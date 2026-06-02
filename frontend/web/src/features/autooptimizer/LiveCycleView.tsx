@@ -8,7 +8,11 @@
 import { useEffect, useRef, useState } from "react";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { createCliJob } from "@/api/cli";
-import { type CycleProgressEvent, formatEventLabel } from "./api";
+import {
+  type CycleProgressEvent,
+  formatEventLabel,
+  normalizeCycleProgressEnvelope,
+} from "./api";
 
 type EventRow = CycleProgressEvent & {
   _row_id: number;
@@ -28,6 +32,7 @@ const CYCLE_EVENT_NAMES = [
   "mutation_gated_dropped",
   "honesty_check_run",
   "judge_finding",
+  "cycle_finished",
   "cycle_sealed",
 ] as const;
 
@@ -178,21 +183,22 @@ export function LiveCycleView() {
     <div className="space-y-4">
       <LaunchStrip onEvent={appendEvent} />
 
-      <div className="flex items-center gap-3">
-        <span
-          className={[
-            "inline-block w-2 h-2 rounded-full",
-            connected ? "bg-green-500" : "bg-text-3",
-          ].join(" ")}
-          aria-label={connected ? "Connected" : "Disconnected"}
+      <div className="grid gap-3 md:grid-cols-3">
+        <LiveStat
+          label="Stream"
+          value={connected ? "Live" : "Idle"}
+          accent={connected ? "good" : "muted"}
         />
-        <span className="text-[13px] text-text-2">
-          {connected ? "Live" : "Waiting for connection…"}
-        </span>
+        <LiveStat label="Events" value={String(events.length)} />
+        <LiveStat
+          label="Latest cycle"
+          value={[...events].reverse().find((event) => event.cycle_id)?.cycle_id ?? "—"}
+          mono
+        />
       </div>
 
       <Card>
-        <CardHeader title="Cycle events" />
+        <CardHeader title="Evening run stream" />
 
         {events.length === 0 ? (
           <div className="px-5 pb-5 pt-2 text-[13px] text-text-3">
@@ -259,6 +265,35 @@ function formatEventTime(ts: string): string {
   }
 }
 
+function LiveStat({
+  label,
+  value,
+  accent = "muted",
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  accent?: "good" | "muted";
+  mono?: boolean;
+}) {
+  const dot = accent === "good" ? "bg-green-500" : "bg-text-3";
+  return (
+    <div className="rounded border border-border bg-surface-card px-4 py-3">
+      <div className="flex items-center gap-2 text-[12px] text-text-3">
+        <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+        {label}
+      </div>
+      <div
+        className={`mt-1 truncate text-[15px] text-text ${
+          mono ? "font-mono text-[12px]" : "font-medium"
+        }`}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function buildEveningCycleArgv(strategyId: string, budget: string, useMock: boolean): string[] {
   const sessionId = `ui-${Date.now().toString(36)}-${randomSuffix()}`;
   const argv = ["optimizer", "evening-cycle", "--session-id", sessionId];
@@ -318,22 +353,16 @@ function followCliJob(
 
 function parseSsePayload(raw: unknown, fallbackKind: string): CycleProgressEvent | null {
   if (typeof raw !== "string" || raw.trim() === "") return null;
-  const parsed = parseJsonObject(raw);
-  if (!parsed) return null;
-  const data = isRecord(parsed.data) ? parsed.data : parsed;
-  const kind = stringValue(data.event_type) ?? stringValue(data.type) ?? stringValue(parsed.kind) ?? fallbackKind;
+  const normalized =
+    normalizeCycleProgressEnvelope(raw) ??
+    normalizeCycleProgressEnvelope({
+      kind: fallbackKind,
+      data: parseJsonObject(raw),
+    });
+  if (!normalized) return null;
+  const kind = normalized.event_type ?? normalized.kind;
   if (kind === "stdout_chunk" || kind === "message") return null;
-  return {
-    ...data,
-    event_type: kind,
-    kind,
-    display_label: stringValue(parsed.display_label) ?? stringValue(data.display_label),
-    ts: stringValue(data.ts) ?? new Date().toISOString(),
-    cycle_id: stringValue(data.cycle_id),
-    bundle_hash: stringValue(data.bundle_hash),
-    parent_hash: stringValue(data.parent_hash),
-    child_hash: stringValue(data.child_hash),
-  };
+  return normalized;
 }
 
 function normalizeCycleEvent(event: CycleProgressEvent): NormalizedEvent | null {
@@ -358,8 +387,4 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
 }

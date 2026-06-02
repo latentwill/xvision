@@ -39,7 +39,6 @@ export function LadderWithProvenance() {
 
   const sorted = [...scores].sort((a, b) => acceptanceRate(b) - acceptanceRate(a));
 
-  // Group recent lineage nodes by provider+model
   const byModel = groupNodesByModel(nodes, sorted);
 
   return (
@@ -126,12 +125,13 @@ export function LadderWithProvenance() {
           </div>
         ) : (
           <div className="px-5 pb-5 space-y-4">
-            {byModel.map(({ key, model, provider, nodes: groupNodes }) => (
-              <div key={key}>
+            {byModel.map(({ key, model, provider, promptVersion, nodes: groupNodes }) => (
+              <div key={key} data-testid={`writer-group-${slugKey(key)}`}>
                 <div className="text-[12px] font-medium text-text mb-2">
                   {model}
                   <span className="font-normal text-text-3 ml-1">
                     · {provider}
+                    {promptVersion ? ` · ${promptVersion}` : ""}
                   </span>
                 </div>
                 <div className="space-y-1">
@@ -184,48 +184,59 @@ type ModelGroup = {
   key: string;
   model: string;
   provider: string;
+  promptVersion: string;
   nodes: LineageNode[];
 };
 
-/**
- * Groups lineage nodes by the provider+model combination of the ladder entry
- * whose cycle_id range covers them. Since we don't have an explicit per-node
- * provider/model field in the LineageNode shape (that's the MutatorScore's
- * dimension), we group nodes by a synthetic ordering: ladder rows define the
- * groups in rank order, and nodes are appended to the first group as "all
- * recent experiments" sorted by created_at desc. Future API revisions that
- * include provider/model per node will allow more precise grouping.
- */
 function groupNodesByModel(
   nodes: LineageNode[],
   sorted: MutatorScore[],
 ): ModelGroup[] {
-  if (sorted.length === 0) {
-    // No ladder — show all nodes in a single group
-    return [
-      {
-        key: "all",
-        model: "All",
-        provider: "",
-        nodes: [...nodes].sort(
-          (a, b) =>
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-        ),
-      },
-    ];
-  }
-
-  // Create one group per ladder entry; distribute nodes round-robin by
-  // position (a heuristic until the API includes provider per node).
   const sortedNodes = [...nodes].sort(
     (a, b) =>
       new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
 
-  return sorted.map((score, i) => ({
-    key: `${score.provider}/${score.model}/${score.prompt_version}`,
-    model: score.model,
-    provider: score.provider,
-    nodes: sortedNodes.filter((_, j) => j % sorted.length === i),
-  })).filter((g) => g.nodes.length > 0);
+  const groups = new Map<string, ModelGroup>();
+  for (const row of sorted) {
+    const key = writerKey(row.provider, row.model, row.prompt_version);
+    groups.set(key, {
+      key,
+      provider: row.provider,
+      model: row.model,
+      promptVersion: row.prompt_version,
+      nodes: [],
+    });
+  }
+
+  for (const node of sortedNodes) {
+    const provider = node.writer_provider ?? "unknown";
+    const model = node.writer_model ?? "Unknown writer";
+    const promptVersion = node.writer_prompt_version ?? "";
+    const key = writerKey(provider, model, promptVersion);
+    const group =
+      groups.get(key) ??
+      {
+        key,
+        provider,
+        model,
+        promptVersion,
+        nodes: [],
+      };
+    group.nodes.push(node);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].filter((g) => g.nodes.length > 0);
+}
+
+function writerKey(provider: string, model: string, promptVersion: string): string {
+  return `${provider}-${model}-${promptVersion || "unversioned"}`;
+}
+
+function slugKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }

@@ -30,10 +30,11 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::{QueryBuilder, Row, Sqlite};
 
 use xvision_engine::autooptimizer::{
+    ContentHash,
     judge::Finding,
-    lineage::{LineageNode, LineageStatus, LineageStore},
     mutator_ladder::{compute_ladder, MutatorScore},
 };
 
@@ -84,6 +85,20 @@ pub struct DiversityRow {
     pub created_at: String,
 }
 
+#[derive(Serialize)]
+pub struct LineageNodeDto {
+    pub bundle_hash: String,
+    pub parent_hash: Option<String>,
+    pub gate_verdict: Option<String>,
+    pub status: String,
+    pub cycle_id: Option<String>,
+    pub created_at: String,
+    pub diversity_score: Option<f64>,
+    pub writer_provider: Option<String>,
+    pub writer_model: Option<String>,
+    pub writer_prompt_version: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/autooptimizer/lineage
 // ---------------------------------------------------------------------------
@@ -91,66 +106,35 @@ pub struct DiversityRow {
 pub async fn list_lineage(
     State(state): State<AppState>,
     Query(q): Query<LineageListQuery>,
-) -> Result<Json<Vec<LineageNode>>, DashboardError> {
+) -> Result<Json<Vec<LineageNodeDto>>, DashboardError> {
     let pool = &state.pool;
 
-    let rows = if let (Some(status_str), Some(cycle_id)) = (&q.status, &q.cycle_id) {
-        sqlx::query(
-            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
-             FROM lineage_nodes WHERE status = ? AND cycle_id = ? \
-             ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(status_str)
-        .bind(cycle_id)
-        .bind(q.limit)
-        .bind(q.offset)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| DashboardError::Internal(e.into()))?
-    } else if let Some(status_str) = &q.status {
-        sqlx::query(
-            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
-             FROM lineage_nodes WHERE status = ? \
-             ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(status_str)
-        .bind(q.limit)
-        .bind(q.offset)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| DashboardError::Internal(e.into()))?
-    } else if let Some(cycle_id) = &q.cycle_id {
-        sqlx::query(
-            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
-             FROM lineage_nodes WHERE cycle_id = ? \
-             ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(cycle_id)
-        .bind(q.limit)
-        .bind(q.offset)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| DashboardError::Internal(e.into()))?
-    } else {
-        sqlx::query(
-            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-             created_at, diversity_score \
-             FROM lineage_nodes \
-             ORDER BY created_at DESC LIMIT ? OFFSET ?",
-        )
-        .bind(q.limit)
-        .bind(q.offset)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| DashboardError::Internal(e.into()))?
-    };
+    let mut query = lineage_query_builder();
+    let mut has_where = false;
+    if let Some(status_str) = &q.status {
+        push_where(&mut query, &mut has_where);
+        query.push("ln.status = ");
+        query.push_bind(status_str.clone());
+    }
+    if let Some(cycle_id) = &q.cycle_id {
+        push_where(&mut query, &mut has_where);
+        query.push("ln.cycle_id = ");
+        query.push_bind(cycle_id.clone());
+    }
+    query.push(" ORDER BY ln.created_at DESC LIMIT ");
+    query.push_bind(q.limit);
+    query.push(" OFFSET ");
+    query.push_bind(q.offset);
 
-    let nodes: Vec<LineageNode> = rows
+    let rows = query
+        .build()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| DashboardError::Internal(e.into()))?;
+
+    let nodes: Vec<LineageNodeDto> = rows
         .into_iter()
-        .map(row_to_lineage_node)
+        .map(row_to_lineage_node_dto)
         .collect::<Result<_, _>>()?;
     Ok(Json(nodes))
 }
@@ -162,23 +146,25 @@ pub async fn list_lineage(
 pub async fn get_lineage_node(
     Path(hash): Path<String>,
     State(state): State<AppState>,
-) -> Result<Json<LineageNode>, DashboardError> {
-    let content_hash = xvision_engine::autooptimizer::ContentHash::from_hex(&hash).map_err(|e| {
+) -> Result<Json<LineageNodeDto>, DashboardError> {
+    let content_hash = ContentHash::from_hex(&hash).map_err(|e| {
         DashboardError::Validation {
             field: "hash".into(),
             msg: format!("invalid content hash: {e}"),
         }
     })?;
-    let store = LineageStore::new(state.pool.clone());
-    let node = store
-        .get(&content_hash)
+    let mut query = lineage_query_builder();
+    query.push(" WHERE ln.bundle_hash = ");
+    query.push_bind(content_hash.to_hex());
+    let row = query
+        .build()
+        .fetch_optional(&state.pool)
         .await
-        .map_err(|e| DashboardError::Internal(e))?;
-    match node {
-        Some(n) => Ok(Json(n)),
-        None => Err(DashboardError::NotFound(format!(
-            "lineage node '{hash}' not found"
-        ))),
+        .map_err(|e| DashboardError::Internal(e.into()))?;
+
+    match row {
+        Some(row) => Ok(Json(row_to_lineage_node_dto(row)?)),
+        None => Err(DashboardError::NotFound(format!("lineage node '{hash}' not found"))),
     }
 }
 
@@ -318,58 +304,59 @@ pub async fn get_blob(
     Ok(Json(value))
 }
 
-fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, DashboardError> {
-    use sqlx::Row;
-    use xvision_engine::autooptimizer::{gate::GateVerdict, ContentHash};
+fn lineage_query_builder() -> QueryBuilder<'static, Sqlite> {
+    QueryBuilder::new(
+        "SELECT ln.bundle_hash, ln.parent_hash, ln.gate_verdict, ln.status, \
+         ln.cycle_id, ln.created_at, ln.diversity_score, \
+         ma.provider AS writer_provider, ma.model AS writer_model, \
+         ma.prompt_version AS writer_prompt_version \
+         FROM lineage_nodes ln \
+         LEFT JOIN mutator_attribution ma ON ma.bundle_hash = ln.bundle_hash",
+    )
+}
 
-    let bundle_hex: String = row
-        .try_get("bundle_hash")
-        .map_err(|e| DashboardError::Internal(e.into()))?;
-    let parent_hex: Option<String> = row
-        .try_get("parent_hash")
-        .map_err(|e| DashboardError::Internal(e.into()))?;
-    let gate_str: String = row
-        .try_get("gate_verdict")
-        .map_err(|e| DashboardError::Internal(e.into()))?;
-    let status_str: String = row
-        .try_get("status")
-        .map_err(|e| DashboardError::Internal(e.into()))?;
-    let cycle_id: Option<String> = row
-        .try_get("cycle_id")
-        .map_err(|e| DashboardError::Internal(e.into()))?;
-    let created_str: String = row
-        .try_get("created_at")
-        .map_err(|e| DashboardError::Internal(e.into()))?;
-    let diversity_score: Option<f64> = row
-        .try_get("diversity_score")
-        .map_err(|e| DashboardError::Internal(e.into()))?;
+fn push_where(query: &mut QueryBuilder<'static, Sqlite>, has_where: &mut bool) {
+    if *has_where {
+        query.push(" AND ");
+    } else {
+        query.push(" WHERE ");
+        *has_where = true;
+    }
+}
 
-    let bundle_hash = ContentHash::from_hex(&bundle_hex).map_err(|e| DashboardError::Internal(e))?;
-    let parent_hash = parent_hex
-        .map(|h| ContentHash::from_hex(&h))
-        .transpose()
-        .map_err(|e| DashboardError::Internal(e))?;
-    let gate_verdict = GateVerdict::from_str(&gate_str).map_err(|e| DashboardError::Internal(e))?;
-    let status = match status_str.as_str() {
-        "active" => LineageStatus::Active,
-        "rejected" => LineageStatus::Rejected,
-        other => {
-            return Err(DashboardError::Internal(anyhow::anyhow!(
-                "unknown lineage status: {other}"
-            )))
-        }
-    };
-    let created_at = DateTime::parse_from_rfc3339(&created_str)
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("parse created_at: {e}")))?
-        .with_timezone(&Utc);
-
-    Ok(LineageNode {
-        bundle_hash,
-        parent_hash,
-        gate_verdict,
-        status,
-        cycle_id,
-        created_at,
-        diversity_score,
+fn row_to_lineage_node_dto(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<LineageNodeDto, DashboardError> {
+    Ok(LineageNodeDto {
+        bundle_hash: row
+            .try_get("bundle_hash")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        parent_hash: row
+            .try_get("parent_hash")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        gate_verdict: row
+            .try_get("gate_verdict")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        status: row
+            .try_get("status")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        cycle_id: row
+            .try_get("cycle_id")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        created_at: row
+            .try_get("created_at")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        diversity_score: row
+            .try_get("diversity_score")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        writer_provider: row
+            .try_get("writer_provider")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        writer_model: row
+            .try_get("writer_model")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
+        writer_prompt_version: row
+            .try_get("writer_prompt_version")
+            .map_err(|e| DashboardError::Internal(e.into()))?,
     })
 }

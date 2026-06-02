@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -76,9 +76,10 @@ describe("LiveCycleView", () => {
       }),
     );
 
-    expect(await screen.findByRole("log")).toBeInTheDocument();
-    expect(screen.getByText("Cycle started")).toBeInTheDocument();
-    expect(screen.getByText("cycle-1")).toBeInTheDocument();
+    const log = await screen.findByRole("log");
+    expect(log).toBeInTheDocument();
+    expect(within(log).getByText("Cycle started")).toBeInTheDocument();
+    expect(within(log).getByText("cycle-1")).toBeInTheDocument();
   });
 
   it("launches evening cycle through CLI jobs and renders stdout cycle events", async () => {
@@ -118,8 +119,9 @@ describe("LiveCycleView", () => {
           '{"type":"mutation_gated","cycle_id":"cycle-2","child_hash":"child-1","passed":false}\n',
       }),
     );
-    expect(await screen.findByText("Gate evaluated")).toBeInTheDocument();
-    expect(screen.getByText("cycle-2")).toBeInTheDocument();
+    const log = await screen.findByRole("log");
+    expect(within(log).getByText("Gate evaluated")).toBeInTheDocument();
+    expect(within(log).getByText("cycle-2")).toBeInTheDocument();
 
     jobStream!.emit("job_finished", JSON.stringify({ status: "succeeded" }));
     expect(await screen.findByText("Optimizer job finished")).toBeInTheDocument();

@@ -30,6 +30,9 @@ export type LineageNode = {
   cycle_id?: string | null;
   created_at: string;
   diversity_score?: number | null;
+  writer_provider?: string | null;
+  writer_model?: string | null;
+  writer_prompt_version?: string | null;
 };
 
 /** Experiment-writer performance record. */
@@ -51,6 +54,8 @@ export type DiversityEntry = {
   created_at: string;
 };
 
+export type BundleBlob = Record<string, unknown>;
+
 /** SSE event from the /api/autooptimizer/events stream. */
 export type CycleProgressEvent = {
   event_type?: string;
@@ -70,6 +75,14 @@ export type CycleProgressEvent = {
 export type DiversityQuery = {
   cycle_id?: string;
   limit?: number;
+};
+
+export type CycleSummary = {
+  cycleId: string;
+  experiments: number;
+  active: number;
+  rejected: number;
+  latestAt: string;
 };
 
 // ─── URL builders ─────────────────────────────────────────────────────────────
@@ -100,12 +113,17 @@ export async function getDiversity(q?: DiversityQuery): Promise<DiversityEntry[]
   return apiFetch<DiversityEntry[]>(buildDiversityUrl(q));
 }
 
+export async function getBlob(hash: string): Promise<BundleBlob> {
+  return apiFetch<BundleBlob>(`/api/autooptimizer/blob/${encodeURIComponent(hash)}`);
+}
+
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {
   all: ["autooptimizer"] as const,
   lineage: () => [...autooptimizerKeys.all, "lineage"] as const,
   lineageNode: (hash: string) => [...autooptimizerKeys.all, "lineage", hash] as const,
+  blob: (hash: string) => [...autooptimizerKeys.all, "blob", hash] as const,
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   diversity: (q?: DiversityQuery) =>
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
@@ -144,6 +162,70 @@ export function useDiversity(q?: DiversityQuery) {
     queryFn: () => getDiversity(q),
     staleTime: 30_000,
   });
+}
+
+export function useBlob(hash?: string | null) {
+  return useQuery({
+    queryKey: autooptimizerKeys.blob(hash ?? ""),
+    queryFn: () => getBlob(hash ?? ""),
+    enabled: !!hash,
+    staleTime: 60_000,
+  });
+}
+
+export function buildCycleSummaries(nodes: LineageNode[]): CycleSummary[] {
+  const groups = new Map<string, CycleSummary>();
+  for (const node of nodes) {
+    if (!node.cycle_id) continue;
+    const current =
+      groups.get(node.cycle_id) ??
+      {
+        cycleId: node.cycle_id,
+        experiments: 0,
+        active: 0,
+        rejected: 0,
+        latestAt: node.created_at,
+      };
+    current.experiments += 1;
+    if (node.status === "active") current.active += 1;
+    if (node.status === "rejected") current.rejected += 1;
+    if (new Date(node.created_at).getTime() > new Date(current.latestAt).getTime()) {
+      current.latestAt = node.created_at;
+    }
+    groups.set(node.cycle_id, current);
+  }
+
+  return [...groups.values()].sort(
+    (a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime(),
+  );
+}
+
+export function normalizeCycleProgressEnvelope(
+  raw: unknown,
+): CycleProgressEvent | null {
+  const parsed = typeof raw === "string" ? parseJsonObject(raw) : raw;
+  if (!isRecord(parsed)) return null;
+
+  const envelopeData = isRecord(parsed.data) ? parsed.data : parsed;
+  const kind =
+    stringValue(parsed.kind) ??
+    stringValue(envelopeData.event_type) ??
+    stringValue(envelopeData.type) ??
+    stringValue(envelopeData.kind);
+  if (!kind) return null;
+
+  return {
+    event_type: kind,
+    kind,
+    display_label:
+      stringValue(parsed.display_label) ?? stringValue(envelopeData.display_label),
+    cycle_id: stringValue(envelopeData.cycle_id),
+    bundle_hash: stringValue(envelopeData.bundle_hash),
+    parent_hash: stringValue(envelopeData.parent_hash),
+    child_hash: stringValue(envelopeData.child_hash),
+    ts: stringValue(envelopeData.ts) ?? new Date().toISOString(),
+    payload: envelopeData,
+  };
 }
 
 // ─── Operator label helpers ───────────────────────────────────────────────────
@@ -215,4 +297,21 @@ export function formatEventLabel(event: CycleProgressEvent): string {
     default:
       return eventType ? eventType.replace(/_/g, " ") : "Optimizer event";
   }
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }

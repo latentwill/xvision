@@ -14,7 +14,7 @@
 //
 // No popups — all content is inline per CLAUDE.md rules.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams, useLocation, useParams } from "react-router-dom";
 
 import { Topbar } from "@/components/shell/Topbar";
@@ -23,6 +23,12 @@ import { GenealogyTree } from "./GenealogyTree";
 import { DiffInspector } from "./DiffInspector";
 import { ExperimentWriterLadder } from "./ExperimentWriterLadder";
 import { LadderWithProvenance } from "./LadderWithProvenance";
+import {
+  buildCycleSummaries,
+  useLadder,
+  useLineageNodes,
+  type MutatorScore,
+} from "./api";
 import {
   getStoredJudgeModel,
   getStoredMutatorModel,
@@ -132,6 +138,12 @@ export function AutoOptimizerLayout() {
   const [tab, setTab] = useState<Tab>(() =>
     tabFromSearch(searchParams.get("tab"), pathHasDiff),
   );
+  const lineageQuery = useLineageNodes();
+  const ladderQuery = useLadder();
+  const cycleSummaries = useMemo(
+    () => buildCycleSummaries(lineageQuery.data ?? []),
+    [lineageQuery.data],
+  );
 
   // Re-sync when the URL changes (back/forward, deep-link).
   useEffect(() => {
@@ -157,6 +169,28 @@ export function AutoOptimizerLayout() {
       <div className="space-y-5">
         {/* Model select row */}
         <ModelSelectRow />
+
+        <OptimizerSummaryBand
+          lineageCount={lineageQuery.data?.length ?? 0}
+          activeCount={
+            lineageQuery.data?.filter((node) => node.status === "active").length ?? 0
+          }
+          rejectedCount={
+            lineageQuery.data?.filter((node) => node.status === "rejected").length ??
+            0
+          }
+          cycles={cycleSummaries}
+          topWriter={
+            ladderQuery.data
+              ? [...ladderQuery.data].sort(
+                  (a, b) =>
+                    (b.proposals === 0 ? 0 : b.accepted / b.proposals) -
+                    (a.proposals === 0 ? 0 : a.accepted / a.proposals),
+                )[0]
+              : undefined
+          }
+          loading={lineageQuery.isPending || ladderQuery.isPending}
+        />
 
         {/* Tab bar */}
         <div
@@ -191,4 +225,107 @@ export function AutoOptimizerLayout() {
       </div>
     </>
   );
+}
+
+type SummaryCycle = ReturnType<typeof buildCycleSummaries>[number];
+
+function OptimizerSummaryBand({
+  lineageCount,
+  activeCount,
+  rejectedCount,
+  cycles,
+  topWriter,
+  loading,
+}: {
+  lineageCount: number;
+  activeCount: number;
+  rejectedCount: number;
+  cycles: SummaryCycle[];
+  topWriter?: MutatorScore;
+  loading: boolean;
+}) {
+  const latest = cycles[0];
+  const writerLabel = topWriter
+    ? `${topWriter.provider} / ${topWriter.model}`
+    : "—";
+  const writerRate =
+    topWriter && topWriter.proposals > 0
+      ? `${((topWriter.accepted / topWriter.proposals) * 100).toFixed(1)}%`
+      : "—";
+
+  return (
+    <div className="grid gap-3 md:grid-cols-4">
+      <SummaryTile
+        label="Experiments"
+        value={loading ? "…" : String(lineageCount)}
+        detail={`${activeCount} active / ${rejectedCount} dropped`}
+      />
+      <SummaryTile
+        label="Recent cycles"
+        value={loading ? "…" : String(cycles.length)}
+        detail={latest ? `${latest.cycleId} · ${latest.experiments} experiments` : "—"}
+        monoDetail
+      />
+      <SummaryTile
+        label="Top writer"
+        value={writerLabel}
+        detail={`${writerRate} accept rate`}
+        compact
+      />
+      <SummaryTile
+        label="Latest cycle"
+        value={latest ? formatSummaryTime(latest.latestAt) : "—"}
+        detail={
+          latest ? `${latest.active} kept / ${latest.rejected} dropped` : "—"
+        }
+      />
+    </div>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  detail,
+  compact = false,
+  monoDetail = false,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  compact?: boolean;
+  monoDetail?: boolean;
+}) {
+  return (
+    <div className="rounded border border-border bg-surface-card px-4 py-3 min-w-0">
+      <div className="text-[12px] text-text-3">{label}</div>
+      <div
+        className={`mt-1 truncate text-text ${
+          compact ? "text-[13px] font-medium" : "text-[20px] font-semibold"
+        }`}
+      >
+        {value}
+      </div>
+      <div
+        className={`mt-1 truncate text-[12px] text-text-3 ${
+          monoDetail ? "font-mono" : ""
+        }`}
+      >
+        {detail}
+      </div>
+    </div>
+  );
+}
+
+function formatSummaryTime(ts: string): string {
+  try {
+    return new Date(ts).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return ts;
+  }
 }

@@ -1,12 +1,17 @@
 // DiffInspector — shows details for a single mutation/experiment node.
 // Accepts :hash param from the /autooptimizer/diff/:hash route.
-// Displays node metadata; diff content itself requires a blob-store
-// endpoint that lands in a follow-up PR.
+// Displays node metadata and changed fields from the blob store.
 
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Card, CardHeader } from "@/components/primitives/Card";
-import { useLineageNode, formatLineageStatus, formatGateVerdict } from "./api";
+import {
+  useBlob,
+  useLineageNode,
+  formatLineageStatus,
+  formatGateVerdict,
+  type BundleBlob,
+} from "./api";
 
 export function DiffInspector() {
   const { hash } = useParams<{ hash: string }>();
@@ -24,6 +29,8 @@ export function DiffInspector() {
 
 function DiffInspectorContent({ hash }: { hash: string }) {
   const { data: node, isPending, isError } = useLineageNode(hash);
+  const childBlob = useBlob(node?.bundle_hash);
+  const parentBlob = useBlob(node?.parent_hash);
 
   if (isPending) {
     return (
@@ -127,20 +134,102 @@ function DiffInspectorContent({ hash }: { hash: string }) {
         </div>
       </Card>
 
-      {/* Diff content placeholder — requires blob-store endpoint (follow-up PR) */}
       <Card>
         <CardHeader title="Experiment diff" />
-        <div className="px-5 pb-5">
-          <div className="rounded border border-border bg-surface-elev/40 px-4 py-6 text-[13px] text-text-3 text-center">
-            Diff content loads from the blob store. Available in the follow-up
-            PR that wires{" "}
-            <code className="font-mono text-[12px]">
-              GET /api/autooptimizer/blobs/:hash
-            </code>
-            .
-          </div>
-        </div>
+        <BlobDiff
+          parentHash={node.parent_hash}
+          parent={parentBlob.data}
+          child={childBlob.data}
+          isLoading={childBlob.isPending || (node.parent_hash ? parentBlob.isPending : false)}
+          isError={childBlob.isError || parentBlob.isError}
+        />
       </Card>
+    </div>
+  );
+}
+
+function BlobDiff({
+  parentHash,
+  parent,
+  child,
+  isLoading,
+  isError,
+}: {
+  parentHash?: string | null;
+  parent?: BundleBlob;
+  child?: BundleBlob;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  if (!parentHash) {
+    return (
+      <div className="px-5 pb-5 text-[13px] text-text-3">
+        Root experiment. No parent diff is available.
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="px-5 pb-5 text-[13px] text-text-3">
+        Loading blob diff…
+      </div>
+    );
+  }
+
+  if (isError || !parent || !child) {
+    return (
+      <div className="px-5 pb-5 text-[13px] text-red-500">
+        Failed to load blob diff.
+      </div>
+    );
+  }
+
+  const changes = diffBlobs(parent, child);
+
+  if (changes.length === 0) {
+    return (
+      <div className="px-5 pb-5 text-[13px] text-text-3">
+        No field changes detected.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[13px] border-collapse">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="text-left font-medium text-text-3 px-5 py-3">
+              Field
+            </th>
+            <th className="text-left font-medium text-text-3 px-4 py-3">
+              Parent
+            </th>
+            <th className="text-left font-medium text-text-3 px-5 py-3">
+              Experiment
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {changes.map((change) => (
+            <tr
+              key={change.path}
+              className="border-b border-border last:border-0 hover:bg-surface-elev/40"
+            >
+              <td className="px-5 py-3 font-mono text-[12px] text-text">
+                {change.path}
+              </td>
+              <td className="px-4 py-3 font-mono text-[12px] text-text-3">
+                {formatDiffValue(change.before)}
+              </td>
+              <td className="px-5 py-3 font-mono text-[12px] text-text">
+                {formatDiffValue(change.after)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -169,4 +258,51 @@ function formatDateTime(ts: string): string {
   } catch {
     return ts;
   }
+}
+
+type FlatBlob = Record<string, unknown>;
+
+function diffBlobs(parent: BundleBlob, child: BundleBlob) {
+  const parentFlat = flattenBlob(parent);
+  const childFlat = flattenBlob(child);
+  const paths = new Set([...Object.keys(parentFlat), ...Object.keys(childFlat)]);
+  return [...paths]
+    .sort()
+    .filter((path) => !valuesEqual(parentFlat[path], childFlat[path]))
+    .map((path) => ({
+      path,
+      before: parentFlat[path],
+      after: childFlat[path],
+    }));
+}
+
+function flattenBlob(value: unknown, prefix = ""): FlatBlob {
+  if (!isPlainRecord(value)) {
+    return prefix ? { [prefix]: value } : {};
+  }
+
+  const out: FlatBlob = {};
+  for (const [key, nested] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (isPlainRecord(nested)) {
+      Object.assign(out, flattenBlob(nested, path));
+    } else {
+      out[path] = nested;
+    }
+  }
+  return out;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function valuesEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function formatDiffValue(value: unknown): string {
+  if (value === undefined) return "—";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
 }

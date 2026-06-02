@@ -1,6 +1,6 @@
 // GenealogyTree — renders the experiment genealogy tree.
-// Fetches all lineage nodes, groups by cycle_id, and shows a simple
-// flat list (no D3 dependency — plain HTML rows with parent arrows).
+// Fetches all lineage nodes, groups by cycle_id, and renders parent/child
+// structure using plain HTML rows.
 // Clicking a node navigates to /autooptimizer/diff/:hash.
 
 import { useNavigate } from "react-router-dom";
@@ -61,8 +61,12 @@ export function GenealogyTree() {
             }
           />
           <div className="px-5 pb-4 space-y-1">
-            {items.map((node) => (
-              <NodeRow key={node.bundle_hash} node={node} />
+            {buildTree(items).map((treeNode) => (
+              <NodeRow
+                key={treeNode.node.bundle_hash}
+                treeNode={treeNode}
+                depth={0}
+              />
             ))}
           </div>
         </Card>
@@ -71,51 +75,102 @@ export function GenealogyTree() {
   );
 }
 
-function NodeRow({ node }: { node: LineageNode }) {
+type TreeNode = {
+  node: LineageNode;
+  children: TreeNode[];
+};
+
+function NodeRow({ treeNode, depth }: { treeNode: TreeNode; depth: number }) {
   const navigate = useNavigate();
+  const { node, children } = treeNode;
   const shortHash = node.bundle_hash.slice(0, 8);
 
   return (
-    <button
-      type="button"
-      onClick={() =>
-        navigate(`/autooptimizer/diff/${encodeURIComponent(node.bundle_hash)}`)
-      }
-      className="w-full flex items-center gap-3 px-3 py-2.5 rounded border border-border hover:border-text-3 hover:bg-surface-elev/40 transition-colors text-left"
-    >
-      {/* Parent arrow */}
-      {node.parent_hash ? (
-        <span className="text-text-3 text-[11px] font-mono shrink-0">
-          ↳ {node.parent_hash.slice(0, 8)}
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() =>
+          navigate(`/autooptimizer/diff/${encodeURIComponent(node.bundle_hash)}`)
+        }
+        className="w-full flex items-center gap-3 px-3 py-2.5 rounded border border-border hover:border-text-3 hover:bg-surface-elev/40 transition-colors text-left"
+        style={{
+          marginLeft: `${depth * 24}px`,
+          width: `calc(100% - ${depth * 24}px)`,
+        }}
+      >
+        <span className="text-text-3 text-[11px] font-mono shrink-0 w-[72px]">
+          {node.parent_hash ? `from ${node.parent_hash.slice(0, 8)}` : "root"}
         </span>
-      ) : (
-        <span className="text-text-3 text-[11px] font-mono shrink-0">root</span>
-      )}
 
-      {/* Hash */}
-      <span className="font-mono text-[13px] text-text shrink-0">{shortHash}</span>
-
-      {/* Status badge */}
-      <StatusBadge status={node.status} />
-
-      {/* Gate verdict */}
-      <span className="text-[12px] text-text-3 shrink-0">
-        {formatGateVerdict(node.gate_verdict)}
-      </span>
-
-      {/* Diversity score */}
-      {node.diversity_score != null && (
-        <span className="ml-auto text-[12px] text-text-3 shrink-0">
-          div {node.diversity_score.toFixed(3)}
+        <span className="font-mono text-[13px] text-text shrink-0">
+          {shortHash}
         </span>
-      )}
 
-      {/* Created at */}
-      <span className="ml-auto text-[12px] text-text-3 shrink-0">
-        {formatShortDate(node.created_at)}
-      </span>
-    </button>
+        <StatusBadge status={node.status} />
+
+        <span className="text-[12px] text-text-3 shrink-0">
+          {formatGateVerdict(node.gate_verdict)}
+        </span>
+
+        {children.length > 0 && (
+          <span className="text-[12px] text-text-3 shrink-0">
+            {children.length} {children.length === 1 ? "child" : "children"}
+          </span>
+        )}
+
+        {node.diversity_score != null && (
+          <span className="ml-auto text-[12px] text-text-3 shrink-0">
+            div {node.diversity_score.toFixed(3)}
+          </span>
+        )}
+
+        <span
+          className={`text-[12px] text-text-3 shrink-0 ${
+            node.diversity_score == null ? "ml-auto" : ""
+          }`}
+        >
+          {formatShortDate(node.created_at)}
+        </span>
+      </button>
+      {children.map((child) => (
+        <NodeRow
+          key={child.node.bundle_hash}
+          treeNode={child}
+          depth={depth + 1}
+        />
+      ))}
+    </div>
   );
+}
+
+function buildTree(nodes: LineageNode[]): TreeNode[] {
+  const byHash = new Map<string, TreeNode>();
+  for (const node of nodes) {
+    byHash.set(node.bundle_hash, { node, children: [] });
+  }
+
+  const roots: TreeNode[] = [];
+  for (const treeNode of byHash.values()) {
+    const parentHash = treeNode.node.parent_hash;
+    const parent = parentHash ? byHash.get(parentHash) : undefined;
+    if (parent) {
+      parent.children.push(treeNode);
+    } else {
+      roots.push(treeNode);
+    }
+  }
+
+  sortTree(roots);
+  return roots;
+}
+
+function sortTree(items: TreeNode[]) {
+  items.sort(
+    (a, b) =>
+      new Date(b.node.created_at).getTime() -
+      new Date(a.node.created_at).getTime(),
+  );
+  for (const item of items) sortTree(item.children);
 }
 
 function StatusBadge({ status }: { status: string }) {
