@@ -30,7 +30,7 @@ use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind};
 use xvision_engine::tokens::{estimate_pipeline_tokens, estimate_pipeline_tokens_from_slots};
 use xvision_engine::tools::ToolRegistry;
-use xvision_filters::{parse_json as parse_filter_json, FilterId, StrategyId};
+use xvision_filters::{parse_json as parse_filter_json, ActivationMode, FilterId, StrategyId};
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 use crate::json::{emit_object, ObjectFormat};
@@ -1048,12 +1048,22 @@ async fn new_atomic(
 fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strategies::Strategy> {
     let body = std::fs::read_to_string(path)
         .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some("toml") => {
-            toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))
-        }
-        _ => serde_json::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}"))),
+    let strategy: xvision_engine::strategies::Strategy =
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("toml") => {
+                toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?
+            }
+            _ => serde_json::from_str(&body)
+                .map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}")))?,
+        };
+    if strategy.activation_mode == ActivationMode::FilterGated && strategy.filter.is_none() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "activation_mode is filter_gated but no filter block was parsed — \
+             check that the 'filter' field is present and correctly structured in {}",
+            path.display()
+        )));
     }
+    Ok(strategy)
 }
 
 async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<()> {
