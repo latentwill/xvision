@@ -318,6 +318,9 @@ pub struct ShowArgs {
     /// `{"run": ..., "behavior_summary": ...}`.
     #[arg(long)]
     pub behavior: bool,
+    /// Show full detail (actions, tokens, cost, providers). Default is compact health card.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -505,6 +508,9 @@ pub struct ValidateArgs {
     /// Emit a JSON validation report.
     #[arg(long)]
     pub json: bool,
+    /// Print a structured explain block after successful validation.
+    #[arg(long)]
+    pub explain: bool,
 }
 
 #[derive(Args, Debug)]
@@ -818,30 +824,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     }
 
     println!();
-    println!("Run completed.");
-    println!("  id              {}", run.id);
-    println!("  status          {}", run.status.as_str());
-    println!("  auto_review     {}", run.auto_fire_review);
-    println!(
-        "  review_ann_max  {}",
-        run.max_annotations_per_review.unwrap_or(8)
-    );
-    if let Some(model) = run.review_model.as_ref() {
-        println!("  review_model    {}/{}", model.provider, model.model);
-    }
-    if let Some(c) = run.completed_at {
-        println!("  completed_at    {}", c.to_rfc3339());
-    }
-    if let Some(m) = run.metrics.as_ref() {
-        println!();
-        println!("  Metrics");
-        println!("    total_return  {:.2}%", m.total_return_pct);
-        println!("    sharpe        {:.3}", m.sharpe);
-        println!("    max_drawdown  {:.2}%", m.max_drawdown_pct);
-        println!("    win_rate      {:.2}", m.win_rate);
-        println!("    n_trades      {}", m.n_trades);
-        println!("    n_decisions   {}", m.n_decisions);
-    }
+    print_run_health_card(&run, None);
     Ok(())
 }
 
@@ -1125,114 +1108,159 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    println!("id              {}", run.id);
-    println!("status          {}", run.status.as_str());
-    println!("mode            {}", run.mode.as_str());
-    println!("scenario        {}", run.scenario_id);
-    println!("strategy        {}", run.agent_id);
-    println!("auto_review     {}", run.auto_fire_review);
-    println!("review_ann_max  {}", run.max_annotations_per_review.unwrap_or(8));
-    if let Some(model) = run.review_model.as_ref() {
-        println!("review_model    {}/{}", model.provider, model.model);
-    }
-    println!("started_at      {}", run.started_at.to_rfc3339());
-    if let Some(c) = run.completed_at {
-        println!("completed_at    {}", c.to_rfc3339());
-    }
-    if let Some(wc) = report.wall_clock_ms {
-        println!("wall_clock_ms   {wc}");
-    }
-    if let Some(m) = run.metrics.as_ref() {
-        println!("\nMetrics");
-        println!("  gross_return  {:.2}%", m.total_return_pct);
-        if let Some(cost) = m.inference_cost_quote_total {
-            println!("  infer_cost    ${cost:.4}");
-        } else {
-            println!("  infer_cost    n/a");
+    if args.verbose {
+        println!("id              {}", run.id);
+        println!("status          {}", run.status.as_str());
+        println!("mode            {}", run.mode.as_str());
+        println!("scenario        {}", run.scenario_id);
+        println!("strategy        {}", run.agent_id);
+        println!("auto_review     {}", run.auto_fire_review);
+        println!("review_ann_max  {}", run.max_annotations_per_review.unwrap_or(8));
+        if let Some(model) = run.review_model.as_ref() {
+            println!("review_model    {}/{}", model.provider, model.model);
         }
-        if let Some(net) = m.net_return_pct {
-            println!("  net_return    {:.2}%", net);
-        } else {
-            println!("  net_return    n/a");
+        println!("started_at      {}", run.started_at.to_rfc3339());
+        if let Some(c) = run.completed_at {
+            println!("completed_at    {}", c.to_rfc3339());
         }
-        println!("  sharpe        {:.3}", m.sharpe);
-        println!("  max_drawdown  {:.2}%", m.max_drawdown_pct);
-        println!("  win_rate      {:.2}", m.win_rate);
-        println!("  n_trades      {}", m.n_trades);
-        println!("  n_decisions   {}", m.n_decisions);
-    }
-
-    // Action distribution + tokens + cost roll-up. Always emitted so an
-    // operator can tell at a glance "no model calls ever landed for this
-    // run" (all-None tokens, model_call_count = 0).
-    println!("\nActions");
-    println!("  long_open     {}", report.action_counts.long_open);
-    println!("  short_open    {}", report.action_counts.short_open);
-    println!("  flat          {}", report.action_counts.flat);
-    println!("  hold          {}", report.action_counts.hold);
-    println!("  long_close    {}", report.action_counts.long_close);
-    println!("  short_close   {}", report.action_counts.short_close);
-    println!("  decisions     {}", report.decisions);
-    println!("  trades        {}", report.trades);
-    println!("  direct_flips  {}", report.direct_flips);
-    println!("  repeated_opens {}", report.repeated_opens);
-
-    println!("\nTokens / cost");
-    match report.input_tokens {
-        Some(n) => println!("  input_tokens  {n}"),
-        None => println!("  input_tokens  n/a"),
-    }
-    match report.output_tokens {
-        Some(n) => println!("  output_tokens {n}"),
-        None => println!("  output_tokens n/a"),
-    }
-    match report.cost_usd_estimate {
-        Some(c) => {
-            let lb = if report.cost_estimate_complete {
-                ""
+        if let Some(wc) = report.wall_clock_ms {
+            println!("wall_clock_ms   {wc}");
+        }
+        if let Some(m) = run.metrics.as_ref() {
+            println!("\nMetrics");
+            println!("  gross_return  {:.2}%", m.total_return_pct);
+            if let Some(cost) = m.inference_cost_quote_total {
+                println!("  infer_cost    ${cost:.4}");
             } else {
-                " (lower bound — some calls had unknown cost)"
-            };
-            println!("  cost_usd      ${c:.4}{lb}");
+                println!("  infer_cost    n/a");
+            }
+            if let Some(net) = m.net_return_pct {
+                println!("  net_return    {:.2}%", net);
+            } else {
+                println!("  net_return    n/a");
+            }
+            println!("  sharpe        {:.3}", m.sharpe);
+            println!("  max_drawdown  {:.2}%", m.max_drawdown_pct);
+            println!("  win_rate      {:.2}", m.win_rate);
+            println!("  n_trades      {}", m.n_trades);
+            println!("  n_decisions   {}", m.n_decisions);
         }
-        None => println!("  cost_usd      n/a"),
-    }
-    if let Some(ref bsummary) = behavior {
-        println!("\nbehavior_summary:");
-        println!("  flat_rate                {:.2}", bsummary.flat_rate);
-        println!("  trades_opened            {}", bsummary.trades_opened);
-        println!("  direct_flips             {}", bsummary.direct_flips);
-        if let Some(avg) = bsummary.avg_bars_held {
-            println!("  avg_bars_held            {:.1}", avg);
-        } else {
-            println!("  avg_bars_held            n/a");
-        }
-        println!("  reentries_after_loss     {}", bsummary.reentries_after_loss);
-        println!("  exits_on_invalidation    {}", bsummary.exits_on_invalidation);
-        println!("  primary_failure_mode     {}", bsummary.primary_failure_mode);
-    }
-    // Providers used — query model_calls via the observability join.
-    let providers_used = eval_export::load_providers_used(&ctx.db, &run.id).await;
-    if !providers_used.is_empty() {
-        println!("\nproviders_used");
-        for pm in &providers_used {
-            println!("  {}/{:<30}  {}", pm.provider, pm.model, pm.call_count);
-        }
-    }
 
-    // Per-launch override receipt (Wave B #5). Surface only when set —
-    // the absence of this section means the run used the strategy's
-    // bound provider/model.
-    if let Some(po) = provider_override.as_ref() {
-        println!("\nprovider_override");
-        println!("  provider      {}", po.provider);
-        println!("  model         {}", po.model);
-    }
+        // Action distribution + tokens + cost roll-up. Always emitted so an
+        // operator can tell at a glance "no model calls ever landed for this
+        // run" (all-None tokens, model_call_count = 0).
+        println!("\nActions");
+        println!("  long_open     {}", report.action_counts.long_open);
+        println!("  short_open    {}", report.action_counts.short_open);
+        println!("  flat          {}", report.action_counts.flat);
+        println!("  hold          {}", report.action_counts.hold);
+        println!("  long_close    {}", report.action_counts.long_close);
+        println!("  short_close   {}", report.action_counts.short_close);
+        println!("  decisions     {}", report.decisions);
+        println!("  trades        {}", report.trades);
+        println!("  direct_flips  {}", report.direct_flips);
+        println!("  repeated_opens {}", report.repeated_opens);
 
-    if let Some(e) = run.error.as_deref() {
-        println!("\nerror: {e}");
+        println!("\nTokens / cost");
+        match report.input_tokens {
+            Some(n) => println!("  input_tokens  {n}"),
+            None => println!("  input_tokens  n/a"),
+        }
+        match report.output_tokens {
+            Some(n) => println!("  output_tokens {n}"),
+            None => println!("  output_tokens n/a"),
+        }
+        match report.cost_usd_estimate {
+            Some(c) => {
+                let lb = if report.cost_estimate_complete {
+                    ""
+                } else {
+                    " (lower bound — some calls had unknown cost)"
+                };
+                println!("  cost_usd      ${c:.4}{lb}");
+            }
+            None => println!("  cost_usd      n/a"),
+        }
+        if let Some(ref bsummary) = behavior {
+            println!("\nbehavior_summary:");
+            println!("  flat_rate                {:.2}", bsummary.flat_rate);
+            println!("  trades_opened            {}", bsummary.trades_opened);
+            println!("  direct_flips             {}", bsummary.direct_flips);
+            if let Some(avg) = bsummary.avg_bars_held {
+                println!("  avg_bars_held            {:.1}", avg);
+            } else {
+                println!("  avg_bars_held            n/a");
+            }
+            println!("  reentries_after_loss     {}", bsummary.reentries_after_loss);
+            println!("  exits_on_invalidation    {}", bsummary.exits_on_invalidation);
+            println!("  primary_failure_mode     {}", bsummary.primary_failure_mode);
+        }
+        // Providers used — query model_calls via the observability join.
+        let providers_used = eval_export::load_providers_used(&ctx.db, &run.id).await;
+        if !providers_used.is_empty() {
+            println!("\nproviders_used");
+            for pm in &providers_used {
+                println!("  {}/{:<30}  {}", pm.provider, pm.model, pm.call_count);
+            }
+        }
+
+        // Per-launch override receipt (Wave B #5). Surface only when set —
+        // the absence of this section means the run used the strategy's
+        // bound provider/model.
+        if let Some(po) = provider_override.as_ref() {
+            println!("\nprovider_override");
+            println!("  provider      {}", po.provider);
+            println!("  model         {}", po.model);
+        }
+
+        if let Some(e) = run.error.as_deref() {
+            println!("\nerror: {e}");
+        }
+    } else {
+        print_run_health_card(&run, Some(&report));
     }
     Ok(())
+}
+
+fn print_run_health_card(
+    run: &xvision_engine::eval::run::Run,
+    report: Option<&xvision_engine::eval::report::RunReport>,
+) {
+    // Line 1: status + key ids
+    println!("run     {} [{}]", run.id, run.status.as_str());
+    println!("for     {} / {}", run.agent_id, run.scenario_id);
+    if let Some(c) = run.completed_at {
+        let started = run.started_at.format("%Y-%m-%dT%H:%MZ");
+        let done = c.format("%Y-%m-%dT%H:%MZ");
+        println!("ran     {} → {}", started, done);
+    }
+    // Metrics (compact, all on one line each)
+    if let Some(m) = run.metrics.as_ref() {
+        println!("return  {:.2}%", m.total_return_pct);
+        println!(
+            "sharpe  {:.3}   dd {:.2}%   win {:.2}",
+            m.sharpe, m.max_drawdown_pct, m.win_rate
+        );
+        println!("trades  {}   decisions {}", m.n_trades, m.n_decisions);
+        if let Some(cost) = m.inference_cost_quote_total {
+            println!("cost    ${:.4}", cost);
+        }
+    }
+    // Token summary from report if available
+    if let Some(rpt) = report {
+        match (rpt.input_tokens, rpt.output_tokens) {
+            (Some(i), Some(o)) => println!("tokens  in={} out={}", i, o),
+            (Some(i), None) => println!("tokens  in={}", i),
+            _ => {}
+        }
+        if let Some(wc) = rpt.wall_clock_ms {
+            println!("wall    {}ms", wc);
+        }
+    }
+    // Error if any
+    if let Some(e) = run.error.as_deref() {
+        println!("error   {}", e);
+    }
 }
 
 async fn run_watch(args: WatchArgs) -> CliResult<()> {
@@ -1640,7 +1668,11 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         }
         return Err(CliError {
             exit: XvnExit::OptValidation,
-            source: anyhow::anyhow!("eval validate: {error}"),
+            source: anyhow::anyhow!(
+                "eval validate failed\n  reason: {error}\n  strategy: {}\n  scenario: {}",
+                args.strategy,
+                args.scenario
+            ),
         });
     }
 
@@ -1655,6 +1687,24 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         crate::io::print_json(&body)?;
     } else {
         println!("ok");
+    }
+    if args.explain && !args.json {
+        println!();
+        println!("explain");
+        println!("  strategy   {}", args.strategy);
+        println!("  scenario   {}", args.scenario);
+        println!("  mode       {}", mode.as_str());
+        if let Ok(strategy) = api_strategy::get(&ctx, &args.strategy).await {
+            println!("  assets     {}", strategy.manifest.asset_universe.join(", "));
+            println!("  timeframe  {}min", strategy.manifest.decision_cadence_minutes);
+            for a in &strategy.agents {
+                println!("  agent      role={} id={}", a.role, a.agent_id);
+            }
+            println!(
+                "  filter     {}",
+                if strategy.filter.is_some() { "yes" } else { "none" }
+            );
+        }
     }
     Ok(())
 }

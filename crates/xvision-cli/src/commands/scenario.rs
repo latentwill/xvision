@@ -11,10 +11,11 @@ use std::str::FromStr;
 use chrono::NaiveDate;
 use clap::{Args, Subcommand, ValueEnum};
 
-use xvision_engine::api::eval as api_eval;
+use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::regime::derive_regime_labels;
+use xvision_engine::eval::run::RunStatus;
 use xvision_engine::eval::scenario::{
     AdjustmentMode, AssetClass, BarGranularity, CalendarRef, Capital, DataSource, Fees, FillModel,
     LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, ReplayMode, Scenario, ScenarioSource,
@@ -132,6 +133,8 @@ pub enum ScenarioOp {
     ///   xvn scenario set-regime sc_01JR3PPWB1WE5XKYGEP7NYWRT9 --regime crash
     #[command(name = "set-regime")]
     SetRegime(SetRegimeArgs),
+    /// Rank all scenarios by best completed eval run metric across all strategies.
+    Leaderboard(LeaderboardArgs),
 }
 
 #[derive(Args, Debug)]
@@ -377,6 +380,22 @@ pub struct SetRegimeArgs {
     pub dry_run: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct LeaderboardArgs {
+    /// Sort metric: return (default) | sharpe.
+    #[arg(long, default_value = "return")]
+    pub sort: String,
+    /// Number of top scenarios to show.
+    #[arg(long, default_value_t = 20usize)]
+    pub top: usize,
+    /// Restrict to runs started within the last N days.
+    #[arg(long)]
+    pub since_days: Option<u32>,
+    /// Emit as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
     let ctx = open_ctx(cmd.xvn_home.clone()).await.map_err(CliError::upstream)?;
     match cmd.op {
@@ -392,6 +411,7 @@ pub async fn run(cmd: ScenarioCmd) -> CliResult<()> {
         ScenarioOp::Select(a) => run_select(&ctx, a).await,
         ScenarioOp::Classify(a) => run_classify(&ctx, a).await,
         ScenarioOp::SetRegime(a) => run_set_regime(&ctx, a).await,
+        ScenarioOp::Leaderboard(a) => run_leaderboard(&ctx, a).await,
     }
 }
 
@@ -554,6 +574,7 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         data_source: DataSource::AlpacaHistorical {
             feed: None,
@@ -1423,6 +1444,159 @@ async fn run_set_regime(ctx: &ApiContext, a: SetRegimeArgs) -> CliResult<()> {
 // and a migration reservation.  See track #12 / a dedicated follow-up track.
 // Downstream callers pass `--scenarios sc_a,sc_b,...` directly for now.
 
+// ---- scenario leaderboard ---------------------------------------------------
+
+#[derive(Debug, serde::Serialize)]
+struct ScenarioLeaderboardRow {
+    rank: usize,
+    scenario_id: String,
+    scenario_name: String,
+    window: String,
+    timeframe: String,
+    best_return_pct: Option<f64>,
+    best_sharpe: Option<f64>,
+    run_count: usize,
+    best_run_id: Option<String>,
+}
+
+async fn run_leaderboard(ctx: &ApiContext, a: LeaderboardArgs) -> CliResult<()> {
+    let scenarios = api_scenario::list(
+        ctx,
+        api_scenario::ListScenariosFilter {
+            source: None,
+            tags: vec![],
+            include_archived: false,
+            parent_scenario_id: None,
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("scenario leaderboard (list)", e))?;
+
+    let cutoff = a
+        .since_days
+        .map(|d| chrono::Utc::now() - chrono::Duration::days(d as i64));
+
+    let mut rows: Vec<ScenarioLeaderboardRow> = Vec::new();
+
+    for scenario in &scenarios {
+        let all_runs = api_eval::list(
+            ctx,
+            ListRunsRequest {
+                agent_id: None,
+                scenario_id: Some(scenario.id.clone()),
+                status: Some(RunStatus::Completed),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_or_default();
+
+        let filtered: Vec<_> = all_runs
+            .iter()
+            .filter(|r| cutoff.map(|c| r.started_at >= c).unwrap_or(true))
+            .collect();
+
+        let best_return = filtered
+            .iter()
+            .filter_map(|r| r.metrics.as_ref().map(|m| m.total_return_pct))
+            .reduce(f64::max);
+        let best_sharpe = filtered
+            .iter()
+            .filter_map(|r| r.metrics.as_ref().map(|m| m.sharpe))
+            .reduce(f64::max);
+        let best_run_id = filtered
+            .iter()
+            .filter(|r| r.metrics.is_some())
+            .max_by(|a, b| {
+                let av = a
+                    .metrics
+                    .as_ref()
+                    .map(|m| m.total_return_pct)
+                    .unwrap_or(f64::NEG_INFINITY);
+                let bv = b
+                    .metrics
+                    .as_ref()
+                    .map(|m| m.total_return_pct)
+                    .unwrap_or(f64::NEG_INFINITY);
+                av.partial_cmp(&bv).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|r| r.id.clone());
+
+        let window = format!(
+            "{}..{}",
+            scenario.time_window.start.format("%Y-%m-%d"),
+            scenario.time_window.end.format("%Y-%m-%d"),
+        );
+
+        rows.push(ScenarioLeaderboardRow {
+            rank: 0,
+            scenario_id: scenario.id.clone(),
+            scenario_name: scenario.display_name.clone(),
+            window,
+            timeframe: scenario.granularity.to_string(),
+            best_return_pct: best_return,
+            best_sharpe,
+            run_count: filtered.len(),
+            best_run_id,
+        });
+    }
+
+    match a.sort.as_str() {
+        "sharpe" => rows.sort_by(|x, y| {
+            y.best_sharpe
+                .unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&x.best_sharpe.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        _ => rows.sort_by(|x, y| {
+            y.best_return_pct
+                .unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&x.best_return_pct.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+
+    rows.truncate(a.top);
+    for (i, row) in rows.iter_mut().enumerate() {
+        row.rank = i + 1;
+    }
+
+    if a.json {
+        return print_json(&rows);
+    }
+
+    if rows.is_empty() {
+        println!("(no scenarios with completed runs)");
+        return Ok(());
+    }
+
+    println!(
+        "{:<4}  {:<34}  {:<23}  {:<6}  {:>10}  {:>8}  {:>5}",
+        "RANK", "SCENARIO", "WINDOW", "TF", "RETURN_%", "SHARPE", "RUNS"
+    );
+    for row in &rows {
+        let name = if row.scenario_name.len() > 32 {
+            format!("{}…", &row.scenario_name[..31])
+        } else {
+            row.scenario_name.clone()
+        };
+        println!(
+            "{:<4}  {:<34}  {:<23}  {:<6}  {:>10}  {:>8}  {:>5}",
+            row.rank,
+            name,
+            row.window,
+            row.timeframe,
+            row.best_return_pct
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or("-".into()),
+            row.best_sharpe.map(|v| format!("{:.3}", v)).unwrap_or("-".into()),
+            row.run_count,
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 pub mod get {
     //! Shape: `cargo test -p xvision-cli scenario::get::json` (per the
@@ -1562,6 +1736,7 @@ pub mod select {
                     volume_constraints: None,
                 },
                 overrides: Vec::new(),
+                borrow_bps_per_day: 5.0,
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),
