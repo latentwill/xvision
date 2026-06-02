@@ -53,11 +53,15 @@ export type DiversityEntry = {
 
 /** SSE event from the /api/autooptimizer/events stream. */
 export type CycleProgressEvent = {
-  event_type: string;
+  event_type?: string;
+  type?: string;
+  kind?: string;
   cycle_id?: string | null;
   bundle_hash?: string | null;
+  parent_hash?: string | null;
+  child_hash?: string | null;
   display_label?: string | null;
-  ts: string;
+  ts?: string;
   payload?: Record<string, unknown> | null;
 };
 
@@ -179,9 +183,12 @@ export function formatGateVerdict(verdict?: string | null): string {
 /** Map CycleProgressEvent.event_type to a plain-language operator label. */
 export function formatEventLabel(event: CycleProgressEvent): string {
   if (event.display_label) return event.display_label;
-  switch (event.event_type) {
+  const eventType = event.event_type ?? event.type ?? event.kind ?? "";
+  switch (eventType) {
     case "cycle_started":
       return "Cycle started";
+    case "parent_selected":
+      return "Parent selected";
     case "cycle_finished":
       return "Evening run finished";
     case "mutation_proposed":
@@ -191,10 +198,21 @@ export function formatEventLabel(event: CycleProgressEvent): string {
     case "mutation_rejected":
       return "Experiment rejected";
     case "gate_evaluated":
+    case "mutation_gated":
+    case "mutation_gated_passed":
+    case "mutation_gated_dropped":
       return "Gate evaluated";
+    case "honesty_check_run":
+      return "Honesty check result";
+    case "judge_finding":
+      return "Reviewer finished notes";
     case "diversity_scored":
       return "Diversity scored";
+    case "job_started":
+      return "Optimizer job started";
+    case "job_finished":
+      return "Optimizer job finished";
     default:
-      return event.event_type.replace(/_/g, " ");
+      return eventType ? eventType.replace(/_/g, " ") : "Optimizer event";
   }
 }

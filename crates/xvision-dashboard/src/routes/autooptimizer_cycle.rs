@@ -104,6 +104,7 @@ pub async fn start_evening_cycle(
                 let _ = tx.send(ev);
             },
             None,
+            None,
         )
         .await;
         if let Err(e) = result {
