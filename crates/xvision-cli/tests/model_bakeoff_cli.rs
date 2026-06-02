@@ -27,6 +27,7 @@ use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::limits::EvalLimits;
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
+use xvision_engine::eval::scenario_store;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
@@ -180,130 +181,10 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/001_api_audit.sql"))
-        .execute(&pool)
+    sqlx::migrate!("../xvision-engine/migrations")
+        .run(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/013_cli_jobs.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/014_eval_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/016_eval_reviews.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/017_eval_findings_review_columns.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/018_agent_run_observability.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/021_eval_batches.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/026_trace_surface_foundation.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/027_run_bars_manifest.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/035_eval_bakeoffs.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/038_eval_runs_live_config.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -314,7 +195,19 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         },
         dir.path().to_path_buf(),
     );
+    seed_bakeoff_scenario(&ctx).await;
     (ctx, dir)
+}
+
+#[allow(deprecated)]
+async fn seed_bakeoff_scenario(ctx: &ApiContext) {
+    let scenario = xvision_engine::eval::canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("legacy flash-crash fixture scenario exists");
+    scenario_store::insert_scenario(ctx, &scenario)
+        .await
+        .expect("seed bakeoff test scenario");
 }
 
 async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
@@ -381,6 +274,8 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

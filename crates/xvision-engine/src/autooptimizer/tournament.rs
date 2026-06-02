@@ -16,12 +16,9 @@ use crate::autooptimizer::program_view;
 use crate::autooptimizer::validator::{validate_mutation_diff, ValidationError};
 use crate::strategies::Strategy;
 
-const ADVERSARIAL_PROMPT: &str =
-    include_str!("../../prompts/autooptimizer/tournament-adversarial-v1.md");
-const SYNTHESIS_PROMPT: &str =
-    include_str!("../../prompts/autooptimizer/tournament-synthesis-v1.md");
-const JUDGE_PROMPT: &str =
-    include_str!("../../prompts/autooptimizer/tournament-judge-v1.md");
+const ADVERSARIAL_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-adversarial-v1.md");
+const SYNTHESIS_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-synthesis-v1.md");
+const JUDGE_PROMPT: &str = include_str!("../../prompts/autooptimizer/tournament-judge-v1.md");
 
 pub const CANDIDATE_COUNT: usize = 3;
 const JUDGE_COUNT: usize = 3;
@@ -94,8 +91,16 @@ impl TournamentRunner {
         let syn_strategy = apply_params(parent, &syn_diff);
         Ok(vec![
             incumbent,
-            TournamentCandidate { kind: CandidateKind::Adversarial, strategy: adv_strategy, diff: adv_diff },
-            TournamentCandidate { kind: CandidateKind::Synthesis, strategy: syn_strategy, diff: syn_diff },
+            TournamentCandidate {
+                kind: CandidateKind::Adversarial,
+                strategy: adv_strategy,
+                diff: adv_diff,
+            },
+            TournamentCandidate {
+                kind: CandidateKind::Synthesis,
+                strategy: syn_strategy,
+                diff: syn_diff,
+            },
         ])
     }
 
@@ -110,11 +115,8 @@ impl TournamentRunner {
         let max_attempts = self.max_retries.saturating_add(1);
         assert!(max_attempts >= 1, "max_attempts must be at least 1");
         for attempt in 0..max_attempts {
-            let user_text = build_proposal_user(
-                &program_md,
-                &config.allowed_mutation_kinds,
-                last_err.as_deref(),
-            );
+            let user_text =
+                build_proposal_user(&program_md, &config.allowed_mutation_kinds, last_err.as_deref());
             let req = LlmRequest {
                 model: self.model.clone(),
                 system_prompt: system_prompt.to_string(),
@@ -132,18 +134,27 @@ impl TournamentRunner {
                 .with_context(|| format!("tournament propose failed on attempt {attempt}"))?;
             let diff = match extract_diff(&resp.text()) {
                 Ok(d) => d,
-                Err(e) => { last_err = Some(e.to_string()); continue; }
+                Err(e) => {
+                    last_err = Some(e.to_string());
+                    continue;
+                }
             };
             match validate_mutation_diff(&diff, parent) {
                 Ok(()) => return Ok(diff),
-                Err(errs) => { last_err = Some(fmt_errors(&errs)); }
+                Err(errs) => {
+                    last_err = Some(fmt_errors(&errs));
+                }
             }
         }
         anyhow::bail!("tournament propose failed after {max_attempts} attempt(s)")
     }
 
     pub async fn borda_vote(&self, candidates: &[TournamentCandidate]) -> Result<Vec<BordaVote>> {
-        assert_eq!(candidates.len(), CANDIDATE_COUNT, "borda_vote requires {CANDIDATE_COUNT} candidates");
+        assert_eq!(
+            candidates.len(),
+            CANDIDATE_COUNT,
+            "borda_vote requires {CANDIDATE_COUNT} candidates"
+        );
         let summary = build_candidate_summary(candidates);
         let (v0, v1, v2) = tokio::try_join!(
             self.one_judge_vote(&summary),
@@ -164,12 +175,20 @@ impl TournamentRunner {
             response_schema: None,
             cache_control: None,
         };
-        let resp = self.dispatch.complete(req).await.context("judge dispatch failed")?;
+        let resp = self
+            .dispatch
+            .complete(req)
+            .await
+            .context("judge dispatch failed")?;
         parse_borda_vote(&resp.text())
     }
 
     pub fn tally(votes: &[BordaVote]) -> [u32; CANDIDATE_COUNT] {
-        assert_eq!(votes.len(), JUDGE_COUNT, "tally requires exactly {JUDGE_COUNT} votes");
+        assert_eq!(
+            votes.len(),
+            JUDGE_COUNT,
+            "tally requires exactly {JUDGE_COUNT} votes"
+        );
         let mut scores = [0u32; CANDIDATE_COUNT];
         for vote in votes {
             for (rank_pos, &candidate_idx) in vote.ranking.iter().enumerate() {
@@ -212,7 +231,10 @@ fn pick_winner(scores: &[u32; CANDIDATE_COUNT]) -> usize {
 }
 
 fn apply_params(base: &Strategy, diff: &MutationDiff) -> Strategy {
-    assert!(diff.params.len() <= MAX_PARAMS_APPLY, "params count exceeds bound");
+    assert!(
+        diff.params.len() <= MAX_PARAMS_APPLY,
+        "params count exceeds bound"
+    );
     let mut s = base.clone();
     if let serde_json::Value::Object(ref mut map) = s.mechanical_params {
         for change in &diff.params {
@@ -263,8 +285,7 @@ fn build_candidate_summary(candidates: &[TournamentCandidate]) -> String {
 
 fn extract_diff(text: &str) -> anyhow::Result<MutationDiff> {
     let s = strip_json_fences(text);
-    serde_json::from_str::<MutationDiff>(s)
-        .context("failed to parse MutationDiff from tournament response")
+    serde_json::from_str::<MutationDiff>(s).context("failed to parse MutationDiff from tournament response")
 }
 
 fn strip_json_fences(text: &str) -> &str {
@@ -280,7 +301,9 @@ fn strip_json_fences(text: &str) -> &str {
 fn parse_borda_vote(text: &str) -> Result<BordaVote> {
     let s = strip_json_fences(text);
     #[derive(Deserialize)]
-    struct Raw { ranking: Vec<usize> }
+    struct Raw {
+        ranking: Vec<usize>,
+    }
     let raw: Raw = serde_json::from_str(s).context("failed to parse BordaVote")?;
     if raw.ranking.len() != CANDIDATE_COUNT {
         anyhow::bail!("BordaVote ranking must have {CANDIDATE_COUNT} entries");
@@ -358,7 +381,10 @@ mod tests {
                 after: "analyze market trends carefully".into(),
             }],
             params: vec![],
-            tools: crate::autooptimizer::mutator::ToolDiff { added: vec![], removed: vec![] },
+            tools: crate::autooptimizer::mutator::ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
             rationale: "test rationale".into(),
         })
         .unwrap()
@@ -433,7 +459,9 @@ mod tests {
                 output_tokens: 1,
             },
             crate::agent::llm::LlmResponse {
-                content: vec![crate::agent::llm::ContentBlock::Text { text: judge_json.to_string() }],
+                content: vec![crate::agent::llm::ContentBlock::Text {
+                    text: judge_json.to_string(),
+                }],
                 stop_reason: crate::agent::llm::StopReason::EndTurn,
                 input_tokens: 1,
                 output_tokens: 1,
@@ -469,7 +497,9 @@ mod tests {
                 output_tokens: 1,
             },
             crate::agent::llm::LlmResponse {
-                content: vec![crate::agent::llm::ContentBlock::Text { text: incumbent_first.to_string() }],
+                content: vec![crate::agent::llm::ContentBlock::Text {
+                    text: incumbent_first.to_string(),
+                }],
                 stop_reason: crate::agent::llm::StopReason::EndTurn,
                 input_tokens: 1,
                 output_tokens: 1,
@@ -478,6 +508,9 @@ mod tests {
         let runner = make_runner(dispatch);
         let strategy = stub_strategy();
         let result = runner.run_tournament(&strategy, &config).await.unwrap();
-        assert!(result.incumbent_wins, "incumbent should win when ranked first by all judges");
+        assert!(
+            result.incumbent_wins,
+            "incumbent should win when ranked first by all judges"
+        );
     }
 }

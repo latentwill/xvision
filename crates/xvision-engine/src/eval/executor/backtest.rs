@@ -1195,188 +1195,195 @@ impl Executor {
                         finish_decision_span_error!("eval run stopped");
                         anyhow::bail!("eval run stopped");
                     }
-                    let cfg = strategy.mechanistic_config.as_ref()
+                    let cfg = strategy
+                        .mechanistic_config
+                        .as_ref()
                         .expect("validate_strategy ensures mechanistic_config with has_rules");
-                    mechanistic_action(cfg, book.position(asset_sym), book.entry_price(asset_sym), bar.close)
+                    mechanistic_action(
+                        cfg,
+                        book.position(asset_sym),
+                        book.entry_price(asset_sym),
+                        bar.close,
+                    )
                 } else {
-                let seed_for_repair = seed.clone();
-                let outs = run_pipeline(PipelineInputs {
-                    strategy,
-                    agent_slots,
-                    seed_inputs: seed,
-                    dispatch: dispatch.clone(),
-                    tools: tools.clone(),
-                    obs: self.obs_emitter.clone(),
-                    memory_recorder: self.memory_recorder.clone(),
-                    // V2D Phase 1.5 — backtest dispatches with the scenario
-                    // start so the recorder's Pattern recall can exclude
-                    // anything trained inside the replay window. Run/scenario
-                    // provenance flows down to Observation writes.
-                    scenario_start: Some(scenario.time_window.start),
-                    source_window_start: Some(source_window_start),
-                    source_window_end: Some(source_window_end),
-                    run_id: run.id.clone(),
-                    scenario_id: scenario.id.clone(),
-                    cycle_idx: decision_idx as i64,
-                    trace_attrs: None,
-                    provider_catalogs: self.provider_catalogs.clone(),
-                    // Phase C — Filter capability runtime context. The
-                    // executor owns the cache for the run's lifetime; the
-                    // pipeline borrows it mutably for this cycle.
-                    filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
-                        signal_cache: &mut signal_cache,
-                        bar_period_minutes,
-                        multi_filter_config,
-                        bar_ts: bar.timestamp,
-                        strategy_id: strategy.manifest.id.clone(),
-                        // Multi-asset (B4): scope each asset's filter signals
-                        // to `Asset(asset)` so two assets at the same bar keep
-                        // independent signal-cache entries. Single-asset runs
-                        // simply key everything under the one asset.
-                        scope: crate::agent::dispatch_capability::SignalScope::Asset(asset_sym),
-                    }),
-                    // Phase D — unified Recorder. Wired by callers that
-                    // construct an `EvalRecorder` and thread it via
-                    // `BacktestExecutor::with_recorder`. The default `None`
-                    // keeps the legacy bus-driven emission path untouched.
-                    recorder: self.recorder.as_deref(),
-                    // Stage 1 — Cline runtime selection. `LlmDispatch` by
-                    // default; `Cline` + the spawned sidecar ctx when the
-                    // eval entry point selected it.
-                    runtime: self.agent_runtime,
-                    cline: self.cline.clone(),
-                })
-                .await?;
-                total_input_tokens += outs.total_input_tokens as u64;
-                total_output_tokens += outs.total_output_tokens as u64;
-                run.actual_input_tokens = Some(total_input_tokens);
-                run.actual_output_tokens = Some(total_output_tokens);
-                store
-                    .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
+                    let seed_for_repair = seed.clone();
+                    let outs = run_pipeline(PipelineInputs {
+                        strategy,
+                        agent_slots,
+                        seed_inputs: seed,
+                        dispatch: dispatch.clone(),
+                        tools: tools.clone(),
+                        obs: self.obs_emitter.clone(),
+                        memory_recorder: self.memory_recorder.clone(),
+                        // V2D Phase 1.5 — backtest dispatches with the scenario
+                        // start so the recorder's Pattern recall can exclude
+                        // anything trained inside the replay window. Run/scenario
+                        // provenance flows down to Observation writes.
+                        scenario_start: Some(scenario.time_window.start),
+                        source_window_start: Some(source_window_start),
+                        source_window_end: Some(source_window_end),
+                        run_id: run.id.clone(),
+                        scenario_id: scenario.id.clone(),
+                        cycle_idx: decision_idx as i64,
+                        trace_attrs: None,
+                        provider_catalogs: self.provider_catalogs.clone(),
+                        // Phase C — Filter capability runtime context. The
+                        // executor owns the cache for the run's lifetime; the
+                        // pipeline borrows it mutably for this cycle.
+                        filter_ctx: Some(crate::agent::pipeline::FilterPipelineCtx {
+                            signal_cache: &mut signal_cache,
+                            bar_period_minutes,
+                            multi_filter_config,
+                            bar_ts: bar.timestamp,
+                            strategy_id: strategy.manifest.id.clone(),
+                            // Multi-asset (B4): scope each asset's filter signals
+                            // to `Asset(asset)` so two assets at the same bar keep
+                            // independent signal-cache entries. Single-asset runs
+                            // simply key everything under the one asset.
+                            scope: crate::agent::dispatch_capability::SignalScope::Asset(asset_sym),
+                        }),
+                        // Phase D — unified Recorder. Wired by callers that
+                        // construct an `EvalRecorder` and thread it via
+                        // `BacktestExecutor::with_recorder`. The default `None`
+                        // keeps the legacy bus-driven emission path untouched.
+                        recorder: self.recorder.as_deref(),
+                        // Stage 1 — Cline runtime selection. `LlmDispatch` by
+                        // default; `Cline` + the spawned sidecar ctx when the
+                        // eval entry point selected it.
+                        runtime: self.agent_runtime,
+                        cline: self.cline.clone(),
+                    })
                     .await?;
+                    total_input_tokens += outs.total_input_tokens as u64;
+                    total_output_tokens += outs.total_output_tokens as u64;
+                    run.actual_input_tokens = Some(total_input_tokens);
+                    run.actual_output_tokens = Some(total_output_tokens);
+                    store
+                        .update_token_usage(&run.id, total_input_tokens, total_output_tokens)
+                        .await?;
 
-                // Hard-limit breach check (cli-operator-safety-p0 slice 2/3).
-                // Decisions counter uses `decision_idx + 1` here because this
-                // bar's decision IS counted toward the cap — the next bar
-                // shouldn't run if the cap has just been reached. `is_empty()`
-                // short-circuits the call when no limits are configured.
-                if let Some(limits) = self.limits.as_ref() {
-                    if !limits.is_empty() {
-                        if let Some(breach) = limits.check_for_cancel(
-                            decision_idx + 1,
-                            total_input_tokens,
-                            total_output_tokens,
-                            run_started,
-                        ) {
-                            let reason = breach.reason();
-                            let _ = store.cancel_active(&run.id, &reason).await;
-                            finish_decision_span_error!(reason.as_str());
-                            anyhow::bail!(reason);
+                    // Hard-limit breach check (cli-operator-safety-p0 slice 2/3).
+                    // Decisions counter uses `decision_idx + 1` here because this
+                    // bar's decision IS counted toward the cap — the next bar
+                    // shouldn't run if the cap has just been reached. `is_empty()`
+                    // short-circuits the call when no limits are configured.
+                    if let Some(limits) = self.limits.as_ref() {
+                        if !limits.is_empty() {
+                            if let Some(breach) = limits.check_for_cancel(
+                                decision_idx + 1,
+                                total_input_tokens,
+                                total_output_tokens,
+                                run_started,
+                            ) {
+                                let reason = breach.reason();
+                                let _ = store.cancel_active(&run.id, &reason).await;
+                                finish_decision_span_error!(reason.as_str());
+                                anyhow::bail!(reason);
+                            }
                         }
                     }
-                }
 
-                if store.is_terminal(&run.id).await? {
-                    finish_decision_span_error!("eval run stopped");
-                    anyhow::bail!("eval run stopped");
-                }
-
-                let trader = match outs.trader.as_ref() {
-                    Some(t) => t,
-                    None => {
-                        let err = TraderOutput::missing_response_error(&run.id, decision_idx);
-                        finish_decision_span_error!(&err.to_string());
-                        return Err(err.into());
+                    if store.is_terminal(&run.id).await? {
+                        finish_decision_span_error!("eval run stopped");
+                        anyhow::bail!("eval run stopped");
                     }
-                };
-                let trader_model_id = trader_model_id(agent_slots, strategy);
-                match TraderOutput::parse_response(trader, &run.id, decision_idx) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        // F-5 phase 2a (`harness-recovery-malformed-json`):
-                        // single-shot repair attempt for the MalformedJson
-                        // family (`InvalidJson` / `Truncated`). All other
-                        // kinds bypass the repair and surface as today (their
-                        // recovery families belong to sibling phase-2
-                        // contracts or are intentionally non-recoverable per
-                        // the audit). The repair propagates the ORIGINAL
-                        // error on second-attempt failure so
-                        // `eval_runs.error` keeps its wire-stable
-                        // `[invalid_json]` / `[truncated]` prefix.
-                        // F-5 phase 2b (`harness-recovery-schema-missing-field`)
-                        // is checked FIRST: targeted-patch retry is cheaper
-                        // than the full repair re-ask. The two families are
-                        // disjoint per `FailureClass::family`, so each error
-                        // walks exactly one branch — no double-repair.
-                        if is_schema_missing_field_recoverable(&e) {
-                            if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
-                                match try_repair_schema_missing_field(
-                                    trader,
-                                    e,
-                                    ctx,
-                                    &seed_for_repair,
-                                    dispatch.clone(),
-                                    self.obs_emitter.as_ref(),
-                                    &run.id,
-                                    decision_idx,
-                                )
-                                .await
-                                {
-                                    Ok(repaired) => repaired,
-                                    Err(original) => {
-                                        // schema-missing-field recovery exhausted.
-                                        let err = original.with_model_hint(trader_model_id.as_deref());
-                                        emit_schema_short_circuit!(err.to_string());
-                                        finish_decision_span_error!(&err.to_string());
-                                        return Err(err.into());
-                                    }
-                                }
-                            } else {
-                                // No repair context → recovery cannot run.
-                                let err = e.with_model_hint(trader_model_id.as_deref());
-                                emit_schema_short_circuit!(err.to_string());
-                                finish_decision_span_error!(&err.to_string());
-                                return Err(err.into());
-                            }
-                        } else if is_malformed_json_recoverable(&e) {
-                            if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
-                                match try_repair_malformed_json(
-                                    trader,
-                                    e,
-                                    ctx,
-                                    &seed_for_repair,
-                                    dispatch.clone(),
-                                    self.obs_emitter.as_ref(),
-                                    &run.id,
-                                    decision_idx,
-                                )
-                                .await
-                                {
-                                    Ok(repaired) => repaired,
-                                    Err(original) => {
-                                        // malformed-json repair exhausted.
-                                        let err = original.with_model_hint(trader_model_id.as_deref());
-                                        emit_schema_short_circuit!(err.to_string());
-                                        finish_decision_span_error!(&err.to_string());
-                                        return Err(err.into());
-                                    }
-                                }
-                            } else {
-                                // No repair context → recovery cannot run.
-                                let err = e.with_model_hint(trader_model_id.as_deref());
-                                emit_schema_short_circuit!(err.to_string());
-                                finish_decision_span_error!(&err.to_string());
-                                return Err(err.into());
-                            }
-                        } else {
-                            // Non-recoverable failure class: recovery never applies.
-                            let err = e.with_model_hint(trader_model_id.as_deref());
-                            emit_schema_short_circuit!(err.to_string());
+
+                    let trader = match outs.trader.as_ref() {
+                        Some(t) => t,
+                        None => {
+                            let err = TraderOutput::missing_response_error(&run.id, decision_idx);
                             finish_decision_span_error!(&err.to_string());
                             return Err(err.into());
                         }
+                    };
+                    let trader_model_id = trader_model_id(agent_slots, strategy);
+                    match TraderOutput::parse_response(trader, &run.id, decision_idx) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            // F-5 phase 2a (`harness-recovery-malformed-json`):
+                            // single-shot repair attempt for the MalformedJson
+                            // family (`InvalidJson` / `Truncated`). All other
+                            // kinds bypass the repair and surface as today (their
+                            // recovery families belong to sibling phase-2
+                            // contracts or are intentionally non-recoverable per
+                            // the audit). The repair propagates the ORIGINAL
+                            // error on second-attempt failure so
+                            // `eval_runs.error` keeps its wire-stable
+                            // `[invalid_json]` / `[truncated]` prefix.
+                            // F-5 phase 2b (`harness-recovery-schema-missing-field`)
+                            // is checked FIRST: targeted-patch retry is cheaper
+                            // than the full repair re-ask. The two families are
+                            // disjoint per `FailureClass::family`, so each error
+                            // walks exactly one branch — no double-repair.
+                            if is_schema_missing_field_recoverable(&e) {
+                                if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
+                                    match try_repair_schema_missing_field(
+                                        trader,
+                                        e,
+                                        ctx,
+                                        &seed_for_repair,
+                                        dispatch.clone(),
+                                        self.obs_emitter.as_ref(),
+                                        &run.id,
+                                        decision_idx,
+                                    )
+                                    .await
+                                    {
+                                        Ok(repaired) => repaired,
+                                        Err(original) => {
+                                            // schema-missing-field recovery exhausted.
+                                            let err = original.with_model_hint(trader_model_id.as_deref());
+                                            emit_schema_short_circuit!(err.to_string());
+                                            finish_decision_span_error!(&err.to_string());
+                                            return Err(err.into());
+                                        }
+                                    }
+                                } else {
+                                    // No repair context → recovery cannot run.
+                                    let err = e.with_model_hint(trader_model_id.as_deref());
+                                    emit_schema_short_circuit!(err.to_string());
+                                    finish_decision_span_error!(&err.to_string());
+                                    return Err(err.into());
+                                }
+                            } else if is_malformed_json_recoverable(&e) {
+                                if let Some(ctx) = trader_repair_context(agent_slots, strategy) {
+                                    match try_repair_malformed_json(
+                                        trader,
+                                        e,
+                                        ctx,
+                                        &seed_for_repair,
+                                        dispatch.clone(),
+                                        self.obs_emitter.as_ref(),
+                                        &run.id,
+                                        decision_idx,
+                                    )
+                                    .await
+                                    {
+                                        Ok(repaired) => repaired,
+                                        Err(original) => {
+                                            // malformed-json repair exhausted.
+                                            let err = original.with_model_hint(trader_model_id.as_deref());
+                                            emit_schema_short_circuit!(err.to_string());
+                                            finish_decision_span_error!(&err.to_string());
+                                            return Err(err.into());
+                                        }
+                                    }
+                                } else {
+                                    // No repair context → recovery cannot run.
+                                    let err = e.with_model_hint(trader_model_id.as_deref());
+                                    emit_schema_short_circuit!(err.to_string());
+                                    finish_decision_span_error!(&err.to_string());
+                                    return Err(err.into());
+                                }
+                            } else {
+                                // Non-recoverable failure class: recovery never applies.
+                                let err = e.with_model_hint(trader_model_id.as_deref());
+                                emit_schema_short_circuit!(err.to_string());
+                                finish_decision_span_error!(&err.to_string());
+                                return Err(err.into());
+                            }
+                        }
                     }
-                }
                 }; // closes if decision_mode == Mechanistic { ... } else { match ... }
 
                 if store.is_terminal(&run.id).await? {
@@ -3236,7 +3243,12 @@ pub fn classify_aggressor_side(
 /// Apply mechanistic close policies to produce a `TraderOutput` without any LLM
 /// call. Returns `flat` when a StopLoss or TakeProfit threshold is breached;
 /// returns `hold` when flat or no policy triggers.
-fn mechanistic_action(cfg: &MechanisticConfig, position: f64, entry_price: f64, mark_price: f64) -> TraderOutput {
+fn mechanistic_action(
+    cfg: &MechanisticConfig,
+    position: f64,
+    entry_price: f64,
+    mark_price: f64,
+) -> TraderOutput {
     if position.abs() < f64::EPSILON || entry_price <= 0.0 {
         return TraderOutput {
             action: "hold".into(),

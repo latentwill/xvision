@@ -1,8 +1,8 @@
 # Plans & Specs Index
 
-> **Auto-generated:** 2026-06-01  
-> **Scope:** `docs/superpowers/plans/` (94 files) + `docs/superpowers/specs/` (56 files)  
-> **Status legend:** ACTIVE = in progress or recently completed; COMPLETE = shipped to main; ARCHIVED = superseded; REFERENCE = design/roadmap, not an execution plan  
+> **Auto-generated:** 2026-06-01
+> **Scope:** `docs/superpowers/plans/` (94 files) + `docs/superpowers/specs/` (56 files)
+> **Status legend:** ACTIVE = in progress or recently completed; COMPLETE = shipped to main; ARCHIVED = superseded; REFERENCE = design/roadmap, not an execution plan
 > **Note:** The Cline-specific sub-index is at `plans/2026-05-24-cline-runtime-unification-INDEX.md` — that file is a cross-referenced inheritance ledger for the 5 Cline stages and is not replaced here.
 
 ---

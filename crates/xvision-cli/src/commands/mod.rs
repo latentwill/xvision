@@ -15,6 +15,7 @@ pub mod flywheel;
 pub mod home;
 pub mod indicator;
 pub mod intern;
+pub mod last;
 pub mod memory;
 pub mod metrics;
 pub mod migrate;

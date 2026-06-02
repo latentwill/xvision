@@ -1,5 +1,5 @@
-use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, MockDispatch, StopReason,
@@ -51,7 +51,9 @@ impl LlmDispatch for MismatchedAssetToolDispatch {
             .collect::<Vec<_>>()
             .join("|");
         if !body.contains("asset mismatch") || !body.contains("ETH/USD") || !body.contains("BTC/USD") {
-            anyhow::bail!("expected wrong-asset ohlcv call to be returned as an asset mismatch tool error; got {body}");
+            anyhow::bail!(
+                "expected wrong-asset ohlcv call to be returned as an asset mismatch tool error; got {body}"
+            );
         }
 
         Ok(LlmResponse {
@@ -182,9 +184,7 @@ async fn execute_slot_blocks_market_data_tool_calls_for_the_wrong_decision_asset
         provider: None,
         model: None,
     };
-    let dispatch = Arc::new(MismatchedAssetToolDispatch {
-        calls: Mutex::new(0),
-    });
+    let dispatch = Arc::new(MismatchedAssetToolDispatch { calls: Mutex::new(0) });
     let mut registry = ToolRegistry::empty();
     registry.register(Arc::new(EchoOhlcvTool));
 
@@ -223,7 +223,9 @@ async fn execute_slot_blocks_market_data_tool_calls_for_the_wrong_decision_asset
     .await
     .expect("wrong-asset tool call should be recoverable as a tool error");
 
-    assert!(out.text().contains("wrong asset market-data tool call was blocked"));
+    assert!(out
+        .text()
+        .contains("wrong asset market-data tool call was blocked"));
 }
 
 #[tokio::test]

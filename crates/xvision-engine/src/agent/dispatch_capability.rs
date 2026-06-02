@@ -464,15 +464,12 @@ fn cline_run_id(input: &DispatchInput<'_>) -> String {
 }
 
 fn current_decision_asset_for_tools(inputs: &serde_json::Value) -> Option<&str> {
-    inputs
-        .get("asset")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            inputs
-                .get("market_data")
-                .and_then(|v| v.get("asset"))
-                .and_then(|v| v.as_str())
-        })
+    inputs.get("asset").and_then(|v| v.as_str()).or_else(|| {
+        inputs
+            .get("market_data")
+            .and_then(|v| v.get("asset"))
+            .and_then(|v| v.as_str())
+    })
 }
 
 /// Run the slot's LLM call through whichever runtime is selected. The
@@ -500,7 +497,8 @@ async fn execute_slot_for_runtime(
             .filter(|r| *r == input.slot.role.as_str())
             .map(str::to_string);
         if let Some(guard) = ctx.tool_asset_guard.as_ref() {
-            *guard.write().await = current_decision_asset_for_tools(&input.upstream_inputs).map(str::to_string);
+            *guard.write().await =
+                current_decision_asset_for_tools(&input.upstream_inputs).map(str::to_string);
         }
         let result = execute_slot_cline(ClineSlotInput {
             slot: input.slot,

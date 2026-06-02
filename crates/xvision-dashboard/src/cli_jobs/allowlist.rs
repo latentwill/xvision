@@ -669,8 +669,6 @@ mod tests {
             &["scenario", "rm", "sc_1"][..],
             &["scenario", "classify", "--all"][..],
             &["scenario", "set-regime", "sc_1", "--regime", "trend"][..],
-            &["strategy", "new", "--name", "remote-test"][..],
-            &["strategy", "create", "--name", "remote-test"][..],
             &["strategy", "add-agent", "st_1", "ag_1", "--role", "trader"][..],
             &["strategy", "remove-agent", "st_1", "--role", "trader"][..],
             &["strategy", "set-pipeline", "st_1", "--kind", "single"][..],

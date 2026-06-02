@@ -131,10 +131,14 @@ pub async fn get(
     // simple (transition into terminal status always re-fetches fresh).
     if let Some(cached) = state.eval_run_cache_get(&id) {
         if !is_terminal_status(&cached.summary.status) {
-            return Ok(Json(cached));
+            if current_run_status_is_terminal(&state, &id).await? {
+                state.eval_run_cache_invalidate(&id);
+            } else {
+                return Ok(Json(cached));
+            }
+        } else {
+            state.eval_run_cache_invalidate(&id);
         }
-        // Cached value just transitioned to terminal between writes —
-        // fall through, fetch fresh, and don't reinsert.
     }
 
     let detail = eval::get_run(&state.api_context(), &id).await?;
@@ -142,6 +146,15 @@ pub async fn get(
         state.eval_run_cache_put(id, detail.clone());
     }
     Ok(Json(detail))
+}
+
+async fn current_run_status_is_terminal(state: &AppState, id: &str) -> Result<bool, DashboardError> {
+    let status: Option<String> = sqlx::query_scalar("SELECT status FROM eval_runs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("eval run status cache check: {e}")))?;
+    Ok(status.as_deref().map(is_terminal_status).unwrap_or(true))
 }
 
 /// Centralized predicate matching the frontend's `isTerminalStatus`
