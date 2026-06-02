@@ -266,6 +266,8 @@ pub enum Command {
     Doctor(commands::doctor::DoctorCmd),
     /// Launch, browse, compare, and inspect eval runs plus canonical scenarios.
     Eval(commands::eval::EvalCmd),
+    /// Testnet marketplace listing, purchase, and attestation commands.
+    Marketplace(commands::marketplace::MarketplaceCmd),
     /// Scenario authoring: create / ls / show / clone / archive / rm / tree.
     Scenario(commands::scenario::ScenarioCmd),
     /// Manage registered LLM providers in config/default.toml.
@@ -431,6 +433,7 @@ impl Cli {
             Command::Eod(args) => commands::eod::run(args).await.map_err(Into::into),
             Command::Doctor(cmd) => commands::doctor::run(cmd).await.map_err(Into::into),
             Command::Eval(cmd) => commands::eval::run(cmd).await,
+            Command::Marketplace(cmd) => commands::marketplace::run(cmd).await,
             Command::Scenario(cmd) => commands::scenario::run(cmd).await,
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
             Command::Bars(cmd) => commands::bars::run(cmd).await,

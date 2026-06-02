@@ -9211,6 +9211,7 @@ dependencies = [
 name = "xvision-cli"
 version = "0.21.0"
 dependencies = [
+ "alloy",
  "anyhow",
  "blake3",
  "chrono",
@@ -9236,6 +9237,7 @@ dependencies = [
  "xvision-filters",
  "xvision-harness",
  "xvision-intern",
+ "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
  "xvision-risk",
