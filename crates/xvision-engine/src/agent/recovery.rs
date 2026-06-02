@@ -107,6 +107,11 @@ pub enum FailureClass {
         kind: String,
     },
 
+    /// The Cline run completed with `status="completed"` but the agent never
+    /// called `submit_decision`. The no-decision recovery policy issues a
+    /// single repair step prompt before surfacing the hard failure.
+    NoDecision,
+
     Unclassified,
 }
 
@@ -139,6 +144,7 @@ impl FailureClass {
             Self::RepeatedBrokerError => "repeated_broker_error",
             Self::RepeatedToolFailure { .. } => "repeated_tool_failure",
             Self::BudgetExceeded { .. } => "budget_exceeded",
+            Self::NoDecision => "no_decision",
             Self::Unclassified => "unclassified",
         }
     }
@@ -179,6 +185,9 @@ impl FailureClass {
             Self::RepeatedBrokerError | Self::RepeatedToolFailure { .. } => {
                 RecoveryFamily::RepeatedToolFailure
             }
+
+            // NoDecision: Cline run ended without submit_decision call.
+            Self::NoDecision => RecoveryFamily::NoDecision,
 
             // Everything else is unrecoverable from this module's
             // vantage point: provider HTTP/decode/rate-limit are
@@ -232,6 +241,10 @@ pub enum RecoveryFamily {
     /// pipeline blocks the pair for the rest of the slot. Live in
     /// phase 1.
     RepeatedToolFailure,
+    /// Cline run completed without a `submit_decision` call. Policy:
+    /// issue a single repair step prompt; if the model still doesn't
+    /// call the tool, fail the cycle visibly.
+    NoDecision,
     /// No bounded recovery applies. The caller surfaces the underlying
     /// error.
     Unrecoverable,
@@ -312,6 +325,10 @@ fn trader_kind_from_formatted(s: &str) -> Option<TraderFailureKind> {
 /// specific patterns first, so a broker fill timeout doesn't get
 /// re-tagged as `provider_timeout`.
 fn classify_from_string(s: &str) -> FailureClass {
+    // Cline no-decision: match before any broker/timeout fallbacks.
+    if s.contains("run completed without calling submit_decision") {
+        return FailureClass::NoDecision;
+    }
     // Loop-control class — match BEFORE broker fallbacks so the abort
     // message (which embeds e.g. `broker_min_order_size`) doesn't get
     // re-classified.
@@ -1172,6 +1189,7 @@ mod tests {
                 },
                 "budget_exceeded",
             ),
+            (FailureClass::NoDecision, "no_decision"),
             (FailureClass::Unclassified, "unclassified"),
         ];
         for (variant, tag) in expected {

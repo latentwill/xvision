@@ -39,7 +39,7 @@ use crate::strategies::slot::LLMSlot;
 use std::sync::Arc;
 use xvision_agent_client::provider_map::{map_provider, ProviderMapError};
 use xvision_agent_client::{
-    AgentClient, BudgetLimits, EndRunParams, ReplayLoadParams, StartRunParams, StepParams,
+    AgentClient, BudgetLimits, EndRunParams, ReplayLoadParams, StartRunParams, StepParams, StepResult,
 };
 use xvision_core::config::ProviderEntry;
 use xvision_observability::trajectory::frame::TrajectoryFrame;
@@ -411,6 +411,14 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         })
         .await;
 
+    // No-decision recovery: before end_run, try to recover a decision from
+    // a weak tool-caller that emitted end_turn without calling submit_decision.
+    // The session is still open, so a second step attempt is valid.
+    let step_result = match step_result {
+        Ok(step) => Ok(try_nodecision_recovery(step, &input.cline_client, &run_id, &role).await),
+        Err(e) => Err(e),
+    };
+
     let _ = input
         .cline_client
         .end_run(EndRunParams {
@@ -442,6 +450,19 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     }
 
     if step.status != "completed" {
+        if step
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("budget_output_tokens_exceeded")
+        {
+            tracing::warn!(
+                event = "budget_misconfig_suspected",
+                run_id = %run_id,
+                role = %role,
+                hint = "max_tokens may be too low for this model — increase to ≥2048 in agent slot settings",
+            );
+        }
         return Err(ClineRuntimeError::StepNotCompleted {
             run_id,
             role,
@@ -490,6 +511,60 @@ pub const STEP_ERR_REPLAY_FRAMES_EXHAUSTED: &str = "replay_frames_exhausted";
 /// diverged from the recorded transcript (a tool result / reconstructed
 /// request did not match the recording).
 pub const STEP_ERR_REPLAY_DIVERGENCE: &str = "replay_divergence";
+
+/// Single-shot no-decision recovery for weak tool-callers that emit
+/// `end_turn` without calling `submit_decision`. Runs BEFORE `end_run`
+/// so the session is still open for a second step.
+///
+/// Method 1: if `output_text` starts with `{` and parses as JSON, adopt
+/// it as the decision (some models emit JSON prose instead of a tool call).
+/// Method 2: issue a repair step prompt asking the model to call
+/// `submit_decision` now. On either success the patched step is returned
+/// with `tracing::info!(event = "nodecision_recovery_succeeded")`.
+/// On total failure the original step is returned unchanged so the
+/// caller's `NoDecision` error path fires as normal.
+async fn try_nodecision_recovery(mut step: StepResult, client: &AgentClient, run_id: &str, role: &str) -> StepResult {
+    if step.status != "completed" || step.decision_json.is_some() {
+        return step;
+    }
+
+    if step.output_text.trim_start().starts_with('{')
+        && serde_json::from_str::<serde_json::Value>(&step.output_text).is_ok()
+    {
+        tracing::info!(
+            event = "nodecision_recovery_succeeded",
+            run_id = %run_id,
+            role = %role,
+            method = "output_text_parse",
+        );
+        step.decision_json = Some(step.output_text.clone());
+        return step;
+    }
+
+    let repair = client
+        .step(StepParams {
+            run_id: run_id.to_string(),
+            prompt: "You completed without calling submit_decision. \
+                Call submit_decision now with your decision as a JSON argument \
+                — do not output prose."
+                .to_string(),
+        })
+        .await;
+
+    if let Ok(repair_step) = repair {
+        if repair_step.decision_json.is_some() {
+            tracing::info!(
+                event = "nodecision_recovery_succeeded",
+                run_id = %run_id,
+                role = %role,
+                method = "repair_step",
+            );
+            step.decision_json = repair_step.decision_json;
+        }
+    }
+
+    step
+}
 
 /// Read the recorded frames for this slot's first step, validate they are
 /// sufficient to start a replay (item 4 bounds — a recording with no

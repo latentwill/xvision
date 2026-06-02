@@ -581,7 +581,6 @@ async fn run_create(ctx: &ApiContext, a: CreateArgs) -> CliResult<()> {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
-            borrow_bps_per_day: 5.0,
         },
         data_source: DataSource::AlpacaHistorical {
             feed: None,
@@ -1522,6 +1521,7 @@ async fn run_scenario_apply(ctx: &ApiContext, a: ScenarioApplyArgs) -> CliResult
             }
         }
         Err(_) => {
+            let req = scenario_to_create_request(&new_s);
             if a.dry_run {
                 if a.json {
                     crate::io::print_json(
@@ -1535,16 +1535,15 @@ async fn run_scenario_apply(ctx: &ApiContext, a: ScenarioApplyArgs) -> CliResult
                 }
                 return Ok(());
             }
-            new_s
-                .validate_v1()
-                .map_err(|e| CliError::usage(anyhow::anyhow!("scenario apply: {e}")))?;
-            xvision_engine::eval::scenario_store::insert_scenario(ctx, &new_s)
+            let created = api_scenario::create(ctx, req)
                 .await
                 .map_err(|e| api_to_cli("scenario apply (create)", e))?;
             if a.json {
-                crate::io::print_json(&serde_json::json!({ "action": "created", "scenario_id": id }))?;
+                crate::io::print_json(
+                    &serde_json::json!({ "action": "created", "scenario_id": created.id }),
+                )?;
             } else {
-                println!("created {} ({})", id, new_s.display_name);
+                println!("created {} ({})", created.id, created.display_name);
             }
         }
     }

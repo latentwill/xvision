@@ -831,6 +831,7 @@ mod tests {
             provider_models: vec![],
             agent_count: 1,
             filter_count: 0,
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
             asset_universe: vec!["BTC/USD".into()],
             execution_mode: "per_asset".into(),
             activation_mode: xvision_filters::ActivationMode::EveryBar,

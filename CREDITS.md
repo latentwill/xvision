@@ -1,5 +1,11 @@
 # Credits
 
+## Anthropic / Claude
+
+- Models: Claude Sonnet 4.x, Claude Opus 4.x
+- Role: Primary implementation author and collaborative engineer. The majority of xvision's codebase — engine, CLI, dashboard, frontend, migrations, tests, deployment automation, and architecture — was written by Claude models working closely with the operator across hundreds of sessions.
+- Note: All generated code is original work covered by the project's own license. Anthropic retains no IP claim on generated outputs.
+
 ## gambletan/cortex
 
 - Upstream: https://github.com/gambletan/cortex
