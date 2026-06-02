@@ -477,6 +477,102 @@ mod tests {
         );
     }
 
+    // ── risk round-trip regression — set-filter must not reset risk ──
+    //
+    // Regression: `xvn strategy set-filter` (and any load→mutate→save
+    // cycle) must not reset `risk_pct_per_trade` to the Balanced preset
+    // default (0.015). The existing happy-path test always uses
+    // `RiskPreset::Balanced.expand()` so it would pass even if the bug
+    // existed. These tests use a custom non-Balanced value (0.05) and
+    // also simulate loading an old strategy file that predates the
+    // `max_position_pct_nav` field (added 2026-06-03) to ensure the
+    // serde default for that field does not disturb other risk fields.
+
+    #[tokio::test]
+    async fn custom_risk_pct_per_trade_survives_round_trip() {
+        let (store, _td) = store_in_tmp();
+        let mut s = strategy_with_id("01HZSTRATEGYRISK0000000001");
+        s.risk.risk_pct_per_trade = 0.05;
+        store.save(&s).await.unwrap();
+
+        let loaded = store.load("01HZSTRATEGYRISK0000000001").await.unwrap();
+        assert_eq!(
+            loaded.risk.risk_pct_per_trade,
+            0.05,
+            "risk_pct_per_trade must not be reset to Balanced default (0.015) after save/load"
+        );
+    }
+
+    #[tokio::test]
+    async fn risk_pct_preserved_through_load_mutate_save_cycle() {
+        // Simulates what `xvn strategy set-filter` does: load → change
+        // only activation_mode/filter → save. The risk block must be
+        // carried through untouched.
+        let (store, _td) = store_in_tmp();
+        let mut s = strategy_with_id("01HZSTRATEGYRISK0000000002");
+        s.risk.risk_pct_per_trade = 0.05;
+        store.save(&s).await.unwrap();
+
+        let mut loaded = store.load("01HZSTRATEGYRISK0000000002").await.unwrap();
+        // Simulate the only mutations set_filter makes.
+        loaded.activation_mode = xvision_filters::ActivationMode::FilterGated;
+        store.save(&loaded).await.unwrap();
+
+        let after = store.load("01HZSTRATEGYRISK0000000002").await.unwrap();
+        assert_eq!(
+            after.risk.risk_pct_per_trade,
+            0.05,
+            "risk_pct_per_trade must survive a set-filter-style load/mutate/save cycle"
+        );
+    }
+
+    #[tokio::test]
+    async fn old_json_without_max_position_pct_nav_preserves_risk_pct() {
+        // Strategy JSON written before `max_position_pct_nav` was added
+        // (2026-06-03 commit). The serde default fills 20.0 for the new
+        // field without touching `risk_pct_per_trade`.
+        let (store, td) = store_in_tmp();
+        let id = "01HZSTRATEGYRISK0000000003";
+        let json = serde_json::json!({
+            "manifest": {
+                "id": id,
+                "display_name": "old",
+                "plain_summary": "pre-max_position_pct_nav",
+                "creator": "@tester",
+                "template": "trend_follower",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "attested_with": [],
+                "required_tools": [],
+                "risk_preset_or_config": "custom"
+            },
+            "risk": {
+                "risk_pct_per_trade": 0.05,
+                "max_concurrent_positions": 2,
+                "max_leverage": 3.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+                // max_position_pct_nav intentionally absent
+            },
+            "mechanical_params": {}
+        });
+        let path = td.path().join(format!("{id}.json"));
+        tokio::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).await.unwrap();
+
+        let loaded = store.load(id).await.unwrap();
+        assert_eq!(
+            loaded.risk.risk_pct_per_trade,
+            0.05,
+            "risk_pct_per_trade must be read from old JSON, not reset by serde default"
+        );
+        assert_eq!(
+            loaded.risk.max_position_pct_nav,
+            20.0,
+            "max_position_pct_nav must be filled with serde default (20.0) when absent from old JSON"
+        );
+    }
+
     // ── strategy-edit-top-level-fields — metadata patch ─────────────
 
     #[tokio::test]
