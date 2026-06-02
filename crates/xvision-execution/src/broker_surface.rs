@@ -51,6 +51,7 @@ pub enum BrokerKind {
     AlpacaPaper,
     AlpacaLive,
     OrderlyLive,
+    BybitPaper,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
