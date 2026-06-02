@@ -16,6 +16,27 @@ Use this skill when the task is about *using* xvision: running or explaining
 nodes, interpreting xvision pipeline vocabulary, or following xvision operator
 runbooks.
 
+## How to invoke xvn
+
+`xvn` ships as a single binary. Two contexts:
+
+**Local binary** (built via `cargo build --workspace`, binary at `target/debug/xvn` or `target/release/xvn`, or installed via `cargo install --path crates/xvision-cli`):
+```bash
+xvn <args>
+```
+
+**Inside Docker** (the runtime image):
+```bash
+# exec into the running container — preferred for one-off commands:
+docker exec xvn-app xvn <args>          # dev node
+docker exec xvnej-app xvn <args>        # QA node
+
+# one-shot container via compose:
+docker compose run --rm xvn <args>
+```
+
+`XVN_HOME` controls where state (strategies, scenarios, the SQLite ledger, config) lives. When running inside Docker it **must match the container's volume mount** — the default in the shipped image is `/data` (set via `XVN_DATA_DIR`; production stacks may override this). If you automate commands against a running node over Tailscale, prefer the remote-CLI job API (`POST /api/cli/jobs`) or `scripts/xvn-remote.py exec` over `docker exec` — both handle reconnects and output streaming.
+
 ## Where to look first (operator docs)
 
 - `MANUAL.md` — operator-side prerequisites (Alpaca creds, Orderly onboarding, Mantle minting). Tier 2 = forward-paper, Tier 3 = one-time setup.
@@ -110,8 +131,12 @@ xvn eval validate --strategy <strategy-id> --scenario <scenario-id> --mode backt
 xvn eval run --strategy <strategy-id> --scenario <scenario-id> --mode backtest
 ```
 
-`strategy diagnostics` answers "is this strategy launchable?". `eval validate`
-answers "can this specific strategy/scenario/mode run be enqueued?". Run both
+`strategy diagnostics` answers "is this strategy launchable?" with a full
+`required_unmet[]` breakdown. `eval validate` answers "can this specific
+strategy/scenario/mode run be enqueued?" — **it now also runs
+`capability_diagnostics` + `assert_launchable` internally and exits 14
+(`OptValidation`) if the strategy is not launchable**, so dangling agent refs
+and missing capabilities are caught before a run is enqueued. Run both steps
 before `eval run` unless the user explicitly asks to skip preflight.
 
 ## Execution modes: agent vs mechanical
@@ -271,8 +296,11 @@ xvn strategy diagnostics <strategy-id> --json   # launchable + required_unmet[]
 xvn agent inspect <agent-id> --diagnostics --json
 ```
 
-Use diagnostics before launching an eval the same way you'd use
-`xvn strategy validate` — both are safe shell gates (non-zero on blocker).
+Both `xvn strategy validate` and `xvn eval validate` now run the same
+`assert_launchable` gate internally and exit 14 (`OptValidation`) on a
+blocker — so either serves as a safe shell gate. `strategy diagnostics`
+additionally emits the structured `required_unmet[]` JSON breakdown, which
+is useful when you need to know exactly *which* capability is missing.
 For agent-facing launch work, prefer the full sequence:
 provider readiness → `strategy diagnostics` → `eval validate` → `eval run`.
 
