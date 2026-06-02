@@ -2228,6 +2228,7 @@ async fn spawn_cline_ctx(
             provider_entry: entry,
             api_key,
             recording_slot_role,
+            tool_asset_guard: Some(tool_asset_guard),
         },
         run_recording,
     ))
