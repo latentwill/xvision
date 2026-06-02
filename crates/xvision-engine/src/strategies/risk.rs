@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+fn default_max_position_pct_nav() -> f64 {
+    20.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RiskConfig {
     pub risk_pct_per_trade: f64, // e.g., 0.015 = 1.5%
@@ -7,6 +11,8 @@ pub struct RiskConfig {
     pub max_leverage: f64,
     pub stop_loss_atr_multiple: f64,
     pub daily_loss_kill_pct: f64, // e.g., 0.05 = 5%
+    #[serde(default = "default_max_position_pct_nav")]
+    pub max_position_pct_nav: f64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,6 +32,7 @@ impl RiskPreset {
                 max_leverage: 2.0,
                 stop_loss_atr_multiple: 2.0,
                 daily_loss_kill_pct: 0.03,
+                max_position_pct_nav: 20.0,
             },
             RiskPreset::Balanced => RiskConfig {
                 risk_pct_per_trade: 0.015,
@@ -33,6 +40,7 @@ impl RiskPreset {
                 max_leverage: 3.0,
                 stop_loss_atr_multiple: 2.0,
                 daily_loss_kill_pct: 0.05,
+                max_position_pct_nav: 20.0,
             },
             RiskPreset::Aggressive => RiskConfig {
                 risk_pct_per_trade: 0.025,
@@ -40,6 +48,7 @@ impl RiskPreset {
                 max_leverage: 5.0,
                 stop_loss_atr_multiple: 1.5,
                 daily_loss_kill_pct: 0.08,
+                max_position_pct_nav: 20.0,
             },
         }
     }
