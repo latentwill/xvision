@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
-import { apiFetch, ApiError } from "@/api/client";
+import { ApiError } from "@/api/client";
 import {
   type CycleProgressEvent,
   type LineageNode,
@@ -109,26 +109,6 @@ function deriveCycleState(
     if (et === "cycle_started") return { isRunning: true, activeCycleId: events[i].cycle_id ?? null };
   }
   return { isRunning: false, activeCycleId: null };
-}
-
-function normalizeProgressEvent(event: CycleProgressEvent): CycleProgressEvent {
-  const nested = event.payload ?? event.data ?? null;
-  if (!nested) return event;
-  const cycleId =
-    event.cycle_id ?? (typeof nested.cycle_id === "string" ? nested.cycle_id : null);
-  const parentHash =
-    event.parent_hash ?? (typeof nested.parent_hash === "string" ? nested.parent_hash : null);
-  const childHash =
-    event.child_hash ?? (typeof nested.child_hash === "string" ? nested.child_hash : null);
-  const bundleHash =
-    event.bundle_hash ?? (typeof nested.bundle_hash === "string" ? nested.bundle_hash : null);
-  return {
-    ...event,
-    cycle_id: cycleId,
-    parent_hash: parentHash,
-    child_hash: childHash,
-    bundle_hash: bundleHash,
-  };
 }
 
 function formatRelativeDate(ts: string): string {

@@ -146,7 +146,7 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
       <ValidationCard strategy={strategy} />
-      <DecisionModeCard strategy={strategy} />
+      <DecisionModeStatusCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
       <FilterCard strategy={strategy} />
       <DecisionModeCard strategy={strategy} />
@@ -197,7 +197,7 @@ function decisionModeInfo(strategy: Strategy): {
   };
 }
 
-function DecisionModeCard({ strategy }: { strategy: Strategy }) {
+function DecisionModeStatusCard({ strategy }: { strategy: Strategy }) {
   const info = decisionModeInfo(strategy);
   const tone =
     info.tone === "success"
