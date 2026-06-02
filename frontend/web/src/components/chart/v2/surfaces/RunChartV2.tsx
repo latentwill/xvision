@@ -71,12 +71,17 @@ export function RunChartV2({ payload, showAnnotations = true }: Props) {
     donchianLower: layers.donchian ? payload.indicators.donchianLower : undefined,
   };
 
-  const markers = payload.markers.filter((m) =>
-    m.kind === "buy" ? layers.markerBuy :
-    m.kind === "sell" ? layers.markerSell :
-    m.kind === "veto" ? layers.markerVeto :
-    layers.markerHold,
-  );
+  const markers = payload.markers.flatMap((m) => {
+    if (m.kind !== "buy" && m.kind !== "sell") return [];
+    if (m.kind === "buy" && !layers.markerBuy) return [];
+    if (m.kind === "sell" && !layers.markerSell) return [];
+    return [{
+      kind: m.kind,
+      time: m.time,
+      price: m.price,
+      decision_index: m.decision_index,
+    }];
+  });
 
   const legendItems = [
     layers.sma20 && { label: "SMA 20", color: theme.overlay.sma20 },
@@ -141,8 +146,6 @@ export function RunChartV2({ payload, showAnnotations = true }: Props) {
                   items: [
                     { key: "markerBuy", label: "Buy", on: layers.markerBuy },
                     { key: "markerSell", label: "Sell", on: layers.markerSell },
-                    { key: "markerVeto", label: "Veto", on: layers.markerVeto },
-                    { key: "markerHold", label: "Hold", on: layers.markerHold },
                   ],
                 },
                 {

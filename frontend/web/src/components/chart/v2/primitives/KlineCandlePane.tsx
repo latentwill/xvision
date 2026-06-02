@@ -67,11 +67,11 @@ registerOverlay({
 // One overlay template for every trade/veto/hold marker pinned to a single
 // (timestamp, price) point on the candle pane. Like xvnLine it is registered
 // once at module scope and styled from per-instance extendData. Shape by kind:
-//   buy  → up-arrow polygon anchored below the bar
-//   sell → down-arrow polygon anchored above the bar
+//   buy  → up chevron anchored below the bar
+//   sell → down chevron anchored above the bar
 //   veto → circle dot
 //   hold → circle dot
-// An optional text label is drawn beside the glyph. No try/catch on purpose
+// An optional text label is drawn beside non-trade glyphs. No try/catch on purpose
 // (see xvnLine note above).
 registerOverlay({
   name: "xvnMarker",
@@ -92,18 +92,24 @@ registerOverlay({
     const yOff = up ? 14 : -14;
     const figs: unknown[] = [];
     if (isArrow) {
-      figs.push({
-        type: "polygon",
-        attrs: {
-          coordinates: [
-            { x: c.x, y: c.y + (up ? 8 : -8) },
-            { x: c.x - 5, y: c.y + yOff },
-            { x: c.x + 5, y: c.y + yOff },
-          ],
+      const tip = { x: c.x, y: c.y + (up ? 7 : -7) };
+      const left = { x: c.x - 6, y: c.y + yOff };
+      const right = { x: c.x + 6, y: c.y + yOff };
+      const styles = { color: ext.color, size: 2, style: "solid" };
+      figs.push(
+        {
+          type: "line",
+          attrs: { coordinates: [left, tip] },
+          styles,
+          ignoreEvent: true,
         },
-        styles: { style: "fill", color: ext.color },
-        ignoreEvent: true,
-      });
+        {
+          type: "line",
+          attrs: { coordinates: [tip, right] },
+          styles,
+          ignoreEvent: true,
+        },
+      );
     } else {
       figs.push({
         type: "circle",
@@ -112,7 +118,7 @@ registerOverlay({
         ignoreEvent: true,
       });
     }
-    if (ext.text) {
+    if (ext.text && !isArrow) {
       figs.push({
         type: "text",
         attrs: { x: c.x + 6, y: c.y + yOff, text: ext.text },
