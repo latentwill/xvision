@@ -7,6 +7,7 @@
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
+import { useWallet } from "@/features/marketplace/lib/wallet";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
@@ -290,6 +291,7 @@ export function LineageRoute() {
   const mp = useMarketplaceData();
   const navigate = useNavigate();
   const [sp, setSp] = useSearchParams();
+  const { address: walletAddress } = useWallet();
 
   const {
     data: detail,
@@ -441,21 +443,34 @@ export function LineageRoute() {
             <div className="font-mono text-[9px] tracking-[0.2em] text-text-3 uppercase mb-1">
               Price
             </div>
-            <div className="font-mono text-[24px] font-semibold text-foreground leading-none">
-              {detail.priceUsdc === null ? "FREE" : `${detail.priceUsdc} USDC`}
+            <div className="flex items-baseline gap-2">
+              <span className="font-mono text-[24px] font-semibold text-foreground leading-none">
+                {detail.priceUsdc === null ? "FREE" : `${detail.priceUsdc} USDC`}
+              </span>
+              <span className="font-mono text-[9px] tracking-[0.14em] text-warn uppercase px-1.5 py-0.5 rounded border border-warn/30 bg-warn/5">
+                TESTNET
+              </span>
             </div>
             <div className="font-mono text-[10.5px] text-text-3 mt-0.5">
               perpetual license · one-time
             </div>
 
-            {/* Buy button */}
+            {/* Buy button — gated on wallet connection */}
             <button
               data-testid="buy-btn"
-              onClick={() => buyMutation.mutate()}
+              onClick={() =>
+                walletAddress
+                  ? buyMutation.mutate()
+                  : navigate("/settings/wallet")
+              }
               disabled={buyMutation.isPending}
               className="mt-3 w-full py-2.5 rounded bg-gold text-[#001A0A] text-[13.5px] font-bold tracking-[0.01em] disabled:opacity-60 hover:opacity-90 transition-opacity"
             >
-              {buyMutation.isPending ? "Buying…" : "Buy"}
+              {buyMutation.isPending
+                ? "Buying…"
+                : walletAddress
+                  ? "Buy"
+                  : "Connect wallet to buy"}
             </button>
           </div>
 
