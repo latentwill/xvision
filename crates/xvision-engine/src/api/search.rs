@@ -60,6 +60,13 @@ pub async fn upsert_strategy(ctx: &ApiContext, strategy: &Strategy) -> anyhow::R
     Ok(())
 }
 
+/// Return all strategy IDs currently in the search index, newest-first.
+pub async fn list_strategy_ids(ctx: &ApiContext) -> ApiResult<Vec<String>> {
+    SearchIndex::list_ids(&ctx.db, SearchKind::Strategy)
+        .await
+        .map_err(|e| ApiError::Internal(format!("list strategy ids from index: {e}")))
+}
+
 /// Drop a strategy from the index. Called when a strategy is deleted.
 pub async fn delete_strategy(ctx: &ApiContext, agent_id: &str) {
     if let Err(e) = SearchIndex::delete(&ctx.db, SearchKind::Strategy, agent_id).await {
@@ -508,5 +515,79 @@ mod tests {
         reindex_all(&ctx).await;
         let count_after_second = search(&ctx, "", &SearchQuery::default()).await.unwrap().len();
         assert_eq!(count_after_first, count_after_second);
+    }
+
+    #[tokio::test]
+    async fn list_strategy_ids_empty_on_fresh_db() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let ids = list_strategy_ids(&ctx).await.unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_strategy_ids_returns_upserted_ids() {
+        use crate::search::{IndexEntry, SearchIndex, SearchKind};
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let now = chrono::Utc::now();
+        for (id, offset_secs) in [("sid-a", 100i64), ("sid-b", 200)] {
+            SearchIndex::upsert(
+                &ctx.db,
+                &IndexEntry {
+                    artifact_id: id.into(),
+                    kind: SearchKind::Strategy,
+                    title: id.into(),
+                    summary: "x".into(),
+                    tags: vec![],
+                    updated_at: now + chrono::Duration::seconds(offset_secs),
+                    href: format!("/strategies/{id}"),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let ids = list_strategy_ids(&ctx).await.unwrap();
+        // newest first: sid-b has the higher offset
+        assert_eq!(ids, vec!["sid-b", "sid-a"]);
+    }
+
+    #[tokio::test]
+    async fn list_strategy_ids_excludes_non_strategy_kinds() {
+        use crate::search::{IndexEntry, SearchIndex, SearchKind};
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let now = chrono::Utc::now();
+        SearchIndex::upsert(
+            &ctx.db,
+            &IndexEntry {
+                artifact_id: "r1".into(),
+                kind: SearchKind::Run,
+                title: "a run".into(),
+                summary: "x".into(),
+                tags: vec![],
+                updated_at: now,
+                href: "/eval-runs/r1".into(),
+            },
+        )
+        .await
+        .unwrap();
+        SearchIndex::upsert(
+            &ctx.db,
+            &IndexEntry {
+                artifact_id: "s1".into(),
+                kind: SearchKind::Strategy,
+                title: "a strategy".into(),
+                summary: "x".into(),
+                tags: vec![],
+                updated_at: now,
+                href: "/strategies/s1".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let ids = list_strategy_ids(&ctx).await.unwrap();
+        assert_eq!(ids, vec!["s1"], "run id must not appear in strategy list");
     }
 }
