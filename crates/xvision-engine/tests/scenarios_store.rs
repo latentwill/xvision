@@ -66,6 +66,7 @@ fn make_test_scenario(id: &str) -> Scenario {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         capital: Capital::default(),
         replay_mode: ReplayMode::Continuous,

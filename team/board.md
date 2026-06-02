@@ -18,6 +18,14 @@ V2 work (V2A onboarding + docs, V2B-V4 roadmap) has its own board:
 
 ## Active (ready to dispatch — no file conflicts)
 
+### synthetic-eval-fill-path-2026-06-02 — eval-only synthetic fills + shorts + realism
+
+- [synthetic-fills-eval-only-shorts](contracts/synthetic-fills-eval-only-shorts.md) — **foundation** · in-flight · `EvalOnly` token on `SimulatedFills`; shorts wired + tested on Alpaca data; look-ahead guard.
+- [synthetic-short-borrow-cost](contracts/synthetic-short-borrow-cost.md) — **leaf** · in-flight · `borrow_bps_per_day` config + per-bar accrual on open shorts.
+- [synthetic-candle-integrity](contracts/synthetic-candle-integrity.md) — **leaf** · in-flight · OHLC/timestamp/gap validation pre-pass over loaded bars.
+- [synthetic-fill-latency](contracts/synthetic-fill-latency.md) — **leaf** · in-flight · honour `LatencyModel.decision_to_fill_ms` in fill pricing.
+
+
 ### agent-graph-2026-05-22 — capability-first refactor cascade
 
 - [agent-graph-capability-schema](contracts/agent-graph-capability-schema.md) — **P1 foundation** · in flight (PR #527) · `Capability` enum + `AgentSlot.capabilities` + `AgentRef.activates` + `PipelineEdge.condition` + migration 033.

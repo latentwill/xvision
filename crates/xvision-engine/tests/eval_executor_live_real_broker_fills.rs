@@ -44,6 +44,9 @@ fn req(action: &str, pos: f64, equity: f64, risk_pct: f64, next_open: f64) -> Fi
         bar_open: next_open,
         bar_high: next_open * 1.01,
         bar_low: next_open * 0.99,
+        bar_close: next_open,
+        decision_to_fill_ms: 0,
+        bar_duration_ms: 3_600_000,
     }
 }
 

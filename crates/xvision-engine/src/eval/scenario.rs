@@ -223,6 +223,7 @@ mod warmup_bars_tests {
                     volume_constraints: None,
                 },
                 overrides: Vec::new(),
+                borrow_bps_per_day: 5.0,
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),
@@ -488,6 +489,14 @@ pub struct VenueSettings {
     /// Added in V2E eval-cost-model-per-bar-and-volume-share.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<VenueOverride>,
+    /// Annualised borrow / financing cost charged per bar on open short
+    /// notional (spot-synthetic shorts only). Expressed in basis points per
+    /// calendar day. Default `5 bps/day` ≈ 18%/yr — conservative placeholder.
+    /// Per-asset override via [`VenueOverride::borrow_bps_per_day`] takes
+    /// precedence. Legacy JSON rows that predate this field hydrate to the
+    /// default via `serde(default)`.
+    #[serde(default = "default_borrow_bps_per_day")]
+    pub borrow_bps_per_day: f64,
 }
 
 impl Default for VenueSettings {
@@ -518,8 +527,16 @@ impl Default for VenueSettings {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: default_borrow_bps_per_day(),
         }
     }
+}
+
+/// Default borrow cost for held short positions: 5 bps/day ≈ 18%/yr.
+/// Conservative placeholder; tunable via `VenueSettings.borrow_bps_per_day`
+/// or per-asset via `VenueOverride.borrow_bps_per_day`.
+fn default_borrow_bps_per_day() -> f64 {
+    5.0
 }
 
 /// Per-asset cost override matched by a glob pattern on the venue symbol
@@ -540,6 +557,10 @@ pub struct VenueOverride {
     pub fees: Option<Fees>,
     /// Override slippage model. `None` means fall through to scenario default.
     pub slippage: Option<SlippageModel>,
+    /// Override borrow cost (bps/day) for short positions on this asset.
+    /// `None` means fall through to `VenueSettings.borrow_bps_per_day`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub borrow_bps_per_day: Option<f64>,
 }
 
 impl VenueOverride {
@@ -875,6 +896,7 @@ pub fn canonical_scenarios() -> Vec<Scenario> {
                 },
                 fill_model: default_fill_model(),
                 overrides: Vec::new(),
+                borrow_bps_per_day: 5.0,
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),
