@@ -1452,7 +1452,9 @@ fn load_scenario_file(path: &std::path::Path) -> CliResult<Scenario> {
     let body = std::fs::read_to_string(path)
         .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
     match path.extension().and_then(|e| e.to_str()) {
-        Some("toml") => toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}"))),
+        Some("toml") => {
+            toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))
+        }
         _ => serde_json::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}"))),
     }
 }
@@ -1476,9 +1478,17 @@ fn scenario_diff(old: &Scenario, new_s: &Scenario) -> Vec<ScenarioFieldChange> {
             if ov != nv {
                 let compact = |v: &serde_json::Value| -> String {
                     let s = serde_json::to_string(v).unwrap_or_default();
-                    if s.len() > 120 { format!("{}…", &s[..117]) } else { s }
+                    if s.len() > 120 {
+                        format!("{}…", &s[..117])
+                    } else {
+                        s
+                    }
                 };
-                changes.push(ScenarioFieldChange { field: key.clone(), old: compact(ov), new: compact(nv) });
+                changes.push(ScenarioFieldChange {
+                    field: key.clone(),
+                    old: compact(ov),
+                    new: compact(nv),
+                });
             }
         }
     }
@@ -1505,25 +1515,36 @@ async fn run_scenario_apply(ctx: &ApiContext, a: ScenarioApplyArgs) -> CliResult
                     println!("  (file matches stored version)");
                 } else {
                     println!("  drift detected ({} field(s)):", changes.len());
-                    for c in &changes { println!("  {}: {} → {}", c.field, c.old, c.new); }
+                    for c in &changes {
+                        println!("  {}: {} → {}", c.field, c.old, c.new);
+                    }
                 }
             }
         }
         Err(_) => {
-            let req = scenario_to_create_request(&new_s);
             if a.dry_run {
                 if a.json {
-                    crate::io::print_json(&serde_json::json!({ "dry_run": true, "action": "create", "scenario_id": id, "display_name": new_s.display_name }))?;
+                    crate::io::print_json(
+                        &serde_json::json!({ "dry_run": true, "action": "create", "scenario_id": id, "display_name": new_s.display_name }),
+                    )?;
                 } else {
-                    eprintln!("DRY RUN — would create scenario '{}' ({})", new_s.display_name, id);
+                    eprintln!(
+                        "DRY RUN — would create scenario '{}' ({})",
+                        new_s.display_name, id
+                    );
                 }
                 return Ok(());
             }
-            let created = api_scenario::create(ctx, req).await.map_err(|e| api_to_cli("scenario apply (create)", e))?;
+            new_s
+                .validate_v1()
+                .map_err(|e| CliError::usage(anyhow::anyhow!("scenario apply: {e}")))?;
+            xvision_engine::eval::scenario_store::insert_scenario(ctx, &new_s)
+                .await
+                .map_err(|e| api_to_cli("scenario apply (create)", e))?;
             if a.json {
-                crate::io::print_json(&serde_json::json!({ "action": "created", "scenario_id": created.id }))?;
+                crate::io::print_json(&serde_json::json!({ "action": "created", "scenario_id": id }))?;
             } else {
-                println!("created {} ({})", created.id, created.display_name);
+                println!("created {} ({})", id, new_s.display_name);
             }
         }
     }
@@ -1541,13 +1562,20 @@ async fn run_scenario_diff(ctx: &ApiContext, a: ScenarioDiffArgs) -> CliResult<(
                 crate::io::print_json(&serde_json::json!({ "scenario_id": id, "changes": changes }))?;
             } else {
                 println!("diff for scenario {id}");
-                if changes.is_empty() { println!("  (no changes)"); }
-                else { for c in &changes { println!("  {}: {} → {}", c.field, c.old, c.new); } }
+                if changes.is_empty() {
+                    println!("  (no changes)");
+                } else {
+                    for c in &changes {
+                        println!("  {}: {} → {}", c.field, c.old, c.new);
+                    }
+                }
             }
         }
         Err(_) => {
             if a.json {
-                crate::io::print_json(&serde_json::json!({ "scenario_id": id, "changes": [], "note": "not found — would create" }))?;
+                crate::io::print_json(
+                    &serde_json::json!({ "scenario_id": id, "changes": [], "note": "not found — would create" }),
+                )?;
             } else {
                 println!("scenario {id} not found — would create");
             }
@@ -2020,9 +2048,9 @@ pub mod apply_diff {
     use std::str::FromStr;
     use xvision_core::Capital;
     use xvision_engine::eval::scenario::{
-        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees,
-        FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy,
-        ReplayMode, Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
+        AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
+        LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, Scenario,
+        ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings,
     };
 
     fn make_test_scenario(id: &str) -> Scenario {
@@ -2048,9 +2076,14 @@ pub mod apply_diff {
             },
             venue: VenueSettings {
                 venue: Venue::Alpaca,
-                fees: Fees { maker_bps: 10, taker_bps: 25 },
+                fees: Fees {
+                    maker_bps: 10,
+                    taker_bps: 25,
+                },
                 slippage: SlippageModel::None,
-                latency: LatencyModel { decision_to_fill_ms: 0 },
+                latency: LatencyModel {
+                    decision_to_fill_ms: 0,
+                },
                 fill_model: FillModel {
                     market_order_fill: MarketOrderFill::FullAtClose,
                     limit_order_fill: LimitOrderFill::NeverFills,
@@ -2095,7 +2128,9 @@ pub mod apply_diff {
         let mut new_s = make_test_scenario("sc1");
         new_s.display_name = "renamed".to_string();
         let changes = scenario_diff(&old, &new_s);
-        let c = changes.iter().find(|c| c.field == "display_name")
+        let c = changes
+            .iter()
+            .find(|c| c.field == "display_name")
             .expect("display_name change must appear in diff");
         assert!(c.old.contains("test-sc1"), "old must reflect original name");
         assert!(c.new.contains("renamed"), "new must reflect updated name");
@@ -2108,7 +2143,9 @@ pub mod apply_diff {
         old.description = "short".to_string();
         new_s.description = "x".repeat(200);
         let changes = scenario_diff(&old, &new_s);
-        let c = changes.iter().find(|c| c.field == "description")
+        let c = changes
+            .iter()
+            .find(|c| c.field == "description")
             .expect("description change must appear in diff");
         assert!(
             c.new.ends_with('…'),

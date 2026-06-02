@@ -2065,7 +2065,9 @@ async fn edit_strategy(
 
     for kv in &fields {
         let Some((k, v)) = kv.split_once('=') else {
-            return Err(CliError::usage(anyhow::anyhow!("--field must be KEY=VALUE, got: {kv}")));
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--field must be KEY=VALUE, got: {kv}"
+            )));
         };
         match k {
             "display_name" => {
@@ -2099,7 +2101,9 @@ async fn edit_strategy(
     store.save(&strategy).await.exit_with(XvnExit::Upstream)?;
 
     println!("updated {strategy_id}");
-    for c in &changed { println!("  {c}"); }
+    for c in &changed {
+        println!("  {c}");
+    }
     Ok(())
 }
 
@@ -2755,7 +2759,6 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
     Ok(())
 }
 
-
 #[derive(Debug, serde::Serialize)]
 struct FieldChange {
     field: String,
@@ -2770,11 +2773,8 @@ fn strategy_diff(
     let old_val = serde_json::to_value(old).unwrap_or_default();
     let new_val = serde_json::to_value(new_s).unwrap_or_default();
     let mut changes = Vec::new();
-    if let (serde_json::Value::Object(old_map), serde_json::Value::Object(new_map)) =
-        (&old_val, &new_val)
-    {
-        let all_keys: std::collections::BTreeSet<_> =
-            old_map.keys().chain(new_map.keys()).collect();
+    if let (serde_json::Value::Object(old_map), serde_json::Value::Object(new_map)) = (&old_val, &new_val) {
+        let all_keys: std::collections::BTreeSet<_> = old_map.keys().chain(new_map.keys()).collect();
         for key in all_keys {
             let ov = old_map.get(key).unwrap_or(&serde_json::Value::Null);
             let nv = new_map.get(key).unwrap_or(&serde_json::Value::Null);
