@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::sqlite::SqlitePoolOptions;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::AgentSlot;
@@ -22,6 +22,7 @@ use xvision_engine::api::eval as api_eval;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::postprocess::DEFAULT_FINDINGS_MODEL;
 use xvision_engine::eval::run::RunMode;
+use xvision_engine::eval::scenario_store;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
@@ -57,114 +58,16 @@ fn batch_request(
     }
 }
 
-async fn apply_agent_migrations(pool: &SqlitePool) {
-    sqlx::query(include_str!("../../xvision-engine/migrations/005_agents.sql"))
-        .execute(pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"
-    ))
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"
-    ))
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"
-    ))
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"
-    ))
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/033_agent_slot_capabilities.sql"
-    ))
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"
-    ))
-    .execute(pool)
-    .await
-    .unwrap();
-}
-
 async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/001_api_audit.sql"))
-        .execute(&pool)
+    sqlx::migrate!("../xvision-engine/migrations")
+        .run(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    apply_agent_migrations(&pool).await;
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/014_eval_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/016_eval_reviews.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/021_eval_batches.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    // 027 adds bars_content_hash + manifest_canonical + bars_manifest
-    // columns referenced by RunStore::create.
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/027_run_bars_manifest.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/038_eval_runs_live_config.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -175,7 +78,19 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         },
         dir.path().to_path_buf(),
     );
+    seed_batch_scenario(&ctx).await;
     (ctx, dir)
+}
+
+#[allow(deprecated)]
+async fn seed_batch_scenario(ctx: &ApiContext) {
+    let scenario = xvision_engine::eval::canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("legacy flash-crash fixture scenario exists");
+    scenario_store::insert_scenario(ctx, &scenario)
+        .await
+        .expect("seed batch test scenario");
 }
 
 async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
@@ -432,81 +347,10 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    // Core + eval tables.
-    sqlx::query(include_str!("../../xvision-engine/migrations/001_api_audit.sql"))
-        .execute(&pool)
+    sqlx::migrate!("../xvision-engine/migrations")
+        .run(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../../xvision-engine/migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    apply_agent_migrations(&pool).await;
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/014_eval_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    // Review tables: agent_profiles + eval_reviews (016) and review-linked
-    // columns on eval_findings (017).
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/016_eval_reviews.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/017_eval_findings_review_columns.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    // Batch persistence (021) — required for run_batch's create_batch call.
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/021_eval_batches.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    // 026 adds evidence_cycle_ids_json + produced_by_check to eval_findings —
-    // required by RunStore::record_finding called during review.
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/026_trace_surface_foundation.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/027_run_bars_manifest.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!(
-        "../../xvision-engine/migrations/038_eval_runs_live_config.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -517,6 +361,7 @@ async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
         },
         dir.path().to_path_buf(),
     );
+    seed_batch_scenario(&ctx).await;
     (ctx, dir)
 }
 
