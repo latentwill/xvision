@@ -30,4 +30,5 @@ jobs:
       - name: Run workspace tests
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
+          CARGO_BUILD_JOBS: "1"
         run: scripts/cargo test --workspace --lib --tests
