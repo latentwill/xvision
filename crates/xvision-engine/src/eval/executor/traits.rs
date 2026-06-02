@@ -665,7 +665,8 @@ mod tests {
 
     #[test]
     fn zero_latency_fill_ref_equals_next_open() {
-        let req = base_req(); // decision_to_fill_ms: 0
+        let mut req = base_req(); // decision_to_fill_ms: 0
+        req.spread_bps = 0.0; // isolate latency path; no spread component
         let rec = simulate_fill_inner(&req);
         // With Linear 5bps slip and no spread, fill = next_open * (1 + 0.0005)
         let expected = 100.0 * (1.0 + 5.0 / 10_000.0);
@@ -704,6 +705,7 @@ mod tests {
         // Oversized latency (2x bar duration) must be clamped to fill_ref = bar_close.
         // The fraction is capped at 1.0: fill_ref = next_open + 1.0 * (bar_close - next_open) = bar_close.
         let mut req = base_req();
+        req.spread_bps = 0.0; // isolate latency path; no spread component
         req.decision_to_fill_ms = 7_200_000;
         req.bar_duration_ms = 3_600_000;
         req.bar_close = 101.0;
