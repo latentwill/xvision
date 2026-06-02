@@ -1648,7 +1648,8 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let scenario_id = row
         .try_get::<Option<String>, _>("scenario_id")
         .context("read scenario_id")?
-        .unwrap_or_default();
+        // Live runs store NULL for scenario_id; map to empty string.
+        .unwrap_or_else(String::new);
 
     Ok(Run {
         id: row.try_get("id").context("read id")?,
