@@ -2041,6 +2041,34 @@ async fn resolve_agent_runtime(ctx: &ApiContext) -> AgentRuntime {
 /// it is a built-in lifecycle tool captured locally by the sidecar.
 struct ToolRegistryDispatch {
     tools: Arc<ToolRegistry>,
+    current_asset: Arc<tokio::sync::RwLock<Option<String>>>,
+}
+
+fn normalize_callback_asset_for_compare(asset: &str) -> String {
+    let upper = asset.trim().to_ascii_uppercase();
+    let base = upper.split('/').next().unwrap_or(&upper);
+    base.strip_suffix("USD").unwrap_or(base).to_string()
+}
+
+fn callback_market_data_tool_asset_mismatch(
+    name: &str,
+    input: &serde_json::Value,
+    current_asset: Option<&str>,
+) -> Option<String> {
+    if !matches!(name, "ohlcv" | "indicator_panel") {
+        return None;
+    }
+    let current_asset = current_asset?;
+    let requested_asset = input.get("asset").and_then(|v| v.as_str())?;
+    if normalize_callback_asset_for_compare(current_asset) == normalize_callback_asset_for_compare(requested_asset) {
+        return None;
+    }
+
+    Some(format!(
+        "asset mismatch for {name}: current decision asset is {current_asset} but tool requested \
+         {requested_asset}. Use the current decision asset only; do not fetch cross-asset market \
+         data for this per-asset decision."
+    ))
 }
 
 #[async_trait::async_trait]
@@ -2050,6 +2078,13 @@ impl ToolDispatch for ToolRegistryDispatch {
         name: &str,
         input: serde_json::Value,
     ) -> std::result::Result<serde_json::Value, ToolDispatchError> {
+        let current_asset = self.current_asset.read().await.clone();
+        if let Some(message) =
+            callback_market_data_tool_asset_mismatch(name, &input, current_asset.as_deref())
+        {
+            return Err(ToolDispatchError::Failed(message));
+        }
+
         match crate::agent::tool_call::invoke(name, input, self.tools.clone()).await {
             Ok(s) => {
                 // Tool outputs are JSON-shaped strings; pass parsed JSON
@@ -2132,7 +2167,11 @@ async fn spawn_cline_ctx(
     let cb_sock = sock_dir.join(format!("agentd-{uniq}.cb.sock"));
     let ev_sock = sock_dir.join(format!("agentd-{uniq}.ev.sock"));
 
-    let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch { tools });
+    let tool_asset_guard = Arc::new(tokio::sync::RwLock::new(None));
+    let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
+        tools,
+        current_asset: tool_asset_guard.clone(),
+    });
     let bus = ctx
         .obs_event_bus
         .clone()
@@ -2186,6 +2225,7 @@ async fn spawn_cline_ctx(
             provider_entry: entry,
             api_key,
             recording_slot_role,
+            tool_asset_guard: Some(tool_asset_guard),
         },
         run_recording,
     ))
