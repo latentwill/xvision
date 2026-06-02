@@ -26,7 +26,6 @@ import { listStrategies, strategyKeys } from "@/api/strategies";
 import { listProviders, settingsKeys } from "@/api/settings";
 
 type EventRow = CycleProgressEvent & { _row_id: number };
-type NormalizedEvent = Omit<EventRow, "_row_id">;
 
 let nextRowId = 1;
 
