@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{ApiContext, ApiError, ApiResult};
-use crate::eval::run::Run;
+use crate::eval::run::{Run, RunMode};
 use crate::eval::scenario::TimeWindow;
 use crate::eval::store::{DecisionRow, RunStore};
 use xvision_core::trading::AssetSymbol;
@@ -390,6 +390,42 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
             ApiError::Internal(msg)
         }
     })?;
+
+    // Live runs have no scenario; return a metric-only payload without bars.
+    if run.mode == RunMode::Live || run.scenario_id.is_empty() {
+        let decisions = store
+            .read_decisions(run_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        let equity: Vec<ChartEquityPoint> = store
+            .read_equity_curve(run_id)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?
+            .into_iter()
+            .map(|(ts, equity_usd)| ChartEquityPoint {
+                time: ts.timestamp(),
+                equity_usd,
+            })
+            .collect();
+        let drawdown = compute_drawdown(&equity);
+        let markers = split_markers(&decisions, &[]);
+        return Ok(RunChartPayload {
+            run_id: run_id.into(),
+            scenario_id: run.scenario_id.clone(),
+            asset: String::new(),
+            granularity: String::new(),
+            time_window: TimeWindow {
+                start: Default::default(),
+                end: Default::default(),
+            },
+            bars: vec![],
+            indicators: compute_indicators(&[]),
+            equity,
+            drawdown,
+            position: vec![],
+            markers,
+        });
+    }
 
     // 2. Resolve the scenario so we know asset + window + granularity.
     let scenario = crate::api::scenario::get(ctx, &run.scenario_id)
