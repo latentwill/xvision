@@ -28,3 +28,22 @@ export function getStoredJudgeModel(): string | null {
 export function setStoredJudgeModel(value: string): void {
   setStoredValue(JUDGE_MODEL_KEY, LEGACY_JUDGE_MODEL_KEY, value);
 }
+
+const MUTATOR_PROVIDER_KEY = "autooptimizer_mutator_provider";
+const JUDGE_PROVIDER_KEY = "autooptimizer_judge_provider";
+
+export function getStoredMutatorProvider(): string | null {
+  return localStorage.getItem(MUTATOR_PROVIDER_KEY);
+}
+
+export function setStoredMutatorProvider(value: string): void {
+  localStorage.setItem(MUTATOR_PROVIDER_KEY, value);
+}
+
+export function getStoredJudgeProvider(): string | null {
+  return localStorage.getItem(JUDGE_PROVIDER_KEY);
+}
+
+export function setStoredJudgeProvider(value: string): void {
+  localStorage.setItem(JUDGE_PROVIDER_KEY, value);
+}
