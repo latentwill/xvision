@@ -79,4 +79,10 @@ pub enum CycleProgressEvent {
         merkle_root: String,
         node_count: usize,
     },
+    /// Fired once the evening run task has completed. Operator label: "Evening run finished".
+    CycleFinished {
+        cycle_id: String,
+        active_count: usize,
+        rejected_count: usize,
+    },
 }

@@ -1,12 +1,11 @@
 // DiffInspector — shows details for a single mutation/experiment node.
 // Accepts :hash param from the /autooptimizer/diff/:hash route.
-// Displays node metadata; diff content itself requires a blob-store
-// endpoint that lands in a follow-up PR.
+// Displays node metadata plus the stored strategy artifact for the experiment.
 
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Card, CardHeader } from "@/components/primitives/Card";
-import { useLineageNode, formatLineageStatus, formatGateVerdict } from "./api";
+import { useLineageNode, formatLineageStatus, formatGateVerdict, useBlob } from "./api";
 
 export function DiffInspector() {
   const { hash } = useParams<{ hash: string }>();
@@ -24,6 +23,8 @@ export function DiffInspector() {
 
 function DiffInspectorContent({ hash }: { hash: string }) {
   const { data: node, isPending, isError } = useLineageNode(hash);
+  const { data: childBlob, isPending: blobPending, isError: blobError } = useBlob(hash);
+  const { data: parentBlob } = useBlob(node?.parent_hash);
 
   if (isPending) {
     return (
@@ -47,6 +48,7 @@ function DiffInspectorContent({ hash }: { hash: string }) {
 
   const statusLabel = formatLineageStatus(node.status);
   const verdictLabel = formatGateVerdict(node.gate_verdict);
+  const paramChanges = buildMechanicalParamChanges(parentBlob, childBlob);
   const statusCls =
     node.status === "active"
       ? "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/30"
@@ -127,22 +129,97 @@ function DiffInspectorContent({ hash }: { hash: string }) {
         </div>
       </Card>
 
-      {/* Diff content placeholder — requires blob-store endpoint (follow-up PR) */}
       <Card>
         <CardHeader title="Experiment diff" />
-        <div className="px-5 pb-5">
-          <div className="rounded border border-border bg-surface-elev/40 px-4 py-6 text-[13px] text-text-3 text-center">
-            Diff content loads from the blob store. Available in the follow-up
-            PR that wires{" "}
-            <code className="font-mono text-[12px]">
-              GET /api/autooptimizer/blobs/:hash
-            </code>
-            .
-          </div>
+        <div className="px-5 pb-5 space-y-4">
+          {paramChanges.length > 0 && (
+            <div className="rounded border border-border overflow-hidden">
+              <table className="w-full text-[13px] border-collapse">
+                <thead>
+                  <tr className="bg-surface-card border-b border-border">
+                    <th className="text-left font-medium text-text-3 px-3 py-2">Parameter</th>
+                    <th className="text-left font-medium text-text-3 px-3 py-2">Before</th>
+                    <th className="text-left font-medium text-text-3 px-3 py-2">After</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paramChanges.map((change) => (
+                    <tr key={change.key} className="border-b border-border last:border-0">
+                      <td className="px-3 py-2 font-mono text-[12px] text-text">{change.key}</td>
+                      <td className="px-3 py-2 font-mono text-[12px] text-text-3 break-all">
+                        {change.before}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[12px] text-gold break-all">
+                        {change.after}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {blobPending ? (
+            <div className="rounded border border-border bg-surface-elev/40 px-4 py-6 text-[13px] text-text-3 text-center">
+              Loading strategy blob…
+            </div>
+          ) : blobError || !childBlob ? (
+            <div className="rounded border border-border bg-surface-elev/40 px-4 py-6 text-[13px] text-danger text-center">
+              Strategy blob not found for this experiment.
+            </div>
+          ) : (
+            <pre className="max-h-[520px] overflow-auto rounded border border-border bg-surface-elev/40 p-4 text-[12px] leading-5 text-text font-mono">
+              {stableStringify(childBlob)}
+            </pre>
+          )}
         </div>
       </Card>
     </div>
   );
+}
+
+type ParamChange = {
+  key: string;
+  before: string;
+  after: string;
+};
+
+function buildMechanicalParamChanges(
+  parentBlob: unknown,
+  childBlob: unknown,
+): ParamChange[] {
+  const parentParams = asRecord(asRecord(parentBlob)?.mechanical_params);
+  const childParams = asRecord(asRecord(childBlob)?.mechanical_params);
+  if (!parentParams || !childParams) return [];
+  const keys = new Set([...Object.keys(parentParams), ...Object.keys(childParams)]);
+  const changes: ParamChange[] = [];
+  for (const key of Array.from(keys).sort()) {
+    const before = stableStringify(parentParams[key]);
+    const after = stableStringify(childParams[key]);
+    if (before !== after) {
+      changes.push({ key, before, after });
+    }
+  }
+  return changes;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "undefined";
+  return JSON.stringify(sortJson(value), null, 2);
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    out[key] = sortJson((value as Record<string, unknown>)[key]);
+  }
+  return out;
 }
 
 function MetaRow({

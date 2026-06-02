@@ -9,7 +9,7 @@
 //! plans must follow.
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::SqlitePool;
+use sqlx::{Acquire, SqlitePool};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1211,25 +1211,6 @@ async fn fk_targets_old_eval_runs(pool: &SqlitePool, table: &str, column: &str) 
         .unwrap_or(false))
 }
 
-async fn run_fk_rebuild<F, Fut>(pool: &SqlitePool, label: &str, body: F) -> ApiResult<()>
-where
-    F: FnOnce(SqlitePool) -> Fut,
-    Fut: std::future::Future<Output = ApiResult<()>>,
-{
-    // PRAGMA foreign_keys cannot be toggled inside a transaction. The caller
-    // wraps its statements in a transaction internally.
-    sqlx::query("PRAGMA foreign_keys = OFF").execute(pool).await?;
-    let result = body(pool.clone()).await;
-    let reenable = sqlx::query("PRAGMA foreign_keys = ON").execute(pool).await;
-    match (result, reenable) {
-        (Ok(()), Ok(_)) => Ok(()),
-        (Err(e), _) => Err(e),
-        (Ok(()), Err(e)) => Err(ApiError::Internal(format!(
-            "{label}: re-enable foreign_keys: {e}"
-        ))),
-    }
-}
-
 async fn rebuild_agent_runs_fk(pool: &SqlitePool) -> ApiResult<()> {
     if !fk_targets_old_eval_runs(pool, "agent_runs", "eval_run_id").await? {
         return Ok(());
@@ -1245,8 +1226,14 @@ async fn rebuild_agent_runs_fk(pool: &SqlitePool) -> ApiResult<()> {
     // their values are preserved. The four 039 columns are added atomically, so
     // `trajectory_mode` is a sufficient probe for all four.
     let copy_trajectory_cols = table_has_column(pool, "agent_runs", "trajectory_mode").await?;
-    run_fk_rebuild(pool, "rebuild_agent_runs_fk", move |pool| async move {
-        let mut tx = pool.begin().await?;
+    let mut conn = pool.acquire().await?;
+    // PRAGMA foreign_keys is connection-local. Keep this toggle and the rebuild
+    // transaction on the same pooled connection.
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await?;
+    let result: ApiResult<()> = async {
+        let mut tx = conn.begin().await?;
         sqlx::query(
             "CREATE TABLE agent_runs_new (
                 id                   TEXT PRIMARY KEY,
@@ -1341,16 +1328,28 @@ async fn rebuild_agent_runs_fk(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
         tx.commit().await?;
         Ok(())
-    })
-    .await
+    }
+    .await;
+    let reenable = sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *conn).await;
+    match (result, reenable) {
+        (Ok(()), Ok(_)) => Ok(()),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(ApiError::Internal(format!(
+            "rebuild_agent_runs_fk: re-enable foreign_keys: {e}"
+        ))),
+    }
 }
 
 async fn rebuild_eval_attestations_fk(pool: &SqlitePool) -> ApiResult<()> {
     if !fk_targets_old_eval_runs(pool, "eval_attestations", "run_id").await? {
         return Ok(());
     }
-    run_fk_rebuild(pool, "rebuild_eval_attestations_fk", |pool| async move {
-        let mut tx = pool.begin().await?;
+    let mut conn = pool.acquire().await?;
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await?;
+    let result: ApiResult<()> = async {
+        let mut tx = conn.begin().await?;
         sqlx::query(
             "CREATE TABLE eval_attestations_new (
                 id                       TEXT PRIMARY KEY,
@@ -1385,16 +1384,28 @@ async fn rebuild_eval_attestations_fk(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
         tx.commit().await?;
         Ok(())
-    })
-    .await
+    }
+    .await;
+    let reenable = sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *conn).await;
+    match (result, reenable) {
+        (Ok(()), Ok(_)) => Ok(()),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(ApiError::Internal(format!(
+            "rebuild_eval_attestations_fk: re-enable foreign_keys: {e}"
+        ))),
+    }
 }
 
 async fn rebuild_eval_reviews_fk(pool: &SqlitePool) -> ApiResult<()> {
     if !fk_targets_old_eval_runs(pool, "eval_reviews", "eval_run_id").await? {
         return Ok(());
     }
-    run_fk_rebuild(pool, "rebuild_eval_reviews_fk", |pool| async move {
-        let mut tx = pool.begin().await?;
+    let mut conn = pool.acquire().await?;
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await?;
+    let result: ApiResult<()> = async {
+        let mut tx = conn.begin().await?;
         sqlx::query(
             "CREATE TABLE eval_reviews_new (
                 id                  TEXT PRIMARY KEY,
@@ -1423,7 +1434,8 @@ async fn rebuild_eval_reviews_fk(pool: &SqlitePool) -> ApiResult<()> {
              SELECT id, eval_run_id, agent_profile_id, status, verdict, confidence, score,
                     summary, raw_output_json, error, created_at, updated_at, annotations_json
              FROM eval_reviews
-             WHERE EXISTS (SELECT 1 FROM eval_runs WHERE id = eval_reviews.eval_run_id)",
+             WHERE EXISTS (SELECT 1 FROM eval_runs WHERE id = eval_reviews.eval_run_id)
+               AND EXISTS (SELECT 1 FROM agent_profiles WHERE id = eval_reviews.agent_profile_id)",
         )
         .execute(&mut *tx)
         .await?;
@@ -1442,8 +1454,16 @@ async fn rebuild_eval_reviews_fk(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
         tx.commit().await?;
         Ok(())
-    })
-    .await
+    }
+    .await;
+    let reenable = sqlx::query("PRAGMA foreign_keys = ON").execute(&mut *conn).await;
+    match (result, reenable) {
+        (Ok(()), Ok(_)) => Ok(()),
+        (Err(e), _) => Err(e),
+        (Ok(()), Err(e)) => Err(ApiError::Internal(format!(
+            "rebuild_eval_reviews_fk: re-enable foreign_keys: {e}"
+        ))),
+    }
 }
 
 /// Apply migration 039: durable lineage rows for offline slot optimizers.
@@ -1763,6 +1783,89 @@ mod migration_registry_tests {
         .unwrap();
         assert_eq!(enabled, 1, "enabled defaults to 1");
         assert_eq!(auto_approve, 0, "auto_approve defaults to 0");
+    }
+
+    #[tokio::test]
+    async fn rebuild_eval_reviews_fk_drops_rows_with_missing_agent_profiles() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE eval_runs_old_live_migration (id TEXT PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE eval_runs (id TEXT PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE agent_profiles (id TEXT PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE eval_reviews (
+                id                  TEXT PRIMARY KEY,
+                eval_run_id         TEXT NOT NULL,
+                agent_profile_id    TEXT NOT NULL,
+                status              TEXT NOT NULL,
+                verdict             TEXT,
+                confidence          REAL,
+                score               INTEGER,
+                summary             TEXT,
+                raw_output_json     TEXT,
+                error               TEXT,
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL,
+                annotations_json    TEXT NOT NULL DEFAULT '[]',
+                FOREIGN KEY (eval_run_id)      REFERENCES eval_runs_old_live_migration(id),
+                FOREIGN KEY (agent_profile_id) REFERENCES agent_profiles(id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO eval_runs_old_live_migration (id) VALUES ('run-1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO eval_runs (id) VALUES ('run-1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO agent_profiles (id) VALUES ('profile-1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO eval_reviews
+                (id, eval_run_id, agent_profile_id, status, created_at, updated_at)
+             VALUES
+                ('valid-review', 'run-1', 'profile-1', 'queued', '2026-05-18T00:00:00Z', '2026-05-18T00:00:00Z'),
+                ('orphan-review', 'run-1', 'missing-profile', 'queued', '2026-05-18T00:00:00Z', '2026-05-18T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        rebuild_eval_reviews_fk(&pool).await.unwrap();
+
+        assert!(!fk_targets_old_eval_runs(&pool, "eval_reviews", "eval_run_id")
+            .await
+            .unwrap());
+        let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM eval_reviews ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ids, vec!["valid-review"]);
+        let violations: Vec<(String, i64, String, i64)> = sqlx::query_as("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(violations.is_empty(), "foreign key violations: {violations:?}");
     }
 
     /// Phase 2.5: migration 044 (`chat_checkpoints`) is applied by the

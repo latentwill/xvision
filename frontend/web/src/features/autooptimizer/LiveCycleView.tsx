@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -8,7 +8,9 @@ import {
   type CycleProgressEvent,
   type LineageNode,
   formatEventLabel,
+  startEveningCycle,
   useLineageNodes,
+  autooptimizerKeys,
 } from "./api";
 import {
   getStoredJudgeModel,
@@ -28,41 +30,18 @@ type NormalizedEvent = Omit<EventRow, "_row_id">;
 
 let nextRowId = 1;
 
-const CYCLE_EVENT_NAMES = [
+const SSE_EVENT_NAMES = [
   "cycle_started",
   "parent_selected",
   "mutation_proposed",
   "mutation_gated",
-  "mutation_gated_passed",
-  "mutation_gated_dropped",
   "honesty_check_run",
   "judge_finding",
   "cycle_sealed",
+  "cycle_finished",
+  "lagged",
 ] as const;
 
-async function submitEveningCycle(
-  strategyId: string,
-  mutatorModel: string,
-  judgeModel: string,
-): Promise<string | null> {
-  try {
-    await apiFetch<{ started: boolean; message: string }>("/api/autooptimizer/evening-cycle", {
-      method: "POST",
-      body: JSON.stringify({
-        strategy_id: strategyId,
-        mutator_model: mutatorModel,
-        judge_model: judgeModel,
-      }),
-    });
-    return null;
-  } catch (e) {
-    if (e instanceof ApiError) {
-      if (e.status === 404 || e.status === 501) return "Not yet available on this server";
-      return e.message || `Error ${e.status}`;
-    }
-    return e instanceof Error ? e.message : "Network error";
-  }
-}
 
 // ─── Lineage helpers ──────────────────────────────────────────────────────────
 
@@ -124,10 +103,32 @@ function deriveCycleState(
 ): { isRunning: boolean; activeCycleId: string | null } {
   for (let i = events.length - 1; i >= 0; i--) {
     const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
-    if (et === "cycle_finished") return { isRunning: false, activeCycleId: null };
+    if (et === "cycle_finished" || et === "cycle_sealed") {
+      return { isRunning: false, activeCycleId: null };
+    }
     if (et === "cycle_started") return { isRunning: true, activeCycleId: events[i].cycle_id ?? null };
   }
   return { isRunning: false, activeCycleId: null };
+}
+
+function normalizeProgressEvent(event: CycleProgressEvent): CycleProgressEvent {
+  const nested = event.payload ?? event.data ?? null;
+  if (!nested) return event;
+  const cycleId =
+    event.cycle_id ?? (typeof nested.cycle_id === "string" ? nested.cycle_id : null);
+  const parentHash =
+    event.parent_hash ?? (typeof nested.parent_hash === "string" ? nested.parent_hash : null);
+  const childHash =
+    event.child_hash ?? (typeof nested.child_hash === "string" ? nested.child_hash : null);
+  const bundleHash =
+    event.bundle_hash ?? (typeof nested.bundle_hash === "string" ? nested.bundle_hash : null);
+  return {
+    ...event,
+    cycle_id: cycleId,
+    parent_hash: parentHash,
+    child_hash: childHash,
+    bundle_hash: bundleHash,
+  };
 }
 
 function formatRelativeDate(ts: string): string {
@@ -147,10 +148,12 @@ function LivePageHeader({
   nodes,
   isRunning,
   activeCycleId,
+  onTabChange,
 }: {
   nodes: LineageNode[];
   isRunning: boolean;
   activeCycleId: string | null;
+  onTabChange?: (tab: string) => void;
 }) {
   const keptThisWeek = countKeptThisWeek(nodes);
   const totalExperiments = nodes.length;
@@ -176,23 +179,25 @@ function LivePageHeader({
         </p>
       </div>
       <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-        <button
-          type="button"
+        <a
+          href="#optimizer-run-controls"
           className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:text-text hover:border-border-strong transition-colors"
         >
-          Configure loop
+          Configure run
+        </a>
+        <button
+          type="button"
+          onClick={() => onTabChange?.("genealogy")}
+          className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:text-text hover:border-border-strong transition-colors"
+        >
+          Genealogy
         </button>
         <button
           type="button"
-          className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:text-text hover:border-border-strong transition-colors"
-        >
-          What is this?
-        </button>
-        <button
-          type="button"
+          onClick={() => onTabChange?.("ladder")}
           className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90"
         >
-          Trigger off-cycle run
+          Writer ladder
         </button>
       </div>
     </div>
@@ -202,31 +207,53 @@ function LivePageHeader({
 // ─── Left column ──────────────────────────────────────────────────────────────
 
 function LaunchStrip() {
+  const queryClient = useQueryClient();
   const [strategyId, setStrategyId] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
   const { data: strategies, isPending: strategiesLoading } = useQuery({
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
   });
+  const launchMutation = useMutation({
+    mutationFn: startEveningCycle,
+    onSuccess: async (resp) => {
+      setLaunchError(null);
+      setLaunchMessage(resp.message);
+      await queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
+    },
+    onError: (err) => {
+      setLaunchMessage(null);
+      if (err instanceof ApiError) {
+        setLaunchError(err.field ? `${err.field}: ${err.message}` : err.message);
+      } else {
+        setLaunchError(err instanceof Error ? err.message : "Network error");
+      }
+    },
+  });
   const handleLaunch = async () => {
     const trimmed = strategyId.trim();
     if (!trimmed) { setLaunchError("Select a strategy"); return; }
-    setIsRunning(true);
     setLaunchError(null);
-    const err = await submitEveningCycle(
-      trimmed,
-      getStoredMutatorModel() ?? "claude-haiku-4-5-20251001",
-      getStoredJudgeModel() ?? "claude-sonnet-4-6",
-    );
-    setLaunchError(err);
-    setIsRunning(false);
+    setLaunchMessage(null);
+    launchMutation.mutate({
+      strategy_id: trimmed,
+      mutator_provider: getStoredMutatorProvider(),
+      mutator_model: getStoredMutatorModel(),
+      judge_provider: getStoredJudgeProvider(),
+      judge_model: getStoredJudgeModel(),
+    });
   };
-  const inp = "bg-surface border border-border rounded text-text text-[13px] px-2 py-1";
+  const isRunning = launchMutation.isPending;
+  const inp = "min-h-9 bg-surface-elev border border-border rounded text-text text-[13px] px-2 py-1";
   const noStrategies = !strategiesLoading && (!strategies || strategies.length === 0);
   return (
     <div className="flex flex-col gap-2">
+      <label htmlFor="optimizer-strategy" className="text-[12px] text-text-3">
+        Parent strategy
+      </label>
       <select
+        id="optimizer-strategy"
         value={strategyId}
         onChange={(e) => setStrategyId(e.target.value)}
         disabled={isRunning || strategiesLoading || noStrategies}
@@ -249,13 +276,16 @@ function LaunchStrip() {
       <button
         type="button"
         onClick={() => { void handleLaunch(); }}
-        disabled={isRunning}
+        disabled={isRunning || !strategyId.trim() || noStrategies}
         className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50"
       >
-        {isRunning ? "Running…" : "Start evening run"}
+        {isRunning ? "Starting…" : "Start evening run"}
       </button>
       {launchError !== null && (
         <span className="text-[13px] text-danger">{launchError}</span>
+      )}
+      {launchMessage !== null && (
+        <span className="text-[13px] text-green-500">{launchMessage}</span>
       )}
     </div>
   );
@@ -268,40 +298,52 @@ function ModelSelectRow() {
   const [mutatorModel, setMutatorModel] = useState<string>(() => getStoredMutatorModel() ?? "");
   const [judgeProvider, setJudgeProvider] = useState<string | null>(() => getStoredJudgeProvider());
   const [judgeModel, setJudgeModel] = useState<string>(() => getStoredJudgeModel() ?? "");
-  const sel = "bg-surface border border-border rounded text-text text-[13px] px-2 py-1";
+  const sel = "min-h-9 bg-surface-elev border border-border rounded text-text text-[13px] px-2 py-1";
   return (
     <div className="space-y-3 pt-3 border-t border-border">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-text-3 text-[12px] whitespace-nowrap">Writer</span>
+      <div className="space-y-1.5">
+        <span className="text-text-3 text-[12px] block">
+          Experiment writer
+        </span>
         <ModelPicker
           rows={rows}
           loading={providers.isLoading}
           provider={mutatorProvider}
           model={mutatorModel}
           onChange={(p, m) => { setMutatorProvider(p); setMutatorModel(m); if (p !== null) setStoredMutatorProvider(p); if (m) setStoredMutatorModel(m); }}
-          className={sel}
+          className={`${sel} w-full`}
           ariaLabel="Experiment writer model"
+          placeholder="Use config default"
         />
       </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-text-3 text-[12px] whitespace-nowrap">Reviewer</span>
+      <div className="space-y-1.5">
+        <span className="text-text-3 text-[12px] block">
+          Reviewer
+        </span>
         <ModelPicker
           rows={rows}
           loading={providers.isLoading}
           provider={judgeProvider}
           model={judgeModel}
           onChange={(p, m) => { setJudgeProvider(p); setJudgeModel(m); if (p !== null) setStoredJudgeProvider(p); if (m) setStoredJudgeModel(m); }}
-          className={sel}
+          className={`${sel} w-full`}
           ariaLabel="Reviewer model"
+          placeholder="Use writer provider/default"
         />
       </div>
+      {providers.isError && (
+        <p className="text-[12px] text-danger">Could not load provider models.</p>
+      )}
     </div>
   );
 }
 
 function CycleLeftCard() {
   return (
-    <div className="rounded-md border border-gold/30 bg-gradient-to-b from-gold/5 to-transparent p-5 space-y-4">
+    <div
+      id="optimizer-run-controls"
+      className="rounded-md border border-gold/30 bg-gradient-to-b from-gold/5 to-transparent p-5 space-y-4 scroll-mt-24"
+    >
       <span className="uppercase tracking-[0.22em] text-[9.5px] text-gold font-medium block">
         Evening Run
       </span>
@@ -562,18 +604,32 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
     };
     source.addEventListener("open", () => { setConnected(true); });
     source.addEventListener("message", handleMessage);
-    for (const name of CYCLE_EVENT_NAMES) source.addEventListener(name, handleMessage);
+    for (const name of SSE_EVENT_NAMES) source.addEventListener(name, handleMessage);
     source.addEventListener("error", () => { setConnected(false); });
-    return () => { source.close(); setConnected(false); };
+    return () => {
+      source.removeEventListener("message", handleMessage);
+      for (const eventName of SSE_EVENT_NAMES) {
+        source.removeEventListener(eventName, handleMessage);
+      }
+      source.close();
+      setConnected(false);
+    };
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView?.({ behavior: "smooth" });
+    if (typeof bottomRef.current?.scrollIntoView === "function") {
+      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
   }, [events.length]);
 
   return (
     <div className="space-y-6">
-      <LivePageHeader nodes={lineageNodes} isRunning={isRunning} activeCycleId={activeCycleId} />
+      <LivePageHeader
+        nodes={lineageNodes}
+        isRunning={isRunning}
+        activeCycleId={activeCycleId}
+        onTabChange={onTabChange}
+      />
       <div className="flex items-center gap-3">
         <span
           className={[
