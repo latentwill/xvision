@@ -1407,6 +1407,8 @@ impl XvisionTools {
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         };
 
         // 3. Validate shape.
