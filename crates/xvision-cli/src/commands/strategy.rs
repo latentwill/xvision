@@ -12,7 +12,7 @@ use xvision_engine::agent::pipeline::{
 use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
+use xvision_engine::api::{agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::diagnostics::{
     self, assert_launchable, CapabilityStatus, DiagnosticsError, StrategyDiagnostics,
 };
@@ -444,6 +444,9 @@ enum StrategyAction {
         #[arg(long)]
         json: bool,
     },
+    /// Scan the on-disk strategy directory for bundles missing from the search
+    /// index and backfill them. One-shot fix for existing index divergence.
+    Reindex,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -579,6 +582,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         } => leaderboard(&sort, top, since_days, json).await,
         StrategyAction::Apply { file, dry_run, json } => apply_strategy(&file, dry_run, json).await,
         StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
+        StrategyAction::Reindex => reindex().await,
     }
 }
 
@@ -597,6 +601,41 @@ async fn open_ctx() -> CliResult<ApiContext> {
     ApiContext::open(&home(), Actor::Cli { user })
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))
+}
+
+async fn reindex() -> CliResult<()> {
+    let home_dir = home();
+    let fs_store = store();
+    let on_disk_ids = fs_store.list().await.exit_with(XvnExit::Upstream)?;
+    let db_path = home_dir.join("xvn.db");
+    let indexed: std::collections::HashSet<String> =
+        api_search::indexed_strategy_ids_raw(&db_path).await.into_iter().collect();
+    let orphaned: Vec<&String> = on_disk_ids.iter()
+        .filter(|id| !indexed.contains(*id))
+        .collect();
+    if orphaned.is_empty() {
+        println!("all {} strategies indexed", on_disk_ids.len());
+        return Ok(());
+    }
+    let ctx = open_ctx().await?;
+    let mut attempted = 0usize;
+    for id in &orphaned {
+        match fs_store.load(id).await {
+            Ok(strategy) => {
+                api_search::upsert_strategy(&ctx, &strategy).await;
+                println!("attempted reindex: {id}");
+                attempted += 1;
+            }
+            Err(e) => eprintln!("warning: could not load strategy {id}: {e}"),
+        }
+    }
+    println!(
+        "reindex complete: {} on-disk strategies, {} attempted ({} already indexed; index writes are best-effort — check logs if search misses any)",
+        on_disk_ids.len(),
+        attempted,
+        on_disk_ids.len() - orphaned.len()
+    );
+    Ok(())
 }
 
 fn api_to_cli(prefix: &str, e: ApiError) -> CliError {

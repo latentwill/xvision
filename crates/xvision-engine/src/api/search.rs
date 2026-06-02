@@ -185,6 +185,36 @@ pub async fn seed_actions(ctx: &ApiContext) {
     }
 }
 
+/// Lightweight diagnostic read: return all strategy artifact IDs currently
+/// in the search index. Opens a minimal read-only pool directly against the
+/// given db path so callers (e.g. `xvn doctor`) that cannot call
+/// `ApiContext::open` (migrations print to stdout, corrupting `--json`)
+/// can still get an accurate count. Returns an empty vec on any error —
+/// the table may not exist yet on a fresh install.
+pub async fn indexed_strategy_ids_raw(db_path: &std::path::Path) -> Vec<String> {
+    if !db_path.exists() {
+        return vec![];
+    }
+    let opts = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true);
+    let pool = match sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+    {
+        Ok(p) => p,
+        Err(_) => return vec![],
+    };
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT artifact_id FROM search_index WHERE kind = 'strategy'")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+    pool.close().await;
+    rows
+}
+
 /// Cold-start walker: re-derive every index row from the authoritative
 /// stores. Safe to call on a fresh DB and on a populated one — `upsert`
 /// is idempotent.
