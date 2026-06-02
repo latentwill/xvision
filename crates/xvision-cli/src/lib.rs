@@ -446,9 +446,14 @@ impl Cli {
             Command::Model(cmd) => commands::model::run(cmd).await,
             Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
             Command::Optimize(cmd) => commands::optimize::run(cmd).await,
-            Command::Last { xvn_home, strategy, json, n } => {
-                commands::last::run(xvn_home, strategy, json, n).await.map_err(Into::into)
-            }
+            Command::Last {
+                xvn_home,
+                strategy,
+                json,
+                n,
+            } => commands::last::run(xvn_home, strategy, json, n)
+                .await
+                .map_err(Into::into),
         }
     }
 }

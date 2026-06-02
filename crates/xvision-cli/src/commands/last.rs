@@ -5,12 +5,7 @@ use xvision_engine::api::{Actor, ApiContext};
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 
-pub async fn run(
-    xvn_home: Option<PathBuf>,
-    strategy: Option<String>,
-    json: bool,
-    n: usize,
-) -> CliResult<()> {
+pub async fn run(xvn_home: Option<PathBuf>, strategy: Option<String>, json: bool, n: usize) -> CliResult<()> {
     let ctx = open_ctx(xvn_home).await.exit_with(XvnExit::Upstream)?;
 
     let runs = eval::list(
