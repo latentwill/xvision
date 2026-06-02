@@ -356,6 +356,10 @@ async fn live_fixtures(initial: f64) -> (RunStore, Strategy, Scenario, Run, temp
     // Live runs must carry their LiveConfig (store invariant).
     run.live_config = Some(live_config());
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
     (store, strategy, scenario, run, dir)
 }
 
@@ -708,6 +712,10 @@ async fn multi_asset_live_fixtures(initial: f64) -> (RunStore, Strategy, Scenari
     let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
     run.live_config = Some(multi_asset_live_config());
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
     (store, strategy, scenario, run, dir)
 }
 

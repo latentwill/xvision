@@ -44,7 +44,15 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -53,6 +61,18 @@ async fn fresh_store() -> RunStore {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -152,6 +172,10 @@ async fn paper_executor_emits_run_failed_on_unparseable_trader_output() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
 
     let bus = ProgressBus::new(1024);
     let mut rx = bus.subscribe();
@@ -218,6 +242,10 @@ async fn paper_executor_emits_all_progress_event_types() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
 
     // Subscribe BEFORE running so RunStarted isn't lost.
     let bus = ProgressBus::new(8192);
@@ -313,6 +341,10 @@ async fn paper_executor_runs_clean_with_no_progress_subscriber() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
 
     let bus = ProgressBus::new(8);
     let tx = bus.sender();
