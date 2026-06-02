@@ -450,6 +450,19 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     }
 
     if step.status != "completed" {
+        if step
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("budget_output_tokens_exceeded")
+        {
+            tracing::warn!(
+                event = "budget_misconfig_suspected",
+                run_id = %run_id,
+                role = %role,
+                hint = "max_tokens may be too low for this model — increase to ≥2048 in agent slot settings",
+            );
+        }
         return Err(ClineRuntimeError::StepNotCompleted {
             run_id,
             role,
