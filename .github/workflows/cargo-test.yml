@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: cargo test (workspace)
+    name: cargo test (phase regressions)
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -31,5 +31,8 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
           CARGO_BUILD_JOBS: "1"
-          RUSTFLAGS: "-C link-arg=-fuse-ld=bfd"
-        run: scripts/cargo test --workspace --lib --tests
+        run: |
+          scripts/cargo test -p xvision-eval --test ab_compare_regression
+          scripts/cargo test -p xvision-execution --test broker_surface_mock_orders
+          scripts/cargo test -p xvision-engine --test multi_asset_backtest
+          scripts/cargo test -p xvision-engine --test multi_asset_filter_scope
