@@ -668,7 +668,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             RiskDecision::Vetoed { .. } => {
                 return Err(ExecutorError::NotActionable("decision was vetoed".to_string()));
             }
-            RiskDecision::Approved { decision: td } => td,
+            RiskDecision::Approved { decision: td, .. } => td,
             RiskDecision::Modified { modified: td, .. } => td,
         };
 
