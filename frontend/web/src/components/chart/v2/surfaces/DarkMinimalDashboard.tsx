@@ -191,7 +191,7 @@ export function DarkMinimalDashboard({
 
       <div className="border border-border rounded-card bg-surface-card overflow-hidden">
         <header className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
-          <div className="caps">Equity</div>
+          <div className="caps">Return %</div>
           <div className="flex items-center gap-3 text-[11px] text-text-3">
             {payload.strategies.map((s) => (
               <span key={s.id} className="inline-flex items-center gap-1.5">

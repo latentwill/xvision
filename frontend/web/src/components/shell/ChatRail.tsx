@@ -545,6 +545,11 @@ export function ChatRail({
         >
           <Icon name="pulse" size={14} />
         </button>
+        <span className="text-[10px] font-semibold tracking-widest text-text-3 select-none"
+          style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+        >
+          CHAT
+        </span>
       </aside>
     );
   }

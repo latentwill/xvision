@@ -36,11 +36,12 @@ export function UplotDrawdownPane({
 
   // Compute the y-axis floor from the data (drawdown is always ≤ 0).
   const values = points.map((p) => p.value);
-  const minVal = values.length > 0 ? Math.min(...values) : -0.01;
+  const minVal = values.length > 0 ? values.reduce((a, b) => (b < a ? b : a), 0) : -0.01;
   // Pad 5 % so the fill area is visible.
   const paddedMin = minVal === 0 ? -0.01 : minVal * 1.05;
 
   const baseOpts = themeToUplotOptions(theme) as Partial<uPlot.Options>;
+  const [xAxis = {}, yAxisBase = {}] = (baseOpts as any).axes ?? [];
 
   const cursorOpts: uPlot.Cursor = {
     ...(baseOpts.cursor as uPlot.Cursor | undefined),
@@ -54,6 +55,15 @@ export function UplotDrawdownPane({
     width: 0,
     height,
     cursor: cursorOpts,
+    axes: [
+      xAxis,
+      {
+        ...yAxisBase,
+        size: 56,
+        values: (_u: uPlot, vals: (number | null)[]) =>
+          vals.map((v) => (v != null ? v.toFixed(1) + "%" : "")),
+      },
+    ],
     scales: {
       y: {
         // Negative-only; pin ceiling at 0.

@@ -224,6 +224,58 @@ export function xvnGradientFill(
 }
 
 /**
+ * Green-above/red-below gradient fill split at y=0. Used as `series.fill`
+ * callback on the return-% equity pane.
+ */
+export function buildReturnFillGradient(u: uPlot): CanvasGradient {
+  const yMax = u.scales.y.max ?? 10;
+  const yMin = u.scales.y.min ?? -10;
+  const top = u.valToPos(yMax, "y", true);
+  const bot = u.valToPos(yMin, "y", true);
+  const zero = u.valToPos(0, "y", true);
+  const grad = u.ctx.createLinearGradient(0, top, 0, bot);
+  const span = bot - top;
+  if (span <= 0) {
+    grad.addColorStop(0, "rgba(0,230,118,0.25)");
+    grad.addColorStop(1, "rgba(0,230,118,0)");
+    return grad;
+  }
+  const zf = Math.max(0, Math.min(1, (zero - top) / span));
+  const eps = 1 / Math.max(1, span);
+  grad.addColorStop(0, "rgba(0,230,118,0.25)");
+  grad.addColorStop(zf, "rgba(0,230,118,0)");
+  grad.addColorStop(Math.min(1, zf + eps), "rgba(239,68,68,0)");
+  grad.addColorStop(1, "rgba(239,68,68,0.20)");
+  return grad;
+}
+
+/**
+ * Dashed zero-baseline drawn across the plot area. Visible only when the
+ * y-scale spans zero (positive + negative returns both present).
+ */
+export function xvnZeroLine(): DrawHookPlugin {
+  return {
+    hooks: {
+      draw: (u) => {
+        const { min: yMin, max: yMax } = u.scales.y;
+        if (yMin == null || yMax == null || yMin > 0 || yMax < 0) return;
+        const y = u.valToPos(0, "y", true);
+        const ctx = u.ctx;
+        ctx.save();
+        ctx.strokeStyle = "rgba(255,255,255,0.20)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(u.bbox.left, y);
+        ctx.lineTo(u.bbox.left + u.bbox.width, y);
+        ctx.stroke();
+        ctx.restore();
+      },
+    },
+  };
+}
+
+/**
  * Horizontal sheen highlight in the top band of the plot — adds a
  * subtle "glass on curve" effect to the B4 hero equity pane.
  */

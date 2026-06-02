@@ -1,5 +1,6 @@
 import type { ScenarioPreviewPayload } from "@/api/types.gen";
-import type { EquityPoint, WizardPreviewV2Payload } from "../types";
+import type { WizardPreviewV2Payload } from "../types";
+import { normalizeEquityToReturnPct } from "./columnar-to-uplot";
 
 export function scenarioPreviewToWizardV2(
   p: ScenarioPreviewPayload,
@@ -16,8 +17,6 @@ export function scenarioPreviewToWizardV2(
       close: p.bars.map((b) => b.close),
       volume: p.bars.map((b) => b.volume),
     },
-    equity: (p.baseline_equity ?? []).map(
-      (e): EquityPoint => ({ time: e.time, value: e.equity_usd }),
-    ),
+    equity: normalizeEquityToReturnPct(p.baseline_equity ?? []),
   };
 }
