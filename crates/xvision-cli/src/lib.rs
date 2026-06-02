@@ -276,7 +276,7 @@ pub enum Command {
     Migrate(commands::migrate::MigrateCmd),
     /// Inspect agent records from the workspace agent library.
     Agent(commands::agent::AgentCmd),
-    /// Seed curated example strategies, scenarios, and tutorial artifacts.
+    /// Seed curated example scenarios and tutorial artifacts.
     Example(commands::example::ExampleCmd),
     /// Agent-run observability operations (retention, janitor).
     Obs(commands::obs::ObsCmd),
