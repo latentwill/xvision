@@ -161,24 +161,18 @@ pub fn signature_for(capability: Capability) -> OptimizerResult<BoxedSignature> 
 ///
 /// This is the offline reward signal an optimizer maximizes; it must be cheap
 /// and deterministic enough to run over a whole corpus.
-pub mod decision_grader {
-    //! See module-level doc on [`super::decision_grader`].
-}
+pub mod decision_grader {}
 
 /// `intern` (STUB — not yet implemented).
 ///
 /// Intended shape:
 /// * inputs: `task: String`, `raw_context: String`.
 /// * outputs: `digest: String` (condensed context for the trader stage).
-pub mod intern {
-    //! See module-level doc on [`super::intern`].
-}
+pub mod intern {}
 
 /// `chat_authoring` (STUB — not yet implemented).
 ///
 /// Intended shape:
 /// * inputs: `user_request: String`, `app_state: String`.
 /// * outputs: `reply: String`. Non-trading; lowest-risk capability.
-pub mod chat_authoring {
-    //! See module-level doc on [`super::chat_authoring`].
-}
+pub mod chat_authoring {}

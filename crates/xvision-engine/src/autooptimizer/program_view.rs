@@ -49,11 +49,9 @@ pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
         regime_slot: base.regime_slot.clone(),
         intern_slot: base.intern_slot.clone(),
         trader_slot: base.trader_slot.clone(),
-        activation_mode: base.activation_mode.clone(),
+        activation_mode: base.activation_mode,
         filter: base.filter.clone(),
         acknowledge_no_filter: base.acknowledge_no_filter,
-        decision_mode: base.decision_mode.clone(),
-        mechanistic_config: base.mechanistic_config.clone(),
     })
 }
 
@@ -94,15 +92,15 @@ fn extract_sections(md: &str) -> HashMap<String, String> {
     let mut current_body = String::new();
     let lines: Vec<&str> = md.lines().collect();
     let limit = lines.len().min(8192);
-    for i in 0..limit {
-        if let Some(rest) = lines[i].strip_prefix("## ") {
+    for line in lines.iter().take(limit) {
+        if let Some(rest) = line.strip_prefix("## ") {
             if let Some(name) = current_name.take() {
                 map.insert(name, current_body.trim().to_owned());
                 current_body = String::new();
             }
             current_name = Some(rest.trim().to_owned());
         } else if current_name.is_some() {
-            current_body.push_str(lines[i]);
+            current_body.push_str(line);
             current_body.push('\n');
         }
     }
@@ -133,8 +131,8 @@ fn parse_agents_section(content: &str) -> Result<Vec<AgentRef>> {
         if lines[i].starts_with("### ") {
             let start = i + 1;
             let mut end = start;
-            for j in start..limit {
-                if lines[j].starts_with("### ") {
+            for (j, line) in lines.iter().enumerate().take(limit).skip(start) {
+                if line.starts_with("### ") {
                     break;
                 }
                 end = j + 1;
