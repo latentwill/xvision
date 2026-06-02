@@ -78,6 +78,11 @@ pub struct ClineDispatchCtx {
     /// `None` ⇒ no recording (live/backtest default): `record = false`,
     /// `slot_role = None` — byte-identical to the pre-§2-B path.
     pub recording_slot_role: Option<String>,
+    /// Current per-asset decision scope for registry-backed market-data
+    /// callbacks. The eval dispatcher sets this immediately before each
+    /// sidecar step; the callback adapter rejects `ohlcv` /
+    /// `indicator_panel` calls whose input asset differs from this value.
+    pub tool_asset_guard: Option<Arc<tokio::sync::RwLock<Option<String>>>>,
 }
 
 /// Scope at which a `FilterSignal` is meaningful. First-class so cross-asset
@@ -439,6 +444,18 @@ fn cline_run_id(input: &DispatchInput<'_>) -> String {
     format!("{base}::{}::cycle{}", input.resolved.role, input.cycle_idx)
 }
 
+fn current_decision_asset_for_tools(inputs: &serde_json::Value) -> Option<&str> {
+    inputs
+        .get("asset")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            inputs
+                .get("market_data")
+                .and_then(|v| v.get("asset"))
+                .and_then(|v| v.as_str())
+        })
+}
+
 /// Run the slot's LLM call through whichever runtime is selected. The
 /// Cline branch (item 4 of the Stage 1 design) builds a `ClineSlotInput`
 /// from the dispatch context and calls [`execute_slot_cline`]; otherwise
@@ -463,7 +480,10 @@ async fn execute_slot_for_runtime(
             .as_deref()
             .filter(|r| *r == input.slot.role.as_str())
             .map(str::to_string);
-        return execute_slot_cline(ClineSlotInput {
+        if let Some(guard) = ctx.tool_asset_guard.as_ref() {
+            *guard.write().await = current_decision_asset_for_tools(&input.upstream_inputs).map(str::to_string);
+        }
+        let result = execute_slot_cline(ClineSlotInput {
             slot: input.slot,
             provider_entry: &ctx.provider_entry,
             api_key: ctx.api_key.clone(),
@@ -482,6 +502,10 @@ async fn execute_slot_for_runtime(
             record_slot_role,
         })
         .await;
+        if let Some(guard) = ctx.tool_asset_guard.as_ref() {
+            *guard.write().await = None;
+        }
+        return result;
     }
 
     execute_slot(SlotInput {

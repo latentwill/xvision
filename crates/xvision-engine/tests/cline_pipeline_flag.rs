@@ -177,6 +177,7 @@ async fn pipeline_cline_runtime_produces_trader_decision() {
             provider_entry: anthropic_entry(),
             api_key: Some("test-key".into()),
             recording_slot_role: None,
+            tool_asset_guard: None,
         }),
     })
     .await

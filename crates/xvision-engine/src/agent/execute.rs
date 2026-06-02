@@ -64,6 +64,45 @@ pub enum ExecuteSlotError {
     },
 }
 
+fn current_decision_asset(inputs: &serde_json::Value) -> Option<&str> {
+    inputs
+        .get("asset")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            inputs
+                .get("market_data")
+                .and_then(|v| v.get("asset"))
+                .and_then(|v| v.as_str())
+        })
+}
+
+fn normalize_asset_for_compare(asset: &str) -> String {
+    let upper = asset.trim().to_ascii_uppercase();
+    let base = upper.split('/').next().unwrap_or(&upper);
+    base.strip_suffix("USD").unwrap_or(base).to_string()
+}
+
+fn market_data_tool_asset_mismatch(
+    tool_name: &str,
+    tool_input: &serde_json::Value,
+    decision_asset: Option<&str>,
+) -> Option<String> {
+    if !matches!(tool_name, "ohlcv" | "indicator_panel") {
+        return None;
+    }
+    let decision_asset = decision_asset?;
+    let requested_asset = tool_input.get("asset").and_then(|v| v.as_str())?;
+    if normalize_asset_for_compare(decision_asset) == normalize_asset_for_compare(requested_asset) {
+        return None;
+    }
+
+    Some(format!(
+        "tool error: asset mismatch for {tool_name}: current decision asset is {decision_asset} \
+         but tool requested {requested_asset}. Use the current decision asset only; do not fetch \
+         cross-asset market data for this per-asset decision."
+    ))
+}
+
 pub struct SlotInput<'a> {
     pub slot: &'a LLMSlot,
     /// The system prompt fed to the LLM for this slot.
@@ -219,9 +258,12 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         inputs_for_prompt
     };
 
+    let decision_asset = current_decision_asset(&inputs_for_prompt).map(str::to_string);
+
     let initial_user = format!(
         "Inputs:\n{}\n\nFollow the slot's instructions. You may call tools \
-         to fetch additional data; emit your final decision as JSON.",
+         to fetch additional data for the current decision asset only; emit \
+         your final decision as JSON.",
         serde_json::to_string_pretty(&inputs_for_prompt)?
     );
 
@@ -731,11 +773,15 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             // `repeated_tool_failure` tool_result.
             let allowed = input.slot.allowed_tools.iter().any(|name| name == &tu_name);
             let blocked = repeated_failures.is_blocked(&tu_name, &tu_input);
+            let asset_mismatch =
+                market_data_tool_asset_mismatch(&tu_name, &tu_input, decision_asset.as_deref());
             let (content, is_error) = if !allowed {
                 (
                     format!("tool error: tool '{tu_name}' is not allowed for this slot"),
                     Some(true),
                 )
+            } else if let Some(message) = asset_mismatch {
+                (message, Some(true))
             } else if blocked {
                 (repeated_tool_failure_result(&tu_name), Some(true))
             } else {
