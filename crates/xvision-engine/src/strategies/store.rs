@@ -7,6 +7,7 @@ use thiserror::Error;
 
 use crate::strategies::id::{validate_strategy_id_for_path, StrategyIdError};
 use crate::strategies::Strategy;
+use xvision_filters::ActivationMode;
 
 /// Partial-update body for [`update_metadata`]. All fields are
 /// optional; `None` means "leave the existing value unchanged". A
@@ -217,7 +218,13 @@ pub fn apply_metadata_patch(
 /// Public so alternative `StrategyStore` impls (in-memory stubs,
 /// future remote stores) can call the same seam instead of
 /// re-deriving the checks.
-pub fn validate_strategy_for_persist(_strategy: &Strategy) -> anyhow::Result<()> {
+pub fn validate_strategy_for_persist(strategy: &Strategy) -> anyhow::Result<()> {
+    if strategy.activation_mode == ActivationMode::FilterGated && strategy.filter.is_none() {
+        anyhow::bail!(
+            "activation_mode is filter_gated but filter is None — \
+             the filter block failed to load or is missing from the file"
+        );
+    }
     Ok(())
 }
 
