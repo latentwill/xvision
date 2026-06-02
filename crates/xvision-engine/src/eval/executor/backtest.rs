@@ -751,6 +751,8 @@ impl Executor {
         let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
         let bar_period_minutes = cadence_min.max(1) as u32;
         let mut n_trades = 0u32;
+        let mut wins = 0u32;
+        let mut realized_count = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         // Wall-clock anchor for `EvalLimits::max_wall_clock_secs`. Captured
@@ -1879,6 +1881,12 @@ impl Executor {
                     },
                 };
                 store.record_decision(&decision_row).await?;
+                if pre_fill_position != 0.0 && fill.fill_price.is_some() {
+                    realized_count += 1;
+                    if fill.realized_pnl > 0.0 {
+                        wins += 1;
+                    }
+                }
                 self.emit_chart(
                     &run.id,
                     RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
@@ -2086,7 +2094,11 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: 0.0,
+            win_rate: if realized_count > 0 {
+                wins as f64 / realized_count as f64
+            } else {
+                0.0
+            },
             n_trades,
             n_decisions: decision_idx,
             baselines: Some(baselines),
@@ -2287,6 +2299,8 @@ impl Executor {
         // unique index so the `(run_id, decision_index)` PK never collides.
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
+        let mut wins = 0u32;
+        let mut realized_count = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let run_started: Instant = Instant::now();
@@ -2402,6 +2416,7 @@ impl Executor {
             let asset_signal_cache = signal_cache
                 .entry(asset_sym)
                 .or_insert_with(crate::agent::signal_cache::SignalCache::new);
+            let pre_fill_position = book.position(asset_sym);
             let outcome = self
                 .decide_one_live(
                     DecideOneLiveCtx {
@@ -2443,6 +2458,12 @@ impl Executor {
 
             if outcome.fill_happened {
                 n_trades += 1;
+            }
+            if pre_fill_position != 0.0 && outcome.fill_happened {
+                realized_count += 1;
+                if outcome.realized_pnl > 0.0 {
+                    wins += 1;
+                }
             }
             // Per-asset open-direction memory: write back THIS asset's
             // updated direction only.
@@ -2547,7 +2568,11 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: 0.0,
+            win_rate: if realized_count > 0 {
+                wins as f64 / realized_count as f64
+            } else {
+                0.0
+            },
             n_trades,
             n_decisions: decision_idx,
             // Live runs do not compute the four backtest baselines (they
@@ -2896,6 +2921,7 @@ impl Executor {
             input_tokens,
             output_tokens,
             fill_happened,
+            realized_pnl: fill.realized_pnl,
             last_open_direction,
             broker_error,
         })
@@ -2963,6 +2989,7 @@ struct LiveDecisionOutcome {
     input_tokens: u64,
     output_tokens: u64,
     fill_happened: bool,
+    realized_pnl: f64,
     last_open_direction: Option<GuardAction>,
     broker_error: Option<(xvision_execution::broker_surface::BrokerErrorClass, String)>,
 }
