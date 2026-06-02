@@ -365,9 +365,6 @@ pub struct CancelArgs {
 }
 
 #[derive(Args, Debug)]
-
-#[derive(Args, Debug)]
-#[derive(Args, Debug)]
 pub struct SweepArgs {
     /// Strategy agent id.
     #[arg(long)]
@@ -411,7 +408,9 @@ pub struct SweepArgs {
     /// Skip provider reachability preflight.
     #[arg(long)]
     pub skip_preflight: bool,
+}
 
+#[derive(Args, Debug)]
 pub struct ScenariosArgs {
     /// Override the xvn home directory.
     #[arg(long)]
@@ -1709,15 +1708,19 @@ async fn run_attest(args: AttestArgs) -> CliResult<()> {
     Ok(())
 }
 
-
 fn parse_duration_days(s: &str) -> Result<u64, String> {
     let s = s.trim();
     if let Some(n) = s.strip_suffix("d") {
-        n.parse::<u64>().map_err(|_| format!("invalid duration '{s}' — expected e.g. 90d"))
+        n.parse::<u64>()
+            .map_err(|_| format!("invalid duration '{s}' — expected e.g. 90d"))
     } else if let Some(n) = s.strip_suffix("w") {
-        n.parse::<u64>().map(|v| v * 7).map_err(|_| format!("invalid duration '{s}'"))
+        n.parse::<u64>()
+            .map(|v| v * 7)
+            .map_err(|_| format!("invalid duration '{s}'"))
     } else if let Some(n) = s.strip_suffix("mo") {
-        n.parse::<u64>().map(|v| v * 30).map_err(|_| format!("invalid duration '{s}'"))
+        n.parse::<u64>()
+            .map(|v| v * 30)
+            .map_err(|_| format!("invalid duration '{s}'"))
     } else {
         Err(format!("invalid duration '{s}' — expected: 90d, 6w, 3mo"))
     }
@@ -1760,9 +1763,7 @@ struct SweepRunResult {
     n_decisions: u32,
 }
 
-fn resolve_assets_subset(
-    assets: &[String],
-) -> CliResult<Option<Vec<xvision_core::trading::AssetSymbol>>> {
+fn resolve_assets_subset(assets: &[String]) -> CliResult<Option<Vec<xvision_core::trading::AssetSymbol>>> {
     if assets.is_empty() {
         return Ok(None);
     }
@@ -1811,18 +1812,31 @@ async fn run_sweep_window(
     assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
     eff_max_decisions: Option<u32>,
 ) -> CliResult<SweepRunResult> {
-    let clone_name = format!("sweep {}..{}", win_start.format("%Y-%m-%d"), win_end.format("%Y-%m-%d"));
+    let clone_name = format!(
+        "sweep {}..{}",
+        win_start.format("%Y-%m-%d"),
+        win_end.format("%Y-%m-%d")
+    );
     let cloned = api_scenario::clone(
-        ctx, scenario,
+        ctx,
+        scenario,
         api_scenario::ScenarioMutations {
             display_name: Some(clone_name.clone()),
             time_window: Some(TimeWindow {
-                start: win_start.and_hms_opt(0, 0, 0).expect("midnight is always valid").and_utc(),
-                end: win_end.and_hms_opt(0, 0, 0).expect("midnight is always valid").and_utc(),
+                start: win_start
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is always valid")
+                    .and_utc(),
+                end: win_end
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is always valid")
+                    .and_utc(),
             }),
             ..Default::default()
         },
-    ).await.map_err(|e| api_to_cli("sweep (clone scenario)", e))?;
+    )
+    .await
+    .map_err(|e| api_to_cli("sweep (clone scenario)", e))?;
     let limits = eff_max_decisions.map(|n| xvision_engine::eval::limits::EvalLimits {
         max_decisions: Some(n),
         max_input_tokens: None,
@@ -1846,7 +1860,9 @@ async fn run_sweep_window(
         max_annotations_per_review: None,
         trajectory_mode: RunTrajectoryMode::Live,
     };
-    let run = eval::run(ctx, req).await.map_err(|e| api_to_cli("sweep (eval run)", e))?;
+    let run = eval::run(ctx, req)
+        .await
+        .map_err(|e| api_to_cli("sweep (eval run)", e))?;
     Ok(sweep_run_result(win_start, win_end, cloned.id, &run))
 }
 
@@ -1867,9 +1883,15 @@ fn print_sweep_results(results: &Vec<SweepRunResult>, json: bool) -> CliResult<(
             "{:<12}  {:<12}  {:>10}  {:>8}  {:>8}  {:>6}  {:>9}",
             r.window_start,
             r.window_end,
-            r.return_pct.map(|v| format!("{:.2}", v)).unwrap_or_else(|| "-".into()),
-            r.sharpe.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "-".into()),
-            r.max_drawdown_pct.map(|v| format!("{:.2}", v)).unwrap_or_else(|| "-".into()),
+            r.return_pct
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or_else(|| "-".into()),
+            r.sharpe
+                .map(|v| format!("{:.3}", v))
+                .unwrap_or_else(|| "-".into()),
+            r.max_drawdown_pct
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or_else(|| "-".into()),
             r.n_trades,
             r.n_decisions,
         );
@@ -1878,19 +1900,31 @@ fn print_sweep_results(results: &Vec<SweepRunResult>, json: bool) -> CliResult<(
 }
 
 async fn run_sweep(args: SweepArgs) -> CliResult<()> {
-    let ctx = open_ctx(args.xvn_home.clone()).await.exit_with(XvnExit::Upstream)?;
-    let window_days = parse_duration_days(&args.window)
-        .map_err(|e| CliError { exit: XvnExit::Usage, source: anyhow::anyhow!("{e}") })?;
-    let step_days = parse_duration_days(&args.step)
-        .map_err(|e| CliError { exit: XvnExit::Usage, source: anyhow::anyhow!("{e}") })?;
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let window_days = parse_duration_days(&args.window).map_err(|e| CliError {
+        exit: XvnExit::Usage,
+        source: anyhow::anyhow!("{e}"),
+    })?;
+    let step_days = parse_duration_days(&args.step).map_err(|e| CliError {
+        exit: XvnExit::Usage,
+        source: anyhow::anyhow!("{e}"),
+    })?;
     if window_days == 0 || step_days == 0 {
-        return Err(CliError { exit: XvnExit::Usage, source: anyhow::anyhow!("--window and --step must be > 0") });
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--window and --step must be > 0"),
+        });
     }
     let windows = generate_windows(args.from, args.to, window_days, step_days);
     if windows.is_empty() {
-        return Err(CliError { exit: XvnExit::Usage, source: anyhow::anyhow!(
-            "no windows generated — window end exceeds --to for every start position"
-        ) });
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "no windows generated — window end exceeds --to for every start position"
+            ),
+        });
     }
     let (eff_provider, eff_model, eff_max_decisions) = match args.profile {
         Some(p) => (
@@ -1901,27 +1935,61 @@ async fn run_sweep(args: SweepArgs) -> CliResult<()> {
         None => (args.provider, args.model, args.max_decisions),
     };
     let provider_override = match (eff_provider.as_deref(), eff_model.as_deref()) {
-        (Some(p), Some(m)) => Some(ProviderOverride { provider: p.to_string(), model: m.to_string() }),
-        (Some(_), None) => return Err(CliError { exit: XvnExit::Usage, source: anyhow::anyhow!("--provider requires --model") }),
-        (None, Some(_)) => return Err(CliError { exit: XvnExit::Usage, source: anyhow::anyhow!("--model requires --provider") }),
+        (Some(p), Some(m)) => Some(ProviderOverride {
+            provider: p.to_string(),
+            model: m.to_string(),
+        }),
+        (Some(_), None) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--provider requires --model"),
+            })
+        }
+        (None, Some(_)) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--model requires --provider"),
+            })
+        }
         (None, None) => None,
     };
     let assets_subset = resolve_assets_subset(&args.assets)?;
     crate::progress!(
         "Sweep: {} window(s) strategy={} scenario={}",
-        windows.len(), args.strategy, args.scenario
+        windows.len(),
+        args.strategy,
+        args.scenario
     );
     let mut results: Vec<SweepRunResult> = Vec::new();
     for (i, (win_start, win_end)) in windows.iter().enumerate() {
         let result = run_sweep_window(
-            &ctx, i, windows.len(), *win_start, *win_end,
-            &args.strategy, &args.scenario, args.skip_preflight,
-            provider_override.clone(), assets_subset.clone(), eff_max_decisions,
-        ).await?;
-        eprintln!("  return={} sharpe={} dd={}",
-            result.return_pct.map(|v| format!("{:.2}%", v)).unwrap_or_else(|| "-".into()),
-            result.sharpe.map(|v| format!("{:.3}", v)).unwrap_or_else(|| "-".into()),
-            result.max_drawdown_pct.map(|v| format!("{:.2}%", v)).unwrap_or_else(|| "-".into()),
+            &ctx,
+            i,
+            windows.len(),
+            *win_start,
+            *win_end,
+            &args.strategy,
+            &args.scenario,
+            args.skip_preflight,
+            provider_override.clone(),
+            assets_subset.clone(),
+            eff_max_decisions,
+        )
+        .await?;
+        eprintln!(
+            "  return={} sharpe={} dd={}",
+            result
+                .return_pct
+                .map(|v| format!("{:.2}%", v))
+                .unwrap_or_else(|| "-".into()),
+            result
+                .sharpe
+                .map(|v| format!("{:.3}", v))
+                .unwrap_or_else(|| "-".into()),
+            result
+                .max_drawdown_pct
+                .map(|v| format!("{:.2}%", v))
+                .unwrap_or_else(|| "-".into()),
         );
         results.push(result);
     }
