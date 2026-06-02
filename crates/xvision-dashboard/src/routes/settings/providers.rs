@@ -1,8 +1,8 @@
 //! `/api/settings/providers` — list / show / add / remove registered
 //! LLM providers. Thin shim over `engine::api::settings::providers::*`.
 //!
-//! Config path resolution: `$XVN_CONFIG_PATH` if set, else
-//! `<cwd>/config/default.toml`. Matches what the `xvn provider` CLI uses.
+//! Config path resolution: `$XVN_CONFIG_PATH`, then `$XVN_CONFIG`, else
+//! `<cwd>/config/default.toml`.
 
 use axum::{
     extract::{Path, State},
@@ -23,9 +23,14 @@ use crate::error::DashboardError;
 use crate::state::AppState;
 
 fn config_path() -> PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
+    for env_name in [
+        xvision_core::config::XVN_CONFIG_PATH_ENV,
+        xvision_core::config::XVN_CONFIG_ENV,
+    ] {
+        if let Ok(path) = std::env::var(env_name) {
+            if !path.is_empty() {
+                return PathBuf::from(path);
+            }
         }
     }
     std::env::current_dir()

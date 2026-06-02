@@ -290,15 +290,7 @@ async fn build_arm_dispatch(
     provider: &str,
     _model: &str,
 ) -> CliResult<Arc<dyn LlmDispatch>> {
-    let cfg_path = if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            PathBuf::from(p)
-        } else {
-            ctx.xvn_home.join("config").join("default.toml")
-        }
-    } else {
-        ctx.xvn_home.join("config").join("default.toml")
-    };
+    let cfg_path = config::runtime_config_path(&ctx.xvn_home);
     let cfg = tokio::task::spawn_blocking(move || config::load_runtime(&cfg_path))
         .await
         .map_err(|e| CliError::upstream(anyhow!("load_runtime join: {e}")))?

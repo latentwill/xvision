@@ -129,12 +129,17 @@ pub async fn resolve(
     })
 }
 
-/// Reuse the same `XVN_CONFIG_PATH` / `<cwd>/config/default.toml`
+/// Reuse the same config-path override / `<cwd>/config/default.toml`
 /// resolution that the providers CRUD route uses.
 fn config_path() -> PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
+    for env_name in [
+        xvision_core::config::XVN_CONFIG_PATH_ENV,
+        xvision_core::config::XVN_CONFIG_ENV,
+    ] {
+        if let Ok(path) = std::env::var(env_name) {
+            if !path.is_empty() {
+                return PathBuf::from(path);
+            }
         }
     }
     std::env::current_dir()

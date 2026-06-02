@@ -2251,12 +2251,7 @@ fn recording_persist_failed(client: &Option<Arc<AgentClient>>) -> bool {
 }
 
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return p.into();
-        }
-    }
-    ctx.xvn_home.join("config").join("default.toml")
+    xvision_core::config::runtime_config_path(&ctx.xvn_home)
 }
 
 /// Load every configured provider's cached catalog once per eval run.

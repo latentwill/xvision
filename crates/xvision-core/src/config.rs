@@ -13,6 +13,9 @@ use garde::Validate;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub const XVN_CONFIG_PATH_ENV: &str = "XVN_CONFIG_PATH";
+pub const XVN_CONFIG_ENV: &str = "XVN_CONFIG";
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("config file not found: {0}")]
@@ -550,6 +553,17 @@ pub fn load_runtime(path: &Path) -> Result<RuntimeConfig, ConfigError> {
         message: msg,
     })?;
     Ok(cfg)
+}
+
+pub fn runtime_config_path(xvn_home: &Path) -> PathBuf {
+    for env_name in [XVN_CONFIG_PATH_ENV, XVN_CONFIG_ENV] {
+        if let Ok(path) = std::env::var(env_name) {
+            if !path.is_empty() {
+                return PathBuf::from(path);
+            }
+        }
+    }
+    xvn_home.join("config").join("default.toml")
 }
 
 fn validate_unique_provider_names(cfg: &RuntimeConfig) -> Result<(), String> {

@@ -201,12 +201,7 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
 }
 
 fn runtime_config_path(xvn_home: &std::path::Path) -> PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
-    }
-    xvn_home.join("config").join("default.toml")
+    xvision_core::config::runtime_config_path(xvn_home)
 }
 
 fn resolve_xvn_home() -> Result<PathBuf> {

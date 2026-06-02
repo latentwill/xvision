@@ -1230,12 +1230,7 @@ async fn collect_strategy_runtime_requirements(
 }
 
 fn runtime_config_path(ctx: &ApiContext) -> PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return PathBuf::from(p);
-        }
-    }
-    ctx.xvn_home.join("config").join("default.toml")
+    xvision_core::config::runtime_config_path(&ctx.xvn_home)
 }
 
 async fn load_runtime_config(ctx: &ApiContext) -> ApiResult<RuntimeConfig> {

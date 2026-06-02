@@ -127,3 +127,35 @@ fn list_effective_json_emits_canonical_shape() {
     assert_eq!(models[0]["id"], "deepseek/deepseek-v4-flash");
     assert_eq!(models[0]["enabled"], true);
 }
+
+#[test]
+fn list_honors_xvn_config_alias() {
+    let home = setup();
+    let override_dir = tempdir().expect("tempdir");
+    let override_path = override_dir.path().join("compat-default.toml");
+    let override_config = MIN_CONFIG.replace("openrouter", "compatrouter");
+    std::fs::write(&override_path, override_config).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
+        .args(["provider", "list", "--format", "json-compact"])
+        .env("XVN_HOME", home.path())
+        .env("XVN_CONFIG", &override_path)
+        .env_remove("XVN_CONFIG_PATH")
+        .env_remove("XVN_PARITY_CLI_OPENROUTER_KEY")
+        .output()
+        .expect("xvn provider list --format json-compact");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout must be JSON: {e}\nstdout: {}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    let rows = body.as_array().expect("top-level must be an array");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["provider"], "compatrouter");
+}

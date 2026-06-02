@@ -335,12 +335,7 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
 }
 
 fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return p.into();
-        }
-    }
-    ctx.xvn_home.join("config").join("default.toml")
+    config::runtime_config_path(&ctx.xvn_home)
 }
 
 #[cfg(test)]
