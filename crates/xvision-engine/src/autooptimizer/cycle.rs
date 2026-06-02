@@ -76,8 +76,9 @@ pub async fn run_evening_cycle(
     paper_tester: &dyn PaperTestRunner,
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
     dspy_ctx: Option<&DspyContext>,
+    cycle_id_override: Option<String>,
 ) -> Result<CycleResult> {
-    let cycle_id = Ulid::new().to_string();
+    let cycle_id = cycle_id_override.unwrap_or_else(|| Ulid::new().to_string());
     let min_improvement =
         effective_min_improvement_for_cycle(pool, config, 0, cycle_config.sustained_no_pass_cycles)
             .await?

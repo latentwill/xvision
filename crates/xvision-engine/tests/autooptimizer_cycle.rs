@@ -363,6 +363,7 @@ async fn run_evening_cycle_smoke() {
             events_clone.lock().unwrap().push(evt);
         },
         None,
+        None,
     )
     .await;
 
