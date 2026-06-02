@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
+import { apiFetch, ApiError } from "@/api/client";
 import { type CycleProgressEvent, formatEventLabel } from "./api";
 import {
   getStoredJudgeModel,
@@ -18,8 +19,21 @@ import { listStrategies, strategyKeys } from "@/api/strategies";
 import { listProviders, settingsKeys } from "@/api/settings";
 
 type EventRow = CycleProgressEvent & { _row_id: number };
+type NormalizedEvent = Omit<EventRow, "_row_id">;
 
 let nextRowId = 1;
+
+const CYCLE_EVENT_NAMES = [
+  "cycle_started",
+  "parent_selected",
+  "mutation_proposed",
+  "mutation_gated",
+  "mutation_gated_passed",
+  "mutation_gated_dropped",
+  "honesty_check_run",
+  "judge_finding",
+  "cycle_sealed",
+] as const;
 
 async function submitEveningCycle(
   strategyId: string,
@@ -27,33 +41,21 @@ async function submitEveningCycle(
   judgeModel: string,
 ): Promise<string | null> {
   try {
-    const resp = await fetch("/api/autooptimizer/evening-cycle", {
+    await apiFetch<{ started: boolean; message: string }>("/api/autooptimizer/evening-cycle", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         strategy_id: strategyId,
         mutator_model: mutatorModel,
         judge_model: judgeModel,
       }),
     });
-    if (resp.status === 404 || resp.status === 501) return "Not yet available on this server";
-    if (!resp.ok) {
-      const text = await resp.text();
-      return errorMessageFromResponse(text) || `Error ${resp.status}`;
-    }
     return null;
   } catch (e) {
+    if (e instanceof ApiError) {
+      if (e.status === 404 || e.status === 501) return "Not yet available on this server";
+      return e.message || `Error ${e.status}`;
+    }
     return e instanceof Error ? e.message : "Network error";
-  }
-}
-
-function errorMessageFromResponse(text: string): string {
-  if (!text) return "";
-  try {
-    const parsed = JSON.parse(text) as { message?: unknown };
-    return typeof parsed.message === "string" ? parsed.message : text;
-  } catch {
-    return text;
   }
 }
 
@@ -86,6 +88,7 @@ function LaunchStrip() {
         value={strategyId}
         onChange={(e) => setStrategyId(e.target.value)}
         disabled={isRunning || strategiesLoading || noStrategies}
+        aria-label="Strategy"
         className={`${inp} w-full`}
       >
         {strategiesLoading ? (
@@ -187,13 +190,7 @@ function KeptNextCard() {
   );
 }
 
-function EventLogCard({
-  events,
-  bottomRef,
-}: {
-  events: EventRow[];
-  bottomRef: { current: HTMLDivElement | null };
-}) {
+function EventLogCard({ events, bottomRef }: { events: EventRow[]; bottomRef: RefObject<HTMLDivElement> }) {
   return (
     <Card>
       <CardHeader title="Live progress · cycle events" />
@@ -279,25 +276,31 @@ export function LiveCycleView() {
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const appendEvent = (event: CycleProgressEvent) => {
+    const normalized = normalizeCycleEvent(event);
+    if (!normalized) return;
+    setEvents((prev) => {
+      const row: EventRow = { ...normalized, _row_id: nextRowId++ };
+      const next = prev.length >= 200 ? prev.slice(1) : prev;
+      return [...next, row];
+    });
+  };
+
   useEffect(() => {
     const source = new EventSource("/api/autooptimizer/events");
+    const handleMessage = (ev: Event) => {
+      const event = parseSsePayload((ev as MessageEvent).data, ev.type);
+      if (event) appendEvent(event);
+    };
     source.addEventListener("open", () => { setConnected(true); });
-    source.addEventListener("message", (ev) => {
-      let parsed: CycleProgressEvent | null = null;
-      try { parsed = JSON.parse(ev.data as string) as CycleProgressEvent; } catch { return; }
-      if (!parsed) return;
-      setEvents((prev) => {
-        const row: EventRow = { ...parsed!, _row_id: nextRowId++ };
-        const next = prev.length >= 200 ? prev.slice(1) : prev;
-        return [...next, row];
-      });
-    });
+    source.addEventListener("message", handleMessage);
+    for (const name of CYCLE_EVENT_NAMES) source.addEventListener(name, handleMessage);
     source.addEventListener("error", () => { setConnected(false); });
     return () => { source.close(); setConnected(false); };
   }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView?.({ behavior: "smooth" });
   }, [events.length]);
 
   return (
@@ -325,7 +328,8 @@ export function LiveCycleView() {
   );
 }
 
-function formatEventTime(ts: string): string {
+function formatEventTime(ts: string | undefined): string {
+  if (!ts) return "—";
   try {
     const d = new Date(ts);
     return d.toLocaleTimeString(undefined, {
@@ -336,4 +340,58 @@ function formatEventTime(ts: string): string {
   } catch {
     return ts;
   }
+}
+
+function parseSsePayload(raw: unknown, fallbackKind: string): CycleProgressEvent | null {
+  if (typeof raw !== "string" || raw.trim() === "") return null;
+  const parsed = parseJsonObject(raw);
+  if (!parsed) return null;
+  if ("dropped" in parsed) return null;
+
+  const data = isRecord(parsed.data) ? parsed.data : parsed;
+  const kind =
+    stringValue(data.event_type) ??
+    stringValue(data.type) ??
+    stringValue(parsed.kind) ??
+    fallbackKind;
+  if (kind === "message") return null;
+  return {
+    ...data,
+    event_type: kind,
+    kind,
+    display_label: stringValue(parsed.display_label) ?? stringValue(data.display_label),
+    ts: stringValue(data.ts) ?? new Date().toISOString(),
+    cycle_id: stringValue(data.cycle_id),
+    bundle_hash: stringValue(data.bundle_hash),
+    parent_hash: stringValue(data.parent_hash),
+    child_hash: stringValue(data.child_hash),
+  };
+}
+
+function normalizeCycleEvent(event: CycleProgressEvent): NormalizedEvent | null {
+  const eventType = event.event_type ?? event.type ?? event.kind;
+  if (!eventType) return null;
+  return {
+    ...event,
+    event_type: eventType,
+    kind: event.kind ?? eventType,
+    ts: event.ts ?? new Date().toISOString(),
+  };
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
