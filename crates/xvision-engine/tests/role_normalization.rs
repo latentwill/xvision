@@ -59,6 +59,8 @@ fn fixture_strategy_with_agents(agents: Vec<AgentRef>, pipeline: PipelineDef) ->
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 

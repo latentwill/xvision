@@ -185,6 +185,8 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 

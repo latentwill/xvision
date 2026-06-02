@@ -3,6 +3,7 @@ pub mod exec_mode;
 pub mod id;
 pub mod manifest;
 pub mod mechanical;
+pub mod mechanistic;
 pub mod risk;
 pub mod slot;
 pub mod store;
@@ -16,6 +17,9 @@ pub use crate::strategies::agent_ref::{AgentRef, PipelineDef, PipelineEdge, Pipe
 pub use crate::strategies::exec_mode::{CapitalMode, ExecutionMode};
 use crate::strategies::manifest::PublicManifest;
 pub use crate::strategies::mechanical::MechanicalParams;
+pub use crate::strategies::mechanistic::{
+    ClosePolicy, DecisionMode, EntryDirection, EntryRule, ExitReason, MechanisticConfig,
+};
 use crate::strategies::risk::RiskConfig;
 use crate::strategies::slot::LLMSlot;
 
@@ -161,6 +165,17 @@ pub struct Strategy {
     /// `team/contracts/agent-firing-filter-cli-verbs.md` Phase 2.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub acknowledge_no_filter: bool,
+
+    /// Whether this strategy uses an LLM agent (default) or deterministic
+    /// mechanistic rules for trade decisions. Absent from disk for agentic
+    /// strategies so pre-existing JSON files round-trip byte-stable.
+    #[serde(default, skip_serializing_if = "DecisionMode::is_agentic")]
+    pub decision_mode: DecisionMode,
+
+    /// Rule-based entry/exit configuration. Required when
+    /// `decision_mode == Mechanistic`, must be `None` for `Agentic`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mechanistic_config: Option<MechanisticConfig>,
 }
 
 fn default_activation_mode() -> ActivationMode {
@@ -246,6 +261,10 @@ struct StrategyRaw {
     filter: Option<Filter>,
     #[serde(default)]
     acknowledge_no_filter: bool,
+    #[serde(default)]
+    decision_mode: DecisionMode,
+    #[serde(default)]
+    mechanistic_config: Option<MechanisticConfig>,
 }
 
 impl<'de> Deserialize<'de> for Strategy {
@@ -267,6 +286,8 @@ impl<'de> Deserialize<'de> for Strategy {
             activation_mode: raw.activation_mode,
             filter: raw.filter,
             acknowledge_no_filter: raw.acknowledge_no_filter,
+            decision_mode: raw.decision_mode,
+            mechanistic_config: raw.mechanistic_config,
         })
     }
 }
@@ -298,6 +319,8 @@ mod tests {
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: DecisionMode::Agentic,
+            mechanistic_config: None,
         }
     }
 
@@ -461,6 +484,8 @@ mod tests {
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: DecisionMode::Agentic,
+            mechanistic_config: None,
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
@@ -498,6 +523,8 @@ mod tests {
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: DecisionMode::Agentic,
+            mechanistic_config: None,
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(

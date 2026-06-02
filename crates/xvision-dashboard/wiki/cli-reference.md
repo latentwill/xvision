@@ -27,6 +27,7 @@ experiment orchestration.
 | `run <id> --fixture <name> [--decisions <n>] [--mock]` | Run a strategy inline against a fixture parquet; `--mock` uses deterministic dispatch with no API calls. |
 | `migrate-agents [--dry-run]` | Migrate legacy slot-shaped strategies into agent references; `--dry-run` previews without writing. |
 | `diagnostics <id> [--json]` | Capability-completeness readiness report for every agent slot in the strategy: which capabilities are required, which are unmet (and why), and which are optimizable now. Exits `14` (`OptValidation`) when the strategy is **not launchable**, `4` (`NotFound`) for an unknown id. See [Capability diagnostics](#capability-diagnostics). |
+| `leaderboard [--sort return\|sharpe] [--top <n>] [--since-days <n>] [--json]` | Rank strategies by their best completed eval run metric. |
 
 **Atomic-mode hypothesis flags** (usable with `create --template` or `create --from-file`):
 
@@ -79,6 +80,7 @@ fields are migrated with `migrate-agents`.
 | `compare <run-id> … [--runs r1,r2] [--batch <id>] [--json] [--markdown] [--sort return\|sharpe\|drawdown]` | Side-by-side metrics and equity diff for 2+ runs. `--markdown` (alias `--md`) emits a GitHub-flavoured table. `--batch` resolves run ids from a persisted eval batch. |
 | `export <run-id> [--output <path>] [--pretty]` | Export a completed run as `EvalRunExport` JSON (q15 §3). Writes to stdout by default. |
 | `validate --strategy <id> --scenario <id> [--mode paper\|backtest] [--json]` | Validate an eval request without launching it. |
+| `sweep --strategy <id> --scenario <id> --from <date> --to <date> [--window 90d] [--step 30d] [--profile smoke\|deep] [--assets <sym,…>] [--json]` | Clone a base scenario across rolling windows, run each clone, and print a metrics table. |
 | `attest <run-id> [--json]` | Sign and persist an `EvalAttestation` for a completed run. |
 | `review <run-id> --agent <profile> [--force] [--format human\|json] [--output <path>]` | Generate an analytical review of a completed run using the named agent profile. Idempotent: a prior failed review is retried; a completed review is returned as-is unless `--force` is set. |
 | `batch run --strategy <id> --scenarios <id,…> [--mode backtest\|paper] [--wait] [--review-with <profile>] [--json]` | Launch one eval run per scenario, block until all reach terminal state (`--wait`), and return a unified `BatchResult`. When `--review-with <profile>` is set (requires `--wait`), a review is generated for each completed run using the named agent profile; failures are captured per-run and do not abort the batch. |
@@ -86,6 +88,16 @@ fields are migrated with `migrate-agents`.
 
 The `batch compare` workflow: run `eval batch run … --json` to get a `batch_id`,
 then pass `--batch <batch_id>` to `eval compare` to resolve run ids automatically.
+
+---
+
+### `xvn last`
+
+Compact health card for recent eval runs.
+
+| Verb | Effect |
+|---|---|
+| `last [--n <n>] [--strategy <id>] [--json]` | Show the most recent eval run(s), including status, strategy, scenario, timestamps, metrics, trades, and decisions. |
 
 ---
 

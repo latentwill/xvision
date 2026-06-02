@@ -115,6 +115,8 @@ fn fixture_strategy(agents: Vec<AgentRef>, kind: PipelineKind, edges: Vec<Pipeli
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 

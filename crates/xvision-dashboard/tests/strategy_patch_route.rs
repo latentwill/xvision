@@ -218,6 +218,44 @@ async fn patch_metadata_rejects_out_of_scope_fields() {
 }
 
 #[tokio::test]
+async fn put_mechanical_params_sets_one_key_and_preserves_metadata() {
+    let (server, _tmp) = boot().await;
+    let id = create_strategy(&server).await;
+
+    let response = server
+        .put(&format!("/api/strategy/{id}/mechanical_params"))
+        .json(&serde_json::json!({
+            "key": "ema_fast",
+            "value": 12
+        }))
+        .await;
+    response.assert_status_ok();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["ok"], true);
+
+    let response = server.get(&format!("/api/strategy/{id}")).await;
+    response.assert_status_ok();
+    let fetched: serde_json::Value = response.json();
+    assert_eq!(fetched["manifest"]["display_name"], "PatchMe");
+    assert_eq!(fetched["mechanical_params"]["ema_fast"], 12);
+}
+
+#[tokio::test]
+async fn put_mechanical_params_unknown_strategy_returns_404() {
+    let (server, _tmp) = boot().await;
+
+    let response = server
+        .put("/api/strategy/01JDOESNOTEXIST0000000000/mechanical_params")
+        .json(&serde_json::json!({
+            "key": "ema_fast",
+            "value": 12
+        }))
+        .await;
+
+    response.assert_status_not_found();
+}
+
+#[tokio::test]
 async fn patch_metadata_invalid_multi_field_patch_is_atomic() {
     let (server, _tmp) = boot().await;
     let id = create_strategy(&server).await;

@@ -194,7 +194,7 @@ export function GradientHeroDashboard({
         </KpiRow>
 
         <GlassCard className="p-4">
-          <div className="caps mb-3">Hero equity · {lead?.short ?? "—"}</div>
+          <div className="caps mb-3">Return % · {lead?.short ?? "—"}</div>
           {lead && (
             <HeroGradientEquity
               time={payload.time}

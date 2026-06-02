@@ -38,7 +38,7 @@ fn parent_strategy_json() -> serde_json::Value {
             "stop_loss_atr_multiple": 2.0,
             "daily_loss_kill_pct": 0.05
         },
-        "mechanical_params": {"rsi_period": 14}
+        "mechanical_params": {"atr_period": 14}
     })
 }
 

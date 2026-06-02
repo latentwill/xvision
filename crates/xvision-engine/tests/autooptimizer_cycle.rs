@@ -86,8 +86,8 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/040_trajectory_frames.sql"),
         include_str!("../migrations/041_chat_session_rail_state.sql"),
         include_str!("../migrations/051_agent_slot_optimizations.sql"),
-        include_str!("../migrations/052_pattern_optimizations.sql"),
-        include_str!("../migrations/053_agent_slot_optimization_gates.sql"),
+        include_str!("../migrations/053_pattern_optimizations.sql"),
+        include_str!("../migrations/054_agent_slot_optimization_gates.sql"),
         include_str!("../migrations/042_session_events.sql"),
         include_str!("../migrations/043_tool_policies.sql"),
         include_str!("../migrations/044_checkpoints.sql"),
@@ -97,7 +97,7 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/048_autooptimizer.sql"),
         include_str!("../migrations/049_autooptimizer_diversity.sql"),
         include_str!("../migrations/050_mutator_attribution.sql"),
-        include_str!("../migrations/051_drop_autooptimizer_provenance.sql"),
+        include_str!("../migrations/052_drop_autooptimizer_provenance.sql"),
     ];
 
     for sql in migrations {
@@ -180,6 +180,7 @@ fn make_scenario(id: &str, year_start: i32, year_end: i32) -> Scenario {
                 volume_constraints: None,
             },
             overrides: vec![],
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         capital: xvision_core::Capital::default(),
@@ -362,6 +363,7 @@ async fn run_evening_cycle_smoke() {
         move |evt| {
             events_clone.lock().unwrap().push(evt);
         },
+        None,
         None,
     )
     .await;

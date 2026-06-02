@@ -46,6 +46,7 @@ fn valid_crypto_scenario(symbol: &str) -> Scenario {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         bar_cache_policy: BarCachePolicy {
@@ -108,6 +109,7 @@ fn scenario_serde_roundtrip() {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         bar_cache_policy: BarCachePolicy {
@@ -167,7 +169,8 @@ fn scenario_serde_roundtrip() {
                 "limit_order_fill": "NeverFills",
                 "partial_fills": false,
                 "volume_constraints": null
-            }
+            },
+            "borrow_bps_per_day": 5.0
         },
         "replay_mode": {
             "mode": "Continuous"

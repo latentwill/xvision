@@ -7,7 +7,7 @@ import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
 import { compareRuns, evalKeys, listRunsPaged } from "@/api/eval";
 import { listScenarios, scenarioKeys } from "@/api/scenarios";
-import { listStrategies, strategyKeys, type StrategyListItem } from "@/api/strategies";
+import { listStrategies, strategyKeys, type ExitReason, type StrategyListItem } from "@/api/strategies";
 import { ChartFrame } from "@/components/chart/v2/primitives/ChartFrame";
 import { UplotCompareOverlayPane } from "@/components/chart/v2/primitives/UplotCompareOverlayPane";
 import { useChart2Theme } from "@/components/chart/v2/hooks/useChart2Theme";
@@ -114,6 +114,7 @@ export function EvalCompareRoute() {
         strategies={strategies.data ?? []}
         scenarios={scenarios.data ?? []}
       />
+      <ExitReasonBreakdown runs={report.runs} strategies={strategies.data ?? []} />
       <h2 className="font-sans font-semibold text-[20px] text-text mt-8 mb-3">
         Equity curves
       </h2>
@@ -666,6 +667,81 @@ function ErrorState({
         Retry
       </button>
     </Card>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Exit reason breakdown
+
+const EXIT_REASONS: ExitReason[] = [
+  "stop_loss",
+  "take_profit",
+  "trailing_stop",
+  "time_expiry",
+  "signal",
+  "manual",
+];
+
+type ComparisonRunSummaryWithExitReasons = import("@/api/types.gen").ComparisonRunSummary & {
+  exit_reason_counts?: Partial<Record<ExitReason, number>>;
+};
+
+function ExitReasonBreakdown({
+  runs,
+  strategies,
+}: {
+  runs: import("@/api/types.gen").ComparisonRunSummary[];
+  strategies: StrategyListItem[];
+}) {
+  const runsExt = runs as ComparisonRunSummaryWithExitReasons[];
+  const hasData = runsExt.some((r) => r.exit_reason_counts != null);
+  if (!hasData) return null;
+
+  return (
+    <>
+      <h2 className="font-sans font-semibold text-[20px] text-text mt-8 mb-3">
+        Exit reasons
+      </h2>
+      <Card className="overflow-x-auto xvn-scroll">
+        <table className="w-full min-w-[720px]">
+          <thead>
+            <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
+              <th className="font-normal py-2.5 px-5">Run</th>
+              {EXIT_REASONS.map((r) => (
+                <th key={r} className="font-normal py-2.5 px-3 text-right capitalize">
+                  {r.replace(/_/g, " ")}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {runsExt.map((r) => (
+              <tr
+                key={r.id}
+                className="border-b border-border-soft last:border-b-0 hover:bg-surface-hover transition-colors"
+              >
+                <td className="py-2.5 px-5">
+                  <Link
+                    to={`/eval-runs/${encodeURIComponent(r.id)}`}
+                    className="text-text hover:underline text-[12px]"
+                  >
+                    {strategyLabel(r, strategies)}
+                  </Link>
+                </td>
+                {EXIT_REASONS.map((reason) => (
+                  <td
+                    key={reason}
+                    className="py-2.5 px-3 text-right font-mono text-[12px] text-text-2"
+                  >
+                    {r.exit_reason_counts?.[reason] ?? "—"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </>
   );
 }
 

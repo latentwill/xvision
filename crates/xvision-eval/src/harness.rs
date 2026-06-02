@@ -19,7 +19,9 @@ use uuid::Uuid;
 use xvision_core::market::MarketSnapshot;
 use xvision_core::trading::{Regime, RiskDecision, TraderDecision};
 use xvision_execution::{ExecutionReceipt, Executor};
-use xvision_observability::{RunEvent, RunEventBus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus};
+use xvision_observability::{
+    RunEvent, RunEventBus, SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus,
+};
 use xvision_risk::RiskLayer;
 
 use crate::algorithm::Algorithm;
@@ -112,7 +114,11 @@ impl BacktestRunner {
                 horizon: config.horizon_hours,
             });
         }
-        Ok(Self { config, arms, obs: None })
+        Ok(Self {
+            config,
+            arms,
+            obs: None,
+        })
     }
 
     /// Wire an event bus so the runner emits `risk.gate` spans.
@@ -265,10 +271,7 @@ impl BacktestRunner {
                         let (status, error_json) = match &risk_outcome {
                             RiskDecision::Vetoed { reason, .. } => (
                                 SpanStatus::Error,
-                                Some(format!(
-                                    r#"{{"verdict":"vetoed","veto_reason":"{:?}"}}"#,
-                                    reason
-                                )),
+                                Some(format!(r#"{{"verdict":"vetoed","veto_reason":"{:?}"}}"#, reason)),
                             ),
                             _ => (SpanStatus::Ok, None),
                         };

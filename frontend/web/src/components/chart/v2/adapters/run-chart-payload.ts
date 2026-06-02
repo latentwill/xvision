@@ -1,36 +1,71 @@
 import type { RunChartPayload } from "@/api/types.gen";
 import type {
   DrawdownPoint,
-  EquityPoint,
   IndicatorMap,
   PositionSpan,
   RunChartV2Payload,
   V2Marker,
 } from "../types";
+import { normalizeEquityToReturnPct } from "./columnar-to-uplot";
 
 export function runChartPayloadToV2(payload: RunChartPayload): RunChartV2Payload {
+  const candles = completionAwareCandles(payload);
   return {
     kind: "run",
     asset: payload.asset,
     granularity: payload.granularity,
-    candles: {
-      time: payload.bars.map((b) => b.time),
-      open: payload.bars.map((b) => b.open),
-      high: payload.bars.map((b) => b.high),
-      low: payload.bars.map((b) => b.low),
-      close: payload.bars.map((b) => b.close),
-      volume: payload.bars.map((b) => b.volume),
-    },
+    candles,
     indicators: indicatorMap(payload),
-    equity: payload.equity.map(
-      (p): EquityPoint => ({ time: p.time, value: p.equity_usd }),
-    ),
+    equity: normalizeEquityToReturnPct(payload.equity),
     drawdown: payload.drawdown.map(
       (p): DrawdownPoint => ({ time: p.time, value: p.drawdown_pct }),
     ),
     markers: markers(payload),
     positions: positionSpans(payload),
   };
+}
+
+function completionAwareCandles(payload: RunChartPayload) {
+  const time = payload.bars.map((b) => b.time);
+  const open = payload.bars.map((b) => b.open);
+  const high = payload.bars.map((b) => b.high);
+  const low = payload.bars.map((b) => b.low);
+  const close = payload.bars.map((b) => b.close);
+  const volume = payload.bars.map((b) => b.volume);
+  const lastTime = time.at(-1);
+  const finalTime = finalRunTime(payload);
+  const lastClose = close.at(-1);
+
+  if (
+    lastTime == null ||
+    finalTime == null ||
+    lastClose == null ||
+    finalTime <= lastTime
+  ) {
+    return { time, open, high, low, close, volume };
+  }
+
+  const finalPrices = payload.markers.trades
+    .filter((m) => m.time === finalTime && Number.isFinite(m.price))
+    .map((m) => m.price);
+  const finalHigh = Math.max(lastClose, ...finalPrices);
+  const finalLow = Math.min(lastClose, ...finalPrices);
+
+  time.push(finalTime);
+  open.push(lastClose);
+  high.push(finalHigh);
+  low.push(finalLow);
+  close.push(lastClose);
+  volume.push(0);
+  return { time, open, high, low, close, volume };
+}
+
+function finalRunTime(payload: RunChartPayload): number | null {
+  const times = [
+    ...payload.equity.map((p) => p.time),
+    ...payload.markers.trades.map((m) => m.time),
+  ].filter((time) => Number.isFinite(time));
+  return times.length === 0 ? null : Math.max(...times);
 }
 
 function indicatorMap(payload: RunChartPayload): IndicatorMap {

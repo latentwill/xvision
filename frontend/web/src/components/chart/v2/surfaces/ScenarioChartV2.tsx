@@ -106,7 +106,7 @@ export function ScenarioChartV2({ payload }: Props) {
               {
                 title: "Panes",
                 items: [
-                  { key: "equity", label: "Equity", on: layers.equity },
+                  { key: "equity", label: "Return %", on: layers.equity },
                   { key: "volume", label: "Volume", on: layers.volume },
                 ],
               },
