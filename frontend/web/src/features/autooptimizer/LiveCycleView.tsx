@@ -419,40 +419,6 @@ function EventLogCard({ events, bottomRef }: { events: EventRow[]; bottomRef: Re
   );
 }
 
-function ActiveLineagesSection() {
-  return (
-    <div className="space-y-3">
-      <div>
-        <h2 className="text-base font-semibold text-text">Active lineages</h2>
-        <p className="font-mono text-[11.5px] text-text-3 mt-0.5">
-          Strategy populations currently evolving
-        </p>
-      </div>
-      <div className="rounded-md border border-border px-5 py-4">
-        <p className="text-[13px] text-text-3">No lineages yet</p>
-      </div>
-    </div>
-  );
-}
-
-function RecentCyclesSection() {
-  return (
-    <div className="space-y-3">
-      <div>
-        <h2 className="text-base font-semibold text-text">Recent cycles</h2>
-        <p className="font-mono text-[11.5px] text-text-3 mt-0.5">
-          History of completed optimization cycles
-        </p>
-      </div>
-      <div className="rounded-md border border-border px-5 py-4">
-        <p className="text-[13px] text-text-3">
-          No cycles yet — see Ladder and Provenance tabs for experiment history
-        </p>
-      </div>
-    </div>
-  );
-}
-
 // ─── Active lineages section ──────────────────────────────────────────────────
 
 function LineageCard({ group }: { group: CycleGroup }) {
@@ -702,17 +668,6 @@ function parseSsePayload(raw: unknown, fallbackKind: string): CycleProgressEvent
     bundle_hash: stringValue(data.bundle_hash),
     parent_hash: stringValue(data.parent_hash),
     child_hash: stringValue(data.child_hash),
-  };
-}
-
-function normalizeCycleEvent(event: CycleProgressEvent): NormalizedEvent | null {
-  const eventType = event.event_type ?? event.type ?? event.kind;
-  if (!eventType) return null;
-  return {
-    ...event,
-    event_type: eventType,
-    kind: event.kind ?? eventType,
-    ts: event.ts ?? new Date().toISOString(),
   };
 }
 
