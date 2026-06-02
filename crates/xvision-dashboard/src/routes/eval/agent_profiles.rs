@@ -119,12 +119,7 @@ pub async fn patch(
 }
 
 fn runtime_config_path(state: &AppState) -> PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return p.into();
-        }
-    }
-    state.api_context().xvn_home.join("config").join("default.toml")
+    xvision_core::config::runtime_config_path(&state.api_context().xvn_home)
 }
 
 #[cfg(test)]

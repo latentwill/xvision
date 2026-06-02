@@ -1,6 +1,7 @@
 # XVISION v1 default runtime configuration.
 #
-# Override per-environment with XVN_CONFIG=path/to/override.toml or
+# Override per-environment with XVN_CONFIG_PATH=path/to/override.toml
+# (or the compatibility alias XVN_CONFIG=path/to/override.toml), or
 # XVN_<SECTION>_<KEY>=value (e.g. XVN_TRADER_TEMPERATURE=0.4 for forward paper).
 
 [runtime]

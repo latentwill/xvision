@@ -123,10 +123,5 @@ async fn load_effective_providers(
 }
 
 fn runtime_config_path(xvn_home: &std::path::Path) -> PathBuf {
-    if let Ok(path) = std::env::var("XVN_CONFIG_PATH") {
-        if !path.is_empty() {
-            return PathBuf::from(path);
-        }
-    }
-    xvn_home.join("config").join("default.toml")
+    xvision_core::config::runtime_config_path(xvn_home)
 }

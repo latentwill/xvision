@@ -151,15 +151,7 @@ async fn build_autooptimizer_dispatch(
     provider: &str,
     xvn_home: &std::path::Path,
 ) -> Result<Arc<dyn LlmDispatch + Send + Sync>, DashboardError> {
-    let config_path = if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            std::path::PathBuf::from(p)
-        } else {
-            xvn_home.join("config").join("default.toml")
-        }
-    } else {
-        xvn_home.join("config").join("default.toml")
-    };
+    let config_path = xvision_core::config::runtime_config_path(xvn_home);
     let provider_name = provider.to_owned();
     let rt = tokio::task::spawn_blocking(move || xvision_core::config::load_runtime(&config_path))
         .await

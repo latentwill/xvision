@@ -288,12 +288,7 @@ fn kind_to_str(k: xvision_core::config::ProviderKind) -> &'static str {
 }
 
 fn runtime_config_path(ctx: &crate::api::ApiContext) -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            return p.into();
-        }
-    }
-    ctx.xvn_home.join("config").join("default.toml")
+    xvision_core::config::runtime_config_path(&ctx.xvn_home)
 }
 
 /// Format a human-readable error message for a failing preflight result.
