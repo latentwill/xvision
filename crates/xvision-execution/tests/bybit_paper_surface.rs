@@ -24,6 +24,7 @@ async fn bybit_paper_surface_buy_records_correct_symbol() {
     assert_eq!(calls.len(), 1, "exactly one place_order call expected");
     assert_eq!(calls[0].symbol, "BTCUSDT");
     assert_eq!(calls[0].side, "Buy");
+    assert_eq!(calls[0].time_in_force, "IOC");
 }
 
 #[tokio::test]
@@ -75,6 +76,8 @@ async fn bybit_paper_surface_balance_passthrough() {
 #[test]
 fn bybit_asset_symbol_mapping_btc() {
     assert_eq!(to_bybit_symbol("BTC/USD"), "BTCUSDT");
+    assert_eq!(to_bybit_symbol("BTCUSD"), "BTCUSDT");
+    assert_eq!(to_bybit_symbol("BTCUSDT"), "BTCUSDT");
     assert_eq!(to_bybit_symbol("ETH/USD"), "ETHUSDT");
     assert_eq!(to_bybit_symbol("SOL/USD"), "SOLUSDT");
 }

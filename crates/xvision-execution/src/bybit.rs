@@ -13,8 +13,14 @@ use crate::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side
 // ── Asset symbol mapping ─────────────────────────────────────────────────────
 
 pub fn to_bybit_symbol(asset: &str) -> String {
-    let base = asset.strip_suffix("/USD").unwrap_or(asset);
-    format!("{}USDT", base)
+    if asset.ends_with("USDT") {
+        return asset.to_string();
+    }
+    let base = asset
+        .strip_suffix("/USD")
+        .or_else(|| asset.strip_suffix("USD"))
+        .unwrap_or(asset);
+    format!("{base}USDT")
 }
 
 // ── Wire types ────────────────────────────────────────────────────────────────
@@ -323,7 +329,7 @@ impl<A: BybitApi + 'static> BrokerSurface for BybitPaperSurface<A> {
             order_type: "Market".to_string(),
             qty: format!("{:.8}", req.size),
             category: "linear".to_string(),
-            time_in_force: "Market".to_string(),
+            time_in_force: "IOC".to_string(),
             order_link_id: req.idempotency_key.clone(),
         };
         let result = self
