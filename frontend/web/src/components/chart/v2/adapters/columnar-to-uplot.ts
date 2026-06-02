@@ -2,6 +2,22 @@ import { type CandleColumns, type LineSeries } from "../types";
 import type uPlot from "uplot";
 
 /**
+ * Normalize raw equity_usd points to return % relative to the first point.
+ * Returns `{ time, value }` where value = ((equity_usd / base) - 1) * 100.
+ */
+export function normalizeEquityToReturnPct(
+  raw: { time: number; equity_usd: number }[],
+): { time: number; value: number }[] {
+  if (raw.length === 0) return [];
+  const base = raw[0].equity_usd;
+  if (base === 0) return raw.map((r) => ({ time: r.time, value: 0 }));
+  return raw.map((r) => ({
+    time: r.time,
+    value: ((r.equity_usd / base) - 1) * 100,
+  }));
+}
+
+/**
  * Convert equity/drawdown point array to uPlot AlignedData.
  * uPlot x-axis expects timestamps in seconds (default ms multiplier is 1e-3).
  * CandleColumns.time is already in seconds; equity/drawdown points share the

@@ -17,7 +17,7 @@ import { useRef, type ReactElement } from "react";
 import uPlot from "uplot";
 
 import { themeToUplotOptions } from "../adapters/theme-to-uplot";
-import { xvnLastDot } from "../adapters/uplot-plugins";
+import { xvnLastDot, xvnZeroLine } from "../adapters/uplot-plugins";
 import { useChart2Theme } from "../hooks/useChart2Theme";
 import { usePlot } from "./usePlot";
 
@@ -88,6 +88,7 @@ export function MultiStrategyEquityPane({
   const data = buildAlignedData(time, series);
 
   const baseOpts = themeToUplotOptions(theme) as Partial<uPlot.Options>;
+  const baseAxes = (baseOpts.axes as uPlot.Axis[] | undefined) ?? [];
 
   const cursorOpts: uPlot.Cursor = {
     ...(baseOpts.cursor as uPlot.Cursor | undefined),
@@ -104,6 +105,14 @@ export function MultiStrategyEquityPane({
     width: 0,
     height,
     cursor: cursorOpts,
+    axes: [
+      baseAxes[0] ?? {},
+      {
+        ...baseAxes[1],
+        values: (_u: uPlot, vals: number[]) =>
+          vals.map((v) => (v != null ? v.toFixed(1) + "%" : "")),
+      },
+    ],
     series: [
       {},
       ...series.map((s, i) => {
@@ -120,7 +129,7 @@ export function MultiStrategyEquityPane({
         return seriesSpec;
       }),
     ],
-    plugins: [xvnLastDot(leadUplotIdx, leadColor)],
+    plugins: [xvnLastDot(leadUplotIdx, leadColor), xvnZeroLine()],
   };
 
   usePlot(opts, data, hostRef, height);

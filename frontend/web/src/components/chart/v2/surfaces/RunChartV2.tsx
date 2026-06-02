@@ -151,7 +151,7 @@ export function RunChartV2({ payload, showAnnotations = true }: Props) {
                     { key: "rsi", label: "RSI", on: layers.rsi },
                     { key: "macd", label: "MACD", on: layers.macd },
                     { key: "atr", label: "ATR", on: layers.atr },
-                    { key: "equity", label: "Equity", on: layers.equity },
+                    { key: "equity", label: "Return %", on: layers.equity },
                     { key: "drawdown", label: "Drawdown", on: layers.drawdown },
                     { key: "volume", label: "Volume", on: layers.volume },
                   ],

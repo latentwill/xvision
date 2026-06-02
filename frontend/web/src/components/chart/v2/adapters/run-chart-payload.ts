@@ -1,12 +1,12 @@
 import type { RunChartPayload } from "@/api/types.gen";
 import type {
   DrawdownPoint,
-  EquityPoint,
   IndicatorMap,
   PositionSpan,
   RunChartV2Payload,
   V2Marker,
 } from "../types";
+import { normalizeEquityToReturnPct } from "./columnar-to-uplot";
 
 export function runChartPayloadToV2(payload: RunChartPayload): RunChartV2Payload {
   return {
@@ -22,9 +22,7 @@ export function runChartPayloadToV2(payload: RunChartPayload): RunChartV2Payload
       volume: payload.bars.map((b) => b.volume),
     },
     indicators: indicatorMap(payload),
-    equity: payload.equity.map(
-      (p): EquityPoint => ({ time: p.time, value: p.equity_usd }),
-    ),
+    equity: normalizeEquityToReturnPct(payload.equity),
     drawdown: payload.drawdown.map(
       (p): DrawdownPoint => ({ time: p.time, value: p.drawdown_pct }),
     ),
