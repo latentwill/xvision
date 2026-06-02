@@ -84,9 +84,7 @@ pub async fn run_evening_cycle(
             .effective_min_improvement;
 
     let dsr_prefix: Option<String> = match dspy_ctx {
-        Some(ctx) if config.dspy_enabled => {
-            query_dsr_prefix(&ctx.store, &ctx.namespace).await?
-        }
+        Some(ctx) if config.dspy_enabled => query_dsr_prefix(&ctx.store, &ctx.namespace).await?,
         _ => None,
     };
 

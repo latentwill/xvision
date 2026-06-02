@@ -1348,75 +1348,6 @@ impl ObsEmitter {
             .await;
     }
 
-    /// Open a `risk.gate` span around one `RiskLayer::evaluate` call.
-    /// Pair with exactly one `emit_risk_gate_finished` using the same
-    /// `span_id`. `parent_span_id` should be the enclosing
-    /// `agent.decision` span when one exists.
-    pub async fn emit_risk_gate_started(&self, span_id: &str, parent_span_id: Option<String>) {
-        let attrs = SpanAttributes {
-            run_id: Some(self.run_id.clone()),
-            ..SpanAttributes::default()
-        };
-        self.bus
-            .publish(RunEvent::SpanStarted(SpanStartedEvent {
-                span_id: span_id.to_string(),
-                run_id: self.run_id.clone(),
-                parent_span_id,
-                kind: SpanKind::RiskGate,
-                name: "risk.gate".to_string(),
-                started_at: Utc::now(),
-                otel_trace_id: None,
-                otel_span_id: None,
-                attributes_json: attrs.to_attributes_json(),
-            }))
-            .await;
-    }
-
-    /// Close the `risk.gate` span opened by `emit_risk_gate_started`.
-    /// `verdict` is "approved" / "modified" / "vetoed". `veto_reason`
-    /// is the `VetoReason` debug string for vetoed decisions.
-    /// `modified_qty` is the size_bps of the modified decision as f64.
-    pub async fn emit_risk_gate_finished(
-        &self,
-        span_id: &str,
-        verdict: &str,
-        veto_reason: Option<&str>,
-        modified_qty: Option<f64>,
-    ) {
-        debug_assert!(
-            matches!(verdict, "approved" | "modified" | "vetoed"),
-            "unexpected risk gate verdict: {verdict}"
-        );
-        let status = if verdict == "vetoed" {
-            SpanStatus::Error
-        } else {
-            SpanStatus::Ok
-        };
-        let mut payload = serde_json::Map::new();
-        payload.insert("verdict".to_string(), serde_json::Value::String(verdict.to_string()));
-        if let Some(r) = veto_reason {
-            payload.insert("veto_reason".to_string(), serde_json::Value::String(r.to_string()));
-        }
-        if let Some(qty) = modified_qty {
-            if let Some(n) = serde_json::Number::from_f64(qty) {
-                payload.insert("modified_qty".to_string(), serde_json::Value::Number(n));
-            }
-        }
-        let error_json = if status == SpanStatus::Error {
-            Some(serde_json::Value::Object(payload).to_string())
-        } else {
-            None
-        };
-        self.bus
-            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
-                span_id: span_id.to_string(),
-                ended_at: Utc::now(),
-                status,
-                error_json,
-            }))
-            .await;
-    }
-
     /// Close a `broker.call` span with the broker's terminal state.
     /// Always emits BOTH `BrokerCallFinished` AND a span-level
     /// `SpanFinished` so the recorder can stamp the close timestamp
@@ -1476,12 +1407,7 @@ impl ObsEmitter {
 
     /// Open a `filter.eval` span around one LLM filter-capability dispatch.
     /// Pair with `emit_filter_eval_finished` using the same `span_id`.
-    pub async fn emit_filter_eval_started(
-        &self,
-        span_id: &str,
-        parent_span_id: Option<String>,
-        asset: &str,
-    ) {
+    pub async fn emit_filter_eval_started(&self, span_id: &str, parent_span_id: Option<String>, asset: &str) {
         self.bus
             .publish(RunEvent::SpanStarted(SpanStartedEvent {
                 span_id: span_id.to_string(),
@@ -1498,12 +1424,7 @@ impl ObsEmitter {
     }
 
     /// Close a `filter.eval` span. `verdict` is `"pass"` or `"reject"`.
-    pub async fn emit_filter_eval_finished(
-        &self,
-        span_id: &str,
-        verdict: &str,
-        reason: Option<&str>,
-    ) {
+    pub async fn emit_filter_eval_finished(&self, span_id: &str, verdict: &str, reason: Option<&str>) {
         let error_json = if verdict != "pass" {
             Some(serde_json::json!({ "verdict": verdict, "reason": reason }).to_string())
         } else {
@@ -1549,11 +1470,14 @@ impl ObsEmitter {
         modified_qty: Option<f64>,
     ) {
         let error_json = if verdict == "vetoed" {
-            Some(serde_json::json!({
-                "verdict": verdict,
-                "veto_reason": veto_reason,
-                "modified_qty": modified_qty,
-            }).to_string())
+            Some(
+                serde_json::json!({
+                    "verdict": verdict,
+                    "veto_reason": veto_reason,
+                    "modified_qty": modified_qty,
+                })
+                .to_string(),
+            )
         } else {
             None
         };

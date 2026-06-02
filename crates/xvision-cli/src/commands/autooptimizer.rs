@@ -1036,6 +1036,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
                 println!("{}", line);
             }
         },
+        None,
     )
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("run_evening_cycle: {e}")))?;
@@ -1252,7 +1253,7 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg).await
+    mutator.propose(base, cfg, None).await
 }
 
 fn apply_mutation_diff(mut strategy: Strategy, diff: &MutationDiff) -> Strategy {

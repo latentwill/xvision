@@ -988,13 +988,7 @@ impl WizardLoop {
                                  tool_use block. Either call the tool you intended to call, \
                                  or finish the turn cleanly with a final text response."
                     })];
-                    ChatSessionStore::append(
-                        &self.pool,
-                        &self.session_id,
-                        "user",
-                        &nudge_blocks,
-                    )
-                    .await?;
+                    ChatSessionStore::append(&self.pool, &self.session_id, "user", &nudge_blocks).await?;
                     continue;
                 }
                 self.is_done = true;
@@ -1091,21 +1085,11 @@ impl WizardLoop {
                     // collected (the prior tool_uses in this turn) so
                     // the chat history doesn't lose them when we bail
                     // early.
-                    ChatSessionStore::append(
-                        &self.pool,
-                        &self.session_id,
-                        "user",
-                        &tool_result_blocks,
-                    )
-                    .await?;
-                    if !rich_blocks.is_empty() {
-                        ChatSessionStore::append(
-                            &self.pool,
-                            &self.session_id,
-                            "assistant",
-                            &rich_blocks,
-                        )
+                    ChatSessionStore::append(&self.pool, &self.session_id, "user", &tool_result_blocks)
                         .await?;
+                    if !rich_blocks.is_empty() {
+                        ChatSessionStore::append(&self.pool, &self.session_id, "assistant", &rich_blocks)
+                            .await?;
                         for block in std::mem::take(&mut rich_blocks) {
                             self.pending.push(WizardEvent::ContentBlock { block });
                         }
@@ -2435,10 +2419,7 @@ fn default_strategy_agent_prompt(strategy: &xvision_engine::strategies::Strategy
 /// `description` tool argument. Prefers strategy `display_name` over the
 /// raw ULID so the Agents list shows a meaningful label; folds in
 /// `plain_summary` when the strategy author has filled one in.
-fn derive_strategy_agent_description(
-    strategy: &xvision_engine::strategies::Strategy,
-    role: &str,
-) -> String {
+fn derive_strategy_agent_description(strategy: &xvision_engine::strategies::Strategy, role: &str) -> String {
     let role = role.trim();
     let name = strategy.manifest.display_name.trim();
     let display = if name.is_empty() {

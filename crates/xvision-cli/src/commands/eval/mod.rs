@@ -155,6 +155,10 @@ pub struct RunArgs {
     /// Stop after N wall-clock seconds. At least one live stop flag is required.
     #[arg(long)]
     pub live_time_limit_secs: Option<u64>,
+    /// Stop after a wall-clock duration (e.g. `30m`, `2h`, `1d`). Human-readable
+    /// alternative to `--live-time-limit-secs`. At least one live stop flag is required.
+    #[arg(long, conflicts_with = "live_time_limit_secs")]
+    pub live_duration: Option<String>,
     /// Historical warmup bars to load before live streaming starts.
     #[arg(long, default_value_t = 200)]
     pub live_warmup_bars: u32,
@@ -581,6 +585,15 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         }
         (None, None) => None,
     };
+    if mode == RunMode::Live && args.scenario.is_some() {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "--scenario is not applicable for --mode live (live mode runs against real-time market data, not a historical scenario)"
+            ),
+        });
+    }
+
     let live_config = if mode == RunMode::Live {
         let asset = args.live_asset.clone().ok_or_else(|| CliError {
             exit: XvnExit::Usage,
@@ -590,8 +603,25 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             exit: XvnExit::Usage,
             source: anyhow::anyhow!("--mode live requires --live-capital"),
         })?;
+        let time_limit_secs = match args.live_duration.as_deref() {
+            Some(d) => {
+                let dur = parse_older_than(d).map_err(|e| CliError {
+                    exit: XvnExit::Usage,
+                    source: anyhow::anyhow!("--live-duration: {e}"),
+                })?;
+                let secs = dur.num_seconds();
+                if secs <= 0 {
+                    return Err(CliError {
+                        exit: XvnExit::Usage,
+                        source: anyhow::anyhow!("--live-duration must be a positive duration"),
+                    });
+                }
+                Some(secs as u64)
+            }
+            None => args.live_time_limit_secs,
+        };
         let stop_policy = StopPolicy {
-            time_limit_secs: args.live_time_limit_secs,
+            time_limit_secs,
             bar_limit: args.live_bar_limit,
             decision_limit: args.live_decision_limit,
         };
@@ -599,7 +629,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
             return Err(CliError {
                 exit: XvnExit::Usage,
                 source: anyhow::anyhow!(
-                    "--mode live requires at least one stop flag: --live-bar-limit, --live-decision-limit, or --live-time-limit-secs"
+                    "--mode live requires at least one stop flag: --live-bar-limit, --live-decision-limit, --live-time-limit-secs, or --live-duration"
                 ),
             });
         }
@@ -1777,5 +1807,84 @@ mod tests {
             panic!("expected ProbeLookahead op");
         };
         assert!(args.json);
+    }
+
+    #[test]
+    fn live_mode_rejects_scenario_flag_at_arg_level() {
+        // --scenario is silently ignored at the clap level (it's Option<String>),
+        // but the run_run handler rejects it. Here we just confirm the field is
+        // captured so the runtime check fires.
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "some-scenario",
+            "--mode",
+            "live",
+            "--live-asset",
+            "BTC/USD",
+            "--live-capital",
+            "10000",
+            "--live-bar-limit",
+            "10",
+        ])
+        .expect("args should parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        assert_eq!(args.scenario.as_deref(), Some("some-scenario"));
+        assert_eq!(args.mode, "live");
+        // The runtime rejection happens in run_run; the parse still succeeds.
+    }
+
+    #[test]
+    fn live_duration_flag_parses() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--mode",
+            "live",
+            "--live-asset",
+            "BTC/USD",
+            "--live-capital",
+            "10000",
+            "--live-duration",
+            "2h",
+        ])
+        .expect("--live-duration 2h must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        assert_eq!(args.live_duration.as_deref(), Some("2h"));
+        assert!(args.live_time_limit_secs.is_none());
+
+        // Confirm the duration resolves to the expected seconds.
+        let dur = parse_older_than("2h").expect("2h must parse");
+        assert_eq!(dur.num_seconds(), 7200);
+    }
+
+    #[test]
+    fn live_duration_and_time_limit_secs_conflict() {
+        let result = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--mode",
+            "live",
+            "--live-asset",
+            "BTC/USD",
+            "--live-capital",
+            "10000",
+            "--live-duration",
+            "2h",
+            "--live-time-limit-secs",
+            "3600",
+        ]);
+        assert!(result.is_err(), "--live-duration and --live-time-limit-secs must conflict");
     }
 }

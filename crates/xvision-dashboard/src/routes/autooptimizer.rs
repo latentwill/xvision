@@ -163,11 +163,12 @@ pub async fn get_lineage_node(
     Path(hash): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<LineageNode>, DashboardError> {
-    let content_hash = xvision_engine::autooptimizer::ContentHash::from_hex(&hash)
-        .map_err(|e| DashboardError::Validation {
+    let content_hash = xvision_engine::autooptimizer::ContentHash::from_hex(&hash).map_err(|e| {
+        DashboardError::Validation {
             field: "hash".into(),
             msg: format!("invalid content hash: {e}"),
-        })?;
+        }
+    })?;
     let store = LineageStore::new(state.pool.clone());
     let node = store
         .get(&content_hash)
@@ -317,9 +318,7 @@ pub async fn get_blob(
     Ok(Json(value))
 }
 
-fn row_to_lineage_node(
-    row: sqlx::sqlite::SqliteRow,
-) -> Result<LineageNode, DashboardError> {
+fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, DashboardError> {
     use sqlx::Row;
     use xvision_engine::autooptimizer::{gate::GateVerdict, ContentHash};
 
@@ -345,8 +344,7 @@ fn row_to_lineage_node(
         .try_get("diversity_score")
         .map_err(|e| DashboardError::Internal(e.into()))?;
 
-    let bundle_hash =
-        ContentHash::from_hex(&bundle_hex).map_err(|e| DashboardError::Internal(e))?;
+    let bundle_hash = ContentHash::from_hex(&bundle_hex).map_err(|e| DashboardError::Internal(e))?;
     let parent_hash = parent_hex
         .map(|h| ContentHash::from_hex(&h))
         .transpose()
