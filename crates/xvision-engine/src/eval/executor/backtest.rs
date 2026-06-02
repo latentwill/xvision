@@ -892,6 +892,7 @@ impl Executor {
             // holds; Cooldown, CappedForDay, SuppressedInPosition, Warming,
             // and Inactive still suppress dispatch.
             let mut filter_gated = false;
+            let mut filter_trigger_context: Option<serde_json::Value> = None;
             if let Some(hook) = filter_hook.as_mut() {
                 if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
                     let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
@@ -901,6 +902,8 @@ impl Executor {
                         .await?;
                     if !evaluation.outcome.decision.is_active() {
                         filter_gated = true;
+                    } else {
+                        filter_trigger_context = evaluation.trigger_context.clone();
                     }
                 }
             }
@@ -1009,6 +1012,15 @@ impl Executor {
                         },
                     }),
                 };
+                // When the DSL filter fired this bar, inject its trigger context
+                // (indicator snapshot from fire.context) so the trader's prompt
+                // includes the values that caused the filter to trip.
+                let mut seed = seed;
+                if let Some(ctx) = &filter_trigger_context {
+                    if let Some(obj) = seed.as_object_mut() {
+                        obj.insert("filter_context".to_string(), ctx.clone());
+                    }
+                }
 
                 // eval-flat-degeneracy-early-stop (F-9): before paying the
                 // LLM tax, check whether we should inherit this decision as
