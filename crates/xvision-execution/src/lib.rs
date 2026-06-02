@@ -7,6 +7,7 @@
 
 pub mod alpaca;
 pub mod broker_surface;
+pub mod bybit;
 pub mod executor;
 pub mod orderly;
 
@@ -15,5 +16,6 @@ pub use broker_surface::{
     AlpacaLiveSurface, AlpacaPaperSurface, BrokerKind, BrokerSurface, MockBrokerSurface, OrderConfirmation,
     OrderRequest as BrokerOrderRequest, OrderlyLiveSurface, Side,
 };
+pub use bybit::{BybitPaperSurface, BybitTestnetClient, MockBybitClient};
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
 pub use orderly::OrderlyExecutor;
