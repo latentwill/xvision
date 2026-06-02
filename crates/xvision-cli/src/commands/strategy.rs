@@ -955,7 +955,11 @@ async fn new_atomic(
                 provider: provider.clone(),
                 model: model.clone(),
                 system_prompt: prompt_text,
-                skill_ids: Vec::new(),
+                skill_ids: if role.eq_ignore_ascii_case("trader") {
+                    vec!["ohlcv".to_string(), "indicator_panel".to_string()]
+                } else {
+                    Vec::new()
+                },
                 max_tokens: None,
                 max_wall_ms: None,
                 temperature: None,
