@@ -132,6 +132,8 @@ fn seed_strategy_with_trader(
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         };
 
         let store = FilesystemStore::new(strategy_store_dir(&home));
@@ -180,6 +182,8 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -394,6 +398,17 @@ fn validate_happy_path_eval_ready() {
 
     // 4h scenario (scenarios are asset-free).
     let scenario_id = create_scenario(dir.path(), "4h", "happy-path-btc-scenario");
+
+    let edit = xvn(
+        &["strategy", "edit", &strategy_id, "--no-filter-warning"],
+        dir.path(),
+    );
+    assert_eq!(
+        code(&edit),
+        0,
+        "expected edit to acknowledge no-filter warning; stderr: {}",
+        String::from_utf8_lossy(&edit.stderr)
+    );
 
     let out = xvn(
         &[

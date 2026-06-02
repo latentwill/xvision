@@ -32,7 +32,7 @@ use xvision_engine::eval::findings::Finding;
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::report::compute_run_report;
 use xvision_engine::eval::run::{ReviewModel, RunMode, RunStatus};
-use xvision_engine::eval::scenario::{AssetClass, AssetRef};
+use xvision_engine::eval::scenario::{AssetClass, AssetRef, TimeWindow};
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::safety::VenueLabel;
 
@@ -48,6 +48,33 @@ pub enum OutputFormat {
     Json,
     /// Compact single-line JSON.
     JsonCompact,
+}
+
+/// Evaluation profile: fast smoke test or thorough deep run.
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalProfile {
+    /// Fast, cheap smoke test. Defaults: openrouter / google/gemini-flash-1.5 / 30 decisions.
+    Smoke,
+    /// Thorough validation run. Defaults: openrouter / deepseek/deepseek-chat / 180 decisions.
+    Deep,
+}
+
+impl EvalProfile {
+    pub fn provider(self) -> &'static str {
+        "openrouter"
+    }
+    pub fn model(self) -> &'static str {
+        match self {
+            Self::Smoke => "google/gemini-flash-1.5",
+            Self::Deep => "deepseek/deepseek-chat",
+        }
+    }
+    pub fn max_decisions(self) -> u32 {
+        match self {
+            Self::Smoke => 30,
+            Self::Deep => 180,
+        }
+    }
 }
 
 /// Map an engine ApiError to our exit-code-bearing CliError. Variants
@@ -109,6 +136,9 @@ pub enum Op {
     /// status. The verb hits the same `eval::cancel` engine API as
     /// `POST /api/eval/runs/:id/cancel`.
     Cancel(CancelArgs),
+    /// Run eval across multiple time windows by cloning a base scenario per window.
+    /// Sequentially clones, runs, and reports. Use --json for machine-readable output.
+    Sweep(SweepArgs),
     /// Run the two-pass lookahead-bias prober on a completed run.
     ///
     /// Detects indicator-based lookahead bias by running each baseline twice:
@@ -241,6 +271,12 @@ pub struct RunArgs {
     /// byte-identical to a non-recorded run). Mirrors `xvn ab-compare --record`.
     #[arg(long)]
     pub record_trajectory: bool,
+    /// Evaluation profile: smoke (fast/cheap) or deep (thorough).
+    /// Sets defaults for --provider, --model, --max-decisions. Explicit flags override.
+    ///   smoke -> openrouter / google/gemini-flash-1.5 / 30 decisions
+    ///   deep  -> openrouter / deepseek/deepseek-chat  / 180 decisions
+    #[arg(long, value_enum)]
+    pub profile: Option<EvalProfile>,
 }
 
 #[derive(Args, Debug)]
@@ -282,6 +318,9 @@ pub struct ShowArgs {
     /// `{"run": ..., "behavior_summary": ...}`.
     #[arg(long)]
     pub behavior: bool,
+    /// Show full detail (actions, tokens, cost, providers). Default is compact health card.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -326,6 +365,52 @@ pub struct CancelArgs {
     /// outcomes: {id: "cancelled" | "not_running" | "not_found" | ...}}`).
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct SweepArgs {
+    /// Strategy agent id.
+    #[arg(long)]
+    pub strategy: String,
+    /// Base scenario id to clone for each window.
+    #[arg(long)]
+    pub scenario: String,
+    /// Sweep start date (YYYY-MM-DD).
+    #[arg(long)]
+    pub from: chrono::NaiveDate,
+    /// Sweep end date (YYYY-MM-DD, exclusive upper bound).
+    #[arg(long)]
+    pub to: chrono::NaiveDate,
+    /// Window length: 90d, 6w, or 3mo (months = 30 days each).
+    #[arg(long, default_value = "90d")]
+    pub window: String,
+    /// Step between window starts.
+    #[arg(long, default_value = "30d")]
+    pub step: String,
+    /// Asset subset (comma-separated). Defaults to the strategy universe.
+    #[arg(long, value_delimiter = ',')]
+    pub assets: Vec<String>,
+    /// Eval profile: smoke (fast/cheap) or deep (thorough).
+    #[arg(long, value_enum)]
+    pub profile: Option<EvalProfile>,
+    /// Override provider (takes priority over --profile).
+    #[arg(long)]
+    pub provider: Option<String>,
+    /// Override model (takes priority over --profile).
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Max decisions per window run (takes priority over --profile).
+    #[arg(long)]
+    pub max_decisions: Option<u32>,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Emit sweep results as JSON.
+    #[arg(long)]
+    pub json: bool,
+    /// Skip provider reachability preflight.
+    #[arg(long)]
+    pub skip_preflight: bool,
 }
 
 #[derive(Args, Debug)]
@@ -423,6 +508,9 @@ pub struct ValidateArgs {
     /// Emit a JSON validation report.
     #[arg(long)]
     pub json: bool,
+    /// Print a structured explain block after successful validation.
+    #[arg(long)]
+    pub explain: bool,
 }
 
 #[derive(Args, Debug)]
@@ -471,6 +559,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Batch(args) => run_batch_cmd(args).await,
         Op::Cancel(args) => run_cancel(args).await,
         Op::ProbeLookahead(args) => probe_lookahead::run_probe_lookahead(args).await,
+        Op::Sweep(args) => run_sweep(args).await,
     }
 }
 
@@ -520,12 +609,22 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         .exit_with(XvnExit::Upstream)?;
     let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
 
+    // Apply profile defaults — explicit flags take priority.
+    let (eff_provider, eff_model, eff_max_decisions) = match args.profile {
+        Some(p) => (
+            args.provider.or_else(|| Some(p.provider().to_string())),
+            args.model.or_else(|| Some(p.model().to_string())),
+            Some(args.max_decisions.unwrap_or(p.max_decisions())),
+        ),
+        None => (args.provider, args.model, args.max_decisions),
+    };
+
     // Build `EvalLimits` from the CLI flags. If every cap is `None`
     // and `cancel_on_token_limit` is false, leave `limits: None` so
     // the engine's pre-limits codepath stays hot.
     let limits = {
         let l = xvision_engine::eval::limits::EvalLimits {
-            max_decisions: args.max_decisions,
+            max_decisions: eff_max_decisions,
             max_input_tokens: args.max_input_tokens,
             max_output_tokens: args.max_output_tokens,
             max_wall_clock_secs: args.max_wall_clock_secs,
@@ -543,7 +642,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     // usage. The engine validates the override against the resolver
     // (`key_missing`/`model_disabled`/…) and refuses with the same typed
     // reason as the strategy-bound path.
-    let provider_override = match (args.provider.as_deref(), args.model.as_deref()) {
+    let provider_override = match (eff_provider.as_deref(), eff_model.as_deref()) {
         (Some(p), Some(m)) => Some(ProviderOverride {
             provider: p.to_string(),
             model: m.to_string(),
@@ -725,30 +824,7 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     }
 
     println!();
-    println!("Run completed.");
-    println!("  id              {}", run.id);
-    println!("  status          {}", run.status.as_str());
-    println!("  auto_review     {}", run.auto_fire_review);
-    println!(
-        "  review_ann_max  {}",
-        run.max_annotations_per_review.unwrap_or(8)
-    );
-    if let Some(model) = run.review_model.as_ref() {
-        println!("  review_model    {}/{}", model.provider, model.model);
-    }
-    if let Some(c) = run.completed_at {
-        println!("  completed_at    {}", c.to_rfc3339());
-    }
-    if let Some(m) = run.metrics.as_ref() {
-        println!();
-        println!("  Metrics");
-        println!("    total_return  {:.2}%", m.total_return_pct);
-        println!("    sharpe        {:.3}", m.sharpe);
-        println!("    max_drawdown  {:.2}%", m.max_drawdown_pct);
-        println!("    win_rate      {:.2}", m.win_rate);
-        println!("    n_trades      {}", m.n_trades);
-        println!("    n_decisions   {}", m.n_decisions);
-    }
+    print_run_health_card(&run, None);
     Ok(())
 }
 
@@ -1032,114 +1108,159 @@ async fn run_show(args: ShowArgs) -> CliResult<()> {
         return Ok(());
     }
 
-    println!("id              {}", run.id);
-    println!("status          {}", run.status.as_str());
-    println!("mode            {}", run.mode.as_str());
-    println!("scenario        {}", run.scenario_id);
-    println!("strategy        {}", run.agent_id);
-    println!("auto_review     {}", run.auto_fire_review);
-    println!("review_ann_max  {}", run.max_annotations_per_review.unwrap_or(8));
-    if let Some(model) = run.review_model.as_ref() {
-        println!("review_model    {}/{}", model.provider, model.model);
-    }
-    println!("started_at      {}", run.started_at.to_rfc3339());
-    if let Some(c) = run.completed_at {
-        println!("completed_at    {}", c.to_rfc3339());
-    }
-    if let Some(wc) = report.wall_clock_ms {
-        println!("wall_clock_ms   {wc}");
-    }
-    if let Some(m) = run.metrics.as_ref() {
-        println!("\nMetrics");
-        println!("  gross_return  {:.2}%", m.total_return_pct);
-        if let Some(cost) = m.inference_cost_quote_total {
-            println!("  infer_cost    ${cost:.4}");
-        } else {
-            println!("  infer_cost    n/a");
+    if args.verbose {
+        println!("id              {}", run.id);
+        println!("status          {}", run.status.as_str());
+        println!("mode            {}", run.mode.as_str());
+        println!("scenario        {}", run.scenario_id);
+        println!("strategy        {}", run.agent_id);
+        println!("auto_review     {}", run.auto_fire_review);
+        println!("review_ann_max  {}", run.max_annotations_per_review.unwrap_or(8));
+        if let Some(model) = run.review_model.as_ref() {
+            println!("review_model    {}/{}", model.provider, model.model);
         }
-        if let Some(net) = m.net_return_pct {
-            println!("  net_return    {:.2}%", net);
-        } else {
-            println!("  net_return    n/a");
+        println!("started_at      {}", run.started_at.to_rfc3339());
+        if let Some(c) = run.completed_at {
+            println!("completed_at    {}", c.to_rfc3339());
         }
-        println!("  sharpe        {:.3}", m.sharpe);
-        println!("  max_drawdown  {:.2}%", m.max_drawdown_pct);
-        println!("  win_rate      {:.2}", m.win_rate);
-        println!("  n_trades      {}", m.n_trades);
-        println!("  n_decisions   {}", m.n_decisions);
-    }
-
-    // Action distribution + tokens + cost roll-up. Always emitted so an
-    // operator can tell at a glance "no model calls ever landed for this
-    // run" (all-None tokens, model_call_count = 0).
-    println!("\nActions");
-    println!("  long_open     {}", report.action_counts.long_open);
-    println!("  short_open    {}", report.action_counts.short_open);
-    println!("  flat          {}", report.action_counts.flat);
-    println!("  hold          {}", report.action_counts.hold);
-    println!("  long_close    {}", report.action_counts.long_close);
-    println!("  short_close   {}", report.action_counts.short_close);
-    println!("  decisions     {}", report.decisions);
-    println!("  trades        {}", report.trades);
-    println!("  direct_flips  {}", report.direct_flips);
-    println!("  repeated_opens {}", report.repeated_opens);
-
-    println!("\nTokens / cost");
-    match report.input_tokens {
-        Some(n) => println!("  input_tokens  {n}"),
-        None => println!("  input_tokens  n/a"),
-    }
-    match report.output_tokens {
-        Some(n) => println!("  output_tokens {n}"),
-        None => println!("  output_tokens n/a"),
-    }
-    match report.cost_usd_estimate {
-        Some(c) => {
-            let lb = if report.cost_estimate_complete {
-                ""
+        if let Some(wc) = report.wall_clock_ms {
+            println!("wall_clock_ms   {wc}");
+        }
+        if let Some(m) = run.metrics.as_ref() {
+            println!("\nMetrics");
+            println!("  gross_return  {:.2}%", m.total_return_pct);
+            if let Some(cost) = m.inference_cost_quote_total {
+                println!("  infer_cost    ${cost:.4}");
             } else {
-                " (lower bound — some calls had unknown cost)"
-            };
-            println!("  cost_usd      ${c:.4}{lb}");
+                println!("  infer_cost    n/a");
+            }
+            if let Some(net) = m.net_return_pct {
+                println!("  net_return    {:.2}%", net);
+            } else {
+                println!("  net_return    n/a");
+            }
+            println!("  sharpe        {:.3}", m.sharpe);
+            println!("  max_drawdown  {:.2}%", m.max_drawdown_pct);
+            println!("  win_rate      {:.2}", m.win_rate);
+            println!("  n_trades      {}", m.n_trades);
+            println!("  n_decisions   {}", m.n_decisions);
         }
-        None => println!("  cost_usd      n/a"),
-    }
-    if let Some(ref bsummary) = behavior {
-        println!("\nbehavior_summary:");
-        println!("  flat_rate                {:.2}", bsummary.flat_rate);
-        println!("  trades_opened            {}", bsummary.trades_opened);
-        println!("  direct_flips             {}", bsummary.direct_flips);
-        if let Some(avg) = bsummary.avg_bars_held {
-            println!("  avg_bars_held            {:.1}", avg);
-        } else {
-            println!("  avg_bars_held            n/a");
-        }
-        println!("  reentries_after_loss     {}", bsummary.reentries_after_loss);
-        println!("  exits_on_invalidation    {}", bsummary.exits_on_invalidation);
-        println!("  primary_failure_mode     {}", bsummary.primary_failure_mode);
-    }
-    // Providers used — query model_calls via the observability join.
-    let providers_used = eval_export::load_providers_used(&ctx.db, &run.id).await;
-    if !providers_used.is_empty() {
-        println!("\nproviders_used");
-        for pm in &providers_used {
-            println!("  {}/{:<30}  {}", pm.provider, pm.model, pm.call_count);
-        }
-    }
 
-    // Per-launch override receipt (Wave B #5). Surface only when set —
-    // the absence of this section means the run used the strategy's
-    // bound provider/model.
-    if let Some(po) = provider_override.as_ref() {
-        println!("\nprovider_override");
-        println!("  provider      {}", po.provider);
-        println!("  model         {}", po.model);
-    }
+        // Action distribution + tokens + cost roll-up. Always emitted so an
+        // operator can tell at a glance "no model calls ever landed for this
+        // run" (all-None tokens, model_call_count = 0).
+        println!("\nActions");
+        println!("  long_open     {}", report.action_counts.long_open);
+        println!("  short_open    {}", report.action_counts.short_open);
+        println!("  flat          {}", report.action_counts.flat);
+        println!("  hold          {}", report.action_counts.hold);
+        println!("  long_close    {}", report.action_counts.long_close);
+        println!("  short_close   {}", report.action_counts.short_close);
+        println!("  decisions     {}", report.decisions);
+        println!("  trades        {}", report.trades);
+        println!("  direct_flips  {}", report.direct_flips);
+        println!("  repeated_opens {}", report.repeated_opens);
 
-    if let Some(e) = run.error.as_deref() {
-        println!("\nerror: {e}");
+        println!("\nTokens / cost");
+        match report.input_tokens {
+            Some(n) => println!("  input_tokens  {n}"),
+            None => println!("  input_tokens  n/a"),
+        }
+        match report.output_tokens {
+            Some(n) => println!("  output_tokens {n}"),
+            None => println!("  output_tokens n/a"),
+        }
+        match report.cost_usd_estimate {
+            Some(c) => {
+                let lb = if report.cost_estimate_complete {
+                    ""
+                } else {
+                    " (lower bound — some calls had unknown cost)"
+                };
+                println!("  cost_usd      ${c:.4}{lb}");
+            }
+            None => println!("  cost_usd      n/a"),
+        }
+        if let Some(ref bsummary) = behavior {
+            println!("\nbehavior_summary:");
+            println!("  flat_rate                {:.2}", bsummary.flat_rate);
+            println!("  trades_opened            {}", bsummary.trades_opened);
+            println!("  direct_flips             {}", bsummary.direct_flips);
+            if let Some(avg) = bsummary.avg_bars_held {
+                println!("  avg_bars_held            {:.1}", avg);
+            } else {
+                println!("  avg_bars_held            n/a");
+            }
+            println!("  reentries_after_loss     {}", bsummary.reentries_after_loss);
+            println!("  exits_on_invalidation    {}", bsummary.exits_on_invalidation);
+            println!("  primary_failure_mode     {}", bsummary.primary_failure_mode);
+        }
+        // Providers used — query model_calls via the observability join.
+        let providers_used = eval_export::load_providers_used(&ctx.db, &run.id).await;
+        if !providers_used.is_empty() {
+            println!("\nproviders_used");
+            for pm in &providers_used {
+                println!("  {}/{:<30}  {}", pm.provider, pm.model, pm.call_count);
+            }
+        }
+
+        // Per-launch override receipt (Wave B #5). Surface only when set —
+        // the absence of this section means the run used the strategy's
+        // bound provider/model.
+        if let Some(po) = provider_override.as_ref() {
+            println!("\nprovider_override");
+            println!("  provider      {}", po.provider);
+            println!("  model         {}", po.model);
+        }
+
+        if let Some(e) = run.error.as_deref() {
+            println!("\nerror: {e}");
+        }
+    } else {
+        print_run_health_card(&run, Some(&report));
     }
     Ok(())
+}
+
+fn print_run_health_card(
+    run: &xvision_engine::eval::run::Run,
+    report: Option<&xvision_engine::eval::report::RunReport>,
+) {
+    // Line 1: status + key ids
+    println!("run     {} [{}]", run.id, run.status.as_str());
+    println!("for     {} / {}", run.agent_id, run.scenario_id);
+    if let Some(c) = run.completed_at {
+        let started = run.started_at.format("%Y-%m-%dT%H:%MZ");
+        let done = c.format("%Y-%m-%dT%H:%MZ");
+        println!("ran     {} → {}", started, done);
+    }
+    // Metrics (compact, all on one line each)
+    if let Some(m) = run.metrics.as_ref() {
+        println!("return  {:.2}%", m.total_return_pct);
+        println!(
+            "sharpe  {:.3}   dd {:.2}%   win {:.2}",
+            m.sharpe, m.max_drawdown_pct, m.win_rate
+        );
+        println!("trades  {}   decisions {}", m.n_trades, m.n_decisions);
+        if let Some(cost) = m.inference_cost_quote_total {
+            println!("cost    ${:.4}", cost);
+        }
+    }
+    // Token summary from report if available
+    if let Some(rpt) = report {
+        match (rpt.input_tokens, rpt.output_tokens) {
+            (Some(i), Some(o)) => println!("tokens  in={} out={}", i, o),
+            (Some(i), None) => println!("tokens  in={}", i),
+            _ => {}
+        }
+        if let Some(wc) = rpt.wall_clock_ms {
+            println!("wall    {}ms", wc);
+        }
+    }
+    // Error if any
+    if let Some(e) = run.error.as_deref() {
+        println!("error   {}", e);
+    }
 }
 
 async fn run_watch(args: WatchArgs) -> CliResult<()> {
@@ -1547,7 +1668,11 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         }
         return Err(CliError {
             exit: XvnExit::OptValidation,
-            source: anyhow::anyhow!("eval validate: {error}"),
+            source: anyhow::anyhow!(
+                "eval validate failed\n  reason: {error}\n  strategy: {}\n  scenario: {}",
+                args.strategy,
+                args.scenario
+            ),
         });
     }
 
@@ -1562,6 +1687,24 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         crate::io::print_json(&body)?;
     } else {
         println!("ok");
+    }
+    if args.explain && !args.json {
+        println!();
+        println!("explain");
+        println!("  strategy   {}", args.strategy);
+        println!("  scenario   {}", args.scenario);
+        println!("  mode       {}", mode.as_str());
+        if let Ok(strategy) = api_strategy::get(&ctx, &args.strategy).await {
+            println!("  assets     {}", strategy.manifest.asset_universe.join(", "));
+            println!("  timeframe  {}min", strategy.manifest.decision_cadence_minutes);
+            for a in &strategy.agents {
+                println!("  agent      role={} id={}", a.role, a.agent_id);
+            }
+            println!(
+                "  filter     {}",
+                if strategy.filter.is_some() { "yes" } else { "none" }
+            );
+        }
     }
     Ok(())
 }
@@ -1613,6 +1756,294 @@ async fn run_attest(args: AttestArgs) -> CliResult<()> {
         att.tokens_used.input, att.tokens_used.output
     );
     Ok(())
+}
+
+fn parse_duration_days(s: &str) -> Result<u64, String> {
+    let s = s.trim();
+    if let Some(n) = s.strip_suffix("d") {
+        n.parse::<u64>()
+            .map_err(|_| format!("invalid duration '{s}' — expected e.g. 90d"))
+    } else if let Some(n) = s.strip_suffix("w") {
+        n.parse::<u64>()
+            .map(|v| v * 7)
+            .map_err(|_| format!("invalid duration '{s}'"))
+    } else if let Some(n) = s.strip_suffix("mo") {
+        n.parse::<u64>()
+            .map(|v| v * 30)
+            .map_err(|_| format!("invalid duration '{s}'"))
+    } else {
+        Err(format!("invalid duration '{s}' — expected: 90d, 6w, 3mo"))
+    }
+}
+
+fn generate_windows(
+    from: chrono::NaiveDate,
+    to: chrono::NaiveDate,
+    window_days: u64,
+    step_days: u64,
+) -> Vec<(chrono::NaiveDate, chrono::NaiveDate)> {
+    let mut windows = Vec::new();
+    let mut start = from;
+    loop {
+        let end = start + chrono::Duration::days(window_days as i64);
+        if end > to {
+            break;
+        }
+        windows.push((start, end));
+        let next = start + chrono::Duration::days(step_days as i64);
+        if next >= to {
+            break;
+        }
+        start = next;
+    }
+    windows
+}
+
+#[derive(Debug, serde::Serialize)]
+struct SweepRunResult {
+    window_start: String,
+    window_end: String,
+    scenario_id: String,
+    run_id: String,
+    status: String,
+    return_pct: Option<f64>,
+    sharpe: Option<f64>,
+    max_drawdown_pct: Option<f64>,
+    n_trades: u32,
+    n_decisions: u32,
+}
+
+fn resolve_assets_subset(assets: &[String]) -> CliResult<Option<Vec<xvision_core::trading::AssetSymbol>>> {
+    if assets.is_empty() {
+        return Ok(None);
+    }
+    let mut parsed = Vec::new();
+    for raw in assets {
+        let sym = crate::commands::asset::parse_asset(raw).map_err(|e| CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--assets: {e}"),
+        })?;
+        parsed.push(sym);
+    }
+    Ok(Some(parsed))
+}
+
+fn sweep_run_result(
+    win_start: chrono::NaiveDate,
+    win_end: chrono::NaiveDate,
+    scenario_id: String,
+    run: &xvision_engine::eval::run::Run,
+) -> SweepRunResult {
+    SweepRunResult {
+        window_start: win_start.format("%Y-%m-%d").to_string(),
+        window_end: win_end.format("%Y-%m-%d").to_string(),
+        scenario_id,
+        run_id: run.id.clone(),
+        status: run.status.as_str().to_string(),
+        return_pct: run.metrics.as_ref().map(|m| m.total_return_pct),
+        sharpe: run.metrics.as_ref().map(|m| m.sharpe),
+        max_drawdown_pct: run.metrics.as_ref().map(|m| m.max_drawdown_pct),
+        n_trades: run.metrics.as_ref().map(|m| m.n_trades).unwrap_or(0),
+        n_decisions: run.metrics.as_ref().map(|m| m.n_decisions).unwrap_or(0),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_sweep_window(
+    ctx: &ApiContext,
+    i: usize,
+    total: usize,
+    win_start: chrono::NaiveDate,
+    win_end: chrono::NaiveDate,
+    strategy: &str,
+    scenario: &str,
+    skip_preflight: bool,
+    provider_override: Option<ProviderOverride>,
+    assets_subset: Option<Vec<xvision_core::trading::AssetSymbol>>,
+    eff_max_decisions: Option<u32>,
+) -> CliResult<SweepRunResult> {
+    let clone_name = format!(
+        "sweep {}..{}",
+        win_start.format("%Y-%m-%d"),
+        win_end.format("%Y-%m-%d")
+    );
+    let cloned = api_scenario::clone(
+        ctx,
+        scenario,
+        api_scenario::ScenarioMutations {
+            display_name: Some(clone_name.clone()),
+            time_window: Some(TimeWindow {
+                start: win_start
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is always valid")
+                    .and_utc(),
+                end: win_end
+                    .and_hms_opt(0, 0, 0)
+                    .expect("midnight is always valid")
+                    .and_utc(),
+            }),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("sweep (clone scenario)", e))?;
+    let limits = eff_max_decisions.map(|n| xvision_engine::eval::limits::EvalLimits {
+        max_decisions: Some(n),
+        max_input_tokens: None,
+        max_output_tokens: None,
+        max_wall_clock_secs: None,
+        cancel_on_token_limit: false,
+    });
+    crate::progress!("[{}/{}] {} scenario={}", i + 1, total, clone_name, cloned.id);
+    let req = EvalRunRequest {
+        agent_id: strategy.to_string(),
+        scenario_id: cloned.id.clone(),
+        mode: RunMode::Backtest,
+        params_override: None,
+        live_config: None,
+        limits,
+        skip_preflight,
+        provider_override,
+        assets_subset,
+        auto_fire_review: false,
+        review_model: None,
+        max_annotations_per_review: None,
+        trajectory_mode: RunTrajectoryMode::Live,
+    };
+    let run = eval::run(ctx, req)
+        .await
+        .map_err(|e| api_to_cli("sweep (eval run)", e))?;
+    Ok(sweep_run_result(win_start, win_end, cloned.id, &run))
+}
+
+fn print_sweep_results(results: &Vec<SweepRunResult>, json: bool) -> CliResult<()> {
+    if json {
+        crate::io::print_json(results)?;
+        return Ok(());
+    }
+    println!();
+    println!("Sweep complete — {} windows", results.len());
+    println!();
+    println!(
+        "{:<12}  {:<12}  {:>10}  {:>8}  {:>8}  {:>6}  {:>9}",
+        "FROM", "TO", "RETURN_%", "SHARPE", "MAX_DD_%", "TRADES", "DECISIONS"
+    );
+    for r in results {
+        println!(
+            "{:<12}  {:<12}  {:>10}  {:>8}  {:>8}  {:>6}  {:>9}",
+            r.window_start,
+            r.window_end,
+            r.return_pct
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or_else(|| "-".into()),
+            r.sharpe
+                .map(|v| format!("{:.3}", v))
+                .unwrap_or_else(|| "-".into()),
+            r.max_drawdown_pct
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or_else(|| "-".into()),
+            r.n_trades,
+            r.n_decisions,
+        );
+    }
+    Ok(())
+}
+
+async fn run_sweep(args: SweepArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let window_days = parse_duration_days(&args.window).map_err(|e| CliError {
+        exit: XvnExit::Usage,
+        source: anyhow::anyhow!("{e}"),
+    })?;
+    let step_days = parse_duration_days(&args.step).map_err(|e| CliError {
+        exit: XvnExit::Usage,
+        source: anyhow::anyhow!("{e}"),
+    })?;
+    if window_days == 0 || step_days == 0 {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!("--window and --step must be > 0"),
+        });
+    }
+    let windows = generate_windows(args.from, args.to, window_days, step_days);
+    if windows.is_empty() {
+        return Err(CliError {
+            exit: XvnExit::Usage,
+            source: anyhow::anyhow!(
+                "no windows generated — window end exceeds --to for every start position"
+            ),
+        });
+    }
+    let (eff_provider, eff_model, eff_max_decisions) = match args.profile {
+        Some(p) => (
+            args.provider.or_else(|| Some(p.provider().to_string())),
+            args.model.or_else(|| Some(p.model().to_string())),
+            Some(args.max_decisions.unwrap_or(p.max_decisions())),
+        ),
+        None => (args.provider, args.model, args.max_decisions),
+    };
+    let provider_override = match (eff_provider.as_deref(), eff_model.as_deref()) {
+        (Some(p), Some(m)) => Some(ProviderOverride {
+            provider: p.to_string(),
+            model: m.to_string(),
+        }),
+        (Some(_), None) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--provider requires --model"),
+            })
+        }
+        (None, Some(_)) => {
+            return Err(CliError {
+                exit: XvnExit::Usage,
+                source: anyhow::anyhow!("--model requires --provider"),
+            })
+        }
+        (None, None) => None,
+    };
+    let assets_subset = resolve_assets_subset(&args.assets)?;
+    crate::progress!(
+        "Sweep: {} window(s) strategy={} scenario={}",
+        windows.len(),
+        args.strategy,
+        args.scenario
+    );
+    let mut results: Vec<SweepRunResult> = Vec::new();
+    for (i, (win_start, win_end)) in windows.iter().enumerate() {
+        let result = run_sweep_window(
+            &ctx,
+            i,
+            windows.len(),
+            *win_start,
+            *win_end,
+            &args.strategy,
+            &args.scenario,
+            args.skip_preflight,
+            provider_override.clone(),
+            assets_subset.clone(),
+            eff_max_decisions,
+        )
+        .await?;
+        eprintln!(
+            "  return={} sharpe={} dd={}",
+            result
+                .return_pct
+                .map(|v| format!("{:.2}%", v))
+                .unwrap_or_else(|| "-".into()),
+            result
+                .sharpe
+                .map(|v| format!("{:.3}", v))
+                .unwrap_or_else(|| "-".into()),
+            result
+                .max_drawdown_pct
+                .map(|v| format!("{:.2}%", v))
+                .unwrap_or_else(|| "-".into()),
+        );
+        results.push(result);
+    }
+    print_sweep_results(&results, args.json)
 }
 
 #[cfg(test)]
@@ -1889,5 +2320,196 @@ mod tests {
             result.is_err(),
             "--live-duration and --live-time-limit-secs must conflict"
         );
+    }
+    // -----------------------------------------------------------------------
+    // EvalProfile / --profile flag tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn eval_profile_smoke_flag_parses() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "scen-01",
+            "--profile",
+            "smoke",
+        ])
+        .expect("--profile smoke must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        assert_eq!(args.profile, Some(EvalProfile::Smoke));
+    }
+
+    #[test]
+    fn eval_profile_deep_flag_parses() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "scen-01",
+            "--profile",
+            "deep",
+        ])
+        .expect("--profile deep must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        assert_eq!(args.profile, Some(EvalProfile::Deep));
+    }
+
+    #[test]
+    fn eval_profile_absent_is_none() {
+        let parsed =
+            TestEval::try_parse_from(["x", "run", "--strategy", "strat-01", "--scenario", "scen-01"])
+                .expect("minimal run must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        assert!(
+            args.profile.is_none(),
+            "profile must be None when --profile is not provided"
+        );
+    }
+
+    #[test]
+    fn eval_profile_smoke_method_defaults() {
+        let p = EvalProfile::Smoke;
+        assert_eq!(p.provider(), "openrouter");
+        assert_eq!(p.model(), "google/gemini-flash-1.5");
+        assert_eq!(p.max_decisions(), 30);
+    }
+
+    #[test]
+    fn eval_profile_deep_method_defaults() {
+        let p = EvalProfile::Deep;
+        assert_eq!(p.provider(), "openrouter");
+        assert_eq!(p.model(), "deepseek/deepseek-chat");
+        assert_eq!(p.max_decisions(), 180);
+    }
+
+    /// Explicit --max-decisions takes priority over the profile default.
+    /// Mirrors the `args.max_decisions.unwrap_or(p.max_decisions())` branch.
+    #[test]
+    fn eval_profile_explicit_max_decisions_overrides_profile() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "scen-01",
+            "--profile",
+            "smoke",
+            "--max-decisions",
+            "50",
+        ])
+        .expect("--profile smoke --max-decisions 50 must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        let p = args.profile.unwrap();
+        // Replicate the resolution logic from run_run().
+        let eff_max_decisions = Some(args.max_decisions.unwrap_or(p.max_decisions()));
+        assert_eq!(
+            eff_max_decisions,
+            Some(50),
+            "explicit --max-decisions must override smoke default of 30"
+        );
+    }
+
+    /// Explicit --provider/--model take priority over profile defaults.
+    /// Mirrors the `args.provider.or_else(|| Some(p.provider()...))` branch.
+    #[test]
+    fn eval_profile_explicit_provider_model_overrides_profile() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "scen-01",
+            "--profile",
+            "smoke",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-3-haiku",
+        ])
+        .expect("--profile smoke with explicit --provider/--model must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        let p = args.profile.unwrap();
+        // Replicate the resolution logic from run_run().
+        let eff_provider = args.provider.or_else(|| Some(p.provider().to_string()));
+        let eff_model = args.model.or_else(|| Some(p.model().to_string()));
+        assert_eq!(
+            eff_provider.as_deref(),
+            Some("anthropic"),
+            "explicit --provider must override smoke profile default"
+        );
+        assert_eq!(
+            eff_model.as_deref(),
+            Some("claude-3-haiku"),
+            "explicit --model must override smoke profile default"
+        );
+    }
+
+    /// When --profile smoke and no explicit flags: profile supplies all defaults.
+    #[test]
+    fn eval_profile_smoke_supplies_defaults_when_no_explicit_flags() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "scen-01",
+            "--profile",
+            "smoke",
+        ])
+        .expect("--profile smoke must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        let p = args.profile.unwrap();
+        let eff_provider = args.provider.or_else(|| Some(p.provider().to_string()));
+        let eff_model = args.model.or_else(|| Some(p.model().to_string()));
+        let eff_max_decisions = Some(args.max_decisions.unwrap_or(p.max_decisions()));
+        assert_eq!(eff_provider.as_deref(), Some("openrouter"));
+        assert_eq!(eff_model.as_deref(), Some("google/gemini-flash-1.5"));
+        assert_eq!(eff_max_decisions, Some(30));
+    }
+
+    /// When --profile deep and no explicit flags: profile supplies all defaults.
+    #[test]
+    fn eval_profile_deep_supplies_defaults_when_no_explicit_flags() {
+        let parsed = TestEval::try_parse_from([
+            "x",
+            "run",
+            "--strategy",
+            "strat-01",
+            "--scenario",
+            "scen-01",
+            "--profile",
+            "deep",
+        ])
+        .expect("--profile deep must parse");
+        let Op::Run(args) = parsed.op else {
+            panic!("expected Run subcommand");
+        };
+        let p = args.profile.unwrap();
+        let eff_provider = args.provider.or_else(|| Some(p.provider().to_string()));
+        let eff_model = args.model.or_else(|| Some(p.model().to_string()));
+        let eff_max_decisions = Some(args.max_decisions.unwrap_or(p.max_decisions()));
+        assert_eq!(eff_provider.as_deref(), Some("openrouter"));
+        assert_eq!(eff_model.as_deref(), Some("deepseek/deepseek-chat"));
+        assert_eq!(eff_max_decisions, Some(180));
     }
 }

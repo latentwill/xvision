@@ -125,6 +125,8 @@ fn build_test_strategy(id: &str, name: &str) -> Strategy {
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     }
 }
 
@@ -262,14 +264,30 @@ fn from_file_validate_ls_show_roundtrip() {
     assert_eq!(stdout_id, id);
 
     let out = xvn(&["strategy", "validate", id], dir.path());
-    assert!(out.status.success());
+    assert!(
+        !out.status.success(),
+        "validate should fail for a file-imported strategy with no agent refs"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("has no agents"),
+        "validate stderr should explain missing agents: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let out = xvn(&["strategy", "ls"], dir.path());
-    assert!(out.status.success());
+    assert!(
+        out.status.success(),
+        "ls stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(String::from_utf8(out.stdout).unwrap().contains(id));
 
     let out = xvn(&["strategy", "show", id], dir.path());
-    assert!(out.status.success());
+    assert!(
+        out.status.success(),
+        "show stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let strategy: serde_json::Value = serde_json::from_slice(&out.stdout).expect("strategy JSON");
     assert_eq!(strategy["manifest"]["id"], id);
     assert_eq!(strategy["manifest"]["display_name"], "test1");

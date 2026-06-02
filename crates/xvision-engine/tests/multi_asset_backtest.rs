@@ -59,7 +59,15 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -169,6 +177,10 @@ async fn backtest_fans_out_over_universe_with_shared_nav() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "full_debug")
+        .await
+        .unwrap();
 
     // Inject aligned bars for BOTH assets (same 5 timestamps, distinct prices).
     let btc = daily_bars(5, 50_000.0);
@@ -249,6 +261,10 @@ async fn backtest_misaligned_timeline_carries_last_mark() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "full_debug")
+        .await
+        .unwrap();
 
     // BTC has all 5 daily bars. ETH is missing the interior bar at index 2
     // (the 3rd timestamp) — it has bars at indices 0,1,3,4 only. ETH opens a
@@ -347,6 +363,10 @@ async fn backtest_asset_subset_excludes_other_assets() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "full_debug")
+        .await
+        .unwrap();
 
     // Inject bars for BOTH assets in the universe.
     let btc = daily_bars(4, 50_000.0);

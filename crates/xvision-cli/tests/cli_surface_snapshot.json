@@ -789,6 +789,17 @@
       "path": [
         "eval",
         "help",
+        "sweep"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "eval",
+        "help",
         "validate"
       ]
     },
@@ -885,6 +896,7 @@
         "--live-broker-creds-ref",
         "--live-capital",
         "--live-decision-limit",
+        "--live-duration",
         "--live-time-limit-secs",
         "--live-warmup-bars",
         "--max-decisions",
@@ -894,6 +906,7 @@
         "--max-wall-clock-secs",
         "--mode",
         "--model",
+        "--profile",
         "--provider",
         "--record-trajectory",
         "--review-model",
@@ -938,6 +951,32 @@
       "path": [
         "eval",
         "show"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--assets",
+        "--from",
+        "--help",
+        "--json",
+        "--max-decisions",
+        "--model",
+        "--profile",
+        "--provider",
+        "--scenario",
+        "--skip-preflight",
+        "--step",
+        "--strategy",
+        "--to",
+        "--window",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "eval",
+        "sweep"
       ]
     },
     {
@@ -1728,6 +1767,17 @@
       "path": [
         "help",
         "eval",
+        "sweep"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "eval",
         "validate"
       ]
     },
@@ -2029,6 +2079,16 @@
         "help",
         "intern",
         "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "last"
       ]
     },
     {
@@ -3070,6 +3130,17 @@
       "path": [
         "help",
         "strategy",
+        "leaderboard"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
         "ls"
       ]
     },
@@ -3584,6 +3655,21 @@
       "path": [
         "intern",
         "preview"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--n",
+        "--strategy",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "last"
       ]
     },
     {
@@ -4720,9 +4806,10 @@
         "--db",
         "--help",
         "--mock",
+        "--session-id",
         "--strategy"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "optimizer",
         "evening-cycle"
@@ -6265,6 +6352,17 @@
       "path": [
         "strategy",
         "help",
+        "leaderboard"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
         "ls"
       ]
     },
@@ -6376,6 +6474,22 @@
         "strategy",
         "help",
         "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json",
+        "--since-days",
+        "--sort",
+        "--top"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "leaderboard"
       ]
     },
     {

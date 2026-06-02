@@ -2061,7 +2061,9 @@ fn callback_market_data_tool_asset_mismatch(
     }
     let current_asset = current_asset?;
     let requested_asset = input.get("asset").and_then(|v| v.as_str())?;
-    if normalize_callback_asset_for_compare(current_asset) == normalize_callback_asset_for_compare(requested_asset) {
+    if normalize_callback_asset_for_compare(current_asset)
+        == normalize_callback_asset_for_compare(requested_asset)
+    {
         return None;
     }
 

@@ -65,15 +65,12 @@ pub enum ExecuteSlotError {
 }
 
 fn current_decision_asset(inputs: &serde_json::Value) -> Option<&str> {
-    inputs
-        .get("asset")
-        .and_then(|v| v.as_str())
-        .or_else(|| {
-            inputs
-                .get("market_data")
-                .and_then(|v| v.get("asset"))
-                .and_then(|v| v.as_str())
-        })
+    inputs.get("asset").and_then(|v| v.as_str()).or_else(|| {
+        inputs
+            .get("market_data")
+            .and_then(|v| v.get("asset"))
+            .and_then(|v| v.as_str())
+    })
 }
 
 fn normalize_asset_for_compare(asset: &str) -> String {

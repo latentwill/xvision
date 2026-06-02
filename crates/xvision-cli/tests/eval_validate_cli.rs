@@ -58,6 +58,8 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
         activation_mode: ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()
