@@ -22,7 +22,8 @@ Conductor: see `team/CONDUCTOR.md`.
 | `crates/xvision-engine/src/agent/llm.rs` | held: indicator-tool-wiring, eval-token-efficiency-tail | multiple waves | Disjoint regions. |
 | `crates/xvision-engine/src/agent/pipeline.rs` | held: indicator-tool-wiring (tool-call dispatch), trace-dock-emitters (tool_calls emit) | multiple waves | Disjoint regions. |
 | `crates/xvision-engine/src/eval/executor/paper.rs` | held: trace-dock-emitters | trace-dock-emitters-2026-05-22 | Single claim; safe to dispatch. |
-| `crates/xvision-engine/src/eval/executor/backtest.rs` | held: trace-dock-emitters | trace-dock-emitters-2026-05-22 | Single claim; safe to dispatch. |
+| `crates/xvision-engine/src/eval/executor/backtest.rs` | (none) | - | trace-dock-emitters merged PR #524 2026-05-22 |
+| `crates/xvision-engine/src/eval/executor/traits.rs` | `synthetic-fills-eval-only-shorts` (EvalOnly token + short wiring); held: `synthetic-fill-latency` (disjoint region — latency in `simulate_fill_inner`) | synthetic-eval-fill-path-2026-06-02 | Foundation lands first; latency rebases. |
 | `crates/xvision-observability/src/{sqlite,events,types,lib}.rs` | held: trace-dock-emitters (broad), memory-provenance-in-decisions-trace (narrow — `decision_id` on memory_recall payload) | multiple waves | trace-dock-emitters lands first preferred; provenance rebases. |
 
 ## Rules

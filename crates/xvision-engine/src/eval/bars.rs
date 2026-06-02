@@ -18,6 +18,7 @@ use std::io::{Read, Write};
 use chrono::{DateTime, Utc};
 use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 
+use xvision_core::market::Ohlcv;
 use xvision_data::alpaca::{BarGranularity, MarketBar};
 
 use crate::api::{ApiContext, ApiError, ApiResult};
@@ -218,6 +219,28 @@ pub async fn load_bars(ctx: &ApiContext, args: &BarCacheArgs) -> ApiResult<Vec<M
         .fetch_crypto_bars(&args.asset_pair, args.granularity, args.start, args.end)
         .await
         .map_err(|e| ApiError::Validation(format!("alpaca fetch: {e}")))?;
+
+    // 3a. Candle integrity pre-pass: hard-fail on structural corruption,
+    //     warn on gaps. Runs on cache-miss so every uncached window is
+    //     validated before being committed to the bar cache.
+    {
+        let ohlcv_check: Vec<Ohlcv> = bars.iter().map(|b| market_bar_to_ohlcv(b.clone())).collect();
+        let gap_findings =
+            crate::eval::candle_integrity::validate_bar_series(
+                &ohlcv_check,
+                Some(args.granularity.seconds()),
+            )
+            .map_err(|e| ApiError::Validation(format!("candle integrity: {e}")))?;
+        for gap in &gap_findings {
+            tracing::warn!(
+                asset = %args.asset_pair,
+                gap_start = %gap.gap_start_ts,
+                gap_end = %gap.gap_end_ts,
+                missing = gap.expected_bars,
+                "bar series gap detected",
+            );
+        }
+    }
 
     // 4. Persist — uncompressed for small windows, gzip above threshold.
     let raw = serialise_bars(&bars);

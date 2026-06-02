@@ -8,6 +8,7 @@
 
 pub mod attestation;
 pub mod bars;
+pub mod candle_integrity;
 pub mod batch_store;
 pub mod behavior;
 pub mod broker_rules;

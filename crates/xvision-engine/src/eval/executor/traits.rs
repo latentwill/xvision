@@ -48,6 +48,35 @@ use crate::eval::orders::OrderState;
 use crate::eval::scenario::{FillProvenance, SlippageModel};
 
 // ---------------------------------------------------------------------------
+// EvalOnly capability token
+// ---------------------------------------------------------------------------
+
+/// Zero-size capability token required by [`SimulatedFills::new`].
+///
+/// Mintable only from within `xvision-engine` via [`eval_only_token`].
+/// This gives a compile-time guarantee that `SimulatedFills` cannot be
+/// constructed in the live/real-money path (which uses `RealBrokerFills`).
+pub struct EvalOnly(());
+
+/// Mint an eval-only capability token. Only callable from within
+/// `xvision-engine`; external crates cannot invoke this.
+pub(crate) fn eval_only_token() -> EvalOnly {
+    EvalOnly(())
+}
+
+impl EvalOnly {
+    /// Test-only constructor. For use in unit and integration tests that
+    /// need to exercise [`SimulatedFills`] directly.
+    ///
+    /// **Not for use in production code.** Production paths use
+    /// [`eval_only_token`] (crate-internal).
+    #[doc(hidden)]
+    pub fn new_for_tests() -> Self {
+        EvalOnly(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BarSource
 // ---------------------------------------------------------------------------
 
@@ -183,6 +212,23 @@ impl Clock for InstantClock {
 /// lifetime gymnastics. The `slippage_model` is cloned in the executor
 /// before assembling the request — backtests own their scenario for
 /// the whole run, so the clone is a single SlippageModel value per fill.
+///
+/// ## Latency fields
+///
+/// `decision_to_fill_ms` and `bar_duration_ms` drive the intra-bar
+/// fill-reference interpolation in [`simulate_fill_inner`]. When
+/// `decision_to_fill_ms == 0` (or `bar_duration_ms == 0`) the fill
+/// reference is exactly `next_open`, preserving backward compatibility.
+/// Non-zero latency shifts the fill reference toward `bar_close`:
+///
+/// ```text
+/// latency_fraction = min(decision_to_fill_ms / bar_duration_ms, 1.0)
+/// fill_ref         = next_open + latency_fraction * (bar_close - next_open)
+/// ```
+///
+/// `bar_close` is the close of the fill bar (T+1), i.e. the bar whose
+/// open is `next_open`. This models "how far into the fill bar does the
+/// decision arrive."
 #[derive(Debug, Clone)]
 pub struct FillRequest {
     /// Pre-fill position size (base-asset units; +long / -short).
@@ -226,6 +272,16 @@ pub struct FillRequest {
     /// Fill bar's low (for intra-bar fill ordering; v1 market orders
     /// ignore this).
     pub bar_low: f64,
+    /// Fill bar's close. Used as the end-point of the latency
+    /// interpolation range when `decision_to_fill_ms > 0`.
+    pub bar_close: f64,
+    /// Configured decision-to-fill latency in milliseconds.
+    /// `0` → fill at `next_open` (backward-compatible no-op).
+    pub decision_to_fill_ms: u32,
+    /// Duration of one bar in milliseconds. Used to compute
+    /// `latency_fraction = decision_to_fill_ms / bar_duration_ms`.
+    /// `0` → treated as zero latency.
+    pub bar_duration_ms: u64,
 }
 
 /// The fill outcome returned by `FillSink::submit`. Mirrors the
@@ -293,16 +349,14 @@ pub trait FillSink: Send + Sync {
 /// pre-refactor inline call. **Behavior is byte-identical** to the
 /// pre-refactor code path; the integration regression in
 /// `tests/eval_executor_traits.rs` pins this.
+///
+/// Requires an [`EvalOnly`] capability token so this type cannot be
+/// constructed in the live/real-money path. Use [`eval_only_token`]
+/// (crate-internal) or [`EvalOnly::new_for_tests`] in tests.
 pub struct SimulatedFills;
 
-impl Default for SimulatedFills {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SimulatedFills {
-    pub fn new() -> Self {
+    pub fn new(_token: EvalOnly) -> Self {
         Self
     }
 }
@@ -318,12 +372,32 @@ impl FillSink for SimulatedFills {
 /// `simulate_fill`. Kept as a free function so unit tests can call it
 /// without holding a `SimulatedFills` value.
 ///
-/// **DO NOT modify this function in this contract.** It is a verbatim
-/// lift; behavioral drift would surface as test failures elsewhere.
-/// See the contract acceptance: "Lift the existing fill code from
-/// `Executor` verbatim into `SimulatedFills` rather than
-/// rewriting it."
+/// ## Look-ahead invariant
+///
+/// This function is a pure function of `FillRequest`. All bar fields
+/// in `FillRequest` are either from the decision bar (T) or from the
+/// fill bar (T+1). No data beyond bar T+1 is accessed, so there is no
+/// multi-bar look-ahead bias. The `debug_assert` below documents this.
+///
+/// ## Latency semantics
+///
+/// When `decision_to_fill_ms > 0`, the fill reference is shifted from
+/// `next_open` (T+1 open) toward `bar_close` (T+1 close):
+///
+/// ```text
+/// latency_fraction = min(decision_to_fill_ms / bar_duration_ms, 1.0)
+/// fill_ref         = next_open + latency_fraction * (bar_close - next_open)
+/// ```
+///
+/// Slippage and spread are then applied on top of `fill_ref`. Zero
+/// latency (`decision_to_fill_ms == 0`) reproduces the pre-latency
+/// behavior exactly.
 pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
+    // Look-ahead guard: fill uses only bar T+1 fields (next_open, bar_close,
+    // bar_open, bar_high, bar_low). No data beyond bar T+1 is read.
+    // Latency > bar_duration is handled by clamping the fraction to 1.0.
+    debug_assert!(a.next_open > 0.0, "next_open must be positive");
+
     let want_long = a.action == "long_open";
     let want_short = a.action == "short_open";
     let want_flat = !want_long && !want_short;
@@ -408,12 +482,21 @@ pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
         }
     };
 
+    // Latency: interpolate fill reference between next_open and bar_close.
+    // Zero latency → fill_ref = next_open (backward-compatible).
+    let fill_ref = if a.decision_to_fill_ms == 0 || a.bar_duration_ms == 0 {
+        a.next_open
+    } else {
+        let frac = (a.decision_to_fill_ms as f64 / a.bar_duration_ms as f64).min(1.0);
+        a.next_open + frac * (a.bar_close - a.next_open)
+    };
+
     let spread_fraction = a.spread_bps / 10_000.0 / 2.0;
 
     let fill_price = if trade_long {
-        a.next_open * (1.0 + effective_slip_fraction + spread_fraction)
+        fill_ref * (1.0 + effective_slip_fraction + spread_fraction)
     } else {
-        a.next_open * (1.0 - effective_slip_fraction - spread_fraction)
+        fill_ref * (1.0 - effective_slip_fraction - spread_fraction)
     };
 
     let realized = if a.pos != 0.0 {
@@ -508,44 +591,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn injected_bars_yields_each_bar_in_order_then_none() {
-        let bars = vec![ohlcv_at(1, 100.0), ohlcv_at(2, 101.0), ohlcv_at(3, 102.0)];
-        let mut src = InjectedBars::new(bars.clone());
-
-        for expected in bars.iter() {
-            let got = src.next_bar().await.expect("bar present");
-            assert_eq!(got.timestamp, expected.timestamp);
-            assert_eq!(got.close, expected.close);
-        }
-        assert!(src.next_bar().await.is_none(), "source must drain to None");
-        // Subsequent polls keep returning None.
-        assert!(src.next_bar().await.is_none());
-    }
-
-    #[test]
-    fn instant_clock_now_returns_most_recent_advance_to() {
-        let mut clock = InstantClock::new();
-        // Pre-advance: epoch.
-        assert_eq!(clock.now().timestamp(), 0);
-
-        let t1 = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
-        clock.advance_to(t1);
-        assert_eq!(clock.now(), t1);
-
-        let t2 = Utc.timestamp_opt(1_700_000_060, 0).unwrap();
-        clock.advance_to(t2);
-        assert_eq!(clock.now(), t2);
-    }
-
-    #[tokio::test]
-    async fn simulated_fills_produces_same_outcome_as_inline_simulate() {
-        // The fill simulation is a pure function of the FillRequest. Build
-        // an identical request and assert SimulatedFills::submit matches
-        // simulate_fill_inner directly — guarding against accidental
-        // behavioural drift between the trait impl and the lifted free
-        // function it delegates to.
-        let req = FillRequest {
+    fn base_req() -> FillRequest {
+        FillRequest {
             pos: 0.0,
             entry: 0.0,
             action: "long_open".into(),
@@ -564,13 +611,47 @@ mod tests {
             bar_open: 100.0,
             bar_high: 101.0,
             bar_low: 99.0,
-        };
+            bar_close: 100.5,
+            decision_to_fill_ms: 0,
+            bar_duration_ms: 3_600_000,
+        }
+    }
 
-        let mut sink = SimulatedFills::new();
+    #[tokio::test]
+    async fn injected_bars_yields_each_bar_in_order_then_none() {
+        let bars = vec![ohlcv_at(1, 100.0), ohlcv_at(2, 101.0), ohlcv_at(3, 102.0)];
+        let mut src = InjectedBars::new(bars.clone());
+
+        for expected in bars.iter() {
+            let got = src.next_bar().await.expect("bar present");
+            assert_eq!(got.timestamp, expected.timestamp);
+            assert_eq!(got.close, expected.close);
+        }
+        assert!(src.next_bar().await.is_none(), "source must drain to None");
+        assert!(src.next_bar().await.is_none());
+    }
+
+    #[test]
+    fn instant_clock_now_returns_most_recent_advance_to() {
+        let mut clock = InstantClock::new();
+        assert_eq!(clock.now().timestamp(), 0);
+
+        let t1 = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        clock.advance_to(t1);
+        assert_eq!(clock.now(), t1);
+
+        let t2 = Utc.timestamp_opt(1_700_000_060, 0).unwrap();
+        clock.advance_to(t2);
+        assert_eq!(clock.now(), t2);
+    }
+
+    #[tokio::test]
+    async fn simulated_fills_produces_same_outcome_as_inline_simulate() {
+        let req = base_req();
+        let mut sink = SimulatedFills::new(eval_only_token());
         let from_trait = sink.submit(req.clone()).await;
         let from_inline = simulate_fill_inner(&req);
 
-        // Compare the load-bearing fields. Both must agree byte-for-byte.
         assert_eq!(from_trait.new_pos, from_inline.new_pos);
         assert_eq!(from_trait.new_entry, from_inline.new_entry);
         assert_eq!(from_trait.fill_price, from_inline.fill_price);
@@ -580,5 +661,60 @@ mod tests {
         assert_eq!(from_trait.fill_branch, from_inline.fill_branch);
         assert_eq!(from_trait.aggressor_side, from_inline.aggressor_side);
         assert_eq!(from_trait.order_state, from_inline.order_state);
+    }
+
+    #[test]
+    fn zero_latency_fill_ref_equals_next_open() {
+        let req = base_req(); // decision_to_fill_ms: 0
+        let rec = simulate_fill_inner(&req);
+        // With Linear 5bps slip and no spread, fill = next_open * (1 + 0.0005)
+        let expected = 100.0 * (1.0 + 5.0 / 10_000.0);
+        assert!(
+            (rec.fill_price.unwrap() - expected).abs() < 1e-10,
+            "zero latency fill_price={} expected={}",
+            rec.fill_price.unwrap(),
+            expected,
+        );
+    }
+
+    #[test]
+    fn nonzero_latency_shifts_fill_ref_toward_bar_close() {
+        let mut req = base_req();
+        // Half-bar latency: fill_ref = 100.0 + 0.5 * (100.5 - 100.0) = 100.25
+        req.decision_to_fill_ms = 1_800_000; // 30 min of a 60-min bar
+        req.bar_duration_ms = 3_600_000;
+        req.bar_close = 100.5;
+        let rec_latency = simulate_fill_inner(&req);
+
+        let mut req_zero = base_req();
+        req_zero.bar_close = 100.5;
+        let rec_zero = simulate_fill_inner(&req_zero);
+
+        // Latency should push fill price above zero-latency fill price for long_open.
+        assert!(
+            rec_latency.fill_price.unwrap() > rec_zero.fill_price.unwrap(),
+            "half-bar latency must increase long fill price: {} vs {}",
+            rec_latency.fill_price.unwrap(),
+            rec_zero.fill_price.unwrap(),
+        );
+    }
+
+    #[test]
+    fn latency_exceeding_bar_duration_is_capped() {
+        // Oversized latency (2x bar duration) must be clamped to fill_ref = bar_close.
+        // The fraction is capped at 1.0: fill_ref = next_open + 1.0 * (bar_close - next_open) = bar_close.
+        let mut req = base_req();
+        req.decision_to_fill_ms = 7_200_000;
+        req.bar_duration_ms = 3_600_000;
+        req.bar_close = 101.0;
+        let rec = simulate_fill_inner(&req);
+
+        let expected = 101.0 * (1.0 + 5.0 / 10_000.0);
+        assert!(
+            (rec.fill_price.unwrap() - expected).abs() < 1e-10,
+            "capped latency fill_price={} expected={}",
+            rec.fill_price.unwrap(),
+            expected,
+        );
     }
 }

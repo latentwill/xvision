@@ -14,6 +14,7 @@ use xvision_core::market::Ohlcv;
 use xvision_engine::eval::executor::{
     BarSource, Clock, FillRequest, FillSink, InjectedBars, InstantClock, SimulatedFills,
 };
+use xvision_engine::eval::executor::traits::EvalOnly;
 use xvision_engine::eval::scenario::{FeeSource, SlippageModel};
 
 // ---------------------------------------------------------------------------
@@ -138,12 +139,15 @@ fn golden_request(pos: f64, action: &str) -> FillRequest {
         bar_open: 60_000.0,
         bar_high: 61_000.0,
         bar_low: 59_000.0,
+        bar_close: 60_500.0,
+        decision_to_fill_ms: 0,
+        bar_duration_ms: 3_600_000,
     }
 }
 
 #[tokio::test]
 async fn simulated_fills_long_open_from_flat_matches_pre_refactor() {
-    let mut sink = SimulatedFills::new();
+    let mut sink = SimulatedFills::new(EvalOnly::new_for_tests());
     let rec = sink.submit(golden_request(0.0, "long_open")).await;
     let fp = rec.fill_price.expect("filled");
     // 60_000 * (1 + 10/10000) = 60_060
@@ -168,7 +172,7 @@ async fn simulated_fills_long_open_from_flat_matches_pre_refactor() {
 
 #[tokio::test]
 async fn simulated_fills_noop_when_already_aligned() {
-    let mut sink = SimulatedFills::new();
+    let mut sink = SimulatedFills::new(EvalOnly::new_for_tests());
     // flat when flat — no-op.
     let r1 = sink.submit(golden_request(0.0, "flat")).await;
     assert_eq!(r1.new_pos, 0.0);
@@ -183,7 +187,7 @@ async fn simulated_fills_noop_when_already_aligned() {
 
 #[tokio::test]
 async fn simulated_fills_flat_closes_long_and_books_realized() {
-    let mut sink = SimulatedFills::new();
+    let mut sink = SimulatedFills::new(EvalOnly::new_for_tests());
     let rec = sink.submit(golden_request(0.001, "flat")).await;
     assert_eq!(rec.new_pos, 0.0);
     let fp = rec.fill_price.expect("close-leg fills");
@@ -202,7 +206,7 @@ async fn simulated_fills_flat_closes_long_and_books_realized() {
 
 #[tokio::test]
 async fn simulated_fills_short_open_from_long_reverses() {
-    let mut sink = SimulatedFills::new();
+    let mut sink = SimulatedFills::new(EvalOnly::new_for_tests());
     let rec = sink.submit(golden_request(0.001, "short_open")).await;
     assert!(rec.new_pos < 0.0);
     assert!(rec.fill_price.is_some());
@@ -215,7 +219,7 @@ async fn simulated_fills_short_open_from_long_reverses() {
 /// shape under `VolumeShare` slippage.
 #[tokio::test]
 async fn simulated_fills_volume_share_cap_emits_provenance_tuple() {
-    let mut sink = SimulatedFills::new();
+    let mut sink = SimulatedFills::new(EvalOnly::new_for_tests());
     let mut req = golden_request(0.0, "long_open");
     // Force the cap to bind: tiny bar volume relative to the order size.
     req.bar_volume = 0.0001;

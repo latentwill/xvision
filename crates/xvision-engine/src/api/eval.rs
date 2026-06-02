@@ -1184,6 +1184,7 @@ fn scenario_from_live_config(cfg: &LiveConfig) -> Scenario {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Realtime,
         capital: cfg.capital.clone(),

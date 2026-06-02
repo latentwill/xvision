@@ -3658,6 +3658,7 @@ mod tests {
                     volume_constraints: None,
                 },
                 overrides: Vec::new(),
+                borrow_bps_per_day: 5.0,
             },
             replay_mode: ReplayMode::Continuous,
             capital: Capital::default(),

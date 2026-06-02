@@ -62,6 +62,7 @@ fn valid_request() -> CreateScenarioRequest {
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         data_source: DataSource::AlpacaHistorical {
             feed: None,

@@ -161,6 +161,7 @@ fn crypto_scenario(asset_class: AssetClass, symbol: &str, _venue_symbol: &str) -
                 volume_constraints: None,
             },
             overrides: Vec::new(),
+            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         capital: Capital {
