@@ -633,7 +633,7 @@ pub(crate) async fn try_repair_malformed_json(
     // the broker self-healing seam belongs to the first attempt).
     let initial_user_body = format!(
         "Inputs:\n{inputs}\n\nFollow the slot's instructions. You may call tools \
-         to fetch additional data; emit your final decision as JSON.",
+         to fetch additional data for the current decision asset only; emit your final decision as JSON.",
         inputs = serde_json::to_string_pretty(seed_inputs)
             .unwrap_or_else(|_| "<seed-serialize-error>".to_string()),
     );
@@ -873,7 +873,7 @@ pub(crate) async fn try_repair_schema_missing_field(
     // across both repair families.
     let initial_user_body = format!(
         "Inputs:\n{inputs}\n\nFollow the slot's instructions. You may call tools \
-         to fetch additional data; emit your final decision as JSON.",
+         to fetch additional data for the current decision asset only; emit your final decision as JSON.",
         inputs = serde_json::to_string_pretty(seed_inputs)
             .unwrap_or_else(|_| "<seed-serialize-error>".to_string()),
     );

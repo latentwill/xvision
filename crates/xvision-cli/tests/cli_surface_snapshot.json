@@ -857,6 +857,7 @@
         "--behavior",
         "--help",
         "--json",
+        "--verbose",
         "--xvn-home"
       ],
       "mutates": false,
@@ -945,6 +946,7 @@
         "--behavior",
         "--help",
         "--json",
+        "--verbose",
         "--xvn-home"
       ],
       "mutates": false,
@@ -983,6 +985,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--explain",
         "--help",
         "--json",
         "--mode",
@@ -2098,6 +2101,60 @@
       "mutates": false,
       "path": [
         "help",
+        "marketplace"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "marketplace",
+        "attest"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "marketplace",
+        "buy"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "marketplace",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "marketplace",
+        "publish"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
         "memory"
       ]
     },
@@ -2824,6 +2881,17 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "apply"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": true,
       "path": [
         "help",
@@ -2862,6 +2930,17 @@
         "help",
         "scenario",
         "create"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "scenario",
+        "diff"
       ]
     },
     {
@@ -3082,6 +3161,17 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "apply"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": true,
       "path": [
         "help",
@@ -3098,6 +3188,17 @@
         "help",
         "strategy",
         "diagnostics"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "diff"
       ]
     },
     {
@@ -3670,6 +3771,138 @@
       "mutates": false,
       "path": [
         "last"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "marketplace"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--cycles",
+        "--help",
+        "--listing-id",
+        "--sharpe"
+      ],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "attest"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--buyer",
+        "--help",
+        "--listing-id"
+      ],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "buy"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": true,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "help",
+        "attest"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "help",
+        "buy"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "help",
+        "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "help",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "help",
+        "publish"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "list"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--agent-id",
+        "--help",
+        "--manifest-path",
+        "--price"
+      ],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "publish"
       ]
     },
     {
@@ -5618,6 +5851,20 @@
       "has_subcommands": false,
       "long_flags": [
         "--dry-run",
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "apply"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--dry-run",
         "--help"
       ],
       "mutates": true,
@@ -5687,12 +5934,36 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "diff"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
       "path": [
         "scenario",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "apply"
       ]
     },
     {
@@ -5737,6 +6008,17 @@
         "scenario",
         "help",
         "create"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "scenario",
+        "help",
+        "diff"
       ]
     },
     {
@@ -6206,6 +6488,20 @@
       "long_flags": [
         "--dry-run",
         "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "apply"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--dry-run",
+        "--help",
         "--json",
         "--model",
         "--name",
@@ -6234,7 +6530,21 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--help",
+        "--json"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "diff"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--clear-no-filter-warning",
+        "--field",
         "--help",
         "--no-filter-warning"
       ],
@@ -6293,6 +6603,17 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "apply"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": true,
       "path": [
         "strategy",
@@ -6309,6 +6630,17 @@
         "strategy",
         "help",
         "diagnostics"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "diff"
       ]
     },
     {

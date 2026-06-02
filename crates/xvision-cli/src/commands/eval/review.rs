@@ -347,8 +347,10 @@ fn runtime_config_path(ctx: &ApiContext) -> std::path::PathBuf {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use sqlx::SqlitePool;
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use tempfile::TempDir;
     use xvision_engine::eval::run::{MetricsSummary, Run, RunMode};
     use xvision_engine::eval::store::DecisionRow;
@@ -432,14 +434,23 @@ mod tests {
         run.id
     }
 
-    /// Open a SQLite pool with engine migrations applied. We don't use
-    /// `ApiContext::open` here because that builds a file-backed pool
-    /// under xvn_home, and we want the same `:memory:` URL for the
-    /// tests so they don't litter the tempdir with `.db` files.
+    static NEXT_DB: AtomicU64 = AtomicU64::new(0);
+
+    /// Open a SQLite pool with engine migrations applied. Use a unique
+    /// temporary DB path so parallel tests don't race on SQLx migrations.
     async fn pool_with_migrations() -> SqlitePool {
+        let db_path = std::env::temp_dir().join(format!(
+            "xvision-review-test-{}-{}.db",
+            std::process::id(),
+            NEXT_DB.fetch_add(1, Ordering::Relaxed)
+        ));
+        let url = format!("sqlite://{}", db_path.display());
+        let options = SqliteConnectOptions::from_str(&url)
+            .unwrap()
+            .create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect("sqlite::memory:")
+            .connect_with(options)
             .await
             .unwrap();
         sqlx::migrate!("../xvision-engine/migrations")

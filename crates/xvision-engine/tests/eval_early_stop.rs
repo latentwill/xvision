@@ -71,6 +71,9 @@ async fn fresh_store() -> RunStore {
         include_str!("../migrations/018_agent_run_observability.sql"),
         include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
         include_str!("../migrations/027_run_bars_manifest.sql"),
+        include_str!("../migrations/016_eval_reviews.sql"),
+        include_str!("../migrations/037_review_annotations_and_autofire.sql"),
+        include_str!("../migrations/038_eval_runs_live_config.sql"),
     ] {
         sqlx::query(migration).execute(&pool).await.unwrap();
     }

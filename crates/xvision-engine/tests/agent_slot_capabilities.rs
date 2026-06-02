@@ -27,6 +27,7 @@ async fn fresh_pool() -> SqlitePool {
         include_str!("../migrations/029_agent_slot_memory_mode.sql"),
         include_str!("../migrations/033_agent_slot_capabilities.sql"),
         include_str!("../migrations/036_agents_scope_strategy_id.sql"),
+        include_str!("../migrations/047_agent_slot_max_wall_ms.sql"),
     ] {
         sqlx::query(migration).execute(&pool).await.unwrap();
     }

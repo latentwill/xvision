@@ -127,6 +127,15 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
     })
 }
 
+fn load_acknowledge_no_filter(home: &Path, strategy_id: &str) -> bool {
+    let store = FilesystemStore::new(strategy_store_dir(home));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async move { store.load(strategy_id).await.unwrap().acknowledge_no_filter })
+}
+
 #[test]
 fn validate_emits_no_filter_warning_for_explicit_trader_without_filter() {
     let dir = tempdir().unwrap();
@@ -185,8 +194,7 @@ fn strategy_edit_no_filter_warning_round_trips() {
     // Set.
     let set = xvn(&["strategy", "edit", &id, "--no-filter-warning"], dir.path());
     assert_eq!(code(&set), 0, "edit --no-filter-warning must succeed");
-    let body: serde_json::Value = serde_json::from_slice(&set.stdout).unwrap();
-    assert_eq!(body["acknowledge_no_filter"], true);
+    assert!(load_acknowledge_no_filter(dir.path(), &id));
 
     // Validate must now be silent.
     let v1 = xvn(&["strategy", "validate", &id], dir.path());
@@ -198,8 +206,7 @@ fn strategy_edit_no_filter_warning_round_trips() {
         dir.path(),
     );
     assert_eq!(code(&clear), 0, "edit --clear-no-filter-warning must succeed");
-    let body: serde_json::Value = serde_json::from_slice(&clear.stdout).unwrap();
-    assert_eq!(body["acknowledge_no_filter"], false);
+    assert!(!load_acknowledge_no_filter(dir.path(), &id));
 
     // Warning re-appears.
     let v2 = xvn(&["strategy", "validate", &id], dir.path());
