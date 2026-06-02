@@ -444,7 +444,7 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
             RiskDecision::Vetoed { .. } => {
                 return Err(ExecutorError::NotActionable("decision was vetoed".to_string()));
             }
-            RiskDecision::Approved { decision: td } => td,
+            RiskDecision::Approved { decision: td, .. } => td,
             RiskDecision::Modified { modified: td, .. } => td,
         };
 
@@ -768,6 +768,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: vec![],
         }
     }
 
@@ -885,6 +886,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: vec![],
         };
         executor.submit(&decision).await.expect("submit should succeed");
 

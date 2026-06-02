@@ -99,7 +99,7 @@ mod tests {
         let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
         let result = apply_risk(fixture_decision(), &flat_portfolio(), &layer);
         match result {
-            RiskDecision::Approved { decision } => {
+            RiskDecision::Approved { decision, .. } => {
                 assert_eq!(decision.asset, AssetSymbol::Btc);
             }
             other => panic!("expected Approved, got {other:?}"),
@@ -124,18 +124,17 @@ mod tests {
     }
 
     #[test]
-    fn harness_apply_risk_returns_vetoed_decision() {
+    fn harness_apply_risk_warns_oversize_decision() {
         let layer = load_risk_layer(Path::new("../..")).expect("workspace config should load");
         let mut decision = fixture_decision();
         decision.size_bps = 2500;
 
         let result = apply_risk(decision, &flat_portfolio(), &layer);
         match result {
-            RiskDecision::Vetoed { original, reason } => {
-                assert_eq!(reason, VetoReason::PositionTooLarge);
-                assert_eq!(original.asset, AssetSymbol::Btc);
+            RiskDecision::Approved { warnings, .. } => {
+                assert!(!warnings.is_empty(), "oversize decision must produce warnings");
             }
-            other => panic!("expected Vetoed, got {other:?}"),
+            other => panic!("expected Approved with warnings, got {other:?}"),
         }
     }
 }
