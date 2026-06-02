@@ -17,6 +17,7 @@ use tempfile::TempDir;
 use ulid::Ulid;
 
 use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::autooptimizer::blob_store::BlobStore as StrategyBlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_evening_cycle, CycleConfig};
@@ -389,6 +390,32 @@ async fn run_evening_cycle_smoke() {
     assert!(
         has_honesty,
         "HonestyCheckRun event must appear in progress events; got: {collected:?}"
+    );
+
+    let has_finished = collected
+        .iter()
+        .any(|e| matches!(e, CycleProgressEvent::CycleFinished { .. }));
+    assert!(
+        has_finished,
+        "CycleFinished event must appear in progress events; got: {collected:?}"
+    );
+
+    let child_hash = result
+        .active_nodes
+        .iter()
+        .chain(result.rejected_nodes.iter())
+        .next()
+        .expect("cycle should produce at least one child node")
+        .bundle_hash;
+    let strategy_blob_store = StrategyBlobStore::new(blob_dir.path().join("blobs"));
+    let stored_child = strategy_blob_store
+        .get_json(&child_hash)
+        .await
+        .expect("child strategy blob should be persisted for dashboard inspection");
+    assert_eq!(
+        ContentHash::of_json(&stored_child),
+        child_hash,
+        "stored child strategy blob must match lineage hash"
     );
 
     // No CycleSealed events should appear (provenance layer removed).

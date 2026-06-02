@@ -51,6 +51,23 @@ async fn health_endpoint_reports_probes() {
 }
 
 #[tokio::test]
+async fn autooptimizer_lists_are_empty_on_fresh_home_without_tables() {
+    let (server, _tmp) = boot().await;
+
+    let lineage = server.get("/api/autooptimizer/lineage").await;
+    lineage.assert_status_ok();
+    assert_eq!(lineage.json::<serde_json::Value>(), serde_json::json!([]));
+
+    let ladder = server.get("/api/autooptimizer/ladder").await;
+    ladder.assert_status_ok();
+    assert_eq!(ladder.json::<serde_json::Value>(), serde_json::json!([]));
+
+    let diversity = server.get("/api/autooptimizer/diversity").await;
+    diversity.assert_status_ok();
+    assert_eq!(diversity.json::<serde_json::Value>(), serde_json::json!([]));
+}
+
+#[tokio::test]
 async fn health_db_probe_records_latency() {
     let (server, _tmp) = boot().await;
     let response = server.get("/api/health").await;
@@ -152,6 +169,8 @@ async fn strategies_list_returns_seeded_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         })
         .await
         .unwrap();
@@ -1258,6 +1277,8 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
         })
         .await
         .unwrap();

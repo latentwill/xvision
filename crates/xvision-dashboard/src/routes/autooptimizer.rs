@@ -93,6 +93,9 @@ pub async fn list_lineage(
     Query(q): Query<LineageListQuery>,
 ) -> Result<Json<Vec<LineageNode>>, DashboardError> {
     let pool = &state.pool;
+    if !table_exists(pool, "lineage_nodes").await? {
+        return Ok(Json(Vec::new()));
+    }
 
     let rows = if let (Some(status_str), Some(cycle_id)) = (&q.status, &q.cycle_id) {
         sqlx::query(
@@ -163,6 +166,11 @@ pub async fn get_lineage_node(
     Path(hash): Path<String>,
     State(state): State<AppState>,
 ) -> Result<Json<LineageNode>, DashboardError> {
+    if !table_exists(&state.pool, "lineage_nodes").await? {
+        return Err(DashboardError::NotFound(format!(
+            "lineage node '{hash}' not found"
+        )));
+    }
     let content_hash = xvision_engine::autooptimizer::ContentHash::from_hex(&hash).map_err(|e| {
         DashboardError::Validation {
             field: "hash".into(),
@@ -190,6 +198,11 @@ pub async fn get_ladder(
     State(state): State<AppState>,
     Query(q): Query<LadderQuery>,
 ) -> Result<Json<Vec<MutatorScore>>, DashboardError> {
+    if !table_exists(&state.pool, "mutator_attribution").await?
+        || !table_exists(&state.pool, "lineage_nodes").await?
+    {
+        return Ok(Json(Vec::new()));
+    }
     let since: DateTime<Utc> = match &q.since {
         Some(s) => DateTime::parse_from_rfc3339(s)
             .map_err(|e| DashboardError::Validation {
@@ -215,6 +228,9 @@ pub async fn list_diversity(
     Query(q): Query<DiversityQuery>,
 ) -> Result<Json<Vec<DiversityRow>>, DashboardError> {
     let pool = &state.pool;
+    if !table_exists(pool, "lineage_nodes").await? {
+        return Ok(Json(Vec::new()));
+    }
 
     let rows = if let Some(cycle_id) = &q.cycle_id {
         sqlx::query(
@@ -316,6 +332,20 @@ pub async fn get_blob(
         .await
         .map_err(DashboardError::Internal)?;
     Ok(Json(value))
+}
+
+async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, DashboardError> {
+    use sqlx::Row;
+    let found: Option<String> =
+        sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+            .bind(table)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| DashboardError::Internal(e.into()))?
+            .map(|row| row.try_get("name"))
+            .transpose()
+            .map_err(|e| DashboardError::Internal(e.into()))?;
+    Ok(found.is_some())
 }
 
 fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, DashboardError> {

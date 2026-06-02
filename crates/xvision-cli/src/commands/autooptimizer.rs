@@ -1089,6 +1089,7 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
         CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
         CycleProgressEvent::CycleSealed { .. } => "Evening summary signed",
+        CycleProgressEvent::CycleFinished { .. } => "Evening run finished",
     }
 }
 
@@ -1101,6 +1102,7 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
         CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
         CycleProgressEvent::CycleSealed { .. } => "cycle_sealed",
+        CycleProgressEvent::CycleFinished { .. } => "cycle_finished",
     }
 }
 

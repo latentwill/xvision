@@ -63,7 +63,23 @@ export type CycleProgressEvent = {
   display_label?: string | null;
   ts?: string;
   payload?: Record<string, unknown> | null;
+  data?: Record<string, unknown> | null;
 };
+
+export type StartEveningCycleRequest = {
+  strategy_id: string;
+  mutator_provider?: string | null;
+  mutator_model?: string | null;
+  judge_provider?: string | null;
+  judge_model?: string | null;
+};
+
+export type StartEveningCycleResponse = {
+  started: boolean;
+  message: string;
+};
+
+export type StrategyBlob = Record<string, unknown>;
 
 // ─── Query params ─────────────────────────────────────────────────────────────
 
@@ -100,6 +116,19 @@ export async function getDiversity(q?: DiversityQuery): Promise<DiversityEntry[]
   return apiFetch<DiversityEntry[]>(buildDiversityUrl(q));
 }
 
+export async function startEveningCycle(
+  body: StartEveningCycleRequest,
+): Promise<StartEveningCycleResponse> {
+  return apiFetch<StartEveningCycleResponse>("/api/autooptimizer/evening-cycle", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getBlob<T = StrategyBlob>(hash: string): Promise<T> {
+  return apiFetch<T>(`/api/autooptimizer/blob/${encodeURIComponent(hash)}`);
+}
+
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {
@@ -109,6 +138,8 @@ export const autooptimizerKeys = {
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   diversity: (q?: DiversityQuery) =>
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
+  blob: (hash: string | null | undefined) =>
+    [...autooptimizerKeys.all, "blob", hash ?? ""] as const,
 };
 
 // ─── TanStack Query hooks ─────────────────────────────────────────────────────
@@ -143,6 +174,15 @@ export function useDiversity(q?: DiversityQuery) {
     queryKey: autooptimizerKeys.diversity(q),
     queryFn: () => getDiversity(q),
     staleTime: 30_000,
+  });
+}
+
+export function useBlob<T = StrategyBlob>(hash: string | null | undefined) {
+  return useQuery({
+    queryKey: autooptimizerKeys.blob(hash),
+    queryFn: () => getBlob<T>(hash!),
+    enabled: !!hash,
+    staleTime: 60_000,
   });
 }
 
