@@ -1,12 +1,29 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createCliJob } from "@/api/cli";
+import { apiFetch } from "@/api/client";
+import { listProviders } from "@/api/settings";
+import { listStrategies } from "@/api/strategies";
 import { LiveCycleView } from "./LiveCycleView";
 
-vi.mock("@/api/cli", () => ({
-  createCliJob: vi.fn(),
+vi.mock("@/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/api/client")>("@/api/client");
+  return {
+    ...actual,
+    apiFetch: vi.fn(),
+  };
+});
+
+vi.mock("@/api/settings", () => ({
+  settingsKeys: { providers: () => ["settings", "providers"] },
+  listProviders: vi.fn(),
+}));
+
+vi.mock("@/api/strategies", () => ({
+  strategyKeys: { list: () => ["strategies", "list"] },
+  listStrategies: vi.fn(),
 }));
 
 type Listener = (event: MessageEvent) => void;
@@ -44,9 +61,33 @@ class MockEventSource {
 beforeEach(() => {
   vi.resetAllMocks();
   MockEventSource.instances = [];
-  vi.mocked(createCliJob).mockResolvedValue({
-    job_id: "job-1",
-    status: "queued",
+  localStorage.clear();
+  vi.mocked(apiFetch).mockResolvedValue({
+    started: true,
+    message: "Evening run started",
+  });
+  vi.mocked(listStrategies).mockResolvedValue([
+    {
+      agent_id: "strategy-1",
+      display_name: "Trend follower",
+      template: "trend_follower",
+      decision_cadence_minutes: 60,
+    },
+  ]);
+  vi.mocked(listProviders).mockResolvedValue({
+    providers: [
+      {
+        name: "anthropic",
+        kind: "anthropic",
+        base_url: "",
+        api_key_env: "ANTHROPIC_API_KEY",
+        api_key_set: true,
+        synthetic: false,
+        is_default: true,
+        enabled_models: ["claude-sonnet-4-6"],
+      },
+    ],
+    default_model: null,
   });
   Object.defineProperty(globalThis, "EventSource", {
     configurable: true,
@@ -60,9 +101,23 @@ beforeEach(() => {
   });
 });
 
+function renderLiveCycleView() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <LiveCycleView />
+    </QueryClientProvider>,
+  );
+}
+
 describe("LiveCycleView", () => {
   it("renders named cycle events from the optimizer SSE stream", async () => {
-    render(<LiveCycleView />);
+    renderLiveCycleView();
 
     expect(screen.getByText(/Waiting for cycle/)).toBeInTheDocument();
     expect(MockEventSource.instances[0]?.url).toBe("/api/autooptimizer/events");
@@ -81,63 +136,43 @@ describe("LiveCycleView", () => {
     expect(screen.getByText("cycle-1")).toBeInTheDocument();
   });
 
-  it("launches evening cycle through CLI jobs and renders stdout cycle events", async () => {
-    const user = userEvent.setup();
-    render(<LiveCycleView />);
+  it("renders dashboard SSE envelope events from the optimizer stream", async () => {
+    renderLiveCycleView();
 
-    await user.type(screen.getByPlaceholderText("Strategy ID"), "example-trend-follower");
-    await user.type(screen.getByPlaceholderText("5.00"), "2.50");
-    await user.click(screen.getByRole("button", { name: "Start evening run" }));
-
-    await waitFor(() => expect(createCliJob).toHaveBeenCalledTimes(1));
-    const request = vi.mocked(createCliJob).mock.calls[0][0];
-    expect(request.timeout_secs).toBe(3600);
-    expect(request.argv).toEqual(
-      expect.arrayContaining([
-        "optimizer",
-        "evening-cycle",
-        "--mock",
-        "--strategy",
-        "example-trend-follower",
-        "--budget",
-        "2.5",
-      ]),
-    );
-    expect(request.argv[2]).toBe("--session-id");
-    expect(request.argv[3]).toMatch(/^ui-/);
-
-    const jobStream = MockEventSource.instances.find((source) =>
-      source.url.includes("/api/cli/jobs/job-1/events"),
-    );
-    expect(jobStream).toBeDefined();
-
-    jobStream!.emit(
-      "stdout_chunk",
+    MockEventSource.instances[0].emit(
+      "message",
       JSON.stringify({
-        chunk:
-          '{"type":"mutation_gated","cycle_id":"cycle-2","child_hash":"child-1","passed":false}\n',
+        kind: "mutation_gated",
+        display_label: "Gate evaluated",
+        data: {
+          type: "mutation_gated",
+          cycle_id: "cycle-2",
+          child_hash: "child-1",
+          passed: false,
+        },
       }),
     );
+
     expect(await screen.findByText("Gate evaluated")).toBeInTheDocument();
     expect(screen.getByText("cycle-2")).toBeInTheDocument();
-
-    jobStream!.emit("job_finished", JSON.stringify({ status: "succeeded" }));
-    expect(await screen.findByText("Optimizer job finished")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start evening run" })).toBeEnabled();
   });
 
-  it("can launch a non-mock evening cycle from the UI", async () => {
+  it("launches an evening cycle through the dashboard API", async () => {
     const user = userEvent.setup();
-    render(<LiveCycleView />);
+    renderLiveCycleView();
 
-    await user.type(screen.getByPlaceholderText("Strategy ID"), "example-trend-follower");
-    await user.click(screen.getByLabelText("Mock"));
+    await screen.findByRole("option", { name: "Trend follower" });
+    await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
     await user.click(screen.getByRole("button", { name: "Start evening run" }));
 
-    await waitFor(() => expect(createCliJob).toHaveBeenCalledTimes(1));
-    const request = vi.mocked(createCliJob).mock.calls[0][0];
-    expect(request.argv).toEqual(expect.arrayContaining(["optimizer", "evening-cycle"]));
-    expect(request.argv).toEqual(expect.arrayContaining(["--strategy", "example-trend-follower"]));
-    expect(request.argv).not.toContain("--mock");
+    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
+    expect(apiFetch).toHaveBeenCalledWith("/api/autooptimizer/evening-cycle", {
+      method: "POST",
+      body: JSON.stringify({
+        strategy_id: "strategy-1",
+        mutator_model: "claude-haiku-4-5-20251001",
+        judge_model: "claude-sonnet-4-6",
+      }),
+    });
   });
 });
