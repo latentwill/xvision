@@ -348,6 +348,7 @@ async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, Dash
     Ok(found.is_some())
 }
 
+
 fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, DashboardError> {
     use sqlx::Row;
     use xvision_engine::autooptimizer::{gate::GateVerdict, ContentHash};
