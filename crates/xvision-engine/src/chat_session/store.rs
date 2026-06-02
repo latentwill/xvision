@@ -18,6 +18,8 @@ use ulid::Ulid;
 
 use super::context::ContextScope;
 
+type RailStateRow = Option<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>)>;
+
 #[derive(Debug, Clone, Copy)]
 struct PoolSnapshot {
     size: u32,
@@ -368,14 +370,7 @@ impl ChatSessionStore {
     /// Load the durable rail state (migration 041). Returns an error if the
     /// session does not exist.
     pub async fn load_rail_state(pool: &SqlitePool, session_id: &str) -> Result<ChatSessionRailState> {
-        let row: Option<(
-            i64,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        )> = sqlx::query_as(
+        let row: RailStateRow = sqlx::query_as(
             "SELECT event_cursor, mode, focus_path, tool_policy_json, checkpoint_head, participants_json \
                  FROM chat_sessions WHERE id = ?1",
         )

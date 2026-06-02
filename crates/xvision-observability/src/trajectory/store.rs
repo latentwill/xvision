@@ -53,6 +53,20 @@ pub enum StoreError {
     NotFound(String),
 }
 
+type ReindexRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+    i64,
+    String,
+    String,
+);
+
 /// Recording status values.
 pub const STATUS_OPEN: &str = "open";
 pub const STATUS_COMPLETE: &str = "complete";
@@ -580,19 +594,7 @@ impl TrajectoryStore {
     /// field with an empty default); it must NOT be called across a breaking
     /// schema version bump without also bumping `schema_version`.
     pub async fn reindex(&self) -> Result<u64, StoreError> {
-        let rows: Vec<(
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            String,
-            String,
-            Option<String>,
-            i64,
-            String,
-            String,
-        )> = sqlx::query_as(
+        let rows: Vec<ReindexRow> = sqlx::query_as(
             "SELECT recording_id, cycle_id, slot_role, arm_scope, simulation_id, \
                         provider, model, model_version, schema_version, \
                         system_prompt_hash, \

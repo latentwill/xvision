@@ -182,21 +182,11 @@ const TRAJECTORY_FRAME_METHOD: &str = "event.trajectory_frame";
 /// the sink publishes. Lets `agent_runs.sidecar_version` /
 /// `cline_sdk_version` / `protocol_version` get populated without the
 /// sidecar having to repeat the fingerprint on every notification.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SidecarFingerprint {
     pub sidecar_version: Option<String>,
     pub cline_sdk_version: Option<String>,
     pub protocol_version: Option<String>,
-}
-
-impl Default for SidecarFingerprint {
-    fn default() -> Self {
-        Self {
-            sidecar_version: None,
-            cline_sdk_version: None,
-            protocol_version: None,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -530,7 +520,7 @@ fn parse_run_status(s: &str) -> RunStatus {
 }
 
 fn ms_to_utc(ms: u64) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64).unwrap_or_else(|| Utc::now())
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms as i64).unwrap_or_else(Utc::now)
 }
 
 fn sha256_text(text: &str) -> String {

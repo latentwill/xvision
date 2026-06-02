@@ -758,8 +758,7 @@ async fn select_demo_observations_by_id(
             "manual_observation_ids cannot exceed {MAX_LIMIT}"
         )));
     }
-    let placeholders = std::iter::repeat("?")
-        .take(ids.len())
+    let placeholders = std::iter::repeat_n("?", ids.len())
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
@@ -812,8 +811,7 @@ async fn select_pattern_priors(
             "prior_pattern_ids cannot exceed {MAX_LIMIT}"
         )));
     }
-    let placeholders = std::iter::repeat("?")
-        .take(ids.len())
+    let placeholders = std::iter::repeat_n("?", ids.len())
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
@@ -897,8 +895,7 @@ async fn select_pattern_priors_lenient(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders = std::iter::repeat("?")
-        .take(ids.len())
+    let placeholders = std::iter::repeat_n("?", ids.len())
         .collect::<Vec<_>>()
         .join(",");
     let sql = format!(
@@ -1398,7 +1395,7 @@ mod tests {
         .await
         .expect("demo source link");
         assert_eq!(linked_demo_source, "opt-demo-pattern-1");
-        let child = agents::get(&ctx, &child_id).await.expect("child");
+        let child = agents::get(&ctx, child_id).await.expect("child");
         let prompt = &child.slots[0].system_prompt;
         assert!(prompt.starts_with("<memory_demos"));
         assert!(prompt.contains("&lt;unsafe&gt;"));

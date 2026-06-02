@@ -45,6 +45,8 @@ use crate::eval::store::RunStore;
 use crate::tools::ToolRegistry;
 use xvision_execution::broker_surface::BrokerSurface;
 
+type BakeoffArmRow = (i64, Option<String>, String, String, String, String, Option<String>);
+
 /// Per-arm coordinates for one bakeoff cell.
 ///
 /// One arm = one `(strategy_id, provider, model)` triple. The caller
@@ -69,17 +71,12 @@ pub struct BakeoffArm {
 /// Materialization mode for a bakeoff. Default `--mode override` is the
 /// per-launch override path; `--mode clone` materializes a durable
 /// cloned strategy per arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BakeoffMode {
+    #[default]
     Override,
     Clone,
-}
-
-impl Default for BakeoffMode {
-    fn default() -> Self {
-        BakeoffMode::Override
-    }
 }
 
 /// Bakeoff parameters. Captures the operator's intent + every
@@ -419,15 +416,7 @@ pub async fn get_bakeoff(ctx: &ApiContext, bakeoff_id: &str) -> ApiResult<Bakeof
         serde_json::from_str(&j).unwrap_or_default()
     } else {
         // Pre-finalize read: rebuild from per-arm rows.
-        let rows: Vec<(
-            i64,
-            Option<String>,
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-        )> = sqlx::query_as(
+        let rows: Vec<BakeoffArmRow> = sqlx::query_as(
             "SELECT arm_index, run_id, arm_strategy_id, arm_provider, arm_model, status, error
              FROM eval_bakeoff_runs WHERE bakeoff_id = ? ORDER BY arm_index ASC",
         )

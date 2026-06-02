@@ -61,16 +61,11 @@ use crate::result::BacktestResult;
 /// The two are mutually exclusive (the CLI rejects `--record` + `--replay`
 /// together). `Record` is the transition default so existing scripts keep
 /// working.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum AbTrajectoryMode {
+    #[default]
     Record,
     Replay { recording_id: String },
-}
-
-impl Default for AbTrajectoryMode {
-    fn default() -> Self {
-        AbTrajectoryMode::Record
-    }
 }
 
 impl AbTrajectoryMode {
