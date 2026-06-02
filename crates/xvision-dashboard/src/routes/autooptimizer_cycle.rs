@@ -22,7 +22,6 @@ use xvision_engine::autooptimizer::{
     mutator::Mutator,
     parent_policy::ParentPolicy,
     scenario_synthesis::synthesize_baseline_untouched_scenario,
-    session::{default_key_path, load_or_generate_key},
 };
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::scenario::{
@@ -58,8 +57,6 @@ pub async fn start_evening_cycle(
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let dispatch = build_autooptimizer_dispatch(&cfg.mutator.provider, &state.xvn_home).await?;
-    let key_path = default_key_path()?;
-    let operator_key = load_or_generate_key(&key_path)?;
     let day_scenario = build_day_scenario(&cfg)?;
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
@@ -97,7 +94,6 @@ pub async fn start_evening_cycle(
     let tx = state.autooptimizer_tx.clone();
     let obs_blob_store =
         xvision_observability::BlobStore::new(state.xvn_home.join("lineage").join("obs-blobs"));
-    let session_id = Ulid::new().to_string();
     tokio::spawn(async move {
         let paper_tester = Arc::new(stub_paper_tester());
         let result = run_evening_cycle(
@@ -109,11 +105,10 @@ pub async fn start_evening_cycle(
             &mutator,
             &judge,
             paper_tester.as_ref(),
-            &operator_key,
-            &session_id,
             move |ev| {
                 let _ = tx.send(ev);
             },
+            None,
         )
         .await;
         if let Err(e) = result {
@@ -281,13 +276,11 @@ async fn load_strategy_parent(
             let root_node = LineageNode {
                 bundle_hash,
                 parent_hash: None,
-                diff_hash: None,
-                metrics_day_hash: None,
-                metrics_untouched_hash: None,
                 gate_verdict: GateVerdict::Pass,
                 status: LineageStatus::Active,
                 cycle_id: None,
                 created_at: Utc::now(),
+                diversity_score: None,
             };
             lineage
                 .insert(&root_node)
