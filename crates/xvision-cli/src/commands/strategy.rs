@@ -10,11 +10,13 @@ use xvision_engine::agent::pipeline::{
     agent_slot_to_llm_slot, run_pipeline, PipelineInputs, ResolvedAgentSlot,
 };
 use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
+use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::diagnostics::{
     self, assert_launchable, CapabilityStatus, DiagnosticsError, StrategyDiagnostics,
 };
+use xvision_engine::eval::run::RunStatus;
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::store::{
@@ -403,6 +405,21 @@ enum StrategyAction {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
     },
+    /// Rank all strategies by best completed eval run metric.
+    Leaderboard {
+        /// Sort metric: return (default) | sharpe | drawdown (lowest = best).
+        #[arg(long, default_value = "return")]
+        sort: String,
+        /// Number of top strategies to show.
+        #[arg(long, default_value_t = 20usize)]
+        top: usize,
+        /// Restrict to runs started within the last N days.
+        #[arg(long)]
+        since_days: Option<u32>,
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -529,6 +546,12 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
             )
             .await
         }
+        StrategyAction::Leaderboard {
+            sort,
+            top,
+            since_days,
+            json,
+        } => leaderboard(&sort, top, since_days, json).await,
     }
 }
 
@@ -2494,6 +2517,176 @@ async fn resolve_agent_slots_for_cli(
     Ok(out)
 }
 
+#[derive(Debug, serde::Serialize)]
+struct LeaderboardRow {
+    rank: usize,
+    strategy_id: String,
+    strategy_name: String,
+    best_return_pct: Option<f64>,
+    best_sharpe: Option<f64>,
+    run_count: usize,
+    best_run_id: Option<String>,
+}
+
+fn sort_leaderboard_rows(rows: &mut [LeaderboardRow], sort: &str) {
+    match sort {
+        "sharpe" => rows.sort_by(|a, b| {
+            b.best_sharpe
+                .unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&a.best_sharpe.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+        _ => rows.sort_by(|a, b| {
+            b.best_return_pct
+                .unwrap_or(f64::NEG_INFINITY)
+                .partial_cmp(&a.best_return_pct.unwrap_or(f64::NEG_INFINITY))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+}
+
+async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool) -> CliResult<()> {
+    let ctx = open_ctx().await?;
+    let ids = store().list().await.exit_with(XvnExit::Upstream)?;
+
+    let cutoff = since_days.map(|d| chrono::Utc::now() - chrono::Duration::days(d as i64));
+
+    let mut rows: Vec<LeaderboardRow> = Vec::new();
+
+    for sid in &ids {
+        let strategy_name = store()
+            .load(sid)
+            .await
+            .map(|s| s.manifest.display_name)
+            .unwrap_or_else(|_| sid.clone());
+
+        let all_runs = api_eval::list(
+            &ctx,
+            ListRunsRequest {
+                agent_id: Some(sid.clone()),
+                scenario_id: None,
+                status: Some(RunStatus::Completed),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_or_default();
+
+        let filtered: Vec<_> = all_runs
+            .iter()
+            .filter(|r| cutoff.map(|c| r.started_at >= c).unwrap_or(true))
+            .collect();
+
+        let best_return = filtered
+            .iter()
+            .filter_map(|r| r.metrics.as_ref().map(|m| m.total_return_pct))
+            .reduce(f64::max);
+
+        let best_sharpe = filtered
+            .iter()
+            .filter_map(|r| r.metrics.as_ref().map(|m| m.sharpe))
+            .reduce(f64::max);
+
+        let best_run_id = match sort {
+            "sharpe" => filtered
+                .iter()
+                .filter(|r| r.metrics.is_some())
+                .max_by(|a, b| {
+                    let as_ = a.metrics.as_ref().map(|m| m.sharpe).unwrap_or(f64::NEG_INFINITY);
+                    let bs = b.metrics.as_ref().map(|m| m.sharpe).unwrap_or(f64::NEG_INFINITY);
+                    as_.partial_cmp(&bs).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|r| r.id.clone()),
+            "drawdown" => filtered
+                .iter()
+                .filter(|r| r.metrics.is_some())
+                .min_by(|a, b| {
+                    let ad = a
+                        .metrics
+                        .as_ref()
+                        .map(|m| m.max_drawdown_pct)
+                        .unwrap_or(f64::INFINITY);
+                    let bd = b
+                        .metrics
+                        .as_ref()
+                        .map(|m| m.max_drawdown_pct)
+                        .unwrap_or(f64::INFINITY);
+                    ad.partial_cmp(&bd).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|r| r.id.clone()),
+            _ => filtered
+                .iter()
+                .filter(|r| r.metrics.is_some())
+                .max_by(|a, b| {
+                    let ar = a
+                        .metrics
+                        .as_ref()
+                        .map(|m| m.total_return_pct)
+                        .unwrap_or(f64::NEG_INFINITY);
+                    let br = b
+                        .metrics
+                        .as_ref()
+                        .map(|m| m.total_return_pct)
+                        .unwrap_or(f64::NEG_INFINITY);
+                    ar.partial_cmp(&br).unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|r| r.id.clone()),
+        };
+
+        rows.push(LeaderboardRow {
+            rank: 0,
+            strategy_id: sid.clone(),
+            strategy_name,
+            best_return_pct: best_return,
+            best_sharpe,
+            run_count: filtered.len(),
+            best_run_id,
+        });
+    }
+
+    sort_leaderboard_rows(&mut rows, sort);
+
+    rows.truncate(top);
+    for (i, row) in rows.iter_mut().enumerate() {
+        row.rank = i + 1;
+    }
+
+    if json {
+        crate::io::print_json(&rows)?;
+        return Ok(());
+    }
+
+    if rows.is_empty() {
+        println!("(no strategies with completed runs)");
+        return Ok(());
+    }
+
+    println!(
+        "{:<4}  {:<36}  {:>10}  {:>8}  {:>5}  {}",
+        "RANK", "STRATEGY", "RETURN_%", "SHARPE", "RUNS", "BEST_RUN"
+    );
+    for row in &rows {
+        let name = if row.strategy_name.len() > 34 {
+            format!("{}…", &row.strategy_name[..33])
+        } else {
+            row.strategy_name.clone()
+        };
+        println!(
+            "{:<4}  {:<36}  {:>10}  {:>8}  {:>5}  {}",
+            row.rank,
+            name,
+            row.best_return_pct
+                .map(|v| format!("{:.2}", v))
+                .unwrap_or("-".into()),
+            row.best_sharpe.map(|v| format!("{:.3}", v)).unwrap_or("-".into()),
+            row.run_count,
+            row.best_run_id.as_deref().unwrap_or("-"),
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2759,5 +2952,143 @@ pub mod atomic_create {
             result.is_err(),
             "expected clap error for removed --template flag, got Ok"
         );
+    }
+}
+
+#[cfg(test)]
+pub mod leaderboard {
+    use super::*;
+
+    fn make_row(strategy_id: &str, best_return_pct: Option<f64>, best_sharpe: Option<f64>) -> LeaderboardRow {
+        LeaderboardRow {
+            rank: 0,
+            strategy_id: strategy_id.into(),
+            strategy_name: strategy_id.into(),
+            best_return_pct,
+            best_sharpe,
+            run_count: 1,
+            best_run_id: Some("run-1".into()),
+        }
+    }
+
+    #[test]
+    fn sort_by_return_orders_descending() {
+        let mut rows = vec![
+            make_row("low", Some(5.0), None),
+            make_row("high", Some(20.0), None),
+            make_row("mid", Some(10.0), None),
+        ];
+        sort_leaderboard_rows(&mut rows, "return");
+        assert_eq!(rows[0].strategy_id, "high");
+        assert_eq!(rows[1].strategy_id, "mid");
+        assert_eq!(rows[2].strategy_id, "low");
+    }
+
+    #[test]
+    fn sort_by_sharpe_orders_descending() {
+        let mut rows = vec![
+            make_row("a", None, Some(0.5)),
+            make_row("b", None, Some(2.0)),
+            make_row("c", None, Some(1.0)),
+        ];
+        sort_leaderboard_rows(&mut rows, "sharpe");
+        assert_eq!(rows[0].strategy_id, "b");
+        assert_eq!(rows[1].strategy_id, "c");
+        assert_eq!(rows[2].strategy_id, "a");
+    }
+
+    #[test]
+    fn sort_unknown_key_defaults_to_return_ordering() {
+        let mut rows = vec![make_row("lo", Some(1.0), None), make_row("hi", Some(9.0), None)];
+        sort_leaderboard_rows(&mut rows, "drawdown");
+        assert_eq!(rows[0].strategy_id, "hi");
+        assert_eq!(rows[1].strategy_id, "lo");
+    }
+
+    #[test]
+    fn none_metrics_sort_after_scored_rows() {
+        let mut rows = vec![
+            make_row("no-return", None, None),
+            make_row("has-return", Some(3.0), None),
+        ];
+        sort_leaderboard_rows(&mut rows, "return");
+        assert_eq!(rows[0].strategy_id, "has-return");
+        assert_eq!(rows[1].strategy_id, "no-return");
+    }
+
+    #[test]
+    fn rank_assignment_is_one_indexed_and_contiguous() {
+        let mut rows: Vec<LeaderboardRow> = (0..5usize)
+            .map(|i| make_row(&format!("s{i}"), Some(i as f64), None))
+            .collect();
+        for (i, row) in rows.iter_mut().enumerate() {
+            row.rank = i + 1;
+        }
+        let ranks: Vec<usize> = rows.iter().map(|r| r.rank).collect();
+        assert_eq!(ranks, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn leaderboard_row_json_has_all_expected_fields() {
+        let row = LeaderboardRow {
+            rank: 1,
+            strategy_id: "strat-abc".into(),
+            strategy_name: "Test Strategy".into(),
+            best_return_pct: Some(12.5),
+            best_sharpe: Some(1.23),
+            run_count: 3,
+            best_run_id: Some("run-xyz".into()),
+        };
+        let json = serde_json::to_value(&row).expect("serialize");
+        assert_eq!(json["rank"], 1u64);
+        assert_eq!(json["strategy_id"], "strat-abc");
+        assert_eq!(json["strategy_name"], "Test Strategy");
+        assert_eq!(json["best_return_pct"], 12.5f64);
+        assert_eq!(json["best_sharpe"], 1.23f64);
+        assert_eq!(json["run_count"], 3u64);
+        assert_eq!(json["best_run_id"], "run-xyz");
+    }
+
+    #[test]
+    fn leaderboard_row_json_nulls_for_none_metrics() {
+        let row = make_row("no-metrics", None, None);
+        let json = serde_json::to_value(&row).expect("serialize");
+        assert!(json["best_return_pct"].is_null());
+        assert!(json["best_sharpe"].is_null());
+    }
+
+    #[test]
+    fn leaderboard_subcommand_is_registered() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let strategy = cmd.find_subcommand("strategy").expect("strategy subcommand");
+        assert!(
+            strategy.find_subcommand("leaderboard").is_some(),
+            "expected `leaderboard` subcommand on `xvn strategy`",
+        );
+    }
+
+    #[test]
+    fn leaderboard_sort_arg_accepts_sharpe() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let result = cmd.try_get_matches_from(["xvn", "strategy", "leaderboard", "--sort", "sharpe"]);
+        assert!(result.is_ok(), "--sort sharpe must parse successfully");
+    }
+
+    #[test]
+    fn leaderboard_top_and_since_days_parse() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let result = cmd.try_get_matches_from([
+            "xvn",
+            "strategy",
+            "leaderboard",
+            "--top",
+            "5",
+            "--since-days",
+            "30",
+        ]);
+        assert!(result.is_ok(), "--top 5 --since-days 30 must parse successfully");
     }
 }

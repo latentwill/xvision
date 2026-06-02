@@ -276,7 +276,7 @@ pub enum Command {
     Migrate(commands::migrate::MigrateCmd),
     /// Inspect agent records from the workspace agent library.
     Agent(commands::agent::AgentCmd),
-    /// Seed curated example strategies, scenarios, and tutorial artifacts.
+    /// Seed curated example scenarios and tutorial artifacts.
     Example(commands::example::ExampleCmd),
     /// Agent-run observability operations (retention, janitor).
     Obs(commands::obs::ObsCmd),
@@ -303,6 +303,21 @@ pub enum Command {
     /// optimization pass over a corpus, compile memory demos, inspect/export/import
     /// results, and accept a snapshot as a child agent. See `xvn optimize --help`.
     Optimize(commands::optimize::OptimizeCmd),
+    /// Show the most recent eval run(s) as a compact health card.
+    Last {
+        /// Override the xvn home directory.
+        #[arg(long)]
+        xvn_home: Option<std::path::PathBuf>,
+        /// Filter to runs for this strategy id.
+        #[arg(long)]
+        strategy: Option<String>,
+        /// Emit as JSON instead of the health card.
+        #[arg(long)]
+        json: bool,
+        /// Number of recent runs to show.
+        #[arg(long, default_value_t = 1usize)]
+        n: usize,
+    },
 }
 
 impl Cli {
@@ -431,6 +446,9 @@ impl Cli {
             Command::Model(cmd) => commands::model::run(cmd).await,
             Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
             Command::Optimize(cmd) => commands::optimize::run(cmd).await,
+            Command::Last { xvn_home, strategy, json, n } => {
+                commands::last::run(xvn_home, strategy, json, n).await.map_err(Into::into)
+            }
         }
     }
 }
