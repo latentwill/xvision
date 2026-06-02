@@ -147,7 +147,7 @@ export function buildAgent(config: StartRunConfig, opts: BuildAgentOptions = {})
 
   return new Agent({
     model: wrapped,
-    systemPrompt: config.system_prompt,
+    systemPrompt,
     tools,
   })
 }
