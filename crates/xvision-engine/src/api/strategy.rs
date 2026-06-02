@@ -13,6 +13,7 @@ use crate::api::{
     audit::{self, Outcome},
     search as api_search, ApiContext, ApiError, ApiResult,
 };
+use crate::eval::store::{ListFilter as RunListFilter, RunStore};
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
     RenameAgentRoleRequest, SetFilterReq, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
@@ -587,11 +588,13 @@ pub async fn get(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
     result
 }
 
-pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+/// Delete a strategy. When `force` is false and eval runs reference this
+/// strategy, returns `ApiError::Conflict`. Set `force = true` to delete
+/// anyway (eval run rows are preserved; only the strategy bundle is removed).
+pub async fn delete(ctx: &ApiContext, agent_id: &str, force: bool) -> ApiResult<()> {
     let started = Instant::now();
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
-    let result = delete_inner(&store, agent_id).await;
-
+    let result = delete_strategy_inner(ctx, &store, agent_id, force).await;
     let outcome = match &result {
         Ok(_) => Outcome::Ok,
         Err(e) => Outcome::Error(e.to_string()),
@@ -606,24 +609,101 @@ pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
         started.elapsed().as_millis() as i64,
     )
     .await;
-    if result.is_ok() {
-        api_search::delete_strategy(ctx, agent_id).await;
-        // Sweep agents whose `scope_strategy_id` matched the strategy
-        // we just deleted. Phase 3 of agent-firing-filter introduced
-        // strategy-scoped agents (migration 036); without this sweep
-        // they orphan in the agents table when the owning strategy is
-        // removed. Best-effort: if the sweep fails the delete still
-        // succeeds — the rows are inert noise, not a correctness bug.
-        let agent_store = AgentStore::new(ctx.db.clone());
-        if let Err(err) = agent_store.delete_scoped_to(agent_id).await {
-            tracing::warn!(
-                strategy_id = agent_id,
-                error = %err,
-                "scoped-agent sweep failed after strategy delete",
-            );
+    result
+}
+
+async fn delete_strategy_inner(
+    ctx: &ApiContext,
+    store: &FilesystemStore,
+    agent_id: &str,
+    force: bool,
+) -> ApiResult<()> {
+    let strategy = get_inner(ctx, agent_id).await?;
+    if !force {
+        let run_count = count_eval_runs(ctx, agent_id).await?;
+        if run_count > 0 {
+            return Err(ApiError::Conflict(format!(
+                "strategy is referenced by {run_count} eval run(s); use --force to delete anyway or archive instead"
+            )));
         }
     }
+    delete_inner(store, agent_id).await?;
+    api_search::delete_strategy(ctx, agent_id).await;
+    let agent_store = AgentStore::new(ctx.db.clone());
+    if let Err(err) = agent_store.delete_scoped_to(agent_id).await {
+        tracing::warn!(strategy_id = agent_id, error = %err, "scoped-agent sweep failed after strategy delete");
+    }
+    delete_exclusive_agents(ctx, &strategy.agents).await;
+    Ok(())
+}
+
+async fn count_eval_runs(ctx: &ApiContext, agent_id: &str) -> ApiResult<u64> {
+    RunStore::new(ctx.db.clone())
+        .count(&RunListFilter {
+            agent_id: Some(agent_id.to_string()),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| ApiError::Internal(format!("count eval runs: {e}")))
+}
+
+async fn delete_exclusive_agents(ctx: &ApiContext, agents: &[AgentRef]) {
+    let agent_store = AgentStore::new(ctx.db.clone());
+    for aref in agents {
+        let refs = match crate::api::agents::referencing_strategy_ids(ctx, &aref.agent_id).await {
+            Ok(refs) => refs,
+            Err(err) => {
+                tracing::warn!(agent_id = aref.agent_id.as_str(), error = %err, "ref-check failed; skipping exclusive-agent cleanup");
+                continue;
+            }
+        };
+        if refs.is_empty() {
+            if let Err(err) = agent_store.delete_by_id(&aref.agent_id).await {
+                tracing::warn!(agent_id = aref.agent_id.as_str(), error = %err, "exclusive-agent delete failed after strategy delete");
+            }
+        }
+    }
+}
+
+/// Soft-delete a strategy by moving its bundle to
+/// `$XVN_HOME/strategies/archive/<id>.json`. Removes the active bundle
+/// and the search index row; does NOT delete any agents (they may be shared).
+pub async fn archive_strategy(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let result = archive_strategy_inner(ctx, agent_id).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "archive",
+        Some(agent_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
     result
+}
+
+async fn archive_strategy_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let strategy = get_inner(ctx, agent_id).await?;
+    let archive_dir = strategy_store_dir(&ctx.xvn_home).join("archive");
+    tokio::fs::create_dir_all(&archive_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("create archive dir: {e}")))?;
+    let archive_path = archive_dir.join(format!("{agent_id}.json"));
+    let json = serde_json::to_string_pretty(&strategy)
+        .map_err(|e| ApiError::Internal(format!("serialize strategy: {e}")))?;
+    tokio::fs::write(&archive_path, json)
+        .await
+        .map_err(|e| ApiError::Internal(format!("write archive: {e}")))?;
+    delete_inner(&store, agent_id).await?;
+    api_search::delete_strategy(ctx, agent_id).await;
+    Ok(())
 }
 
 async fn get_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Strategy> {
@@ -2123,7 +2203,7 @@ mod tests {
         )
         .await
         .unwrap();
-        delete(&ctx, &created.id).await.unwrap();
+        delete(&ctx, &created.id, false).await.unwrap();
 
         let list = list(&ctx).await.unwrap();
         assert!(
@@ -2137,7 +2217,7 @@ mod tests {
     #[tokio::test]
     async fn delete_unknown_strategy_returns_not_found() {
         let (ctx, _d) = ctx_with_audit().await;
-        let r = delete(&ctx, "01TOTALLYMISSINGAGENTID000").await;
+        let r = delete(&ctx, "01TOTALLYMISSINGAGENTID000", false).await;
         assert!(matches!(r, Err(ApiError::NotFound(_))));
     }
 
@@ -2180,6 +2260,98 @@ mod tests {
         assert_eq!(
             summary.execution_mode, "per_asset",
             "default execution_mode must be 'per_asset'"
+        );
+    }
+
+    async fn fresh_ctx() -> (ApiContext, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test".into() })
+            .await
+            .unwrap();
+        (ctx, dir)
+    }
+
+    fn completed_run_for(strategy_id: &str) -> crate::eval::run::Run {
+        use crate::eval::run::{RunMode, RunStatus};
+        crate::eval::run::Run {
+            id: ulid::Ulid::new().to_string(),
+            agent_id: strategy_id.to_string(),
+            agents_agent_id: None,
+            scenario_id: "crypto-bull-q1-2025".to_string(),
+            params_override: None,
+            mode: RunMode::Backtest,
+            status: RunStatus::Completed,
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+            metrics: None,
+            error: None,
+            estimated_total_tokens: None,
+            actual_input_tokens: None,
+            actual_output_tokens: None,
+            bars_content_hash: None,
+            manifest_canonical: None,
+            bars_manifest: None,
+            auto_fire_review: false,
+            review_model: None,
+            max_annotations_per_review: Some(8),
+            live_config: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_strategy_conflict_when_referenced_by_eval_run() {
+        use crate::eval::store::RunStore;
+
+        let (ctx, _d) = fresh_ctx().await;
+        let created = create_strategy(&ctx, CreateStrategyReq { name: "x".into(), creator: None })
+            .await
+            .unwrap();
+        let run = completed_run_for(&created.id);
+        RunStore::new(ctx.db.clone()).create(&run).await.unwrap();
+
+        let r = delete(&ctx, &created.id, false).await;
+        assert!(
+            matches!(r, Err(ApiError::Conflict(_))),
+            "expected Conflict when strategy has eval runs and force=false, got {r:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_strategy_force_succeeds_when_referenced_by_eval_run() {
+        use crate::eval::store::RunStore;
+
+        let (ctx, _d) = fresh_ctx().await;
+        let created = create_strategy(&ctx, CreateStrategyReq { name: "x".into(), creator: None })
+            .await
+            .unwrap();
+        let run = completed_run_for(&created.id);
+        RunStore::new(ctx.db.clone()).create(&run).await.unwrap();
+
+        delete(&ctx, &created.id, true).await.unwrap();
+        assert!(matches!(get(&ctx, &created.id).await, Err(ApiError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn archive_strategy_moves_file_and_removes_from_active() {
+        let (ctx, _d) = fresh_ctx().await;
+        let created = create_strategy(&ctx, CreateStrategyReq { name: "x".into(), creator: None })
+            .await
+            .unwrap();
+
+        archive_strategy(&ctx, &created.id).await.unwrap();
+
+        let archive_path = strategy_store_dir(&ctx.xvn_home)
+            .join("archive")
+            .join(format!("{}.json", created.id));
+        assert!(archive_path.exists(), "archived bundle file should exist");
+        assert!(
+            matches!(get(&ctx, &created.id).await, Err(ApiError::NotFound(_))),
+            "archived strategy must not appear via get"
+        );
+        let list_items = list(&ctx).await.unwrap();
+        assert!(
+            !list_items.iter().any(|s| s.agent_id == created.id),
+            "archived strategy must not appear in list"
         );
     }
 }

@@ -395,6 +395,15 @@ impl AgentStore {
         Ok(result.rows_affected())
     }
 
+    pub async fn delete_by_id(&self, agent_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM agents WHERE agent_id = ?")
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("delete agent {agent_id}"))?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn name_exists(&self, name: &str, excluding_id: Option<&str>) -> Result<bool> {
         let row = match excluding_id {
             Some(id) => {

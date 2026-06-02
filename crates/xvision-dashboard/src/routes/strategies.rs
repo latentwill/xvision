@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, remove_agent, rename_agent_role, set_mechanical_param, set_pipeline, set_risk_config,
-    update_inspector, update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq,
-    ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut,
-    StrategySummary,
+    self, add_agent, archive_strategy, remove_agent, rename_agent_role, set_mechanical_param,
+    set_pipeline, set_risk_config, update_inspector, update_metadata, update_slot, validate_draft,
+    AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq,
+    SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -133,12 +133,30 @@ pub async fn clone(
     Ok((StatusCode::CREATED, Json(strategy)))
 }
 
-/// `DELETE /api/strategy/:id` — delete a draft strategy entity.
+/// `DELETE /api/strategy/:id` — delete a strategy bundle.
+///
+/// `?force=true` deletes even when the strategy has completed eval runs.
+/// `?archive=true` moves the bundle to the archive dir (soft-delete) instead
+/// of removing it. The two flags are mutually exclusive; `archive` takes
+/// precedence when both are set.
+#[derive(Deserialize, Default)]
+pub struct DeleteStrategyQuery {
+    #[serde(default)]
+    pub force: bool,
+    #[serde(default)]
+    pub archive: bool,
+}
+
 pub async fn delete(
     Path(id): Path<String>,
+    Query(q): Query<DeleteStrategyQuery>,
     State(state): State<AppState>,
 ) -> Result<StatusCode, DashboardError> {
-    strategy::delete(&state.api_context(), &id).await?;
+    if q.archive {
+        archive_strategy(&state.api_context(), &id).await?;
+    } else {
+        strategy::delete(&state.api_context(), &id, q.force).await?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
