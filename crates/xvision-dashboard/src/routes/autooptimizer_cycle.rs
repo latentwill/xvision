@@ -123,7 +123,6 @@ pub async fn start_evening_cycle(
                 let _ = tx.send(ev);
             },
             None,
-            None,
         )
         .await;
         if let Err(e) = result {
@@ -343,7 +342,6 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
                 volume_constraints: None,
             },
             overrides: vec![],
-            borrow_bps_per_day: 5.0,
         },
         replay_mode: ReplayMode::Continuous,
         capital: Capital::default(),

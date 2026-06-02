@@ -242,6 +242,30 @@ Also: `100x run` auto-commits/pushes and can trigger an auto-PR+merge, and it
 sweeps any uncommitted WIP into its commit — run it from a clean worktree, never
 the main checkout with live WIP.
 
+### Worktree placement rules
+
+**Where worktrees must go:**
+- Claude manual worktrees → `.worktrees/<name>` (under the main checkout)
+- Claude Code `EnterWorktree` / `isolation: "worktree"` subagents → `.claude/worktrees/agent-*` (auto-managed by harness)
+- Codex CLI → creates siblings at `~/Code/xvision-<name>` (Codex default, unavoidable)
+
+**Never** create a worktree as a sibling to the main checkout manually (`git worktree add ../xvision-<name>`) — use `.worktrees/<name>` instead.
+
+### Periodic worktree cleanup
+
+Worktrees accumulate. Run this when there are more than ~10 in `.claude/worktrees/`:
+
+```bash
+# Prune stale entries (branches deleted)
+git worktree prune
+
+# Remove stale locked agent worktrees (check none are actively in use first)
+for wt in /Users/edkennedy/Code/xvision/.claude/worktrees/agent-*; do
+  git worktree remove --force "$wt" 2>/dev/null || true
+done
+git worktree prune
+```
+
 ## Team coordination
 
 Parallel agent/worker coordination lives under `team/`. Start with:
