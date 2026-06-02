@@ -1,15 +1,15 @@
-//! Example template ids and constructors for the `xvn example seed` flow.
+//! Example scenario ids and constructors for the `xvn example seed` flow.
 //!
-//! Produces a curated set of `Strategy` and `Scenario` artifacts the CLI
-//! drops into a fresh `XVN_HOME` so the Driver.js tour and in-app docs
-//! (V2A items 1 and 2) have something concrete to point at.
+//! Produces curated `Scenario` artifacts the CLI drops into a fresh
+//! `XVN_HOME` so the Driver.js tour and in-app docs have concrete market
+//! windows to point at.
 //!
 //! Identification rules — keep operator data safe:
 //!
-//! * Strategies use [`EXAMPLE_ID_PREFIX`] on the manifest id and
-//!   [`EXAMPLE_STRATEGY_CREATOR`] on the manifest creator. Both must match
-//!   for [`is_example_strategy`] to return true; the seed only reads or
-//!   replaces rows it positively identifies as examples.
+//! * Legacy example strategies used [`EXAMPLE_ID_PREFIX`] on the manifest id
+//!   and [`EXAMPLE_STRATEGY_CREATOR`] on the manifest creator. Both must match
+//!   for [`is_example_strategy`] to return true; the seed only removes rows it
+//!   positively identifies as legacy examples.
 //! * Scenarios use [`EXAMPLE_ID_PREFIX`] on the scenario id and carry the
 //!   [`EXAMPLE_SOURCE_TAG`] in `tags`. The `ScenarioSource` enum stays
 //!   `Generated` — adding a new enum variant would change the DB column
@@ -26,10 +26,7 @@ use crate::eval::scenario::{
     SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
 };
 use crate::safety::VenueLabel;
-use crate::strategies::manifest::{PublicManifest, RegimeFit};
-use crate::strategies::risk::RiskPreset;
-use crate::strategies::slot::LLMSlot;
-use crate::strategies::{PipelineDef, Strategy};
+use crate::strategies::Strategy;
 
 /// Stable id prefix used by both example strategies and example scenarios.
 pub const EXAMPLE_ID_PREFIX: &str = "example-";
@@ -42,174 +39,15 @@ pub const EXAMPLE_STRATEGY_CREATOR: &str = "@xvision-examples";
 /// surface examples without depending on the id prefix.
 pub const EXAMPLE_SOURCE_TAG: &str = "source:example";
 
-/// Stable example strategy ids surfaced by [`example_strategies`]. Exported
-/// so the Driver.js tour (V2A item 1) and CLI tests can reference them
-/// without hardcoding the strings.
-pub const EXAMPLE_STRATEGY_TREND_FOLLOWER: &str = "example-trend-follower";
-pub const EXAMPLE_STRATEGY_MEAN_REVERSION: &str = "example-mean-reversion";
-pub const EXAMPLE_STRATEGY_BREAKOUT: &str = "example-breakout";
-
 /// Stable example scenario ids surfaced by [`example_scenarios`].
 pub const EXAMPLE_SCENARIO_QUICKSTART_BULL: &str = "example-quickstart-btc-bull-jan-2025";
 pub const EXAMPLE_SCENARIO_QUICKSTART_FLASH: &str = "example-quickstart-btc-flash-aug-2024";
 
-/// Build the curated example strategies that `xvn example seed` writes.
-///
-/// Three strategies are returned, covering the three primary regime
-/// behaviors the driver tour highlights:
-///
-/// * `example-trend-follower` — single-slot trend follower (the 80% case)
-/// * `example-mean-reversion` — regime classifier + mean-reversion trader
-/// * `example-breakout` — single-slot Donchian breakout
+/// Return app-facing example strategies for `xvn example seed`.
+/// Kept as an empty compatibility seam so older cleanup tests and callers can
+/// ask for example strategies without reintroducing broken agentless rows.
 pub fn example_strategies() -> Vec<Strategy> {
-    vec![
-        Strategy {
-            manifest: PublicManifest {
-                id: EXAMPLE_STRATEGY_TREND_FOLLOWER.into(),
-                display_name: "Example — Trend follower".into(),
-                plain_summary: "Trades with the dominant trend on BTC/ETH. \
-                     A worked example of the trend_follower template — \
-                     swap the prompt or model to make it your own."
-                    .into(),
-                creator: EXAMPLE_STRATEGY_CREATOR.into(),
-                template: "trend_follower".into(),
-                regime_fit: vec![RegimeFit::TrendingBull, RegimeFit::TrendingBear],
-                asset_universe: vec!["BTC/USD".into(), "ETH/USD".into()],
-                decision_cadence_minutes: 60,
-                attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
-                required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-                risk_preset_or_config: "balanced".into(),
-                published_at: None,
-                min_warmup_bars: None,
-                color: None,
-                execution_mode: Default::default(),
-                capital_mode: Default::default(),
-            },
-            hypothesis: None,
-            agents: Vec::new(),
-            pipeline: PipelineDef::default(),
-            regime_slot: None,
-            intern_slot: None,
-            trader_slot: Some(LLMSlot {
-                role: "trader".into(),
-                attested_with: "anthropic.claude-sonnet-4.6".into(),
-                allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-                provider: None,
-                model: None,
-            }),
-            risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({
-                "ema_fast": 12,
-                "ema_mid": 26,
-                "ema_slow": 50,
-                "atr_period": 14
-            }),
-            activation_mode: xvision_filters::ActivationMode::EveryBar,
-            filter: None,
-            acknowledge_no_filter: false,
-            decision_mode: Default::default(),
-            mechanistic_config: None,
-        },
-        Strategy {
-            manifest: PublicManifest {
-                id: EXAMPLE_STRATEGY_MEAN_REVERSION.into(),
-                display_name: "Example — Mean reversion".into(),
-                plain_summary: "Two-stage pipeline: a regime classifier filters \
-                     the briefing, then the trader buys oversold dips and sells \
-                     overbought rallies on ETH/USD."
-                    .into(),
-                creator: EXAMPLE_STRATEGY_CREATOR.into(),
-                template: "mean_reversion".into(),
-                regime_fit: vec![RegimeFit::RangeBound, RegimeFit::LowVol],
-                asset_universe: vec!["ETH/USD".into()],
-                decision_cadence_minutes: 60,
-                attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
-                required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-                risk_preset_or_config: "balanced".into(),
-                published_at: None,
-                min_warmup_bars: None,
-                color: None,
-                execution_mode: Default::default(),
-                capital_mode: Default::default(),
-            },
-            hypothesis: None,
-            agents: Vec::new(),
-            pipeline: PipelineDef::default(),
-            regime_slot: Some(LLMSlot {
-                role: "regime".into(),
-                attested_with: "anthropic.claude-sonnet-4.6".into(),
-                allowed_tools: vec!["indicator_panel".into()],
-                provider: None,
-                model: None,
-            }),
-            intern_slot: None,
-            trader_slot: Some(LLMSlot {
-                role: "trader".into(),
-                attested_with: "anthropic.claude-sonnet-4.6".into(),
-                allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-                provider: None,
-                model: None,
-            }),
-            risk: RiskPreset::Balanced.expand(),
-            mechanical_params: serde_json::json!({
-                "rsi_oversold": 30,
-                "rsi_overbought": 70,
-                "bollinger_period": 20,
-                "bollinger_sigma": 2.0,
-                "atr_period": 14
-            }),
-            activation_mode: xvision_filters::ActivationMode::EveryBar,
-            filter: None,
-            acknowledge_no_filter: false,
-            decision_mode: Default::default(),
-            mechanistic_config: None,
-        },
-        Strategy {
-            manifest: PublicManifest {
-                id: EXAMPLE_STRATEGY_BREAKOUT.into(),
-                display_name: "Example — Breakout".into(),
-                plain_summary: "Donchian channel breakout trader. Long the \
-                     upper break, short the lower break, sit out the middle. \
-                     A worked example of the breakout template."
-                    .into(),
-                creator: EXAMPLE_STRATEGY_CREATOR.into(),
-                template: "breakout".into(),
-                regime_fit: vec![RegimeFit::TrendingBull, RegimeFit::HighVol],
-                asset_universe: vec!["BTC/USD".into()],
-                decision_cadence_minutes: 60,
-                attested_with: vec!["anthropic.claude-sonnet-4.6".into()],
-                required_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-                risk_preset_or_config: "conservative".into(),
-                published_at: None,
-                min_warmup_bars: None,
-                color: None,
-                execution_mode: Default::default(),
-                capital_mode: Default::default(),
-            },
-            hypothesis: None,
-            agents: Vec::new(),
-            pipeline: PipelineDef::default(),
-            regime_slot: None,
-            intern_slot: None,
-            trader_slot: Some(LLMSlot {
-                role: "trader".into(),
-                attested_with: "anthropic.claude-sonnet-4.6".into(),
-                allowed_tools: vec!["ohlcv".into(), "indicator_panel".into()],
-                provider: None,
-                model: None,
-            }),
-            risk: RiskPreset::Conservative.expand(),
-            mechanical_params: serde_json::json!({
-                "donchian_period": 20,
-                "atr_period": 14
-            }),
-            activation_mode: xvision_filters::ActivationMode::EveryBar,
-            filter: None,
-            acknowledge_no_filter: false,
-            decision_mode: Default::default(),
-            mechanistic_config: None,
-        },
-    ]
+    Vec::new()
 }
 
 /// Build the curated example scenarios that `xvn example seed` writes.
@@ -330,26 +168,14 @@ pub fn is_example_scenario(s: &Scenario) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::strategies::validate::validate_strategy;
 
     #[test]
-    fn example_strategies_are_labelled_and_valid() {
+    fn example_strategies_are_not_seeded() {
         let strategies = example_strategies();
-        assert_eq!(strategies.len(), 3, "three example strategies");
-        let ids: Vec<&str> = strategies.iter().map(|s| s.manifest.id.as_str()).collect();
-        assert!(ids.contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER));
-        assert!(ids.contains(&EXAMPLE_STRATEGY_MEAN_REVERSION));
-        assert!(ids.contains(&EXAMPLE_STRATEGY_BREAKOUT));
-        for s in &strategies {
-            assert!(
-                is_example_strategy(s),
-                "example {} must satisfy is_example_strategy",
-                s.manifest.id
-            );
-            validate_strategy(s).unwrap_or_else(|e| {
-                panic!("example strategy {} failed validate_strategy: {e}", s.manifest.id)
-            });
-        }
+        assert!(
+            strategies.is_empty(),
+            "example strategies are no longer seeded because they lack user-specific agents"
+        );
     }
 
     #[test]
@@ -383,7 +209,45 @@ mod tests {
 
     #[test]
     fn is_example_strategy_rejects_unrelated_id_or_creator() {
-        let mut s = example_strategies().remove(0);
+        use crate::strategies::manifest::PublicManifest;
+        use crate::strategies::risk::RiskPreset;
+        use crate::strategies::{ActivationMode, DecisionMode, PipelineDef};
+
+        let make_example = || Strategy {
+            manifest: PublicManifest {
+                id: "example-test".into(),
+                display_name: "Test".into(),
+                plain_summary: "".into(),
+                creator: EXAMPLE_STRATEGY_CREATOR.into(),
+                template: "test".into(),
+                regime_fit: vec![],
+                asset_universe: vec![],
+                decision_cadence_minutes: 60,
+                attested_with: vec![],
+                required_tools: vec![],
+                risk_preset_or_config: "balanced".into(),
+                published_at: None,
+                min_warmup_bars: None,
+                color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
+            },
+            hypothesis: None,
+            agents: Vec::new(),
+            pipeline: PipelineDef::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+            activation_mode: ActivationMode::EveryBar,
+            filter: None,
+            acknowledge_no_filter: false,
+            decision_mode: DecisionMode::default(),
+            mechanistic_config: None,
+        };
+
+        let mut s = make_example();
         assert!(is_example_strategy(&s));
 
         // Wrong creator: matched id but different author -> not an example.
@@ -391,7 +255,7 @@ mod tests {
         assert!(!is_example_strategy(&s));
 
         // Wrong id prefix: matched creator but renamed -> not an example.
-        let mut s = example_strategies().remove(0);
+        let mut s = make_example();
         s.manifest.id = "operator-trend".into();
         assert!(!is_example_strategy(&s));
     }
