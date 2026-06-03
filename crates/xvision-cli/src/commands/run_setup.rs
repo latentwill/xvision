@@ -74,6 +74,18 @@ pub async fn run(snapshot_path: PathBuf, intern_provider: String, model: String)
         take_profit_pct: 5.0,
         trader_summary: "run-setup placeholder decision (Trader path not invoked here).".into(),
         asset: snap.asset,
+        trailing_stop_pct: None,
+        breakeven_trigger_pct: None,
+        breakeven_offset_pct: None,
+        fade_sl_bars: None,
+        fade_sl_start_pct: None,
+        fade_sl_end_pct: None,
+        max_bars_held: None,
+        sl_atr_mult: None,
+        tp_atr_mult: None,
+        tp1_pct: None,
+        tp1_close_fraction: None,
+        tp2_pct: None,
     };
     let risk_outcome = xvision_harness::apply_risk(placeholder, &portfolio, &risk);
     println!("risk verdict: {risk_outcome:?}");
