@@ -997,7 +997,14 @@ fn default_scan_cadence() -> ScanCadence {
 }
 
 fn default_wake_in_position() -> WakeInPosition {
-    WakeInPosition::Always
+    // Sane default: while a position is open, only re-wake the trader on a
+    // FRESH filter trip (a new invalidation / target-style signal), not on
+    // every sustained-true bar. `Always` (the previous default) drove a
+    // redundant trader-LLM call on EVERY in-position bar — the per-bar
+    // polling cost bug. The trader can still close on a fresh trip, and the
+    // deterministic SL/TP enforces exits regardless. `Always` stays available
+    // as an explicit opt-in.
+    WakeInPosition::OnInvalidationOrTargetOnly
 }
 
 fn default_agent_context_template() -> AgentContextTemplateId {
