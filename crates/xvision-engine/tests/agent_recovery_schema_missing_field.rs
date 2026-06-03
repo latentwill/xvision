@@ -136,6 +136,8 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/026_trace_surface_foundation.sql"),
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
+        include_str!("../migrations/013_cli_jobs.sql"),
+        include_str!("../migrations/018_agent_run_observability.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -323,6 +325,7 @@ async fn paper_executor_repairs_missing_conviction_on_single_patch_retry() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
@@ -479,6 +482,7 @@ async fn paper_executor_repairs_invalid_action_on_single_patch_retry() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
@@ -572,6 +576,7 @@ async fn paper_executor_surfaces_original_error_when_patch_is_malformed() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
@@ -672,6 +677,7 @@ async fn backtest_executor_repairs_missing_field_on_single_patch_retry() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();

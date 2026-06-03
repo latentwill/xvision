@@ -59,6 +59,26 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -73,6 +93,7 @@ async fn seed_run(ctx: &ApiContext, status: RunStatus) -> Run {
     let store = RunStore::new(ctx.db.clone());
     let run = Run::new_queued("agent-x".into(), "scenario-x".into(), RunMode::Backtest);
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     if status != RunStatus::Queued {
         store.update_status(&run.id, status, None).await.unwrap();
     }
@@ -84,6 +105,7 @@ async fn seed_sibling(ctx: &ApiContext, source: &Run, sibling_status: RunStatus)
     let sibling = Run::new_queued(source.agent_id.clone(), source.scenario_id.clone(), source.mode);
     let sibling_id = sibling.id.clone();
     store.create(&sibling).await.unwrap();
+    store.ensure_agent_run_baseline(&sibling.id, "hash_only").await.unwrap();
     if sibling_status != RunStatus::Queued {
         store
             .update_status(&sibling_id, sibling_status, None)

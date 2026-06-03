@@ -117,6 +117,11 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
         include_str!("../migrations/027_run_bars_manifest.sql"),
         include_str!("../migrations/015_eval_decisions_reasoning.sql"),
+        include_str!("../migrations/013_cli_jobs.sql"),
+        include_str!("../migrations/016_eval_reviews.sql"),
+        include_str!("../migrations/018_agent_run_observability.sql"),
+        include_str!("../migrations/037_review_annotations_and_autofire.sql"),
+        include_str!("../migrations/038_eval_runs_live_config.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }
@@ -297,6 +302,7 @@ async fn paper_executor_repairs_invalid_json_on_single_retry() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
@@ -449,6 +455,7 @@ async fn paper_executor_surfaces_original_error_after_two_consecutive_truncation
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
@@ -559,6 +566,7 @@ async fn repair_turn_strips_tools_so_model_cannot_emit_tool_use() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();
@@ -622,6 +630,7 @@ async fn backtest_executor_repairs_invalid_json_on_single_retry() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let tools = Arc::new(ToolRegistry::empty());
     let dispatch_dyn: Arc<dyn LlmDispatch> = dispatch.clone();

@@ -88,6 +88,18 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
     RunStore::new(pool)
 }
@@ -232,6 +244,7 @@ async fn four_consecutive_long_open_pyramid_blocks_to_three_holds() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let bars = daily_bars(4);
     let dispatch = sequenced_dispatch(&["long_open", "long_open", "long_open", "long_open"]);
@@ -322,6 +335,7 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let bars = daily_bars(2);
     let dispatch = sequenced_dispatch(&["long_open", "short_open"]);

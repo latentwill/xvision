@@ -71,6 +71,10 @@ async fn fresh_store() -> RunStore {
         include_str!("../migrations/018_agent_run_observability.sql"),
         include_str!("../migrations/022_eval_runs_agents_agent_id.sql"),
         include_str!("../migrations/027_run_bars_manifest.sql"),
+        include_str!("../migrations/013_cli_jobs.sql"),
+        include_str!("../migrations/016_eval_reviews.sql"),
+        include_str!("../migrations/037_review_annotations_and_autofire.sql"),
+        include_str!("../migrations/038_eval_runs_live_config.sql"),
     ] {
         sqlx::query(migration).execute(&pool).await.unwrap();
     }
@@ -198,6 +202,7 @@ async fn flat_degeneracy_triggers_inherited_skip_window() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let bars = synthetic_bars(12);
     let dispatch = CountingFlatDispatch::new();
@@ -304,6 +309,7 @@ async fn second_skip_window_only_triggers_after_counter_resets() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let bars = synthetic_bars(28);
     let dispatch = CountingFlatDispatch::new();

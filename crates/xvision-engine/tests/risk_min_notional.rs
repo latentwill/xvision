@@ -62,6 +62,26 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -163,6 +183,7 @@ async fn min_notional_gate_skips_broker_for_below_min_orders() {
     let executor = Executor::with_bars(eth_like_bars(&scenario)); // paper venue minimum
     let mut run = Run::new_queued("test-min-notional".into(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -237,6 +258,7 @@ async fn without_gate_below_min_orders_reach_the_broker() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -273,6 +295,7 @@ async fn zero_min_notional_is_noop() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -311,6 +334,7 @@ async fn above_min_notional_orders_pass_through() {
     let executor = Executor::with_bars(eth_like_bars(&scenario));
     let mut run = Run::new_queued("test-above-min".into(), scenario.id.clone(), RunMode::Backtest);
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());
 

@@ -43,6 +43,26 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -56,6 +76,7 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
 async fn seed_completed_run(store: &RunStore, scenario_id: &str) -> Run {
     let run = Run::new_queued("h-strategy".into(), scenario_id.into(), RunMode::Backtest);
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let t0 = Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap();
     for i in 0..3 {
@@ -126,6 +147,7 @@ async fn attest_rejects_run_without_metrics() {
     // Queued — no metrics computed.
     let mut run = Run::new_queued("h-strategy".into(), scenario_id, RunMode::Backtest);
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     run = store.get(&run.id).await.unwrap();
 
     let err = eval::attest(&ctx, &run.id).await.unwrap_err();

@@ -70,6 +70,22 @@ async fn engine_pool_with_026() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -206,6 +222,7 @@ async fn findings_new_fields_persist_and_read_back() {
     let mut run = completed_run();
     run.status = RunStatus::Queued;
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     store
         .finalize(&run.id, run.metrics.as_ref().unwrap())
         .await
@@ -256,6 +273,7 @@ async fn findings_legacy_rows_load_with_defaults() {
     let mut run = completed_run();
     run.status = RunStatus::Queued;
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     store
         .finalize(&run.id, run.metrics.as_ref().unwrap())
         .await

@@ -54,6 +54,26 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {
@@ -69,6 +89,7 @@ async fn seed_failed(ctx: &ApiContext, params: Option<serde_json::Value>) -> Run
     let mut run = Run::new_queued("agent-x".into(), "scenario-x".into(), RunMode::Backtest);
     run.params_override = params;
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     store
         .update_status(&run.id, RunStatus::Failed, Some("provider 5xx"))
         .await
@@ -81,6 +102,7 @@ async fn seed_sibling_queued(ctx: &ApiContext, failed: &Run, params: Option<serd
     let mut sibling = Run::new_queued(failed.agent_id.clone(), failed.scenario_id.clone(), failed.mode);
     sibling.params_override = params;
     store.create(&sibling).await.unwrap();
+    store.ensure_agent_run_baseline(&sibling.id, "hash_only").await.unwrap();
     store.get(&sibling.id).await.unwrap()
 }
 

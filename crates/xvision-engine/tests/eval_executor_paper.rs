@@ -54,6 +54,26 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -158,6 +178,7 @@ async fn paper_harness(
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned_trader_json));
     let tools = Arc::new(ToolRegistry::empty());
     (mock, executor, store, run, strategy, scenario, dispatch, tools)
@@ -368,6 +389,7 @@ async fn paper_executor_crypto_short_open_closes_existing_long() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::sequence(responses));
     let tools = Arc::new(ToolRegistry::empty());
 
@@ -530,6 +552,7 @@ async fn paper_harness_with_dispatch(
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let tools = Arc::new(ToolRegistry::empty());
     let _ = dispatch; // value passed into the test only for clarity
     (mock, executor, store, run, strategy, scenario, tools)

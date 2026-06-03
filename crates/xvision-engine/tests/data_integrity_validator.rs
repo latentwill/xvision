@@ -61,6 +61,22 @@ async fn pool_with_migrations() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -384,11 +400,13 @@ async fn manifest_mismatch_returns_error() {
     run_a.manifest_canonical = Some(manifest_a.canonical_hash());
     run_a.bars_manifest = Some(serde_json::to_value(&manifest_a).unwrap());
     store.create(&run_a).await.unwrap();
+    store.ensure_agent_run_baseline(&run_a.id, "hash_only").await.unwrap();
 
     let mut run_b = Run::new_queued("agent-b".into(), "sc-1".into(), RunMode::Backtest);
     run_b.manifest_canonical = Some(manifest_b.canonical_hash());
     run_b.bars_manifest = Some(serde_json::to_value(&manifest_b).unwrap());
     store.create(&run_b).await.unwrap();
+    store.ensure_agent_run_baseline(&run_b.id, "hash_only").await.unwrap();
 
     // Without override → should get ManifestMismatch error.
     let result = compare_runs(
@@ -437,11 +455,13 @@ async fn allow_manifest_mismatch_bypasses_refusal() {
     run_a.manifest_canonical = Some(manifest_a.canonical_hash());
     run_a.bars_manifest = Some(serde_json::to_value(&manifest_a).unwrap());
     store.create(&run_a).await.unwrap();
+    store.ensure_agent_run_baseline(&run_a.id, "hash_only").await.unwrap();
 
     let mut run_b = Run::new_queued("agent-b".into(), "sc-1".into(), RunMode::Backtest);
     run_b.manifest_canonical = Some(manifest_b.canonical_hash());
     run_b.bars_manifest = Some(serde_json::to_value(&manifest_b).unwrap());
     store.create(&run_b).await.unwrap();
+    store.ensure_agent_run_baseline(&run_b.id, "hash_only").await.unwrap();
 
     // With override → should succeed.
     let result = compare_runs(
@@ -483,6 +503,7 @@ async fn store_persists_and_reads_manifest_columns() {
     run.bars_manifest = Some(serde_json::to_value(&manifest).unwrap());
 
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let loaded = store.get(&run.id).await.unwrap();
 
     assert_eq!(loaded.bars_content_hash.as_deref(), Some(hash.as_str()));
@@ -499,6 +520,7 @@ async fn set_bars_manifest_updates_existing_run() {
 
     let run = Run::new_queued("agent-y".into(), "sc-3".into(), RunMode::Backtest);
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let manifest = DataManifest {
         feed: FeedKind::Crypto,

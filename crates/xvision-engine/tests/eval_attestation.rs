@@ -32,6 +32,26 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -221,6 +241,7 @@ async fn run_store_record_attestation_and_get_round_trips() {
     run.completed_at = None;
     run.metrics = None;
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     store.begin_running(&id).await.unwrap();
     store.finalize(&id, &metrics).await.unwrap();
     run = store.get(&id).await.unwrap();
@@ -256,6 +277,7 @@ async fn run_store_get_attestation_returns_none_when_missing() {
     run.completed_at = None;
     run.metrics = None;
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     store.begin_running(&run.id).await.unwrap();
     store.finalize(&run.id, &metrics).await.unwrap();
     run = store.get(&run.id).await.unwrap();

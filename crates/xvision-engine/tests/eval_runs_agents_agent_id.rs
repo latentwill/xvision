@@ -155,6 +155,26 @@ async fn pool_with_022() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -168,6 +188,7 @@ async fn run_store_round_trips_agents_agent_id() {
     let mut a = Run::new_queued("bundle-hash-a".into(), "scenario-a".into(), RunMode::Backtest);
     assert!(a.agents_agent_id.is_none());
     store.create(&a).await.unwrap();
+    store.ensure_agent_run_baseline(&a.id, "hash_only").await.unwrap();
     let read_a = store.get(&a.id).await.unwrap();
     assert!(read_a.agents_agent_id.is_none());
 
@@ -177,6 +198,7 @@ async fn run_store_round_trips_agents_agent_id() {
     a.id = "run-b".to_string();
     a.agents_agent_id = Some("01HZAGENTULID00000000000000".into());
     store.create(&a).await.unwrap();
+    store.ensure_agent_run_baseline(&a.id, "hash_only").await.unwrap();
     let read_b = store.get("run-b").await.unwrap();
     assert_eq!(
         read_b.agents_agent_id.as_deref(),
@@ -243,6 +265,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
     fresh.agents_agent_id = Some(agent_ulid.clone());
     let fresh_id = fresh.id.clone();
     run_store.create(&fresh).await.unwrap();
+    run_store.ensure_agent_run_baseline(&fresh.id, "hash_only").await.unwrap();
 
     let resolved = lookup_agent_for_eval_run(&ctx, &fresh_id)
         .await
@@ -293,6 +316,7 @@ async fn lookup_agent_for_eval_run_returns_some_for_fresh_run_and_none_for_legac
     orphan.agents_agent_id = Some("01HZNOTAGENTULID0000000000".into());
     let orphan_id = orphan.id.clone();
     run_store.create(&orphan).await.unwrap();
+    run_store.ensure_agent_run_baseline(&orphan.id, "hash_only").await.unwrap();
     let resolved_orphan = lookup_agent_for_eval_run(&ctx, &orphan_id)
         .await
         .expect("lookup ok for orphan");

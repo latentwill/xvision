@@ -58,6 +58,7 @@ async fn finalized_run(store: &RunStore) -> Run {
     let mut r = Run::new_queued("agent-h".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     r.status = RunStatus::Queued;
     store.create(&r).await.unwrap();
+    store.ensure_agent_run_baseline(&r.id, "hash_only").await.unwrap();
     let metrics = MetricsSummary {
         total_return_pct: 4.2,
         sharpe: 0.6,
@@ -115,6 +116,14 @@ async fn agent_profile_seed_is_idempotent() {
     .unwrap();
 
     sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
         .execute(&pool)
         .await
         .unwrap();

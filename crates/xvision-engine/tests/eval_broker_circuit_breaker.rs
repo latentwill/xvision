@@ -72,6 +72,26 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     pool
 }
 
@@ -268,6 +288,7 @@ async fn harness_with_script(
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
     let canned = r#"{"action":"long_open","conviction":0.6,"justification":"keep buying"}"#;
     let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(canned));
     let tools = Arc::new(ToolRegistry::empty());
@@ -489,6 +510,7 @@ async fn hold_between_rejections_resets_strike_counter() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let long_open = r#"{"action":"long_open","conviction":0.6,"justification":"buy"}"#;
     let hold = r#"{"action":"hold","conviction":0.0,"justification":"wait"}"#;

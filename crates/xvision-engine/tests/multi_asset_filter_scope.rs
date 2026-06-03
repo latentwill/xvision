@@ -95,6 +95,14 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     RunStore::new(pool)
 }
 
@@ -543,6 +551,7 @@ async fn backtest_executor_per_asset_filter_signals_do_not_bleed() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     // 2 bars per asset — gives 2 decision bars (bar[0] fills at bar[1]).
     let btc_bars = daily_bars(2, 50_000.0);
