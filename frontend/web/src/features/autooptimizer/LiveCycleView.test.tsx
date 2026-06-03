@@ -1,9 +1,30 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { apiFetch } from "@/api/client";
+import { listProviders } from "@/api/settings";
+import { listStrategies } from "@/api/strategies";
 import { LiveCycleView } from "./LiveCycleView";
+
+vi.mock("@/api/client", async () => {
+  const actual = await vi.importActual<typeof import("@/api/client")>("@/api/client");
+  return {
+    ...actual,
+    apiFetch: vi.fn(),
+  };
+});
+
+vi.mock("@/api/settings", () => ({
+  settingsKeys: { providers: () => ["settings", "providers"] },
+  listProviders: vi.fn(),
+}));
+
+vi.mock("@/api/strategies", () => ({
+  strategyKeys: { list: () => ["strategies", "list"] },
+  listStrategies: vi.fn(),
+}));
 
 type Listener = (event: MessageEvent) => void;
 
@@ -37,55 +58,44 @@ class MockEventSource {
   }
 }
 
-const fetchMock = vi.fn();
-
 beforeEach(() => {
+  vi.resetAllMocks();
   MockEventSource.instances = [];
-  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input.toString();
-    if (url === "/api/autooptimizer/lineage") {
-      return jsonResponse([]);
-    }
-    if (url === "/api/strategies") {
-      return jsonResponse({
-        items: [
-          {
-            agent_id: "example-trend-follower",
-            display_name: "Example Trend Follower",
-            template: "mechanistic",
-            decision_cadence_minutes: 60,
-          },
-        ],
-        total: 1,
+  localStorage.clear();
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.mocked(apiFetch).mockImplementation((path: string) => {
+    if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
+    if (path === "/api/autooptimizer/run-cycle") {
+      return Promise.resolve({
+        started: true,
+        message: "Optimizer run started.",
       });
     }
-    if (url === "/api/settings/providers") {
-      return jsonResponse({
-        providers: [
-          {
-            name: "anthropic",
-            kind: "anthropic",
-            base_url: "",
-            api_key_env: "ANTHROPIC_API_KEY",
-            api_key_set: true,
-            synthetic: false,
-            enabled_models: ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"],
-          },
-        ],
-      });
-    }
-    if (url === "/api/autooptimizer/evening-cycle" && init?.method === "POST") {
-      return jsonResponse(
-        {
-          started: true,
-          message: "Evening run started. Watch the Live tab for progress.",
-        },
-        202,
-      );
-    }
-    return jsonResponse({ code: "not_found", message: url }, 404);
+    return Promise.resolve({});
   });
-  vi.stubGlobal("fetch", fetchMock);
+  vi.mocked(listStrategies).mockResolvedValue([
+    {
+      agent_id: "strategy-1",
+      display_name: "Trend follower",
+      template: "trend_follower",
+      decision_cadence_minutes: 60,
+    },
+  ]);
+  vi.mocked(listProviders).mockResolvedValue({
+    providers: [
+      {
+        name: "anthropic",
+        kind: "anthropic",
+        base_url: "",
+        api_key_env: "ANTHROPIC_API_KEY",
+        api_key_set: true,
+        synthetic: false,
+        is_default: true,
+        enabled_models: ["claude-sonnet-4-6"],
+      },
+    ],
+    default_model: null,
+  });
   Object.defineProperty(globalThis, "EventSource", {
     configurable: true,
     writable: true,
@@ -96,11 +106,6 @@ beforeEach(() => {
     writable: true,
     value: MockEventSource,
   });
-  localStorage.clear();
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
 });
 
 function renderLiveCycleView() {
@@ -118,7 +123,7 @@ function renderLiveCycleView() {
 }
 
 describe("LiveCycleView", () => {
-  it("renders named and nested cycle events from the optimizer SSE stream", async () => {
+  it("renders named cycle events from the optimizer SSE stream", async () => {
     renderLiveCycleView();
 
     expect(screen.getByText(/Waiting for cycle/)).toBeInTheDocument();
@@ -138,58 +143,44 @@ describe("LiveCycleView", () => {
     expect(screen.getByText("cycle-1")).toBeInTheDocument();
   });
 
-  it("launches an evening run through the autooptimizer REST endpoint", async () => {
+  it("renders dashboard SSE envelope events from the optimizer stream", async () => {
+    renderLiveCycleView();
+
+    MockEventSource.instances[0].emit(
+      "message",
+      JSON.stringify({
+        kind: "mutation_gated",
+        display_label: "Gate evaluated",
+        data: {
+          type: "mutation_gated",
+          cycle_id: "cycle-2",
+          child_hash: "child-1",
+          passed: false,
+        },
+      }),
+    );
+
+    expect(await screen.findByText("Gate evaluated")).toBeInTheDocument();
+    expect(screen.getByText("cycle-2")).toBeInTheDocument();
+  });
+
+  it("launches an optimizer run through the dashboard API", async () => {
     const user = userEvent.setup();
     renderLiveCycleView();
 
-    await screen.findByRole("option", { name: "Example Trend Follower" });
-    await user.selectOptions(
-      screen.getByLabelText("Parent strategy"),
-      "example-trend-follower",
-    );
-    await screen.findAllByRole("option", { name: "claude-haiku-4-5-20251001" });
-    await user.selectOptions(
-      screen.getByLabelText("Experiment writer model"),
-      "anthropic::claude-haiku-4-5-20251001",
-    );
-    await user.selectOptions(
-      screen.getByLabelText("Reviewer model"),
-      "anthropic::claude-sonnet-4-6",
-    );
-    await user.click(screen.getByRole("button", { name: "Start evening run" }));
+    await screen.findByRole("option", { name: "Trend follower" });
+    await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
+    await user.click(screen.getByRole("button", { name: "Run optimizer" }));
 
-    await screen.findByText("Evening run started. Watch the Live tab for progress.");
-    const post = fetchMock.mock.calls.find(
-      ([url, init]) => url === "/api/autooptimizer/evening-cycle" && init?.method === "POST",
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith("/api/autooptimizer/run-cycle", {
+        method: "POST",
+        body: JSON.stringify({
+          strategy_id: "strategy-1",
+          mutator_model: "claude-haiku-4-5-20251001",
+          judge_model: "claude-sonnet-4-6",
+        }),
+      }),
     );
-    expect(post).toBeDefined();
-    expect(JSON.parse(String(post![1]?.body))).toEqual({
-      strategy_id: "example-trend-follower",
-      mutator_provider: "anthropic",
-      mutator_model: "claude-haiku-4-5-20251001",
-      judge_provider: "anthropic",
-      judge_model: "claude-sonnet-4-6",
-    });
-  });
-
-  it("keeps the start button disabled until a strategy is selected", async () => {
-    renderLiveCycleView();
-
-    const button = await screen.findByRole("button", { name: "Start evening run" });
-    expect(button).toBeDisabled();
-
-    await screen.findByRole("option", { name: "Example Trend Follower" });
-    await userEvent.selectOptions(
-      screen.getByLabelText("Parent strategy"),
-      "example-trend-follower",
-    );
-    await waitFor(() => expect(button).toBeEnabled());
   });
 });
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}

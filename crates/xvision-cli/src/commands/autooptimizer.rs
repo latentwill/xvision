@@ -26,7 +26,7 @@ use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::autooptimizer::blob_store::BlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
-use xvision_engine::autooptimizer::cycle::{run_evening_cycle, CycleConfig};
+use xvision_engine::autooptimizer::cycle::{run_cycle, CycleConfig};
 use xvision_engine::autooptimizer::eval_adapter::{CachedBacktestPaperTester, StubPaperTester};
 use xvision_engine::autooptimizer::gate::GateVerdict;
 use xvision_engine::autooptimizer::judge::Judge;
@@ -72,8 +72,8 @@ pub enum Op {
     Lineage(LineageCmd),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
-    /// Run the full evening cycle (parent selection -> candidate edit -> gate -> judge). Operator label: 'Evening run'.
-    EveningCycle(EveningCycleArgs),
+    /// Run the full optimizer cycle (parent selection -> candidate edit -> gate -> judge). Operator label: 'Optimizer run'.
+    RunCycle(RunCycleArgs),
     /// Replay a saved optimizer cycle from a fixture (no API keys required).
     Demo(DemoArgs),
 }
@@ -113,7 +113,7 @@ pub struct MutateOnceArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct EveningCycleArgs {
+pub struct RunCycleArgs {
     /// Path to autooptimizer.toml. Defaults to ~/.xvn/autooptimizer.toml.
     #[arg(long)]
     pub config: Option<PathBuf>,
@@ -123,7 +123,7 @@ pub struct EveningCycleArgs {
     /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
     #[arg(long)]
     pub mock: bool,
-    /// Cycle/session id to use for this evening cycle. Generated when omitted.
+    /// Cycle/session id to use for this optimizer cycle. Generated when omitted.
     #[arg(long)]
     pub session_id: Option<String>,
     /// Strategy ID to use as the root parent for this cycle.
@@ -331,7 +331,7 @@ pub async fn run(cmd: AutoOptimizerCmd) -> CliResult<()> {
             LineageOp::Show(args) => lineage_show(args).await,
         },
         Op::MutateOnce(args) => run_mutate_once(args).await,
-        Op::EveningCycle(args) => run_evening_cycle_cmd(args).await,
+        Op::RunCycle(args) => run_cycle_cmd(args).await,
         Op::Demo(args) => run_demo_cmd(args).await,
     }
 }
@@ -859,9 +859,9 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     Ok(())
 }
 
-// ── evening-cycle ─────────────────────────────────────────────────────────
+// ── run-cycle ─────────────────────────────────────────────────────────
 
-async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
+async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     if let Some(budget) = args.budget {
         validate_budget_usd(budget)?;
     }
@@ -876,7 +876,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
-    // Observability blob store (required by run_evening_cycle signature).
+    // Observability blob store (required by run_cycle signature).
     let obs_blob_root = xvn_home.join("lineage").join("obs-blobs");
     let obs_blob_store = xvision_observability::BlobStore::new(obs_blob_root);
 
@@ -899,7 +899,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
             id: format!("ec-day-{}", Ulid::new()),
             parent_scenario_id: None,
             source: ScenarioSource::Generated,
-            display_name: "Evening cycle day window".into(),
+            display_name: "Optimizer cycle day window".into(),
             description: format!(
                 "Synthesized day window {} – {}",
                 cfg.day_window.start, cfg.day_window.end
@@ -1037,14 +1037,14 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
 
     let parent_policy = ParentPolicy::RoundRobin;
 
-    eprintln!("Starting evening cycle...");
+    eprintln!("Starting optimizer cycle...");
     if let Some(ref s) = args.strategy {
         eprintln!("strategy: {s}");
     }
     if let Some(b) = args.budget {
         eprintln!("budget: {b} USD");
     }
-    let result = run_evening_cycle(
+    let result = run_cycle(
         &pool,
         &obs_blob_store,
         &cfg,
@@ -1062,7 +1062,7 @@ async fn run_evening_cycle_cmd(args: EveningCycleArgs) -> CliResult<()> {
         args.session_id.clone(),
     )
     .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("run_evening_cycle: {e}")))?;
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
 
     println!("cycle_id={}", result.cycle_id);
 
@@ -1088,8 +1088,8 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::MutationGated { .. } => "Experiment gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
         CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
-        CycleProgressEvent::CycleSealed { .. } => "Evening summary signed",
-        CycleProgressEvent::CycleFinished { .. } => "Evening run finished",
+        CycleProgressEvent::CycleSealed { .. } => "Cycle summary signed",
+        CycleProgressEvent::CycleFinished { .. } => "Optimizer run finished",
     }
 }
 
@@ -1162,7 +1162,7 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
 
 /// Send a `CycleProgressEvent` as a newline-delimited JSON line to the IPC
 /// socket. Non-fatal: errors are silently discarded so a disconnected or
-/// slow socket never interrupts the evening cycle.
+/// slow socket never interrupts the optimizer cycle.
 async fn ipc_send_event(stream: &mut Option<tokio::net::UnixStream>, ev: CycleProgressEvent) {
     let Some(ref mut s) = stream else { return };
     let Ok(mut line) = serde_json::to_string(&ev) else {

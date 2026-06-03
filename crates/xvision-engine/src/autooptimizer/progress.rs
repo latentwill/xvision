@@ -68,13 +68,13 @@ pub enum CycleProgressEvent {
         severity: String,
         code: String,
     },
-    /// Fired once the evening summary is signed. Operator label: "Evening summary signed".
+    /// Fired once the cycle summary is signed. Operator label: "Cycle summary signed".
     CycleSealed {
         cycle_id: String,
         merkle_root: String,
         node_count: usize,
     },
-    /// Fired once the evening run task has completed. Operator label: "Evening run finished".
+    /// Fired once the optimizer run task has completed. Operator label: "Optimizer run finished".
     CycleFinished {
         cycle_id: String,
         active_count: usize,

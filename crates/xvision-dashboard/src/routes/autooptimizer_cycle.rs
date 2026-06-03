@@ -1,4 +1,4 @@
-//! POST /api/autooptimizer/evening-cycle — launch an evening optimizer run.
+//! POST /api/autooptimizer/run-cycle — launch an optimizer run.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use xvision_engine::autooptimizer::{
     blob_store::BlobStore,
     config::AutoOptimizerConfig,
     content_hash::ContentHash,
-    cycle::{run_evening_cycle, CycleConfig},
+    cycle::{run_cycle, CycleConfig},
     eval_adapter::StubPaperTester,
     gate::GateVerdict,
     judge::Judge,
@@ -51,7 +51,7 @@ pub struct StartCycleResponse {
     pub message: String,
 }
 
-pub async fn start_evening_cycle(
+pub async fn start_cycle(
     State(state): State<AppState>,
     Json(body): Json<StartCycleBody>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
@@ -90,7 +90,7 @@ pub async fn start_evening_cycle(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| DashboardError::Validation {
             field: "strategy_id".into(),
-            msg: "strategy_id is required for dashboard evening-cycle launches".into(),
+            msg: "strategy_id is required for dashboard run-cycle launches".into(),
         })?;
     let (bundle_hash, strategy) =
         load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
@@ -110,7 +110,7 @@ pub async fn start_evening_cycle(
         xvision_observability::BlobStore::new(state.xvn_home.join("lineage").join("obs-blobs"));
     tokio::spawn(async move {
         let paper_tester = Arc::new(stub_paper_tester());
-        let result = run_evening_cycle(
+        let result = run_cycle(
             &pool,
             &obs_blob_store,
             &cfg,
@@ -127,14 +127,14 @@ pub async fn start_evening_cycle(
         )
         .await;
         if let Err(e) = result {
-            tracing::warn!(error = %e, "evening cycle failed");
+            tracing::warn!(error = %e, "optimizer cycle failed");
         }
     });
     Ok((
         StatusCode::ACCEPTED,
         Json(StartCycleResponse {
             started: true,
-            message: "Evening run started. Watch the Live tab for progress.".into(),
+            message: "Optimizer run started. Watch the Live tab for progress.".into(),
         }),
     ))
 }
@@ -309,7 +309,7 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
         id: format!("ec-day-{}", Ulid::new()),
         parent_scenario_id: None,
         source: ScenarioSource::Generated,
-        display_name: "Evening cycle day window".into(),
+        display_name: "Optimizer cycle day window".into(),
         description: format!(
             "Synthesized day window {} – {}",
             cfg.day_window.start, cfg.day_window.end

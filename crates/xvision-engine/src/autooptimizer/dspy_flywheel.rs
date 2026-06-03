@@ -99,7 +99,7 @@ async fn maybe_trigger_compile(
     persist_compiled_pattern(store, namespace, &instruction).await
 }
 
-/// Carrier for DSPy flywheel state threaded through the evening cycle.
+/// Carrier for DSPy flywheel state threaded through the optimizer cycle.
 pub struct DspyContext {
     pub store: Arc<MemoryStore>,
     pub bridge: Arc<dyn DspyBridge>,

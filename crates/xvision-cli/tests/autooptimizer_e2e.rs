@@ -123,8 +123,8 @@ fn autooptimizer_help_exits_zero_and_lists_known_subcommands() {
         "autooptimizer --help must list mutate-once, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("evening-cycle"),
-        "autooptimizer --help must list evening-cycle, got:\n{stdout}"
+        stdout.contains("run-cycle"),
+        "autooptimizer --help must list run-cycle, got:\n{stdout}"
     );
     assert!(
         stdout.contains("demo"),

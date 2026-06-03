@@ -62,7 +62,7 @@
 // 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
-// 53. POST   /api/autooptimizer/evening-cycle           autooptimizer_cycle::start_evening_cycle
+// 53. POST   /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
 // 53b. POST  /api/autooptimizer/run                    flywheel::autooptimizer_run
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
@@ -422,8 +422,8 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── Flywheel / offline self-improvement ─────────────────────────
         .route(
-            "/api/autooptimizer/evening-cycle",
-            post(autooptimizer_cycle::start_evening_cycle),
+            "/api/autooptimizer/run-cycle",
+            post(autooptimizer_cycle::start_cycle),
         )
         .route("/api/autooptimizer/run", post(flywheel::autooptimizer_run))
         .route(
@@ -647,7 +647,7 @@ pub async fn serve(
     let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
 
     // AR-3: start the autooptimizer IPC Unix socket listener when the
-    // operator passes `--autooptimizer-ipc-socket`. Evening-cycle CLI
+    // operator passes `--autooptimizer-ipc-socket`. Optimizer-cycle CLI
     // clients connect and stream CycleProgressEvents; the listener
     // broadcasts them into `state.autooptimizer_tx` which feeds
     // `GET /api/autooptimizer/events` SSE.

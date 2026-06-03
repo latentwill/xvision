@@ -84,18 +84,6 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -379,8 +367,8 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
         .fill_size
         .expect("flip-blocked decision must record close size");
     assert!(
-        (opened - closed).abs() < 1e-9,
-        "flip-blocked decision must close exactly the existing long size, not open a new short; opened={opened}, closed={closed}",
+        (opened + closed).abs() < 1e-9,
+        "flip-blocked decision must only close the existing long, not open a new short; opened={opened}, closed={closed}",
     );
 
     // supervisor_notes carries exactly one `one-step flip blocked` row.

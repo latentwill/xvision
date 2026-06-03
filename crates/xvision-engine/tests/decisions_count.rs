@@ -43,15 +43,7 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -60,18 +52,6 @@ async fn fresh_store() -> RunStore {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -218,10 +198,6 @@ async fn run_backtest_with_bars(
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
-    store
-        .ensure_agent_run_baseline(&run.id, "hash_only")
-        .await
-        .unwrap();
 
     let bars = daily_bars(bar_count);
     let first_ts = bars.first().unwrap().timestamp;

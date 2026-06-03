@@ -66,11 +66,10 @@ pub const RECOVERY_REPLAY_DIVERGENCE: &str = "replay_divergence";
 ///   — zero network cost, byte-identical decision. On frame exhaustion or
 ///   control-flow divergence the run aborts with a typed error and the
 ///   recording is marked corrupt (items 2 + 4). NEVER a silent live fallback.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub enum TrajectoryMode {
     /// Live/record path (default). Frame persistence is handled by the
     /// event sink, not by this executor.
-    #[default]
     Record,
     /// Replay an existing recording deterministically.
     Replay {
@@ -80,6 +79,12 @@ pub enum TrajectoryMode {
         /// The trajectory store the recording lives in. Shared across slots.
         store: Arc<TrajectoryStore>,
     },
+}
+
+impl Default for TrajectoryMode {
+    fn default() -> Self {
+        TrajectoryMode::Record
+    }
 }
 
 impl std::fmt::Debug for TrajectoryMode {
@@ -321,9 +326,13 @@ impl ClineSlotInput<'_> {
     /// model sees the same inputs shape regardless of runtime.
     fn render_prompt(&self) -> anyhow::Result<String> {
         Ok(format!(
-            "Inputs:\n{}\n\nFollow the slot's instructions. You may call tools \
-             to fetch additional data; submit your final decision via the \
-             `submit_decision` tool as JSON matching the required schema.",
+            "Inputs:\n{}\n\nFollow the slot instructions. You may call tools \
+             to fetch additional data for the current decision asset only. \
+             You MUST reply by calling the submit_decision tool with your \
+             decision as a JSON argument. Do NOT output prose, raw JSON, or \
+             code fences in your reply — only the submit_decision tool call \
+             is accepted. Outputting text instead of calling the tool will \
+             fail the cycle.",
             serde_json::to_string_pretty(&self.upstream_inputs)?
         ))
     }
@@ -523,7 +532,12 @@ pub const STEP_ERR_REPLAY_DIVERGENCE: &str = "replay_divergence";
 /// with `tracing::info!(event = "nodecision_recovery_succeeded")`.
 /// On total failure the original step is returned unchanged so the
 /// caller's `NoDecision` error path fires as normal.
-async fn try_nodecision_recovery(mut step: StepResult, client: &AgentClient, run_id: &str, role: &str) -> StepResult {
+async fn try_nodecision_recovery(
+    mut step: StepResult,
+    client: &AgentClient,
+    run_id: &str,
+    role: &str,
+) -> StepResult {
     if step.status != "completed" || step.decision_json.is_some() {
         return step;
     }
@@ -872,14 +886,14 @@ mod tests {
     fn budget_uses_max_tokens_then_default() {
         let with = BudgetLimits {
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
-            max_output_tokens: 4096u32,
+            max_output_tokens: Some(4096u32).unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
             max_wall_ms: DEFAULT_MAX_WALL_MS,
         };
         assert_eq!(with.max_output_tokens, 4096);
 
         let without = BudgetLimits {
             max_input_tokens: DEFAULT_MAX_INPUT_TOKENS,
-            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+            max_output_tokens: None.unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
             max_wall_ms: DEFAULT_MAX_WALL_MS,
         };
         assert_eq!(without.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
