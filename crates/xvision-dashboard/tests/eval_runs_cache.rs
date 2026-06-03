@@ -22,6 +22,7 @@
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
+use std::time::Duration;
 use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
@@ -34,7 +35,7 @@ const SCENARIO_ID: &str = "crypto-bull-q1-2025";
 
 async fn boot() -> (TestServer, AppState, TempDir) {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(tmp.path().to_path_buf())
+    let state = AppState::new_with_eval_run_cache_ttl(tmp.path().to_path_buf(), Duration::from_secs(60))
         .await
         .expect("init dashboard state");
     let server = TestServer::new(build_router(state.clone())).unwrap();

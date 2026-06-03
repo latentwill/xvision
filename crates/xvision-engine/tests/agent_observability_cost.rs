@@ -370,7 +370,8 @@ async fn caller_supplied_cost_wins_over_catalog_lookup() {
 /// recorder boundary without scaffolding the full eval executor.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
-    use sqlx::SqlitePool;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
 
     const MIGRATION_018: &str = include_str!("../migrations/018_agent_run_observability.sql");
 
@@ -381,12 +382,15 @@ async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
     let path = tmp.path().join("cost.db");
     Box::leak(Box::new(tmp));
     let url = format!("sqlite://{}?mode=rwc", path.display());
-    let pool = SqlitePool::connect(&url).await.unwrap();
     // FKs reference `agent_runs`/`spans`; we apply migration 018
     // only, so cross-migration FKs (eval_runs, cli_jobs) would
-    // refuse the inserts. Same toggle `eval_observability` uses.
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&pool)
+    // refuse the inserts. Configure the pool instead of issuing a
+    // connection-local PRAGMA so recorder operations cannot land on a
+    // different connection with foreign keys enabled.
+    let options = SqliteConnectOptions::from_str(&url).unwrap().foreign_keys(false);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
         .await
         .unwrap();
     sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();

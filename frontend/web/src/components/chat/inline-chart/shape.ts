@@ -1,4 +1,10 @@
-import type { ChartBounds, InlineChartSeries, InlinePoint, NormalizedPoint, ViewBox } from "./types";
+import type {
+  ChartBounds,
+  InlineChartSeries,
+  InlinePoint,
+  NormalizedPoint,
+  ViewBox,
+} from "./types";
 
 export const DEFAULT_VIEWBOX: ViewBox = {
   width: 300,
@@ -48,11 +54,31 @@ export function normalizePoints(
 
   return points
     .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-    .map((point) => ({
-      ...point,
-      sx: viewBox.padX + ((point.x - bounds.minX) / xSpan) * innerW,
-      sy: viewBox.padY + (1 - (point.y - bounds.minY) / ySpan) * innerH,
-    }));
+    .map((point) => {
+      const nx = normalizedRatio(point.x, bounds.minX, bounds.maxX, xSpan);
+      const ny = normalizedRatio(point.y, bounds.minY, bounds.maxY, ySpan);
+      return {
+        ...point,
+        sx: viewBox.padX + nx * innerW,
+        sy: viewBox.padY + (1 - ny) * innerH,
+      };
+    })
+    .filter((point) => Number.isFinite(point.sx) && Number.isFinite(point.sy));
+}
+
+function normalizedRatio(value: number, min: number, max: number, span: number) {
+  if (!Number.isFinite(span) || span <= 0) {
+    if (value <= min) return 0;
+    if (value >= max) return 1;
+    return 0.5;
+  }
+  const ratio = (value - min) / span;
+  if (Number.isFinite(ratio)) {
+    return Math.min(1, Math.max(0, ratio));
+  }
+  if (value <= min) return 0;
+  if (value >= max) return 1;
+  return 0.5;
 }
 
 export function linePath(points: NormalizedPoint[]): string {
@@ -62,7 +88,10 @@ export function linePath(points: NormalizedPoint[]): string {
     return `M ${p.sx - 2} ${p.sy} L ${p.sx + 2} ${p.sy}`;
   }
   return points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.sx} ${point.sy}`)
+    .map(
+      (point, index) =>
+        `${index === 0 ? "M" : "L"} ${point.sx} ${point.sy}`,
+    )
     .join(" ");
 }
 
@@ -94,8 +123,11 @@ export function histogramBars(
   const maxH = viewBox.height / 2 - viewBox.padY;
 
   return finitePoints.map((point, index) => {
-    const h = Math.max(1, (Math.abs(point.y) / maxAbs) * maxH);
-    const positive = point.y >= 0;
+    const h =
+      point.y === 0
+        ? 0
+        : Math.max(1, (Math.abs(point.y) / maxAbs) * maxH);
+    const positive = point.y > 0;
     return {
       x: viewBox.padX + index * slotW,
       y: positive ? zeroY - h : zeroY,

@@ -27,6 +27,33 @@ class RemoteCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.remote = load_remote_module()
 
+    def test_exec_reports_invalid_json_response_without_traceback(self) -> None:
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self) -> bytes:
+                return b"not json"
+
+        stderr = io.StringIO()
+        with patch.object(
+            self.remote.urllib.request, "urlopen", return_value=FakeResponse()
+        ):
+            with redirect_stderr(stderr):
+                exit_code = self.remote.main(
+                    ["--url", "https://host", "exec", "eval", "list"]
+                )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("POST https://host/api/cli/jobs -> 200", stderr.getvalue())
+        self.assertIn("invalid JSON response", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
     def test_job_ids_are_encoded_as_one_path_segment(self) -> None:
         calls: list[tuple[str, str]] = []
 

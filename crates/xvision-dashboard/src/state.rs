@@ -85,6 +85,7 @@ pub struct AppState {
     /// route bypasses the cache for them) — see
     /// `EVAL_RUN_CACHE_TTL` and `routes::eval_runs::get`.
     eval_run_cache: Arc<Mutex<HashMap<String, CachedRunDetail>>>,
+    eval_run_cache_ttl: Duration,
     cli_command: PathBuf,
     cli_runner: Arc<CliJobRunner>,
     /// Global safety pause-gate singleton. Bootstrapped at server startup from
@@ -102,6 +103,16 @@ impl AppState {
     /// engine API migrations. Safe to call from `xvn dashboard serve` and from
     /// integration tests against a tempdir.
     pub async fn new(xvn_home: PathBuf) -> anyhow::Result<Self> {
+        Self::new_with_eval_run_cache_ttl(xvn_home, EVAL_RUN_CACHE_TTL).await
+    }
+
+    /// Build state with a caller-provided eval-run cache TTL. Production uses
+    /// [`AppState::new`]; tests that assert cache hits can use a longer TTL to
+    /// avoid coupling correctness to scheduler timing.
+    pub async fn new_with_eval_run_cache_ttl(
+        xvn_home: PathBuf,
+        eval_run_cache_ttl: Duration,
+    ) -> anyhow::Result<Self> {
         let bootstrap_ctx = ApiContext::open(
             &xvn_home,
             Actor::Cli {
@@ -184,6 +195,7 @@ impl AppState {
             obs_config,
             models_cache: Arc::new(Mutex::new(HashMap::new())),
             eval_run_cache: Arc::new(Mutex::new(HashMap::new())),
+            eval_run_cache_ttl,
             cli_command,
             cli_runner,
             safety_manager,
@@ -256,7 +268,7 @@ impl AppState {
     pub fn eval_run_cache_get(&self, run_id: &str) -> Option<RunDetail> {
         let cache = self.eval_run_cache.lock().ok()?;
         let entry = cache.get(run_id)?;
-        if entry.fetched_at.elapsed() > EVAL_RUN_CACHE_TTL {
+        if entry.fetched_at.elapsed() > self.eval_run_cache_ttl {
             None
         } else {
             Some(entry.detail.clone())
