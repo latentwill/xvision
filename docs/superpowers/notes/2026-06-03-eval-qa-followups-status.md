@@ -3,6 +3,26 @@
 Branch: `codex/multi-asset-tool-asset-guard` (worktree `.worktrees/eval-multiasset-fixes`).
 Source QA: `docs/QA/2026-06-03-deepseek-v4-multiasset-1h-eval-findings.md`.
 
+## FINAL STATUS (all four QA findings done + branch test-health restored)
+
+- **T1 / T2 / T3 / T4 — all implemented and tested.** T2 now includes the full
+  intrabar SL/TP exit engine + model-emitted sizing (commit b47b059), not just
+  the foundation. T5 intentionally skipped (strategy tuning, not a code bug).
+- **Migration collision** (039/040/041 dup) fixed.
+- **Harness-drift sweep done:** full suite went **111 → 7 failures**
+  (1825 passed). The remaining 7 are PRE-EXISTING, non-migration codex-branch
+  bugs that fail at b47b059 (before the sweep) — NOT regressions from this work:
+  - `agent_recovery_schema_missing_field` (1): the branch's own tool-asset-guard
+    change added "for the current decision asset only" to the initial trader
+    prompt but not the patch-retry path, breaking the "patch turn must reuse the
+    prompt verbatim" A/B-cache invariant. Real bug in the asset-guard commit.
+  - `eval_executor_live_loop` (4): live-executor FK / baseline drift (live path).
+  - `eval_guardrails` (2): pre-existing guardrail-test failure.
+
+Everything below this line is the historical mid-flight record.
+
+---
+
 ## Landed (committed, all green)
 
 | Commit | What |

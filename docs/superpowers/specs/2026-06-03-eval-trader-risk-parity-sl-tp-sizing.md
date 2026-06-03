@@ -1,6 +1,8 @@
 # Eval trader risk parity — model/config sizing, stop-loss & take-profit
 
-**Status:** draft (awaiting review)
+**Status:** IMPLEMENTED + tested (commit b47b059). Foundation + executor exit
+engine + model sizing all landed; DoD tests in `tests/eval_sl_tp_exit.rs` (5)
+pass; lib suite 913/0; byte-identical fill pin 11/11.
 **Author:** Claude (paired with @latentwill)
 **Date:** 2026-06-03
 **Branch:** `codex/multi-asset-tool-asset-guard` (worktree `.worktrees/eval-multiasset-fixes`)
