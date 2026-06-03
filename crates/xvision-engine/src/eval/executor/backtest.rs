@@ -755,6 +755,17 @@ impl Executor {
         let mut n_trades = 0u32;
         let mut closed_trades = 0u32;
         let mut winning_trades = 0u32;
+        // Intrabar exit engine (eval-trader risk-parity spec): per-asset Wilder
+        // ATR series for config-driven (`stop_loss_atr_multiple` /
+        // `take_profit_atr_multiple`) levels, and the entry-fixed stop/target
+        // levels of each currently-open position.
+        let atr_period = strategy.risk.atr_period.max(1) as usize;
+        let atr_by_asset: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Option<f64>>> = active
+            .iter()
+            .map(|a| (*a, wilder_atr_series(&asset_bars[a], atr_period)))
+            .collect();
+        let mut levels_by_asset: BTreeMap<xvision_core::trading::AssetSymbol, PositionLevels> =
+            BTreeMap::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         // Wall-clock anchor for `EvalLimits::max_wall_clock_secs`. Captured
@@ -839,6 +850,71 @@ impl Executor {
             if store.is_terminal(&run.id).await? {
                 anyhow::bail!("eval run stopped");
             }
+
+            // Intrabar stop/target exit engine. Runs on EVERY bar (before the
+            // cadence/filter gates) so an open position can exit between
+            // decisions when the bar's range crosses its entry-fixed stop or
+            // target. Iterates assets present at this timestamp that hold an
+            // open leg with recorded levels.
+            for (&ex_asset, &ex_idx) in assets_at_ts.iter() {
+                let pos = book.position(ex_asset);
+                if pos.abs() <= f64::EPSILON {
+                    levels_by_asset.remove(&ex_asset);
+                    continue;
+                }
+                let Some(levels) = levels_by_asset.get(&ex_asset).copied() else {
+                    continue;
+                };
+                let ex_bar = &asset_bars[&ex_asset][ex_idx];
+                // Carry the leg's mark forward for pooled equity continuity.
+                book.mark(ex_asset, ex_bar.close);
+                let Some((exit_px, reason)) = resolve_intrabar_exit(&levels, ex_bar) else {
+                    continue;
+                };
+                // Close the entire position at the exit price. Fee uses the
+                // scenario taker rate on the exit notional; slippage is not
+                // re-applied (the stop/target level — or the gap open — IS the
+                // fill price).
+                let entry = book.entry_price(ex_asset);
+                let taker_bps = scenario.venue.fees.taker_bps as f64;
+                let exit_fee = pos.abs() * exit_px * (taker_bps / 10_000.0);
+                let realized = pos * (exit_px - entry) - exit_fee;
+                book.set_position(ex_asset, 0.0, 0.0);
+                book.add_realized(realized);
+                levels_by_asset.remove(&ex_asset);
+                n_trades += 1;
+                closed_trades += 1;
+                if realized > 0.0 {
+                    winning_trades += 1;
+                }
+                let ex_row = DecisionRow {
+                    run_id: run.id.clone(),
+                    decision_index: decision_idx,
+                    timestamp: ex_bar.timestamp,
+                    asset: ex_asset.as_alpaca_pair(),
+                    action: "flat".into(),
+                    conviction: None,
+                    justification: Some(format!("intrabar {reason} exit @ {exit_px:.4}")),
+                    reasoning: Some(format!(
+                        "intrabar {reason}: entry {entry:.4} → exit {exit_px:.4}"
+                    )),
+                    order_size: Some(pos.abs()),
+                    fill_price: Some(exit_px),
+                    fill_size: Some(pos.abs()),
+                    fee: Some(exit_fee),
+                    pnl_realized: Some(realized),
+                };
+                store.record_decision(&ex_row).await?;
+                self.emit(ProgressEvent::FillRecorded {
+                    run_id: run.id.clone(),
+                    side: if pos > 0.0 { "sell" } else { "buy" }.into(),
+                    price: exit_px,
+                    qty: pos.abs(),
+                    fee: exit_fee,
+                });
+                decision_idx += 1;
+            }
+
             // Cadence gate: only fire on timestamps whose minute-aligned
             // value is divisible by the strategy's cadence. Timestamp-level
             // (shared across all assets at this ts).
@@ -1804,6 +1880,7 @@ impl Executor {
                             maker_bps: effective_maker_bps,
                             equity,
                             risk_pct: strategy.risk.risk_pct_per_trade,
+                            size_bps_override: parsed.size_bps,
                             slippage_model: effective_slippage_model.clone(),
                             fee_source,
                             asset: asset.clone(),
@@ -1834,6 +1911,41 @@ impl Executor {
                 // the old scalar `entry_price = fill.new_entry (== 0.0)`.
                 book.set_position(asset_sym, fill.new_pos, fill.new_entry);
                 book.add_realized(fill.realized_pnl);
+
+                // Intrabar exit engine: record entry-fixed stop/target levels
+                // when this fill OPENED a position (flat → non-flat), and clear
+                // them when the position is now flat (a model close). Levels
+                // resolve model `pct` → config ATR multiple → none (spec D3).
+                if fill.new_pos.abs() <= f64::EPSILON {
+                    levels_by_asset.remove(&asset_sym);
+                } else if pre_fill_position.abs() <= f64::EPSILON {
+                    let long = fill.new_pos > 0.0;
+                    let entry_px = fill.new_entry;
+                    let atr = atr_by_asset
+                        .get(&asset_sym)
+                        .and_then(|s| s.get(i).copied())
+                        .flatten();
+                    let stop = resolve_stop_level(
+                        long,
+                        entry_px,
+                        parsed.stop_loss_pct,
+                        atr,
+                        strategy.risk.stop_loss_atr_multiple,
+                    );
+                    let target = resolve_target_level(
+                        long,
+                        entry_px,
+                        parsed.take_profit_pct,
+                        atr,
+                        strategy.risk.take_profit_atr_multiple,
+                    );
+                    if stop.is_some() || target.is_some() {
+                        levels_by_asset.insert(asset_sym, PositionLevels { stop, target, long });
+                    } else {
+                        levels_by_asset.remove(&asset_sym);
+                    }
+                }
+
                 let fill_happened = fill.fill_price.is_some();
                 if fill_happened {
                     n_trades += 1;
@@ -2841,6 +2953,8 @@ impl Executor {
                     maker_bps: scenario.venue.fees.maker_bps as f64,
                     equity,
                     risk_pct: strategy.risk.risk_pct_per_trade,
+                    // Live sizing override is a follow-up (spec: backtest-only).
+                    size_bps_override: None,
                     slippage_model: scenario.venue.slippage.clone(),
                     fee_source: crate::eval::scenario::FeeSource::Default,
                     asset: asset.to_string(),
@@ -3740,6 +3854,117 @@ fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
         .iter()
         .find(|r| canonical_role(&r.role) == "trader")
         .and_then(|r| r.bar_history_limit)
+}
+
+// ── Intrabar stop/target exit engine (eval-trader risk-parity spec 2026-06-03) ──
+
+/// Entry-fixed stop / target levels for an open position, recorded when the
+/// position opens and checked against each subsequent bar's range.
+#[derive(Debug, Clone, Copy)]
+struct PositionLevels {
+    /// Stop-loss price. `None` = no stop.
+    stop: Option<f64>,
+    /// Take-profit price. `None` = no target.
+    target: Option<f64>,
+    /// `true` for a long position (stop below / target above entry); `false`
+    /// for a short.
+    long: bool,
+}
+
+/// Wilder ATR series aligned 1:1 with `bars`. Entries before `period` bars
+/// have elapsed are `None`. Seeds the ATR at index `period-1` as the SMA of
+/// the first `period` true ranges, then applies Wilder smoothing.
+fn wilder_atr_series(bars: &[Ohlcv], period: usize) -> Vec<Option<f64>> {
+    let n = bars.len();
+    let mut out = vec![None; n];
+    if period == 0 || n < period {
+        return out;
+    }
+    let mut trs = Vec::with_capacity(n);
+    for (i, b) in bars.iter().enumerate() {
+        let tr = if i == 0 {
+            b.high - b.low
+        } else {
+            let pc = bars[i - 1].close;
+            (b.high - b.low).max((b.high - pc).abs()).max((b.low - pc).abs())
+        };
+        trs.push(tr);
+    }
+    let mut atr = trs[..period].iter().sum::<f64>() / period as f64;
+    out[period - 1] = Some(atr);
+    for i in period..n {
+        atr = (atr * (period as f64 - 1.0) + trs[i]) / period as f64;
+        out[i] = Some(atr);
+    }
+    out
+}
+
+/// Stop-loss price at entry, by the spec's resolution priority: model `pct`
+/// → config ATR multiple (when `> 0`) → none.
+fn resolve_stop_level(
+    long: bool,
+    entry: f64,
+    model_pct: Option<f64>,
+    atr: Option<f64>,
+    atr_mult: f64,
+) -> Option<f64> {
+    if let Some(pct) = model_pct {
+        let frac = pct / 100.0;
+        Some(if long { entry * (1.0 - frac) } else { entry * (1.0 + frac) })
+    } else if atr_mult > 0.0 {
+        atr.map(|a| if long { entry - a * atr_mult } else { entry + a * atr_mult })
+    } else {
+        None
+    }
+}
+
+/// Take-profit price at entry, symmetric to [`resolve_stop_level`].
+fn resolve_target_level(
+    long: bool,
+    entry: f64,
+    model_pct: Option<f64>,
+    atr: Option<f64>,
+    atr_mult: f64,
+) -> Option<f64> {
+    if let Some(pct) = model_pct {
+        let frac = pct / 100.0;
+        Some(if long { entry * (1.0 + frac) } else { entry * (1.0 - frac) })
+    } else if atr_mult > 0.0 {
+        atr.map(|a| if long { entry + a * atr_mult } else { entry - a * atr_mult })
+    } else {
+        None
+    }
+}
+
+/// Decide whether `bar`'s range triggers an exit. Conventions (spec D4):
+/// gap-through fills at the bar open; when both stop and target are hit in the
+/// same bar, the stop is assumed to fire first (conservative). Returns
+/// `(fill_price, reason)`.
+fn resolve_intrabar_exit(levels: &PositionLevels, bar: &Ohlcv) -> Option<(f64, &'static str)> {
+    if levels.long {
+        if let Some(stop) = levels.stop {
+            if bar.low <= stop {
+                return Some((if bar.open <= stop { bar.open } else { stop }, "stop_loss"));
+            }
+        }
+        if let Some(tp) = levels.target {
+            if bar.high >= tp {
+                return Some((if bar.open >= tp { bar.open } else { tp }, "take_profit"));
+            }
+        }
+    } else {
+        if let Some(stop) = levels.stop {
+            if bar.high >= stop {
+                return Some((if bar.open >= stop { bar.open } else { stop }, "stop_loss"));
+            }
+        }
+        if let Some(tp) = levels.target {
+            if bar.low <= tp {
+                return Some((if bar.open <= tp { bar.open } else { tp }, "take_profit"));
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]

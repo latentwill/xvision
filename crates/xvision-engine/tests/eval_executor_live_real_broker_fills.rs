@@ -37,6 +37,7 @@ fn req(action: &str, pos: f64, equity: f64, risk_pct: f64, next_open: f64) -> Fi
         maker_bps: 5.0,
         equity,
         risk_pct,
+        size_bps_override: None,
         slippage_model: SlippageModel::None,
         fee_source: FeeSource::Default,
         asset: "BTC/USD".into(),

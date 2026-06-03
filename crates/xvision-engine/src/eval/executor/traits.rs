@@ -210,6 +210,12 @@ pub struct FillRequest {
     pub equity: f64,
     /// `Strategy.risk.risk_pct_per_trade`.
     pub risk_pct: f64,
+    /// Optional model-emitted position size in basis points of NAV
+    /// (`TraderOutput.size_bps`). When `Some`, it overrides the mechanical
+    /// `risk_pct` sizing: `usd_at_risk = equity * size_bps / 10_000`. `None`
+    /// preserves the historical `equity * risk_pct` behavior (eval-trader
+    /// risk-parity spec 2026-06-03).
+    pub size_bps_override: Option<u32>,
     /// Resolved slippage model for this fill (owned clone).
     pub slippage_model: SlippageModel,
     /// Provenance tag — which override won (per-bar / per-asset / default).
@@ -358,7 +364,10 @@ pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
     let approx_units = if want_flat {
         a.pos.abs()
     } else {
-        let usd_at_risk = a.equity * a.risk_pct;
+        let usd_at_risk = a
+            .size_bps_override
+            .map(|b| a.equity * (b as f64 / 10_000.0))
+            .unwrap_or(a.equity * a.risk_pct);
         let units = (usd_at_risk / a.next_open).max(0.0);
         if a.pos != 0.0 {
             // Reversing: pay close leg + open leg.
@@ -425,7 +434,10 @@ pub(crate) fn simulate_fill_inner(a: &FillRequest) -> FillRecord {
     let new_pos_units = if want_flat {
         0.0
     } else {
-        let usd_at_risk = a.equity * a.risk_pct;
+        let usd_at_risk = a
+            .size_bps_override
+            .map(|b| a.equity * (b as f64 / 10_000.0))
+            .unwrap_or(a.equity * a.risk_pct);
         let units = (usd_at_risk / fill_price).max(0.0);
         if want_long {
             units
@@ -557,6 +569,7 @@ mod tests {
             maker_bps: 5.0,
             equity: 10_000.0,
             risk_pct: 0.01,
+            size_bps_override: None,
             slippage_model: SlippageModel::Linear { bps: 5 },
             fee_source: crate::eval::scenario::FeeSource::Default,
             asset: "BTC/USD".into(),

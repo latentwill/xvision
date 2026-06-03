@@ -131,6 +131,7 @@ fn golden_request(pos: f64, action: &str) -> FillRequest {
         maker_bps: 10.0,
         equity: 10_000.0,
         risk_pct: 0.02,
+        size_bps_override: None,
         slippage_model: SlippageModel::Linear { bps: 10 },
         fee_source: FeeSource::Default,
         asset: "BTC/USD".into(),
