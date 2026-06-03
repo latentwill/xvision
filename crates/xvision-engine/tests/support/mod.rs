@@ -1,5 +1,7 @@
 #![allow(dead_code, deprecated)]
 
+pub mod eval_harness;
+
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::{canonical_scenarios, scenario_store};

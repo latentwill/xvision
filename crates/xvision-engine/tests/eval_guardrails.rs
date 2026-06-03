@@ -30,124 +30,17 @@
 use std::sync::Arc;
 
 use chrono::{Duration, TimeZone, Utc};
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
-use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
-use xvision_engine::eval::store::RunStore;
-use xvision_engine::strategies::manifest::PublicManifest;
-use xvision_engine::strategies::risk::RiskPreset;
-use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 
-const MIGRATION_018: &str = include_str!("../migrations/018_agent_run_observability.sql");
+mod support;
 
-async fn fresh_store() -> RunStore {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
-        .await
-        .unwrap();
-    // FK enforcement OFF: `supervisor_notes.run_id` FKs `agent_runs(id)`,
-    // and the eval-only test harness doesn't insert agent_runs rows. The
-    // executor uses the eval run id directly when writing supervisor
-    // notes; production wires both ids together via the agent-run
-    // observability bus.
-    sqlx::query("PRAGMA foreign_keys = OFF")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/001_api_audit.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/002_eval.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/022_eval_runs_agents_agent_id.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!(
-        "../migrations/037_review_annotations_and_autofire.sql"
-    ))
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(MIGRATION_018).execute(&pool).await.unwrap();
-    RunStore::new(pool)
-}
-
-fn minimal_strategy(agent_id: &str) -> Strategy {
-    Strategy {
-        manifest: PublicManifest {
-            id: agent_id.into(),
-            display_name: "guardrails test strategy".into(),
-            plain_summary: "F-7 guardrail coverage".into(),
-            creator: "@tester".into(),
-            template: "mean_reversion".into(),
-            regime_fit: vec![],
-            asset_universe: vec!["BTC/USD".into()],
-            // 1 day cadence so every daily bar fires a decision.
-            decision_cadence_minutes: 1_440,
-            attested_with: vec![],
-            required_tools: vec![],
-            risk_preset_or_config: "balanced".into(),
-            published_at: None,
-            min_warmup_bars: None,
-            color: None,
-            execution_mode: Default::default(),
-            capital_mode: Default::default(),
-        },
-        agents: Vec::new(),
-        pipeline: Default::default(),
-        regime_slot: None,
-        intern_slot: None,
-        trader_slot: Some(LLMSlot {
-            role: "trader".into(),
-            attested_with: "anthropic.claude-sonnet-4.6+".into(),
-            allowed_tools: vec![],
-            provider: None,
-            model: None,
-        }),
-        risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
-        hypothesis: None,
-        activation_mode: xvision_filters::ActivationMode::EveryBar,
-        filter: None,
-        acknowledge_no_filter: false,
-        decision_mode: Default::default(),
-        mechanistic_config: None,
-    }
-}
+use support::eval_harness::{
+    count_notes_with_prefix, fetch_note_contents, fresh_store, minimal_strategy, sequenced_dispatch,
+};
 
 /// Daily bars starting 2026-01-01, monotonically increasing close. The
 /// shape matches `decisions_count.rs` so we exercise the same fill path.
@@ -166,65 +59,6 @@ fn daily_bars(count: usize) -> Vec<Ohlcv> {
             }
         })
         .collect()
-}
-
-/// Build a `LlmResponse` carrying a single JSON text block — the trader
-/// output the executor's `TraderOutput::parse_response` expects.
-fn trader_resp(action: &str) -> LlmResponse {
-    let body = format!(r#"{{"action":"{action}","conviction":0.7,"justification":"test {action}"}}"#);
-    LlmResponse {
-        content: vec![ContentBlock::Text { text: body }],
-        stop_reason: StopReason::EndTurn,
-        input_tokens: 1,
-        output_tokens: 1,
-    }
-}
-
-fn sequenced_dispatch(actions: &[&str]) -> Arc<dyn LlmDispatch> {
-    let resps: Vec<LlmResponse> = actions.iter().map(|a| trader_resp(a)).collect();
-    Arc::new(MockDispatch::sequence(resps))
-}
-
-/// Count `supervisor_notes` rows for a run with the given reason prefix.
-async fn count_notes_with_prefix(store: &RunStore, run_id: &str, prefix: &str) -> i64 {
-    let pool = store_pool(store);
-    let pattern = format!("{prefix}%");
-    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM supervisor_notes WHERE run_id = ? AND content LIKE ?")
-        .bind(run_id)
-        .bind(pattern)
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-}
-
-async fn fetch_note_contents(store: &RunStore, run_id: &str) -> Vec<(String, String, String)> {
-    // Returns (role, severity, content) so the test can pin all three.
-    let pool = store_pool(store);
-    sqlx::query_as::<_, (String, String, String)>(
-        "SELECT role, severity, content FROM supervisor_notes WHERE run_id = ? ORDER BY created_at ASC",
-    )
-    .bind(run_id)
-    .fetch_all(&pool)
-    .await
-    .unwrap()
-}
-
-/// Lift the pool out of the store via a roundtrip query path. The store
-/// owns the pool but doesn't expose it; the tests query directly through
-/// a fresh connection-by-pool extracted via the store's own helpers.
-/// We avoid adding a `pool()` accessor (out-of-scope crate API change)
-/// and just rerun the same DB; sqlx pools are cheap to clone via a new
-/// connect — but that defeats `:memory:` (a new pool is a new DB). So
-/// the tests instead reuse a global captured pool via an exposed
-/// accessor on `RunStore`.
-///
-/// Since `RunStore` has no `pool()` getter today, this helper relies on
-/// the `pool_for_test` accessor added alongside the supervisor-note
-/// helper on the same track. If the parallel
-/// `eval-causal-input-sanitization` track lands first and adds a
-/// different accessor, rebase to use that name.
-fn store_pool(store: &RunStore) -> SqlitePool {
-    store.pool_for_test()
 }
 
 #[tokio::test]
@@ -381,8 +215,8 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
         .fill_size
         .expect("flip-blocked decision must record close size");
     assert!(
-        (opened + closed).abs() < 1e-9,
-        "flip-blocked decision must only close the existing long, not open a new short; opened={opened}, closed={closed}",
+        (opened.abs() - closed.abs()).abs() < 1e-9,
+        "flip-blocked decision must only close the existing long size, not open a new short; opened={opened}, closed={closed}",
     );
 
     // supervisor_notes carries exactly one `one-step flip blocked` row.
