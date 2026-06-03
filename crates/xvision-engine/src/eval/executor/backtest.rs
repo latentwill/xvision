@@ -741,6 +741,9 @@ impl Executor {
         let mut book = crate::eval::executor::book::PortfolioBook::new(initial);
         // Tracks bars held while short per asset for borrow-cost accrual.
         let mut short_bars_held: BTreeMap<xvision_core::trading::AssetSymbol, u32> = BTreeMap::new();
+        // Advanced SL/TP per-position state (trailing, break-even, fading, time, ATR, partial TP).
+        let mut sltp_state: BTreeMap<xvision_core::trading::AssetSymbol, crate::eval::executor::sltp::PositionRiskState> =
+            BTreeMap::new();
         let bar_secs = scenario.granularity.seconds();
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
@@ -885,14 +888,14 @@ impl Executor {
             // strategy filter is a STRATEGY-level signal — it doesn't care
             // which asset's bar it sees, only that the timestamp has one.
             //
-            // The wakeup gate is `is_trip()` — Trip is the bar an LLM
-            // dispatch fires, matching `FilterEventV1.triggered` semantics
-            // and the dashboard's `FilterSummary.wakeups` /
-            // `llm_calls_saved` math. `Active { Hold }` (sustained true
-            // after cooldown expires) is NOT a wakeup; treating it as one
-            // re-introduces the "fires every bar" bug whenever the
-            // condition tree stays true for multiple bars.
+            // The wakeup gate allows LLM dispatch on both Trip (first bar
+            // the condition tree becomes true after Inactive/Cooldown) AND
+            // Hold (subsequent bars the condition tree stays true). Level
+            // operators (Gt/Lt/Gte/Lte) correctly fire every bar the level
+            // holds; Cooldown, CappedForDay, SuppressedInPosition, Warming,
+            // and Inactive still suppress dispatch.
             let mut filter_gated = false;
+            let mut filter_trigger_context: Option<serde_json::Value> = None;
             if let Some(hook) = filter_hook.as_mut() {
                 if let Some((&gate_asset_sym, &gate_idx)) = assets_at_ts.iter().next() {
                     let gate_bar = &asset_bars[&gate_asset_sym][gate_idx];
@@ -900,8 +903,10 @@ impl Executor {
                     let evaluation = hook.evaluate(gate_bar, in_position);
                     hook.record(&pool, self.progress.as_ref(), &run.id, ts, &evaluation)
                         .await?;
-                    if !evaluation.outcome.decision.is_trip() {
+                    if !evaluation.outcome.decision.is_active() {
                         filter_gated = true;
+                    } else {
+                        filter_trigger_context = evaluation.trigger_context.clone();
                     }
                 }
             }
@@ -1010,6 +1015,126 @@ impl Executor {
                         },
                     }),
                 };
+                // When the DSL filter fired this bar, inject its trigger context
+                // (indicator snapshot + fire.reason/priority/tags) into the seed
+                // so the trader's briefing includes the values that caused the
+                // filter to trip.
+                let mut seed = seed;
+                if let Some(ctx) = &filter_trigger_context {
+                    if let Some(obj) = seed.as_object_mut() {
+                        obj.insert("filter_context".to_string(), ctx.clone());
+                    }
+                }
+
+                // Advanced SL/TP check — fires before the LLM pipeline.
+                // If a trigger fires, we execute the exit, record the
+                // decision row, and `continue 'asset` so the LLM is not
+                // consulted for this bar. This fires even during early-stop
+                // skip windows (capital protection trumps efficiency).
+                if book.position(asset_sym).abs() > f64::EPSILON {
+                    if let Some(sltp) = sltp_state.get_mut(&asset_sym) {
+                        use crate::eval::executor::sltp::SltpTrigger;
+                        let sltp_position = book.position(asset_sym);
+                        let sltp_entry = book.entry_price(asset_sym);
+                        match crate::eval::executor::sltp::check_and_update(sltp, bar) {
+                            Some(SltpTrigger::FullExit { reason }) => {
+                                let (sltp_pnl, sltp_fee) = apply_sltp_full_exit(
+                                    sltp_position,
+                                    sltp_entry,
+                                    next_bar_open,
+                                    default_slip_bps,
+                                    default_taker_bps,
+                                );
+                                // Apply borrow cost for short exits.
+                                let borrow_cost = if sltp_position < -f64::EPSILON {
+                                    let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
+                                    let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                                        .and_then(|o| o.borrow_bps_per_day)
+                                        .unwrap_or(scenario.venue.borrow_bps_per_day);
+                                    compute_borrow_cost(sltp_position.abs(), sltp_entry, borrow_bps, held, bar_secs)
+                                } else {
+                                    0.0
+                                };
+                                let net_sltp_pnl = sltp_pnl - borrow_cost;
+                                book.add_realized(net_sltp_pnl);
+                                if net_sltp_pnl > 0.0 { wins += 1; }
+                                realized_count += 1;
+                                book.set_position(asset_sym, 0.0, 0.0);
+                                sltp_state.remove(&asset_sym);
+                                last_open_direction.remove(&asset_sym);
+                                n_trades += 1;
+                                let fill_price = next_bar_open * (1.0 - default_slip_bps / 10_000.0
+                                    * if sltp_position > 0.0 { 1.0 } else { -1.0 });
+                                let sltp_row = crate::eval::store::DecisionRow {
+                                    run_id: run.id.clone(),
+                                    decision_index: decision_idx,
+                                    timestamp: bar.timestamp,
+                                    asset: asset.clone(),
+                                    action: reason.to_string(),
+                                    conviction: Some(1.0),
+                                    justification: Some(format!("sltp: {reason}")),
+                                    reasoning: None,
+                                    order_size: Some(sltp_position.abs()),
+                                    fill_price: Some(fill_price),
+                                    fill_size: Some(sltp_position.abs()),
+                                    fee: Some(sltp_fee),
+                                    pnl_realized: Some(sltp_pnl - borrow_cost),
+                                };
+                                store.record_decision(&sltp_row).await?;
+                                self.emit_chart(
+                                    &run.id,
+                                    RunChartEvent::Decision(LiveDecisionRow::from(&sltp_row)),
+                                )
+                                .await;
+                                self.emit(ProgressEvent::FillRecorded {
+                                    run_id: run.id.clone(),
+                                    side: fill_side_for_action(reason, sltp_position).into(),
+                                    price: fill_price,
+                                    qty: sltp_position.abs(),
+                                    fee: sltp_fee,
+                                });
+                                decision_idx += 1;
+                                continue 'asset;
+                            }
+                            Some(SltpTrigger::PartialTp1 { fraction }) => {
+                                let close_units = sltp_position.abs() * fraction;
+                                let fill_price = next_bar_open;
+                                let fee_rate = default_taker_bps / 10_000.0;
+                                let fee = close_units * fill_price * fee_rate;
+                                let pnl = sltp_position * fraction * (fill_price - sltp_entry) - fee;
+                                let remaining = sltp_position * (1.0 - fraction);
+                                book.add_realized(pnl);
+                                book.set_position(asset_sym, remaining, sltp_entry);
+                                sltp.tp1_taken = true;
+                                n_trades += 1;
+                                let pt1_row = crate::eval::store::DecisionRow {
+                                    run_id: run.id.clone(),
+                                    decision_index: decision_idx,
+                                    timestamp: bar.timestamp,
+                                    asset: asset.clone(),
+                                    action: "partial_tp1".to_string(),
+                                    conviction: Some(1.0),
+                                    justification: Some(format!("sltp: partial TP1 ({:.0}%)", fraction * 100.0)),
+                                    reasoning: None,
+                                    order_size: Some(close_units),
+                                    fill_price: Some(fill_price),
+                                    fill_size: Some(close_units),
+                                    fee: Some(fee),
+                                    pnl_realized: Some(pnl),
+                                };
+                                store.record_decision(&pt1_row).await?;
+                                self.emit_chart(
+                                    &run.id,
+                                    RunChartEvent::Decision(LiveDecisionRow::from(&pt1_row)),
+                                )
+                                .await;
+                                decision_idx += 1;
+                                continue 'asset;
+                            }
+                            None => {}
+                        }
+                    }
+                }
 
                 // eval-flat-degeneracy-early-stop (F-9): before paying the
                 // LLM tax, check whether we should inherit this decision as
@@ -1767,7 +1892,56 @@ impl Executor {
                 // leaves `position`/`entry_price` reading 0.0 — identical to
                 // the old scalar `entry_price = fill.new_entry (== 0.0)`.
                 book.set_position(asset_sym, fill.new_pos, fill.new_entry);
+
+                if fill.fill_price.is_some() {
+                    if fill.new_pos.abs() > f64::EPSILON
+                        && (applied_action == "long_open" || applied_action == "short_open")
+                    {
+                        let direction = if fill.new_pos > 0.0 {
+                            xvision_core::trading::Direction::Long
+                        } else {
+                            xvision_core::trading::Direction::Short
+                        };
+                        let sl_pct = parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0);
+                        let tp_pct = parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0);
+                        let entry_atr = if parsed.sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some() {
+                            crate::eval::executor::sltp::compute_atr14(history_slice)
+                        } else {
+                            None
+                        };
+                        sltp_state.insert(
+                            asset_sym,
+                            crate::eval::executor::sltp::PositionRiskState::new(
+                                direction,
+                                fill.new_entry,
+                                sl_pct,
+                                tp_pct,
+                                entry_atr,
+                                parsed.trailing_stop_pct,
+                                parsed.breakeven_trigger_pct,
+                                parsed.breakeven_offset_pct,
+                                parsed.fade_sl_bars,
+                                parsed.fade_sl_start_pct,
+                                parsed.fade_sl_end_pct,
+                                parsed.max_bars_held,
+                                parsed.sl_atr_mult,
+                                parsed.tp_atr_mult,
+                                parsed.tp1_pct,
+                                parsed.tp1_close_fraction,
+                                parsed.tp2_pct,
+                            ),
+                        );
+                    } else if fill.new_pos.abs() <= f64::EPSILON {
+                        sltp_state.remove(&asset_sym);
+                    }
+                }
+
                 book.add_realized(fill.realized_pnl);
+                if pre_fill_position != 0.0 && fill.new_pos.abs() <= f64::EPSILON {
+                    // Closing a position — count for win_rate
+                    realized_count += 1;
+                    if fill.realized_pnl > 0.0 { wins += 1; }
+                }
 
                 // Borrow cost: when a short is closed, subtract accumulated
                 // cost from realized PnL. Long positions accrue nothing.
@@ -1881,12 +2055,6 @@ impl Executor {
                     },
                 };
                 store.record_decision(&decision_row).await?;
-                if pre_fill_position != 0.0 && fill.fill_price.is_some() {
-                    realized_count += 1;
-                    if fill.realized_pnl > 0.0 {
-                        wins += 1;
-                    }
-                }
                 self.emit_chart(
                     &run.id,
                     RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
@@ -2094,11 +2262,7 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 {
-                wins as f64 / realized_count as f64
-            } else {
-                0.0
-            },
+            win_rate: if realized_count > 0 { wins as f64 / realized_count as f64 } else { 0.0 },
             n_trades,
             n_decisions: decision_idx,
             baselines: Some(baselines),
@@ -2416,7 +2580,6 @@ impl Executor {
             let asset_signal_cache = signal_cache
                 .entry(asset_sym)
                 .or_insert_with(crate::agent::signal_cache::SignalCache::new);
-            let pre_fill_position = book.position(asset_sym);
             let outcome = self
                 .decide_one_live(
                     DecideOneLiveCtx {
@@ -2458,12 +2621,6 @@ impl Executor {
 
             if outcome.fill_happened {
                 n_trades += 1;
-            }
-            if pre_fill_position != 0.0 && outcome.fill_happened {
-                realized_count += 1;
-                if outcome.realized_pnl > 0.0 {
-                    wins += 1;
-                }
             }
             // Per-asset open-direction memory: write back THIS asset's
             // updated direction only.
@@ -2568,11 +2725,7 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 {
-                wins as f64 / realized_count as f64
-            } else {
-                0.0
-            },
+            win_rate: if realized_count > 0 { wins as f64 / realized_count as f64 } else { 0.0 },
             n_trades,
             n_decisions: decision_idx,
             // Live runs do not compute the four backtest baselines (they
@@ -2921,7 +3074,6 @@ impl Executor {
             input_tokens,
             output_tokens,
             fill_happened,
-            realized_pnl: fill.realized_pnl,
             last_open_direction,
             broker_error,
         })
@@ -2989,7 +3141,6 @@ struct LiveDecisionOutcome {
     input_tokens: u64,
     output_tokens: u64,
     fill_happened: bool,
-    realized_pnl: f64,
     last_open_direction: Option<GuardAction>,
     broker_error: Option<(xvision_execution::broker_surface::BrokerErrorClass, String)>,
 }
@@ -3281,6 +3432,7 @@ fn mechanistic_action(
             action: "hold".into(),
             conviction: 0.0,
             justification: "mechanistic: no open position".into(),
+            ..Default::default()
         };
     }
     let pnl_pct = if position > 0.0 {
@@ -3295,6 +3447,7 @@ fn mechanistic_action(
                     action: "flat".into(),
                     conviction: 1.0,
                     justification: format!("mechanistic: stop-loss ({pnl_pct:.2}% <= -{pct:.2}%)"),
+                    ..Default::default()
                 };
             }
             ClosePolicy::TakeProfit { pct } if pnl_pct >= *pct => {
@@ -3302,6 +3455,7 @@ fn mechanistic_action(
                     action: "flat".into(),
                     conviction: 1.0,
                     justification: format!("mechanistic: take-profit ({pnl_pct:.2}% >= {pct:.2}%)"),
+                    ..Default::default()
                 };
             }
             _ => {}
@@ -3311,6 +3465,7 @@ fn mechanistic_action(
         action: "hold".into(),
         conviction: 0.0,
         justification: "mechanistic: no close policy triggered".into(),
+        ..Default::default()
     }
 }
 
@@ -3663,6 +3818,25 @@ fn compute_borrow_cost(
     let bars_per_day = 86_400.0 / bar_secs as f64;
     let daily_cost = abs_pos * entry * borrow_bps_per_day / 10_000.0;
     daily_cost * bars_held as f64 / bars_per_day
+}
+
+/// Compute fill price, fee, and realized PnL for a full SLTP exit.
+///
+/// Returns `(pnl, fee)`. Slippage is adverse to the exiting side:
+/// long exits fill slightly below `next_open`, short exits slightly above.
+fn apply_sltp_full_exit(
+    position: f64,
+    entry_price: f64,
+    next_open: f64,
+    slip_bps: f64,
+    taker_bps: f64,
+) -> (f64, f64) {
+    debug_assert!(position.abs() > 0.0, "apply_sltp_full_exit called with zero position");
+    let direction_sign = if position > 0.0 { 1.0_f64 } else { -1.0 };
+    let fill_price = next_open * (1.0 - slip_bps / 10_000.0 * direction_sign);
+    let fee = position.abs() * fill_price * taker_bps / 10_000.0;
+    let pnl = position * (fill_price - entry_price) - fee;
+    (pnl, fee)
 }
 
 fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {

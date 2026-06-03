@@ -214,6 +214,49 @@ pub struct TraderDecision {
     /// per-decision, and `BacktestConfig::instrument` was removed.
     #[garde(skip)]
     pub asset: AssetSymbol,
+
+    // -- Trailing stop (ratchets SL toward current price as position profits) --
+    #[garde(skip)]
+    #[serde(default)]
+    pub trailing_stop_pct: Option<f64>,
+    // -- Break-even stop (move SL to entry once profit threshold is hit) --
+    #[garde(skip)]
+    #[serde(default)]
+    pub breakeven_trigger_pct: Option<f64>,
+    #[garde(skip)]
+    #[serde(default)]
+    pub breakeven_offset_pct: Option<f64>,
+    // -- Fading SL (SL tightens toward entry over time) --
+    #[garde(skip)]
+    #[serde(default)]
+    pub fade_sl_bars: Option<u32>,
+    #[garde(skip)]
+    #[serde(default)]
+    pub fade_sl_start_pct: Option<f64>,
+    #[garde(skip)]
+    #[serde(default)]
+    pub fade_sl_end_pct: Option<f64>,
+    // -- Time-based exit (force-close after N bars) --
+    #[garde(skip)]
+    #[serde(default)]
+    pub max_bars_held: Option<u32>,
+    // -- ATR-based SL/TP (distance expressed as ATR multiples) --
+    #[garde(skip)]
+    #[serde(default)]
+    pub sl_atr_mult: Option<f64>,
+    #[garde(skip)]
+    #[serde(default)]
+    pub tp_atr_mult: Option<f64>,
+    // -- Partial TP (close fraction at TP1, let remainder run to TP2) --
+    #[garde(skip)]
+    #[serde(default)]
+    pub tp1_pct: Option<f64>,
+    #[garde(skip)]
+    #[serde(default)]
+    pub tp1_close_fraction: Option<f64>,
+    #[garde(skip)]
+    #[serde(default)]
+    pub tp2_pct: Option<f64>,
 }
 
 /// Shadow struct backing `TraderDecision`'s `try_from` deserialize
@@ -232,6 +275,30 @@ struct TraderDecisionRaw {
     take_profit_pct: f32,
     trader_summary: String,
     asset: AssetSymbol,
+    #[serde(default)]
+    trailing_stop_pct: Option<f64>,
+    #[serde(default)]
+    breakeven_trigger_pct: Option<f64>,
+    #[serde(default)]
+    breakeven_offset_pct: Option<f64>,
+    #[serde(default)]
+    fade_sl_bars: Option<u32>,
+    #[serde(default)]
+    fade_sl_start_pct: Option<f64>,
+    #[serde(default)]
+    fade_sl_end_pct: Option<f64>,
+    #[serde(default)]
+    max_bars_held: Option<u32>,
+    #[serde(default)]
+    sl_atr_mult: Option<f64>,
+    #[serde(default)]
+    tp_atr_mult: Option<f64>,
+    #[serde(default)]
+    tp1_pct: Option<f64>,
+    #[serde(default)]
+    tp1_close_fraction: Option<f64>,
+    #[serde(default)]
+    tp2_pct: Option<f64>,
 }
 
 impl TryFrom<TraderDecisionRaw> for TraderDecision {
@@ -247,6 +314,18 @@ impl TryFrom<TraderDecisionRaw> for TraderDecision {
             take_profit_pct: raw.take_profit_pct,
             trader_summary: raw.trader_summary,
             asset: raw.asset,
+            trailing_stop_pct: raw.trailing_stop_pct,
+            breakeven_trigger_pct: raw.breakeven_trigger_pct,
+            breakeven_offset_pct: raw.breakeven_offset_pct,
+            fade_sl_bars: raw.fade_sl_bars,
+            fade_sl_start_pct: raw.fade_sl_start_pct,
+            fade_sl_end_pct: raw.fade_sl_end_pct,
+            max_bars_held: raw.max_bars_held,
+            sl_atr_mult: raw.sl_atr_mult,
+            tp_atr_mult: raw.tp_atr_mult,
+            tp1_pct: raw.tp1_pct,
+            tp1_close_fraction: raw.tp1_close_fraction,
+            tp2_pct: raw.tp2_pct,
         };
         decision.validate_cross_field()?;
         Ok(decision)
@@ -473,6 +552,18 @@ mod tests {
             take_profit_pct: 5.0,
             trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
             asset: AssetSymbol::Btc,
+            trailing_stop_pct: None,
+            breakeven_trigger_pct: None,
+            breakeven_offset_pct: None,
+            fade_sl_bars: None,
+            fade_sl_start_pct: None,
+            fade_sl_end_pct: None,
+            max_bars_held: None,
+            sl_atr_mult: None,
+            tp_atr_mult: None,
+            tp1_pct: None,
+            tp1_close_fraction: None,
+            tp2_pct: None,
         }
     }
 

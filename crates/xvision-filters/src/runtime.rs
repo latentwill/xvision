@@ -47,12 +47,11 @@ pub enum ActivationDecision {
 impl ActivationDecision {
     /// True for any `Active` decision (Trip OR Hold) — i.e. the
     /// condition tree evaluated `true` on this bar without being
-    /// suppressed by cooldown / cap / position gating. NOT the engine's
-    /// wakeup gate: the engine fires an LLM dispatch only on Trip (see
-    /// [`Self::is_trip`] and `FilterEventV1.triggered`). Use this for
-    /// "is the filter currently in its active region?" — e.g. the
-    /// agent-graph DSL bridge that maps active/holding into a single
-    /// predicate boolean.
+    /// suppressed by cooldown / cap / position gating. The engine uses
+    /// this as its LLM dispatch gate so that both the first-crossing bar
+    /// (Trip) and sustained-true bars (Hold) invoke the agent. The
+    /// `FilterEventV1.triggered` field still uses `is_trip()` and is
+    /// independent of dispatch.
     pub fn is_active(&self) -> bool {
         matches!(self, ActivationDecision::Active { .. })
     }
@@ -861,6 +860,66 @@ mod tests {
             trips, 1,
             "sustained close > sma_2 must not retrigger crosses_above"
         );
+    }
+
+    #[test]
+    fn crosses_above_numeric_threshold_fires_on_cross() {
+        // `close crosses_above 50` — rhs is a constant. Passes validation
+        // and the runtime evaluates prev_close <= 50 && close > 50.
+        let f = mk_filter(
+            ConditionTree::All(vec![Condition {
+                lhs: Operand::Indicator(IndicatorRef::close()),
+                op: Operator::CrossesAbove,
+                rhs: Operand::Numeric(50.0),
+            }]),
+            0,
+            None,
+        );
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        // Bar 1: close=40, no prev_pair yet → Inactive.
+        assert_eq!(rt.evaluate(&mut state, &bar(40.0), ctx).decision, ActivationDecision::Inactive);
+        // Bar 2: prev=40 (<= 50), current=60 (> 50) → Trip.
+        let o = rt.evaluate(&mut state, &bar(60.0), ctx);
+        assert!(o.decision.is_trip(), "expected Trip on cross, got {:?}", o.decision);
+        // Bar 3: prev=60 (> 50), current=70 (> 50) → no cross → Hold is false → Inactive.
+        let o = rt.evaluate(&mut state, &bar(70.0), ctx);
+        assert_eq!(o.decision, ActivationDecision::Inactive);
+        // Bar 4: close=30, crosses below (not above) → Inactive.
+        let o = rt.evaluate(&mut state, &bar(30.0), ctx);
+        assert_eq!(o.decision, ActivationDecision::Inactive);
+        // Bar 5: prev=30 (<= 50), current=55 (> 50) → Trip again.
+        let o = rt.evaluate(&mut state, &bar(55.0), ctx);
+        assert!(o.decision.is_trip(), "expected second Trip, got {:?}", o.decision);
+    }
+
+    #[test]
+    fn crosses_below_numeric_threshold_fires_on_cross() {
+        let f = mk_filter(
+            ConditionTree::All(vec![Condition {
+                lhs: Operand::Indicator(IndicatorRef::close()),
+                op: Operator::CrossesBelow,
+                rhs: Operand::Numeric(70.0),
+            }]),
+            0,
+            None,
+        );
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+
+        assert_eq!(rt.evaluate(&mut state, &bar(80.0), ctx).decision, ActivationDecision::Inactive);
+        // prev=80 (>= 70), current=60 (< 70) → Trip.
+        let o = rt.evaluate(&mut state, &bar(60.0), ctx);
+        assert!(o.decision.is_trip(), "expected Trip on cross below, got {:?}", o.decision);
     }
 
     #[test]

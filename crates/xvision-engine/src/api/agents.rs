@@ -377,6 +377,53 @@ pub async fn archive(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
     result
 }
 
+/// Hard-delete an agent by id. Returns 409 Conflict if any strategy currently
+/// references this agent — delete the owning strategy first (or use
+/// `xvn strategy rm`) so AgentRefs don't dangle.
+pub async fn delete(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+    let started = Instant::now();
+    let result = agent_delete_inner(ctx, agent_id).await;
+    let outcome = outcome_of(&result);
+    let _ = audit::record(
+        ctx,
+        "agents",
+        "delete",
+        Some(agent_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn agent_delete_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
+    let store = AgentStore::new(ctx.db.clone());
+    if store
+        .get(agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .is_none()
+    {
+        return Err(ApiError::NotFound(format!("agent {agent_id}")));
+    }
+    let refs = referencing_strategy_ids(ctx, agent_id).await?;
+    if !refs.is_empty() {
+        return Err(ApiError::Conflict(format!(
+            "agent is used by strategy {}; delete the strategy first or use `xvn strategy rm`",
+            refs[0]
+        )));
+    }
+    let deleted = store
+        .delete_by_id(agent_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    if !deleted {
+        return Err(ApiError::NotFound(format!("agent {agent_id}")));
+    }
+    Ok(())
+}
+
 async fn archive_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<()> {
     let store = AgentStore::new(ctx.db.clone());
     let archived = store
@@ -422,7 +469,7 @@ async fn validate_inner(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<Valid
 /// Returns the strategy ids for every on-disk strategy that contains
 /// `agent_id` in its `agents` vec. Best-effort: strategies that fail to
 /// load are skipped so a single corrupted file does not break the panel.
-async fn referencing_strategy_ids(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<String>> {
+pub async fn referencing_strategy_ids(ctx: &ApiContext, agent_id: &str) -> ApiResult<Vec<String>> {
     let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
     let strategy_ids = store
         .list()
@@ -707,5 +754,94 @@ mod tests {
         // Newest first: run_ids[2] then run_ids[1].
         assert_eq!(result[0].run_id, run_ids[2]);
         assert_eq!(result[1].run_id, run_ids[1]);
+    }
+
+    // ── delete tests ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn delete_agent_returns_conflict_when_used_by_strategy() {
+        use crate::agents::AgentSlot;
+        use crate::api::strategy as api_strategy;
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+
+        let agent = create(
+            &ctx,
+            CreateAgentRequest {
+                name: "exclusive-agent".into(),
+                description: "".into(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    name: "main".into(),
+                    provider: "openai".into(),
+                    model: "gpt-4o".into(),
+                    system_prompt: "Test prompt.".into(),
+                    skill_ids: vec![],
+                    max_tokens: None,
+                    max_wall_ms: None,
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: crate::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
+                    memory_mode: Default::default(),
+                    noop_skip: None,
+                    capabilities: crate::agents::default_capabilities(),
+                    delta_briefing: None,
+                }],
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let strategy = strategy_referencing("01HZSTRATEGY_DELETE_GUARD", "Guard Strategy", &agent.agent_id);
+        store.save(&strategy).await.unwrap();
+
+        let r = delete(&ctx, &agent.agent_id).await;
+        assert!(
+            matches!(r, Err(ApiError::Conflict(_))),
+            "expected Conflict when agent is used by a strategy, got {r:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_agent_succeeds_when_not_referenced_by_any_strategy() {
+        use crate::agents::AgentSlot;
+
+        let (ctx, _dir) = fresh_ctx().await;
+
+        let agent = create(
+            &ctx,
+            CreateAgentRequest {
+                name: "standalone-agent".into(),
+                description: "".into(),
+                tags: vec![],
+                slots: vec![AgentSlot {
+                    name: "main".into(),
+                    provider: "openai".into(),
+                    model: "gpt-4o".into(),
+                    system_prompt: "Test prompt.".into(),
+                    skill_ids: vec![],
+                    max_tokens: None,
+                    max_wall_ms: None,
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: crate::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
+                    memory_mode: Default::default(),
+                    noop_skip: None,
+                    capabilities: crate::agents::default_capabilities(),
+                    delta_briefing: None,
+                }],
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        delete(&ctx, &agent.agent_id).await.unwrap();
+        let r = get(&ctx, &agent.agent_id).await;
+        assert!(matches!(r, Err(ApiError::NotFound(_))), "agent should be gone after delete");
     }
 }

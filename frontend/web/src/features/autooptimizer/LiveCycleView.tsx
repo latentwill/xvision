@@ -26,7 +26,6 @@ import { listStrategies, strategyKeys } from "@/api/strategies";
 import { listProviders, settingsKeys } from "@/api/settings";
 
 type EventRow = CycleProgressEvent & { _row_id: number };
-type NormalizedEvent = Omit<EventRow, "_row_id">;
 
 let nextRowId = 1;
 
@@ -446,7 +445,7 @@ function LineageCard({ group }: { group: CycleGroup }) {
   );
 }
 
-function ActiveLineagesSection({ nodes }: { nodes: LineageNode[] }) {
+function ActiveLineagesSectionFull({ nodes }: { nodes: LineageNode[] }) {
   const groups = buildCycleGroups(nodes).slice(0, 6);
   return (
     <div className="space-y-3">
@@ -519,7 +518,7 @@ function CycleTable({ groups }: { groups: CycleGroup[] }) {
   );
 }
 
-function RecentCyclesSection({
+function RecentCyclesSectionFull({
   nodes,
   onTabChange,
 }: {
@@ -567,10 +566,8 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
   const { isRunning, activeCycleId } = deriveCycleState(events);
 
   const appendEvent = (event: CycleProgressEvent) => {
-    const normalized = normalizeCycleEvent(event);
-    if (!normalized) return;
     setEvents((prev) => {
-      const row: EventRow = { ...normalized, _row_id: nextRowId++ };
+      const row: EventRow = { ...event, _row_id: nextRowId++ };
       const next = prev.length >= 200 ? prev.slice(1) : prev;
       return [...next, row];
     });
@@ -627,8 +624,8 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
         <EventLogCard events={events} bottomRef={bottomRef} />
         <KeptNextCard nodes={lineageNodes} />
       </div>
-      <ActiveLineagesSection nodes={lineageNodes} />
-      <RecentCyclesSection nodes={lineageNodes} onTabChange={onTabChange} />
+      <ActiveLineagesSectionFull nodes={lineageNodes} />
+      <RecentCyclesSectionFull nodes={lineageNodes} onTabChange={onTabChange} />
     </div>
   );
 }
@@ -670,17 +667,6 @@ function parseSsePayload(raw: unknown, fallbackKind: string): CycleProgressEvent
     bundle_hash: stringValue(data.bundle_hash),
     parent_hash: stringValue(data.parent_hash),
     child_hash: stringValue(data.child_hash),
-  };
-}
-
-function normalizeCycleEvent(event: CycleProgressEvent): NormalizedEvent | null {
-  const eventType = event.event_type ?? event.type ?? event.kind;
-  if (!eventType) return null;
-  return {
-    ...event,
-    event_type: eventType,
-    kind: event.kind ?? eventType,
-    ts: event.ts ?? new Date().toISOString(),
   };
 }
 

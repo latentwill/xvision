@@ -66,6 +66,18 @@ impl Algorithm for MacdMomentum {
                 take_profit_pct: 4.0,
                 trader_summary: "MacdMomentum: MACD hist crossed above zero — long momentum.".into(),
                 asset: snapshot.asset,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             })
         } else if bearish_cross {
             Some(TraderDecision {
@@ -77,6 +89,18 @@ impl Algorithm for MacdMomentum {
                 take_profit_pct: 4.0,
                 trader_summary: "MacdMomentum: MACD hist crossed below zero — short momentum.".into(),
                 asset: snapshot.asset,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             })
         } else {
             None

@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ChatRailProps } from "@/components/shell/ChatRail";
 import { useUi } from "@/stores/ui";
@@ -28,26 +28,27 @@ function StubChatRail(_: ChatRailProps) {
   return <aside data-testid="chat-rail" />;
 }
 
-function renderShell() {
-  return render(
-    <MemoryRouter initialEntries={["/"]}>
-      <Routes>
-        <Route element={<DesktopThreePaneShell ChatRailComponent={StubChatRail} />}>
-          <Route index element={<div>Route content</div>} />
-        </Route>
-      </Routes>
-    </MemoryRouter>,
-  );
-}
-
 describe("DesktopThreePaneShell", () => {
   beforeEach(() => {
     useFirstRunTourMock.mockClear();
-    useUi.setState({ chatRailOpen: false });
+    localStorage.clear();
+    useUi.setState({ chatRailOpen: false, sidebarWidth: 220, chatRailWidth: 380 });
+  });
+
+  afterEach(() => {
+    localStorage.clear();
   });
 
   it("renders the desktop shell panes and persistent shell UI", async () => {
-    const { container } = renderShell();
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<DesktopThreePaneShell ChatRailComponent={StubChatRail} />}>
+            <Route index element={<div>Route content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
 
     expect(useFirstRunTourMock).toHaveBeenCalledTimes(1);
     const sidebar = screen.getByTestId("sidebar");
@@ -60,29 +61,24 @@ describe("DesktopThreePaneShell", () => {
     expect(screen.getByTestId("command-palette")).toBeInTheDocument();
     expect(await screen.findByTestId("strip-dock-slot")).toBeInTheDocument();
 
-    const shell = container.firstElementChild;
-    expect(shell).toHaveClass("grid", "grid-cols-[220px_minmax(0,1fr)_auto]", "min-h-screen");
-    expect(shell?.children[0]).toBe(sidebar);
-    expect(shell?.children[1]).toBe(main);
-    expect(shell?.children[2]).toContainElement(chatRail);
-  });
+    // Shell grid uses inline style instead of a Tailwind grid-cols class so
+    // column widths can be set dynamically from the store.
+    const shell = container.firstElementChild as HTMLElement;
+    expect(shell).toHaveClass("grid", "min-h-screen");
+    expect(shell.style.gridTemplateColumns).toContain("220px");
+    expect(shell.style.gridTemplateColumns).toContain("minmax(0,1fr)");
 
-  it("constrains center column width when chat rail is open", () => {
-    useUi.setState({ chatRailOpen: true });
-    renderShell();
-    const main = screen.getByRole("main");
-    // max-w cap + centering prevents unbreakable inner content from overflowing
-    // into the chat rail column when the rail is visible.
-    expect(main).toHaveClass("max-w-[960px]", "justify-self-center");
-  });
+    // DOM order: Sidebar | ResizeHandle | main | [chat-rail wrapper] | …
+    expect(shell.children[0]).toBe(sidebar);
+    expect(shell.children[2]).toBe(main);
+    expect(shell.children[3]).toContainElement(chatRail);
 
-  it("expands center column to fill available width when chat rail is closed", () => {
-    useUi.setState({ chatRailOpen: false });
-    renderShell();
-    const main = screen.getByRole("main");
-    expect(main).toHaveClass("min-w-0", "w-full");
-    expect(main).not.toHaveClass("max-w-[960px]");
-    expect(main).not.toHaveClass("justify-self-center");
+    // Regression guard for the text-overlap QA: the middle column must keep
+    // its width hard-capped (max-w-[960px]) AND its track must be allowed to
+    // shrink (minmax(0,1fr)). Together these stop unbreakable inner content
+    // from pushing the main column past the chat rail. Centered via
+    // justify-self so it doesn't drift left when the cap kicks in.
+    expect(main).toHaveClass("min-w-0", "max-w-[960px]", "justify-self-center");
   });
 
   it("keeps the third grid cell mounted while the chat rail is suspended", () => {
@@ -104,7 +100,26 @@ describe("DesktopThreePaneShell", () => {
     const shell = container.firstElementChild;
     const main = screen.getByRole("main");
 
-    expect(shell?.children[2]).toBeInTheDocument();
-    expect(shell?.children[1]).toBe(main);
+    // children[2] = main, children[3] = div wrapping the suspending rail
+    expect(shell?.children[3]).toBeInTheDocument();
+    expect(shell?.children[2]).toBe(main);
+  });
+
+  it("includes a second ResizeHandle and 5-column grid when the chat rail is open", () => {
+    useUi.setState({ chatRailOpen: true, sidebarWidth: 220, chatRailWidth: 380 });
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route element={<DesktopThreePaneShell ChatRailComponent={StubChatRail} />}>
+            <Route index element={<div>Route content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const shell = container.firstElementChild as HTMLElement;
+    // 5-column template when rail is open: sidebar 4px center 4px auto
+    expect(shell.style.gridTemplateColumns).toMatch(/220px 4px minmax\(0,1fr\) 4px auto/);
   });
 });

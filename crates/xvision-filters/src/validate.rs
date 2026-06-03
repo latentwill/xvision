@@ -255,13 +255,25 @@ fn validate_operand_types(cond: &Condition, base: &str) -> Result<(), Validation
                 }
             }
         }
-        // `crosses_*`: both sides indicator.
+        // `crosses_*`: lhs must be indicator; rhs may be indicator or numeric
+        // (a numeric rhs is a constant threshold, e.g. `rsi_14 crosses_above 50`).
         Operator::CrossesAbove
         | Operator::CrossesBelow
         | Operator::CrossedAbove(_)
         | Operator::CrossedBelow(_) => {
             require_indicator(&cond.lhs, &lhs_path, cond.op)?;
-            require_indicator(&cond.rhs, &rhs_path, cond.op)?;
+            match &cond.rhs {
+                Operand::Indicator(_) | Operand::Numeric(_) => {}
+                Operand::Range(_, _) => {
+                    return Err(ValidationError::OperandType {
+                        path: rhs_path,
+                        detail: format!(
+                            "operator '{}' rhs must be indicator or numeric, got range",
+                            cond.op.dsl_token()
+                        ),
+                    });
+                }
+            }
         }
         // Transform operators compare the transformed LHS against a
         // numeric threshold.
