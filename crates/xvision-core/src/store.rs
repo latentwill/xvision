@@ -281,6 +281,20 @@ mod tests {
             take_profit_pct: 5.0,
             trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
             asset: AssetSymbol::Btc,
+            // Advanced SL/TP knobs default to None in fixtures (added after this
+            // helper was written; keeps the lib-test build compiling).
+            trailing_stop_pct: None,
+            breakeven_trigger_pct: None,
+            breakeven_offset_pct: None,
+            fade_sl_bars: None,
+            fade_sl_start_pct: None,
+            fade_sl_end_pct: None,
+            max_bars_held: None,
+            sl_atr_mult: None,
+            tp_atr_mult: None,
+            tp1_pct: None,
+            tp1_close_fraction: None,
+            tp2_pct: None,
         }
     }
 

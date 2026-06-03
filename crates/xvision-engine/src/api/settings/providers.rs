@@ -37,6 +37,28 @@ pub struct ProvidersReport {
     /// when the operator hasn't set a default/model yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// `[[providers]]` rows that failed validation and were skipped during the
+    /// lenient load (e.g. an uppercase name from a hand-edited config). Surfaced
+    /// so the UI can warn the operator and offer to remove them, instead of the
+    /// list silently going blank. Empty in the normal case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub invalid: Option<Vec<InvalidProviderRow>>,
+}
+
+/// Wire view of a dropped/invalid provider row (see [`ProvidersReport::invalid`]).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidProviderRow {
+    /// The (invalid) name as written in the config — also the key used to
+    /// remove the row via `DELETE /providers/:name`.
+    pub name: String,
+    /// Human-readable reason the row was rejected.
+    pub reason: String,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -851,7 +873,7 @@ pub async fn set_default(
 // --- inner impls (no auditing) ---------------------------------------------
 
 async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersReport> {
-    let cfg = load_cfg(config_path).await?;
+    let (cfg, invalid_rows) = load_cfg_with_invalid(config_path).await?;
     let secrets = load_providers_secrets(xvn_home).await?;
     let providers = cfg
         .providers
@@ -866,9 +888,22 @@ async fn list_inner(config_path: &Path, xvn_home: &Path) -> ApiResult<ProvidersR
             (!m.is_empty()).then(|| m.to_string())
         })
     };
+    // Surface dropped rows so the UI can warn + offer removal. Internal `_`
+    // rows are never operator-facing, so they don't appear here either.
+    let invalid: Vec<InvalidProviderRow> = invalid_rows
+        .into_iter()
+        .filter(|p| !p.name.starts_with('_'))
+        .map(|p| InvalidProviderRow {
+            name: p.name,
+            reason: p.reason,
+        })
+        .collect();
     Ok(ProvidersReport {
         providers,
         default_model,
+        // None (omitted on the wire) in the normal case so consumers that
+        // don't care never see the field.
+        invalid: (!invalid.is_empty()).then_some(invalid),
     })
 }
 
@@ -893,13 +928,20 @@ async fn add_inner(config_path: &Path, xvn_home: &Path, req: AddProviderRequest)
     } = req;
 
     let parsed_kind = parse_kind(&kind)?;
-    if name.trim().is_empty() {
+    // Normalize before any further checks or the disk write — a name with
+    // surrounding whitespace should be stored trimmed, and validated trimmed.
+    let name = name.trim().to_string();
+    if name.is_empty() {
         return Err(ApiError::Validation("name is empty".into()));
     }
-    if name.starts_with('_') {
-        return Err(ApiError::Validation(
-            "provider names starting with '_' are reserved".into(),
-        ));
+    // Validate the name against the SAME `[a-z0-9-]+`, 1..=32, no-`_` rule the
+    // config loader enforces, BEFORE writing to disk. Previously only empty /
+    // `_`-prefix were checked here, so an invalid name like "Gemini" was
+    // persisted to default.toml and only rejected by the post-write
+    // load_runtime re-validation — corrupting the file so every subsequent
+    // load failed. Reject up front instead. (Maps to HTTP 400.)
+    if let Err(msg) = xvision_core::config::validate_provider_name_str(&name) {
+        return Err(ApiError::Validation(msg));
     }
     // Require an API key for auth-bearing kinds, but only when the
     // operator hasn't already exported one via the env var (the CLI
@@ -1132,18 +1174,24 @@ async fn update_inner(
 }
 
 async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiResult<()> {
-    let cfg = load_cfg(config_path).await?;
-    let entry = cfg
-        .providers
-        .iter()
-        .find(|p| p.name == name)
-        .ok_or_else(|| ApiError::NotFound(format!("provider `{name}` not found")))?;
-    if entry.name.starts_with('_') {
+    // Lenient load so an INVALID row (e.g. a hand-edited uppercase name) is
+    // still removable — that's the whole point of the self-heal path. The row
+    // won't appear in `cfg.providers` (it was dropped), so we also check the
+    // reported `invalid` list to confirm it exists before touching the TOML.
+    let (cfg, invalid) = load_cfg_with_invalid(config_path).await?;
+    let valid_entry = cfg.providers.iter().find(|p| p.name == name);
+    let is_invalid_row = invalid.iter().any(|p| p.name == name);
+    if valid_entry.is_none() && !is_invalid_row {
+        return Err(ApiError::NotFound(format!("provider `{name}` not found")));
+    }
+    if name.starts_with('_') {
         return Err(ApiError::Validation(format!(
             "cannot remove internal provider `{name}`"
         )));
     }
-    let was_default = provider_matches_default(entry, &cfg);
+    let was_default = valid_entry
+        .map(|entry| provider_matches_default(entry, &cfg))
+        .unwrap_or(false);
 
     let path: PathBuf = config_path.to_path_buf();
     let n = name.to_string();
@@ -1300,9 +1348,24 @@ async fn set_default_inner(config_path: &Path, name: &str, model: Option<&str>) 
 
 // --- helpers ---------------------------------------------------------------
 
+/// Load the runtime config for the provider surface, DROPPING any
+/// individually-invalid `[[providers]]` rows (see
+/// [`xvision_core::config::load_runtime_lenient`]). Every read/mutate path in
+/// this module goes through here so a single malformed provider row can never
+/// blank the whole list or wedge the config — the offending row is excluded
+/// (and stays removable; see `remove_inner`). Non-provider config errors still
+/// fail loudly.
 async fn load_cfg(config_path: &Path) -> ApiResult<RuntimeConfig> {
+    Ok(load_cfg_with_invalid(config_path).await?.0)
+}
+
+/// Same lenient load as [`load_cfg`], but also returns the dropped rows so the
+/// list endpoint can surface them to the operator for repair/removal.
+async fn load_cfg_with_invalid(
+    config_path: &Path,
+) -> ApiResult<(RuntimeConfig, Vec<xvision_core::config::InvalidProvider>)> {
     let path = config_path.to_path_buf();
-    task::spawn_blocking(move || xvision_core::config::load_runtime(&path))
+    task::spawn_blocking(move || xvision_core::config::load_runtime_lenient(&path))
         .await
         .map_err(|e| ApiError::Internal(format!("spawn_blocking: {e}")))?
         .map_err(|e| ApiError::Validation(format!("load config: {e}")))
@@ -1476,6 +1539,10 @@ fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
     match kind {
         ProviderKind::Anthropic => "ANTHROPIC_API_KEY".to_string(),
         ProviderKind::OpenaiCompat if name == "openai" => "OPENAI_API_KEY".to_string(),
+        // Conventional env vars for the seeded openai-compat starters so the
+        // add-flow env matches the names in config/default.toml + the UI presets.
+        ProviderKind::OpenaiCompat if name == "gemini" => "GEMINI_API_KEY".to_string(),
+        ProviderKind::OpenaiCompat if name == "nous-research" => "NOUS_API_KEY".to_string(),
         ProviderKind::OpenaiCompat => {
             format!("XVN_PROVIDER_{}_KEY", name.to_ascii_uppercase().replace('-', "_"))
         }
@@ -1496,6 +1563,11 @@ fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str
             "groq" => Some("llama-3.3-70b-versatile"),
             "openrouter" => Some("anthropic/claude-3.5-sonnet"),
             "openai" => Some("gpt-4o-mini"),
+            // Seeded starters — pick a current default so "Set as default"
+            // yields a working model without a manual catalog pick. Operators
+            // can override via Settings → Providers → Manage models.
+            "gemini" => Some("gemini-2.5-flash"),
+            "nous-research" => Some("Hermes-4-405B"),
             _ => None,
         },
         ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp => None,
@@ -1801,6 +1873,129 @@ sqlite_url = "sqlite://x.db"
         .await
         .unwrap_err();
         assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+    }
+
+    /// Regression for the config-corruption bug: an invalid (uppercase) name
+    /// must be rejected with a Validation error AND must NOT be written to
+    /// default.toml. Before the fix, `add_inner` persisted the bad row first,
+    /// then the post-write re-validation failed — leaving the file permanently
+    /// unloadable.
+    #[tokio::test]
+    async fn add_rejects_uppercase_name_without_corrupting_config() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        let err = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "Gemini".into(),
+                kind: "openai-compat".into(),
+                base_url: "https://generativelanguage.googleapis.com/v1beta/openai".into(),
+                api_key_env: "GEMINI_API_KEY".into(),
+                api_key: Some("k".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+
+        // The file is byte-unchanged and still loads — no corruption.
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(before, after, "default.toml was mutated by a rejected add");
+        let report = list(&ctx, &path).await.expect("config still loads");
+        assert_eq!(report.providers.len(), 1, "only the seeded anthropic row remains");
+    }
+
+    #[tokio::test]
+    async fn add_rejects_name_over_32_chars() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let err = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "a".repeat(33),
+                kind: "openai-compat".into(),
+                base_url: "https://x.example.com/v1".into(),
+                api_key_env: "K".into(),
+                api_key: Some("k".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+    }
+
+    /// A name with surrounding whitespace that trims to a valid slug is
+    /// accepted and stored trimmed.
+    #[tokio::test]
+    async fn add_trims_surrounding_whitespace_in_name() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let row = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "  gemini  ".into(),
+                kind: "openai-compat".into(),
+                base_url: "https://generativelanguage.googleapis.com/v1beta/openai".into(),
+                api_key_env: "GEMINI_API_KEY".into(),
+                api_key: Some("k".into()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(row.name, "gemini");
+        // Config still loads with both rows.
+        let report = list(&ctx, &path).await.unwrap();
+        assert_eq!(report.providers.len(), 2);
+    }
+
+    /// WU6 resilience: a single invalid `[[providers]]` row must NOT blank the
+    /// list — the valid rows still load and the bad row is surfaced for repair.
+    #[tokio::test]
+    async fn list_surfaces_invalid_rows_instead_of_blanking() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("default.toml");
+        let cfg = format!(
+            "{MIN_CONFIG}\n[[providers]]\nname = \"Gemini\"\nkind = \"openai-compat\"\nbase_url = \"https://x.example.com/v1\"\napi_key_env = \"K\"\n"
+        );
+        std::fs::write(&path, &cfg).unwrap();
+        let ctx = ctx_in(&dir).await;
+
+        let report = list(&ctx, &path)
+            .await
+            .expect("list must not hard-fail on a single bad row");
+        assert_eq!(report.providers.len(), 1, "valid anthropic row still listed");
+        assert_eq!(report.providers[0].name, "anthropic");
+        let invalid = report.invalid.expect("bad row surfaced, not hidden");
+        assert_eq!(invalid.len(), 1);
+        assert_eq!(invalid[0].name, "Gemini");
+    }
+
+    /// WU6 self-heal: the invalid row must be removable via the API so the
+    /// operator can fix a corrupted config without hand-editing the file.
+    #[tokio::test]
+    async fn remove_can_delete_an_invalid_row() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("default.toml");
+        let cfg = format!(
+            "{MIN_CONFIG}\n[[providers]]\nname = \"Gemini\"\nkind = \"openai-compat\"\nbase_url = \"https://x.example.com/v1\"\napi_key_env = \"K\"\n"
+        );
+        std::fs::write(&path, &cfg).unwrap();
+        let ctx = ctx_in(&dir).await;
+
+        remove(&ctx, &path, "Gemini")
+            .await
+            .expect("an invalid row must be removable");
+        let report = list(&ctx, &path).await.unwrap();
+        assert!(report.invalid.is_none(), "bad row gone after removal");
+        assert_eq!(report.providers.len(), 1);
     }
 
     #[tokio::test]

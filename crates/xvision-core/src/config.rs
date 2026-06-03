@@ -95,21 +95,33 @@ impl ProviderEntry {
     }
 }
 
-fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
+/// Canonical provider-name rule, shared by the config loader (the garde
+/// validator below) and the route-level provider CRUD (`add`). A name is
+/// `[a-z0-9-]+`, 1..=32 chars, and may not start with `_` (the leading
+/// underscore namespace is reserved for internal rows).
+///
+/// Returning a plain `Result<(), String>` (rather than a `garde::Error`) lets
+/// the HTTP `add` path reuse this *before* it writes to `default.toml`, so an
+/// invalid name is rejected up front instead of being persisted and only caught
+/// by the post-write re-validation — which used to leave the file corrupt.
+pub fn validate_provider_name_str(name: &str) -> Result<(), String> {
     if name.is_empty() || name.len() > 32 {
-        return Err(garde::Error::new("provider name must be 1..=32 chars"));
+        return Err("provider name must be 1..=32 chars".to_string());
     }
     if name.starts_with('_') {
-        // The leading-underscore namespace is reserved for internal rows.
-        return Err(garde::Error::new("provider names starting with '_' are reserved"));
+        return Err("provider names starting with '_' are reserved".to_string());
     }
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
-        return Err(garde::Error::new("provider name must match [a-z0-9-]+"));
+        return Err("provider name must match [a-z0-9-]+".to_string());
     }
     Ok(())
+}
+
+fn validate_provider_name(name: &str, _ctx: &()) -> garde::Result {
+    validate_provider_name_str(name).map_err(garde::Error::new)
 }
 
 // --- runtime ----------------------------------------------------------------
@@ -576,6 +588,100 @@ fn validate_unique_provider_names(cfg: &RuntimeConfig) -> Result<(), String> {
     Ok(())
 }
 
+/// One `[[providers]]` row that failed validation and was dropped during a
+/// lenient load. Surfaced so the operator can see / fix / remove it, instead of
+/// the entire provider surface silently disappearing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidProvider {
+    pub name: String,
+    pub reason: String,
+}
+
+/// Per-row provider validation mirroring the garde rules that `#[garde(dive)]`
+/// applies to each `ProviderEntry` (name charset/length, base_url/api_key_env
+/// length caps). Used by the lenient loader to decide which rows to keep.
+fn validate_provider_entry(p: &ProviderEntry) -> Result<(), String> {
+    validate_provider_name_str(&p.name)?;
+    if p.base_url.len() > 512 {
+        return Err(format!("base_url exceeds 512 chars ({})", p.base_url.len()));
+    }
+    if p.api_key_env.len() > 64 {
+        return Err(format!("api_key_env exceeds 64 chars ({})", p.api_key_env.len()));
+    }
+    Ok(())
+}
+
+/// Like [`load_runtime`], but tolerant of individually-invalid `[[providers]]`
+/// rows: any provider entry that fails validation (bad name, oversize fields,
+/// or a duplicate name) is DROPPED from the returned config and reported in the
+/// second tuple element, rather than failing the entire load.
+///
+/// This is the resilience guarantee for the provider-settings surface — a
+/// single malformed provider row can never blank the whole provider list, nor
+/// wedge the config so badly that the offending row can't even be removed. The
+/// strict [`load_runtime`] remains the authoritative loader for the engine's
+/// run path; this leniency is scoped to provider CRUD / listing.
+///
+/// Non-provider config sections are still validated strictly: if anything
+/// outside `[[providers]]` is invalid, this returns the same error
+/// [`load_runtime`] would.
+pub fn load_runtime_lenient(path: &Path) -> Result<(RuntimeConfig, Vec<InvalidProvider>), ConfigError> {
+    // Parse WITHOUT the whole-struct garde validate (serde itself accepts e.g.
+    // an uppercase provider name — only garde's `dive` rejects it). We validate
+    // the provider rows individually below.
+    let bytes = std::fs::read(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => ConfigError::NotFound(path.to_path_buf()),
+        _ => ConfigError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        },
+    })?;
+    let s = String::from_utf8(bytes).map_err(|e| ConfigError::Io {
+        path: path.to_path_buf(),
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
+    })?;
+    let mut cfg: RuntimeConfig = toml::from_str(&s).map_err(|e| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+
+    // Partition providers into valid / invalid (dropping invalid + duplicate
+    // rows). Dedup-by-name here too so a duplicate row can't wedge the load.
+    let mut valid: Vec<ProviderEntry> = Vec::with_capacity(cfg.providers.len());
+    let mut invalid: Vec<InvalidProvider> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for p in std::mem::take(&mut cfg.providers) {
+        if let Err(reason) = validate_provider_entry(&p) {
+            invalid.push(InvalidProvider { name: p.name, reason });
+            continue;
+        }
+        if !seen.insert(p.name.clone()) {
+            invalid.push(InvalidProvider {
+                name: p.name,
+                reason: "duplicate provider name".to_string(),
+            });
+            continue;
+        }
+        valid.push(p);
+    }
+    cfg.providers = valid;
+
+    // Validate the cleaned config strictly. The providers vec now holds only
+    // good rows, so the `dive` passes; every other section is checked exactly
+    // as in `load_runtime`.
+    cfg.validate().map_err(|report| ConfigError::Validation {
+        path: path.to_path_buf(),
+        report,
+    })?;
+    cfg.backtest
+        .validate_step_vs_horizon()
+        .map_err(|message| ConfigError::CrossField {
+            path: path.to_path_buf(),
+            message,
+        })?;
+    Ok((cfg, invalid))
+}
+
 pub fn load_whitelist(path: &Path) -> Result<WhitelistConfig, ConfigError> {
     read_toml(path)
 }
@@ -790,6 +896,130 @@ take_profit_min_rr = 1.5
             cfg.data.alpaca.rate_limit_rpm,
             AlpacaData::DEFAULT_RATE_LIMIT_RPM,
             "default.toml ships with the documented Alpaca rate limit"
+        );
+    }
+
+    #[test]
+    fn load_runtime_lenient_drops_invalid_provider_rows() {
+        // One valid ("gemini") and one invalid ("Gemini", uppercase) provider
+        // row. The strict loader rejects the whole file; the lenient loader
+        // keeps the good row and reports the bad one — so a single malformed
+        // row can't blank the provider surface.
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "gemini"
+kind = "openai-compat"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+
+[[providers]]
+name = "Gemini"
+kind = "openai-compat"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "K"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("with-bad-provider.toml");
+        std::fs::write(&path, toml_src).unwrap();
+
+        // Strict load rejects the entire file because of the "Gemini" row.
+        assert!(
+            load_runtime(&path).is_err(),
+            "strict load must reject the invalid row"
+        );
+
+        // Lenient load keeps the good row and reports the bad one.
+        let (cfg, invalid) = load_runtime_lenient(&path).expect("lenient load must succeed");
+        let names: Vec<&str> = cfg.providers.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["gemini"], "only the valid row is kept");
+        assert_eq!(invalid.len(), 1, "exactly one row reported invalid");
+        assert_eq!(invalid[0].name, "Gemini");
+        assert!(
+            invalid[0].reason.contains("[a-z0-9-]"),
+            "reason should name the rule, got {:?}",
+            invalid[0].reason
+        );
+    }
+
+    #[test]
+    fn load_runtime_lenient_still_rejects_non_provider_errors() {
+        // Leniency is scoped to [[providers]] — a broken non-provider section
+        // (here: step < horizon) must still fail, exactly as strict load.
+        let toml_src = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "K"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 4
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad-backtest.toml");
+        std::fs::write(&path, toml_src).unwrap();
+        assert!(
+            load_runtime_lenient(&path).is_err(),
+            "non-provider validation errors must still fail the lenient load"
         );
     }
 
@@ -1151,24 +1381,51 @@ sqlite_url = "sqlite://x.db"
     }
 
     #[test]
-    fn repo_default_toml_ships_with_no_user_providers() {
-        // The repo's default config no longer seeds [[providers]]; users add
-        // their own via Settings -> Providers (or `xvn provider add`).
+    fn repo_default_toml_ships_with_seeded_starter_providers() {
+        // The repo's default config seeds two key-less OpenAI-compatible
+        // starters (gemini, nous-research). Operators paste keys to enable
+        // them; any further providers are added via Settings -> Providers
+        // (or `xvn provider add`).
         let cfg = load_runtime(&project_root().join("config/default.toml")).unwrap();
-        let user_rows: Vec<&str> = cfg
+        let mut user_rows: Vec<&str> = cfg
             .providers
             .iter()
             .map(|p| p.name.as_str())
             .filter(|n| !n.starts_with('_'))
             .collect();
-        assert!(
-            user_rows.is_empty(),
-            "default.toml should ship without user provider rows, got {user_rows:?}"
+        user_rows.sort_unstable();
+        assert_eq!(
+            user_rows,
+            vec!["gemini", "nous-research"],
+            "default.toml should ship the two seeded starters, got {user_rows:?}"
         );
         assert!(
             cfg.providers.iter().all(|p| p.name != "_default_llm"),
             "default.toml should not synthesize `_default_llm` provider rows"
         );
+    }
+
+    #[test]
+    fn validate_provider_name_str_rules() {
+        // Valid: lowercase, digits, hyphens, 1..=32 chars.
+        assert!(validate_provider_name_str("gemini").is_ok());
+        assert!(validate_provider_name_str("nous-research").is_ok());
+        assert!(validate_provider_name_str("a").is_ok());
+        assert!(validate_provider_name_str(&"a".repeat(32)).is_ok());
+        // Invalid: uppercase, spaces, empty, too long, leading underscore.
+        assert!(validate_provider_name_str("Gemini").is_err());
+        assert!(validate_provider_name_str("nous research").is_err());
+        assert!(validate_provider_name_str("").is_err());
+        assert!(validate_provider_name_str(&"a".repeat(33)).is_err());
+        assert!(validate_provider_name_str("_internal").is_err());
+        // The garde adapter must agree with the shared fn (same accept/reject).
+        for name in ["gemini", "Gemini", "_x", "ok-1", "Bad Name"] {
+            assert_eq!(
+                validate_provider_name_str(name).is_ok(),
+                validate_provider_name(name, &()).is_ok(),
+                "garde adapter disagreed with shared fn for {name:?}"
+            );
+        }
     }
 
     #[test]

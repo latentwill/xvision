@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -76,8 +76,9 @@ beforeEach(() => {
   stubMatchMediaDesktop();
   vi.mocked(settingsApi.listProviders).mockResolvedValue({
     providers: [provider()],
-  
+
       default_model: null,
+      invalid: [],
   });
 });
 
@@ -96,6 +97,7 @@ describe("SettingsProvidersRoute", () => {
       ],
     
         default_model: null,
+        invalid: [],
     });
 
     renderRoute();
@@ -130,6 +132,7 @@ describe("SettingsProvidersRoute", () => {
       ],
     
         default_model: null,
+        invalid: [],
     });
     vi.mocked(settingsApi.listProviderModels).mockResolvedValue({
       models: [
@@ -166,11 +169,92 @@ describe("SettingsProvidersRoute", () => {
     expect(ids.slice(2)).toEqual(["gpt-3.5-turbo", "gpt-4o", "o1-preview"]);
   });
 
+  it("offers Gemini and Nous Research presets and validates custom names inline", async () => {
+    renderRoute();
+    await screen.findByText("openai");
+
+    // Open the add form.
+    fireEvent.click(screen.getByRole("button", { name: /Add provider/i }));
+
+    // The two new presets appear in the provider dropdown.
+    expect(
+      screen.getByRole("option", { name: "Google Gemini" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "Nous Research" }),
+    ).toBeInTheDocument();
+
+    // Switch to Custom (the only path where the user types a name) and supply a
+    // valid base URL + key so the ONLY blocker is the name itself. Scope to the
+    // form's Provider select (the list toolbar also renders comboboxes).
+    const form = screen.getByText("New provider").closest("form") as HTMLElement;
+    fireEvent.change(within(form).getByRole("combobox"), {
+      target: { value: "custom" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("https://api.example.com/v1"),
+      { target: { value: "https://api.example.com/v1" } },
+    );
+    fireEvent.change(screen.getByPlaceholderText("paste key here"), {
+      target: { value: "sk-test" },
+    });
+
+    const nameInput = screen.getByPlaceholderText("e.g. ollama");
+    fireEvent.change(nameInput, { target: { value: "Gemini" } });
+
+    // Uppercase name → inline error + disabled submit.
+    expect(
+      screen.getByText(/lowercase letters, digits, and hyphens/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save provider" }),
+    ).toBeDisabled();
+
+    // Fixing the name clears the error and enables submit.
+    fireEvent.change(nameInput, { target: { value: "gemini" } });
+    expect(
+      screen.queryByText(/lowercase letters, digits, and hyphens/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Save provider" }),
+    ).toBeEnabled();
+  });
+
+  it("surfaces invalid provider rows with an inline Remove affordance", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [provider()],
+      default_model: null,
+      invalid: [
+        { name: "Gemini", reason: "provider name must match [a-z0-9-]+" },
+      ],
+    });
+    vi.mocked(settingsApi.removeProvider).mockResolvedValue(
+      undefined as never,
+    );
+
+    renderRoute();
+    await screen.findByText(/could not be loaded/i);
+
+    // The bad row's name + reason are shown.
+    expect(screen.getByText("Gemini")).toBeInTheDocument();
+    expect(screen.getByText(/must match/i)).toBeInTheDocument();
+
+    // The strip's Remove button calls removeProvider with the bad name.
+    const strip = screen
+      .getByText(/could not be loaded/i)
+      .closest("div") as HTMLElement;
+    fireEvent.click(within(strip).getByRole("button", { name: /Remove/i }));
+    await waitFor(() =>
+      expect(settingsApi.removeProvider).toHaveBeenCalledWith("Gemini"),
+    );
+  });
+
   it("does not re-order rows mid-session when a checkbox is toggled", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [provider({ enabled_models: ["gpt-4.1"] })],
     
         default_model: null,
+        invalid: [],
     });
     vi.mocked(settingsApi.listProviderModels).mockResolvedValue({
       models: [
