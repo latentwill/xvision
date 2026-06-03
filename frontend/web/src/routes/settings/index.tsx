@@ -31,7 +31,7 @@ export function SettingsLayout() {
     <>
       <Topbar
         title="Settings"
-        sub="Connect LLM providers and broker accounts xvision uses to run agents"
+        sub="Connect LLM providers and broker accounts xvn uses to run agents"
       />
       <nav className="flex gap-1 mb-5 border-b border-border-soft">
         {TABS.map((t) => (
