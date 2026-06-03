@@ -1,5 +1,5 @@
-//! CycleSeal — signed manifest of one evening cycle.
-//! Operator-surface display name: "Evening summary" (terminology lock 2026-05-27).
+//! CycleSeal — signed manifest of one optimizer cycle.
+//! Operator-surface display name: "Cycle summary" (terminology lock 2026-05-27).
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -9,7 +9,7 @@ use sqlx::{Row, SqlitePool};
 
 use super::content_hash::{canonical_json, ContentHash};
 
-pub const OPERATOR_DISPLAY_LABEL: &str = "Evening summary";
+pub const OPERATOR_DISPLAY_LABEL: &str = "Cycle summary";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleSeal {

@@ -1,4 +1,4 @@
-//! POST /api/autooptimizer/evening-cycle — launch an evening optimizer run.
+//! POST /api/autooptimizer/run-cycle — launch an optimizer run.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use xvision_engine::autooptimizer::{
     blob_store::BlobStore,
     config::AutoOptimizerConfig,
     content_hash::ContentHash,
-    cycle::{run_evening_cycle, CycleConfig},
+    cycle::{run_cycle, CycleConfig},
     eval_adapter::StubPaperTester,
     gate::GateVerdict,
     judge::Judge,
@@ -39,9 +39,7 @@ use crate::state::AppState;
 #[derive(Deserialize, Default)]
 pub struct StartCycleBody {
     pub strategy_id: Option<String>,
-    pub mutator_provider: Option<String>,
     pub mutator_model: Option<String>,
-    pub judge_provider: Option<String>,
     pub judge_model: Option<String>,
 }
 
@@ -51,35 +49,18 @@ pub struct StartCycleResponse {
     pub message: String,
 }
 
-pub async fn start_evening_cycle(
+pub async fn start_cycle(
     State(state): State<AppState>,
     Json(body): Json<StartCycleBody>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
     let cfg = load_optimizer_config()?;
-    let mutator_provider = body
-        .mutator_provider
-        .unwrap_or_else(|| cfg.mutator.provider.clone());
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
-    let judge_provider = body.judge_provider.unwrap_or_else(|| mutator_provider.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| cfg.mutator.model.clone());
-    let mutator_dispatch = build_autooptimizer_dispatch(&mutator_provider, &state.xvn_home).await?;
-    let judge_dispatch = if judge_provider == mutator_provider {
-        Arc::clone(&mutator_dispatch)
-    } else {
-        build_autooptimizer_dispatch(&judge_provider, &state.xvn_home).await?
-    };
+    let dispatch = build_autooptimizer_dispatch(&cfg.mutator.provider, &state.xvn_home).await?;
     let day_scenario = build_day_scenario(&cfg)?;
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
-    let (mutator, judge) = build_mutator_and_judge(
-        &cfg,
-        mutator_provider,
-        mutator_model,
-        mutator_dispatch,
-        judge_provider,
-        judge_model,
-        judge_dispatch,
-    );
+    let (mutator, judge) = build_mutator_and_judge(&cfg, mutator_model, judge_model, dispatch);
     let pool = state.pool.clone();
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
@@ -90,7 +71,7 @@ pub async fn start_evening_cycle(
         .filter(|s| !s.is_empty())
         .ok_or_else(|| DashboardError::Validation {
             field: "strategy_id".into(),
-            msg: "strategy_id is required for dashboard evening-cycle launches".into(),
+            msg: "strategy_id is required for dashboard run-cycle launches".into(),
         })?;
     let (bundle_hash, strategy) =
         load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
@@ -110,7 +91,7 @@ pub async fn start_evening_cycle(
         xvision_observability::BlobStore::new(state.xvn_home.join("lineage").join("obs-blobs"));
     tokio::spawn(async move {
         let paper_tester = Arc::new(stub_paper_tester());
-        let result = run_evening_cycle(
+        let result = run_cycle(
             &pool,
             &obs_blob_store,
             &cfg,
@@ -123,17 +104,18 @@ pub async fn start_evening_cycle(
                 let _ = tx.send(ev);
             },
             None,
+            None,
         )
         .await;
         if let Err(e) = result {
-            tracing::warn!(error = %e, "evening cycle failed");
+            tracing::warn!(error = %e, "optimizer cycle failed");
         }
     });
     Ok((
         StatusCode::ACCEPTED,
         Json(StartCycleResponse {
             started: true,
-            message: "Evening run started. Watch the Live tab for progress.".into(),
+            message: "Optimizer run started. Watch the Live tab for progress.".into(),
         }),
     ))
 }
@@ -150,7 +132,15 @@ async fn build_autooptimizer_dispatch(
     provider: &str,
     xvn_home: &std::path::Path,
 ) -> Result<Arc<dyn LlmDispatch + Send + Sync>, DashboardError> {
-    let config_path = xvision_core::config::runtime_config_path(xvn_home);
+    let config_path = if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
+        if !p.is_empty() {
+            std::path::PathBuf::from(p)
+        } else {
+            xvn_home.join("config").join("default.toml")
+        }
+    } else {
+        xvn_home.join("config").join("default.toml")
+    };
     let provider_name = provider.to_owned();
     let rt = tokio::task::spawn_blocking(move || xvision_core::config::load_runtime(&config_path))
         .await
@@ -191,22 +181,19 @@ async fn build_autooptimizer_dispatch(
 
 fn build_mutator_and_judge(
     cfg: &AutoOptimizerConfig,
-    mutator_provider: String,
     mutator_model: String,
-    mutator_dispatch: Arc<dyn LlmDispatch + Send + Sync>,
-    judge_provider: String,
     judge_model: String,
-    judge_dispatch: Arc<dyn LlmDispatch + Send + Sync>,
+    dispatch: Arc<dyn LlmDispatch + Send + Sync>,
 ) -> (Mutator, Judge) {
     let mutator = Mutator {
-        provider: mutator_provider,
+        provider: cfg.mutator.provider.clone(),
         model: mutator_model,
-        dispatch: mutator_dispatch,
+        dispatch: Arc::clone(&dispatch),
         max_retries: cfg.mutator.max_retries,
     };
     let judge = Judge {
-        dispatch: judge_dispatch,
-        provider: judge_provider,
+        dispatch,
+        provider: cfg.mutator.provider.clone(),
         model: judge_model,
     };
     (mutator, judge)
@@ -308,7 +295,7 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
         id: format!("ec-day-{}", Ulid::new()),
         parent_scenario_id: None,
         source: ScenarioSource::Generated,
-        display_name: "Evening cycle day window".into(),
+        display_name: "Optimizer cycle day window".into(),
         description: format!(
             "Synthesized day window {} – {}",
             cfg.day_window.start, cfg.day_window.end

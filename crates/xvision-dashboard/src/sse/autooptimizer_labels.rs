@@ -20,15 +20,14 @@ use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 pub fn display_label(event: &CycleProgressEvent) -> &'static str {
     use CycleProgressEvent::*;
     match event {
-        CycleStarted { .. } => "Evening run started",
+        CycleStarted { .. } => "Optimizer run started",
         ParentSelected { .. } => "Parent selected",
         MutationProposed { .. } => "Experiment proposed",
         MutationGated { passed: true, .. } => "Experiment kept",
         MutationGated { passed: false, .. } => "Experiment dropped",
         HonestyCheckRun { .. } => "Honesty check result",
         JudgeFinding { .. } => "Reviewer finished notes",
-        CycleSealed { .. } => "Evening summary signed",
-        CycleFinished { .. } => "Evening run finished",
+        CycleSealed { .. } => "Cycle summary signed",
     }
 }
 
@@ -47,7 +46,6 @@ pub fn event_kind(event: &CycleProgressEvent) -> &'static str {
         HonestyCheckRun { .. } => "honesty_check_run",
         JudgeFinding { .. } => "judge_finding",
         CycleSealed { .. } => "cycle_sealed",
-        CycleFinished { .. } => "cycle_finished",
     }
 }
 
@@ -108,24 +106,16 @@ mod tests {
             node_count: 2,
         }
     }
-    fn cycle_finished() -> CycleProgressEvent {
-        CycleProgressEvent::CycleFinished {
-            cycle_id: "c1".into(),
-            active_count: 1,
-            rejected_count: 1,
-        }
-    }
     #[test]
     fn display_label_covers_all_variants() {
-        assert_eq!(display_label(&cycle_started()), "Evening run started");
+        assert_eq!(display_label(&cycle_started()), "Optimizer run started");
         assert_eq!(display_label(&parent_selected()), "Parent selected");
         assert_eq!(display_label(&mutation_proposed()), "Experiment proposed");
         assert_eq!(display_label(&mutation_gated_passed()), "Experiment kept");
         assert_eq!(display_label(&mutation_gated_dropped()), "Experiment dropped");
         assert_eq!(display_label(&honesty_check_run()), "Honesty check result");
         assert_eq!(display_label(&judge_finding()), "Reviewer finished notes");
-        assert_eq!(display_label(&cycle_sealed()), "Evening summary signed");
-        assert_eq!(display_label(&cycle_finished()), "Evening run finished");
+        assert_eq!(display_label(&cycle_sealed()), "Cycle summary signed");
     }
 
     #[test]
@@ -138,6 +128,5 @@ mod tests {
         assert_eq!(event_kind(&honesty_check_run()), "honesty_check_run");
         assert_eq!(event_kind(&judge_finding()), "judge_finding");
         assert_eq!(event_kind(&cycle_sealed()), "cycle_sealed");
-        assert_eq!(event_kind(&cycle_finished()), "cycle_finished");
     }
 }
