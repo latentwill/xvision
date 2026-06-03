@@ -11,9 +11,11 @@
 //!   constraint, same as paper-mode-executor-deleted).
 //! - Indicator panel injection into the pipeline seed (matching what
 //!   paper-mode-executor-deleted passes today, which is just portfolio_state).
-//! - Win-rate sourced from realized-PnL pairs across decisions (the
-//!   `MetricsSummary.win_rate` is left at 0.0 the same way paper-mode-executor-deleted
-//!   leaves it — Phase 3.C work).
+//! - Win-rate is sourced from realized round-trip PnL: each time a position
+//!   returns to flat (trader `flat`/flip OR a deterministic SL/TP exit) the
+//!   `realized_count` denominator and, on a positive realized PnL, the `wins`
+//!   numerator are incremented; `win_rate = wins / realized_count`. See the
+//!   run-accounting counter doc at the counter declarations below (U4).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -755,6 +757,32 @@ impl Executor {
         let mut signal_cache = crate::agent::signal_cache::SignalCache::new();
         let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
         let bar_period_minutes = cadence_min.max(1) as u32;
+        // Run-accounting counters (U4 — definitions; keep these in sync with
+        // the doc on `MetricsSummary`). Each measures a DIFFERENT thing and
+        // they intentionally do not all share a denominator:
+        //
+        //   * `n_trades`       — FILL LEGS that crossed the book: opens, closes,
+        //                        SL/TP forced exits, and partial-TP1 slices each
+        //                        count one. An open+close round-trip is therefore
+        //                        2 here. This is the historical "trade count"
+        //                        semantics asserted by existing tests
+        //                        (eval_executor_paper, eval_executor_live_loop)
+        //                        and is NOT changed.
+        //   * `realized_count` — CLOSED ROUND-TRIPS: incremented once each time a
+        //                        non-flat position returns to flat (via trader
+        //                        `flat`/flip OR a deterministic SL/TP exit). This
+        //                        is the `win_rate` denominator.
+        //   * `wins`           — round-trips whose realized PnL was > 0; numerator
+        //                        of `win_rate = wins / realized_count`.
+        //
+        // The decision/wake counters live elsewhere:
+        //   * `decision_idx` (→ `MetricsSummary.n_decisions`) — LLM-pipeline
+        //     decision slots, INCLUDING synthesized SL/TP exit rows; cadence-
+        //     gated and filter-suppressed bars do NOT increment it (correct: no
+        //     decision happened).
+        //   * Filter wake/suppression counters (`FilterSummary.wakeups` = Trips,
+        //     `suppressed_in_position` = in-position Holds, etc.) are aggregated
+        //     separately in `xvision_filters::events::FilterSummary::from_events`.
         let mut n_trades = 0u32;
         let mut wins = 0u32;
         let mut realized_count = 0u32;
@@ -1637,7 +1665,7 @@ impl Executor {
                                     "decision_index": decision_idx,
                                     "asset": asset,
                                     "reason": reason,
-                                    "original": applied_action,
+                                    "original": applied_action.as_str(),
                                     "applied": "hold",
                                 });
                                 obs.emit_engine_event(

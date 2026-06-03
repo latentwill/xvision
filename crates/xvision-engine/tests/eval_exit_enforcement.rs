@@ -32,7 +32,7 @@ use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
-use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::risk::{RiskConfig, RiskPreset};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
@@ -75,6 +75,15 @@ fn store_pool(store: &RunStore) -> SqlitePool {
 /// risk preset (stop_loss_atr_multiple = 2.0, max_concurrent_positions = 2,
 /// daily_loss_kill_pct = 0.05) unless overridden by the caller.
 fn strategy_with(agent_id: &str, assets: &[&str], preset: RiskPreset, cadence_minutes: u32) -> Strategy {
+    strategy_with_risk(agent_id, assets, preset.expand(), cadence_minutes)
+}
+
+fn strategy_with_risk(
+    agent_id: &str,
+    assets: &[&str],
+    risk: RiskConfig,
+    cadence_minutes: u32,
+) -> Strategy {
     Strategy {
         manifest: PublicManifest {
             id: agent_id.into(),
@@ -105,7 +114,7 @@ fn strategy_with(agent_id: &str, assets: &[&str], preset: RiskPreset, cadence_mi
             provider: None,
             model: None,
         }),
-        risk: preset.expand(),
+        risk,
         mechanical_params: serde_json::json!({}),
         hypothesis: None,
         activation_mode: xvision_filters::ActivationMode::EveryBar,
@@ -130,6 +139,26 @@ fn trader_resp(action: &str) -> LlmResponse {
 
 fn sequenced_dispatch(actions: &[&str]) -> Arc<dyn LlmDispatch> {
     let resps: Vec<LlmResponse> = actions.iter().map(|a| trader_resp(a)).collect();
+    Arc::new(MockDispatch::sequence(resps))
+}
+
+/// A `long_open` carrying an explicit `take_profit_pct` bracket, followed by
+/// `hold`s. Used to drive a deterministic winning round-trip (TP exit).
+fn long_open_with_tp_then_holds(tp_pct: f64, holds: usize) -> Arc<dyn LlmDispatch> {
+    let open = LlmResponse {
+        content: vec![ContentBlock::Text {
+            text: format!(
+                r#"{{"action":"long_open","conviction":0.8,"justification":"breakout","take_profit_pct":{tp_pct}}}"#
+            ),
+        }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
+    };
+    let mut resps = vec![open];
+    for _ in 0..holds {
+        resps.push(trader_resp("hold"));
+    }
     Arc::new(MockDispatch::sequence(resps))
 }
 
@@ -265,7 +294,14 @@ async fn max_concurrent_positions_vetoes_third_simultaneous_open() {
     let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let mut asset_bars: std::collections::BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>> =
         std::collections::BTreeMap::new();
-    for (sym_idx, sym) in ["BTC/USD", "ETH/USD", "SOL/USD"].iter().enumerate() {
+    for (sym_idx, sym) in [
+        xvision_core::trading::AssetSymbol::Btc,
+        xvision_core::trading::AssetSymbol::Eth,
+        xvision_core::trading::AssetSymbol::Sol,
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let base = 100.0 + sym_idx as f64 * 10.0;
         let series: Vec<Ohlcv> = (0..2)
             .map(|i| Ohlcv {
@@ -277,7 +313,7 @@ async fn max_concurrent_positions_vetoes_third_simultaneous_open() {
                 volume: 1_000.0,
             })
             .collect();
-        asset_bars.insert(xvision_core::trading::AssetSymbol::from(*sym), series);
+        asset_bars.insert(sym, series);
     }
 
     // Two gated timestamps (day0, day1) × 3 assets = 6 decisions, consumed in
@@ -332,11 +368,20 @@ async fn daily_loss_kill_vetoes_further_opens_after_loss_budget_breached() {
         .expect("flash-crash-2024-08 scenario must exist");
 
     let agent_id = "01TESTEXITDAILYLOSS00000000A";
-    // Conservative: max_concurrent_positions = 1, daily_loss_kill_pct = 0.03,
-    // stop_loss_atr_multiple = 2.0.
-    // 1-minute cadence so every per-minute bar on the SAME UTC day fires a
-    // decision (the daily-loss window must not roll mid-test).
-    let strategy = strategy_with(agent_id, &["BTC/USD"], RiskPreset::Conservative, 1);
+    // Custom risk: a deliberately tight daily-loss budget (0.1% of initial)
+    // so a single small stop-out loss breaches it, plus a configured ATR stop
+    // so the open long actually stops out. 1-minute cadence so every
+    // per-minute bar on the SAME UTC day fires a decision (the daily-loss
+    // window must not roll mid-test).
+    let risk = RiskConfig {
+        risk_pct_per_trade: 0.010,
+        max_concurrent_positions: 5, // not the constraint under test
+        max_leverage: 2.0,
+        stop_loss_atr_multiple: 2.0,
+        daily_loss_kill_pct: 0.001, // 0.1% of initial — tight on purpose
+        max_position_pct_nav: 20.0,
+    };
+    let strategy = strategy_with_risk(agent_id, &["BTC/USD"], risk, 1);
 
     let mut run = Run::new_queued(
         strategy.manifest.id.clone(),
@@ -352,9 +397,14 @@ async fn daily_loss_kill_vetoes_further_opens_after_loss_budget_breached() {
     let day = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
     let mut bars: Vec<Ohlcv> = Vec::new();
     for i in 0..10 {
+        // The stop is TRIGGERED by the crash bar's low (i == 4) but the exit
+        // FILLS at the next bar's open, so bar 5 must also be crashed for the
+        // close to realize a loss. Bars 6+ recover to ~100 (where re-opens are
+        // attempted and must be vetoed once the loss budget is spent).
         let (o, h, l, c) = if i == 4 {
-            // Crash bar: deep loss on the open long.
-            (100.0, 100.0, 50.0, 52.0)
+            (100.0, 100.0, 50.0, 52.0) // crash: triggers the ATR stop
+        } else if i == 5 {
+            (52.0, 53.0, 50.0, 52.0) // stop fills here at open=52 → realized loss
         } else {
             (100.0, 101.0, 99.0, 100.0)
         };
@@ -388,5 +438,86 @@ async fn daily_loss_kill_vetoes_further_opens_after_loss_budget_breached() {
     assert!(
         veto_count >= 1,
         "a same-day open after the daily-loss budget is breached must be vetoed at least once; got {veto_count}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// U4 — round-trip accounting: win_rate reflects realized round-trip PnL,
+// n_trades is the leg count.
+// ─────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn winning_round_trip_yields_win_rate_one_and_two_legs() {
+    // Open a long at ~100, hit a +6% take-profit on a later bar. That is ONE
+    // closed round-trip with positive realized PnL → win_rate == 1.0. The
+    // fill-leg count `n_trades` is 2 (the open leg + the TP close leg).
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+
+    let agent_id = "01TESTEXITWINRATE0000000000A";
+    let strategy = strategy_with(agent_id, &["BTC/USD"], RiskPreset::Balanced, 1_440);
+
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    // Flat ~100, then a bar that rallies through +6% (high >= 106) to trigger
+    // the take-profit. Entry fills at the bar after long_open (~100).
+    let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let mut bars: Vec<Ohlcv> = Vec::new();
+    for i in 0..6 {
+        let (o, h, l, c) = if i == 4 {
+            // Rally bar: high well above the +6% TP (106).
+            (100.0, 112.0, 100.0, 110.0)
+        } else {
+            (100.0, 101.0, 99.0, 100.0)
+        };
+        bars.push(Ohlcv {
+            timestamp: start + Duration::days(i as i64),
+            open: o,
+            high: h,
+            low: l,
+            close: c,
+            volume: 1_000.0,
+        });
+    }
+
+    let dispatch = long_open_with_tp_then_holds(6.0, 6);
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = Executor::with_bars(bars);
+
+    let metrics = executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("backtest run should complete");
+
+    // The take-profit close must have recorded a winning round-trip.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let tp_close = decisions
+        .iter()
+        .find(|d| d.action == "take_profit")
+        .expect("a take_profit close row must exist");
+    assert!(
+        tp_close.pnl_realized.unwrap_or(0.0) > 0.0,
+        "take-profit close must realize a gain; got {:?}",
+        tp_close.pnl_realized
+    );
+
+    assert!(
+        (metrics.win_rate - 1.0).abs() < 1e-9,
+        "one winning round-trip → win_rate must be 1.0, got {}",
+        metrics.win_rate
+    );
+    // Leg-count semantics: open leg + take-profit close leg = 2.
+    assert_eq!(
+        metrics.n_trades, 2,
+        "n_trades counts fill legs (open + TP close) for one round-trip, got {}",
+        metrics.n_trades
     );
 }
