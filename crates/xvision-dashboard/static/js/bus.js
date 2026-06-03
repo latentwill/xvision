@@ -24,15 +24,15 @@
 // Wire-name → operator-facing display label.
 // Wire names are the snake_case type discriminants from CycleProgressEvent.
 const DISPLAY_LABELS = {
-  cycle_started:          "Evening run started",
+  cycle_started:          "Optimizer run started",
   parent_selected:        "Parent selected",
   mutation_proposed:      "Experiment proposed",
   mutation_gated_passed:  "Experiment kept",
   mutation_gated_dropped: "Experiment dropped",
   honesty_check_run:      "Honesty check result",
   judge_finding:          "Reviewer finished notes",
-  cycle_sealed:           "Evening summary signed",
-  cycle_finished:         "Evening run finished",
+  cycle_sealed:           "Cycle summary signed",
+  cycle_finished:         "Optimizer run finished",
 };
 
 /**

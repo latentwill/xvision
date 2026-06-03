@@ -12,7 +12,7 @@
 //! # Terminal 1 — dashboard (socket path set via ServeOpts)
 //! xvn dashboard serve --autooptimizer-ipc-socket /tmp/xvn-events.sock
 //!
-//! # Terminal 2 — evening cycle (events stream to connected browser tabs)
+//! # Terminal 2 — optimizer cycle (events stream to connected browser tabs)
 //! xvn optimizer mutate-once <parent_hash> --ipc-socket /tmp/xvn-events.sock
 //! ```
 //!

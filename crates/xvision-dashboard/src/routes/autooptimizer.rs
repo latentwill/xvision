@@ -17,7 +17,7 @@
 //!
 //! ## Notes on `findings`
 //!
-//! Judge `Finding`s are produced at LLM-evaluation time inside an evening
+//! Judge `Finding`s are produced at LLM-evaluation time inside an optimizer
 //! cycle run and are surfaced via SSE progress events (`CycleProgressEvent::
 //! JudgeFinding`). They are **not** persisted to the DB or blob store — the
 //! `findings` endpoint therefore always returns an empty array. It exists

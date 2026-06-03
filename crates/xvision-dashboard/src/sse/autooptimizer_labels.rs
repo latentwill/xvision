@@ -20,15 +20,15 @@ use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 pub fn display_label(event: &CycleProgressEvent) -> &'static str {
     use CycleProgressEvent::*;
     match event {
-        CycleStarted { .. } => "Evening run started",
+        CycleStarted { .. } => "Optimizer run started",
         ParentSelected { .. } => "Parent selected",
         MutationProposed { .. } => "Experiment proposed",
         MutationGated { passed: true, .. } => "Experiment kept",
         MutationGated { passed: false, .. } => "Experiment dropped",
         HonestyCheckRun { .. } => "Honesty check result",
         JudgeFinding { .. } => "Reviewer finished notes",
-        CycleSealed { .. } => "Evening summary signed",
-        CycleFinished { .. } => "Evening run finished",
+        CycleSealed { .. } => "Cycle summary signed",
+        CycleFinished { .. } => "Optimizer run finished",
     }
 }
 
@@ -117,15 +117,15 @@ mod tests {
     }
     #[test]
     fn display_label_covers_all_variants() {
-        assert_eq!(display_label(&cycle_started()), "Evening run started");
+        assert_eq!(display_label(&cycle_started()), "Optimizer run started");
         assert_eq!(display_label(&parent_selected()), "Parent selected");
         assert_eq!(display_label(&mutation_proposed()), "Experiment proposed");
         assert_eq!(display_label(&mutation_gated_passed()), "Experiment kept");
         assert_eq!(display_label(&mutation_gated_dropped()), "Experiment dropped");
         assert_eq!(display_label(&honesty_check_run()), "Honesty check result");
         assert_eq!(display_label(&judge_finding()), "Reviewer finished notes");
-        assert_eq!(display_label(&cycle_sealed()), "Evening summary signed");
-        assert_eq!(display_label(&cycle_finished()), "Evening run finished");
+        assert_eq!(display_label(&cycle_sealed()), "Cycle summary signed");
+        assert_eq!(display_label(&cycle_finished()), "Optimizer run finished");
     }
 
     #[test]

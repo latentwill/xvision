@@ -66,7 +66,7 @@ export type CycleProgressEvent = {
   data?: Record<string, unknown> | null;
 };
 
-export type StartEveningCycleRequest = {
+export type StartRunCycleRequest = {
   strategy_id: string;
   mutator_provider?: string | null;
   mutator_model?: string | null;
@@ -74,7 +74,7 @@ export type StartEveningCycleRequest = {
   judge_model?: string | null;
 };
 
-export type StartEveningCycleResponse = {
+export type StartRunCycleResponse = {
   started: boolean;
   message: string;
 };
@@ -116,10 +116,10 @@ export async function getDiversity(q?: DiversityQuery): Promise<DiversityEntry[]
   return apiFetch<DiversityEntry[]>(buildDiversityUrl(q));
 }
 
-export async function startEveningCycle(
-  body: StartEveningCycleRequest,
-): Promise<StartEveningCycleResponse> {
-  return apiFetch<StartEveningCycleResponse>("/api/autooptimizer/evening-cycle", {
+export async function startRunCycle(
+  body: StartRunCycleRequest,
+): Promise<StartRunCycleResponse> {
+  return apiFetch<StartRunCycleResponse>("/api/autooptimizer/run-cycle", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -230,7 +230,7 @@ export function formatEventLabel(event: CycleProgressEvent): string {
     case "parent_selected":
       return "Parent selected";
     case "cycle_finished":
-      return "Evening run finished";
+      return "Optimizer run finished";
     case "mutation_proposed":
       return "Experiment proposed";
     case "mutation_accepted":

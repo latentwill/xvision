@@ -26,7 +26,7 @@ pub struct AutoOptimizerConfig {
     #[serde(default)]
     pub lineage_root: Option<PathBuf>,
     /// Enable DSPy flywheel: write judge findings as Observations and
-    /// compile compiled DSRs into Patterns after each evening cycle.
+    /// compile compiled DSRs into Patterns after each optimizer cycle.
     #[serde(default)]
     pub dspy_enabled: bool,
     /// Minimum number of Observations in the namespace before a DSPy

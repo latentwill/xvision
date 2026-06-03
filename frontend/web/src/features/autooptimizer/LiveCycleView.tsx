@@ -8,7 +8,7 @@ import {
   type CycleProgressEvent,
   type LineageNode,
   formatEventLabel,
-  startEveningCycle,
+  startRunCycle,
   useLineageNodes,
   autooptimizerKeys,
 } from "./api";
@@ -139,7 +139,7 @@ function LivePageHeader({
   const activeLineages = countActiveLineages(nodes);
   const headline =
     isRunning && activeCycleId
-      ? `Evening run in progress · ${activeCycleId}`
+      ? `Optimizer run in progress · ${activeCycleId}`
       : "No cycle running";
   return (
     <div className="flex items-start justify-between gap-4 pb-6 mb-2 border-b border-border">
@@ -195,7 +195,7 @@ function LaunchStrip() {
     queryFn: listStrategies,
   });
   const launchMutation = useMutation({
-    mutationFn: startEveningCycle,
+    mutationFn: startRunCycle,
     onSuccess: async (resp) => {
       setLaunchError(null);
       setLaunchMessage(resp.message);
@@ -256,9 +256,9 @@ function LaunchStrip() {
         type="button"
         onClick={() => { void handleLaunch(); }}
         disabled={isRunning || !strategyId.trim() || noStrategies}
-        className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50"
+        className="w-full rounded bg-accent px-3 py-3 text-[14px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50"
       >
-        {isRunning ? "Starting…" : "Start evening run"}
+        {isRunning ? "Starting…" : "Run optimizer"}
       </button>
       {launchError !== null && (
         <span className="text-[13px] text-danger">{launchError}</span>
@@ -324,7 +324,7 @@ function CycleLeftCard() {
       className="rounded-md border border-gold/30 bg-gradient-to-b from-gold/5 to-transparent p-5 space-y-4 scroll-mt-24"
     >
       <span className="uppercase tracking-[0.22em] text-[9.5px] text-gold font-medium block">
-        Evening Run
+        Optimizer Run
       </span>
       <Pill tone="default">No cycle running</Pill>
       <LaunchStrip />

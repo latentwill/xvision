@@ -70,7 +70,6 @@ import {
   useSessionRows,
 } from "@/stores/session-events";
 import { useTraceDock } from "@/stores/trace-dock";
-import { useUi } from "@/stores/ui";
 import type {
   MessageRow,
   ToolRow,
@@ -163,7 +162,6 @@ export function ChatRail({
   const [modelId, setModelId] = useState<string>(
     () => safeStorageGet(RAIL_MODEL_LS) ?? "",
   );
-  const setChatRailOpen = useUi((s) => s.setChatRailOpen);
   const abortRef = useRef<AbortController | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lastScopeKeyRef = useRef<string | null>(null);

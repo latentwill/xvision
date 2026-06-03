@@ -381,8 +381,8 @@ async fn long_open_then_short_open_one_step_flip_blocks_with_flat() {
         .fill_size
         .expect("flip-blocked decision must record close size");
     assert!(
-        (opened - closed).abs() < 1e-9,
-        "flip-blocked decision must close exactly the existing long size, not open a new short; opened={opened}, closed={closed}",
+        (opened + closed).abs() < 1e-9,
+        "flip-blocked decision must only close the existing long, not open a new short; opened={opened}, closed={closed}",
     );
 
     // supervisor_notes carries exactly one `one-step flip blocked` row.

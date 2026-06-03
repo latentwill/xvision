@@ -1,4 +1,4 @@
-//! Evening-cycle orchestrator — AR-2 Task 9.
+//! Optimizer cycle orchestrator — AR-2 Task 9.
 
 use std::collections::HashMap;
 
@@ -6,9 +6,8 @@ use anyhow::{bail, Result};
 use chrono::Utc;
 use sqlx::SqlitePool;
 use ulid::Ulid;
-use xvision_observability::BlobStore as ObservabilityBlobStore;
+use xvision_observability::BlobStore;
 
-use crate::autooptimizer::blob_store::BlobStore;
 use crate::autooptimizer::canary::{run_honesty_check, HonestyCheckResult};
 use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::content_hash::ContentHash;
@@ -66,9 +65,9 @@ struct MutationOutcome {
     delta_sharpe: f64,
 }
 
-pub async fn run_evening_cycle(
+pub async fn run_cycle(
     pool: &SqlitePool,
-    obs_blob_store: &ObservabilityBlobStore,
+    _blob_store: &BlobStore,
     config: &AutoOptimizerConfig,
     cycle_config: &CycleConfig,
     parent_policy: &ParentPolicy,
@@ -130,7 +129,6 @@ pub async fn run_evening_cycle(
             });
             let (active, rejected) = process_parent_mutations(
                 pool,
-                obs_blob_store,
                 parent_node,
                 parent_strategy,
                 &cycle_id,
@@ -163,11 +161,6 @@ pub async fn run_evening_cycle(
     )
     .await?;
     let diversity_score = diversity_decay_for_cycle(pool, &cycle_id).await.unwrap_or(0.0);
-    progress(CycleProgressEvent::CycleFinished {
-        cycle_id: cycle_id.clone(),
-        active_count: active_nodes.len(),
-        rejected_count: rejected_nodes.len(),
-    });
     Ok(CycleResult {
         cycle_id,
         active_nodes,
@@ -233,7 +226,6 @@ where
 
 async fn process_parent_mutations<F>(
     pool: &SqlitePool,
-    obs_blob_store: &ObservabilityBlobStore,
     parent_node: &LineageNode,
     parent_strategy: &Strategy,
     cycle_id: &str,
@@ -300,7 +292,7 @@ where
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
-        let node = build_and_insert_node(pool, obs_blob_store, &outcome, parent_node, cycle_id).await?;
+        let node = build_and_insert_node(pool, &outcome, parent_node, cycle_id).await?;
         record_proposal(
             pool,
             &outcome.child_hash,
@@ -387,27 +379,10 @@ async fn gate_and_classify(
 
 async fn build_and_insert_node(
     pool: &SqlitePool,
-    obs_blob_store: &ObservabilityBlobStore,
     outcome: &MutationOutcome,
     parent_node: &LineageNode,
     cycle_id: &str,
 ) -> Result<LineageNode> {
-    let blob_root = obs_blob_store
-        .root()
-        .parent()
-        .map(|p| p.join("blobs"))
-        .unwrap_or_else(|| obs_blob_store.root().join("blobs"));
-    let strategy_blob_store = BlobStore::new(blob_root);
-    let child_json = serde_json::to_value(&outcome.child)?;
-    let stored_hash = strategy_blob_store.put_json(&child_json).await?;
-    if stored_hash != outcome.child_hash {
-        bail!(
-            "stored child strategy hash {} did not match lineage hash {}",
-            stored_hash.to_hex(),
-            outcome.child_hash.to_hex()
-        );
-    }
-
     let node = LineageNode {
         bundle_hash: outcome.child_hash,
         parent_hash: Some(parent_node.bundle_hash),

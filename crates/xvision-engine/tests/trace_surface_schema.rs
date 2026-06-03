@@ -53,6 +53,10 @@ async fn engine_pool_with_026() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
         .execute(&pool)
         .await
@@ -68,10 +72,6 @@ async fn engine_pool_with_026() -> SqlitePool {
     .await
     .unwrap();
     sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
         .unwrap();

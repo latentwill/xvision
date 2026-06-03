@@ -75,7 +75,7 @@ where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     let endpoint = env::var(ENV_OTLP_ENDPOINT).unwrap_or_else(|_| "http://localhost:4317".to_owned());
-    let service_name = env::var(ENV_SERVICE_NAME).unwrap_or_else(|_| "xvision".to_owned());
+    let service_name = env::var(ENV_SERVICE_NAME).unwrap_or_else(|_| "xvn".to_owned());
     let resource = build_resource(&service_name);
 
     let exporter = opentelemetry_otlp::new_exporter().tonic().with_endpoint(endpoint);

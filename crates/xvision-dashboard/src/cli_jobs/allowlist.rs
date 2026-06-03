@@ -139,7 +139,7 @@ const STRICT_TEMPLATES: &[Template] = &[
     // UI-launched optimizer cycle. The dashboard job supervisor makes it
     // cancellable and caps runtime/output; --mock is optional for smoke runs.
     Template {
-        head: &["optimizer", "evening-cycle"],
+        head: &["optimizer", "run-cycle"],
         permitted_flags: &["--session-id", "--config", "--db", "--strategy", "--budget"],
         permitted_switches: &["--mock"],
     },
@@ -182,7 +182,7 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
-    "optimizer", // bounded via STRICT_TEMPLATES (optimizer evening-cycle only)
+    "optimizer", // bounded via STRICT_TEMPLATES (optimizer run-cycle only)
     "portfolio",
     "provider",
     "report",
@@ -368,7 +368,7 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
         }
     } else if head == "optimizer" {
         return AllowlistDecision::Reject(
-            "subcommand `optimizer` is only allowed over remote cli as `optimizer evening-cycle`".into(),
+            "subcommand `optimizer` is only allowed over remote cli as `optimizer run-cycle`".into(),
         );
     }
 
@@ -538,10 +538,10 @@ mod tests {
     }
 
     #[test]
-    fn optimizer_evening_cycle_mock_is_allowed() {
+    fn optimizer_run_cycle_mock_is_allowed() {
         assert_allow(&[
             "optimizer",
-            "evening-cycle",
+            "run-cycle",
             "--session-id",
             "ui-01",
             "--mock",
@@ -553,10 +553,10 @@ mod tests {
     }
 
     #[test]
-    fn optimizer_evening_cycle_non_mock_is_allowed() {
+    fn optimizer_run_cycle_non_mock_is_allowed() {
         assert_allow(&[
             "optimizer",
-            "evening-cycle",
+            "run-cycle",
             "--session-id",
             "ui-01",
             "--strategy",
@@ -570,16 +570,16 @@ mod tests {
     fn optimizer_other_subcommands_are_rejected() {
         assert_reject(
             &["optimizer", "run", "--namespace", "global"],
-            "only allowed over remote cli as `optimizer evening-cycle`",
+            "only allowed over remote cli as `optimizer run-cycle`",
         );
     }
 
     #[test]
-    fn optimizer_evening_cycle_unknown_flag_is_rejected() {
+    fn optimizer_run_cycle_unknown_flag_is_rejected() {
         assert_reject(
             &[
                 "optimizer",
-                "evening-cycle",
+                "run-cycle",
                 "--session-id",
                 "ui-01",
                 "--real-broker",
