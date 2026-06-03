@@ -44,6 +44,7 @@ import {
   safeStorageRemove,
   safeStorageSet,
 } from "@/lib/storage";
+import { useUi } from "@/stores/ui";
 import {
   type ChatMessage,
   type ChatSessionMode,
@@ -135,6 +136,16 @@ export function ChatRail({
   const [open, setOpen] = useState<boolean>(() => {
     return safeStorageGet(RAIL_OPEN_LS) === "1";
   });
+  const chatRailWidth = useUi((s) => s.chatRailWidth);
+  const setChatRailOpen = useUi((s) => s.setChatRailOpen);
+  const setOpenAndSync = useCallback(
+    (v: boolean) => {
+      safeStorageSet(RAIL_OPEN_LS, v ? "1" : "0");
+      setOpen(v);
+      setChatRailOpen(v);
+    },
+    [setChatRailOpen],
+  );
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState("");
@@ -245,11 +256,13 @@ export function ChatRail({
   }, [providerName, modelId, providers.data]);
 
   // Persist open/close so the rail stays in the user's chosen state across
-  // route changes (and reloads).
+  // route changes (and reloads). Also sync to the shared UI store so the
+  // shell can adjust its grid layout without the rail needing a prop channel.
   useEffect(() => {
     if (variant !== "desktop") return;
     safeStorageSet(RAIL_OPEN_LS, open ? "1" : "0");
-  }, [open, variant]);
+    setChatRailOpen(open);
+  }, [open, variant, setChatRailOpen]);
 
   // Persist mode so a new chat inherits the user's last choice (Think/Act)
   // instead of always defaulting back to "research".
@@ -541,7 +554,7 @@ export function ChatRail({
         <button
           className="w-8 h-8 rounded-full flex items-center justify-center text-text-3 hover:text-text border border-border-soft"
           title="Open agent chat (⌘\\)"
-          onClick={() => setOpen(true)}
+          onClick={() => setOpenAndSync(true)}
         >
           <Icon name="pulse" size={14} />
         </button>
@@ -558,10 +571,11 @@ export function ChatRail({
     <aside
       className={[
         variant === "desktop"
-          ? "hidden xl:flex w-[380px] flex-col h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar"
+          ? "hidden xl:flex flex-col h-screen sticky top-0 border-l border-border-soft bg-surface-sidebar"
           : "flex w-full flex-col h-full min-h-0 bg-surface-sidebar",
         className,
       ].join(" ")}
+      style={variant === "desktop" ? { width: chatRailWidth + "px" } : undefined}
       aria-label="Chat rail"
     >
       {showHeader && (
@@ -594,7 +608,7 @@ export function ChatRail({
               {variant === "desktop" && (
                 <button
                   className="text-text-3 hover:text-text"
-                  onClick={() => setOpen(false)}
+                  onClick={() => setOpenAndSync(false)}
                   title="Collapse rail"
                 >
                   <Icon name="chevR" size={14} />

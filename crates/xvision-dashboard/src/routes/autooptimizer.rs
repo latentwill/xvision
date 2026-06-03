@@ -17,7 +17,7 @@
 //!
 //! ## Notes on `findings`
 //!
-//! Judge `Finding`s are produced at LLM-evaluation time inside an evening
+//! Judge `Finding`s are produced at LLM-evaluation time inside an optimizer
 //! cycle run and are surfaced via SSE progress events (`CycleProgressEvent::
 //! JudgeFinding`). They are **not** persisted to the DB or blob store — the
 //! `findings` endpoint therefore always returns an empty array. It exists
@@ -347,6 +347,7 @@ async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, Dash
             .map_err(|e| DashboardError::Internal(e.into()))?;
     Ok(found.is_some())
 }
+
 
 fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, DashboardError> {
     use sqlx::Row;

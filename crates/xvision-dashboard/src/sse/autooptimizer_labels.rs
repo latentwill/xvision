@@ -28,6 +28,7 @@ pub fn display_label(event: &CycleProgressEvent) -> &'static str {
         HonestyCheckRun { .. } => "Honesty check result",
         JudgeFinding { .. } => "Reviewer finished notes",
         CycleSealed { .. } => "Cycle summary signed",
+        CycleFinished { .. } => "Optimizer run finished",
     }
 }
 
@@ -46,6 +47,7 @@ pub fn event_kind(event: &CycleProgressEvent) -> &'static str {
         HonestyCheckRun { .. } => "honesty_check_run",
         JudgeFinding { .. } => "judge_finding",
         CycleSealed { .. } => "cycle_sealed",
+        CycleFinished { .. } => "cycle_finished",
     }
 }
 
@@ -106,6 +108,13 @@ mod tests {
             node_count: 2,
         }
     }
+    fn cycle_finished() -> CycleProgressEvent {
+        CycleProgressEvent::CycleFinished {
+            cycle_id: "c1".into(),
+            active_count: 1,
+            rejected_count: 1,
+        }
+    }
     #[test]
     fn display_label_covers_all_variants() {
         assert_eq!(display_label(&cycle_started()), "Optimizer run started");
@@ -116,6 +125,7 @@ mod tests {
         assert_eq!(display_label(&honesty_check_run()), "Honesty check result");
         assert_eq!(display_label(&judge_finding()), "Reviewer finished notes");
         assert_eq!(display_label(&cycle_sealed()), "Cycle summary signed");
+        assert_eq!(display_label(&cycle_finished()), "Optimizer run finished");
     }
 
     #[test]
@@ -128,5 +138,6 @@ mod tests {
         assert_eq!(event_kind(&honesty_check_run()), "honesty_check_run");
         assert_eq!(event_kind(&judge_finding()), "judge_finding");
         assert_eq!(event_kind(&cycle_sealed()), "cycle_sealed");
+        assert_eq!(event_kind(&cycle_finished()), "cycle_finished");
     }
 }

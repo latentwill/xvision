@@ -4,12 +4,40 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{LlmResponse, StopReason};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TraderOutput {
     pub(crate) action: String,
     pub(crate) conviction: f64,
     pub(crate) justification: String,
+    #[serde(default)]
+    pub(crate) stop_loss_pct: Option<f32>,
+    #[serde(default)]
+    pub(crate) take_profit_pct: Option<f32>,
+    #[serde(default)]
+    pub(crate) trailing_stop_pct: Option<f64>,
+    #[serde(default)]
+    pub(crate) breakeven_trigger_pct: Option<f64>,
+    #[serde(default)]
+    pub(crate) breakeven_offset_pct: Option<f64>,
+    #[serde(default)]
+    pub(crate) fade_sl_bars: Option<u32>,
+    #[serde(default)]
+    pub(crate) fade_sl_start_pct: Option<f64>,
+    #[serde(default)]
+    pub(crate) fade_sl_end_pct: Option<f64>,
+    #[serde(default)]
+    pub(crate) max_bars_held: Option<u32>,
+    #[serde(default)]
+    pub(crate) sl_atr_mult: Option<f64>,
+    #[serde(default)]
+    pub(crate) tp_atr_mult: Option<f64>,
+    #[serde(default)]
+    pub(crate) tp1_pct: Option<f64>,
+    #[serde(default)]
+    pub(crate) tp1_close_fraction: Option<f64>,
+    #[serde(default)]
+    pub(crate) tp2_pct: Option<f64>,
 }
 
 /// Stable classification of trader-output failure modes. Persisted as part

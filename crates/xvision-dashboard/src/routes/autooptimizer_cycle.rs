@@ -39,7 +39,9 @@ use crate::state::AppState;
 #[derive(Deserialize, Default)]
 pub struct StartCycleBody {
     pub strategy_id: Option<String>,
+    pub mutator_provider: Option<String>,
     pub mutator_model: Option<String>,
+    pub judge_provider: Option<String>,
     pub judge_model: Option<String>,
 }
 
@@ -54,13 +56,30 @@ pub async fn start_cycle(
     Json(body): Json<StartCycleBody>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
     let cfg = load_optimizer_config()?;
+    let mutator_provider = body
+        .mutator_provider
+        .unwrap_or_else(|| cfg.mutator.provider.clone());
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
+    let judge_provider = body.judge_provider.unwrap_or_else(|| mutator_provider.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| cfg.mutator.model.clone());
-    let dispatch = build_autooptimizer_dispatch(&cfg.mutator.provider, &state.xvn_home).await?;
+    let mutator_dispatch = build_autooptimizer_dispatch(&mutator_provider, &state.xvn_home).await?;
+    let judge_dispatch = if judge_provider == mutator_provider {
+        Arc::clone(&mutator_dispatch)
+    } else {
+        build_autooptimizer_dispatch(&judge_provider, &state.xvn_home).await?
+    };
     let day_scenario = build_day_scenario(&cfg)?;
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
-    let (mutator, judge) = build_mutator_and_judge(&cfg, mutator_model, judge_model, dispatch);
+    let (mutator, judge) = build_mutator_and_judge(
+        &cfg,
+        mutator_provider,
+        mutator_model,
+        mutator_dispatch,
+        judge_provider,
+        judge_model,
+        judge_dispatch,
+    );
     let pool = state.pool.clone();
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
@@ -132,15 +151,7 @@ async fn build_autooptimizer_dispatch(
     provider: &str,
     xvn_home: &std::path::Path,
 ) -> Result<Arc<dyn LlmDispatch + Send + Sync>, DashboardError> {
-    let config_path = if let Ok(p) = std::env::var("XVN_CONFIG_PATH") {
-        if !p.is_empty() {
-            std::path::PathBuf::from(p)
-        } else {
-            xvn_home.join("config").join("default.toml")
-        }
-    } else {
-        xvn_home.join("config").join("default.toml")
-    };
+    let config_path = xvision_core::config::runtime_config_path(xvn_home);
     let provider_name = provider.to_owned();
     let rt = tokio::task::spawn_blocking(move || xvision_core::config::load_runtime(&config_path))
         .await
@@ -181,19 +192,22 @@ async fn build_autooptimizer_dispatch(
 
 fn build_mutator_and_judge(
     cfg: &AutoOptimizerConfig,
+    mutator_provider: String,
     mutator_model: String,
+    mutator_dispatch: Arc<dyn LlmDispatch + Send + Sync>,
+    judge_provider: String,
     judge_model: String,
-    dispatch: Arc<dyn LlmDispatch + Send + Sync>,
+    judge_dispatch: Arc<dyn LlmDispatch + Send + Sync>,
 ) -> (Mutator, Judge) {
     let mutator = Mutator {
-        provider: cfg.mutator.provider.clone(),
+        provider: mutator_provider,
         model: mutator_model,
-        dispatch: Arc::clone(&dispatch),
+        dispatch: mutator_dispatch,
         max_retries: cfg.mutator.max_retries,
     };
     let judge = Judge {
-        dispatch,
-        provider: cfg.mutator.provider.clone(),
+        dispatch: judge_dispatch,
+        provider: judge_provider,
         model: judge_model,
     };
     (mutator, judge)
@@ -328,6 +342,7 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
                 partial_fills: false,
                 volume_constraints: None,
             },
+            borrow_bps_per_day: 5.0,
             overrides: vec![],
         },
         replay_mode: ReplayMode::Continuous,

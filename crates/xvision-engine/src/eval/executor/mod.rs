@@ -26,6 +26,7 @@ pub mod backtest;
 pub mod book;
 pub mod live_source;
 pub mod real_broker_fills;
+pub(crate) mod sltp;
 pub mod trace_types;
 pub mod trader_output;
 pub mod traits;
