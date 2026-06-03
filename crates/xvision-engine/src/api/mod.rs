@@ -97,12 +97,17 @@ const MIGRATION_036_AGENTS_SCOPE_STRATEGY_ID: &str =
     include_str!("../../migrations/036_agents_scope_strategy_id.sql");
 const MIGRATION_038_EVAL_RUNS_LIVE_CONFIG: &str =
     include_str!("../../migrations/038_eval_runs_live_config.sql");
-const MIGRATION_039_AGENT_SLOT_OPTIMIZATIONS: &str =
-    include_str!("../../migrations/039_agent_slot_optimizations.sql");
-const MIGRATION_040_PATTERN_OPTIMIZATIONS: &str =
-    include_str!("../../migrations/040_pattern_optimizations.sql");
-const MIGRATION_041_AGENT_SLOT_OPTIMIZATION_GATES: &str =
-    include_str!("../../migrations/041_agent_slot_optimization_gates.sql");
+// Renumbered 039/040/041 → 048/049/050 to resolve a duplicate-version
+// collision with the trajectory/chat-rail wave's 039/040/041 (which broke
+// `sqlx::migrate!`). Runtime applies these via the guarded helpers below in
+// explicit order, so the renumber is order-safe (nothing in 042–047 depends
+// on these tables).
+const MIGRATION_048_AGENT_SLOT_OPTIMIZATIONS: &str =
+    include_str!("../../migrations/048_agent_slot_optimizations.sql");
+const MIGRATION_049_PATTERN_OPTIMIZATIONS: &str =
+    include_str!("../../migrations/049_pattern_optimizations.sql");
+const MIGRATION_050_AGENT_SLOT_OPTIMIZATION_GATES: &str =
+    include_str!("../../migrations/050_agent_slot_optimization_gates.sql");
 /// Stage 1 (Cline runtime unification, operational-visibility contract
 /// item 3): adds `trajectory_mode` (+ sibling Stage 2-3 columns) to
 /// `agent_runs`. Applied via `migrate_run_trajectory_mode` because the
@@ -1449,12 +1454,12 @@ async fn rebuild_eval_reviews_fk(pool: &SqlitePool) -> ApiResult<()> {
 /// Apply migration 039: durable lineage rows for offline slot optimizers.
 async fn migrate_agent_slot_optimizations(pool: &SqlitePool) -> ApiResult<()> {
     if !table_exists(pool, "agent_slot_optimizations").await? {
-        sqlx::query(MIGRATION_039_AGENT_SLOT_OPTIMIZATIONS)
+        sqlx::query(MIGRATION_048_AGENT_SLOT_OPTIMIZATIONS)
             .execute(pool)
             .await?;
     }
     if !table_has_column(pool, "agent_slot_optimizations", "gate_verdict").await? {
-        sqlx::query(MIGRATION_041_AGENT_SLOT_OPTIMIZATION_GATES)
+        sqlx::query(MIGRATION_050_AGENT_SLOT_OPTIMIZATION_GATES)
             .execute(pool)
             .await?;
     }
@@ -1464,7 +1469,7 @@ async fn migrate_agent_slot_optimizations(pool: &SqlitePool) -> ApiResult<()> {
 /// Apply migration 040: Pattern prior/demo-source links for optimizer lineage.
 async fn migrate_pattern_optimizations(pool: &SqlitePool) -> ApiResult<()> {
     if !table_exists(pool, "pattern_optimizations").await? {
-        sqlx::query(MIGRATION_040_PATTERN_OPTIMIZATIONS)
+        sqlx::query(MIGRATION_049_PATTERN_OPTIMIZATIONS)
             .execute(pool)
             .await?;
     }
