@@ -237,13 +237,44 @@ impl<'f> RuntimeFilter<'f> {
         }
 
         // Tree is true; figure out which suppression (if any) applies.
-        let suppressed_in_pos = matches!(
-            (ctx.in_position, self.filter.wake_when_in_position,),
-            (
-                true,
-                WakeInPosition::Never | WakeInPosition::OnInvalidationOrTargetOnly
-            )
-        );
+        //
+        // KTD3: the in-position wake policy distinguishes a fresh Trip (the
+        // bar the tree first becomes true again — a NEW invalidation/target
+        // signal the trader should see so it can close) from a sustained-true
+        // Hold (a redundant per-bar re-eval). We must therefore compute the
+        // Trip/Hold transition HERE, before the suppression decision, rather
+        // than after it as the original code did.
+        //
+        //   * `Always`                     → wake on every active bar
+        //                                     (Trip AND Hold) while holding.
+        //   * `OnInvalidationOrTargetOnly` → wake on a fresh Trip while
+        //                                     holding; suppress sustained-true
+        //                                     Hold bars (the per-bar polling
+        //                                     cost win). A gate true→false
+        //                                     invalidation already returns
+        //                                     `Inactive` above (before this
+        //                                     gate) and is never suppressed.
+        //   * `Never`                      → never wake while holding
+        //                                     (entries-only filter; exits rely
+        //                                     on the deterministic SL/TP).
+        //
+        // Before this fix `OnInvalidationOrTargetOnly` was treated as a full
+        // suppression (== `Never`), so it never woke the trader on a fresh
+        // in-position trip despite its name.
+        let prev_true = state.prev_tree.unwrap_or(false);
+        let transition = if prev_true {
+            Transition::Hold
+        } else {
+            Transition::Trip
+        };
+        let suppressed_in_pos = ctx.in_position
+            && match self.filter.wake_when_in_position {
+                WakeInPosition::Always => false,
+                WakeInPosition::Never => true,
+                WakeInPosition::OnInvalidationOrTargetOnly => {
+                    matches!(transition, Transition::Hold)
+                }
+            };
 
         if suppressed_in_pos {
             // We still tick cooldown so a position-open period doesn't
@@ -268,13 +299,9 @@ impl<'f> RuntimeFilter<'f> {
             };
         }
 
-        // Determine transition: Trip vs Hold.
-        let prev_true = state.prev_tree.unwrap_or(false);
-        let transition = if prev_true {
-            Transition::Hold
-        } else {
-            Transition::Trip
-        };
+        // Transition (Trip vs Hold) was already determined above — the
+        // suppression gate needs it, and nothing between here and there
+        // mutates `state.prev_tree`. Reuse it.
         // Daily wakeup cap — checked on Trip only (a sustained Hold
         // doesn't consume a wakeup).
         if matches!(transition, Transition::Trip) {
@@ -1000,6 +1027,165 @@ mod tests {
             },
         );
         assert_eq!(o.decision, ActivationDecision::SuppressedInPosition);
+    }
+
+    #[test]
+    fn on_invalidation_only_wakes_on_trip_but_suppresses_in_position_hold() {
+        // KTD3 / R4 regression: with `OnInvalidationOrTargetOnly`, a fresh
+        // Trip while holding still wakes (so the trader can close), but the
+        // sustained-true Hold bars that follow are suppressed instead of
+        // dispatching the trader LLM on every in-position bar.
+        let mut f = close_gt_threshold(50.0);
+        f.wake_when_in_position = WakeInPosition::OnInvalidationOrTargetOnly;
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+
+        // Out of position, tree false -> Inactive.
+        rt.evaluate(
+            &mut state,
+            &bar(40.0),
+            EvalContext {
+                ts: ts(0),
+                in_position: false,
+            },
+        );
+        // In position, tree becomes true -> fresh Trip -> NOT suppressed.
+        let trip = rt.evaluate(
+            &mut state,
+            &bar(60.0),
+            EvalContext {
+                ts: ts(1),
+                in_position: true,
+            },
+        );
+        assert!(
+            matches!(
+                trip.decision,
+                ActivationDecision::Active {
+                    transition: Transition::Trip
+                }
+            ),
+            "fresh in-position trip must wake the trader so it can close, got {:?}",
+            trip.decision
+        );
+        // In position, tree stays true -> Hold -> suppressed (no per-bar LLM).
+        for min in 2..6 {
+            let hold = rt.evaluate(
+                &mut state,
+                &bar(65.0),
+                EvalContext {
+                    ts: ts(min),
+                    in_position: true,
+                },
+            );
+            assert_eq!(
+                hold.decision,
+                ActivationDecision::SuppressedInPosition,
+                "sustained-true in-position bar must be suppressed, not dispatched"
+            );
+        }
+    }
+
+    #[test]
+    fn on_invalidation_only_lets_gate_invalidation_through_as_inactive() {
+        // R4: a gate true->false invalidation while holding is NEVER
+        // suppressed — the tree-false branch returns `Inactive` before the
+        // in-position suppression gate runs. (The trader's exit is then driven
+        // by the deterministic SL/TP; the filter does not masquerade the
+        // invalidation as a wake, but it also does not hide it as a
+        // suppression.)
+        let mut f = close_gt_threshold(50.0);
+        f.wake_when_in_position = WakeInPosition::OnInvalidationOrTargetOnly;
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        // Out of position: trip true.
+        rt.evaluate(
+            &mut state,
+            &bar(40.0),
+            EvalContext { ts: ts(0), in_position: false },
+        );
+        rt.evaluate(
+            &mut state,
+            &bar(60.0),
+            EvalContext { ts: ts(1), in_position: true },
+        );
+        // Gate invalidates (close drops below threshold) while holding.
+        let invalidated = rt.evaluate(
+            &mut state,
+            &bar(40.0),
+            EvalContext { ts: ts(2), in_position: true },
+        );
+        assert_eq!(
+            invalidated.decision,
+            ActivationDecision::Inactive,
+            "gate invalidation while holding must NOT be reported as SuppressedInPosition"
+        );
+    }
+
+    #[test]
+    fn on_invalidation_only_still_wakes_every_active_bar_out_of_position() {
+        // Out of position the policy is a no-op: both Trip and Hold are active
+        // (regression guard for the cost win — it must not leak out of
+        // position).
+        let mut f = close_gt_threshold(50.0);
+        f.wake_when_in_position = WakeInPosition::OnInvalidationOrTargetOnly;
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
+        rt.evaluate(&mut state, &bar(40.0), ctx);
+        let trip = rt.evaluate(&mut state, &bar(60.0), ctx);
+        assert!(matches!(
+            trip.decision,
+            ActivationDecision::Active {
+                transition: Transition::Trip
+            }
+        ));
+        let hold = rt.evaluate(&mut state, &bar(65.0), ctx);
+        assert!(matches!(
+            hold.decision,
+            ActivationDecision::Active {
+                transition: Transition::Hold
+            }
+        ));
+    }
+
+    #[test]
+    fn always_policy_still_wakes_every_in_position_hold_bar() {
+        // `Always` remains an explicit opt-in reproducing the per-bar
+        // behavior — proof the fix is a semantics change, not a hard removal.
+        let mut f = close_gt_threshold(50.0);
+        f.wake_when_in_position = WakeInPosition::Always;
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        rt.evaluate(
+            &mut state,
+            &bar(40.0),
+            EvalContext { ts: ts(0), in_position: false },
+        );
+        let trip = rt.evaluate(
+            &mut state,
+            &bar(60.0),
+            EvalContext { ts: ts(1), in_position: true },
+        );
+        assert!(trip.decision.is_active());
+        let hold = rt.evaluate(
+            &mut state,
+            &bar(65.0),
+            EvalContext { ts: ts(2), in_position: true },
+        );
+        assert!(
+            matches!(
+                hold.decision,
+                ActivationDecision::Active {
+                    transition: Transition::Hold
+                }
+            ),
+            "Always must still wake on sustained-true in-position bars, got {:?}",
+            hold.decision
+        );
     }
 
     #[test]

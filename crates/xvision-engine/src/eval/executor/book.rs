@@ -67,6 +67,13 @@ impl PortfolioBook {
     pub fn realized(&self) -> f64 {
         self.realized
     }
+    /// Number of assets currently holding a non-flat position. A leg is only
+    /// present in `legs` while its position is non-zero (`set_position` with
+    /// `0.0` removes it), so the leg count is the open-position count. Used by
+    /// the `max_concurrent_positions` risk veto.
+    pub fn open_position_count(&self) -> usize {
+        self.legs.len()
+    }
     /// Mark-to-market equity. `marks[a]` is the price to value asset `a` at;
     /// an asset absent from `marks` falls back to its stored `last_mark`
     /// (the last price it was marked at via `mark`/`set_position`) rather

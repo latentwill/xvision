@@ -11,9 +11,11 @@
 //!   constraint, same as paper-mode-executor-deleted).
 //! - Indicator panel injection into the pipeline seed (matching what
 //!   paper-mode-executor-deleted passes today, which is just portfolio_state).
-//! - Win-rate sourced from realized-PnL pairs across decisions (the
-//!   `MetricsSummary.win_rate` is left at 0.0 the same way paper-mode-executor-deleted
-//!   leaves it — Phase 3.C work).
+//! - Win-rate is sourced from realized round-trip PnL: each time a position
+//!   returns to flat (trader `flat`/flip OR a deterministic SL/TP exit) the
+//!   `realized_count` denominator and, on a positive realized PnL, the `wins`
+//!   numerator are incremented; `win_rate = wins / realized_count`. See the
+//!   run-accounting counter doc at the counter declarations below (U4).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -755,9 +757,40 @@ impl Executor {
         let mut signal_cache = crate::agent::signal_cache::SignalCache::new();
         let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
         let bar_period_minutes = cadence_min.max(1) as u32;
+        // Run-accounting counters (U4 — definitions; keep these in sync with
+        // the doc on `MetricsSummary`). Each measures a DIFFERENT thing and
+        // they intentionally do not all share a denominator:
+        //
+        //   * `n_trades`       — FILL LEGS that crossed the book: opens, closes,
+        //                        SL/TP forced exits, and partial-TP1 slices each
+        //                        count one. An open+close round-trip is therefore
+        //                        2 here. This is the historical "trade count"
+        //                        semantics asserted by existing tests
+        //                        (eval_executor_paper, eval_executor_live_loop)
+        //                        and is NOT changed.
+        //   * `realized_count` — CLOSED ROUND-TRIPS: incremented once each time a
+        //                        non-flat position returns to flat (via trader
+        //                        `flat`/flip OR a deterministic SL/TP exit). This
+        //                        is the `win_rate` denominator.
+        //   * `wins`           — round-trips whose realized PnL was > 0; numerator
+        //                        of `win_rate = wins / realized_count`.
+        //
+        // The decision/wake counters live elsewhere:
+        //   * `decision_idx` (→ `MetricsSummary.n_decisions`) — LLM-pipeline
+        //     decision slots, INCLUDING synthesized SL/TP exit rows; cadence-
+        //     gated and filter-suppressed bars do NOT increment it (correct: no
+        //     decision happened).
+        //   * Filter wake/suppression counters (`FilterSummary.wakeups` = Trips,
+        //     `suppressed_in_position` = in-position Holds, etc.) are aggregated
+        //     separately in `xvision_filters::events::FilterSummary::from_events`.
         let mut n_trades = 0u32;
         let mut wins = 0u32;
         let mut realized_count = 0u32;
+        // R3 daily-loss kill: the UTC day the realized-loss window currently
+        // tracks, and the book's cumulative realized PnL at that day's start.
+        // `realized_today = book.realized() - daily_realized_at_day_start`.
+        let mut daily_loss_day: Option<chrono::NaiveDate> = None;
+        let mut daily_realized_at_day_start: f64 = 0.0;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         // Wall-clock anchor for `EvalLimits::max_wall_clock_secs`. Captured
@@ -1567,6 +1600,88 @@ impl Executor {
                     }
                 };
 
+                // R3: deterministic risk-config vetoes on NEW opens. These run
+                // after the guardrail rewrite and before the broker/fill seam,
+                // and only constrain opening orders — `hold`/`flat` and exits
+                // are never vetoed (capital protection must always be able to
+                // close). A vetoed open is rewritten to `hold` (position
+                // survives untouched; for a flat book that is a no-op) and a
+                // supervisor note records the reason.
+                //
+                //   * daily_loss_kill_pct  — once cumulative realized loss for
+                //     the current UTC day exceeds this fraction of starting
+                //     capital, no further opens are admitted for the rest of
+                //     that day. (0.0 disables.)
+                //   * max_concurrent_positions — caps the number of distinct
+                //     assets holding an open position; a new open that would
+                //     exceed the cap is vetoed. Re-opening / adjusting an asset
+                //     that is already in-position is not blocked.
+                let applied_action: String = {
+                    let is_new_open =
+                        applied_action == "long_open" || applied_action == "short_open";
+                    if !is_new_open {
+                        applied_action
+                    } else {
+                        // Daily-loss kill: roll the realized-loss accumulator on
+                        // a UTC-day boundary, then compare today's realized loss
+                        // against the configured fraction of starting capital.
+                        let bar_day = bar.timestamp.date_naive();
+                        if daily_loss_day != Some(bar_day) {
+                            daily_loss_day = Some(bar_day);
+                            daily_realized_at_day_start = book.realized();
+                        }
+                        let kill_pct = strategy.risk.daily_loss_kill_pct;
+                        let realized_today = book.realized() - daily_realized_at_day_start;
+                        let daily_loss_breached =
+                            kill_pct > 0.0 && realized_today <= -(kill_pct * initial);
+
+                        // Max concurrent positions: count distinct assets that
+                        // currently hold a non-flat position. The asset being
+                        // opened only consumes a NEW slot if it is currently
+                        // flat.
+                        let max_positions = strategy.risk.max_concurrent_positions;
+                        let open_positions = book.open_position_count();
+                        let already_open = book.position(asset_sym).abs() > f64::EPSILON;
+                        let max_positions_breached = max_positions > 0
+                            && !already_open
+                            && open_positions >= max_positions as usize;
+
+                        if daily_loss_breached || max_positions_breached {
+                            let reason = if daily_loss_breached {
+                                "daily_loss_kill"
+                            } else {
+                                "max_concurrent_positions"
+                            };
+                            let note = format!(
+                                "risk veto `{reason}` at decision {decision_idx} ({asset}): \
+                                 open {applied_action} rewritten to hold \
+                                 (realized_today={realized_today:.2}, open_positions={open_positions})"
+                            );
+                            store
+                                .record_supervisor_note(&run.id, "risk", "warn", &note)
+                                .await?;
+                            if let Some(obs) = self.obs_emitter.as_ref() {
+                                let payload = serde_json::json!({
+                                    "decision_index": decision_idx,
+                                    "asset": asset,
+                                    "reason": reason,
+                                    "original": applied_action.as_str(),
+                                    "applied": "hold",
+                                });
+                                obs.emit_engine_event(
+                                    "risk_veto",
+                                    Some(decision_span_id.clone()),
+                                    Some(payload.to_string()),
+                                )
+                                .await;
+                            }
+                            "hold".to_string()
+                        } else {
+                            applied_action
+                        }
+                    }
+                };
+
                 // eval-broker-rule-findings: validate new open orders against venue
                 // rules before calling simulate_fill. Only `long_open` and
                 // `short_open` generate new orders at the venue; `hold` and `flat`
@@ -1888,7 +2003,28 @@ impl Executor {
                         };
                         let sl_pct = parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0);
                         let tp_pct = parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0);
-                        let entry_atr = if parsed.sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some() {
+                        // R1: enforce the strategy's configured protective stop
+                        // even when the model emits no bracket of its own. If
+                        // the trader supplied neither a percent SL nor an ATR
+                        // SL multiple, fall back to `risk.stop_loss_atr_multiple`
+                        // so a held position cannot ride an unbounded adverse
+                        // move (the -14.5% no-stop-out repro). The model's own
+                        // `sl_atr_mult` wins when present; otherwise the
+                        // strategy config supplies a deterministic ATR stop.
+                        let config_atr_mult = strategy.risk.stop_loss_atr_multiple;
+                        let effective_sl_atr_mult = parsed.sl_atr_mult.or_else(|| {
+                            if sl_pct <= 0.0 && config_atr_mult > 0.0 {
+                                Some(config_atr_mult)
+                            } else {
+                                None
+                            }
+                        });
+                        // Compute ATR whenever any ATR-based level (model or
+                        // config fallback) needs it. When warmup leaves ATR
+                        // unavailable, `atr_sl_price`/`atr_tp_price` no-op, so
+                        // no spurious stop fires.
+                        let entry_atr = if effective_sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some()
+                        {
                             crate::eval::executor::sltp::compute_atr14(history_slice)
                         } else {
                             None
@@ -1908,7 +2044,7 @@ impl Executor {
                                 parsed.fade_sl_start_pct,
                                 parsed.fade_sl_end_pct,
                                 parsed.max_bars_held,
-                                parsed.sl_atr_mult,
+                                effective_sl_atr_mult,
                                 parsed.tp_atr_mult,
                                 parsed.tp1_pct,
                                 parsed.tp1_close_fraction,

@@ -321,8 +321,20 @@ pub struct MetricsSummary {
     pub total_return_pct: f64,
     pub sharpe: f64,
     pub max_drawdown_pct: f64,
+    /// Fraction of CLOSED ROUND-TRIPS that realized positive PnL
+    /// (`wins / realized_count`). A round-trip is one position open→flat
+    /// cycle, closed by the trader (`flat`/flip) or a deterministic SL/TP
+    /// exit. `0.0` when no round-trip closed.
     pub win_rate: f64,
+    /// Count of FILL LEGS that crossed the book — opens, closes, SL/TP forced
+    /// exits, and partial-TP1 slices each count one. An open+close round-trip
+    /// is `2` here. This is leg-count semantics (NOT round-trips); `win_rate`
+    /// is the round-trip view. See the counter doc in `backtest.rs`.
     pub n_trades: u32,
+    /// Count of LLM-pipeline decision slots, including synthesized SL/TP exit
+    /// rows. Cadence-gated and filter-suppressed bars do not increment it (no
+    /// decision occurred). Filter wake/suppression accounting lives separately
+    /// in `xvision_filters::events::FilterSummary`.
     pub n_decisions: u32,
     /// Total LLM inference cost for all decisions in this run (USD).
     /// `None` when the model's pricing isn't in the catalog — in that case
