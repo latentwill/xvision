@@ -452,6 +452,36 @@ impl TraderOutput {
                 "trader output justification is required".to_string(),
             ));
         }
+        // Protective-bracket range validation. Mirrors the ranges enforced on
+        // `xvision_core::trading::TraderDecision` (SL 0.1–20.0%, TP 0.1–50.0%)
+        // so the eval `TraderOutput` cannot smuggle a degenerate bracket (e.g.
+        // `stop_loss_pct = 0`, which the SL/TP engine would treat as "no stop")
+        // past the schema. Only validated when present — the fields are
+        // optional and `None` is the back-compatible default.
+        if let Some(sl) = self.stop_loss_pct {
+            if !sl.is_finite() || !(0.1..=20.0).contains(&sl) {
+                return Err(TraderOutputError::build(
+                    TraderFailureKind::InvalidField,
+                    run_id,
+                    decision_index,
+                    response,
+                    Some(raw),
+                    format!("trader output stop_loss_pct must be between 0.1 and 20.0 (got {sl})"),
+                ));
+            }
+        }
+        if let Some(tp) = self.take_profit_pct {
+            if !tp.is_finite() || !(0.1..=50.0).contains(&tp) {
+                return Err(TraderOutputError::build(
+                    TraderFailureKind::InvalidField,
+                    run_id,
+                    decision_index,
+                    response,
+                    Some(raw),
+                    format!("trader output take_profit_pct must be between 0.1 and 50.0 (got {tp})"),
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -675,6 +705,79 @@ mod tests {
     use super::{TraderFailureKind, TraderOutput};
 
     // ─── F-5 phase 2b: problem_fields extraction ──────────────────────
+
+    // ─── U1: protective-bracket parse + range validation ──────────────
+
+    #[test]
+    fn brackets_absent_parses_as_none() {
+        // Back-compat: an output with no SL/TP fields parses and leaves both
+        // brackets None (no error).
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout"}"#,
+            "01TEST",
+            0,
+        )
+        .expect("output without brackets must still parse");
+        assert_eq!(parsed.stop_loss_pct, None);
+        assert_eq!(parsed.take_profit_pct, None);
+    }
+
+    #[test]
+    fn valid_brackets_round_trip() {
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":2.0,"take_profit_pct":6.0}"#,
+            "01TEST",
+            0,
+        )
+        .expect("valid brackets must parse and validate");
+        assert_eq!(parsed.stop_loss_pct, Some(2.0));
+        assert_eq!(parsed.take_profit_pct, Some(6.0));
+    }
+
+    #[test]
+    fn zero_stop_loss_pct_is_rejected() {
+        // 0 would be silently treated as "no stop" by the SL/TP engine — the
+        // exact failure mode (a position with a degenerate bracket riding an
+        // adverse move) this validation guards against.
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.0}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("zero stop_loss_pct must be rejected");
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        assert!(err.to_string().contains("stop_loss_pct must be between"));
+    }
+
+    #[test]
+    fn out_of_range_take_profit_pct_is_rejected() {
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","take_profit_pct":99.0}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("take_profit_pct above 50 must be rejected");
+        assert_eq!(err.kind, TraderFailureKind::InvalidField);
+        assert!(err.to_string().contains("take_profit_pct must be between"));
+    }
+
+    #[test]
+    fn unknown_bracket_field_still_rejected() {
+        // `deny_unknown_fields` must stay intact even with the new optional
+        // bracket fields present. A misspelled bracket key (`stop_loss`
+        // instead of `stop_loss_pct`) must NOT be silently accepted.
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"x","stop_loss":2.0}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("misspelled/unknown bracket field must be rejected");
+        // Unknown field is a serde parse failure, not a validate() failure.
+        assert!(matches!(
+            err.kind,
+            TraderFailureKind::InvalidJson | TraderFailureKind::MissingField
+        ));
+    }
 
     #[test]
     fn problem_fields_extracts_missing_conviction() {
