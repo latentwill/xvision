@@ -30,7 +30,7 @@ use xvision_engine::eval::compare::ComparisonEquityCurve;
 use xvision_engine::eval::export::{self as eval_export};
 use xvision_engine::eval::findings::Finding;
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
-use xvision_engine::eval::report::compute_run_report;
+use xvision_engine::eval::report::{aggregate_run_token_totals, compute_run_report, RunTokenTotals};
 use xvision_engine::eval::run::{ReviewModel, RunMode, RunStatus};
 use xvision_engine::eval::scenario::{AssetClass, AssetRef, TimeWindow};
 use xvision_engine::eval::store::RunStore;
@@ -1253,6 +1253,21 @@ fn print_run_health_card(
             (Some(i), None) => println!("tokens  in={}", i),
             _ => {}
         }
+        // Live aggregate cost — only for running runs (the finalized metrics
+        // block above already prints a `cost` line for completed runs, so this
+        // avoids a duplicate). Suppressed entirely when there is no cost signal.
+        let finalized_cost_present = run
+            .metrics
+            .as_ref()
+            .and_then(|m| m.inference_cost_quote_total)
+            .is_some();
+        if let Some(cost_line) = render_aggregate_cost_line(
+            finalized_cost_present,
+            rpt.cost_usd_estimate,
+            rpt.cost_estimate_complete,
+        ) {
+            println!("{cost_line}");
+        }
         if let Some(wc) = rpt.wall_clock_ms {
             println!("wall    {}ms", wc);
         }
@@ -1273,6 +1288,9 @@ async fn run_watch(args: WatchArgs) -> CliResult<()> {
         let run = eval::get(&ctx, &args.run_id)
             .await
             .map_err(|e| api_to_cli("eval watch", e))?;
+        // Live token/cost totals — aggregated from `model_calls` (which land
+        // per-call during the run), the same source the dashboard reads.
+        let tokens = aggregate_run_token_totals(&ctx.db, &args.run_id).await;
         if args.json {
             // Note: `xvn eval watch --json` is one-shot only — passing
             // `--once` (or having the run already terminal) emits a
@@ -1281,9 +1299,9 @@ async fn run_watch(args: WatchArgs) -> CliResult<()> {
             // `--once` writes one JSON object per poll which is
             // intentionally not a single-value channel today; an NDJSON
             // follow-up contract will redesign that surface.
-            crate::io::print_json(&run)?;
+            crate::io::print_json(&serde_json::json!({ "run": run, "tokens": tokens }))?;
         } else {
-            print_run_status_line(&run);
+            println!("{}", render_run_status_line(&run, &tokens));
         }
 
         if args.once || run.status.is_terminal() {
@@ -1293,7 +1311,42 @@ async fn run_watch(args: WatchArgs) -> CliResult<()> {
     }
 }
 
-fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
+/// Render the live token/cost segment appended to the watch status line.
+///
+/// `model_call_count == 0` means "no signal" (nothing landed yet, or a
+/// pre-observability run) — rendered as `n/a` for all three fields so an
+/// operator can tell it apart from a genuine zero. Otherwise each numeric
+/// field falls back to `n/a` if its `Option` is `None`, and the cost carries
+/// a trailing `*` when the estimate is incomplete (a lower bound), matching
+/// the asterisk convention in `eval/compare_format.rs`.
+///
+/// Note: per-field `n/a` can also appear with `model_call_count > 0` when
+/// model calls landed but the provider did not report token/cost counts (the
+/// underlying columns are nullable). The `--json` surface disambiguates via
+/// `model_call_count`.
+fn render_tokens_segment(tokens: &RunTokenTotals) -> String {
+    if tokens.model_call_count == 0 {
+        return "\ttokens_in=n/a\ttokens_out=n/a\tcost=n/a".to_string();
+    }
+    let in_s = tokens
+        .input_tokens
+        .map_or_else(|| "n/a".to_string(), |n| n.to_string());
+    let out_s = tokens
+        .output_tokens
+        .map_or_else(|| "n/a".to_string(), |n| n.to_string());
+    let cost_s = match tokens.cost_usd_estimate {
+        Some(c) => {
+            let star = if tokens.cost_estimate_complete { "" } else { "*" };
+            format!("${c:.4}{star}")
+        }
+        None => "n/a".to_string(),
+    };
+    format!("\ttokens_in={in_s}\ttokens_out={out_s}\tcost={cost_s}")
+}
+
+/// Build the watch status line (tab-delimited `key=value`) for a run, with the
+/// live token/cost totals appended. Pure — no I/O — so it is unit-testable.
+fn render_run_status_line(run: &xvision_engine::eval::run::Run, tokens: &RunTokenTotals) -> String {
     let mut line = format!(
         "{}\t{}\t{}\t{}",
         run.id,
@@ -1312,10 +1365,29 @@ fn print_run_status_line(run: &xvision_engine::eval::run::Run) {
             metrics.n_decisions
         ));
     }
+    line.push_str(&render_tokens_segment(tokens));
     if let Some(error) = run.error.as_deref() {
         line.push_str(&format!("\terror={error}"));
     }
-    println!("{line}");
+    line
+}
+
+/// Render the health-card aggregate cost line, or `None` when it should be
+/// suppressed. Suppressed when a finalized metrics cost line was already
+/// printed (`finalized_cost_present`, avoids a duplicate on completed runs) or
+/// when there is no cost signal at all (`cost_usd_estimate` is `None`). The
+/// `*` marks an incomplete (lower-bound) estimate.
+fn render_aggregate_cost_line(
+    finalized_cost_present: bool,
+    cost_usd_estimate: Option<f64>,
+    cost_estimate_complete: bool,
+) -> Option<String> {
+    if finalized_cost_present {
+        return None;
+    }
+    let c = cost_usd_estimate?;
+    let star = if cost_estimate_complete { "" } else { "*" };
+    Some(format!("cost    ${c:.4}{star}"))
 }
 
 fn action_distribution(decisions: &[xvision_engine::eval::store::DecisionRow]) -> HashMap<String, u32> {
@@ -2511,5 +2583,115 @@ mod tests {
         assert_eq!(eff_provider.as_deref(), Some("openrouter"));
         assert_eq!(eff_model.as_deref(), Some("deepseek/deepseek-chat"));
         assert_eq!(eff_max_decisions, Some(180));
+    }
+
+    // ── live token/cost rendering (eval watch + show health card) ──────────
+    //
+    // Pure-formatter tests: construct `Run` and `RunTokenTotals` directly,
+    // never touching a DB or `aggregate_run_token_totals`. They pin the
+    // human-readable surfaces the dashboard already shows live.
+    // (`RunTokenTotals`, `RunMode` are in scope via the module's `use super::*`.)
+
+    fn sample_run() -> xvision_engine::eval::run::Run {
+        xvision_engine::eval::run::Run::new_queued(
+            "agent-tok".into(),
+            "crypto-bull-q1-2025".into(),
+            RunMode::Backtest,
+        )
+    }
+
+    #[test]
+    fn status_line_default_totals_render_na() {
+        // No model_calls landed yet (or pre-observability run): all n/a, so an
+        // operator can tell "no signal" apart from a genuine zero.
+        let line = render_run_status_line(&sample_run(), &RunTokenTotals::default());
+        assert!(line.contains("tokens_in=n/a"), "line: {line}");
+        assert!(line.contains("tokens_out=n/a"), "line: {line}");
+        assert!(line.contains("cost=n/a"), "line: {line}");
+        // Tab-delimited like the rest of the line.
+        assert!(
+            line.contains("\ttokens_in=n/a"),
+            "tokens segment must be tab-delimited: {line:?}"
+        );
+    }
+
+    #[test]
+    fn status_line_partial_signal_renders_na_without_panicking() {
+        // model_call_count > 0 but the provider reported no token/cost counts
+        // (nullable columns). All three fields fall back to n/a — same glyphs
+        // as the no-signal case; --json disambiguates via model_call_count.
+        let tokens = RunTokenTotals {
+            input_tokens: None,
+            output_tokens: None,
+            cost_usd_estimate: None,
+            cost_estimate_complete: false,
+            model_call_count: 3,
+        };
+        let line = render_run_status_line(&sample_run(), &tokens);
+        assert!(line.contains("tokens_in=n/a"), "line: {line}");
+        assert!(line.contains("tokens_out=n/a"), "line: {line}");
+        assert!(line.contains("cost=n/a"), "line: {line}");
+    }
+
+    #[test]
+    fn status_line_populated_totals_render_values_with_asterisk() {
+        let tokens = RunTokenTotals {
+            input_tokens: Some(12_400),
+            output_tokens: Some(3_100),
+            cost_usd_estimate: Some(0.0421),
+            cost_estimate_complete: false,
+            model_call_count: 18,
+        };
+        let line = render_run_status_line(&sample_run(), &tokens);
+        assert!(line.contains("tokens_in=12400"), "line: {line}");
+        assert!(line.contains("tokens_out=3100"), "line: {line}");
+        // Lower-bound marker present when the cost estimate is incomplete.
+        assert!(line.contains("cost=$0.0421*"), "line: {line}");
+    }
+
+    #[test]
+    fn status_line_complete_cost_has_no_asterisk() {
+        let tokens = RunTokenTotals {
+            input_tokens: Some(10),
+            output_tokens: Some(20),
+            cost_usd_estimate: Some(1.5),
+            cost_estimate_complete: true,
+            model_call_count: 2,
+        };
+        let line = render_run_status_line(&sample_run(), &tokens);
+        assert!(line.contains("cost=$1.5000"), "line: {line}");
+        assert!(
+            !line.contains("cost=$1.5000*"),
+            "no asterisk when complete: {line}"
+        );
+    }
+
+    #[test]
+    fn aggregate_cost_line_suppressed_when_finalized_cost_present() {
+        // Completed run: the metrics block already printed a cost line, so the
+        // aggregate line must not duplicate it.
+        assert_eq!(render_aggregate_cost_line(true, Some(0.5), true), None);
+    }
+
+    #[test]
+    fn aggregate_cost_line_suppressed_when_no_cost_signal() {
+        // Running run, nothing landed: suppress (not "n/a") to match the
+        // existing tokens-line suppression idiom on the health card.
+        assert_eq!(render_aggregate_cost_line(false, None, false), None);
+    }
+
+    #[test]
+    fn aggregate_cost_line_rendered_for_running_run() {
+        let line = render_aggregate_cost_line(false, Some(0.0421), false)
+            .expect("running run with cost must render a line");
+        assert!(line.contains("cost"), "line: {line}");
+        assert!(line.contains("$0.0421*"), "incomplete-estimate asterisk: {line}");
+    }
+
+    #[test]
+    fn aggregate_cost_line_complete_has_no_asterisk() {
+        let line = render_aggregate_cost_line(false, Some(2.0), true).expect("line");
+        assert!(line.contains("$2.0000"), "line: {line}");
+        assert!(!line.contains('*'), "no asterisk when complete: {line}");
     }
 }
