@@ -178,6 +178,133 @@ async fn hook_records_filter_event_json_and_summary() {
     assert_eq!(summaries[0].llm_calls_saved, 0);
 }
 
+/// Default-filter variant: identical condition tree to `simple_close_filter`
+/// but WITHOUT an explicit `wake_when_in_position`, so it picks up the serde
+/// default. This mirrors what `set-filter` stamps when an operator omits the
+/// field (the path that produced the per-bar polling cost bug).
+fn default_close_filter() -> Filter {
+    parse_toml(
+        r#"
+[filter]
+id = "f_filter_hook_default"
+strategy_id = "s_filter_hook_default"
+display_name = "Close above zero (default wake policy)"
+asset_scope = ["BTC/USD"]
+timeframe = "1h"
+scan_cadence = "bar_close"
+cooldown_bars = 0
+
+[[filter.conditions.all]]
+lhs = "close"
+op  = ">"
+rhs = 0.0
+"#,
+    )
+    .unwrap()
+}
+
+/// Regression for the in-position per-bar trader-LLM cost bug.
+///
+/// A filter whose tree stays true (`close > 0`) is evaluated for one Trip
+/// bar (out of position) and then N sustained-true bars while a position is
+/// open. Under the OLD default (`wake_when_in_position = "always"`) every one
+/// of those N in-position bars came back `is_active()` and dispatched the
+/// trader LLM — O(N) redundant calls. Under the fixed default
+/// (`OnInvalidationOrTargetOnly`) the sustained Hold bars are suppressed
+/// in-position, so dispatches stay O(wakes) and `suppressed_in_position`
+/// rises to N.
+#[tokio::test]
+async fn holding_a_position_does_not_wake_trader_every_bar() {
+    let pool = migrated_pool().await;
+    // Default filter (no explicit wake policy) — exercises the fixed default.
+    let filter = default_close_filter();
+    // Sanity: the serde default really is the non-per-bar policy now.
+    assert_eq!(
+        filter.wake_when_in_position,
+        xvision_filters::WakeInPosition::OnInvalidationOrTargetOnly,
+        "default wake policy must NOT be Always (per-bar polling cost bug)"
+    );
+
+    let strategy = build_strategy(ActivationMode::FilterGated, Some(filter));
+    let mut hook = FilterHook::new(&strategy).unwrap().expect("filter hook");
+    let run_id = "run-in-position-cost";
+
+    // Bar 0: out of position, tree true -> Trip -> trader dispatched.
+    let n_in_position: u32 = 20;
+    let mut dispatches: u32 = 0;
+
+    let first = hook.evaluate(&bar(100.0), false);
+    if first.outcome.decision.is_active() {
+        dispatches += 1;
+    }
+    hook.record(&pool, None, run_id, bar(100.0).timestamp, &first)
+        .await
+        .unwrap();
+
+    // Bars 1..=N: now holding a position, tree stays true every bar.
+    for _ in 0..n_in_position {
+        let eval = hook.evaluate(&bar(101.0), /* in_position = */ true);
+        if eval.outcome.decision.is_active() {
+            dispatches += 1;
+        }
+        hook.record(&pool, None, run_id, bar(101.0).timestamp, &eval)
+            .await
+            .unwrap();
+    }
+
+    // Exactly one dispatch (the initial out-of-position Trip). The 20
+    // in-position sustained-true bars are suppressed, not dispatched.
+    assert_eq!(
+        dispatches, 1,
+        "expected O(wakes) trader dispatches, got O(N) — in-position Hold bars were not suppressed"
+    );
+
+    let store = RunStore::new(pool);
+    let summaries = store.read_filter_summaries(run_id).await.unwrap();
+    assert_eq!(summaries.len(), 1);
+    let s = &summaries[0];
+    assert_eq!(s.bars_scanned, 1 + n_in_position);
+    assert_eq!(s.wakeups, 1, "only the initial out-of-position Trip is a wakeup");
+    assert_eq!(
+        s.suppressed_in_position, n_in_position,
+        "every sustained-true in-position bar must be suppressed"
+    );
+}
+
+/// Companion test: `Always` is still honored as an explicit opt-in and
+/// reproduces the old per-bar behavior. This proves the fix is a default
+/// change + policy semantics, not a hard removal of per-bar waking.
+#[tokio::test]
+async fn always_policy_still_wakes_every_in_position_bar() {
+    let pool = migrated_pool().await;
+    // `simple_close_filter` sets `wake_when_in_position = "always"` explicitly.
+    let filter = simple_close_filter();
+    assert_eq!(
+        filter.wake_when_in_position,
+        xvision_filters::WakeInPosition::Always
+    );
+    let strategy = build_strategy(ActivationMode::FilterGated, Some(filter));
+    let mut hook = FilterHook::new(&strategy).unwrap().expect("filter hook");
+
+    let n_in_position: u32 = 10;
+    let mut dispatches: u32 = 0;
+
+    let first = hook.evaluate(&bar(100.0), false);
+    if first.outcome.decision.is_active() {
+        dispatches += 1;
+    }
+    for _ in 0..n_in_position {
+        let eval = hook.evaluate(&bar(101.0), true);
+        if eval.outcome.decision.is_active() {
+            dispatches += 1;
+        }
+    }
+    // Always: Trip + every Hold bar dispatches.
+    assert_eq!(dispatches, 1 + n_in_position);
+
+    drop(pool);
+}
+
 #[test]
 fn active_filter_builds_fire_trigger_context() {
     let filter = fire_context_filter();

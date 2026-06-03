@@ -237,13 +237,45 @@ impl<'f> RuntimeFilter<'f> {
         }
 
         // Tree is true; figure out which suppression (if any) applies.
-        let suppressed_in_pos = matches!(
-            (ctx.in_position, self.filter.wake_when_in_position,),
-            (
-                true,
-                WakeInPosition::Never | WakeInPosition::OnInvalidationOrTargetOnly
-            )
-        );
+        //
+        // The transition (Trip = the bar the tree first becomes true after
+        // being false/Inactive; Hold = a subsequent sustained-true bar) is
+        // also computed below for the non-suppressed path, but we need it
+        // HERE because the in-position wake policy distinguishes the two:
+        //
+        //   * `Always`                     → wake on every active bar
+        //                                     (Trip AND Hold) while holding.
+        //   * `OnInvalidationOrTargetOnly` → wake only on a fresh Trip while
+        //                                     holding (a NEW signal — i.e. an
+        //                                     invalidation / target re-eval —
+        //                                     so the trader still gets a
+        //                                     chance to close); suppress the
+        //                                     sustained-true Hold bars that
+        //                                     would otherwise drive a redundant
+        //                                     LLM call on EVERY bar.
+        //   * `Never`                      → never wake while holding (entries
+        //                                     -only filter; exits rely on the
+        //                                     deterministic SL/TP).
+        //
+        // Before this fix `OnInvalidationOrTargetOnly` was treated as a full
+        // suppression (== `Never`) and the default was `Always`, so any
+        // strategy with a tree that stays true while holding (e.g. a level
+        // operator) invoked the trader LLM on EVERY in-position bar — the
+        // per-bar polling cost bug.
+        let prev_true = state.prev_tree.unwrap_or(false);
+        let in_position_transition = if prev_true {
+            Transition::Hold
+        } else {
+            Transition::Trip
+        };
+        let suppressed_in_pos = ctx.in_position
+            && match self.filter.wake_when_in_position {
+                WakeInPosition::Always => false,
+                WakeInPosition::Never => true,
+                WakeInPosition::OnInvalidationOrTargetOnly => {
+                    matches!(in_position_transition, Transition::Hold)
+                }
+            };
 
         if suppressed_in_pos {
             // We still tick cooldown so a position-open period doesn't
@@ -268,13 +300,10 @@ impl<'f> RuntimeFilter<'f> {
             };
         }
 
-        // Determine transition: Trip vs Hold.
-        let prev_true = state.prev_tree.unwrap_or(false);
-        let transition = if prev_true {
-            Transition::Hold
-        } else {
-            Transition::Trip
-        };
+        // Transition: Trip vs Hold. Already determined above (state.prev_tree
+        // is not mutated on the cooldown path that may have run between here
+        // and the suppression block), so reuse it.
+        let transition = in_position_transition;
         // Daily wakeup cap — checked on Trip only (a sustained Hold
         // doesn't consume a wakeup).
         if matches!(transition, Transition::Trip) {
@@ -1000,6 +1029,76 @@ mod tests {
             },
         );
         assert_eq!(o.decision, ActivationDecision::SuppressedInPosition);
+    }
+
+    #[test]
+    fn on_invalidation_only_wakes_on_trip_but_suppresses_in_position_hold() {
+        // Regression for the in-position per-bar trader-LLM cost bug. With
+        // `OnInvalidationOrTargetOnly`, a fresh Trip while holding still
+        // wakes (so the trader can close), but the sustained-true Hold bars
+        // that follow are suppressed instead of dispatching every bar.
+        let mut f = close_gt_threshold(50.0);
+        f.wake_when_in_position = WakeInPosition::OnInvalidationOrTargetOnly;
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+
+        // Out of position: tree false -> Inactive.
+        rt.evaluate(
+            &mut state,
+            &bar(40.0),
+            EvalContext { ts: ts(0), in_position: false },
+        );
+
+        // In position, tree becomes true -> fresh Trip -> NOT suppressed.
+        let trip = rt.evaluate(
+            &mut state,
+            &bar(60.0),
+            EvalContext { ts: ts(1), in_position: true },
+        );
+        assert!(
+            matches!(
+                trip.decision,
+                ActivationDecision::Active { transition: Transition::Trip }
+            ),
+            "fresh in-position trip must wake the trader so it can close, got {:?}",
+            trip.decision
+        );
+
+        // In position, tree stays true -> Hold -> suppressed (no per-bar LLM).
+        for min in 2..6 {
+            let hold = rt.evaluate(
+                &mut state,
+                &bar(65.0),
+                EvalContext { ts: ts(min), in_position: true },
+            );
+            assert_eq!(
+                hold.decision,
+                ActivationDecision::SuppressedInPosition,
+                "sustained-true in-position bar must be suppressed, not dispatched"
+            );
+        }
+    }
+
+    #[test]
+    fn on_invalidation_only_still_wakes_every_active_bar_out_of_position() {
+        // Out of position the policy is a no-op: both Trip and Hold are active.
+        let mut f = close_gt_threshold(50.0);
+        f.wake_when_in_position = WakeInPosition::OnInvalidationOrTargetOnly;
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext { ts: ts(0), in_position: false };
+
+        rt.evaluate(&mut state, &bar(40.0), ctx);
+        let trip = rt.evaluate(&mut state, &bar(60.0), ctx);
+        assert!(matches!(
+            trip.decision,
+            ActivationDecision::Active { transition: Transition::Trip }
+        ));
+        let hold = rt.evaluate(&mut state, &bar(65.0), ctx);
+        assert!(matches!(
+            hold.decision,
+            ActivationDecision::Active { transition: Transition::Hold }
+        ));
     }
 
     #[test]

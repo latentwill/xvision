@@ -156,9 +156,23 @@ pub enum ScanCadence {
 )]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// When the filter's condition tree is true while a position is open, this
+/// policy decides whether the trader LLM is woken. It only affects in-position
+/// behavior; out of position every active bar (Trip and Hold) wakes the trader.
 pub enum WakeInPosition {
+    /// Wake on every active bar while holding — both the first true bar (Trip)
+    /// and each subsequent sustained-true bar (Hold). This is the most
+    /// expensive policy: a tree that stays true (e.g. a level operator) drives
+    /// a trader-LLM call on EVERY bar the position is open. Opt-in only.
     Always,
+    /// Wake only on a FRESH trip while holding (the bar the tree first becomes
+    /// true after being false) — i.e. a new invalidation / target-style
+    /// signal — and suppress the sustained-true Hold bars in between. The
+    /// trader can still close on a fresh trip, so exits are preserved while
+    /// per-bar polling is eliminated. This is the default.
     OnInvalidationOrTargetOnly,
+    /// Never wake while holding. Entries-only filter; exits rely entirely on
+    /// the deterministic `risk.stop_loss_atr_multiple`.
     Never,
 }
 
@@ -997,7 +1011,13 @@ fn default_scan_cadence() -> ScanCadence {
 }
 
 fn default_wake_in_position() -> WakeInPosition {
-    WakeInPosition::Always
+    // Sane default: while a position is open only re-wake the trader on a
+    // FRESH filter trip (a new invalidation / target-style signal), not on
+    // every sustained-true bar. `Always` (the previous default) drove a
+    // redundant trader-LLM call on EVERY in-position bar — the per-bar
+    // polling cost bug. The trader can still close on a fresh trip, so
+    // exits are preserved without the deterministic SL/TP being involved.
+    WakeInPosition::OnInvalidationOrTargetOnly
 }
 
 fn default_agent_context_template() -> AgentContextTemplateId {
