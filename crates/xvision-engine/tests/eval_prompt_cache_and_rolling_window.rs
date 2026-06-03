@@ -16,8 +16,9 @@
 //!    once per `(provider, model)` pair via the
 //!    `OnceLock<Mutex<HashSet>>` dedup.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
+use tracing_subscriber::prelude::*;
 use xvision_engine::agent::llm::{
     anthropic_request_body, openai_compat_request_body, CacheControlMode, ContentBlock, LlmRequest, Message,
 };
@@ -27,12 +28,75 @@ use xvision_engine::agent::llm::{
 /// while they mutate + observe the var. Same pattern as
 /// `retention_janitor_spawn.rs::ENV_LOCK`.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+const OPENAI_CACHE_SKIP_MESSAGE: &str =
+    "prompt cache hint requested but OpenAI-compat has no provider-side equivalent; skipping";
 
-/// Build a request shaped like an eval pipeline call — non-empty
-/// system prompt and a first user message whose body contains a JSON
-/// dump with a `bar_history` array of `n` entries (matching the
-/// stable-prefix heuristic the dispatcher uses).
-fn eval_shaped_request(n_bars: usize, cache_control: Option<CacheControlMode>) -> LlmRequest {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CacheSkipLog {
+    provider: String,
+    model: String,
+    message: String,
+}
+
+#[derive(Clone, Default)]
+struct CapturedCacheSkipLogs {
+    entries: Arc<Mutex<Vec<CacheSkipLog>>>,
+}
+
+struct CacheSkipLayer {
+    captured: CapturedCacheSkipLogs,
+}
+
+impl<S> tracing_subscriber::Layer<S> for CacheSkipLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() != "xvision::llm" {
+            return;
+        }
+
+        let mut visitor = CacheSkipVisitor::default();
+        event.record(&mut visitor);
+        if visitor.message.as_deref() == Some(OPENAI_CACHE_SKIP_MESSAGE) {
+            self.captured.entries.lock().unwrap().push(CacheSkipLog {
+                provider: visitor.provider.unwrap_or_default(),
+                model: visitor.model.unwrap_or_default(),
+                message: visitor.message.unwrap_or_default(),
+            });
+        }
+    }
+}
+
+#[derive(Default)]
+struct CacheSkipVisitor {
+    provider: Option<String>,
+    model: Option<String>,
+    message: Option<String>,
+}
+
+impl tracing::field::Visit for CacheSkipVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        match field.name() {
+            "provider" => self.provider = Some(value.to_string()),
+            "model" => self.model = Some(value.to_string()),
+            "message" => self.message = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        let value = format!("{value:?}").trim_matches('"').to_string();
+        match field.name() {
+            "provider" => self.provider = Some(value),
+            "model" => self.model = Some(value),
+            "message" => self.message = Some(value),
+            _ => {}
+        }
+    }
+}
+
+fn eval_prompt_text(n_bars: usize) -> String {
     let bars: Vec<serde_json::Value> = (0..n_bars)
         .map(|i| serde_json::json!({"open": 100.0 + i as f64, "close": 101.0 + i as f64}))
         .collect();
@@ -42,16 +106,24 @@ fn eval_shaped_request(n_bars: usize, cache_control: Option<CacheControlMode>) -
             "bar_history": bars,
         },
     });
+    format!(
+        "Inputs:\n{}\n\nDecide.",
+        serde_json::to_string_pretty(&seed).unwrap()
+    )
+}
+
+/// Build a request shaped like an eval pipeline call — non-empty
+/// system prompt and a first user message whose body contains a JSON
+/// dump with a `bar_history` array of `n` entries (matching the
+/// stable-prefix heuristic the dispatcher uses).
+fn eval_shaped_request(n_bars: usize, cache_control: Option<CacheControlMode>) -> LlmRequest {
     LlmRequest {
         model: "claude-sonnet-4-6".into(),
         system_prompt: "You are a trader.".into(),
         messages: vec![Message {
             role: "user".into(),
             content: vec![ContentBlock::Text {
-                text: format!(
-                    "Inputs:\n{}\n\nDecide.",
-                    serde_json::to_string_pretty(&seed).unwrap()
-                ),
+                text: eval_prompt_text(n_bars),
             }],
         }],
         max_tokens: Some(1024),
@@ -60,6 +132,48 @@ fn eval_shaped_request(n_bars: usize, cache_control: Option<CacheControlMode>) -
         response_schema: None,
         cache_control,
     }
+}
+
+fn expected_anthropic_no_cache_body(n_bars: usize) -> serde_json::Value {
+    serde_json::json!({
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 1024,
+        "system": "You are a trader.",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": eval_prompt_text(n_bars),
+                    }
+                ]
+            }
+        ],
+    })
+}
+
+fn expected_openai_compat_body(n_bars: usize) -> serde_json::Value {
+    serde_json::json!({
+        "model": "claude-sonnet-4-6",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a trader.",
+            },
+            {
+                "role": "user",
+                "content": eval_prompt_text(n_bars),
+            }
+        ],
+        "max_tokens": 1024,
+    })
+}
+
+fn eval_shaped_request_for_model(model: String) -> LlmRequest {
+    let mut req = eval_shaped_request(10, None);
+    req.model = model;
+    req
 }
 
 #[test]
@@ -121,9 +235,10 @@ fn anthropic_body_omits_cache_control_without_env() {
     // Without env, the system block stays a plain string and no
     // `cache_control` keys appear anywhere — byte-identical to
     // today's wire shape.
-    assert!(
-        body.get("system").map(|v| v.is_string()).unwrap_or(false),
-        "no-env path keeps system as a plain string"
+    assert_eq!(
+        body,
+        expected_anthropic_no_cache_body(10),
+        "no-env Anthropic body must match the legacy wire shape exactly"
     );
     let serialized = serde_json::to_string(&body).unwrap();
     assert!(
@@ -159,10 +274,24 @@ fn openai_compat_body_never_emits_cache_control_even_with_env_and_stable_prefix(
     // the wire body is byte-identical with or without the hint. The
     // key MUST be absent (not `null`).
     let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    std::env::set_var("XVN_PROMPT_CACHE", "1");
-
     let req = eval_shaped_request(10, None);
+
+    std::env::remove_var("XVN_PROMPT_CACHE");
+    let env_off_body = openai_compat_request_body(&req);
+
+    std::env::set_var("XVN_PROMPT_CACHE", "1");
     let body = openai_compat_request_body(&req);
+
+    assert_eq!(
+        serde_json::to_string(&body).unwrap(),
+        serde_json::to_string(&env_off_body).unwrap(),
+        "OpenAI-compat env-on cache hint path must be byte-identical to env-off"
+    );
+    assert_eq!(
+        body,
+        expected_openai_compat_body(10),
+        "OpenAI-compat body must match the legacy wire shape exactly"
+    );
 
     assert!(
         body.get("cache_control").is_none(),
@@ -200,6 +329,53 @@ fn openai_compat_body_byte_identical_with_and_without_explicit_cache_control() {
 }
 
 #[test]
+fn openai_compat_cache_skip_log_dedups_once_per_provider_model_pair() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    std::env::set_var("XVN_PROMPT_CACHE", "1");
+
+    let repeated_model = format!("cache-skip-dedup-a-{}-{}", std::process::id(), line!());
+    let distinct_model = format!("cache-skip-dedup-b-{}-{}", std::process::id(), line!());
+    let repeated_req = eval_shaped_request_for_model(repeated_model.clone());
+    let distinct_req = eval_shaped_request_for_model(distinct_model.clone());
+    let captured = CapturedCacheSkipLogs::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::LevelFilter::DEBUG)
+        .with(CacheSkipLayer {
+            captured: captured.clone(),
+        });
+    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+    let _ = openai_compat_request_body(&repeated_req);
+    let _ = openai_compat_request_body(&repeated_req);
+    let _ = openai_compat_request_body(&distinct_req);
+
+    let entries = captured.entries.lock().unwrap().clone();
+    assert_eq!(
+        entries.len(),
+        2,
+        "skip log must fire once for the repeated model and once for the distinct model: {entries:?}"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| entry.provider == "openai-compat" && entry.model == repeated_model)
+            .count(),
+        1,
+        "repeated provider/model pair must log exactly once"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| entry.provider == "openai-compat" && entry.model == distinct_model)
+            .count(),
+        1,
+        "distinct provider/model pair must log once independently"
+    );
+
+    std::env::remove_var("XVN_PROMPT_CACHE");
+}
+
+#[test]
 fn no_regression_when_limit_none_and_env_unset_byte_identical_today_wire() {
     // When env is off, the Anthropic body's `system` field stays a plain
     // string and no `cache_control` keys appear anywhere. The OpenAI-compat
@@ -208,14 +384,17 @@ fn no_regression_when_limit_none_and_env_unset_byte_identical_today_wire() {
     std::env::remove_var("XVN_PROMPT_CACHE");
     let req = eval_shaped_request(10, None);
 
-    // Anthropic: system stays a string.
     let anth = anthropic_request_body(&req);
-    assert!(
-        anth.get("system").map(|v| v.is_string()).unwrap_or(false),
-        "no-env Anthropic body keeps system as a plain string"
+    assert_eq!(
+        anth,
+        expected_anthropic_no_cache_body(10),
+        "no-env Anthropic body must match the legacy wire shape exactly"
     );
 
-    // OpenAI-compat: no cache_control key.
     let oai = openai_compat_request_body(&req);
-    assert!(oai.get("cache_control").is_none());
+    assert_eq!(
+        oai,
+        expected_openai_compat_body(10),
+        "OpenAI-compat body must match the legacy wire shape exactly"
+    );
 }

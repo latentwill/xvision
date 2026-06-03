@@ -324,6 +324,18 @@ pub(crate) mod tests_common {
             take_profit_pct,
             trader_summary: "Test decision for risk layer.".into(),
             asset: AssetSymbol::Btc,
+            trailing_stop_pct: None,
+            breakeven_trigger_pct: None,
+            breakeven_offset_pct: None,
+            fade_sl_bars: None,
+            fade_sl_start_pct: None,
+            fade_sl_end_pct: None,
+            max_bars_held: None,
+            sl_atr_mult: None,
+            tp_atr_mult: None,
+            tp1_pct: None,
+            tp1_close_fraction: None,
+            tp2_pct: None,
         }
     }
 
@@ -538,6 +550,21 @@ mod integration {
                 }
             ),
             "expected Vetoed(PositionTooLarge), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn default_layer_allows_oversized_close_to_reduce_exposure() {
+        use tests_common::{make_decision, portfolio_with_btc};
+
+        let layer = layer_from_files();
+        let mut decision = make_decision(Action::Close, Direction::Flat, 2000, 2.0, 5.0);
+        decision.size_bps = 2500; // closing size is not a new exposure request
+        let portfolio = portfolio_with_btc(2500);
+        let result = layer.evaluate(decision, &portfolio);
+        assert!(
+            matches!(result, RiskDecision::Approved { .. }),
+            "close decisions must not be vetoed by max position size; got {result:?}"
         );
     }
 

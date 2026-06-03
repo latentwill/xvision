@@ -22,6 +22,137 @@ async fn boot() -> (TestServer, TempDir) {
     (server, tmp)
 }
 
+async fn seed_launchable_strategy(tmp: &TempDir, strategy_id: &str) {
+    use xvision_engine::agents::model::InputsPolicy;
+    use xvision_engine::agents::store::{AgentStore, NewAgent};
+    use xvision_engine::agents::{default_capabilities, AgentSlot};
+    use xvision_engine::strategies::manifest::PublicManifest;
+    use xvision_engine::strategies::risk::RiskPreset;
+    use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
+    use xvision_engine::strategies::{AgentRef, Strategy};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local-candle preflight listener");
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+
+    let config_dir = tmp.path().join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("default.toml"),
+        format!(
+            r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "local"
+kind = "local-candle"
+base_url = "http://{addr}"
+api_key_env = ""
+enabled_models = ["model-a"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#,
+        ),
+    )
+    .unwrap();
+
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
+        .await
+        .unwrap();
+    let agent_id = AgentStore::new(pool)
+        .create(NewAgent {
+            name: format!("{strategy_id}-trader"),
+            description: "retry acceptance fixture trader".into(),
+            tags: vec!["fixture".into()],
+            slots: vec![AgentSlot {
+                name: "trader".into(),
+                provider: "local".into(),
+                model: "model-a".into(),
+                system_prompt: "Return a hold decision.".into(),
+                skill_ids: vec![],
+                max_tokens: Some(4096),
+                max_wall_ms: None,
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
+                capabilities: default_capabilities(),
+                delta_briefing: None,
+            }],
+            scope_strategy_id: None,
+        })
+        .await
+        .unwrap();
+
+    let strategy = Strategy {
+        manifest: PublicManifest {
+            id: strategy_id.into(),
+            display_name: "Retry Acceptance Fixture".into(),
+            plain_summary: "seeded for retry acceptance coverage".into(),
+            creator: "@dashboard-test".into(),
+            template: "mean_reversion".into(),
+            regime_fit: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            attested_with: vec![],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+            min_warmup_bars: None,
+            color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
+        },
+        hypothesis: None,
+        agents: vec![AgentRef {
+            agent_id,
+            role: "trader".into(),
+            activates: None,
+        }],
+        pipeline: Default::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+        activation_mode: xvision_filters::ActivationMode::EveryBar,
+        filter: None,
+        acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
+    };
+    FilesystemStore::new(tmp.path().join("strategies"))
+        .save(&strategy)
+        .await
+        .unwrap();
+}
+
 /// `Completed` source + a queued sibling → coalesce with `202`. The
 /// route returns the sibling's id, no new row is persisted. Pins the
 /// "Rerun" semantics: a double-click on Rerun does NOT fan out.
@@ -72,6 +203,96 @@ async fn retry_returns_202_for_completed_source_with_queued_sibling() {
         items, 2,
         "expected 2 runs (completed source + sibling), got {items}"
     );
+}
+
+/// `Completed` source with no in-flight sibling -> persist a fresh
+/// queued retry run. This covers the non-coalescing success path.
+#[tokio::test]
+async fn retry_creates_new_run_for_completed_source_without_sibling() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode, RunStatus},
+        store::RunStore,
+    };
+
+    let (server, tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
+        .await
+        .unwrap();
+    let store = RunStore::new(pool);
+    seed_launchable_strategy(&tmp, "agent-x").await;
+
+    let source = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let source_id = source.id.clone();
+    store.create(&source).await.unwrap();
+    store
+        .update_status(&source_id, RunStatus::Completed, None)
+        .await
+        .unwrap();
+
+    let response = server.post(&format!("/api/eval/runs/{source_id}/retry")).await;
+    response.assert_status(StatusCode::ACCEPTED);
+    let body: serde_json::Value = response.json();
+    let retry_id = body["summary"]["id"].as_str().unwrap();
+    assert_ne!(retry_id, source_id);
+    assert_eq!(body["summary"]["status"], "queued");
+
+    let list = server.get("/api/eval/runs").await;
+    let items = list.json::<serde_json::Value>()["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        items.len(),
+        2,
+        "expected completed source plus fresh retry run, got {items:#?}"
+    );
+    assert!(items.iter().any(|item| item["id"] == source_id));
+    assert!(items.iter().any(|item| item["id"] == retry_id));
+}
+
+/// `Cancelled` source is retry-eligible and, without an in-flight
+/// sibling, creates a fresh queued run.
+#[tokio::test]
+async fn retry_creates_new_run_for_cancelled_source_without_sibling() {
+    use xvision_engine::eval::{
+        run::{Run, RunMode, RunStatus},
+        store::RunStore,
+    };
+
+    let (server, tmp) = boot().await;
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
+        .await
+        .unwrap();
+    let store = RunStore::new(pool);
+    seed_launchable_strategy(&tmp, "agent-x").await;
+
+    let source = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
+    let source_id = source.id.clone();
+    store.create(&source).await.unwrap();
+    store
+        .update_status(&source_id, RunStatus::Cancelled, Some("operator cancelled"))
+        .await
+        .unwrap();
+
+    let response = server.post(&format!("/api/eval/runs/{source_id}/retry")).await;
+    response.assert_status(StatusCode::ACCEPTED);
+    let body: serde_json::Value = response.json();
+    let retry_id = body["summary"]["id"].as_str().unwrap();
+    assert_ne!(retry_id, source_id);
+    assert_eq!(body["summary"]["status"], "queued");
+
+    let list = server.get("/api/eval/runs").await;
+    let items = list.json::<serde_json::Value>()["items"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        items.len(),
+        2,
+        "expected cancelled source plus fresh retry run, got {items:#?}"
+    );
+    assert!(items.iter().any(|item| item["id"] == source_id));
+    assert!(items.iter().any(|item| item["id"] == retry_id));
 }
 
 /// `Queued` source → `400 validation`. The body's `code` field is

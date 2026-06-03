@@ -13,13 +13,13 @@ use crate::api::{
     audit::{self, Outcome},
     search as api_search, ApiContext, ApiError, ApiResult,
 };
-use crate::eval::store::{ListFilter as RunListFilter, RunStore};
 use crate::authoring::{
     self, AddAgentRefRequest, CreateStrategyOut, CreateStrategyReq, RemoveAgentRefRequest,
     RenameAgentRoleRequest, SetFilterReq, SetPipelineRequest, SetRiskConfigOut, SetRiskConfigReq,
     SetStrategyFilterOut, SetStrategyFilterReq, UpdateManifestOut, UpdateManifestReq, UpdateSlotOut,
     UpdateSlotReq, ValidateDraftOut,
 };
+use crate::eval::store::{ListFilter as RunListFilter, RunStore};
 use crate::strategies::{
     store::{
         apply_metadata_patch, strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
@@ -2303,9 +2303,15 @@ mod tests {
         use crate::eval::store::RunStore;
 
         let (ctx, _d) = fresh_ctx().await;
-        let created = create_strategy(&ctx, CreateStrategyReq { name: "x".into(), creator: None })
-            .await
-            .unwrap();
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
         let run = completed_run_for(&created.id);
         RunStore::new(ctx.db.clone()).create(&run).await.unwrap();
 
@@ -2321,9 +2327,15 @@ mod tests {
         use crate::eval::store::RunStore;
 
         let (ctx, _d) = fresh_ctx().await;
-        let created = create_strategy(&ctx, CreateStrategyReq { name: "x".into(), creator: None })
-            .await
-            .unwrap();
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
         let run = completed_run_for(&created.id);
         RunStore::new(ctx.db.clone()).create(&run).await.unwrap();
 
@@ -2334,9 +2346,15 @@ mod tests {
     #[tokio::test]
     async fn archive_strategy_moves_file_and_removes_from_active() {
         let (ctx, _d) = fresh_ctx().await;
-        let created = create_strategy(&ctx, CreateStrategyReq { name: "x".into(), creator: None })
-            .await
-            .unwrap();
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
 
         archive_strategy(&ctx, &created.id).await.unwrap();
 

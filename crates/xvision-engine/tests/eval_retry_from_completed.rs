@@ -22,9 +22,19 @@
 //!    just discards lineage.
 
 use sqlx::sqlite::SqlitePoolOptions;
+use xvision_data::fixtures::ensure_test_fixture;
+use xvision_engine::agents::{default_capabilities, AgentSlot, AgentStore, InputsPolicy, NewAgent};
 use xvision_engine::api::eval::{self, ListRunsRequest, RetryReason};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
+use xvision_engine::strategies::manifest::PublicManifest;
+use xvision_engine::strategies::risk::RiskPreset;
+use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
+use xvision_engine::strategies::{ActivationMode, AgentRef, Strategy};
+
+mod support;
+
+const FLASH_SCENARIO_ID: &str = "flash-crash-2024-08";
 
 async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -52,6 +62,20 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -91,6 +115,142 @@ async fn seed_sibling(ctx: &ApiContext, source: &Run, sibling_status: RunStatus)
             .unwrap();
     }
     store.get(&sibling_id).await.unwrap()
+}
+
+async fn seed_launchable_inline_strategy(ctx: &ApiContext, strategy_id: &str) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local-candle preflight listener");
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { while listener.accept().await.is_ok() {} });
+
+    let config_dir = ctx.xvn_home.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("default.toml"),
+        format!(
+            r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "local"
+kind = "local-candle"
+base_url = "http://{addr}"
+api_key_env = ""
+enabled_models = ["model-a"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#,
+        ),
+    )
+    .unwrap();
+
+    let agent_id = AgentStore::new(ctx.db.clone())
+        .create(NewAgent {
+            name: format!("{strategy_id}-trader"),
+            description: "completed rerun fresh-run fixture trader".into(),
+            tags: vec!["fixture".into()],
+            slots: vec![AgentSlot {
+                name: "trader".into(),
+                provider: "local".into(),
+                model: "model-a".into(),
+                system_prompt: "Return a conservative hold decision for the supplied BTC/USD backtest context. Explain that this fixture is deterministic and avoid placing any order unless the input explicitly requires it.".into(),
+                skill_ids: vec![],
+                max_tokens: Some(4096),
+                max_wall_ms: None,
+                temperature: None,
+                prompt_version: String::new(),
+                inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: xvision_memory::types::MemoryMode::default(),
+                noop_skip: None,
+                capabilities: default_capabilities(),
+                delta_briefing: None,
+            }],
+            scope_strategy_id: None,
+        })
+        .await
+        .unwrap();
+
+    let strategy = Strategy {
+        manifest: PublicManifest {
+            id: strategy_id.into(),
+            display_name: "Retry Fresh Run Fixture".into(),
+            plain_summary: "seeded for completed rerun creation coverage".into(),
+            creator: "@retry-test".into(),
+            template: "mean_reversion".into(),
+            regime_fit: vec![],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            attested_with: vec![],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+            min_warmup_bars: None,
+            color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
+        },
+        hypothesis: None,
+        agents: vec![AgentRef {
+            agent_id,
+            role: "trader".into(),
+            activates: None,
+        }],
+        pipeline: Default::default(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({}),
+        activation_mode: ActivationMode::EveryBar,
+        filter: None,
+        acknowledge_no_filter: false,
+        decision_mode: Default::default(),
+        mechanistic_config: None,
+    };
+
+    FilesystemStore::new(ctx.xvn_home.join("strategies"))
+        .save(&strategy)
+        .await
+        .unwrap();
+}
+
+async fn seed_completed_source_for_launch(ctx: &ApiContext, strategy_id: &str) -> Run {
+    let store = RunStore::new(ctx.db.clone());
+    let mut source = Run::new_queued(strategy_id.into(), FLASH_SCENARIO_ID.into(), RunMode::Backtest);
+    source.params_override = Some(serde_json::json!({
+        "broker": { "slippage_bps": 3.0 }
+    }));
+    let source_id = source.id.clone();
+    store.create(&source).await.unwrap();
+    store
+        .update_status(&source_id, RunStatus::Completed, None)
+        .await
+        .unwrap();
+    store.get(&source_id).await.unwrap()
 }
 
 /// Source `Completed` → accepted, classified `ManualRerun`, lineage
@@ -230,6 +390,45 @@ async fn rerun_of_completed_coalesces_onto_running_sibling() {
     assert_eq!(outcome.detail.summary.id, sibling.id);
     assert_eq!(outcome.reason, RetryReason::ManualRerun);
     assert_eq!(outcome.detail.summary.status, "running");
+}
+
+/// Completed source + no in-flight sibling + launchable strategy/scenario
+/// dependencies → start a fresh queued run with ManualRerun lineage.
+#[tokio::test]
+async fn rerun_of_completed_without_sibling_creates_fresh_run() {
+    ensure_test_fixture("scenario-flash-crash-2024-08").unwrap();
+    let (ctx, _d) = support::api_eval_run_context().await;
+    let strategy_id = "retry-fresh-run-strategy";
+    seed_launchable_inline_strategy(&ctx, strategy_id).await;
+    let source = seed_completed_source_for_launch(&ctx, strategy_id).await;
+
+    let outcome = eval::retry_with_outcome(&ctx, &source.id)
+        .await
+        .expect("launchable completed source without sibling must create a fresh rerun");
+
+    assert_eq!(outcome.reason, RetryReason::ManualRerun);
+    assert_eq!(outcome.source_run_id, source.id);
+    assert_ne!(
+        outcome.detail.summary.id, source.id,
+        "fresh rerun must get a distinct eval_run id"
+    );
+    assert_eq!(outcome.detail.summary.status, "queued");
+    assert_eq!(outcome.detail.summary.agent_id, source.agent_id);
+    assert_eq!(outcome.detail.summary.scenario_id, source.scenario_id);
+
+    let store = RunStore::new(ctx.db.clone());
+    let fresh = store.get(&outcome.detail.summary.id).await.unwrap();
+    assert_eq!(fresh.agent_id, source.agent_id);
+    assert_eq!(fresh.scenario_id, source.scenario_id);
+    assert_eq!(fresh.mode, source.mode);
+    assert_eq!(fresh.params_override, source.params_override);
+
+    let runs = eval::list(&ctx, ListRunsRequest::default()).await.unwrap();
+    assert_eq!(
+        runs.len(),
+        2,
+        "fresh rerun should create exactly one new row alongside the completed source"
+    );
 }
 
 /// When no in-flight sibling exists, the rerun falls through to

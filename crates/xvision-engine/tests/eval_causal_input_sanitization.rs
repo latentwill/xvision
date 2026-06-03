@@ -26,8 +26,11 @@
 //! tests are co-located in `agents::store::tests` (run with
 //! `cargo test -p xvision-engine agents::store`).
 
+use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use xvision_core::market::Ohlcv;
 use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
+use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput};
 
 const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_agent_slot_prompt_version.sql");
@@ -161,21 +164,38 @@ async fn migration_020_up_down_up_preserves_rows() {
 // `backtest::tests` would also need updating, so this is intentional
 // double-pinning.
 
-fn ohlcv_value(
-    timestamp: &str,
-    open: f64,
-    high: f64,
-    low: f64,
-    close: f64,
-    volume: f64,
-) -> serde_json::Value {
-    serde_json::json!({
-        "timestamp": timestamp,
-        "open": open,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
+fn ohlcv(idx: i64, open: f64, high: f64, low: f64, close: f64, volume: f64) -> Ohlcv {
+    Ohlcv {
+        timestamp: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::hours(idx),
+        open,
+        high,
+        low,
+        close,
+        volume,
+    }
+}
+
+fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
+    let history = vec![
+        ohlcv(0, 100.0, 110.0, 90.0, 105.0, 1_000.0),
+        ohlcv(1, 101.0, 111.0, 91.0, 106.0, 1_100.0),
+        ohlcv(2, 102.0, 112.0, 92.0, 107.0, 1_200.0),
+    ];
+    let history_refs = history.iter().collect::<Vec<_>>();
+    let current = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
+    let active_assets = vec!["BTC/USD".to_string()];
+    build_decision_seed(DecisionSeedInput {
+        decision_idx: 0,
+        asset: "BTC/USD",
+        active_assets: &active_assets,
+        bar: &current,
+        next_bar_open: 109.0,
+        reference_price_source: "eval_bar.close",
+        position_size: 0.0,
+        equity: 10_000.0,
+        mark_price: current.close,
+        history_slice: &history_refs,
+        inputs_policy: policy,
     })
 }
 
@@ -186,7 +206,8 @@ fn raw_per_bar_shape_is_byte_identical_to_pre_f6() {
     // — field order matters for snapshot stability but not for the
     // wire contract; we pin by field presence + value here so the
     // test fails for meaningful drift only.
-    let v = ohlcv_value("2026-01-01T00:00:00Z", 100.0, 110.0, 90.0, 105.0, 1234.5);
+    let seed = production_seed_shape(InputsPolicy::Raw);
+    let v = &seed["market_data"]["current_bar"];
     let obj = v.as_object().unwrap();
     for k in ["timestamp", "open", "high", "low", "close", "volume"] {
         assert!(
@@ -205,21 +226,13 @@ fn causal_per_bar_shape_drops_timestamp_and_adds_bar_index() {
     // property we're pinning. `bar_index` starts at 0 = oldest bar
     // in the slice and increases monotonically with no gaps.
     //
-    // We construct the shape directly here rather than calling into
-    // the executor's private helpers; the executor-side test in
-    // `paper::tests` is the integration anchor.
-    let entries: Vec<serde_json::Value> = (0..3)
-        .map(|i| {
-            serde_json::json!({
-                "bar_index": i,
-                "open": 100.0 + i as f64,
-                "high": 110.0 + i as f64,
-                "low": 90.0 + i as f64,
-                "close": 105.0 + i as f64,
-                "volume": 1000.0,
-            })
-        })
-        .collect();
+    let seed = production_seed_shape(InputsPolicy::Causal);
+    let current_bar = seed["market_data"]["current_bar"].as_object().unwrap();
+    assert!(
+        !current_bar.contains_key("timestamp"),
+        "Causal current_bar must NOT carry `timestamp` (F-6 leak)",
+    );
+    let entries = seed["market_data"]["bar_history"].as_array().unwrap();
     for (i, entry) in entries.iter().enumerate() {
         let obj = entry.as_object().unwrap();
         assert!(
@@ -236,42 +249,9 @@ fn causal_per_bar_shape_drops_timestamp_and_adds_bar_index() {
 
 // ----- Top-level seed shape under each policy ------------------------
 //
-// The harness's top-level seed is constructed in
-// `eval::executor::{paper,backtest}::run_inner`. The shape is
-// internal but visible to the trader LLM via the
-// `assistant.user_message` body in the run_pipeline call. The
-// contract we pin: under `Causal`, `decision_index` is NOT a
-// top-level key; under `Raw`/`Oracle`, it IS.
-//
-// We replicate the construction here because the live code path
-// pulls in async + broker mocks that the unit test layer doesn't
-// need.
-
-fn top_level_seed_shape(policy: InputsPolicy) -> serde_json::Value {
-    // This is the structural skeleton the executors produce — see
-    // `paper::paper-mode-executor-deleted::run_inner` and
-    // `backtest::Executor::run_inner` for the live builders.
-    // Test mirrors the shape so a refactor that accidentally
-    // re-introduces `decision_index` under Causal is caught.
-    match policy {
-        InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
-            "decision_index": 0,
-            "asset": "BTC/USD",
-            "timestamp": "2026-01-01T00:00:00Z",
-            "market_data": {},
-            "portfolio_state": {},
-        }),
-        InputsPolicy::Causal => serde_json::json!({
-            "asset": "BTC/USD",
-            "market_data": {},
-            "portfolio_state": {},
-        }),
-    }
-}
-
 #[test]
 fn raw_top_level_seed_carries_decision_index_and_timestamp() {
-    let seed = top_level_seed_shape(InputsPolicy::Raw);
+    let seed = production_seed_shape(InputsPolicy::Raw);
     let obj = seed.as_object().unwrap();
     assert!(
         obj.contains_key("decision_index"),
@@ -286,7 +266,7 @@ fn raw_top_level_seed_carries_decision_index_and_timestamp() {
 #[test]
 fn oracle_top_level_seed_carries_decision_index_and_timestamp() {
     // Oracle is a runtime no-op: byte-identical to Raw.
-    let seed = top_level_seed_shape(InputsPolicy::Oracle);
+    let seed = production_seed_shape(InputsPolicy::Oracle);
     let obj = seed.as_object().unwrap();
     assert!(obj.contains_key("decision_index"));
     assert!(obj.contains_key("timestamp"));
@@ -298,7 +278,7 @@ fn causal_top_level_seed_strips_decision_index_and_timestamp() {
     // sees `decision_index` or top-level `timestamp`. The v4 causal
     // prompts explicitly say "Do not use timestamp or
     // decision_index" — we make it impossible.
-    let seed = top_level_seed_shape(InputsPolicy::Causal);
+    let seed = production_seed_shape(InputsPolicy::Causal);
     let obj = seed.as_object().unwrap();
     assert!(
         !obj.contains_key("decision_index"),

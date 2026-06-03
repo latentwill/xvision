@@ -20,28 +20,6 @@ use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use xvision_engine::eval::finalize_writer::{FinalizeError, FinalizeWriter};
 use xvision_engine::eval::{Run, RunMode, RunStore};
 
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
-        std::env::set_var(key, value);
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match &self.previous {
-            Some(value) => std::env::set_var(self.key, value),
-            None => std::env::remove_var(self.key),
-        }
-    }
-}
-
 async fn pool_with_eval_migration() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -61,6 +39,20 @@ async fn pool_with_eval_migration() -> SqlitePool {
         .await
         .unwrap();
     sqlx::query(include_str!("../migrations/027_run_bars_manifest.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
         .unwrap();
@@ -160,20 +152,14 @@ async fn oneshot_surfaces_db_error_when_pool_closed() {
 }
 
 /// Filling the channel above its bound makes additional `send_*` calls
-/// return `QueueFull` instead of blocking. We force the bound to 1 via
-/// `XVN_FINALIZE_WRITER_CAP`, then fire two sends without ever yielding
-/// to the receiver so the first one occupies the slot and the second
-/// trips `try_send`.
+/// return `QueueFull` instead of blocking. We start the writer with an
+/// explicit capacity of 1, then fire two sends without ever yielding to
+/// the receiver so the first one occupies the slot and the second trips
+/// `try_send`.
 #[tokio::test(flavor = "current_thread")]
 async fn queue_full_path_returns_typed_error() {
-    // SAFETY: tests run serially in this binary because we mutate a
-    // process-global env var. Cargo-test default is one binary per
-    // file, and inside a binary tokio::test functions run
-    // sequentially.
-    let _cap_guard = EnvVarGuard::set("XVN_FINALIZE_WRITER_CAP", "1");
-
     let pool = pool_with_eval_migration().await;
-    let writer = FinalizeWriter::start(pool.clone());
+    let writer = FinalizeWriter::start_with_capacity_for_test(pool.clone(), 1);
 
     // Hold the receiver task off the runqueue: in `current_thread`
     // flavor we don't `.await` anything else between the two sends, so

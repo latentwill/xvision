@@ -39,6 +39,20 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/016_eval_reviews.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -258,6 +272,27 @@ async fn sweep_skips_completed_and_failed_rows() {
     .await
     .unwrap();
 
+    // A failed row with an ancient started_at and preexisting terminal
+    // metadata — must not be reselected or rewritten by the watchdog.
+    let failed_id = "01FAILED0000000000000000000000";
+    let failed_error = "provider returned schema-invalid response";
+    let failed_completed_at = "2020-01-02T01:00:00+00:00";
+    sqlx::query(
+        "INSERT INTO eval_runs \
+         (id, agent_id, scenario_id, mode, status, started_at, completed_at, error) \
+         VALUES (?, ?, ?, ?, 'failed', ?, ?, ?)",
+    )
+    .bind(failed_id)
+    .bind("strategy-test")
+    .bind("scenario-test")
+    .bind("backtest")
+    .bind("2020-01-02T00:00:00+00:00")
+    .bind(failed_completed_at)
+    .bind(failed_error)
+    .execute(&pool)
+    .await
+    .unwrap();
+
     // And a queued row — also not in scope for the watchdog (the
     // contract scopes to `status='running'` only).
     let queued = Run::new_queued("strategy-test".into(), "scenario-test".into(), RunMode::Backtest);
@@ -271,6 +306,14 @@ async fn sweep_skips_completed_and_failed_rows() {
     assert_eq!(
         store.get(completed_id).await.unwrap().status,
         RunStatus::Completed
+    );
+    let failed = store.get(failed_id).await.unwrap();
+    assert_eq!(failed.status, RunStatus::Failed);
+    assert_eq!(failed.error.as_deref(), Some(failed_error));
+    assert_eq!(
+        failed.completed_at.as_ref().map(chrono::DateTime::to_rfc3339),
+        Some(failed_completed_at.to_string()),
+        "failed row completed_at must be preserved"
     );
     assert_eq!(store.get(&queued.id).await.unwrap().status, RunStatus::Queued);
 }

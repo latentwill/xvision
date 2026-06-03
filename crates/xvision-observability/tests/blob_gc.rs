@@ -107,6 +107,20 @@ async fn insert_checkpoint(
     .unwrap();
 }
 
+async fn insert_sandbox_result(pool: &SqlitePool, span_id: &str, stdout_ref: &str, stderr_ref: &str) {
+    sqlx::query(
+        "INSERT INTO sandbox_results \
+         (span_id, command, stdout_ref, stderr_ref, exit_code) \
+         VALUES (?, 'echo test', ?, ?, 0)",
+    )
+    .bind(span_id)
+    .bind(stdout_ref)
+    .bind(stderr_ref)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Age a blob file by backdating its mtime far enough to clear the guard.
 fn backdate(path: &std::path::Path, age_secs: u64) {
     use std::time::{Duration, SystemTime};
@@ -220,19 +234,23 @@ async fn gc_mixed_scenario_counts() {
     let protected = store.write(b"protected-full-debug-model").unwrap();
     let protected_tool = store.write(b"protected-full-debug-tool").unwrap();
     let protected_checkpoint = store.write(b"protected-full-debug-checkpoint").unwrap();
+    let protected_sandbox = store.write(b"protected-full-debug-sandbox").unwrap();
     let orphan = store.write(b"fully-orphaned").unwrap();
     let hash_only = store.write(b"hash-only-ref").unwrap();
     let hash_only_tool = store.write(b"hash-only-tool-ref").unwrap();
     let hash_only_checkpoint = store.write(b"hash-only-checkpoint-ref").unwrap();
+    let hash_only_sandbox = store.write(b"hash-only-sandbox-ref").unwrap();
 
     for sha in [
         protected.as_str(),
         protected_tool.as_str(),
         protected_checkpoint.as_str(),
+        protected_sandbox.as_str(),
         orphan.as_str(),
         hash_only.as_str(),
         hash_only_tool.as_str(),
         hash_only_checkpoint.as_str(),
+        hash_only_sandbox.as_str(),
     ] {
         backdate(&tmp.path().join(sha), 120);
     }
@@ -259,6 +277,14 @@ async fn gc_mixed_scenario_counts() {
         protected_checkpoint.as_str(),
     )
     .await;
+    insert_span(&pool, "span_sandbox_p", "run_p").await;
+    insert_sandbox_result(
+        &pool,
+        "span_sandbox_p",
+        protected_sandbox.as_str(),
+        protected_sandbox.as_str(),
+    )
+    .await;
 
     // hash_only run references blobs through all tables; these are logically orphaned.
     insert_run(&pool, "run_h", "hash_only").await;
@@ -282,23 +308,33 @@ async fn gc_mixed_scenario_counts() {
         hash_only_checkpoint.as_str(),
     )
     .await;
+    insert_span(&pool, "span_sandbox_h", "run_h").await;
+    insert_sandbox_result(
+        &pool,
+        "span_sandbox_h",
+        hash_only_sandbox.as_str(),
+        hash_only_sandbox.as_str(),
+    )
+    .await;
 
     // `orphan` has no DB rows.
 
     let report = gc_orphaned_blobs(&pool, &store, 0).await.unwrap();
 
-    assert_eq!(report.scanned, 7);
-    assert_eq!(report.deleted, 4, "orphan + hash_only refs deleted");
-    assert_eq!(report.retained_referenced, 3, "full_debug refs kept");
+    assert_eq!(report.scanned, 9);
+    assert_eq!(report.deleted, 5, "orphan + hash_only refs deleted");
+    assert_eq!(report.retained_referenced, 4, "full_debug refs kept");
     assert_eq!(report.errors, Vec::<String>::new());
 
     assert!(store.exists(&protected));
     assert!(store.exists(&protected_tool));
     assert!(store.exists(&protected_checkpoint));
+    assert!(store.exists(&protected_sandbox));
     assert!(!store.exists(&orphan));
     assert!(!store.exists(&hash_only));
     assert!(!store.exists(&hash_only_tool));
     assert!(!store.exists(&hash_only_checkpoint));
+    assert!(!store.exists(&hash_only_sandbox));
 }
 
 // ---------------------------------------------------------------------------

@@ -91,6 +91,42 @@ async fn get_run_caches_within_ttl_for_queued_runs() {
     );
 }
 
+#[tokio::test]
+async fn get_run_bypasses_cached_non_terminal_when_run_fails() {
+    let (server, state, _tmp) = boot().await;
+    let store = RunStore::new(state.pool.clone());
+
+    let mut run = Run::new_queued("agent-x".into(), SCENARIO_ID.into(), RunMode::Backtest);
+    run.status = RunStatus::Running;
+    store.create(&run).await.unwrap();
+
+    let first = server.get(&format!("/api/eval/runs/{}", run.id)).await;
+    first.assert_status(StatusCode::OK);
+    let first_body: serde_json::Value = first.json();
+    assert_eq!(first_body["summary"]["status"], "running");
+    assert!(
+        state.eval_run_cache_get(&run.id).is_some(),
+        "running status should populate the cache"
+    );
+
+    store
+        .update_status(&run.id, RunStatus::Failed, Some("fixture failure"))
+        .await
+        .unwrap();
+
+    let failed = server.get(&format!("/api/eval/runs/{}", run.id)).await;
+    failed.assert_status(StatusCode::OK);
+    let failed_body: serde_json::Value = failed.json();
+    assert_eq!(
+        failed_body["summary"]["status"], "failed",
+        "failed transition must bypass the running cache entry"
+    );
+    assert!(
+        state.eval_run_cache_get(&run.id).is_none(),
+        "terminal failed status should evict the cached non-terminal body"
+    );
+}
+
 /// Terminal-status runs (`completed | failed | cancelled`) are never
 /// inserted into the cache. We assert this directly via the state
 /// accessor — after a `GET` returns a `completed` body, the cache lookup

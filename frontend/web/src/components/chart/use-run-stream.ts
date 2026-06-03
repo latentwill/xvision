@@ -110,12 +110,13 @@ function appendIndicatorTail(
 
 export function useRunStream(runId: string, initial?: RunChartPayload) {
   const qc = useQueryClient();
-  const [data, setData] = useState<RunChartPayload | undefined>(initial);
+  const initialData = initial?.run_id === runId ? initial : undefined;
+  const [data, setData] = useState<RunChartPayload | undefined>(initialData);
   const [status, setStatus] = useState<LiveStatus>(
-    initial ? "streaming" : "snapshot",
+    initialData ? "streaming" : "snapshot",
   );
   const esRef = useRef<EventSource | null>(null);
-  const dataRef = useRef<RunChartPayload | undefined>(initial);
+  const dataRef = useRef<RunChartPayload | undefined>(initialData);
   const runIdRef = useRef(runId);
 
   // Keep ref in sync with state so the SSE handlers can read the latest

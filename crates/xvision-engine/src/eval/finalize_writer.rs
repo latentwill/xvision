@@ -123,6 +123,18 @@ impl FinalizeWriter {
     /// and the receiver task drains the queue then exits.
     pub fn start(pool: SqlitePool) -> Arc<Self> {
         let capacity = capacity_from_env();
+        Self::start_with_capacity(pool, capacity)
+    }
+
+    /// Test-only constructor for queue-boundary coverage without mutating
+    /// process-global environment.
+    #[doc(hidden)]
+    pub fn start_with_capacity_for_test(pool: SqlitePool, capacity: usize) -> Arc<Self> {
+        assert!(capacity > 0, "finalize writer capacity must be positive");
+        Self::start_with_capacity(pool, capacity)
+    }
+
+    fn start_with_capacity(pool: SqlitePool, capacity: usize) -> Arc<Self> {
         let (tx, rx) = mpsc::channel::<FinalizeMsg>(capacity);
         tokio::spawn(run_receiver(pool, rx));
         Arc::new(Self { tx, capacity })

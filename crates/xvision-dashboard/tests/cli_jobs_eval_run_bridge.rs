@@ -20,7 +20,7 @@ use xvision_dashboard::cli_jobs::eval_run_bridge::{
 };
 use xvision_dashboard::AppState;
 use xvision_engine::eval::{
-    run::{Run, RunMode, RunStatus},
+    run::{MetricsSummary, Run, RunMode, RunStatus},
     store::RunStore,
 };
 
@@ -51,6 +51,20 @@ async fn seed_run(pool: &sqlx::SqlitePool, status: RunStatus) -> String {
 /// Construct the `eval_run_`-prefixed id the wizard agent would pass in.
 fn prefixed(run_id: &str) -> String {
     format!("{EVAL_RUN_PREFIX}{run_id}")
+}
+
+fn sample_metrics() -> MetricsSummary {
+    MetricsSummary {
+        total_return_pct: 12.5,
+        sharpe: 1.75,
+        max_drawdown_pct: -4.25,
+        win_rate: 0.625,
+        n_trades: 8,
+        n_decisions: 21,
+        inference_cost_quote_total: Some(0.42),
+        net_return_pct: Some(12.08),
+        baselines: None,
+    }
 }
 
 #[tokio::test]
@@ -102,7 +116,15 @@ async fn completed_run_maps_to_succeeded_status() {
 #[tokio::test]
 async fn completed_run_output_contains_eval_summary() {
     let (pool, _tmp) = boot_pool().await;
-    let run_id = seed_run(&pool, RunStatus::Completed).await;
+    let store = RunStore::new(pool.clone());
+    let run = Run::new_queued(
+        "agent-test".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
+    let run_id = run.id.clone();
+    store.create(&run).await.unwrap();
+    store.finalize(&run_id, &sample_metrics()).await.unwrap();
     let job_id = prefixed(&run_id);
 
     let output = get_synthetic_output(&pool, &job_id)
@@ -119,6 +141,14 @@ async fn completed_run_output_contains_eval_summary() {
     assert_eq!(summary["status"].as_str().unwrap(), "completed");
     assert!(summary["detail_url"].as_str().unwrap().contains(&run_id));
     assert_eq!(summary["scenario_id"].as_str().unwrap(), "crypto-bull-q1-2025");
+    assert_eq!(summary["metrics"]["total_return_pct"], 12.5);
+    assert_eq!(summary["metrics"]["sharpe"], 1.75);
+    assert_eq!(summary["metrics"]["max_drawdown_pct"], -4.25);
+    assert_eq!(summary["metrics"]["win_rate"], 0.625);
+    assert_eq!(summary["metrics"]["n_trades"], 8);
+    assert_eq!(summary["metrics"]["n_decisions"], 21);
+    assert_eq!(summary["metrics"]["inference_cost_quote_total"], 0.42);
+    assert_eq!(summary["metrics"]["net_return_pct"], 12.08);
 }
 
 #[tokio::test]

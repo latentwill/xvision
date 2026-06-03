@@ -82,6 +82,26 @@ describe("ScenarioForm", () => {
     );
   });
 
+  it("submits a typed tag draft without requiring Enter", () => {
+    const onSubmit = vi.fn();
+
+    render(<ScenarioForm onSubmit={onSubmit} initial={withDateRange()} />);
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "ETH tagged" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("+ add tag"), {
+      target: { value: "  momentum  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create →" }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tags: ["momentum"],
+      } satisfies Partial<CreateScenarioRequest>),
+    );
+  });
+
   it("requires a non-empty scenario display name before submit", () => {
     const onSubmit = vi.fn();
 

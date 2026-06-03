@@ -23,8 +23,7 @@ use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, StrategyMetadataPatch, StrategyStore,
 };
 use xvision_engine::strategies::validate::{
-    every_bar_warning, high_position_size_warning, no_filter_warnings, preflight_validate,
-    validate_strategy,
+    every_bar_warning, high_position_size_warning, no_filter_warnings, preflight_validate, validate_strategy,
 };
 use xvision_engine::strategies::Hypothesis;
 use xvision_engine::strategies::{AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind};
@@ -1048,14 +1047,12 @@ async fn new_atomic(
 fn load_strategy_file(path: &std::path::Path) -> CliResult<xvision_engine::strategies::Strategy> {
     let body = std::fs::read_to_string(path)
         .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", path.display())))?;
-    let strategy: xvision_engine::strategies::Strategy =
-        match path.extension().and_then(|ext| ext.to_str()) {
-            Some("toml") => {
-                toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?
-            }
-            _ => serde_json::from_str(&body)
-                .map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}")))?,
-        };
+    let strategy: xvision_engine::strategies::Strategy = match path.extension().and_then(|ext| ext.to_str()) {
+        Some("toml") => {
+            toml::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse TOML: {e}")))?
+        }
+        _ => serde_json::from_str(&body).map_err(|e| CliError::usage(anyhow::anyhow!("parse JSON: {e}")))?,
+    };
     if strategy.activation_mode == ActivationMode::FilterGated && strategy.filter.is_none() {
         return Err(CliError::usage(anyhow::anyhow!(
             "activation_mode is filter_gated but no filter block was parsed — \

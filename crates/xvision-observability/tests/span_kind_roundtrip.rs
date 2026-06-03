@@ -42,6 +42,8 @@ fn all_variants() -> Vec<(SpanKind, &'static str)> {
         (SpanKind::RecoveryAttempt, "recovery.attempt"),
         (SpanKind::StateTransition, "state.transition"),
         (SpanKind::AgentDecision, "agent.decision"),
+        (SpanKind::FilterEval, "filter.eval"),
+        (SpanKind::RiskGate, "risk.gate"),
     ]
 }
 
@@ -79,4 +81,6 @@ fn new_f4_variants_have_dotted_wire_form() {
     assert_eq!(SpanKind::RecoveryAttempt.as_db_str(), "recovery.attempt");
     assert_eq!(SpanKind::StateTransition.as_db_str(), "state.transition");
     assert_eq!(SpanKind::AgentDecision.as_db_str(), "agent.decision");
+    assert_eq!(SpanKind::FilterEval.as_db_str(), "filter.eval");
+    assert_eq!(SpanKind::RiskGate.as_db_str(), "risk.gate");
 }

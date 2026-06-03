@@ -17,9 +17,43 @@
 //! 3. `AgentSlot.temperature=None` produces an outbound body that
 //!    omits the `temperature` key on both providers.
 
-use xvision_engine::agent::llm::{anthropic_request_body, openai_compat_request_body, LlmRequest, Message};
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use xvision_engine::agent::execute::{execute_slot, SlotInput};
+use xvision_engine::agent::llm::{
+    anthropic_request_body, openai_compat_request_body, ContentBlock, LlmDispatch, LlmRequest, LlmResponse,
+    Message, StopReason,
+};
 use xvision_engine::agent::pipeline::resolve_agent_slot;
 use xvision_engine::agents::{AgentSlot, InputsPolicy};
+use xvision_engine::tools::ToolRegistry;
+
+#[derive(Default)]
+struct RecordingDispatch {
+    seen: Mutex<Vec<LlmRequest>>,
+}
+
+#[async_trait]
+impl LlmDispatch for RecordingDispatch {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        self.seen.lock().unwrap().push(req);
+        Ok(LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: r#"{"action":"hold","conviction":0.5,"justification":"test"}"#.into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 1,
+            output_tokens: 1,
+        })
+    }
+}
+
+impl RecordingDispatch {
+    fn last_request(&self) -> LlmRequest {
+        self.seen.lock().unwrap().last().cloned().unwrap()
+    }
+}
 
 fn slot_with(max_tokens: Option<u32>, temperature: Option<f64>) -> AgentSlot {
     AgentSlot {
@@ -59,6 +93,53 @@ fn req_from(resolved_max: Option<u32>, resolved_temp: Option<f64>) -> LlmRequest
         response_schema: None,
         cache_control: None,
     }
+}
+
+#[tokio::test]
+async fn resolved_slot_values_are_forwarded_through_execute_slot_to_dispatcher_request() {
+    let slot = slot_with(Some(64), Some(0.2));
+    let resolved = resolve_agent_slot("trader", &slot, "agent-1");
+    let dispatch = Arc::new(RecordingDispatch::default());
+
+    execute_slot(SlotInput {
+        slot: &resolved.slot,
+        system_prompt: resolved.system_prompt.clone(),
+        upstream_inputs: serde_json::json!({"decision": "now"}),
+        dispatch: dispatch.clone(),
+        tools: Arc::new(ToolRegistry::default_with_builtins()),
+        response_schema: None,
+        max_tokens: resolved.max_tokens,
+        temperature: resolved.temperature,
+        obs: None,
+        memory: None,
+        memory_mode: resolved.memory_mode,
+        agent_id: resolved.agent_id.clone(),
+        scenario_start: None,
+        source_window_start: None,
+        source_window_end: None,
+        run_id: String::new(),
+        scenario_id: String::new(),
+        cycle_idx: 0,
+        catalog: None,
+        delta_briefing: false,
+        prev_briefing: None,
+        trace_name: None,
+        trace_attrs: None,
+    })
+    .await
+    .unwrap();
+
+    let req = dispatch.last_request();
+    assert_eq!(
+        req.max_tokens,
+        Some(64),
+        "execute_slot must forward the max_tokens produced by resolve_agent_slot"
+    );
+    assert_eq!(
+        req.temperature,
+        Some(0.2),
+        "execute_slot must forward the temperature produced by resolve_agent_slot"
+    );
 }
 
 #[test]

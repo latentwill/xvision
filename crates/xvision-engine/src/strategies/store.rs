@@ -504,8 +504,7 @@ mod tests {
 
         let loaded = store.load("01HZSTRATEGYRISK0000000001").await.unwrap();
         assert_eq!(
-            loaded.risk.risk_pct_per_trade,
-            0.05,
+            loaded.risk.risk_pct_per_trade, 0.05,
             "risk_pct_per_trade must not be reset to Balanced default (0.015) after save/load"
         );
     }
@@ -527,8 +526,7 @@ mod tests {
 
         let after = store.load("01HZSTRATEGYRISK0000000002").await.unwrap();
         assert_eq!(
-            after.risk.risk_pct_per_trade,
-            0.05,
+            after.risk.risk_pct_per_trade, 0.05,
             "risk_pct_per_trade must survive a set-filter-style load/mutate/save cycle"
         );
     }
@@ -565,17 +563,17 @@ mod tests {
             "mechanical_params": {}
         });
         let path = td.path().join(format!("{id}.json"));
-        tokio::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap()).await.unwrap();
+        tokio::fs::write(&path, serde_json::to_vec_pretty(&json).unwrap())
+            .await
+            .unwrap();
 
         let loaded = store.load(id).await.unwrap();
         assert_eq!(
-            loaded.risk.risk_pct_per_trade,
-            0.05,
+            loaded.risk.risk_pct_per_trade, 0.05,
             "risk_pct_per_trade must be read from old JSON, not reset by serde default"
         );
         assert_eq!(
-            loaded.risk.max_position_pct_nav,
-            20.0,
+            loaded.risk.max_position_pct_nav, 20.0,
             "max_position_pct_nav must be filled with serde default (20.0) when absent from old JSON"
         );
     }

@@ -205,16 +205,49 @@ async fn patch_metadata_rejects_out_of_scope_fields() {
     let (server, _tmp) = boot().await;
     let id = create_strategy(&server).await;
 
-    let response = server
-        .patch(&format!("/api/strategy/{id}"))
-        .json(&serde_json::json!({ "id": "01JSHOULDNOTCHANGE0000000000" }))
-        .await;
-    response.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+    let before = server.get(&format!("/api/strategy/{id}")).await;
+    before.assert_status_ok();
+    let before_body: serde_json::Value = before.json();
 
-    let response = server.get(&format!("/api/strategy/{id}")).await;
-    response.assert_status_ok();
-    let fetched: serde_json::Value = response.json();
-    assert_eq!(fetched["manifest"]["id"], id);
+    let cases = [
+        serde_json::json!({
+            "display_name": "ShouldNotPersist",
+            "id": "01JSHOULDNOTCHANGE0000000000",
+        }),
+        serde_json::json!({
+            "display_name": "ShouldNotPersist",
+            "creator": "@other",
+        }),
+        serde_json::json!({
+            "display_name": "ShouldNotPersist",
+            "template": "other_template",
+        }),
+        serde_json::json!({
+            "display_name": "ShouldNotPersist",
+            "mechanical_params": { "ema_fast": 99 },
+        }),
+        serde_json::json!({
+            "display_name": "ShouldNotPersist",
+            "unknown_patch_key": true,
+        }),
+    ];
+
+    for payload in cases {
+        let response = server.patch(&format!("/api/strategy/{id}")).json(&payload).await;
+        response.assert_status(StatusCode::UNPROCESSABLE_ENTITY);
+
+        let response = server.get(&format!("/api/strategy/{id}")).await;
+        response.assert_status_ok();
+        let fetched: serde_json::Value = response.json();
+        assert_eq!(
+            fetched["manifest"], before_body["manifest"],
+            "out-of-scope payload must not mutate manifest fields: {payload}"
+        );
+        assert_eq!(
+            fetched["mechanical_params"], before_body["mechanical_params"],
+            "PATCH /api/strategy must not mutate mechanical_params: {payload}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -260,21 +293,42 @@ async fn patch_metadata_invalid_multi_field_patch_is_atomic() {
     let (server, _tmp) = boot().await;
     let id = create_strategy(&server).await;
 
+    let before = server.get(&format!("/api/strategy/{id}")).await;
+    before.assert_status_ok();
+    let before_body: serde_json::Value = before.json();
+
     let response = server
         .patch(&format!("/api/strategy/{id}"))
         .json(&serde_json::json!({
-            "display_name": "",
+            "display_name": "ShouldNotPersist",
             "plain_summary": "This should not be persisted.",
+            "asset_universe": ["just-a-word"],
         }))
         .await;
     response.assert_status_bad_request();
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("asset_universe"),
+        "rejected multi-field patch should name the invalid field, got: {body}"
+    );
 
     let response = server.get(&format!("/api/strategy/{id}")).await;
     response.assert_status_ok();
     let fetched: serde_json::Value = response.json();
-    assert_eq!(fetched["manifest"]["display_name"], "PatchMe");
-    assert_ne!(
-        fetched["manifest"]["plain_summary"], "This should not be persisted.",
+    assert_eq!(
+        fetched["manifest"]["display_name"], before_body["manifest"]["display_name"],
+        "valid display_name in a rejected patch must not be partially written"
+    );
+    assert_eq!(
+        fetched["manifest"]["plain_summary"], before_body["manifest"]["plain_summary"],
+        "valid plain_summary in a rejected patch must not be partially written"
+    );
+    assert_eq!(
+        fetched["manifest"]["asset_universe"], before_body["manifest"]["asset_universe"],
         "valid fields in a rejected patch must not be partially written"
     );
 }

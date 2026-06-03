@@ -20,7 +20,7 @@ use xvision_core::{
 
 use xvision_risk::config::{Limits, RiskConfig, Stops, VenueLimits};
 use xvision_risk::whitelist::{AssetEntry, Whitelist};
-use xvision_risk::RiskLayer;
+use xvision_risk::{RiskEvalContext, RiskLayer, RiskRule, RuleVerdict};
 
 fn whitelist_with_btc_and_eth_enabled() -> Whitelist {
     let mut assets = BTreeMap::new();
@@ -100,6 +100,35 @@ fn decision_with_asset(size_bps: u32, asset: AssetSymbol) -> TraderDecision {
         take_profit_pct: 5.0,
         trader_summary: "MinNotional integration test".into(),
         asset,
+        trailing_stop_pct: None,
+        breakeven_trigger_pct: None,
+        breakeven_offset_pct: None,
+        fade_sl_bars: None,
+        fade_sl_start_pct: None,
+        fade_sl_end_pct: None,
+        max_bars_held: None,
+        sl_atr_mult: None,
+        tp_atr_mult: None,
+        tp1_pct: None,
+        tp1_close_fraction: None,
+        tp2_pct: None,
+    }
+}
+
+struct ShrinkToFiftyBps;
+
+impl RiskRule for ShrinkToFiftyBps {
+    fn name(&self) -> &'static str {
+        "ShrinkToFiftyBps"
+    }
+
+    fn evaluate(&self, ctx: &RiskEvalContext<'_>) -> RuleVerdict {
+        if ctx.decision.size_bps <= 50 {
+            return RuleVerdict::Pass;
+        }
+        let mut modified = ctx.decision.clone();
+        modified.size_bps = 50;
+        RuleVerdict::Modify(modified, VetoReason::Custom("shrink-to-fifty-bps fixture".into()))
     }
 }
 
@@ -222,6 +251,33 @@ fn live_venue_uses_its_own_min() {
     );
 }
 
+/// Order-sensitive interaction: a prepended size-modifying rule shrinks
+/// an initially above-min order below the venue minimum. MinNotional must
+/// evaluate the modified size, not the raw trader size.
+#[test]
+fn min_notional_evaluates_size_after_prepended_size_modifier() {
+    let mut layer = RiskLayer::with_default_rules(
+        risk_config(10.0, 1.0),
+        whitelist_with_btc_and_eth_enabled(),
+        Some("paper"),
+    );
+    layer.prepend_rule(Box::new(ShrinkToFiftyBps));
+
+    // Raw: 150 bps × $1000 = $15, above paper's $10 minimum.
+    // Modified by ShrinkToFiftyBps: 50 bps × $1000 = $5, below min.
+    let result = layer.evaluate(decision(150), &portfolio(1_000.0));
+    assert!(
+        matches!(
+            result,
+            RiskDecision::Vetoed {
+                reason: VetoReason::BelowVenueMinNotional,
+                ..
+            }
+        ),
+        "MinNotional must see size_bps after prepended size modifiers; got {result:?}",
+    );
+}
+
 /// Modified-decision interaction: an open BTC position triggers
 /// MaxOpenPositions / size-related modifications. We exercise the more
 /// direct shape: confirm that `MinNotional` runs AFTER the size /
@@ -249,6 +305,18 @@ fn min_notional_runs_after_size_modifying_rules() {
         take_profit_pct: 5.0,
         trader_summary: "wide stop + below min".into(),
         asset: AssetSymbol::Btc,
+        trailing_stop_pct: None,
+        breakeven_trigger_pct: None,
+        breakeven_offset_pct: None,
+        fade_sl_bars: None,
+        fade_sl_start_pct: None,
+        fade_sl_end_pct: None,
+        max_bars_held: None,
+        sl_atr_mult: None,
+        tp_atr_mult: None,
+        tp1_pct: None,
+        tp1_close_fraction: None,
+        tp2_pct: None,
     };
     let result = layer.evaluate(d, &portfolio(1_000.0));
     assert!(
@@ -271,6 +339,18 @@ fn min_notional_runs_after_size_modifying_rules() {
         take_profit_pct: 5.0,
         trader_summary: "above min + wide stop".into(),
         asset: AssetSymbol::Btc,
+        trailing_stop_pct: None,
+        breakeven_trigger_pct: None,
+        breakeven_offset_pct: None,
+        fade_sl_bars: None,
+        fade_sl_start_pct: None,
+        fade_sl_end_pct: None,
+        max_bars_held: None,
+        sl_atr_mult: None,
+        tp_atr_mult: None,
+        tp1_pct: None,
+        tp1_close_fraction: None,
+        tp2_pct: None,
     };
     let above_min_result = layer.evaluate(above_min_wide_stop, &portfolio(1_000.0));
     assert!(

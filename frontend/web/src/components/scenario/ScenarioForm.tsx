@@ -111,6 +111,7 @@ export function ScenarioForm({
       : '1h';
   })();
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
+  const [tagDraft, setTagDraft] = useState('');
   const [notes, setNotes] = useState(initial?.notes ?? '');
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [feesMaker, setFeesMaker] = useState(
@@ -176,6 +177,12 @@ export function ScenarioForm({
       adjustment: 'Raw',
     };
 
+    const submittedTags = appendDraftTag(tags, tagDraft);
+    if (submittedTags !== tags) {
+      setTags(submittedTags);
+      setTagDraft('');
+    }
+
     const req: CreateScenarioRequest = {
       display_name: displayName,
       description: '',
@@ -196,7 +203,7 @@ export function ScenarioForm({
       },
       data_source: dataSource,
       replay_mode: REPLAY_MODE,
-      tags,
+      tags: submittedTags,
       notes: notes.trim() || null,
       parent_scenario_id: null,
       source: SCENARIO_SOURCE,
@@ -231,7 +238,12 @@ export function ScenarioForm({
         />
       </Field>
       <Field label="Tags">
-        <TagInput value={tags} onChange={setTags} />
+        <TagInput
+          value={tags}
+          draft={tagDraft}
+          onChange={setTags}
+          onDraftChange={setTagDraft}
+        />
       </Field>
 
       <Section title="Market">
@@ -489,12 +501,22 @@ function Field({
 
 function TagInput({
   value,
+  draft,
   onChange,
+  onDraftChange,
 }: {
   value: string[];
+  draft: string;
   onChange: (v: string[]) => void;
+  onDraftChange: (v: string) => void;
 }) {
-  const [draft, setDraft] = useState('');
+  const commitDraft = () => {
+    const next = appendDraftTag(value, draft);
+    if (next === value) return;
+    onChange(next);
+    onDraftChange('');
+  };
+
   return (
     <div className="flex flex-wrap gap-1.5 items-center">
       {value.map((t, i) => (
@@ -515,12 +537,17 @@ function TagInput({
         onKeyDown={(e) => {
           if (e.key === 'Enter' && draft.trim()) {
             e.preventDefault();
-            onChange([...value, draft.trim()]);
-            setDraft('');
+            commitDraft();
           }
         }}
-        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commitDraft}
+        onChange={(e) => onDraftChange(e.target.value)}
       />
     </div>
   );
+}
+
+function appendDraftTag(value: string[], draft: string): string[] {
+  const tag = draft.trim();
+  return tag ? [...value, tag] : value;
 }

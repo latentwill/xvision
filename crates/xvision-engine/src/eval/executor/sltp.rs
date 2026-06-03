@@ -259,9 +259,7 @@ pub fn compute_atr14(bars: &[&Ohlcv]) -> Option<f64> {
     for i in 1..slice.len().min(15) {
         let b = slice[i];
         let pc = slice[i - 1].close;
-        let tr = (b.high - b.low)
-            .max((b.high - pc).abs())
-            .max((b.low - pc).abs());
+        let tr = (b.high - b.low).max((b.high - pc).abs()).max((b.low - pc).abs());
         sum += tr;
         count += 1;
     }
@@ -300,7 +298,9 @@ pub fn check_and_update(state: &mut PositionRiskState, bar: &Ohlcv) -> Option<Sl
     // Priority 3: Time-based exit
     if let Some(max_bars) = state.max_bars_held {
         if state.bars_held >= max_bars {
-            return Some(SltpTrigger::FullExit { reason: "max_bars_held" });
+            return Some(SltpTrigger::FullExit {
+                reason: "max_bars_held",
+            });
         }
     }
 
@@ -314,10 +314,12 @@ pub fn check_and_update(state: &mut PositionRiskState, bar: &Ohlcv) -> Option<Sl
         state.take_profit_pct
     };
     if tp_pct > 0.0 {
-        let tp_price = atr_tp_price(state)
-            .unwrap_or_else(|| basic_tp_price(state.direction, state.entry_price, tp_pct));
+        let tp_price =
+            atr_tp_price(state).unwrap_or_else(|| basic_tp_price(state.direction, state.entry_price, tp_pct));
         if check_tp_hit(state.direction, bar, tp_price) {
-            return Some(SltpTrigger::FullExit { reason: "take_profit" });
+            return Some(SltpTrigger::FullExit {
+                reason: "take_profit",
+            });
         }
     }
 
@@ -367,7 +369,10 @@ mod tests {
         let mut state = long_state(5.0, 10.0);
         // SL at 95.0; bar low = 94.9 → hits
         let trigger = check_and_update(&mut state, &bar(94.9, 101.0, 100.5));
-        assert!(matches!(trigger, Some(SltpTrigger::FullExit { reason: "stop_loss" })));
+        assert!(matches!(
+            trigger,
+            Some(SltpTrigger::FullExit { reason: "stop_loss" })
+        ));
     }
 
     #[test]
@@ -375,19 +380,27 @@ mod tests {
         let mut state = long_state(5.0, 10.0);
         // TP at 110.0; bar high = 110.5 → hits
         let trigger = check_and_update(&mut state, &bar(99.0, 110.5, 100.0));
-        assert!(matches!(trigger, Some(SltpTrigger::FullExit { reason: "take_profit" })));
+        assert!(matches!(
+            trigger,
+            Some(SltpTrigger::FullExit {
+                reason: "take_profit"
+            })
+        ));
     }
 
     #[test]
     fn trailing_stop_ratchets_up_as_price_rises_long() {
         let mut state = long_state(0.0, 0.0);
         state.trailing_stop_pct = Some(2.0); // 2% trailing
-        // Bar 1: high = 110.0 → hwm = 110, trailing_SL = 107.8
+                                             // Bar 1: high = 110.0 → hwm = 110, trailing_SL = 107.8
         check_and_update(&mut state, &bar(100.0, 110.0, 109.0));
         assert!((state.hwm - 110.0).abs() < 1e-6);
         // Bar 2: price drops to 107.0 (below 107.8) → SL fires
         let trigger = check_and_update(&mut state, &bar(107.0, 108.0, 107.5));
-        assert!(matches!(trigger, Some(SltpTrigger::FullExit { reason: "stop_loss" })));
+        assert!(matches!(
+            trigger,
+            Some(SltpTrigger::FullExit { reason: "stop_loss" })
+        ));
     }
 
     #[test]
@@ -397,19 +410,27 @@ mod tests {
         check_and_update(&mut state, &bar(99.0, 101.0, 100.0)); // bar 1
         check_and_update(&mut state, &bar(99.0, 101.0, 100.0)); // bar 2
         let trigger = check_and_update(&mut state, &bar(99.0, 101.0, 100.0)); // bar 3
-        assert!(matches!(trigger, Some(SltpTrigger::FullExit { reason: "max_bars_held" })));
+        assert!(matches!(
+            trigger,
+            Some(SltpTrigger::FullExit {
+                reason: "max_bars_held"
+            })
+        ));
     }
 
     #[test]
     fn breakeven_activates_and_moves_sl_to_entry() {
         let mut state = long_state(5.0, 20.0);
         state.breakeven_trigger_pct = Some(0.01); // 1% profit triggers
-        // Bar 1: close = 101.5 → profit = 1.5% → triggers breakeven
+                                                  // Bar 1: close = 101.5 → profit = 1.5% → triggers breakeven
         check_and_update(&mut state, &bar(100.0, 102.0, 101.5));
         assert!(state.breakeven_activated);
         // Bar 2: price drops to 100.0 → BE SL at entry (100.0), low = 99.5 → fires
         let trigger = check_and_update(&mut state, &bar(99.5, 101.0, 100.5));
-        assert!(matches!(trigger, Some(SltpTrigger::FullExit { reason: "stop_loss" })));
+        assert!(matches!(
+            trigger,
+            Some(SltpTrigger::FullExit { reason: "stop_loss" })
+        ));
     }
 
     #[test]
@@ -418,7 +439,9 @@ mod tests {
         state.tp1_pct = Some(5.0);
         state.tp1_close_fraction = Some(0.5);
         let trigger = check_and_update(&mut state, &bar(99.0, 106.0, 105.0));
-        assert!(matches!(trigger, Some(SltpTrigger::PartialTp1 { fraction }) if (fraction - 0.5).abs() < 1e-6));
+        assert!(
+            matches!(trigger, Some(SltpTrigger::PartialTp1 { fraction }) if (fraction - 0.5).abs() < 1e-6)
+        );
     }
 
     #[test]

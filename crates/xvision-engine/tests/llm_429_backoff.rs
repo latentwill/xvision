@@ -5,7 +5,7 @@
 //! - test 2: persistent 429 (3 attempts all fail) → error propagated after
 //!   `MAX_RATE_LIMIT_RETRIES` (3) are exhausted.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -113,12 +113,20 @@ async fn persistent_429_fails_after_max_retries() {
         .await;
 
     let dispatch = OpenaiCompatDispatch::new(server.uri(), "test-key".into());
-    let result = dispatch.complete(simple_request()).await;
+    let result = tokio::time::timeout(Duration::from_secs(2), dispatch.complete(simple_request()))
+        .await
+        .expect("persistent 429 retry loop must terminate within the bounded retry budget");
 
     assert!(result.is_err(), "expected error after exhausting retries; got Ok");
     let err_msg = result.unwrap_err().to_string();
     assert!(
         err_msg.contains("429"),
         "error message should mention 429; got: {err_msg}"
+    );
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests.len(),
+        3,
+        "persistent 429 should make one initial request plus two retries before surfacing the error"
     );
 }
