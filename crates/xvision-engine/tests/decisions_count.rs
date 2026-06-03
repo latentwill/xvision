@@ -59,6 +59,20 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    // Schema the modern RunStore + executor touch: cli_jobs (013) and
+    // agent-run observability (018, supervisor_notes), eval_reviews (016),
+    // and the eval_runs column adds in 037 (auto_fire_review) + 038
+    // (live_config). RunStore::create writes 037/038's columns; the backtest
+    // executor records supervisor_notes (018) on longer runs.
+    for m in [
+        include_str!("../migrations/013_cli_jobs.sql"),
+        include_str!("../migrations/016_eval_reviews.sql"),
+        include_str!("../migrations/018_agent_run_observability.sql"),
+        include_str!("../migrations/037_review_annotations_and_autofire.sql"),
+        include_str!("../migrations/038_eval_runs_live_config.sql"),
+    ] {
+        sqlx::query(m).execute(&pool).await.unwrap();
+    }
     RunStore::new(pool)
 }
 
@@ -196,6 +210,7 @@ async fn run_backtest_with_bars(
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let bars = daily_bars(bar_count);
     let first_ts = bars.first().unwrap().timestamp;
@@ -284,6 +299,7 @@ async fn final_bar_uses_close_as_next_open_fallback() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    store.ensure_agent_run_baseline(&run.id, "hash_only").await.unwrap();
 
     let bars = daily_bars(1);
     let final_close = bars[0].close;
