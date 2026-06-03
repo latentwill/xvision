@@ -488,7 +488,13 @@ fn openai_compat_base_url(configured: &str) -> String {
 
 pub(crate) fn openai_compat_models_url(base_url: &str) -> String {
     let trimmed = base_url.trim_end_matches('/');
-    if trimmed.ends_with("/v1") {
+    // A base that already carries its API version segment exposes the catalog
+    // directly at `{base}/models`:
+    //  - `.../v1`            — OpenAI / Groq / DeepSeek-style roots
+    //  - `.../openai`        — Gemini's OpenAI-compat root
+    //    (`https://generativelanguage.googleapis.com/v1beta/openai`)
+    // Everything else is a bare host, so we append the conventional `/v1/models`.
+    if trimmed.ends_with("/v1") || trimmed.ends_with("/openai") {
         format!("{}/models", trimmed)
     } else {
         format!("{}/v1/models", trimmed)
@@ -836,6 +842,31 @@ mod tests {
         assert_eq!(f.source_url(), "https://api.groq.com/openai/v1/models");
         let f2 = OpenAiCompatFetcher::new("d".into(), "https://api.deepseek.com".into(), String::new());
         assert_eq!(f2.source_url(), "https://api.deepseek.com/v1/models");
+    }
+
+    #[test]
+    fn openai_compat_models_url_cases() {
+        // Bare host → conventional `/v1/models`.
+        assert_eq!(
+            openai_compat_models_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1/models"
+        );
+        // Already-versioned `/v1` root → `{base}/models`.
+        assert_eq!(
+            openai_compat_models_url("https://api.openai.com/v1"),
+            "https://api.openai.com/v1/models"
+        );
+        // Gemini's OpenAI-compat root ends in `/openai` → `{base}/models`,
+        // NOT `.../openai/v1/models`.
+        assert_eq!(
+            openai_compat_models_url("https://generativelanguage.googleapis.com/v1beta/openai"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        );
+        // Trailing slash normalizes to the same result.
+        assert_eq!(
+            openai_compat_models_url("https://generativelanguage.googleapis.com/v1beta/openai/"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        );
     }
 
     #[test]

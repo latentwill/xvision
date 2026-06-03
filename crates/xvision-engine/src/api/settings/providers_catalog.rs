@@ -19,7 +19,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use xvision_core::config::{load_runtime, ProviderEntry, ProviderKind};
+use xvision_core::config::{load_runtime_lenient, ProviderEntry, ProviderKind};
 use xvision_core::providers::Catalog;
 
 use crate::api::{
@@ -84,7 +84,11 @@ pub async fn refresh_all(ctx: &ApiContext, config_path: &Path) -> ApiResult<Vec<
 }
 
 async fn refresh_all_inner(ctx: &ApiContext, config_path: &Path) -> ApiResult<Vec<RefreshOutcome>> {
-    let cfg = load_runtime(config_path).map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+    // Lenient load: a single hand-edited bad row shouldn't fail the whole
+    // catalog refresh — refresh the valid providers and ignore the dropped ones
+    // (the list endpoint already surfaces them for removal).
+    let (cfg, _invalid) =
+        load_runtime_lenient(config_path).map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
     let refreshable: Vec<ProviderEntry> = cfg
         .providers
         .into_iter()
@@ -157,7 +161,11 @@ pub struct RefreshOutcome {
 }
 
 fn load_provider(config_path: &Path, name: &str) -> ApiResult<ProviderEntry> {
-    let cfg = load_runtime(config_path).map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
+    // Lenient load so a single invalid row elsewhere in the config doesn't block
+    // fetching this (valid) provider's catalog. An invalid row won't appear in
+    // `cfg.providers`, so it correctly resolves to NotFound below.
+    let (cfg, _invalid) =
+        load_runtime_lenient(config_path).map_err(|e| ApiError::Validation(format!("load config: {e}")))?;
     cfg.providers
         .into_iter()
         .find(|p| p.name == name)

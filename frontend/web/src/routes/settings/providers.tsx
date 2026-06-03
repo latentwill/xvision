@@ -93,6 +93,27 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
     keyHelp: "Starts with sk-or-…",
   },
   {
+    value: "gemini",
+    label: "Google Gemini",
+    wireKind: "openai-compat",
+    defaultName: "gemini",
+    // Gemini's OpenAI-compatible endpoint. Chat posts to
+    // `{base}/chat/completions`; the catalog is at `{base}/models`. This is the
+    // OpenAI-compat root, NOT the native generativelanguage API root.
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    isCustom: false,
+    keyHelp: "Google AI Studio key (AIza…).",
+  },
+  {
+    value: "nous-research",
+    label: "Nous Research",
+    wireKind: "openai-compat",
+    defaultName: "nous-research",
+    defaultBaseUrl: "https://inference-api.nousresearch.com/v1",
+    isCustom: false,
+    keyHelp: "Nous Portal API key.",
+  },
+  {
     value: "ollama",
     label: "Ollama (local)",
     wireKind: "ollama",
@@ -172,6 +193,10 @@ export function SettingsProvidersRoute() {
   });
 
   const rows: ProviderRow[] = providersQuery.data?.providers ?? [];
+  // Rows in the config that failed validation and were skipped by the lenient
+  // loader. Surfaced so a hand-edited bad row doesn't silently vanish — the
+  // operator can see why and remove it inline.
+  const invalidRows = providersQuery.data?.invalid ?? [];
 
   const list = useListState<ProviderRow>({
     rows,
@@ -231,6 +256,42 @@ export function SettingsProvidersRoute() {
         under <code className="font-mono">~/.xvn/secrets/providers.toml</code>{" "}
         (owner-only) — they never round-trip through this UI again.
       </p>
+
+      {invalidRows.length > 0 ? (
+        <div className="rounded-md border border-warn/40 bg-warn/[0.06] p-3 space-y-2">
+          <p className="m-0 text-[12px] text-warn font-medium">
+            {invalidRows.length} provider{" "}
+            {invalidRows.length === 1 ? "row" : "rows"} in the config could not
+            be loaded and {invalidRows.length === 1 ? "was" : "were"} skipped.
+            Fix the name in the config or remove the{" "}
+            {invalidRows.length === 1 ? "row" : "rows"} here:
+          </p>
+          <ul className="m-0 list-none space-y-1.5">
+            {invalidRows.map((r) => (
+              <li
+                key={r.name}
+                className="flex items-center justify-between gap-3 text-[12px]"
+              >
+                <span className="min-w-0 text-text-2">
+                  <code className="font-mono text-text">
+                    {r.name || "(empty name)"}
+                  </code>
+                  <span className="text-text-3 ml-2">{r.reason}</span>
+                </span>
+                <button
+                  onClick={() => remove.mutate(r.name)}
+                  disabled={remove.isPending && remove.variables === r.name}
+                  className="shrink-0 px-2 py-1 rounded text-[12px] border border-border text-text-2 hover:text-danger hover:border-danger disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {remove.isPending && remove.variables === r.name
+                    ? "Removing…"
+                    : "Remove"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {adding || rows.length === 0 ? (
         <AddProviderForm
@@ -896,7 +957,16 @@ function AddProviderForm({
   const trimmedKey = apiKey.trim();
   const needsKey = keyRequired(meta, trimmedBaseUrl);
   const errors: string[] = [];
-  if (trimmedName === "") errors.push("name is required");
+  if (trimmedName === "") {
+    errors.push("name is required");
+  } else if (!/^[a-z0-9-]+$/.test(trimmedName)) {
+    // Mirror the server rule (xvision-core validate_provider_name_str) so an
+    // invalid name is caught inline instead of failing on save. Only the
+    // "Custom" preset lets the user type a name; presets supply valid slugs.
+    errors.push("name must use only lowercase letters, digits, and hyphens");
+  } else if (trimmedName.length > 32) {
+    errors.push("name must be 32 characters or fewer");
+  }
   if (trimmedBaseUrl === "") {
     errors.push("base URL is required");
   } else if (!isHttpUrl(trimmedBaseUrl)) {
