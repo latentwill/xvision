@@ -1,10 +1,9 @@
 //! Integration tests for `xvn eval batch run`.
 //!
-//! Storage choice: Option (a) — no new table. The batch is an in-memory
-//! ULID that groups individually-persisted runs. `xvn eval batch status`
-//! (a future follow-on) would need a persistence layer (track
-//! `eval-batch-persistence-followup`); for now the batch_id is returned
-//! immediately for caller tracking only.
+//! Batch persistence: `run_batch` writes an `eval_batches` row and attaches
+//! each launched eval run to that batch id. The tests apply the batch
+//! migration and verify both the returned run summaries and the persisted
+//! batch view exposed by the engine API.
 //!
 //! These tests use the same in-memory ApiContext scaffold as
 //! `crates/xvision-engine/tests/api_eval_run.rs`. They exercise the
@@ -13,7 +12,7 @@
 
 use std::sync::Arc;
 
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::AgentSlot;
@@ -64,10 +63,7 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("../xvision-engine/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
+    apply_batch_test_migrations(&pool).await;
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -80,6 +76,39 @@ async fn ctx_with_tables() -> (ApiContext, tempfile::TempDir) {
     );
     seed_batch_scenario(&ctx).await;
     (ctx, dir)
+}
+
+async fn apply_batch_test_migrations(pool: &SqlitePool) {
+    for migration in [
+        include_str!("../../xvision-engine/migrations/001_api_audit.sql"),
+        include_str!("../../xvision-engine/migrations/002_eval.sql"),
+        include_str!("../../xvision-engine/migrations/005_agents.sql"),
+        include_str!("../../xvision-engine/migrations/010_bars_cache.sql"),
+        include_str!("../../xvision-engine/migrations/011_scenarios.sql"),
+        include_str!("../../xvision-engine/migrations/013_cli_jobs.sql"),
+        include_str!("../../xvision-engine/migrations/014_eval_agent_id.sql"),
+        include_str!("../../xvision-engine/migrations/015_eval_decisions_reasoning.sql"),
+        include_str!("../../xvision-engine/migrations/016_eval_reviews.sql"),
+        include_str!("../../xvision-engine/migrations/017_eval_findings_review_columns.sql"),
+        include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql"),
+        include_str!("../../xvision-engine/migrations/019_agent_slot_prompt_version.sql"),
+        include_str!("../../xvision-engine/migrations/020_agent_slot_inputs_policy.sql"),
+        include_str!("../../xvision-engine/migrations/021_eval_batches.sql"),
+        include_str!("../../xvision-engine/migrations/022_eval_runs_agents_agent_id.sql"),
+        include_str!("../../xvision-engine/migrations/024_scenario_regime_labels.sql"),
+        include_str!("../../xvision-engine/migrations/025_agent_slot_cache_and_window.sql"),
+        include_str!("../../xvision-engine/migrations/026_trace_surface_foundation.sql"),
+        include_str!("../../xvision-engine/migrations/027_run_bars_manifest.sql"),
+        include_str!("../../xvision-engine/migrations/029_agent_slot_memory_mode.sql"),
+        include_str!("../../xvision-engine/migrations/031_eval_runs_venue_label.sql"),
+        include_str!("../../xvision-engine/migrations/033_agent_slot_capabilities.sql"),
+        include_str!("../../xvision-engine/migrations/036_agents_scope_strategy_id.sql"),
+        include_str!("../../xvision-engine/migrations/037_review_annotations_and_autofire.sql"),
+        include_str!("../../xvision-engine/migrations/038_eval_runs_live_config.sql"),
+        include_str!("../../xvision-engine/migrations/047_agent_slot_max_wall_ms.sql"),
+    ] {
+        sqlx::query(migration).execute(pool).await.unwrap();
+    }
 }
 
 #[allow(deprecated)]
@@ -332,27 +361,19 @@ async fn batch_result_serialises_to_expected_json_shape() {
 
 // --- review-with tests ---------------------------------------------------
 //
-// These use a full-migration pool (sqlx::migrate!) because the review
-// feature touches agent_profiles (016) and eval_reviews (016) and
-// eval_findings review columns (017). The ctx_with_tables helper above
-// only runs a subset of migrations, so we need a separate helper here.
+// These use the same explicit migration subset as `ctx_with_tables` so the
+// in-memory agent schema stays aligned with AgentStore writes such as
+// agent_slots.capabilities and agents.scope_strategy_id.
 
-/// Build an ApiContext that runs the same migrations as `ctx_with_tables`
-/// (001, 002, 014, 015 — skipping the migration-012 FK trigger so the
-/// canonical legacy scenario id "flash-crash-2024-08" can be used in
-/// eval_runs without a matching row in the scenarios table) PLUS the
-/// review-related migrations (016, 017) so agent_profiles and eval_reviews
-/// are available for the --review-with tests.
+/// Build an ApiContext with the batch-test migration set for the
+/// --review-with tests.
 async fn ctx_with_review_migrations() -> (ApiContext, tempfile::TempDir) {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    sqlx::migrate!("../xvision-engine/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
+    apply_batch_test_migrations(&pool).await;
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
@@ -423,7 +444,10 @@ async fn review_with_populates_review_field_for_completed_run() {
     assert_eq!(entry.status, "completed");
 
     let review = entry.review.as_ref().expect("review field must be present");
-    assert!(!review.review_id.is_empty(), "review_id must be non-empty");
+    assert!(
+        !review.review_id.is_empty(),
+        "review_id must be non-empty; review={review:?}"
+    );
     assert_eq!(review.status, "completed", "review status must be 'completed'");
     assert!(review.summary.is_some(), "summary must be populated");
     assert!(review.verdict.is_some(), "verdict must be populated");

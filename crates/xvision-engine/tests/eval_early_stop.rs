@@ -330,18 +330,29 @@ async fn second_skip_window_only_triggers_after_counter_resets() {
 
     let decisions = store.read_decisions(&run.id).await.unwrap();
     assert_eq!(decisions.len(), 28);
-    let inherited = decisions
+    let inherited_indices: Vec<u32> = decisions
         .iter()
         .filter(|d| d.justification.as_deref() == Some("inherited from early-stop policy"))
-        .count();
-    assert!(
-        inherited >= 8,
-        "two skip windows should inherit at least 8 rows over 28 bars; got {inherited}"
+        .map(|d| d.decision_index)
+        .collect();
+    assert_eq!(
+        inherited_indices,
+        vec![8, 9, 10, 11, 20, 21, 22, 23],
+        "two 4-row skip windows must fire at the documented zero-based indices"
     );
-    assert!(
-        dispatch.calls() < decisions.len(),
-        "early-stop should suppress at least one model call"
+    assert_eq!(
+        dispatch.calls(),
+        20,
+        "28 bars with two 4-row inherited windows should make exactly 20 model calls"
     );
+    for d in &decisions[12..20] {
+        assert_eq!(d.action, "flat");
+        assert_eq!(
+            d.justification.as_deref(),
+            Some("hold-the-line baseline"),
+            "rows between inherited windows must rebuild the model-decision buffer"
+        );
+    }
 
     let notes = store.read_supervisor_notes(&run.id).await.unwrap();
     assert_eq!(

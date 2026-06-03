@@ -742,8 +742,10 @@ impl Executor {
         // Tracks bars held while short per asset for borrow-cost accrual.
         let mut short_bars_held: BTreeMap<xvision_core::trading::AssetSymbol, u32> = BTreeMap::new();
         // Advanced SL/TP per-position state (trailing, break-even, fading, time, ATR, partial TP).
-        let mut sltp_state: BTreeMap<xvision_core::trading::AssetSymbol, crate::eval::executor::sltp::PositionRiskState> =
-            BTreeMap::new();
+        let mut sltp_state: BTreeMap<
+            xvision_core::trading::AssetSymbol,
+            crate::eval::executor::sltp::PositionRiskState,
+        > = BTreeMap::new();
         let bar_secs = scenario.granularity.seconds();
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
@@ -970,51 +972,19 @@ impl Executor {
                     .map(|b| b.timestamp)
                     .unwrap_or(bar.timestamp);
                 let source_window_end = bar.timestamp;
-                let bar_history = build_bar_history(history_slice, inputs_policy);
-
-                // F-6: `Causal` drops `decision_index` + `timestamp` from
-                // both the top-level seed and the current-bar inline.
-                // `Raw` / `Oracle` keep the original shape byte-for-byte
-                // — the regression-guard test pins this.
-                let current_bar_json = ohlcv_to_json(bar, inputs_policy);
-                let seed = match inputs_policy {
-                    InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
-                        "decision_index": decision_idx,
-                        "asset": asset,
-                        "active_assets": active_venue_symbols,
-                        "timestamp": bar.timestamp,
-                        "market_data": {
-                            "asset": asset,
-                            "current_bar": current_bar_json,
-                            "next_bar_open": next_bar_open,
-                            "reference_price_usd": bar.close,
-                            "reference_price_source": "eval_bar.close",
-                            "bar_history": bar_history,
-                        },
-                        "portfolio_state": {
-                            "position_size": book.position(asset_sym),
-                            "equity": equity,
-                            "mark_price": bar.close,
-                        },
-                    }),
-                    InputsPolicy::Causal => serde_json::json!({
-                        "asset": asset,
-                        "active_assets": active_venue_symbols,
-                        "market_data": {
-                            "asset": asset,
-                            "current_bar": current_bar_json,
-                            "next_bar_open": next_bar_open,
-                            "reference_price_usd": bar.close,
-                            "reference_price_source": "eval_bar.close",
-                            "bar_history": bar_history,
-                        },
-                        "portfolio_state": {
-                            "position_size": book.position(asset_sym),
-                            "equity": equity,
-                            "mark_price": bar.close,
-                        },
-                    }),
-                };
+                let seed = build_decision_seed(DecisionSeedInput {
+                    decision_idx,
+                    asset: &asset,
+                    active_assets: &active_venue_symbols,
+                    bar,
+                    next_bar_open,
+                    reference_price_source: "eval_bar.close",
+                    position_size: book.position(asset_sym),
+                    equity,
+                    mark_price: bar.close,
+                    history_slice,
+                    inputs_policy,
+                });
                 // When the DSL filter fired this bar, inject its trigger context
                 // (indicator snapshot + fire.reason/priority/tags) into the seed
                 // so the trader's briefing includes the values that caused the
@@ -1048,23 +1018,34 @@ impl Executor {
                                 // Apply borrow cost for short exits.
                                 let borrow_cost = if sltp_position < -f64::EPSILON {
                                     let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
-                                    let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
-                                        .and_then(|o| o.borrow_bps_per_day)
-                                        .unwrap_or(scenario.venue.borrow_bps_per_day);
-                                    compute_borrow_cost(sltp_position.abs(), sltp_entry, borrow_bps, held, bar_secs)
+                                    let borrow_bps =
+                                        resolve_asset_override(&scenario.venue.overrides, &asset)
+                                            .and_then(|o| o.borrow_bps_per_day)
+                                            .unwrap_or(scenario.venue.borrow_bps_per_day);
+                                    compute_borrow_cost(
+                                        sltp_position.abs(),
+                                        sltp_entry,
+                                        borrow_bps,
+                                        held,
+                                        bar_secs,
+                                    )
                                 } else {
                                     0.0
                                 };
                                 let net_sltp_pnl = sltp_pnl - borrow_cost;
                                 book.add_realized(net_sltp_pnl);
-                                if net_sltp_pnl > 0.0 { wins += 1; }
+                                if net_sltp_pnl > 0.0 {
+                                    wins += 1;
+                                }
                                 realized_count += 1;
                                 book.set_position(asset_sym, 0.0, 0.0);
                                 sltp_state.remove(&asset_sym);
                                 last_open_direction.remove(&asset_sym);
                                 n_trades += 1;
-                                let fill_price = next_bar_open * (1.0 - default_slip_bps / 10_000.0
-                                    * if sltp_position > 0.0 { 1.0 } else { -1.0 });
+                                let fill_price = next_bar_open
+                                    * (1.0
+                                        - default_slip_bps / 10_000.0
+                                            * if sltp_position > 0.0 { 1.0 } else { -1.0 });
                                 let sltp_row = crate::eval::store::DecisionRow {
                                     run_id: run.id.clone(),
                                     decision_index: decision_idx,
@@ -1114,7 +1095,10 @@ impl Executor {
                                     asset: asset.clone(),
                                     action: "partial_tp1".to_string(),
                                     conviction: Some(1.0),
-                                    justification: Some(format!("sltp: partial TP1 ({:.0}%)", fraction * 100.0)),
+                                    justification: Some(format!(
+                                        "sltp: partial TP1 ({:.0}%)",
+                                        fraction * 100.0
+                                    )),
                                     reasoning: None,
                                     order_size: Some(close_units),
                                     fill_price: Some(fill_price),
@@ -1940,7 +1924,9 @@ impl Executor {
                 if pre_fill_position != 0.0 && fill.new_pos.abs() <= f64::EPSILON {
                     // Closing a position — count for win_rate
                     realized_count += 1;
-                    if fill.realized_pnl > 0.0 { wins += 1; }
+                    if fill.realized_pnl > 0.0 {
+                        wins += 1;
+                    }
                 }
 
                 // Borrow cost: when a short is closed, subtract accumulated
@@ -2262,7 +2248,11 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 { wins as f64 / realized_count as f64 } else { 0.0 },
+            win_rate: if realized_count > 0 {
+                wins as f64 / realized_count as f64
+            } else {
+                0.0
+            },
             n_trades,
             n_decisions: decision_idx,
             baselines: Some(baselines),
@@ -2463,8 +2453,8 @@ impl Executor {
         // unique index so the `(run_id, decision_index)` PK never collides.
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
-        let mut wins = 0u32;
-        let mut realized_count = 0u32;
+        let wins = 0u32;
+        let realized_count = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let run_started: Instant = Instant::now();
@@ -2725,7 +2715,11 @@ impl Executor {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 { wins as f64 / realized_count as f64 } else { 0.0 },
+            win_rate: if realized_count > 0 {
+                wins as f64 / realized_count as f64
+            } else {
+                0.0
+            },
             n_trades,
             n_decisions: decision_idx,
             // Live runs do not compute the four backtest baselines (they
@@ -2804,7 +2798,6 @@ impl Executor {
                 _ => slice.iter().collect(),
             }
         };
-        let bar_history = build_bar_history(&history_slice, inputs_policy);
         let source_window_start = history_slice
             .first()
             .map(|b| b.timestamp)
@@ -2815,45 +2808,19 @@ impl Executor {
         // don't have a T+1 bar yet (the broker fills at the live market
         // price; `next_open` is only the reference price for sizing).
         let next_open = bar.close;
-        let current_bar_json = ohlcv_to_json(bar, inputs_policy);
-        let seed = match inputs_policy {
-            InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
-                "decision_index": decision_idx,
-                "asset": asset,
-                "active_assets": active_venue_symbols,
-                "timestamp": bar.timestamp,
-                "market_data": {
-                    "asset": asset,
-                    "current_bar": current_bar_json,
-                    "next_bar_open": next_open,
-                    "reference_price_usd": bar.close,
-                    "reference_price_source": "live_bar.close",
-                    "bar_history": bar_history,
-                },
-                "portfolio_state": {
-                    "position_size": book.position(asset_sym),
-                    "equity": equity,
-                    "mark_price": bar.close,
-                },
-            }),
-            InputsPolicy::Causal => serde_json::json!({
-                "asset": asset,
-                "active_assets": active_venue_symbols,
-                "market_data": {
-                    "asset": asset,
-                    "current_bar": current_bar_json,
-                    "next_bar_open": next_open,
-                    "reference_price_usd": bar.close,
-                    "reference_price_source": "live_bar.close",
-                    "bar_history": bar_history,
-                },
-                "portfolio_state": {
-                    "position_size": book.position(asset_sym),
-                    "equity": equity,
-                    "mark_price": bar.close,
-                },
-            }),
-        };
+        let seed = build_decision_seed(DecisionSeedInput {
+            decision_idx,
+            asset,
+            active_assets: active_venue_symbols,
+            bar,
+            next_bar_open: next_open,
+            reference_price_source: "live_bar.close",
+            position_size: book.position(asset_sym),
+            equity,
+            mark_price: bar.close,
+            history_slice: &history_slice,
+            inputs_policy,
+        });
 
         let outs = run_pipeline(PipelineInputs {
             strategy,
@@ -3831,7 +3798,10 @@ fn apply_sltp_full_exit(
     slip_bps: f64,
     taker_bps: f64,
 ) -> (f64, f64) {
-    debug_assert!(position.abs() > 0.0, "apply_sltp_full_exit called with zero position");
+    debug_assert!(
+        position.abs() > 0.0,
+        "apply_sltp_full_exit called with zero position"
+    );
     let direction_sign = if position > 0.0 { 1.0_f64 } else { -1.0 };
     let fill_price = next_open * (1.0 - slip_bps / 10_000.0 * direction_sign);
     let fee = position.abs() * fill_price * taker_bps / 10_000.0;
@@ -3884,6 +3854,68 @@ fn build_baselines_report(
             simple_trend: computed.relative_to.simple_trend,
             simple_mean_reversion: computed.relative_to.simple_mean_reversion,
         },
+    }
+}
+
+/// Input for [`build_decision_seed`], the production seed payload builder
+/// shared by backtest/live execution and integration tests.
+pub struct DecisionSeedInput<'a> {
+    pub decision_idx: u32,
+    pub asset: &'a str,
+    pub active_assets: &'a [String],
+    pub bar: &'a Ohlcv,
+    pub next_bar_open: f64,
+    pub reference_price_source: &'a str,
+    pub position_size: f64,
+    pub equity: f64,
+    pub mark_price: f64,
+    pub history_slice: &'a [&'a Ohlcv],
+    pub inputs_policy: InputsPolicy,
+}
+
+/// Build the trader seed JSON for one decision cycle. F-6: `Causal`
+/// drops `decision_index` and top-level `timestamp`, while Raw/Oracle
+/// keep the pre-F-6 shape.
+pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
+    let bar_history = build_bar_history(input.history_slice, input.inputs_policy);
+    let current_bar_json = ohlcv_to_json(input.bar, input.inputs_policy);
+    match input.inputs_policy {
+        InputsPolicy::Raw | InputsPolicy::Oracle => serde_json::json!({
+            "decision_index": input.decision_idx,
+            "asset": input.asset,
+            "active_assets": input.active_assets,
+            "timestamp": input.bar.timestamp,
+            "market_data": {
+                "asset": input.asset,
+                "current_bar": current_bar_json,
+                "next_bar_open": input.next_bar_open,
+                "reference_price_usd": input.bar.close,
+                "reference_price_source": input.reference_price_source,
+                "bar_history": bar_history,
+            },
+            "portfolio_state": {
+                "position_size": input.position_size,
+                "equity": input.equity,
+                "mark_price": input.mark_price,
+            },
+        }),
+        InputsPolicy::Causal => serde_json::json!({
+            "asset": input.asset,
+            "active_assets": input.active_assets,
+            "market_data": {
+                "asset": input.asset,
+                "current_bar": current_bar_json,
+                "next_bar_open": input.next_bar_open,
+                "reference_price_usd": input.bar.close,
+                "reference_price_source": input.reference_price_source,
+                "bar_history": bar_history,
+            },
+            "portfolio_state": {
+                "position_size": input.position_size,
+                "equity": input.equity,
+                "mark_price": input.mark_price,
+            },
+        }),
     }
 }
 

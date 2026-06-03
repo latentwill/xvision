@@ -15,12 +15,12 @@
 //! 2. `hash_only` → both refs are `None`; nothing is written to the
 //!    `BlobStore`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use xvision_engine::agent::execute::{execute_slot, SlotInput};
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
-use xvision_engine::agent::observability::{ObsEmitter, ObsRetentionPolicy};
+use xvision_engine::agent::observability::{canonical_request_bytes, ObsEmitter, ObsRetentionPolicy};
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
 use xvision_observability::{
@@ -34,11 +34,25 @@ const ASSISTANT_TEXT: &str = r#"{"action":"hold","conviction":0.5,"justification
 
 /// Minimal `LlmDispatch` that returns a fixed response so the test
 /// doesn't need a live provider.
-struct CannedDispatch;
+#[derive(Default)]
+struct CannedDispatch {
+    last_request: Mutex<Option<LlmRequest>>,
+}
+
+impl CannedDispatch {
+    fn last_request(&self) -> LlmRequest {
+        self.last_request
+            .lock()
+            .expect("last_request mutex poisoned")
+            .clone()
+            .expect("dispatcher must capture the LlmRequest")
+    }
+}
 
 #[async_trait]
 impl LlmDispatch for CannedDispatch {
-    async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        *self.last_request.lock().expect("last_request mutex poisoned") = Some(req);
         Ok(LlmResponse {
             content: vec![ContentBlock::Text {
                 text: ASSISTANT_TEXT.to_string(),
@@ -104,17 +118,18 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
     let emitter = ObsEmitter::new(bus.clone(), "run-payload-refs-full-debug")
         .with_retention(policy_for(RetentionMode::FullDebug))
         .with_blob_store(store.clone());
+    let dispatch = Arc::new(CannedDispatch::default());
 
     let slot = trader_slot();
     let result = execute_slot(SlotInput {
         slot: &slot,
         system_prompt: "You are a deterministic test trader.".into(),
         upstream_inputs: serde_json::json!({ "price": 100.0 }),
-        dispatch: Arc::new(CannedDispatch),
+        dispatch: dispatch.clone(),
         tools: Arc::new(ToolRegistry::default_with_builtins()),
         response_schema: None,
-        max_tokens: None,
-        temperature: None,
+        max_tokens: Some(1234),
+        temperature: Some(0.2),
         obs: Some(emitter),
         memory: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
@@ -154,11 +169,17 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
         .as_ref()
         .expect("full_debug must populate response_payload_ref");
 
-    // Prompt blob is the canonical JSON of the LlmRequest. Decoding it
-    // back to JSON must include the system_prompt the slot configured.
+    // Prompt blob is the canonical JSON of the exact LlmRequest handed to
+    // the dispatcher, not just a digest marker or partial prompt field.
     let prompt_bytes = store
         .read(&BlobRef(pref.clone()))
         .expect("prompt blob must exist in BlobStore");
+    let captured_request = dispatch.last_request();
+    assert_eq!(
+        prompt_bytes,
+        canonical_request_bytes(&captured_request),
+        "stored prompt blob must equal the full LlmRequest dispatched to the provider",
+    );
     let parsed: serde_json::Value =
         serde_json::from_slice(&prompt_bytes).expect("prompt blob must be valid JSON");
     assert_eq!(
@@ -166,6 +187,8 @@ async fn full_debug_execute_slot_writes_prompt_and_response_blobs() {
         "You are a deterministic test trader.",
         "stored prompt must contain the slot's system_prompt verbatim",
     );
+    assert_eq!(parsed["max_tokens"], 1234);
+    assert_eq!(parsed["temperature"], 0.2);
 
     // Response blob must decode back to the exact assistant text the
     // canned dispatcher returned.
@@ -200,7 +223,7 @@ async fn hash_only_execute_slot_leaves_payload_refs_none() {
         slot: &slot,
         system_prompt: "You are a deterministic test trader.".into(),
         upstream_inputs: serde_json::json!({ "price": 100.0 }),
-        dispatch: Arc::new(CannedDispatch),
+        dispatch: Arc::new(CannedDispatch::default()),
         tools: Arc::new(ToolRegistry::default_with_builtins()),
         response_schema: None,
         max_tokens: None,

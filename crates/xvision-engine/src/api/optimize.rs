@@ -758,9 +758,7 @@ async fn select_demo_observations_by_id(
             "manual_observation_ids cannot exceed {MAX_LIMIT}"
         )));
     }
-    let placeholders = std::iter::repeat_n("?", ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
+    let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(",");
     let sql = format!(
         "SELECT id, text, run_id, scenario_id, cycle_idx, source_window_end \
          FROM memory_items WHERE namespace = ? AND tier = 'observation' AND forgotten_at IS NULL \
@@ -811,9 +809,7 @@ async fn select_pattern_priors(
             "prior_pattern_ids cannot exceed {MAX_LIMIT}"
         )));
     }
-    let placeholders = std::iter::repeat_n("?", ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
+    let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(",");
     let sql = format!(
         "SELECT id, text, promotion_state FROM memory_items \
          WHERE namespace = ? AND tier = 'pattern' AND forgotten_at IS NULL \
@@ -895,9 +891,7 @@ async fn select_pattern_priors_lenient(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders = std::iter::repeat_n("?", ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
+    let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(",");
     let sql = format!(
         "SELECT id, text, promotion_state FROM memory_items \
          WHERE namespace = ? AND tier = 'pattern' AND forgotten_at IS NULL \

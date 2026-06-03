@@ -68,10 +68,10 @@ describe("DesktopThreePaneShell", () => {
     expect(shell.style.gridTemplateColumns).toContain("220px");
     expect(shell.style.gridTemplateColumns).toContain("minmax(0,1fr)");
 
-    // DOM order: Sidebar | ResizeHandle | main | [chat-rail wrapper] | …
+    // DOM order: Sidebar | ResizeHandle | main | ResizeHandle | [chat-rail wrapper] | …
     expect(shell.children[0]).toBe(sidebar);
     expect(shell.children[2]).toBe(main);
-    expect(shell.children[3]).toContainElement(chatRail);
+    expect(shell.children[4]).toContainElement(chatRail);
 
     // Regression guard for the text-overlap QA: the middle column must keep
     // its width hard-capped (max-w-[960px]) AND its track must be allowed to
@@ -100,8 +100,8 @@ describe("DesktopThreePaneShell", () => {
     const shell = container.firstElementChild;
     const main = screen.getByRole("main");
 
-    // children[2] = main, children[3] = div wrapping the suspending rail
-    expect(shell?.children[3]).toBeInTheDocument();
+    // children[2] = main, children[4] = div wrapping the suspending rail
+    expect(shell?.children[4]).toBeInTheDocument();
     expect(shell?.children[2]).toBe(main);
   });
 
@@ -119,7 +119,7 @@ describe("DesktopThreePaneShell", () => {
     );
 
     const shell = container.firstElementChild as HTMLElement;
-    // 5-column template when rail is open: sidebar 4px center 4px auto
-    expect(shell.style.gridTemplateColumns).toMatch(/220px 4px minmax\(0,1fr\) 4px auto/);
+    // 5-column template when rail is open: sidebar 4px center 4px configured rail width
+    expect(shell.style.gridTemplateColumns).toMatch(/220px 4px minmax\(0,1fr\) 4px 380px/);
   });
 });

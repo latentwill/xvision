@@ -18,7 +18,14 @@ use ulid::Ulid;
 
 use super::context::ContextScope;
 
-type RailStateRow = Option<(i64, String, Option<String>, Option<String>, Option<String>, Option<String>)>;
+type RailStateRow = Option<(
+    i64,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)>;
 
 #[derive(Debug, Clone, Copy)]
 struct PoolSnapshot {

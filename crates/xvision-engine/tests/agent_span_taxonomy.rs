@@ -27,7 +27,7 @@ use xvision_engine::agent::execute::{execute_slot, SlotInput};
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::strategies::slot::LLMSlot;
-use xvision_engine::tools::ToolRegistry;
+use xvision_engine::tools::{Tool, ToolName, ToolRegistry};
 use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, RunStatus, SpanKind};
 
 fn trader_slot() -> LLMSlot {
@@ -80,6 +80,23 @@ impl LlmDispatch for OneToolThenEndTurn {
     }
 }
 
+struct PriceOfThingTool;
+
+#[async_trait]
+impl Tool for PriceOfThingTool {
+    fn name(&self) -> ToolName {
+        ToolName::new("price_of_thing")
+    }
+
+    fn description(&self) -> &'static str {
+        "deterministic price fixture"
+    }
+
+    async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({"symbol": "BTC", "price": 50_000.0}))
+    }
+}
+
 #[tokio::test]
 async fn validate_brackets_wrap_each_tool_call_in_order() {
     let recorder: Arc<NoopRecorder> = Arc::new(NoopRecorder::new());
@@ -89,12 +106,14 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
     let emitter = ObsEmitter::new(bus.clone(), "run-validate-bracket-test");
 
     let slot = trader_slot();
+    let mut tools = ToolRegistry::empty();
+    tools.register(Arc::new(PriceOfThingTool));
     let input = SlotInput {
         slot: &slot,
         system_prompt: "decide".into(),
         upstream_inputs: serde_json::json!({}),
         dispatch: Arc::new(OneToolThenEndTurn),
-        tools: Arc::new(ToolRegistry::empty()),
+        tools: Arc::new(tools),
         response_schema: None,
         max_tokens: None,
         temperature: None,
@@ -115,9 +134,8 @@ async fn validate_brackets_wrap_each_tool_call_in_order() {
         trace_attrs: None,
     };
 
-    // Drive one tool-use iteration. The tool itself fails (registry
-    // is empty), which is fine — the validate spans MUST emit even
-    // on tool error per the F-4 contract.
+    // Drive one successful tool-use iteration. The validate spans MUST
+    // emit around the registered tool call without tripping recovery.
     let _ = execute_slot(input).await;
 
     // Drain the bus into the recorder. Same pattern used by

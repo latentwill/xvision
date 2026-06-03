@@ -842,6 +842,9 @@ mod tests {
 
         delete(&ctx, &agent.agent_id).await.unwrap();
         let r = get(&ctx, &agent.agent_id).await;
-        assert!(matches!(r, Err(ApiError::NotFound(_))), "agent should be gone after delete");
+        assert!(
+            matches!(r, Err(ApiError::NotFound(_))),
+            "agent should be gone after delete"
+        );
     }
 }

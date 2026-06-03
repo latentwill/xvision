@@ -21,11 +21,14 @@
 
 #![allow(deprecated)] // canonical_scenarios() — see Task 8 (M2) deprecation note.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use uuid::Uuid;
 use xvision_core::market::Ohlcv;
+use xvision_core::{Action, AssetSymbol, Direction, PortfolioState, TraderDecision};
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::{canonical_scenarios, Run, RunMode, RunStatus, RunStore, Scenario};
@@ -35,6 +38,8 @@ use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
+use xvision_risk::rules::MinNotional;
+use xvision_risk::{RiskEvalContext, RiskRule, RuleVerdict};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
@@ -62,10 +67,12 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
@@ -157,6 +164,54 @@ fn eth_like_bars(scenario: &Scenario) -> Vec<Ohlcv> {
     bars
 }
 
+#[test]
+fn exact_min_notional_boundary_passes_risk_rule() {
+    let rule = MinNotional {
+        min_notional_usd: 10.0,
+        venue_id: "paper".into(),
+    };
+    let decision = TraderDecision {
+        cycle_id: Uuid::new_v4(),
+        action: Action::Buy,
+        size_bps: 100,
+        direction: Direction::Long,
+        stop_loss_pct: 2.0,
+        take_profit_pct: 5.0,
+        trader_summary: "exact boundary order".into(),
+        asset: AssetSymbol::Eth,
+        trailing_stop_pct: None,
+        breakeven_trigger_pct: None,
+        breakeven_offset_pct: None,
+        fade_sl_bars: None,
+        fade_sl_start_pct: None,
+        fade_sl_end_pct: None,
+        max_bars_held: None,
+        sl_atr_mult: None,
+        tp_atr_mult: None,
+        tp1_pct: None,
+        tp1_close_fraction: None,
+        tp2_pct: None,
+    };
+    let portfolio = PortfolioState {
+        equity_usd: 1000.0,
+        realized_pnl_today_usd: 0.0,
+        day_index: 0,
+        open_positions: BTreeMap::new(),
+        as_of: Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
+    };
+
+    let verdict = rule.evaluate(&RiskEvalContext {
+        decision: &decision,
+        portfolio: &portfolio,
+        asset: AssetSymbol::Eth,
+        conviction: 1.0,
+    });
+    assert!(
+        matches!(verdict, RuleVerdict::Pass),
+        "$1000 equity x 100 bps equals the $10 venue minimum and must pass; got {verdict:?}",
+    );
+}
+
 /// Confirms the gate works end-to-end on the operator's exact failure
 /// shape: tiny buying power × small risk_pct → ~$6 notional → veto.
 /// The broker never sees a submit.
@@ -171,7 +226,7 @@ async fn min_notional_gate_skips_broker_for_below_min_orders() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
     let mock = Arc::new(MockBrokerSurface::new(initial_balance));
-    let broker: Arc<dyn BrokerSurface> = mock.clone();
+    let _broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(eth_like_bars(&scenario)); // paper venue minimum
@@ -240,7 +295,7 @@ async fn without_gate_below_min_orders_reach_the_broker() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
     let mock = Arc::new(MockBrokerSurface::new(initial_balance));
-    let broker: Arc<dyn BrokerSurface> = mock.clone();
+    let _broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
     // No `with_min_notional_usd` call — gate is disabled.
@@ -277,7 +332,7 @@ async fn zero_min_notional_is_noop() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
     let mock = Arc::new(MockBrokerSurface::new(initial_balance));
-    let broker: Arc<dyn BrokerSurface> = mock.clone();
+    let _broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = tiny_risk_strategy();
     let scenario = short_scenario();
     let executor = Executor::with_bars(eth_like_bars(&scenario));
@@ -314,7 +369,7 @@ async fn above_min_notional_orders_pass_through() {
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
     let mock = Arc::new(MockBrokerSurface::new(initial_balance));
-    let broker: Arc<dyn BrokerSurface> = mock.clone();
+    let _broker: Arc<dyn BrokerSurface> = mock.clone();
     let strategy = {
         let mut s = tiny_risk_strategy();
         // 1% risk × $100k buying power = $1000 notional — well over $10.

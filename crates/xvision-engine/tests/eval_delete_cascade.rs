@@ -193,6 +193,54 @@ async fn delete_eval_run_cascades_through_agent_runs_and_spans() {
         .execute(&ctx.db)
         .await
         .unwrap();
+    sqlx::query(
+        "INSERT INTO eval_attestations \
+         (id, run_id, agent_id, scenario_id, signed_metrics_json, signature_hex, signing_pubkey_hex, signed_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("att_1")
+    .bind("r_with_kids")
+    .bind("agent_hash_abc")
+    .bind("crypto-bull-q1-2025")
+    .bind("{}")
+    .bind("sig")
+    .bind("pub")
+    .bind("2026-05-18T00:00:11Z")
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO eval_findings \
+         (id, run_id, kind, severity, summary, evidence_json, extracted_at, schema_version) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("find_1")
+    .bind("r_with_kids")
+    .bind("regression")
+    .bind("warning")
+    .bind("finding summary")
+    .bind("[]")
+    .bind("2026-05-18T00:00:12Z")
+    .bind("1")
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO eval_filter_evaluations \
+         (run_id, bar_index, ts, filter_display_name, decision_tag, decision_json, conditions_passed, filter_event_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("r_with_kids")
+    .bind(0_i64)
+    .bind("2026-05-18T00:00:13Z")
+    .bind("fixture filter")
+    .bind("hold")
+    .bind(r#"{"kind":"inactive"}"#)
+    .bind("[]")
+    .bind(r#"{"decision":"hold"}"#)
+    .execute(&ctx.db)
+    .await
+    .unwrap();
 
     let fk_on: (i64,) = sqlx::query_as("PRAGMA foreign_keys")
         .fetch_one(&ctx.db)
@@ -219,6 +267,9 @@ async fn delete_eval_run_cascades_through_agent_runs_and_spans() {
         ("artifacts", "run_id = ?", "ag_1"),
         ("eval_decisions", "run_id = ?", "r_with_kids"),
         ("eval_equity_samples", "run_id = ?", "r_with_kids"),
+        ("eval_attestations", "run_id = ?", "r_with_kids"),
+        ("eval_findings", "run_id = ?", "r_with_kids"),
+        ("eval_filter_evaluations", "run_id = ?", "r_with_kids"),
     ] {
         let sql = format!("SELECT COUNT(*) FROM {table} WHERE {where_clause}");
         let count: (i64,) = sqlx::query_as(&sql).bind(val).fetch_one(&ctx.db).await.unwrap();

@@ -22,10 +22,11 @@
 //!    same resolution rule.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use serde_json::Value;
+use tracing_subscriber::prelude::*;
 use xvision_core::providers::{Catalog, ModelEntry};
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::eval::cost::compute_token_cost_usd_from_catalog;
@@ -33,6 +34,73 @@ use xvision_observability::{
     AgentRunRecorder, ModelCallFinishedEvent, NoopRecorder, RunEvent, RunEventBus, RunStartedEvent,
     SpanFinishedEvent, SpanKind, SpanStartedEvent, SpanStatus, SqliteRecorder,
 };
+
+const UNPRICED_LOG_PREFIX: &str = "model_calls.cost_usd: no priced catalog entry";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UnpricedLog {
+    provider: String,
+    model: String,
+    message: String,
+}
+
+#[derive(Clone, Default)]
+struct CapturedUnpricedLogs {
+    entries: Arc<Mutex<Vec<UnpricedLog>>>,
+}
+
+struct UnpricedLogLayer {
+    captured: CapturedUnpricedLogs,
+}
+
+impl<S> tracing_subscriber::Layer<S> for UnpricedLogLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: tracing_subscriber::layer::Context<'_, S>) {
+        let mut visitor = UnpricedLogVisitor::default();
+        event.record(&mut visitor);
+        if visitor
+            .message
+            .as_deref()
+            .is_some_and(|message| message.starts_with(UNPRICED_LOG_PREFIX))
+        {
+            self.captured.entries.lock().unwrap().push(UnpricedLog {
+                provider: visitor.provider.unwrap_or_default(),
+                model: visitor.model.unwrap_or_default(),
+                message: visitor.message.unwrap_or_default(),
+            });
+        }
+    }
+}
+
+#[derive(Default)]
+struct UnpricedLogVisitor {
+    provider: Option<String>,
+    model: Option<String>,
+    message: Option<String>,
+}
+
+impl tracing::field::Visit for UnpricedLogVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        match field.name() {
+            "provider" => self.provider = Some(value.to_string()),
+            "model" => self.model = Some(value.to_string()),
+            "message" => self.message = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        let value = format!("{value:?}").trim_matches('"').to_string();
+        match field.name() {
+            "provider" => self.provider = Some(value),
+            "model" => self.model = Some(value),
+            "message" => self.message = Some(value),
+            _ => {}
+        }
+    }
+}
 
 /// OpenRouter-shaped Claude Opus 4.7 entry. Matches the fixture in
 /// `xvision_engine::eval::cost::tests` so the asserted cost stays in
@@ -149,7 +217,7 @@ async fn priced_model_via_provider_fallback_when_slot_provider_string_mismatches
 
     let cat = catalog("openrouter", vec![priced_opus_entry()]);
     let mut catalogs = HashMap::new();
-    catalogs.insert("openrouter".to_string(), cat);
+    catalogs.insert("openrouter".to_string(), cat.clone());
 
     let emitter = ObsEmitter::new(bus.clone(), "run-priced-fallback").with_catalogs(catalogs);
 
@@ -181,12 +249,8 @@ async fn priced_model_via_provider_fallback_when_slot_provider_string_mismatches
 async fn unpriced_model_leaves_cost_none_and_repeats_dont_panic() {
     // Anthropic catalogs land here (no pricing on the wire). Two
     // back-to-back emits with the same (provider, model) must both
-    // resolve to `cost_usd = None`. The debug-log dedupe is a
-    // process-wide singleton across test runs so we can't assert
-    // "exactly one log line per pair" from a single test without a
-    // dedicated subscriber; the observable contract is that
-    // `cost_usd` stays None and no repeated emit panics or
-    // double-counts.
+    // resolve to `cost_usd = None` and produce at most one unpriced
+    // debug log for that provider/model pair.
     let recorder = Arc::new(NoopRecorder::new());
     let bus = Arc::new(RunEventBus::new(vec![recorder.clone()]));
 
@@ -195,13 +259,21 @@ async fn unpriced_model_leaves_cost_none_and_repeats_dont_panic() {
     catalogs.insert("anthropic".to_string(), cat);
 
     let emitter = ObsEmitter::new(bus.clone(), "run-unpriced").with_catalogs(catalogs);
+    let model = format!("claude-sonnet-4-6-unpriced-{}", std::process::id());
+    let captured = CapturedUnpricedLogs::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::LevelFilter::DEBUG)
+        .with(UnpricedLogLayer {
+            captured: captured.clone(),
+        });
+    let _subscriber_guard = tracing::subscriber::set_default(subscriber);
 
     for span in ["span-a", "span-b"] {
         emitter
             .emit_model_call_finished(
                 span,
                 "anthropic",
-                "claude-sonnet-4-6",
+                &model,
                 Some(100),
                 Some(100),
                 None,
@@ -210,6 +282,15 @@ async fn unpriced_model_leaves_cost_none_and_repeats_dont_panic() {
             )
             .await;
     }
+
+    let logs = captured.entries.lock().unwrap().clone();
+    assert_eq!(
+        logs.len(),
+        1,
+        "unpriced provider/model pair must emit one deduped debug log: {logs:?}",
+    );
+    assert_eq!(logs[0].provider, "anthropic");
+    assert_eq!(logs[0].model, model);
 
     let events = collect_events(&bus, &recorder).await;
     let finished = finished_events(&events);
@@ -315,10 +396,23 @@ async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
 
     let cat = catalog("openrouter", vec![priced_opus_entry()]);
     let mut catalogs = HashMap::new();
-    catalogs.insert("openrouter".to_string(), cat);
+    catalogs.insert("openrouter".to_string(), cat.clone());
 
     let run_id = "cost-int-run-1";
     let emitter = ObsEmitter::new(bus.clone(), run_id).with_catalogs(catalogs);
+    let token_pairs = [(1_000_u32, 200_u32), (2_500, 500), (4_000, 1_000)];
+    let expected_sum: f64 = token_pairs
+        .iter()
+        .map(|(input_tokens, output_tokens)| {
+            compute_token_cost_usd_from_catalog(
+                *input_tokens as u64,
+                *output_tokens as u64,
+                "anthropic/claude-opus-4.7",
+                &cat,
+            )
+            .expect("priced catalog produces cost")
+        })
+        .sum();
 
     // Register the run row so spans have a parent.
     bus.publish(RunEvent::RunStarted(RunStartedEvent {
@@ -343,10 +437,7 @@ async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
     // `ModelCallFinished` lands or the recorder's INSERT FK to
     // spans.id fails (even with FKs OFF, missing rows mean the JOIN
     // we SUM over is empty).
-    for (i, (in_tok, out_tok)) in [(1_000_u32, 200_u32), (2_500, 500), (4_000, 1_000)]
-        .iter()
-        .enumerate()
-    {
+    for (i, (in_tok, out_tok)) in token_pairs.iter().enumerate() {
         let span_id = format!("span-cost-{i}");
         bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
             span_id: span_id.clone(),
@@ -388,31 +479,45 @@ async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
         bus.quiesce().await;
     }
 
-    // Sum cost_usd across the rows the recorder persisted.
-    let (row_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM model_calls")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    // Sum cost_usd across the specific rows this test emitted.
+    let (row_count,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM model_calls WHERE span_id LIKE 'span-cost-%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
         row_count, 3,
         "all emitted model call rows must be persisted before cost aggregation"
     );
-    let (sum,): (Option<f64>,) = sqlx::query_as("SELECT SUM(cost_usd) FROM model_calls")
+    let (sum,): (Option<f64>,) =
+        sqlx::query_as("SELECT SUM(cost_usd) FROM model_calls WHERE span_id LIKE 'span-cost-%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let sum = sum.expect("at least one row with non-NULL cost_usd");
+    assert!(
+        (sum - expected_sum).abs() < 1e-12,
+        "persisted sum(model_calls.cost_usd) must include all three priced rows; expected {expected_sum}, got {sum}",
+    );
+
+    let (unscoped_sum,): (Option<f64>,) = sqlx::query_as("SELECT SUM(cost_usd) FROM model_calls")
         .fetch_one(&pool)
         .await
         .unwrap();
-    let sum = sum.expect("at least one row with non-NULL cost_usd");
+    let unscoped_sum = unscoped_sum.expect("at least one row with non-NULL cost_usd");
     assert!(
-        sum > 0.0,
-        "expected sum(model_calls.cost_usd) > 0 for priced run, got {sum}",
+        unscoped_sum > 0.0,
+        "expected sum(model_calls.cost_usd) > 0 for priced run, got {unscoped_sum}",
     );
 
     // Sanity: every row has a non-NULL cost. The audit baseline was
     // 2,757/2,757 NULL — this is the regression bar we promise.
-    let (null_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM model_calls WHERE cost_usd IS NULL")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let (null_count,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM model_calls WHERE span_id LIKE 'span-cost-%' AND cost_usd IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(null_count, 0, "no priced row should land with NULL cost_usd");
 }
 

@@ -20,6 +20,7 @@
 //!   `RunStore::record_attestation`. Powers `xvn eval attest <run_id>` and
 //!   the (future) `publish_attestation` MCP verb.
 
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -3553,11 +3554,7 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
 
     let ctx_bg = ctx.clone();
     let run_id = run.id.clone();
-    tokio::spawn(async move {
-        // Hold the permit for the entire background task lifetime.
-        // Dropping it releases the slot back to the gate; this must
-        // outlive `execute_in_background` and `extract_and_record`.
-        let _launch_permit = launch_permit;
+    spawn_launch_gated_task(launch_permit, async move {
         execute_in_background(
             ctx_bg,
             run,
@@ -3622,6 +3619,26 @@ fn resolve_launch_gate_key(
     // misconfigured strategy that already shouldn't have reached
     // `start_run`.
     (String::new(), findings_model.to_string())
+}
+
+/// Spawn a task while holding the launch-concurrency permit for the full
+/// task lifetime. `start_run` acquires the permit before calling this helper;
+/// the helper is intentionally tiny so integration tests can pin the lifetime
+/// contract without constructing a full backtest executor.
+#[doc(hidden)]
+pub fn spawn_launch_gated_task<F>(
+    launch_permit: crate::eval::concurrency::PermitGuard,
+    task: F,
+) -> tokio::task::JoinHandle<()>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        // Dropping this guard releases the slot back to the gate; it must
+        // outlive the whole background task body.
+        let _launch_permit = launch_permit;
+        task.await;
+    })
 }
 
 /// Background-task body: transition Queued → Running, drive the

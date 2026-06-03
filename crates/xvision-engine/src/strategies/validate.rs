@@ -186,8 +186,7 @@ pub fn high_position_size_warning(strategy: &Strategy) -> Option<String> {
         Some(format!(
             "Strategy '{}' has max_position_pct_nav set to {:.1}% (above the 20% caution threshold). \
              The risk layer will allow this but log a warning on each oversized trade.",
-            strategy.manifest.display_name,
-            strategy.risk.max_position_pct_nav,
+            strategy.manifest.display_name, strategy.risk.max_position_pct_nav,
         ))
     } else {
         None
@@ -802,7 +801,10 @@ mod preflight_tests {
         let msg = high_position_size_warning(&strategy).unwrap();
         assert!(msg.contains("MyStrat"), "warning must include strategy name");
         assert!(msg.contains("50.0%"), "warning must include formatted pct");
-        assert!(msg.contains("20% caution"), "warning must mention the 20% threshold");
+        assert!(
+            msg.contains("20% caution"),
+            "warning must mention the 20% threshold"
+        );
     }
 
     #[test]
@@ -858,6 +860,9 @@ mod preflight_tests {
         strategy.acknowledge_no_filter = true; // suppress filter warning
         let result = preflight_validate(&strategy, None);
         assert!(!result.errors.is_empty() || !result.warnings.is_empty());
-        assert!(!result.eval_ready, "eval_ready must be false when warnings present");
+        assert!(
+            !result.eval_ready,
+            "eval_ready must be false when warnings present"
+        );
     }
 }

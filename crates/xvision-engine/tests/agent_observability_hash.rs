@@ -136,7 +136,12 @@ fn response_hash_is_deterministic() {
 fn response_hash_is_prefixed_sha256_64_hex() {
     let h = compute_response_hash("anything");
     assert!(h.starts_with("sha256:"), "got {h}");
-    assert_eq!(h["sha256:".len()..].len(), 64);
+    let hex = &h["sha256:".len()..];
+    assert_eq!(hex.len(), 64, "expected 64-hex-char digest, got {hex}");
+    assert!(
+        hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()),
+        "digest must be lowercase hex, got {hex}"
+    );
 }
 
 #[test]
@@ -154,5 +159,7 @@ fn empty_response_text_still_hashes() {
     // defined on "" so a caller misuse won't panic.
     let h = compute_response_hash("");
     assert!(h.starts_with("sha256:"));
-    assert_eq!(h["sha256:".len()..].len(), 64);
+    let hex = &h["sha256:".len()..];
+    assert_eq!(hex.len(), 64);
+    assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase()));
 }

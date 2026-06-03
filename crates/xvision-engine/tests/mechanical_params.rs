@@ -10,7 +10,8 @@
 //!
 //! - Arbitrary keys on `mechanical_params` are accepted at every
 //!   layer (Strategy deserialize, Store save, set_mechanical_param).
-//! - Legacy strategy JSON carrying typed shapes round-trips byte-for-byte.
+//! - Legacy strategy JSON carrying typed shapes still loads and preserves
+//!   its operator-authored mechanical params.
 //! - `min_warmup_bars` derivation uses the JSON walker on every
 //!   strategy (no more per-template typed dispatch).
 //!
@@ -23,7 +24,7 @@ use xvision_engine::authoring::{set_mechanical_param, SetMechanicalParamReq};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
-use xvision_engine::strategies::{MechanicalParams, PipelineDef, Strategy};
+use xvision_engine::strategies::{DecisionMode, MechanicalParams, PipelineDef, Strategy};
 
 fn manifest_for(template_label: &str) -> PublicManifest {
     PublicManifest {
@@ -107,16 +108,61 @@ fn legacy_strategy_json_with_template_field_still_loads() {
     // template-registry removal carried `template: "trend_follower"`
     // and a typed params shape. Post-removal the field stays on
     // `PublicManifest` as a free-text label; the strategy must load
-    // and round-trip byte-for-byte.
+    // from independently-authored JSON rather than from the current
+    // serializer's exact output shape.
     let original_params = json!({"ema_fast": 12, "ema_mid": 26, "ema_slow": 50});
-    let legacy = strategy_with("trend_follower", original_params.clone());
-    let strategy_json = serde_json::to_value(&legacy).expect("legacy fixture serializes");
-    let strategy: Strategy = serde_json::from_value(strategy_json.clone()).expect("legacy shape must parse");
+    let legacy_json = r#"{
+        "manifest": {
+            "id": "01HZLEGACYTREND0000000001",
+            "display_name": "Legacy Trend Follower",
+            "plain_summary": "Pre-removal trend follower fixture",
+            "creator": "@legacy",
+            "template": "trend_follower",
+            "regime_fit": [],
+            "asset_universe": ["BTC/USD"],
+            "decision_cadence_minutes": 60,
+            "required_tools": [],
+            "risk_preset_or_config": "balanced",
+            "published_at": null
+        },
+        "risk": {
+            "risk_pct_per_trade": 0.015,
+            "max_concurrent_positions": 2,
+            "max_leverage": 3.0,
+            "stop_loss_atr_multiple": 2.0,
+            "daily_loss_kill_pct": 0.05
+        },
+        "mechanical_params": {
+            "ema_fast": 12,
+            "ema_mid": 26,
+            "ema_slow": 50
+        }
+    }"#;
+
+    let raw_legacy: serde_json::Value =
+        serde_json::from_str(legacy_json).expect("literal fixture is valid JSON");
+    let strategy: Strategy = serde_json::from_str(legacy_json).expect("legacy shape must parse");
     assert_eq!(strategy.manifest.template, "trend_follower");
+    assert_eq!(strategy.manifest.attested_with, Vec::<String>::new());
+    assert_eq!(strategy.manifest.execution_mode, Default::default());
+    assert_eq!(strategy.manifest.capital_mode, Default::default());
+    assert!(strategy.agents.is_empty());
+    assert_eq!(strategy.pipeline, PipelineDef::default());
+    assert_eq!(
+        strategy.activation_mode,
+        xvision_filters::ActivationMode::EveryBar
+    );
+    assert_eq!(strategy.decision_mode, DecisionMode::Agentic);
+    assert_eq!(strategy.risk.max_position_pct_nav, 20.0);
+
     let reserialized = serde_json::to_value(&strategy).expect("strategy must serialize");
     assert_eq!(
-        reserialized, strategy_json,
-        "full legacy strategy JSON drifted on round-trip",
+        reserialized["manifest"]["template"], raw_legacy["manifest"]["template"],
+        "legacy template label drifted on round-trip",
+    );
+    assert_eq!(
+        reserialized["manifest"]["asset_universe"], raw_legacy["manifest"]["asset_universe"],
+        "legacy asset universe drifted on round-trip",
     );
     assert_eq!(
         reserialized["mechanical_params"], original_params,

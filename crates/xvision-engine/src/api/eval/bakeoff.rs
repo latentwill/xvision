@@ -45,7 +45,15 @@ use crate::eval::store::RunStore;
 use crate::tools::ToolRegistry;
 use xvision_execution::broker_surface::BrokerSurface;
 
-type BakeoffArmRow = (i64, Option<String>, String, String, String, String, Option<String>);
+type BakeoffArmRow = (
+    i64,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+);
 
 /// Per-arm coordinates for one bakeoff cell.
 ///

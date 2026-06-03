@@ -523,7 +523,12 @@ pub const STEP_ERR_REPLAY_DIVERGENCE: &str = "replay_divergence";
 /// with `tracing::info!(event = "nodecision_recovery_succeeded")`.
 /// On total failure the original step is returned unchanged so the
 /// caller's `NoDecision` error path fires as normal.
-async fn try_nodecision_recovery(mut step: StepResult, client: &AgentClient, run_id: &str, role: &str) -> StepResult {
+async fn try_nodecision_recovery(
+    mut step: StepResult,
+    client: &AgentClient,
+    run_id: &str,
+    role: &str,
+) -> StepResult {
     if step.status != "completed" || step.decision_json.is_some() {
         return step;
     }

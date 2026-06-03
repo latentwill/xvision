@@ -6,9 +6,50 @@
 //! refactor of `RunEvent` can't silently drop the side / qty / fill
 //! status / error class.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use chrono::Utc;
+use tokio::sync::Mutex;
 use xvision_observability::{
-    BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide, RunEvent, SpanKind,
+    AgentRunRecorder, BrokerCallFinishedEvent, BrokerCallOutcome, BrokerCallStartedEvent, BrokerSide,
+    RecorderError, RunEvent, RunEventBus, SpanKind, SpanStartedEvent,
 };
+
+#[derive(Default)]
+struct RoutingRecorder {
+    span_to_run: Mutex<HashMap<String, String>>,
+    finished_routes: Mutex<Vec<(String, String, BrokerCallOutcome)>>,
+}
+
+#[async_trait]
+impl AgentRunRecorder for RoutingRecorder {
+    async fn handle_event(&self, event: &RunEvent) -> Result<(), RecorderError> {
+        match event {
+            RunEvent::SpanStarted(e) => {
+                self.span_to_run
+                    .lock()
+                    .await
+                    .insert(e.span_id.clone(), e.run_id.clone());
+            }
+            RunEvent::BrokerCallFinished(e) => {
+                if let Some(run_id) = self.span_to_run.lock().await.get(&e.span_id).cloned() {
+                    self.finished_routes
+                        .lock()
+                        .await
+                        .push((run_id, e.span_id.clone(), e.outcome));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn mark_interrupted(&self, _run_id: &str) -> Result<(), RecorderError> {
+        Ok(())
+    }
+}
 
 #[test]
 fn span_kind_broker_call_serializes_to_dotted_string() {
@@ -83,6 +124,65 @@ fn broker_call_finished_event_omits_run_id_uses_span_routing() {
     assert_eq!(ev.span_id(), Some("span_abc"));
 }
 
+#[tokio::test]
+async fn broker_call_finished_routes_through_bus_after_span_started() {
+    let recorder = Arc::new(RoutingRecorder::default());
+    let bus = RunEventBus::new(vec![recorder.clone()]);
+    let run_id = "run_route";
+    let span_id = "span_route";
+
+    bus.publish(RunEvent::SpanStarted(SpanStartedEvent {
+        span_id: span_id.into(),
+        run_id: run_id.into(),
+        parent_span_id: None,
+        kind: SpanKind::BrokerCall,
+        name: "broker.submit BTC/USD".into(),
+        started_at: Utc::now(),
+        otel_trace_id: None,
+        otel_span_id: None,
+        attributes_json: None,
+    }))
+    .await;
+    bus.publish(RunEvent::BrokerCallStarted(BrokerCallStartedEvent {
+        span_id: span_id.into(),
+        run_id: run_id.into(),
+        side: BrokerSide::Buy,
+        symbol: "BTC/USD".into(),
+        qty: 0.25,
+        intended_price: Some(64_500.0),
+        order_type: "market".into(),
+        venue: "alpaca-paper".into(),
+        idempotency_key: Some("run_route-0001".into()),
+    }))
+    .await;
+    bus.publish(RunEvent::BrokerCallFinished(BrokerCallFinishedEvent {
+        span_id: span_id.into(),
+        outcome: BrokerCallOutcome::Filled,
+        fill_price: Some(64_510.5),
+        fill_qty: Some(0.25),
+        fee: Some(0.32),
+        broker_order_id: Some("ord_1234".into()),
+        error_class: None,
+        error_message: None,
+        severity: None,
+    }))
+    .await;
+
+    for _ in 0..10 {
+        bus.quiesce().await;
+        if recorder.finished_routes.lock().await.len() == 1 {
+            break;
+        }
+    }
+
+    let routes = recorder.finished_routes.lock().await.clone();
+    assert_eq!(
+        routes,
+        vec![(run_id.to_string(), span_id.to_string(), BrokerCallOutcome::Filled)],
+        "BrokerCallFinished must be routeable to the run after SpanStarted seeds the span map"
+    );
+}
+
 #[test]
 fn broker_call_finished_short_fill_round_trips_through_json() {
     // Round-2 intake #14: short-sale fills must be visible on the
@@ -112,6 +212,39 @@ fn broker_call_finished_short_fill_round_trips_through_json() {
         severity: None,
     });
 
+    assert_eq!(
+        serde_json::to_value(&started).unwrap(),
+        serde_json::json!({
+            "kind": "broker_call_started",
+            "span_id": "span_short",
+            "run_id": "run_42",
+            "side": "short",
+            "symbol": "BTC/USD",
+            "qty": 0.1,
+            "intended_price": 60000.0,
+            "order_type": "market",
+            "venue": "alpaca-paper",
+            "idempotency_key": "run_42-0001",
+        }),
+        "started broker-call wire shape must expose side/symbol/qty/intended price"
+    );
+    assert_eq!(
+        serde_json::to_value(&finished).unwrap(),
+        serde_json::json!({
+            "kind": "broker_call_finished",
+            "span_id": "span_short",
+            "outcome": "filled",
+            "fill_price": 60010.0,
+            "fill_qty": 0.1,
+            "fee": 0.01,
+            "broker_order_id": "ord_short",
+            "error_class": null,
+            "error_message": null,
+            "severity": null,
+        }),
+        "finished broker-call wire shape must expose fill outcome/price/qty/fee"
+    );
+
     for ev in [&started, &finished] {
         let wire = serde_json::to_string(ev).unwrap();
         let back: RunEvent = serde_json::from_str(&wire).unwrap();
@@ -136,8 +269,15 @@ fn broker_call_failed_carries_error_class_and_message() {
     });
     let wire = serde_json::to_value(&ev).unwrap();
     assert_eq!(wire["kind"], "broker_call_finished");
+    assert_eq!(wire["span_id"], "span_fail");
     assert_eq!(wire["outcome"], "failed");
+    assert_eq!(wire["fill_price"], serde_json::Value::Null);
+    assert_eq!(wire["fill_qty"], serde_json::Value::Null);
     assert_eq!(wire["error_class"], "broker_timeout");
+    assert_eq!(
+        wire["error_message"], "alpaca create_order: timeout after 5s",
+        "failed broker-call wire shape must expose broker error text"
+    );
     assert_eq!(wire["severity"], "error");
 }
 
@@ -160,6 +300,16 @@ fn broker_call_finished_recoverable_severity_round_trip() {
         ),
         severity: Some("warn".into()),
     });
+    let wire_value = serde_json::to_value(&ev).unwrap();
+    assert_eq!(wire_value["kind"], "broker_call_finished");
+    assert_eq!(wire_value["outcome"], "rejected");
+    assert_eq!(wire_value["error_class"], "broker_insufficient_funds");
+    assert_eq!(
+        wire_value["error_message"],
+        "alpaca create_order: insufficient balance for USD (requested: 2487.87, available: 1807.38)"
+    );
+    assert_eq!(wire_value["severity"], "warn");
+
     let wire = serde_json::to_string(&ev).unwrap();
     let back: RunEvent = serde_json::from_str(&wire).unwrap();
     assert_eq!(serde_json::to_string(&back).unwrap(), wire);

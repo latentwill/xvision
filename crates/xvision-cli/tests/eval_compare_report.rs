@@ -269,6 +269,51 @@ async fn seed_two_runs(home: &std::path::Path) -> (String, String) {
     (id_a, id_b)
 }
 
+async fn seed_extra_completed_run(home: &std::path::Path) -> String {
+    let ctx = ApiContext::open(
+        home,
+        Actor::Cli {
+            user: "eval-compare-report-test".into(),
+        },
+    )
+    .await
+    .expect("open ApiContext");
+    let store = RunStore::new(ctx.db.clone());
+    let run = Run::new_queued(
+        "agent-compare-test-extra".into(),
+        "crypto-bull-q1-2025".into(),
+        RunMode::Backtest,
+    );
+    let id = run.id.clone();
+    store.create(&run).await.expect("seed extra run");
+    store
+        .finalize(
+            &id,
+            &MetricsSummary {
+                total_return_pct: 42.0,
+                sharpe: 4.2,
+                max_drawdown_pct: 0.5,
+                win_rate: 1.0,
+                n_trades: 0,
+                n_decisions: 0,
+                baselines: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("finalize extra run");
+    id
+}
+
+fn json_compare_run_ids(body: &serde_json::Value) -> Vec<String> {
+    body["runs"]
+        .as_array()
+        .expect("runs is array")
+        .iter()
+        .map(|row| row["run_id"].as_str().expect("run row has run_id").to_string())
+        .collect()
+}
+
 // ---- test 1: JSON output has action_distribution + behavior fields ----------
 
 #[test]
@@ -371,15 +416,7 @@ fn default_sort_by_return_puts_higher_return_first() {
     let (id_a, id_b) = rt.block_on(async { seed_two_runs(dir.path()).await });
 
     let out = xvn(
-        &[
-            "eval",
-            "compare",
-            "--json",
-            "--runs",
-            &format!("{id_a},{id_b}"),
-            "--sort",
-            "return",
-        ],
+        &["eval", "compare", "--json", "--runs", &format!("{id_b},{id_a}")],
         dir.path(),
     );
     assert!(
@@ -620,6 +657,7 @@ fn runs_flag_comma_separated_works_like_positional() {
         .build()
         .unwrap();
     let (id_a, id_b) = rt.block_on(async { seed_two_runs(dir.path()).await });
+    let id_c = rt.block_on(async { seed_extra_completed_run(dir.path()).await });
 
     // --runs id1,id2 (comma-separated).
     let out_runs_flag = xvn(
@@ -640,11 +678,30 @@ fn runs_flag_comma_separated_works_like_positional() {
         String::from_utf8_lossy(&out_positional.stderr)
     );
 
-    // Both should produce valid JSON with 2 runs.
+    // Both should produce valid JSON for exactly the requested ids. The
+    // unrequested third run proves the command is not returning every
+    // completed run when parsing `--runs`.
     let body_flag: serde_json::Value = serde_json::from_slice(&out_runs_flag.stdout).unwrap();
     let body_pos: serde_json::Value = serde_json::from_slice(&out_positional.stdout).unwrap();
-    assert_eq!(body_flag["runs"].as_array().unwrap().len(), 2);
-    assert_eq!(body_pos["runs"].as_array().unwrap().len(), 2);
+    let expected = vec![id_a.clone(), id_b.clone()];
+    let flag_ids = json_compare_run_ids(&body_flag);
+    let pos_ids = json_compare_run_ids(&body_pos);
+    assert_eq!(
+        flag_ids, expected,
+        "--runs comma list must return exactly the requested run ids in compare order"
+    );
+    assert_eq!(
+        pos_ids, expected,
+        "positional run ids must return exactly the requested run ids in compare order"
+    );
+    assert_eq!(
+        flag_ids, pos_ids,
+        "--runs comma list and positional ids must resolve to the same rows"
+    );
+    assert!(
+        !flag_ids.contains(&id_c) && !pos_ids.contains(&id_c),
+        "unrequested run {id_c} must be excluded from both compare outputs"
+    );
 }
 
 // ---- test 9: per-asset rollup section in --markdown output ------------------

@@ -16,7 +16,7 @@ use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
 use xvision_engine::api::eval::lookup_agent_for_eval_run;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::run::{Run, RunMode, RunStatus};
-use xvision_engine::eval::store::RunStore;
+use xvision_engine::eval::store::{ListFilter, RunStore};
 
 // ── helpers ───────────────────────────────────────────────────────────
 
@@ -159,10 +159,12 @@ async fn pool_with_022() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query(include_str!("../migrations/037_review_annotations_and_autofire.sql"))
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/037_review_annotations_and_autofire.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(include_str!("../migrations/038_eval_runs_live_config.sql"))
         .execute(&pool)
         .await
@@ -187,12 +189,28 @@ async fn run_store_round_trips_agents_agent_id() {
     //    back equal. This is what the new code in api::eval populates
     //    at run start via `pick_agents_agent_id`.
     a.id = "run-b".to_string();
+    a.scenario_id = "scenario-b".to_string();
     a.agents_agent_id = Some("01HZAGENTULID00000000000000".into());
     store.create(&a).await.unwrap();
     let read_b = store.get("run-b").await.unwrap();
     assert_eq!(
         read_b.agents_agent_id.as_deref(),
         Some("01HZAGENTULID00000000000000"),
+    );
+    let listed_b = store
+        .list(ListFilter {
+            scenario_id: Some("scenario-b".into()),
+            status: Some(RunStatus::Queued),
+            ..ListFilter::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(listed_b.len(), 1, "list filter should isolate run-b");
+    assert_eq!(listed_b[0].id, "run-b");
+    assert_eq!(
+        listed_b[0].agents_agent_id.as_deref(),
+        Some("01HZAGENTULID00000000000000"),
+        "RunStore::list must read agents_agent_id from eval_runs",
     );
 
     // 3. The helper that reads just the column also works.
