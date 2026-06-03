@@ -11,9 +11,10 @@
 //!   constraint, same as paper-mode-executor-deleted).
 //! - Indicator panel injection into the pipeline seed (matching what
 //!   paper-mode-executor-deleted passes today, which is just portfolio_state).
-//! - Win-rate sourced from realized-PnL pairs across decisions (the
-//!   `MetricsSummary.win_rate` is left at 0.0 the same way paper-mode-executor-deleted
-//!   leaves it — Phase 3.C work).
+//! - Win-rate is computed from closed round-trips: each fill that books
+//!   realized PnL counts as one closed trade, and `MetricsSummary.win_rate`
+//!   is `winning_trades / closed_trades` (QA 2026-06-03; previously hardcoded
+//!   to 0.0). `n_trades` remains the per-fill (leg) count.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -745,7 +746,15 @@ impl Executor {
         let mut signal_cache = crate::agent::signal_cache::SignalCache::new();
         let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
         let bar_period_minutes = cadence_min.max(1) as u32;
+        // `n_trades` counts every fill that crosses the book (opens AND closes
+        // — "legs"), the established meaning across the executor tests. Closed
+        // round-trips are tracked separately for `win_rate`: a fill that books
+        // realized PnL (a close / reduce) is one closed trade, mirroring
+        // `postprocess::summarise_decisions`'s realized-PnL win-rate. This
+        // replaces the historically-hardcoded `win_rate = 0.0` (QA 2026-06-03).
         let mut n_trades = 0u32;
+        let mut closed_trades = 0u32;
+        let mut winning_trades = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         // Wall-clock anchor for `EvalLimits::max_wall_clock_secs`. Captured
@@ -1386,7 +1395,7 @@ impl Executor {
                     position_state,
                     last_open_direction.get(&asset_sym).copied(),
                 );
-                let applied_action: String = match &decision {
+                let mut applied_action: String = match &decision {
                     GuardrailDecision::Allow => parsed.action.clone(),
                     GuardrailDecision::RewriteTo { action, reason } => {
                         let note =
@@ -1428,6 +1437,95 @@ impl Executor {
                         action.as_str().to_string()
                     }
                 };
+
+                // risk-cap-enforcement (QA 2026-06-03): enforce
+                // `risk.max_concurrent_positions` portfolio-wide before opening
+                // a NEW leg. A flat→open on a currently-flat asset adds one to
+                // the concurrent-position count; pyramids / reversals
+                // (`pre_fill_position != 0`) keep the same asset count and are
+                // not gated here. When the pool is already at the cap the open
+                // is rewritten to `hold` (the asset stays flat) and a finding +
+                // supervisor note record the block. Without this the multi-asset
+                // fan-out opens one leg per asset at the same timestamp and blows
+                // past the cap (QA observed 3 opens under a cap of 2). The book
+                // already reflects earlier assets' fills this timestamp because
+                // the `'asset` fan-out applies each fill before the next asset.
+                if (applied_action == "long_open" || applied_action == "short_open")
+                    && pre_fill_position.abs() <= f64::EPSILON
+                    && book.open_position_count() >= strategy.risk.max_concurrent_positions
+                {
+                    let cap = strategy.risk.max_concurrent_positions;
+                    let open_now = book.open_position_count();
+                    let summary = format!(
+                        "max_concurrent_positions cap reached ({open_now}/{cap}); {applied_action} on {asset} rewritten to hold"
+                    );
+                    let finding = Finding {
+                        id: Ulid::new().to_string(),
+                        run_id: run.id.clone(),
+                        kind: "risk_cap_exceeded".into(),
+                        severity: Severity::Warning,
+                        summary: summary.clone(),
+                        evidence: serde_json::json!({
+                            "cap": cap,
+                            "open_positions": open_now,
+                            "asset": asset,
+                            "action": applied_action,
+                            "decision_index": decision_idx,
+                        }),
+                        extracted_at: Utc::now(),
+                        schema_version: crate::eval::findings::FINDING_SCHEMA_VERSION.to_string(),
+                        evidence_cycle_ids: Some(vec![decision_idx.to_string()]),
+                        produced_by_check: Some("risk:max_concurrent_positions".into()),
+                        eval_review_id: None,
+                        review_type: None,
+                        confidence: None,
+                        title: Some("Risk cap: max_concurrent_positions".into()),
+                        description: Some(summary.clone()),
+                        recommendation: Some(
+                            "The strategy attempted to open more simultaneous positions than \
+                             risk.max_concurrent_positions allows. Raise the cap or tighten \
+                             entry conditions if more concurrency is intended."
+                                .into(),
+                        ),
+                        created_at: None,
+                    };
+                    if let Err(e) = store.record_finding(&finding).await {
+                        tracing::error!(
+                            run_id = %run.id,
+                            decision_index = decision_idx,
+                            error = %e,
+                            "failed to record risk_cap_exceeded finding",
+                        );
+                    }
+                    store
+                        .record_supervisor_note(&run.id, "guard", "warn", &summary)
+                        .await?;
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        obs.emit_supervisor_note("guard", "warn", &summary).await;
+                        let payload = serde_json::json!({
+                            "decision_index": decision_idx,
+                            "asset": asset,
+                            "cap": cap,
+                            "open_positions": open_now,
+                            "action": applied_action,
+                        });
+                        obs.emit_engine_event(
+                            "risk_cap_exceeded",
+                            Some(decision_span_id.clone()),
+                            Some(payload.to_string()),
+                        )
+                        .await;
+                    }
+                    tracing::debug!(
+                        run_id = %run.id,
+                        decision_index = decision_idx,
+                        asset = %asset,
+                        cap,
+                        open_now,
+                        "risk cap blocked new open — rewritten to hold",
+                    );
+                    applied_action = "hold".to_string();
+                }
 
                 // eval-broker-rule-findings: validate new open orders against venue
                 // rules before calling simulate_fill. Only `long_open` and
@@ -1740,6 +1838,23 @@ impl Executor {
                 if fill_happened {
                     n_trades += 1;
 
+                    // Closed round-trip accounting for win_rate. A round-trip
+                    // closes when a fill REDUCES the open position toward zero
+                    // (a close or partial close). Opens / pyramids increase the
+                    // magnitude and are not round-trips — and discriminating on
+                    // the position delta (rather than `realized_pnl != 0`) is
+                    // necessary because the opening leg books its entry fee as
+                    // realized PnL, which would otherwise miscount every open as
+                    // a losing trade. `win` is the closing leg's realized PnL.
+                    let reduced = pre_fill_position.abs() > f64::EPSILON
+                        && fill.new_pos.abs() + f64::EPSILON < pre_fill_position.abs();
+                    if reduced {
+                        closed_trades += 1;
+                        if fill.realized_pnl > 0.0 {
+                            winning_trades += 1;
+                        }
+                    }
+
                     // FillRecorded — only when an actionable decision actually
                     // crossed the book. For close-to-flat decisions, side is
                     // derived from the pre-fill position direction.
@@ -2032,11 +2147,16 @@ impl Executor {
         // iteration exactly.
         let baselines = build_baselines_report(&decision_bars, initial, cadence_minutes, strategy_return_pct);
 
+        let win_rate = if closed_trades > 0 {
+            winning_trades as f64 / closed_trades as f64
+        } else {
+            0.0
+        };
         let metrics = MetricsSummary {
             total_return_pct: strategy_return_pct,
             sharpe: sharpe_from_returns(&returns, periods_per_year),
             max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: 0.0,
+            win_rate,
             n_trades,
             n_decisions: decision_idx,
             baselines: Some(baselines),

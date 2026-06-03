@@ -2990,10 +2990,25 @@ async fn load_bars_for_scenario(
     asset: xvision_core::trading::AssetSymbol,
 ) -> ApiResult<Vec<xvision_data::alpaca::MarketBar>> {
     let asset = asset.as_alpaca_pair();
+    // Multi-asset correctness: per-asset bar loads MUST key the cache by the
+    // asset, not by the scenario-level `bar_cache_policy.cache_key` (which is
+    // asset-independent — see `api/scenario.rs` docs and
+    // `compute_scenario_cache_key`). Reusing the scenario key made every asset
+    // in a multi-asset universe read the same cache row, so all assets were fed
+    // the first-seeded asset's bars (BTC). Compute the per-asset key the same
+    // way `xvn bars fetch`, the chart path, and warmup loads do so this read
+    // hits the per-asset rows those paths seed.
+    let cache_key = crate::eval::bars::compute_cache_key(
+        &asset,
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
     crate::eval::bars::load_bars(
         ctx,
         &crate::eval::bars::BarCacheArgs {
-            cache_key: scenario.bar_cache_policy.cache_key.clone(),
+            cache_key,
             asset_pair: asset,
             granularity: scenario.granularity,
             start: scenario.time_window.start,
@@ -4461,6 +4476,126 @@ mod tests {
         assert!(
             msg.contains("Attach an agent"),
             "expected attach-agent remediation, got {msg}"
+        );
+    }
+
+    /// Regression (QA 2026-06-03 finding #4, CRITICAL): multi-asset eval fed
+    /// every asset BTC's bars. Root cause was `load_bars_for_scenario` keying
+    /// the cache by the asset-independent `scenario.bar_cache_policy.cache_key`
+    /// instead of a per-asset `compute_cache_key`, so the second asset read the
+    /// first asset's cached row. Two assets with divergent price levels must
+    /// resolve to their OWN bars.
+    #[tokio::test]
+    async fn load_bars_for_scenario_routes_per_asset_not_scenario_key() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        use std::sync::Arc;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        use xvision_core::trading::AssetSymbol;
+        use xvision_data::alpaca::{AlpacaBarsFetcher, BarGranularity};
+
+        // One combined body: the fetcher selects `bars[requested_symbol]`, so
+        // each per-asset fetch extracts its own series. BTC ~101_769, ETH ~2_310.
+        let bar = |c: f64, t: &str| {
+            serde_json::json!({"t": t, "o": c, "h": c, "l": c, "c": c, "v": 1.0})
+        };
+        let body = serde_json::json!({
+            "bars": {
+                "BTC/USD": [
+                    bar(101_769.0, "2025-01-06T00:00:00Z"),
+                    bar(101_770.0, "2025-01-06T01:00:00Z"),
+                    bar(101_771.0, "2025-01-06T02:00:00Z"),
+                ],
+                "ETH/USD": [
+                    bar(2_310.0, "2025-01-06T00:00:00Z"),
+                    bar(2_311.0, "2025-01-06T01:00:00Z"),
+                    bar(2_312.0, "2025-01-06T02:00:00Z"),
+                ]
+            },
+            "next_page_token": null
+        });
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1beta3/crypto/us/bars"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../migrations/001_api_audit.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(include_str!("../../migrations/010_bars_cache.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let fetcher = Arc::new(AlpacaBarsFetcher::new(
+            server.uri(),
+            "test-key".into(),
+            "test-secret".into(),
+        ));
+        let ctx = ApiContext::new(
+            pool,
+            crate::api::Actor::Cli {
+                user: "tester".into(),
+            },
+            dir.path().to_path_buf(),
+        )
+        .with_alpaca_fetcher(fetcher);
+
+        // Canonical scenario narrowed to the 3-bar window the mock serves. The
+        // scenario-level cache_key is deliberately set to BTC's per-asset key to
+        // recreate the contamination condition: the pre-fix code read this row
+        // for ETH too and returned BTC's bars.
+        let mut scenario = crate::eval::scenario_seed::canonical_seed_rows()
+            .into_iter()
+            .next()
+            .expect("at least one canonical scenario");
+        scenario.granularity = BarGranularity::Hour1;
+        scenario.time_window = crate::eval::scenario::TimeWindow {
+            start: chrono::DateTime::parse_from_rfc3339("2025-01-06T00:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            end: chrono::DateTime::parse_from_rfc3339("2025-01-06T03:00:00Z")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+        };
+        scenario.bar_cache_policy.cache_key = crate::eval::bars::compute_cache_key(
+            &AssetSymbol::Btc.as_alpaca_pair(),
+            scenario.granularity,
+            scenario.time_window.start,
+            scenario.time_window.end,
+            "alpaca-historical-v1",
+        );
+
+        // Resolve BTC first so the pre-fix code caches BTC under the scenario key.
+        let btc_bars = load_bars_for_scenario(&ctx, &scenario, AssetSymbol::Btc)
+            .await
+            .unwrap();
+        let eth_bars = load_bars_for_scenario(&ctx, &scenario, AssetSymbol::Eth)
+            .await
+            .unwrap();
+        let btc_close = btc_bars.first().expect("btc bars non-empty").close;
+        let eth_close = eth_bars.first().expect("eth bars non-empty").close;
+
+        assert!(
+            (btc_close - 101_769.0).abs() < 1.0,
+            "BTC must resolve its own bars, got {btc_close}"
+        );
+        assert!(
+            (eth_close - 2_310.0).abs() < 1.0,
+            "ETH must resolve ETH's bars, not BTC's (multi-asset contamination regression); got {eth_close}"
+        );
+        assert!(
+            (btc_close - eth_close).abs() > 1_000.0,
+            "per-asset bars must diverge across assets; btc={btc_close} eth={eth_close}"
         );
     }
 }

@@ -35,6 +35,13 @@ impl PortfolioBook {
     pub fn position(&self, a: AssetSymbol) -> f64 {
         self.legs.get(&a).map_or(0.0, |l| l.position)
     }
+    /// Number of assets currently holding an open position. `set_position`
+    /// removes a leg when its size hits zero, so every entry in `legs` is a
+    /// live position — the count is just the map length. Used to enforce
+    /// `risk.max_concurrent_positions` portfolio-wide before opening a new leg.
+    pub fn open_position_count(&self) -> u32 {
+        self.legs.len() as u32
+    }
     pub fn entry_price(&self, a: AssetSymbol) -> f64 {
         self.legs.get(&a).map_or(0.0, |l| l.entry_price)
     }

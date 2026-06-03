@@ -10,6 +10,23 @@ pub(crate) struct TraderOutput {
     pub(crate) action: String,
     pub(crate) conviction: f64,
     pub(crate) justification: String,
+    /// Optional model-emitted position size in basis points of NAV
+    /// (`0..=2000`, i.e. ≤20%, matching production `TraderDecision.size_bps`
+    /// and `risk.max_position_pct_nav`). `None` → the executor falls back to
+    /// the mechanical `risk.risk_pct_per_trade` sizing. See the eval-trader
+    /// risk-parity spec (2026-06-03).
+    #[serde(default)]
+    pub(crate) size_bps: Option<u32>,
+    /// Optional model-emitted stop-loss as a percent of entry (`0.1..=20`).
+    /// `None` → the executor falls back to `risk.stop_loss_atr_multiple` (if
+    /// `> 0`), else no stop.
+    #[serde(default)]
+    pub(crate) stop_loss_pct: Option<f64>,
+    /// Optional model-emitted take-profit as a percent of entry (`0.1..=50`).
+    /// `None` → the executor falls back to `risk.take_profit_atr_multiple` (if
+    /// `> 0`), else no target.
+    #[serde(default)]
+    pub(crate) take_profit_pct: Option<f64>,
 }
 
 /// Stable classification of trader-output failure modes. Persisted as part
@@ -423,6 +440,44 @@ impl TraderOutput {
                 Some(raw),
                 "trader output justification is required".to_string(),
             ));
+        }
+        // Optional risk fields — validated only when the model emits them.
+        // Ranges mirror production `TraderDecision` (`crates/xvision-core/src/trading.rs`).
+        if let Some(size_bps) = self.size_bps {
+            if size_bps > 2000 {
+                return Err(TraderOutputError::build(
+                    TraderFailureKind::InvalidField,
+                    run_id,
+                    decision_index,
+                    response,
+                    Some(raw),
+                    format!("trader output size_bps must be between 0 and 2000 (got {size_bps})"),
+                ));
+            }
+        }
+        if let Some(sl) = self.stop_loss_pct {
+            if !(0.1..=20.0).contains(&sl) {
+                return Err(TraderOutputError::build(
+                    TraderFailureKind::InvalidField,
+                    run_id,
+                    decision_index,
+                    response,
+                    Some(raw),
+                    format!("trader output stop_loss_pct must be between 0.1 and 20 (got {sl})"),
+                ));
+            }
+        }
+        if let Some(tp) = self.take_profit_pct {
+            if !(0.1..=50.0).contains(&tp) {
+                return Err(TraderOutputError::build(
+                    TraderFailureKind::InvalidField,
+                    run_id,
+                    decision_index,
+                    response,
+                    Some(raw),
+                    format!("trader output take_profit_pct must be between 0.1 and 50 (got {tp})"),
+                ));
+            }
         }
         Ok(())
     }
