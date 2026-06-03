@@ -7,7 +7,7 @@
 //! version inference (filed as F-3 in the 2026-05-18 harness audit
 //! intake) all have a deterministic anchor.
 
-use xvision_engine::agent::llm::{ContentBlock, LlmRequest, Message, ToolDefinition};
+use xvision_engine::agent::llm::{ContentBlock, LlmRequest, Message, ResponseSchema, ToolDefinition};
 use xvision_engine::agent::observability::{compute_prompt_hash, compute_response_hash};
 
 fn base_request() -> LlmRequest {
@@ -89,6 +89,7 @@ fn prompt_hash_is_invariant_to_unrelated_request_fields() {
     b.model = "claude-3-5-sonnet".into();
     b.max_tokens = Some(8192);
     b.temperature = Some(1.0);
+    b.response_schema = Some(ResponseSchema::trader_output());
     assert_eq!(compute_prompt_hash(&a), compute_prompt_hash(&b));
 
     // Repeat one more permutation just to be sure model-only deltas

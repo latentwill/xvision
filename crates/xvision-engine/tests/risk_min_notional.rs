@@ -87,7 +87,7 @@ async fn pool_with_migration() -> SqlitePool {
 /// Strategy with a tiny `risk_pct_per_trade` so the executor sizes a
 /// long_open at the operator's reported notional (~$6 on $60 buying
 /// power × 0.1 risk = $6). The `Balanced` preset's defaults are too
-/// generous to reproduce the failure on the canonical BTC scenario, so
+/// generous to reproduce the failure on the ETH regression fixture, so
 /// we tune the risk preset directly.
 fn tiny_risk_strategy() -> Strategy {
     let mut risk = RiskPreset::Balanced.expand();
@@ -100,7 +100,7 @@ fn tiny_risk_strategy() -> Strategy {
             creator: "@tester".into(),
             template: "mean_reversion".into(),
             regime_fit: vec![],
-            asset_universe: vec!["BTC/USD".into()],
+            asset_universe: vec!["ETH/USD".into()],
             decision_cadence_minutes: 60,
             attested_with: vec![],
             required_tools: vec![],
@@ -262,6 +262,7 @@ async fn min_notional_gate_skips_broker_for_below_min_orders() {
         decisions.len()
     );
     for d in &decisions {
+        assert_eq!(d.asset, "ETH/USD");
         assert_eq!(d.action, "long_open");
         assert!(
             d.order_size.is_none(),
@@ -364,7 +365,7 @@ async fn zero_min_notional_is_noop() {
 async fn above_min_notional_orders_pass_through() {
     // Large buying power × default-ish risk_pct → notional well above $10.
     let initial_balance = 100_000.0;
-    let canned = r#"{"action":"long_open","conviction":0.7,"justification":"go long BTC"}"#;
+    let canned = r#"{"action":"long_open","conviction":0.7,"justification":"go long ETH"}"#;
 
     let pool = pool_with_migration().await;
     let store = RunStore::new(pool);
@@ -394,5 +395,11 @@ async fn above_min_notional_orders_pass_through() {
         1,
         "above-min orders must pass through; expected 1 submit (subsequent ticks are duplicate long_opens), got {}",
         submitted.len()
+    );
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.iter().all(|d| d.asset == "ETH/USD"),
+        "ETH regression fixture must persist ETH decisions; got {:?}",
+        decisions.iter().map(|d| &d.asset).collect::<Vec<_>>()
     );
 }

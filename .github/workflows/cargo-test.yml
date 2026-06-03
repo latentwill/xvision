@@ -27,6 +27,9 @@ jobs:
         with:
           cache-on-failure: true
 
+      - name: Run Python script tests
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
       - name: Run workspace tests
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target

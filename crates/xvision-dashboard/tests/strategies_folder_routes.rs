@@ -37,7 +37,7 @@ async fn list_returns_empty_on_fresh_workspace() {
 
 #[tokio::test]
 async fn import_markdown_lands_in_notes() {
-    let (server, _tmp) = boot().await;
+    let (server, tmp) = boot().await;
     let part = Part::bytes(b"# hello\n\nbody\n".to_vec())
         .file_name("hello.md")
         .mime_type("text/markdown");
@@ -48,11 +48,15 @@ async fn import_markdown_lands_in_notes() {
     assert_eq!(body["entry"]["rel_path"], "notes/hello.md");
     assert_eq!(body["entry"]["kind"], "markdown");
     assert!(body["summary"].is_null(), "md should not have a sidecar");
+
+    let persisted = std::fs::read_to_string(tmp.path().join("strategies/notes/hello.md"))
+        .expect("read persisted markdown import");
+    assert_eq!(persisted, "# hello\n\nbody\n");
 }
 
 #[tokio::test]
 async fn import_accepts_upload_above_default_multipart_limit() {
-    let (server, _tmp) = boot().await;
+    let (server, tmp) = boot().await;
     let body = vec![b'a'; 3 * 1024 * 1024];
     let part = Part::bytes(body)
         .file_name("large-note.md")
@@ -64,6 +68,11 @@ async fn import_accepts_upload_above_default_multipart_limit() {
     res.assert_status_ok();
     let body: Value = res.json();
     assert_eq!(body["entry"]["rel_path"], "notes/large-note.md");
+
+    let persisted = std::fs::read(tmp.path().join("strategies/notes/large-note.md"))
+        .expect("read persisted large markdown import");
+    assert_eq!(persisted.len(), 3 * 1024 * 1024);
+    assert!(persisted.iter().all(|b| *b == b'a'));
 }
 
 #[tokio::test]
@@ -108,7 +117,7 @@ async fn import_then_list_reflects_uploaded_file() {
 
 #[tokio::test]
 async fn import_csv_generates_sidecar() {
-    let (server, _tmp) = boot().await;
+    let (server, tmp) = boot().await;
     let part = Part::bytes(b"a,b\n1,2\n3,4\n".to_vec())
         .file_name("rows.csv")
         .mime_type("text/csv");
@@ -118,6 +127,17 @@ async fn import_csv_generates_sidecar() {
     let body: Value = res.json();
     assert_eq!(body["entry"]["rel_path"], "docs/rows.csv");
     assert_eq!(body["summary"]["rel_path"], "docs/rows.summary.md");
+
+    let csv = std::fs::read_to_string(tmp.path().join("strategies/docs/rows.csv"))
+        .expect("read persisted csv import");
+    assert_eq!(csv, "a,b\n1,2\n3,4\n");
+
+    let sidecar = std::fs::read_to_string(tmp.path().join("strategies/docs/rows.summary.md"))
+        .expect("read persisted csv summary sidecar");
+    assert!(sidecar.contains("# Summary of rows.csv"));
+    assert!(sidecar.contains("| a | b |"));
+    assert!(sidecar.contains("| 1 | 2 |"));
+    assert!(sidecar.contains("| 3 | 4 |"));
 }
 
 #[tokio::test]

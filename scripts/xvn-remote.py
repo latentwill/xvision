@@ -79,9 +79,15 @@ def request_json(method: str, url: str, body: dict[str, Any] | None = None) -> H
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            raw = resp.read().decode("utf-8")
-            payload = json.loads(raw) if raw else None
-            return HttpResult(resp.status, payload)
+            status = getattr(resp, "status", 200)
+            try:
+                raw = resp.read().decode("utf-8")
+                payload = json.loads(raw) if raw else None
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RemoteCliError(
+                    f"{method} {url} -> {status}: invalid JSON response"
+                ) from exc
+            return HttpResult(status, payload)
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
         raise build_url_error(method, url, exc.code, exc.reason, raw) from exc

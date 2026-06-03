@@ -28,7 +28,9 @@ use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmRespo
 use xvision_engine::agent::observability::ObsEmitter;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::{Tool, ToolName, ToolRegistry};
-use xvision_observability::{AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, RunStatus, SpanKind};
+use xvision_observability::{
+    AgentRunRecorder, NoopRecorder, RunEvent, RunEventBus, RunStatus, SpanKind, SpanStatus,
+};
 
 fn trader_slot() -> LLMSlot {
     LLMSlot {
@@ -299,13 +301,25 @@ async fn run_lifecycle_emits_two_state_transition_spans() {
     );
 
     // Each transition closes with status=ok in the same tick (the
-    // open/close pair makes the span instantaneous in duration).
-    let finished_count = events
-        .iter()
-        .filter(|e| matches!(e, RunEvent::SpanFinished(_)))
-        .count();
-    assert!(
-        finished_count >= 2,
-        "expected at least 2 SpanFinished events (one per transition), got {finished_count}"
-    );
+    // open/close pair makes the span instantaneous in duration). Correlate
+    // finishes by span_id so unrelated finished spans cannot satisfy this
+    // contract.
+    for transition in transitions {
+        let finish = events.iter().find_map(|e| match e {
+            RunEvent::SpanFinished(f) if f.span_id == transition.span_id => Some(f),
+            _ => None,
+        });
+        let finish = finish.unwrap_or_else(|| {
+            panic!(
+                "state.transition span {} did not emit a matching SpanFinished event",
+                transition.span_id
+            )
+        });
+        assert_eq!(
+            finish.status,
+            SpanStatus::Ok,
+            "state.transition span {} must close with status=ok",
+            transition.span_id
+        );
+    }
 }
