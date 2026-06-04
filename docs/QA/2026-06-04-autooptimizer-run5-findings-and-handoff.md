@@ -41,14 +41,24 @@ The CLI cycle and dashboard cycle ran simultaneously against the same container/
 
 ---
 
+## F35 — [HIGH] UI shows `$0.00` cost and no tokens (three causes)
+Operator-reported: the optimizer panel shows `$0.00` cost and no token usage, despite F11/F23 working in the CLI. Three distinct causes, all confirmed:
+1. **Cost/tokens only persist at cycle END.** The meter (`CycleMeter`) accumulates in-memory and `persist_cycle_cost` runs once at the end. Any cycle that is in-progress, killed, or crashed records **nothing** — e.g. the runaway UI cycle `01KT9KSRMC` spent **11.67M tokens / ~$3** but, killed by the restart, persisted no `cycle_cost` row, so the panel shows `cost_usd: 0.0, input_tokens: 0`. This is *the* reason the operator saw `$0.00` (their cycle never reached the end).
+2. **`GET /api/autooptimizer/cycles/:id` (detail) omits cost/token fields** — only the `/cycles` *list* endpoint returns `cost_usd`/`input_tokens`/`output_tokens`/`unpriced_calls` (F23's LEFT JOIN was added to the list query, not the detail query). So the cycle-detail view shows no cost/tokens even for a *completed* cycle (verified: detail for completed CLI cycle `01KT9KRWHF` returns no cost/token fields, while the list row for it has them).
+3. **No live cost/tokens during a run.** The "Live" tab (where an operator watches a long cycle) has no incremental spend/token display — the total only appears after completion. For a 20-min+ cycle that's exactly when the operator needs it (and when they'd notice the spew).
+
+**Acceptance.** (1) Meter persists incrementally (e.g. after each backtest) and/or is captured on cancel/crash so partial spend is never lost; (2) `/cycles/:id` returns the same cost/token fields as `/cycles`; (3) the Live tab streams running cost + tokens (pair with the F28 cancel button so an operator can see spend climbing and stop it). **Files:** `autooptimizer/cycle_runs.rs` (persist incrementally; detail query JOIN), `routes/autooptimizer.rs` (`:id` fields), `cycle.rs`/`progress.rs` (emit running totals as events), `frontend/.../LiveCycleView.tsx`.
+
+---
+
 ## Suggested order for the next pass
-1. **F28** — UI window + budget + cancel (safety: the UI can currently spew ~$3+/27min unchecked). Highest urgency now that F26 is live.
+1. **F28 + F35** — UI window/budget/cancel **and** honest live cost+tokens (so the operator can see spend climb and stop it; the runaway run is the proof). Highest urgency now that F26 is live.
 2. **F32** — make the mutator explore (without it, the optimizer never converges — the whole point).
 3. **F33 / F34** — attribution for duplicate candidates; concurrency guard.
 
 ## Status recap
 - **Fixed + verified:** F1–F18, F20, F21, F22(preflight), F23, F26, F30, F31, F11.
-- **Open:** **F28** (UI unbounded+uncancellable, now urgent), **F32** (deterministic mutator), **F33** (attribution collision), **F34** (concurrency), plus prior **F24** (configurable objective), **F25** (model-swap axis), **F27** (panel run-list wiring), **F29** (mutate-once/retire UI).
+- **Open:** **F28** (UI unbounded+uncancellable, now urgent), **F32** (deterministic mutator), **F33** (attribution collision), **F34** (concurrency), **F35** (UI shows $0.00/no tokens), plus prior **F24** (configurable objective), **F25** (model-swap axis), **F27** (panel run-list wiring), **F29** (mutate-once/retire UI).
 
 ## Artifacts
 - Runaway UI cycle: 17 runs, 11.67M in / 115k out tokens, ~27 min, halted by `docker restart xvn-app`.
