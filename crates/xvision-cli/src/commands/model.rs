@@ -31,10 +31,10 @@
 //!   records. The override receipt is persisted through provider diagnostics,
 //!   while `eval_bakeoff_runs.{arm_provider, arm_model}` preserves the
 //!   bakeoff matrix audit trail.
-//! - `--mode clone`: materializes one cloned strategy per arm via sibling
-//!   `cli-strategy-clone-model-override`. Currently a deferred stub — the
-//!   engine orchestrator rejects this mode with a clean validation error
-//!   until the sibling merges. Tracking TODO in the CLI handler.
+//! - `--mode clone`: will materialize one cloned strategy per arm via sibling
+//!   `cli-strategy-clone-model-override`. Not yet implemented — the CLI and
+//!   engine both reject this mode with a validation error until the sibling
+//!   lands. Tracked in latentwill/xvision#798.
 //!
 //! ## Bounded-by-default
 //!
@@ -118,9 +118,11 @@ pub struct BakeoffArgs {
     #[arg(long)]
     pub use_strategy_models: bool,
 
-    /// Materialization mode. Default `override` uses per-launch dispatch;
-    /// `clone` materializes one cloned strategy per arm (currently deferred,
-    /// see module docs).
+    /// Materialization mode. Default `override` uses per-launch provider
+    /// dispatch — no new strategy records are created.
+    /// `clone` materializes one cloned strategy per arm and is not yet
+    /// implemented (tracked in latentwill/xvision#798; depends on sibling
+    /// track cli-strategy-clone-model-override).
     #[arg(long, default_value = "override")]
     pub mode: String,
 
