@@ -1,7 +1,7 @@
 //! POST /api/autooptimizer/run-cycle — launch an optimizer run.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{extract::State, http::StatusCode, Json};
 use chrono::Utc;
@@ -14,18 +14,21 @@ use xvision_engine::autooptimizer::{
     config::AutoOptimizerConfig,
     content_hash::ContentHash,
     cycle::{run_cycle, CycleConfig},
-    eval_adapter::StubPaperTester,
+    cycle_runs::persist_cycle_cost,
+    eval_adapter::{BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner},
     gate::GateVerdict,
     judge::Judge,
     lineage::{LineageNode, LineageStatus, LineageStore},
+    metering_dispatch::{CostMeteringDispatch, CycleMeter},
     mutator::Mutator,
     parent_policy::ParentPolicy,
+    preflight::preflight_trader_provider,
     scenario_synthesis::{synthesize_baseline_untouched_scenario, synthesize_optimizer_day_scenario},
 };
-use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::scenario::Scenario;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
+use xvision_engine::tools::ToolRegistry;
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -56,23 +59,52 @@ pub async fn start_cycle(
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let judge_provider = body.judge_provider.unwrap_or_else(|| mutator_provider.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| cfg.mutator.model.clone());
-    let mutator_dispatch = build_autooptimizer_dispatch(&mutator_provider, &state.xvn_home).await?;
-    let judge_dispatch = if judge_provider == mutator_provider {
-        Arc::clone(&mutator_dispatch)
+    let raw_mutator_dispatch = build_autooptimizer_dispatch(&mutator_provider, &state.xvn_home).await?;
+    let raw_judge_dispatch = if judge_provider == mutator_provider {
+        Arc::clone(&raw_mutator_dispatch)
     } else {
         build_autooptimizer_dispatch(&judge_provider, &state.xvn_home).await?
     };
+
+    // F11/F23/F26: one shared meter for the whole cycle — tokens, realized cost,
+    // and unpriced-call count. The metering dispatch wraps EVERY LLM call site
+    // (experiment writer + judge + the paper-test backtest decisions, which route
+    // through the metered mutator dispatch), so the per-cycle cost the panel reads
+    // is real, not the old `$0.00`. Cost is metered at the dispatch boundary, the
+    // same way the CLI `run-cycle` does it.
+    let meter: Arc<Mutex<CycleMeter>> = Arc::new(Mutex::new(CycleMeter::default()));
+    let mutator_catalogs = load_metering_catalogs(&state.xvn_home, &mutator_provider).await;
+    let metered_mutator: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
+        Arc::clone(&raw_mutator_dispatch),
+        mutator_catalogs,
+        Arc::clone(&meter),
+    ));
+    let metered_judge: Arc<dyn LlmDispatch + Send + Sync> = if judge_provider == mutator_provider {
+        Arc::clone(&metered_mutator)
+    } else {
+        let judge_catalogs = load_metering_catalogs(&state.xvn_home, &judge_provider).await;
+        Arc::new(CostMeteringDispatch::new(
+            Arc::clone(&raw_judge_dispatch),
+            judge_catalogs,
+            Arc::clone(&meter),
+        ))
+    };
+
     let day_scenario = build_day_scenario(&cfg)?;
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
+    // The paper-test backtest dispatches every trader decision through the
+    // metered mutator dispatch (the cycle provider), so the strategy's trader
+    // must route to that same provider.
+    let cycle_provider = mutator_provider.clone();
     let (mutator, judge) = build_mutator_and_judge(
         &cfg,
         mutator_provider,
         mutator_model,
-        mutator_dispatch,
+        Arc::clone(&metered_mutator),
         judge_provider,
         judge_model,
-        judge_dispatch,
+        metered_judge,
     );
     let pool = state.pool.clone();
     let lineage_store = LineageStore::new(pool.clone());
@@ -88,6 +120,15 @@ pub async fn start_cycle(
         })?;
     let (bundle_hash, strategy) =
         load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
+    // F22/F26: fail fast with guidance instead of a confusing cross-provider 400
+    // when the strategy's trader would route to a provider other than the cycle's.
+    // Shared with the CLI via `autooptimizer::preflight` — no parallel guard.
+    preflight_trader_provider(&pool, &strategy, strategy_id, &cycle_provider, false)
+        .await
+        .map_err(|e| DashboardError::Validation {
+            field: "strategy_id".into(),
+            msg: e.message,
+        })?;
     let mut parent_strategies = HashMap::new();
     parent_strategies.insert(bundle_hash.to_hex(), strategy);
     let explicit_parent_hashes = vec![bundle_hash];
@@ -103,8 +144,26 @@ pub async fn start_cycle(
     // F13: write candidate strategy blobs to the same `lineage/blobs` root the
     // `/blob/:hash` endpoint reads, so cycle children are retrievable.
     let cycle_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
+    // F26: build a fully-wired ApiContext (event bus + observability) so the
+    // dashboard's optimizer cycle drives REAL backtests through the same shared
+    // `Executor`/`run_pipeline` path as the CLI, `eval run`, the chat rail, and
+    // live — not the deterministic stub that always tied and rejected everything.
+    let api_ctx = state.api_context();
+    let backtest_dispatch = Arc::clone(&metered_mutator);
     tokio::spawn(async move {
-        let paper_tester = Arc::new(stub_paper_tester());
+        // The production paper tester: real cached-backtest Executor, metered at
+        // the dispatch boundary, with the shared per-cycle meter feeding both the
+        // (currently unbounded) budget gate and the persisted cost summary.
+        let cached = CachedBacktestPaperTester::new(
+            api_ctx,
+            backtest_dispatch,
+            Arc::new(ToolRegistry::default_with_builtins()),
+        );
+        // F28 (UI budget control) will thread a real ceiling here; until then the
+        // cap is unbounded but the meter still accumulates realized cost.
+        let paper_tester: Box<dyn PaperTestRunner> = Box::new(
+            BudgetCappedPaperTester::new_with_handle(Box::new(cached), f64::INFINITY, Arc::clone(&meter)),
+        );
         let result = run_cycle(
             &pool,
             &cycle_blob_store,
@@ -121,8 +180,21 @@ pub async fn start_cycle(
             None,
         )
         .await;
-        if let Err(e) = result {
-            tracing::warn!(error = %e, "optimizer cycle failed");
+        match result {
+            Ok(result) => {
+                // F23/F26: persist the per-cycle tokens + cost so the panel and
+                // `GET /api/autooptimizer/cycles/:id` show real spend after the run.
+                // Best-effort — a failure here must not mask the completed cycle.
+                let totals = *meter.lock().expect("meter mutex poisoned");
+                if let Err(e) =
+                    persist_cycle_cost(&pool, &result.cycle_id, &totals, &Utc::now().to_rfc3339()).await
+                {
+                    tracing::warn!(error = %e, "persist optimizer cycle cost failed");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "optimizer cycle failed");
+            }
         }
     });
     Ok((
@@ -306,18 +378,16 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
     ))
 }
 
-fn stub_paper_tester() -> StubPaperTester {
-    StubPaperTester {
-        metrics: MetricsSummary {
-            sharpe: 0.9,
-            total_return_pct: 5.0,
-            max_drawdown_pct: 3.0,
-            win_rate: 0.55,
-            n_trades: 10,
-            n_decisions: 20,
-            inference_cost_quote_total: None,
-            net_return_pct: None,
-            baselines: None,
-        },
+/// Load the cached provider catalog for `provider` so the metering dispatch can
+/// price each LLM completion. Best-effort: an absent/unreadable catalog yields no
+/// pricing (calls are counted as "unpriced", never silently $0) — the same
+/// "unknown ≠ zero" stance the CLI uses.
+async fn load_metering_catalogs(
+    xvn_home: &std::path::Path,
+    provider: &str,
+) -> Vec<Arc<xvision_core::providers::Catalog>> {
+    match xvision_engine::providers::load_cached_catalog(xvn_home, provider).await {
+        Ok(Some(cat)) => vec![Arc::new(cat)],
+        _ => Vec::new(),
     }
 }

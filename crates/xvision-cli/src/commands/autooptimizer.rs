@@ -1270,7 +1270,17 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let (bundle_hash, strategy) =
             load_strategy_parent(strategy_id, &xvn_home, &lineage_store, &strategy_blob_store).await?;
         // F22: fail fast with guidance instead of a confusing cross-provider 400.
-        preflight_trader_provider(&pool, &strategy, strategy_id, &cfg.mutator.provider, args.mock).await?;
+        // F26: the guard lives in the engine (`autooptimizer::preflight`) so the
+        // dashboard run-cycle route shares the identical check — no parallel setup.
+        xvision_engine::autooptimizer::preflight::preflight_trader_provider(
+            &pool,
+            &strategy,
+            strategy_id,
+            &cfg.mutator.provider,
+            args.mock,
+        )
+        .await
+        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
         parent_strategies.insert(bundle_hash.to_hex(), strategy);
         explicit_parent_hashes.push(bundle_hash);
     }
@@ -1694,119 +1704,6 @@ fn validate_budget_usd(budget: f64) -> CliResult<()> {
 /// On rejection it returns a usage error that names the providers actually
 /// registered in `default.toml` and tells the operator to pass
 /// `--provider/--model` or set `autooptimizer.toml`.
-/// F22 (QA 2026-06-04): block a cycle whose strategy would route its paper-test
-/// trader through a provider that differs from the cycle's dispatch provider.
-///
-/// The optimizer paper-test uses a single dispatch (the cycle's
-/// `--provider`/`mutator.provider`, e.g. `openrouter`) for every backtest
-/// decision, sending each slot's model id as-is. An agentless strategy with a
-/// legacy `trader_slot` pinned to a different provider (e.g. the seeded examples'
-/// `anthropic.claude-sonnet-4.6`) therefore sends an anthropic-format model id to
-/// openrouter and dies with a confusing `... is not a valid model ID` 400.
-///
-/// Rather than that cross-provider 400, fail fast with guidance. Mechanistic
-/// (non-LLM) strategies and agent-backed strategies (whose agents resolve to
-/// their own provider) are unaffected.
-async fn preflight_trader_provider(
-    pool: &SqlitePool,
-    strategy: &Strategy,
-    strategy_id: &str,
-    cycle_provider: &str,
-    mock: bool,
-) -> CliResult<()> {
-    if mock || strategy.decision_mode == xvision_engine::strategies::DecisionMode::Mechanistic {
-        return Ok(());
-    }
-    // The optimizer paper-test routes EVERY trader decision through the cycle's
-    // single dispatch (`cycle_provider`, e.g. openrouter), sending each slot's
-    // model id as-is. Collect the provider each trader will actually route to,
-    // from agent-backed slots AND the legacy `trader_slot`, then block if any
-    // differs from the cycle provider — that's the cross-provider 400.
-    let mut routes: Vec<(String, String)> = Vec::new();
-    if !strategy.agents.is_empty() {
-        // Resolution failure here isn't ours to surface — the normal run path
-        // reports it. We only block on a *confirmed* cross-provider mismatch.
-        if let Ok(slots) =
-            xvision_engine::agent::pipeline::resolve_agent_slots_for_strategy(pool, strategy).await
-        {
-            for rs in &slots {
-                let model = rs.slot.effective_model();
-                if let Some(p) = infer_trader_provider(rs.slot.provider.as_deref().unwrap_or(""), &model) {
-                    routes.push((p, model));
-                }
-            }
-        }
-    } else if let Some(slot) = &strategy.trader_slot {
-        let model = slot.effective_model();
-        if let Some(p) = infer_trader_provider(slot.provider.as_deref().unwrap_or(""), &model) {
-            routes.push((p, model));
-        }
-    }
-
-    for (slot_provider, model) in routes {
-        if !slot_provider.eq_ignore_ascii_case(cycle_provider) {
-            return Err(CliError::usage(anyhow::anyhow!(
-                "strategy {strategy_id} routes its trader through provider '{slot_provider}' \
-                 (model '{model}'), but this optimizer cycle dispatches to '{cycle_provider}'. The \
-                 paper-test would send a '{slot_provider}'-format model id to '{cycle_provider}' \
-                 and fail with a cross-provider error. Re-run with `--provider {slot_provider}` and \
-                 a matching `--model`, use a strategy whose trader provider is '{cycle_provider}', \
-                 or convert the strategy to a mechanistic (non-LLM) decision mode."
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Infer the provider a trader slot will actually route to.
-///
-/// F22 (QA 2026-06-04): the legacy seeded examples carry a `trader_slot` with no
-/// explicit `provider`/`model` — only `attested_with = "anthropic.claude-sonnet-4.6"`,
-/// which `effective_model()` returns. So keying off `slot.provider` alone (the
-/// first F22 attempt) misses them. Infer from the model id format instead:
-///   - explicit `provider` always wins;
-///   - an OpenRouter `vendor/model` id (slash) is served by the openrouter route;
-///   - an attestation id with a known `<provider>.<model>` dotted prefix
-///     (e.g. `anthropic.claude-sonnet-4.6`) implies that provider;
-///   - otherwise unknown (a bare id like `claude-haiku-4-5`, or a version dot
-///     like `claude-3.5`, carries no reliable provider hint) → `None`, so we
-///     don't false-positive-block it.
-fn infer_trader_provider(explicit_provider: &str, model: &str) -> Option<String> {
-    const KNOWN_PROVIDER_PREFIXES: &[&str] = &[
-        "anthropic",
-        "openai",
-        "google",
-        "meta",
-        "mistral",
-        "mistralai",
-        "deepseek",
-        "qwen",
-        "xai",
-        "cohere",
-        "nous",
-        "nousresearch",
-    ];
-    let explicit = explicit_provider.trim();
-    if !explicit.is_empty() {
-        return Some(explicit.to_string());
-    }
-    let model = model.trim();
-    if model.is_empty() {
-        return None;
-    }
-    if model.contains('/') {
-        // OpenRouter `vendor/model` id — served by the openrouter route.
-        return Some("openrouter".to_string());
-    }
-    if let Some((vendor, rest)) = model.split_once('.') {
-        let vendor_lc = vendor.to_ascii_lowercase();
-        if !rest.is_empty() && KNOWN_PROVIDER_PREFIXES.contains(&vendor_lc.as_str()) {
-            return Some(vendor_lc);
-        }
-    }
-    None
-}
-
 fn require_launchable_provider(mock: bool, xvn_home: &Path, provider: &str) -> CliResult<()> {
     if mock {
         return Ok(());
@@ -2189,31 +2086,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn infer_trader_provider_handles_attestation_and_openrouter_ids() {
-        // Explicit provider wins.
-        assert_eq!(
-            infer_trader_provider("anthropic", "whatever"),
-            Some("anthropic".to_string())
-        );
-        // The legacy seeded example: trader_slot with no provider, model id is
-        // the `anthropic.<model>` attestation string. This is the F22 case the
-        // first attempt missed.
-        assert_eq!(
-            infer_trader_provider("", "anthropic.claude-sonnet-4.6"),
-            Some("anthropic".to_string())
-        );
-        // OpenRouter `vendor/model` ids are served by the openrouter route.
-        assert_eq!(
-            infer_trader_provider("", "google/gemini-3.1-flash-lite"),
-            Some("openrouter".to_string())
-        );
-        // A bare model id, or a version dot, carries no reliable provider hint —
-        // don't false-positive-block it.
-        assert_eq!(infer_trader_provider("", "claude-haiku-4-5"), None);
-        assert_eq!(infer_trader_provider("", "claude-3.5-sonnet"), None);
-        assert_eq!(infer_trader_provider("", ""), None);
-    }
+    // F26: the F22 `infer_trader_provider` guard now lives in the engine
+    // (`xvision_engine::autooptimizer::preflight`) so the CLI and the dashboard
+    // run-cycle route share one implementation. Its unit test moved there too.
 
     /// Minimal runtime config that registers an `openrouter` provider, used to
     /// exercise `require_launchable_provider`'s resolution. Mirrors the shape in

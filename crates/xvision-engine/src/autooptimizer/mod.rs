@@ -41,6 +41,7 @@ pub mod metering_dispatch;
 pub mod mutator;
 pub mod mutator_ladder;
 pub mod parent_policy;
+pub mod preflight;
 pub mod program_view;
 pub mod progress;
 pub mod scenario_synthesis;
