@@ -515,6 +515,21 @@ async fn build_and_insert_node(
     cycle_id: &str,
 ) -> Result<LineageNode> {
     let store = LineageStore::new(pool.clone());
+    // F33: record this cycle's evaluation edge to the candidate up-front (before
+    // the F12 active-node guard below can early-return), so a cycle that
+    // re-derives an existing candidate still attributes it to itself in the
+    // run-detail surface — even though the content-addressed `lineage_nodes` row
+    // belongs to whichever cycle wrote it first.
+    if let Err(e) = crate::autooptimizer::lineage::record_cycle_node_eval(
+        pool,
+        cycle_id,
+        &outcome.child_hash.to_hex(),
+        &Utc::now().to_rfc3339(),
+    )
+    .await
+    {
+        tracing::warn!(cycle_id, error = %e, "failed to record cycle_node_evaluations edge");
+    }
     // F12: `lineage_nodes` uses `INSERT OR REPLACE` keyed on `bundle_hash`. If a
     // rejected candidate hashes to an already-*active* node (a re-derivation of
     // a known-good strategy), replacing it would downgrade the active node to

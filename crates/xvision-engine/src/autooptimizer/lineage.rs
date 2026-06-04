@@ -153,6 +153,24 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("create cycle_cost")?;
+    // F33 (2026-06-04): per-cycle → candidate evaluation edges. `lineage_nodes`
+    // is content-addressed (PK = bundle_hash) with a single `cycle_id`, so when
+    // two cycles produce the SAME candidate hash, `INSERT OR REPLACE` keeps only
+    // one cycle's attribution and the other cycle's `inspect`/detail shows empty.
+    // This many-to-many edge records that a cycle evaluated a candidate
+    // independently of which cycle won the content-addressed node row, so each
+    // cycle's run-detail reflects the candidates IT evaluated.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_node_evaluations (
+            cycle_id TEXT NOT NULL,
+            bundle_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (cycle_id, bundle_hash)
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create cycle_node_evaluations")?;
     for (sql, label) in [
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",
@@ -173,6 +191,29 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     ] {
         sqlx::query(sql).execute(pool).await.context(label)?;
     }
+    Ok(())
+}
+
+/// F33: record that `cycle_id` evaluated candidate `bundle_hash`. Idempotent
+/// (`INSERT OR IGNORE`) so a re-derived candidate within a cycle isn't double
+/// counted. Independent of the content-addressed `lineage_nodes` row, so two
+/// cycles that produce the same candidate each keep their own attribution.
+pub async fn record_cycle_node_eval(
+    pool: &SqlitePool,
+    cycle_id: &str,
+    bundle_hash: &str,
+    created_at: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO cycle_node_evaluations (cycle_id, bundle_hash, created_at) \
+         VALUES (?, ?, ?)",
+    )
+    .bind(cycle_id)
+    .bind(bundle_hash)
+    .bind(created_at)
+    .execute(pool)
+    .await
+    .context("record cycle_node_evaluations")?;
     Ok(())
 }
 
