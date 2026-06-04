@@ -941,8 +941,11 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     }
     // Re-validate so an inverted/overlapping window from the flags fails
     // fast with a clear message instead of deep in scenario synthesis.
-    cfg.validate()
-        .map_err(|e| CliError::usage(anyhow::anyhow!("invalid optimizer config after window overrides: {e}")))?;
+    cfg.validate().map_err(|e| {
+        CliError::usage(anyhow::anyhow!(
+            "invalid optimizer config after window overrides: {e}"
+        ))
+    })?;
 
     // Fail early if the effective mutator/judge provider is not launchable
     // (e.g. the keyless `test`/`anthropic` default with no runtime fallback),
@@ -1135,8 +1138,8 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         // F2: the cap is now enforced (see BudgetCappedPaperTester above);
         // describe what it actually does rather than echoing an ignored value.
         eprintln!(
-            "budget cap: ${b} USD — the cycle stops before the paper-test backtest \
-             that would push cumulative inference cost past this ceiling"
+            "budget cap: ${b} USD — once reported paper-test inference cost reaches \
+             this ceiling, the cycle stops before launching another backtest"
         );
     }
     if args.mock {

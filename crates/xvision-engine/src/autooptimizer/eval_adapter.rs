@@ -77,8 +77,7 @@ impl PaperTestRunner for BacktestPaperTester {
         // the executor unable to find a trader slot, so every decision came
         // back `<no_response>` with 0 tokens and the run died at decision 0.
         let agent_slots =
-            crate::agent::pipeline::resolve_agent_slots_for_strategy(self.store.pool(), strategy)
-                .await?;
+            crate::agent::pipeline::resolve_agent_slots_for_strategy(self.store.pool(), strategy).await?;
         executor
             .run(
                 &mut run,
@@ -176,10 +175,10 @@ impl PaperTestRunner for StubPaperTester {
 }
 
 /// Wraps another `PaperTestRunner` and enforces a USD ceiling on the
-/// cumulative paper-test inference cost. Once the accumulated
-/// `inference_cost_quote_total` across all runs reaches `budget_usd`,
-/// the next `run` aborts the cycle instead of launching another
-/// (full-window) backtest.
+/// cumulative paper-test inference cost. After each run reports
+/// `inference_cost_quote_total`, the cost is added to the accumulator; once
+/// the accumulator reaches `budget_usd`, the next `run` aborts the cycle
+/// instead of launching another (full-window) backtest.
 ///
 /// This is a best-effort ceiling on the *dominant* cost surface — the
 /// per-candidate backtests the optimizer fans out (parents × mutations ×
