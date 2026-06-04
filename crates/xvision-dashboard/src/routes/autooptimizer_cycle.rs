@@ -202,6 +202,31 @@ pub async fn start_cycle(
     // recorded $0.00 — the operator's "cost shows $0.00" report. With an upfront
     // id + ticker, partial spend survives an interrupt.
     let cycle_id = ulid::Ulid::new().to_string();
+    // F34: serialize cycles per workspace (cross-process via the shared DB lock).
+    // Refuse to launch if a CLI or dashboard cycle is already running, instead of
+    // starving each other.
+    match xvision_engine::autooptimizer::run_lock::try_acquire(
+        &state.pool,
+        &cycle_id,
+        "dashboard",
+        Utc::now(),
+    )
+    .await
+    .map_err(DashboardError::Internal)?
+    {
+        xvision_engine::autooptimizer::run_lock::Acquire::Acquired => {}
+        xvision_engine::autooptimizer::run_lock::Acquire::Busy {
+            cycle_id: holder_cycle,
+            holder,
+            acquired_at,
+        } => {
+            return Err(DashboardError::Conflict(format!(
+                "an optimizer cycle is already running on this workspace (cycle {holder_cycle}, \
+                 holder {holder}, since {acquired_at}). Wait for it to finish or cancel it before \
+                 starting another."
+            )));
+        }
+    }
     // F28: register a cooperative cancel flag for this cycle so
     // `POST /cycles/:id/cancel` can stop it. Deregistered when the cycle ends.
     let cancel_flag = state.autooptimizer_register_cancel(&cycle_id);
@@ -266,6 +291,8 @@ pub async fn start_cycle(
         ticker.abort();
         // F28: drop the cancel flag now the cycle is finished.
         state_for_dereg.autooptimizer_deregister_cancel(&cycle_id);
+        // F34: release the workspace cycle lock so the next cycle can run.
+        let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_id).await;
         // F23/F26/F35: persist the FINAL per-cycle tokens + cost so the panel and
         // `GET /api/autooptimizer/cycles/:id` show real spend after the run.
         // Best-effort — a failure here must not mask the completed cycle. Keyed by
