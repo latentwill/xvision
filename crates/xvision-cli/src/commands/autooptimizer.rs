@@ -1166,6 +1166,44 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // optimizer panel reads (it queries `state.pool` = `$XVN_HOME/xvn.db`).
     let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
     let pool = open_and_migrate_db(&db_path).await?;
+
+    // F34: serialize cycles per workspace. The CLI and dashboard share one
+    // `xvn.db`; running both at once starved each other (a CLI cycle was
+    // timeout-killed at 9.7 min while a dashboard cycle ran). Refuse to start if
+    // another cycle already holds the lock, with a clear message.
+    let cycle_lock_id = args
+        .session_id
+        .clone()
+        .unwrap_or_else(|| Ulid::new().to_string());
+    let lock_holder = format!(
+        "cli:{}",
+        std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "operator".into())
+    );
+    match xvision_engine::autooptimizer::run_lock::try_acquire(
+        &pool,
+        &cycle_lock_id,
+        &lock_holder,
+        Utc::now(),
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("acquire cycle lock: {e}")))?
+    {
+        xvision_engine::autooptimizer::run_lock::Acquire::Acquired => {}
+        xvision_engine::autooptimizer::run_lock::Acquire::Busy {
+            cycle_id,
+            holder,
+            acquired_at,
+        } => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "an optimizer cycle is already running on this workspace (cycle {cycle_id}, \
+                 holder {holder}, since {acquired_at}). Wait for it to finish or cancel it before \
+                 starting another — concurrent cycles starve each other."
+            )));
+        }
+    }
+
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
@@ -1347,11 +1385,14 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             }
         },
         None,
-        args.session_id.clone(),
+        Some(cycle_lock_id.clone()),
         None,
     )
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
+    .await;
+    // F34: release the workspace lock as soon as the cycle ends (success or
+    // failure), before post-processing, so the next cycle isn't blocked.
+    let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_lock_id).await;
+    let result = result.map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
 
     // F9: surface the honesty-check (canary) outcome as a labeled line so the
     // operator can tell the deliberate sabotage from a real broker fault,
