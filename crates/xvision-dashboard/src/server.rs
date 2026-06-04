@@ -303,6 +303,18 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/blob/:hash",
             get(autooptimizer_route::get_blob),
         )
+        // F13/F19: first-class mutation-cycle run list/detail derived from the
+        // lineage nodes a `run-cycle` produced (distinct from the flywheel
+        // distillation ledger below). Static `cycles` segment registered ahead
+        // of the `:id` catch-all.
+        .route(
+            "/api/autooptimizer/cycles",
+            get(autooptimizer_route::list_cycles),
+        )
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id",
+            get(autooptimizer_route::get_cycle),
+        )
         // Flywheel memory-distillation detail — catch-all after static AR-3 routes.
         .route("/api/autooptimizer/:id", get(flywheel::autooptimizer_get))
         // AR-3: live cycle progress stream for the dashboard autooptimizer surface.

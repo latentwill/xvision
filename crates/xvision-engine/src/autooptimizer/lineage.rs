@@ -173,7 +173,7 @@ impl LineageStore {
     }
 
     pub async fn get(&self, bundle_hash: &ContentHash) -> Result<Option<LineageNode>> {
-        let row = sqlx::query(SELECT_COLS)
+        let row = sqlx::query(&format!("{SELECT_COLS_PREFIX} WHERE bundle_hash = ?"))
             .bind(bundle_hash.to_hex())
             .fetch_optional(&self.pool)
             .await
@@ -210,10 +210,13 @@ impl LineageStore {
     }
 }
 
-const SELECT_COLS: &str = "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-     created_at, diversity_score FROM lineage_nodes WHERE bundle_hash = ?";
+/// Shared `SELECT <cols> FROM lineage_nodes` prefix (no `WHERE`/`ORDER BY`), so
+/// every reader — `LineageStore` here and [`super::cycle_runs`] — selects the
+/// same column set in the same order that [`row_to_node`] expects.
+pub(crate) const SELECT_COLS_PREFIX: &str = "SELECT bundle_hash, parent_hash, gate_verdict, status, \
+     cycle_id, created_at, diversity_score FROM lineage_nodes";
 
-fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
+pub(crate) fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
     let bundle_hex: String = row.try_get("bundle_hash").context("bundle_hash")?;
     let parent_hex: Option<String> = row.try_get("parent_hash").context("parent_hash")?;
     let gate_str: String = row.try_get("gate_verdict").context("gate_verdict")?;

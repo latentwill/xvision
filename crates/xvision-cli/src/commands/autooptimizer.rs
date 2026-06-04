@@ -29,6 +29,9 @@ use xvision_engine::autooptimizer::blob_store::BlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_cycle, CycleConfig};
+use xvision_engine::autooptimizer::cycle_runs::{
+    get_cycle_run, list_cycle_runs, CycleRunDetail, CycleRunSummary,
+};
 use xvision_engine::autooptimizer::eval_adapter::{
     BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
 };
@@ -38,6 +41,7 @@ use xvision_engine::autooptimizer::lineage::{
     ensure_lineage_schema, LineageNode, LineageStatus, LineageStore,
 };
 use xvision_engine::autooptimizer::local_dispatch::AutoOptimizerLocalDispatch;
+use xvision_engine::autooptimizer::metering_dispatch::CostMeteringDispatch;
 use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
@@ -453,6 +457,19 @@ async fn run_distill(args: RunArgs) -> CliResult<()> {
 }
 
 async fn run_inspect(args: InspectArgs) -> CliResult<()> {
+    // F13/F19: an id naming a completed mutation cycle (`run-cycle`) shows that
+    // cycle's detail — its gated candidates, verdicts, and counts — instead of
+    // the header-only output it used to print. Only when the id isn't a cycle do
+    // we fall back to the memory-distillation run ledger.
+    if let Some(detail) = load_cycle_detail(&args.id).await? {
+        if args.json {
+            crate::io::print_json(&detail)?;
+        } else {
+            print_cycle_detail(&detail);
+        }
+        return Ok(());
+    }
+
     let store = memory::open_default_store()
         .await
         .map_err(|e| api_to_cli("optimizer inspect", e))?;
@@ -508,12 +525,18 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
     .map_err(|e| api_to_cli("optimizer ls", e))?;
     if args.json {
         crate::io::print_json(&runs)?;
-    } else if runs.items.is_empty() {
-        println!("no optimizer runs");
+        return Ok(());
+    }
+
+    // Memory-distillation runs (the `autooptimizer_runs` ledger, written by
+    // `xvn optimizer run`).
+    if runs.items.is_empty() {
+        println!("no memory-distillation runs (`xvn optimizer run`)");
     } else {
+        println!("Memory-distillation runs:");
         for run in runs.items {
             println!(
-                "{}\t{}\t{}\t{}\t{} obs",
+                "  {}\t{}\t{}\t{}\t{} obs",
                 run.id,
                 run.namespace,
                 run.pattern_id,
@@ -522,7 +545,124 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
             );
         }
     }
+
+    // F13/F19: mutation cycles (`xvn optimizer run-cycle`) record their
+    // candidates in the lineage graph, not the distillation ledger above, so
+    // they were invisible here ("no optimizer runs") after a real cycle.
+    // Surface them as first-class historic runs.
+    match load_cycle_runs(args.limit, args.offset).await {
+        Ok(cycles) if !cycles.is_empty() => {
+            println!("\nMutation cycles (`xvn optimizer run-cycle`):");
+            println!(
+                "  {:<28}  {:>5}  {:>5}  {:>5}  {}",
+                "Cycle", "Nodes", "Kept", "Drop", "Last"
+            );
+            for c in cycles {
+                let last = c.last_created_at.get(..19).unwrap_or(&c.last_created_at);
+                println!(
+                    "  {:<28}  {:>5}  {:>5}  {:>5}  {}",
+                    c.cycle_id, c.node_count, c.active_count, c.rejected_count, last
+                );
+            }
+            println!(
+                "\nInspect one with `xvn optimizer inspect <cycle_id>` \
+                 (or `xvn optimizer lineage ls --cycle <cycle_id>`)."
+            );
+        }
+        Ok(_) => {
+            println!("no mutation cycles yet (`xvn optimizer run-cycle`)");
+        }
+        Err(e) => {
+            // Non-fatal: distillation output already shown.
+            eprintln!("note: could not read mutation cycles: {e}");
+        }
+    }
     Ok(())
+}
+
+/// F13: open the shared lineage DB (best-effort) and list completed mutation
+/// cycles. Returns an empty list — not an error — when the DB or table doesn't
+/// exist yet, so a fresh install doesn't print a spurious note.
+async fn load_cycle_runs(limit: i64, offset: i64) -> CliResult<Vec<CycleRunSummary>> {
+    let db_path = resolve_lineage_db(None)?;
+    if !db_path.exists() {
+        return Ok(Vec::new());
+    }
+    let pool = open_lineage_db(&db_path).await?;
+    if !lineage_table_exists(&pool).await? {
+        return Ok(Vec::new());
+    }
+    list_cycle_runs(&pool, limit, offset)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("list cycle runs: {e}")))
+}
+
+/// F13: fetch a single cycle's detail by id, or `None` when no lineage node
+/// carries that `cycle_id` (so `inspect` can fall back to the distillation
+/// ledger). DB/table absence is treated as "not a cycle".
+async fn load_cycle_detail(cycle_id: &str) -> CliResult<Option<CycleRunDetail>> {
+    let db_path = resolve_lineage_db(None)?;
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let pool = open_lineage_db(&db_path).await?;
+    if !lineage_table_exists(&pool).await? {
+        return Ok(None);
+    }
+    get_cycle_run(&pool, cycle_id)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("get cycle run: {e}")))
+}
+
+async fn lineage_table_exists(pool: &SqlitePool) -> CliResult<bool> {
+    let found: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lineage_nodes' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("check lineage_nodes: {e}")))?;
+    Ok(found.is_some())
+}
+
+fn print_cycle_detail(detail: &CycleRunDetail) {
+    let s = &detail.summary;
+    println!("optimizer cycle: {}", s.cycle_id);
+    println!(
+        "candidates: {} ({} kept, {} dropped)",
+        s.node_count, s.active_count, s.rejected_count
+    );
+    println!("first node: {}", s.first_created_at);
+    println!("last node:  {}", s.last_created_at);
+    println!("\nNodes:");
+    println!(
+        "  {:<12}  {:<10}  {:<12}  {}",
+        "Experiment", "Status", "Parent", "Gate"
+    );
+    for n in &detail.nodes {
+        let exp = n.bundle_hash.to_hex();
+        let exp_short = exp.get(..10).unwrap_or(&exp);
+        let parent = n
+            .parent_hash
+            .as_ref()
+            .map(|h| h.to_hex())
+            .unwrap_or_else(|| "—".to_string());
+        let parent_short = parent.get(..10).unwrap_or(&parent);
+        let status = match n.status {
+            LineageStatus::Active => "kept",
+            LineageStatus::Rejected => "dropped",
+        };
+        println!(
+            "  {:<12}  {:<10}  {:<12}  {}",
+            exp_short,
+            status,
+            parent_short,
+            n.gate_verdict.as_str()
+        );
+    }
+    println!(
+        "\nFull genealogy: `xvn optimizer lineage ls --cycle {}`.",
+        s.cycle_id
+    );
 }
 
 async fn run_gate(args: GateArgs) -> CliResult<()> {
@@ -747,12 +887,26 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
         println!("parent_hash:  {p}");
     }
     println!("\nAncestry:");
+    // F12: cycle-safe walk. A corrupted node whose `parent_hash` points at
+    // itself (or any ancestor cycle, e.g. from an identity-diff candidate that
+    // overwrote its parent) previously looped 50× printing the same hash. Track
+    // visited hashes — including the start node — and stop the instant a parent
+    // has already been seen, so a self-parent terminates immediately with a
+    // clear marker instead of a 50-deep wall of duplicates.
+    use std::collections::HashSet;
+    let mut visited: HashSet<String> = HashSet::new();
+    visited.insert(node.bundle_hash.to_hex());
     let mut current = node.parent_hash.clone();
-    for depth in 0..50usize {
+    let mut depth = 0usize;
+    loop {
         let Some(ph) = current else {
             println!("  [root]");
             break;
         };
+        if !visited.insert(ph.to_hex()) {
+            println!("  [cycle detected at {ph} — ancestry is not a tree; stopping]");
+            break;
+        }
         match store.get(&ph).await {
             Err(e) => {
                 println!("  [error: {e}]");
@@ -771,8 +925,10 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
                 current = anc.parent_hash.clone();
             }
         }
-        if depth == 49 {
-            println!("  [ancestry truncated at 50 levels]");
+        depth += 1;
+        if depth >= 200 {
+            println!("  [ancestry truncated at 200 levels]");
+            break;
         }
     }
     Ok(())
@@ -838,7 +994,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let diff = propose(&parent, &cfg, &dispatch)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
-    let child = apply_mutation_diff(parent.clone(), &diff);
+    let child = diff.apply_to(&parent);
     let child_json = serde_json::to_value(&child)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize child: {e}")))?;
     let child_hash = ContentHash::of_json(&child_json);
@@ -987,20 +1143,38 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         &cfg.mutator.model,
     )
     .await?;
-    let dispatch = Arc::clone(&binding.dispatch);
+    let raw_dispatch = Arc::clone(&binding.dispatch);
+
+    // F11: a single shared cost meter spanning the whole cycle — the
+    // paper-test budget wrapper and the mutator/judge metering dispatch both
+    // accumulate into it, so `--budget` caps and `cycle cost:` reports realized
+    // spend across paper-test inference AND experiment-writer/judge calls.
+    let spent_handle: Arc<std::sync::Mutex<f64>> = Arc::new(std::sync::Mutex::new(0.0));
+
+    // Price mutator/judge completions through the provider catalog (best-effort;
+    // an uncached/unpriced model contributes $0, same "unknown ≠ zero" stance
+    // as the model_calls cost path). Backtests are NOT routed through this
+    // wrapper — their cost is already metered via `model_calls`, so wrapping
+    // them too would double-count.
+    let metering_catalogs = load_metering_catalogs(&xvn_home, &binding.provider).await;
+    let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
+        Arc::clone(&raw_dispatch),
+        metering_catalogs,
+        Arc::clone(&spent_handle),
+    ));
     let mutator = Mutator {
         provider: binding.provider.clone(),
         model: binding.model.clone(),
-        dispatch: Arc::clone(&dispatch),
+        dispatch: Arc::clone(&metered_dispatch),
         max_retries: cfg.mutator.max_retries,
     };
     let judge = Judge {
-        dispatch: Arc::clone(&dispatch),
+        dispatch: Arc::clone(&metered_dispatch),
         provider: binding.provider.clone(),
         model: binding.model.clone(),
     };
 
-    // Build paper tester.
+    // Build paper tester. Backtests use the raw (un-metered) dispatch.
     let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
         Box::new(StubPaperTester {
             metrics: MetricsSummary {
@@ -1024,27 +1198,22 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
         Box::new(CachedBacktestPaperTester::new(
             ctx,
-            Arc::clone(&dispatch),
+            Arc::clone(&raw_dispatch),
             Arc::new(ToolRegistry::default_with_builtins()),
         ))
     };
 
-    // F2: enforce `--budget` as a real ceiling on cumulative paper-test
-    // inference cost. Without this wrapper the flag was validated, echoed,
-    // then ignored (QA 2026-06-04). The mock stub reports no cost, so
-    // wrapping it is harmless — the cap never trips on synthetic metrics.
-    // Keep a handle to the metered spend so the realized cycle cost can be
-    // printed at the end (minor find, 2026-06-04). Only populated when
-    // `--budget` is set, which is the only path that meters inference cost.
-    let mut spent_handle: Option<Arc<std::sync::Mutex<f64>>> = None;
-    let paper_tester: Box<dyn PaperTestRunner> = match args.budget {
-        Some(b) => {
-            let wrapped = BudgetCappedPaperTester::new(paper_tester, b);
-            spent_handle = Some(wrapped.spent_quote_handle());
-            Box::new(wrapped)
-        }
-        None => paper_tester,
-    };
+    // F2/F11: enforce `--budget` as a real ceiling and always meter realized
+    // cost. Without `--budget` the cap is `f64::INFINITY` (never trips) but the
+    // shared `spent_handle` still accumulates, so `cycle cost:` is correct on
+    // every run, not just budgeted ones. The mock stub reports no paper-test
+    // cost, so the cap never trips on synthetic metrics.
+    let budget_cap = args.budget.unwrap_or(f64::INFINITY);
+    let paper_tester: Box<dyn PaperTestRunner> = Box::new(BudgetCappedPaperTester::new_with_handle(
+        paper_tester,
+        budget_cap,
+        Arc::clone(&spent_handle),
+    ));
 
     let mut parent_strategies = HashMap::new();
     let mut explicit_parent_hashes = Vec::new();
@@ -1124,10 +1293,34 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // the sabotaged variant provokes by design.
     eprintln!("honesty check: {}", result.honesty_check.message);
 
-    // Minor: realized cycle cost (only metered when `--budget` is set; F2).
-    if let Some(handle) = &spent_handle {
-        let spent = *handle.lock().expect("budget mutex poisoned");
-        eprintln!("cycle cost: ${spent:.2} (metered paper-test inference)");
+    // F14: distinguish a cycle that gated a real candidate from one that
+    // produced nothing. A no-candidate cycle still exits 0 with a cycle_id, so
+    // without this line it looks identical to a successful optimization.
+    let candidates = result.active_nodes.len() + result.rejected_nodes.len();
+    if candidates == 0 {
+        eprintln!(
+            "no candidate produced: the experiment writer did not yield a usable experiment this \
+             cycle ({} attempt(s) were a no-op or failed). Nothing was gated — see the \
+             `no_candidate` event(s) above.",
+            result.no_candidate_count
+        );
+    } else {
+        eprintln!(
+            "candidates: {candidates} gated ({} kept, {} dropped); {} attempt(s) produced no \
+             usable experiment",
+            result.active_nodes.len(),
+            result.rejected_nodes.len(),
+            result.no_candidate_count
+        );
+    }
+
+    // F11: realized cycle cost, always metered (paper-test inference enriched
+    // from the model_calls ledger + experiment-writer/judge calls priced via
+    // the provider catalog). $0.00 here now means genuinely-zero or
+    // unknown-price, not "the meter was never wired".
+    {
+        let spent = *spent_handle.lock().expect("budget mutex poisoned");
+        eprintln!("cycle cost: ${spent:.2} (metered paper-test + experiment-writer/judge inference)");
     }
 
     println!("cycle_id={}", result.cycle_id);
@@ -1151,10 +1344,10 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::CycleStarted { .. } => "Cycle started",
         CycleProgressEvent::ParentSelected { .. } => "Parent selected",
         CycleProgressEvent::MutationProposed { .. } => "Experiment proposed",
+        CycleProgressEvent::NoCandidate { .. } => "No experiment produced",
         CycleProgressEvent::MutationGated { .. } => "Experiment gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
         CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
-        CycleProgressEvent::CycleSealed { .. } => "Cycle summary signed",
         CycleProgressEvent::CycleFinished { .. } => "Optimizer run finished",
     }
 }
@@ -1164,10 +1357,10 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::CycleStarted { .. } => "cycle_started",
         CycleProgressEvent::ParentSelected { .. } => "parent_selected",
         CycleProgressEvent::MutationProposed { .. } => "mutation_proposed",
+        CycleProgressEvent::NoCandidate { .. } => "no_candidate",
         CycleProgressEvent::MutationGated { .. } => "mutation_gated",
         CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
         CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
-        CycleProgressEvent::CycleSealed { .. } => "cycle_sealed",
         CycleProgressEvent::CycleFinished { .. } => "cycle_finished",
     }
 }
@@ -1320,10 +1513,30 @@ async fn load_strategy_parent(
         .map_err(|e| CliError::upstream(anyhow::anyhow!("read lineage parent {strategy_id}: {e}")))?
     {
         Some(node) if node.status != LineageStatus::Active => {
-            return Err(CliError::usage(anyhow::anyhow!(
-                "strategy {strategy_id} resolves to lineage parent {} but that parent is not active",
+            // F12: previously a hard error that blocked re-running the strategy.
+            // A strategy resolving to a *rejected* node usually means an earlier
+            // identity-diff candidate (now prevented) overwrote this hash, or the
+            // operator saved a rejected experiment as a strategy. Either way, the
+            // operator has explicitly chosen this strategy as the cycle root, so
+            // reseed it as an active root rather than refusing. The identity-diff
+            // and no-overwrite-active guards keep it from being re-poisoned.
+            eprintln!(
+                "note: strategy {strategy_id} resolves to lineage node {} which was marked \
+                 rejected; reseeding it as an active root for this cycle.",
                 bundle_hash.to_hex()
-            )));
+            );
+            let root_node = LineageNode {
+                bundle_hash,
+                parent_hash: None,
+                gate_verdict: GateVerdict::Pass,
+                status: LineageStatus::Active,
+                cycle_id: None,
+                created_at: Utc::now(),
+                diversity_score: None,
+            };
+            lineage.insert(&root_node).await.map_err(|e| {
+                CliError::upstream(anyhow::anyhow!("reseed lineage parent {strategy_id}: {e}"))
+            })?;
         }
         Some(_) => {}
         None => {
@@ -1344,6 +1557,20 @@ async fn load_strategy_parent(
     }
 
     Ok((bundle_hash, strategy))
+}
+
+/// Load catalogs used to price mutator/judge LLM calls for the F11 cost meter.
+/// Best-effort: returns the cached catalog for `provider` when present, else an
+/// empty list (calls then contribute $0 — "unknown is not zero"). OpenRouter,
+/// the primary optimizer provider, carries pricing in its cached catalog.
+async fn load_metering_catalogs(
+    xvn_home: &Path,
+    provider: &str,
+) -> Vec<Arc<xvision_core::providers::Catalog>> {
+    match xvision_engine::providers::load_cached_catalog(xvn_home, provider).await {
+        Ok(Some(cat)) => vec![Arc::new(cat)],
+        _ => Vec::new(),
+    }
 }
 
 fn validate_budget_usd(budget: f64) -> CliResult<()> {
@@ -1626,39 +1853,6 @@ async fn propose(
     mutator.propose(base, cfg, None).await
 }
 
-fn apply_mutation_diff(mut strategy: Strategy, diff: &MutationDiff) -> Strategy {
-    for change in &diff.params {
-        set_param_value(&mut strategy.mechanical_params, &change.key, change.after.clone());
-    }
-    for added in &diff.tools.added {
-        if !strategy.manifest.required_tools.contains(added) {
-            strategy.manifest.required_tools.push(added.clone());
-        }
-    }
-    for removed in &diff.tools.removed {
-        strategy.manifest.required_tools.retain(|t| t != removed);
-    }
-    strategy
-}
-
-fn set_param_value(params: &mut serde_json::Value, key: &str, value: serde_json::Value) {
-    assert!(!key.is_empty(), "param key must not be empty");
-    let parts: Vec<&str> = key.splitn(10, '.').collect();
-    assert!(!parts.is_empty(), "splitn always yields at least one part");
-    let last = parts[parts.len() - 1];
-    let mut cur = params;
-    for &part in &parts[..parts.len() - 1] {
-        let next = cur.as_object_mut().and_then(|m| m.get_mut(part));
-        cur = match next {
-            Some(v) => v,
-            None => return,
-        };
-    }
-    if let Some(map) = cur.as_object_mut() {
-        map.insert(last.to_string(), value);
-    }
-}
-
 fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {
     assert!(min_improvement > 0.0, "min_improvement must be positive");
     (cd - pd) >= min_improvement && (ch - ph) >= min_improvement
@@ -1732,8 +1926,21 @@ async fn insert_lineage_node(
         .map_err(|e| CliError::upstream(anyhow::anyhow!("insert lineage node: {e}")))
 }
 
+/// Default blob directory for `mutate-once`.
+///
+/// F16 (QA 2026-06-04): this previously returned `BlobStore::default_root()` =
+/// `~/.xvn/lineage/blobs`, while `run-cycle` and the dashboard write to
+/// `$XVN_HOME/lineage/blobs`. When `XVN_HOME` is set to a data volume (the
+/// deploy default), the two diverge and `mutate-once <hash>` reports
+/// "parent bundle … not found" for a hash that `run-cycle` and
+/// `GET /api/autooptimizer/blob/:hash` resolve fine. Resolve `$XVN_HOME` so all
+/// three agree on one blob root; fall back to the home default only if
+/// `XVN_HOME` cannot be resolved.
 fn default_blob_dir() -> PathBuf {
-    BlobStore::default_root().unwrap_or_else(|_| PathBuf::from(".xvn/lineage/blobs"))
+    match crate::commands::home::resolve_xvn_home(None) {
+        Ok(home) => home.join("lineage").join("blobs"),
+        Err(_) => BlobStore::default_root().unwrap_or_else(|_| PathBuf::from(".xvn/lineage/blobs")),
+    }
 }
 
 fn parse_embedding_json(raw: &str) -> CliResult<Vec<f32>> {

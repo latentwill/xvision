@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 use crate::autooptimizer::config::AutoOptimizerConfig;
+use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::program_view;
 use crate::autooptimizer::validator::{validate_mutation_diff, ValidationError};
 use crate::strategies::Strategy;
@@ -68,6 +69,67 @@ impl MutationDiff {
             && self.tools.added.is_empty()
             && self.tools.removed.is_empty()
     }
+
+    /// Apply this diff to `base`, returning the candidate strategy.
+    ///
+    /// This is the **canonical** apply used by the cycle orchestrator, the
+    /// `mutate-once` CLI verb, and the mutator's own identity check, so all
+    /// three agree on what a diff actually changes. It applies:
+    ///   - `params`: dot-path keys into `mechanical_params` (nested objects are
+    ///     created as needed), so a change to `risk.max_positions` lands at the
+    ///     right depth instead of a flat top-level key.
+    ///   - `tools`: add/remove against `manifest.required_tools`.
+    ///
+    /// Prose edits are intentionally **not** applied here: a `Strategy`
+    /// references library agents by `AgentRef`, so an agent-prompt edit has no
+    /// home in the strategy artifact's content hash. A prose-only diff is
+    /// therefore an identity (no-op) at the strategy level — [`Mutator::propose`]
+    /// detects that and retries for a real change rather than emitting a
+    /// guaranteed-zero candidate (F14, QA 2026-06-04). Before this was unified,
+    /// the cycle path applied params only (flat, no tools), so a valid tool or
+    /// nested-param experiment was silently dropped as "identity".
+    pub fn apply_to(&self, base: &Strategy) -> Strategy {
+        let mut s = base.clone();
+        for change in &self.params {
+            set_param_value(&mut s.mechanical_params, &change.key, change.after.clone());
+        }
+        for added in &self.tools.added {
+            if !s.manifest.required_tools.contains(added) {
+                s.manifest.required_tools.push(added.clone());
+            }
+        }
+        for removed in &self.tools.removed {
+            s.manifest.required_tools.retain(|t| t != removed);
+        }
+        s
+    }
+}
+
+/// Set `params[key] = value`, where `key` is a dot path (`a.b.c`). Missing
+/// intermediate objects are created. A path that traverses a non-object value
+/// is left unchanged rather than clobbering it.
+fn set_param_value(params: &mut serde_json::Value, key: &str, value: serde_json::Value) {
+    if key.is_empty() {
+        return;
+    }
+    let parts: Vec<&str> = key.splitn(16, '.').collect();
+    let (last, prefix) = parts.split_last().expect("splitn yields at least one part");
+    if !params.is_object() {
+        *params = serde_json::Value::Object(serde_json::Map::new());
+    }
+    let mut cur = params;
+    for &part in prefix {
+        let map = match cur.as_object_mut() {
+            Some(m) => m,
+            None => return,
+        };
+        cur = map
+            .entry(part.to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    }
+    if let Some(map) = cur.as_object_mut() {
+        map.insert(last.to_string(), value);
+    }
 }
 
 pub struct Mutator {
@@ -125,6 +187,20 @@ impl Mutator {
                     last_errors = Some(synthetic);
                 }
                 Ok(diff) => match validate_mutation_diff(&diff, base) {
+                    Ok(()) if is_identity_diff(&diff, base) => {
+                        // F14: a diff that leaves the strategy byte-identical is
+                        // a guaranteed 0.0-delta no-op and hashes to the parent
+                        // (corrupting lineage — F12). Feed it back as an error so
+                        // the next attempt proposes a real change rather than the
+                        // mutator "succeeding" with nothing to gate.
+                        last_errors = Some(vec![ValidationError {
+                            code: "identity_diff".into(),
+                            message: "the proposed change does not alter the strategy (no-op); \
+                                      propose a concrete parameter or tool change"
+                                .into(),
+                            path: None,
+                        }]);
+                    }
                     Ok(()) => return Ok(diff),
                     Err(errors) => {
                         last_errors = Some(errors);
@@ -139,6 +215,18 @@ impl Mutator {
             .unwrap_or_else(|| "unknown error".into());
 
         anyhow::bail!("mutator failed after {} attempt(s): {}", max_attempts, error_text)
+    }
+}
+
+/// True when applying `diff` to `base` produces a strategy with the same
+/// content hash — i.e. the diff is a no-op at the strategy-artifact level.
+fn is_identity_diff(diff: &MutationDiff, base: &Strategy) -> bool {
+    let candidate = diff.apply_to(base);
+    match (serde_json::to_value(base), serde_json::to_value(&candidate)) {
+        (Ok(b), Ok(c)) => ContentHash::of_json(&b) == ContentHash::of_json(&c),
+        // If either fails to serialize we can't prove it's identity; let the
+        // downstream gate handle it rather than spuriously rejecting.
+        _ => false,
     }
 }
 
@@ -212,4 +300,125 @@ fn format_validation_errors(errors: &[ValidationError]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000A",
+                "display_name": "Apply Test Strategy",
+                "plain_summary": "Minimal strategy for apply/identity tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": { "ema_fast": 12, "ema_slow": 26 }
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialise")
+    }
+
+    fn diff_with(params: Vec<ParamChange>, added: Vec<String>, removed: Vec<String>) -> MutationDiff {
+        MutationDiff {
+            kind: MutationKind::Param,
+            prose: Vec::new(),
+            params,
+            tools: ToolDiff { added, removed },
+            rationale: "test".into(),
+        }
+    }
+
+    #[test]
+    fn apply_to_sets_top_level_param() {
+        let base = fixture_strategy();
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "ema_fast".into(),
+                before: serde_json::json!(12),
+                after: serde_json::json!(20),
+            }],
+            vec![],
+            vec![],
+        );
+        let child = diff.apply_to(&base);
+        assert_eq!(child.mechanical_params["ema_fast"], serde_json::json!(20));
+        assert_eq!(child.mechanical_params["ema_slow"], serde_json::json!(26));
+    }
+
+    #[test]
+    fn apply_to_creates_nested_param_path() {
+        let base = fixture_strategy();
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "signals.rsi.period".into(),
+                before: serde_json::Value::Null,
+                after: serde_json::json!(14),
+            }],
+            vec![],
+            vec![],
+        );
+        let child = diff.apply_to(&base);
+        assert_eq!(
+            child.mechanical_params["signals"]["rsi"]["period"],
+            serde_json::json!(14)
+        );
+    }
+
+    #[test]
+    fn apply_to_adds_and_removes_tools() {
+        let base = fixture_strategy();
+        let diff = diff_with(vec![], vec!["macd".into()], vec!["rsi".into()]);
+        let child = diff.apply_to(&base);
+        assert!(child.manifest.required_tools.contains(&"macd".to_string()));
+        assert!(!child.manifest.required_tools.contains(&"rsi".to_string()));
+    }
+
+    #[test]
+    fn identity_diff_detected_for_noop_change() {
+        let base = fixture_strategy();
+        // Setting a param to its current value is a no-op at the hash level.
+        let noop = diff_with(
+            vec![ParamChange {
+                key: "ema_fast".into(),
+                before: serde_json::json!(12),
+                after: serde_json::json!(12),
+            }],
+            vec![],
+            vec![],
+        );
+        assert!(
+            is_identity_diff(&noop, &base),
+            "no-op param change must be identity"
+        );
+
+        // An empty diff is also identity.
+        assert!(is_identity_diff(&empty_mutation(), &base));
+
+        // A real change is not identity.
+        let real = diff_with(
+            vec![ParamChange {
+                key: "ema_fast".into(),
+                before: serde_json::json!(12),
+                after: serde_json::json!(99),
+            }],
+            vec![],
+            vec![],
+        );
+        assert!(!is_identity_diff(&real, &base));
+    }
 }

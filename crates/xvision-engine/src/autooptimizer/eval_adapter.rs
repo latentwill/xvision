@@ -179,7 +179,7 @@ impl CachedBacktestPaperTester {
         // decision 0 with `trader_output[missing_response]` for every strategy.
         let agent_slots =
             crate::agent::pipeline::resolve_agent_slots_for_strategy(&self.ctx.db, strategy).await?;
-        executor
+        let mut metrics = executor
             .run(
                 &mut run,
                 strategy,
@@ -189,7 +189,22 @@ impl CachedBacktestPaperTester {
                 Arc::clone(&self.tools),
                 &store,
             )
-            .await
+            .await?;
+        // F11 (2026-06-04): the executor returns metrics *before* the eval
+        // finalize path (`api::eval::enrich_with_inference_cost`) runs, so the
+        // optimizer never saw a populated `inference_cost_quote_total` — the
+        // `--budget` meter summed 0 and `cycle cost:` printed $0.00 even though
+        // `model_calls.cost_usd` recorded real spend (~$2.04 for a gemini
+        // cycle). Enrich here from the same `model_calls` ledger so the metered
+        // total and the budget cap reflect realized paper-test inference cost.
+        if metrics.inference_cost_quote_total.is_none() {
+            if let Some(cost) =
+                crate::eval::cost::aggregate_eval_run_inference_cost(&self.ctx.db, &run.id).await
+            {
+                metrics.inference_cost_quote_total = Some(cost);
+            }
+        }
+        Ok(metrics)
     }
 }
 
@@ -239,16 +254,22 @@ impl PaperTestRunner for StubPaperTester {
 /// the accumulator reaches `budget_usd`, the next `run` aborts the cycle
 /// instead of launching another (full-window) backtest.
 ///
-/// This is a best-effort ceiling on the *dominant* cost surface — the
-/// per-candidate backtests the optimizer fans out (parents × mutations ×
-/// two windows). Two honest limitations:
-///   1. Mutator/judge LLM calls are not metered here, so the realized
-///      total is slightly higher than what is capped.
-///   2. Providers that don't report `inference_cost_quote_total`
-///      contribute `0`, so the cap can't trip for them.
+/// This caps the *dominant* cost surface — the per-candidate backtests the
+/// optimizer fans out (parents × mutations × two windows).
 ///
-/// It exists so `xvn optimizer run-cycle --budget` is a real guard
-/// rather than the silent no-op it used to be (QA 2026-06-04, F2).
+/// F11 (QA 2026-06-04) closed the two gaps that previously made the cap
+/// blind:
+///   1. The accumulator can be a *shared* handle (`new_with_handle`) that the
+///      mutator/judge `CostMeteringDispatch` also writes to, so the realized
+///      total — and therefore the cap — includes the experiment-writer and
+///      judge LLM calls, not just paper-test inference.
+///   2. The optimizer paper tester now enriches its returned metrics from the
+///      `model_calls` ledger (token-count × catalog pricing), so providers
+///      like OpenRouter that don't self-report `inference_cost_quote_total`
+///      still contribute their real cost and the cap can trip for them.
+///
+/// It exists so `xvn optimizer run-cycle --budget` is a real guard rather than
+/// the silent no-op it used to be (QA 2026-06-04, F2/F11).
 pub struct BudgetCappedPaperTester {
     inner: Box<dyn PaperTestRunner>,
     budget_usd: f64,
@@ -261,6 +282,23 @@ impl BudgetCappedPaperTester {
             inner,
             budget_usd,
             spent_quote: Arc::new(std::sync::Mutex::new(0.0)),
+        }
+    }
+
+    /// Like [`Self::new`] but accumulates into a caller-provided handle so the
+    /// cycle's mutator/judge metering shares one running total with the
+    /// paper-test meter (F11). Pass `f64::INFINITY` for `budget_usd` to meter
+    /// without ever tripping (an unbudgeted cycle that still wants a correct
+    /// realized `cycle cost:`).
+    pub fn new_with_handle(
+        inner: Box<dyn PaperTestRunner>,
+        budget_usd: f64,
+        spent_quote: Arc<std::sync::Mutex<f64>>,
+    ) -> Self {
+        Self {
+            inner,
+            budget_usd,
+            spent_quote,
         }
     }
 

@@ -168,6 +168,51 @@ A cycle that produces no candidate still exits 0 and prints a cycle_id, so it lo
 3. **F15, F16, F19** (event/verb/blob consistency).
 4. **F17, F18** (ergonomics/terminology).
 
+## Resolution (2026-06-04, branch `fix/optimizer-surface-audit-f11-f19`)
+
+All of F11–F19 addressed. Summary of what changed:
+
+- **F11** — Optimizer paper-test metrics are now enriched from the `model_calls`
+  ledger (token-count × catalog pricing) in `CachedBacktestPaperTester`, so
+  OpenRouter spend is no longer reported as `$0.00` and the `--budget` cap trips
+  on realized cost. Metering is always-on (budget `∞` when unset). A new
+  `CostMeteringDispatch` wraps the mutator/judge dispatch and feeds the **same**
+  shared accumulator, so the cap and the printed `cycle cost:` include
+  experiment-writer/judge calls, not just paper-test inference.
+- **F12** — The mutator never emits an identity (child==parent) diff; the cycle
+  has a defensive identity guard (emits `no_candidate`, never persists a
+  self-parent node), `build_and_insert_node` refuses to overwrite an active node
+  with a rejected re-derivation, the CLI ancestry walk is visited-set/cycle-safe,
+  and a strategy resolving to a rejected node is **reseeded** as an active root
+  instead of blocking the re-run.
+- **F13/F19** — Completed cycles are first-class: new `autooptimizer::cycle_runs`
+  derives run list/detail from `lineage_nodes` grouped by `cycle_id`; dashboard
+  `GET /api/autooptimizer/cycles[/:cycle_id]`; `xvn optimizer ls` shows a
+  "Mutation cycles" section and `inspect <cycle_id>` shows the cycle detail
+  (falling back to the distillation ledger otherwise).
+- **F14** — `Mutator::propose` detects/retries identity diffs; a unified
+  `MutationDiff::apply_to` applies nested params + tools (the old cycle path
+  applied flat params only, silently dropping valid tool/nested experiments as
+  "identity"); no-candidate iterations emit a typed `NoCandidate` event and the
+  CLI prints a distinct "no candidate produced" summary with counts.
+- **F15** — Real runs emit `no_candidate` for every empty branch (mutator error,
+  tournament-incumbent, identity); judge/mutation events fire for real
+  candidates now that F14 produces them.
+- **F16** — `mutate-once --blob-dir` defaults to `$XVN_HOME/lineage/blobs`,
+  matching `run-cycle` and the dashboard.
+- **F17** — `xvn flywheel status/velocity/lineage` default to the `global`
+  namespace (with a note) instead of erroring when no `--namespace/--agent`.
+- **F18** — The vestigial `CycleSealed` ("Cycle summary signed") event variant
+  is removed from the taxonomy, CLI/dashboard labels, and `bus.js`/`LiveCycleView`.
+
+Tests: new `mutator::apply_to`/identity unit tests, `autooptimizer_cycle_runs`
+integration tests; existing prose-only diff fixtures in `autooptimizer_mutator_e2e`
+and `autooptimizer_workspace_check` updated to genuine param diffs (a prose-only
+edit can't change a `Strategy` that references agents by `AgentRef`, so it is
+correctly now an identity no-op). Pre-existing, unrelated breakage left as-is:
+`autooptimizer_session.rs` (orphaned module from the earlier provenance removal)
+and the env-dependent `eval::review` provider test.
+
 ## Artifacts
 - v2 run log: `/root/xvn-work/night-watch/optrun-v2-f8f10-091627.log` (cycle `01KT8YPWP72F2BCZZSRYZK6GP7`)
 - v3 re-run failure: `/root/xvn-work/night-watch/optrun-geminilongv3-f8f10-091505.log` ("parent not active")

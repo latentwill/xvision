@@ -33,10 +33,10 @@ const SSE_EVENT_NAMES = [
   "cycle_started",
   "parent_selected",
   "mutation_proposed",
+  "no_candidate",
   "mutation_gated",
   "honesty_check_run",
   "judge_finding",
-  "cycle_sealed",
   "cycle_finished",
   "lagged",
 ] as const;
@@ -102,7 +102,7 @@ function deriveCycleState(
 ): { isRunning: boolean; activeCycleId: string | null } {
   for (let i = events.length - 1; i >= 0; i--) {
     const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
-    if (et === "cycle_finished" || et === "cycle_sealed") {
+    if (et === "cycle_finished") {
       return { isRunning: false, activeCycleId: null };
     }
     if (et === "cycle_started") return { isRunning: true, activeCycleId: events[i].cycle_id ?? null };

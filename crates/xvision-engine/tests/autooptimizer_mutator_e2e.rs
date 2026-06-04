@@ -77,13 +77,19 @@ fn make_strategy() -> Strategy {
     serde_json::from_value(v).expect("fixture strategy deserializes")
 }
 
+// A genuinely strategy-altering diff. F14 (QA 2026-06-04): `propose` now rejects
+// identity (no-op) diffs and retries. A prose-only edit targets an agent prompt,
+// which a `Strategy` only references by `AgentRef` — so it doesn't change the
+// strategy artifact's content hash and is an identity no-op. A real candidate
+// must change a mechanical param (or tools); here we bump an existing param so
+// the apply actually moves the hash.
 fn valid_diff_json() -> String {
     json!({
-        "kind": "prose",
-        "prose": [{"agent_role": "trader", "before": "analyze market", "after": "analyze market trends"}],
-        "params": [],
+        "kind": "param",
+        "prose": [],
+        "params": [{"key": "ema_fast", "before": 12, "after": 20}],
         "tools": {"added": [], "removed": []},
-        "rationale": "better analysis"
+        "rationale": "faster EMA crossover"
     })
     .to_string()
 }

@@ -233,6 +233,8 @@ export function formatEventLabel(event: CycleProgressEvent): string {
       return "Optimizer run finished";
     case "mutation_proposed":
       return "Experiment proposed";
+    case "no_candidate":
+      return "No experiment produced";
     case "mutation_accepted":
       return "Experiment accepted";
     case "mutation_rejected":

@@ -27,6 +27,7 @@ pub mod config;
 pub mod content_hash;
 pub mod cycle;
 pub mod cycle_loosen;
+pub mod cycle_runs;
 pub mod diversity;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
@@ -36,6 +37,7 @@ pub mod inversion;
 pub mod judge;
 pub mod lineage;
 pub mod local_dispatch;
+pub mod metering_dispatch;
 pub mod mutator;
 pub mod mutator_ladder;
 pub mod parent_policy;
@@ -51,6 +53,7 @@ pub use config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, Loosen
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use cycle::{run_cycle, CycleConfig, CycleResult};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
+pub use cycle_runs::{get_cycle_run, list_cycle_runs, CycleRunDetail, CycleRunSummary};
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
 pub use eval_adapter::{
     BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
@@ -59,6 +62,7 @@ pub use gate::{evaluate, GateInput, GateVerdict};
 pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
 pub use local_dispatch::AutoOptimizerLocalDispatch;
+pub use metering_dispatch::CostMeteringDispatch;
 pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, ToolDiff};
 pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, MutatorScore};
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};

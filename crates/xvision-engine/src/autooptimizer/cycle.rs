@@ -54,6 +54,12 @@ pub struct CycleResult {
     pub honesty_check: HonestyCheckResult,
     pub diversity_score: f64,
     pub findings_by_node: HashMap<ContentHash, Vec<Finding>>,
+    /// Number of (parent × mutation) iterations that yielded no usable
+    /// candidate — the experiment writer could not produce a distinct, valid
+    /// experiment (e.g. only no-op/identity diffs). Lets the CLI/panel
+    /// distinguish a genuinely empty cycle from one that gated a real candidate
+    /// (F14, QA 2026-06-04).
+    pub no_candidate_count: usize,
 }
 
 struct MutationOutcome {
@@ -119,6 +125,7 @@ pub async fn run_cycle(
     let mut active_nodes: Vec<LineageNode> = Vec::new();
     let mut rejected_nodes: Vec<LineageNode> = Vec::new();
     let mut findings_by_node: HashMap<ContentHash, Vec<Finding>> = HashMap::new();
+    let mut no_candidate_count: usize = 0;
 
     for parent_node in &parents {
         let ph = parent_node.bundle_hash.to_hex();
@@ -127,7 +134,7 @@ pub async fn run_cycle(
                 cycle_id: cycle_id.clone(),
                 parent_hash: ph,
             });
-            let (active, rejected) = process_parent_mutations(
+            let (active, rejected, nc) = process_parent_mutations(
                 pool,
                 parent_node,
                 parent_strategy,
@@ -146,6 +153,7 @@ pub async fn run_cycle(
             .await?;
             active_nodes.extend(active);
             rejected_nodes.extend(rejected);
+            no_candidate_count += nc;
         }
     }
 
@@ -168,6 +176,7 @@ pub async fn run_cycle(
         honesty_check,
         diversity_score,
         findings_by_node,
+        no_candidate_count,
     })
 }
 
@@ -243,7 +252,7 @@ async fn process_parent_mutations<F>(
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
     dspy_ctx: Option<&DspyContext>,
-) -> Result<(Vec<LineageNode>, Vec<LineageNode>)>
+) -> Result<(Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
     F: Fn(CycleProgressEvent),
 {
@@ -253,6 +262,7 @@ where
     );
     let mut active: Vec<LineageNode> = Vec::new();
     let mut rejected: Vec<LineageNode> = Vec::new();
+    let mut no_candidate_count: usize = 0;
     let parent_day = paper_tester
         .run(parent_strategy, &cycle_config.day_scenario)
         .await?;
@@ -262,37 +272,77 @@ where
 
     for _ in 0..cycle_config.mutations_per_parent {
         // When tournament_enabled, run the 3-candidate Borda-count tournament
-        // instead of a direct propose call. Incumbent win skips this iteration.
+        // instead of a direct propose call. Incumbent win means no candidate
+        // beat the parent this iteration.
+        //
+        // F14/F15 (2026-06-04): every "no usable candidate" branch now emits a
+        // `NoCandidate` event instead of a silent `continue`, so a cycle that
+        // produced nothing is distinguishable in the CLI summary and panel from
+        // one that gated a real experiment.
         let diff = if config.tournament_enabled {
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
             match runner.run_tournament(parent_strategy, config).await {
-                Ok(r) if r.incumbent_wins => continue,
+                Ok(r) if r.incumbent_wins => {
+                    no_candidate_count += 1;
+                    progress(CycleProgressEvent::NoCandidate {
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: parent_node.bundle_hash.to_hex(),
+                        reason: "tournament incumbent retained (no challenger improved on the parent)"
+                            .to_string(),
+                    });
+                    continue;
+                }
                 Ok(r) => r.winner_diff,
-                Err(_) => continue,
+                Err(e) => {
+                    no_candidate_count += 1;
+                    progress(CycleProgressEvent::NoCandidate {
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: parent_node.bundle_hash.to_hex(),
+                        reason: format!("tournament failed: {e}"),
+                    });
+                    continue;
+                }
             }
         } else {
             match mutator.propose(parent_strategy, config, dsr_prefix).await {
                 Ok(d) => d,
-                Err(_) => continue,
+                Err(e) => {
+                    // The mutator exhausted its retries without a distinct,
+                    // valid diff (e.g. every attempt was an identity/no-op —
+                    // F14). Surface it rather than exiting the iteration silently.
+                    no_candidate_count += 1;
+                    progress(CycleProgressEvent::NoCandidate {
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: parent_node.bundle_hash.to_hex(),
+                        reason: format!("experiment writer produced no usable candidate: {e}"),
+                    });
+                    continue;
+                }
             }
         };
-        // Minor (2026-06-04): short-circuit identity (no-op) diffs. A child
-        // byte-identical to its parent is a guaranteed 0.0 delta, so the two
-        // paper-test backtests gate_and_classify would run are pure waste — and
-        // its content hash equals the parent's, so inserting a lineage node for
-        // it would collide with (and overwrite) the parent node. Skip it.
-        let candidate = apply_mutation_params(parent_strategy, &diff);
-        match serde_json::to_value(&candidate) {
-            Ok(v) if ContentHash::of_json(&v) == parent_node.bundle_hash => {
-                tracing::debug!(
-                    cycle_id,
-                    parent_hash = %parent_node.bundle_hash.to_hex(),
-                    "skipping identity (no-op) mutation diff — guaranteed 0.0 delta, no backtest spent",
-                );
-                continue;
-            }
-            _ => {}
+        // F12 defensive guard: never gate or persist a child byte-identical to
+        // its parent. The mutator already rejects identity diffs, but the
+        // tournament path does not, and a no-op child's content hash equals the
+        // parent's — inserting it would overwrite (corrupt) the parent node and
+        // create a self-parent cycle in the lineage graph.
+        let candidate = diff.apply_to(parent_strategy);
+        let is_identity = serde_json::to_value(&candidate)
+            .map(|v| ContentHash::of_json(&v) == parent_node.bundle_hash)
+            .unwrap_or(false);
+        if is_identity {
+            tracing::debug!(
+                cycle_id,
+                parent_hash = %parent_node.bundle_hash.to_hex(),
+                "skipping identity (no-op) mutation diff — guaranteed 0.0 delta, no backtest spent",
+            );
+            no_candidate_count += 1;
+            progress(CycleProgressEvent::NoCandidate {
+                cycle_id: cycle_id.to_string(),
+                parent_hash: parent_node.bundle_hash.to_hex(),
+                reason: "experiment writer produced a no-op (identity) diff".to_string(),
+            });
+            continue;
         }
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),
@@ -340,7 +390,7 @@ where
             rejected.push(node);
         }
     }
-    Ok((active, rejected))
+    Ok((active, rejected, no_candidate_count))
 }
 
 async fn gate_and_classify(
@@ -352,7 +402,7 @@ async fn gate_and_classify(
     parent_untouched: &MetricsSummary,
     min_improvement: f64,
 ) -> Result<MutationOutcome> {
-    let child = apply_mutation_params(parent_strategy, &diff);
+    let child = diff.apply_to(parent_strategy);
     let child_day = paper_tester.run(&child, &cycle_config.day_scenario).await?;
     let child_untouched = paper_tester.run(&child, &cycle_config.baseline_scenario).await?;
     let raw_verdict = gate_check(
@@ -404,6 +454,24 @@ async fn build_and_insert_node(
     parent_node: &LineageNode,
     cycle_id: &str,
 ) -> Result<LineageNode> {
+    let store = LineageStore::new(pool.clone());
+    // F12: `lineage_nodes` uses `INSERT OR REPLACE` keyed on `bundle_hash`. If a
+    // rejected candidate hashes to an already-*active* node (a re-derivation of
+    // a known-good strategy), replacing it would downgrade the active node to
+    // rejected and poison future re-runs/parent selection. Keep the active node
+    // and return it untouched rather than overwriting it with a rejection.
+    if outcome.status == LineageStatus::Rejected {
+        if let Some(existing) = store.get(&outcome.child_hash).await? {
+            if existing.status == LineageStatus::Active {
+                tracing::debug!(
+                    cycle_id,
+                    child_hash = %outcome.child_hash.to_hex(),
+                    "rejected candidate collides with an existing active node — keeping the active node",
+                );
+                return Ok(existing);
+            }
+        }
+    }
     let node = LineageNode {
         bundle_hash: outcome.child_hash,
         parent_hash: Some(parent_node.bundle_hash),
@@ -413,19 +481,8 @@ async fn build_and_insert_node(
         created_at: Utc::now(),
         diversity_score: None,
     };
-    LineageStore::new(pool.clone()).insert(&node).await?;
+    store.insert(&node).await?;
     Ok(node)
-}
-
-fn apply_mutation_params(base: &Strategy, diff: &MutationDiff) -> Strategy {
-    assert!(diff.params.len() <= 64, "params count exceeds bound");
-    let mut s = base.clone();
-    if let serde_json::Value::Object(ref mut map) = s.mechanical_params {
-        for change in &diff.params {
-            map.insert(change.key.clone(), change.after.clone());
-        }
-    }
-    s
 }
 
 fn gate_check(

@@ -84,23 +84,16 @@ pub async fn run(cmd: FlywheelCmd) -> CliResult<()> {
 }
 
 async fn run_status(args: StatusArgs) -> CliResult<()> {
-    if args.namespace.is_none() && args.agent.is_none() {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "set either --namespace or --agent"
-        )));
-    }
+    // F17 (QA 2026-06-04): no longer an error when neither flag is given —
+    // default to the `global` namespace so an operator who just wants the
+    // overall picture gets one. Scope to a single agent with `--agent <id>`.
+    let (namespace, agent) = default_namespace(args.namespace, args.agent);
     let store = memory::open_default_store()
         .await
         .map_err(|e| api_to_cli("flywheel status", e))?;
-    let status = flywheel::status(
-        &store,
-        FlywheelStatusRequest {
-            namespace: args.namespace,
-            agent: args.agent,
-        },
-    )
-    .await
-    .map_err(|e| api_to_cli("flywheel status", e))?;
+    let status = flywheel::status(&store, FlywheelStatusRequest { namespace, agent })
+        .await
+        .map_err(|e| api_to_cli("flywheel status", e))?;
     if args.json {
         crate::io::print_json(&status)?;
     } else {
@@ -118,11 +111,8 @@ async fn run_status(args: StatusArgs) -> CliResult<()> {
 }
 
 async fn run_velocity(args: VelocityArgs) -> CliResult<()> {
-    if args.namespace.is_none() && args.agent.is_none() {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "set either --namespace or --agent"
-        )));
-    }
+    // F17: default to the `global` namespace instead of erroring (see run_status).
+    let (namespace, agent) = default_namespace(args.namespace, args.agent);
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
@@ -133,8 +123,8 @@ async fn run_velocity(args: VelocityArgs) -> CliResult<()> {
         &ctx,
         &store,
         FlywheelVelocityRequest {
-            namespace: args.namespace,
-            agent: args.agent,
+            namespace,
+            agent,
             days: Some(args.days),
         },
     )
@@ -160,19 +150,16 @@ async fn run_velocity(args: VelocityArgs) -> CliResult<()> {
 }
 
 async fn run_lineage(args: LineageArgs) -> CliResult<()> {
-    if args.namespace.is_none() && args.agent.is_none() {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "set either --namespace or --agent"
-        )));
-    }
+    // F17: default to the `global` namespace instead of erroring (see run_status).
+    let (namespace, agent) = default_namespace(args.namespace, args.agent);
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
     let lineage = flywheel::lineage(
         &ctx,
         FlywheelLineageRequest {
-            namespace: args.namespace,
-            agent: args.agent,
+            namespace,
+            agent,
             limit: Some(args.limit),
         },
     )
@@ -230,6 +217,24 @@ async fn run_lineage(args: LineageArgs) -> CliResult<()> {
         }
     }
     Ok(())
+}
+
+/// F17: resolve the effective `(namespace, agent)` for a flywheel command. When
+/// neither is provided, default to the `global` namespace and print a one-line
+/// note so the operator knows what scope they're seeing and how to narrow it.
+/// `global` is the workspace-wide memory namespace (agent-specific runs live
+/// under `agent:<id>`), so it's the clearest single default for "the overall
+/// picture".
+fn default_namespace(namespace: Option<String>, agent: Option<String>) -> (Option<String>, Option<String>) {
+    if namespace.is_none() && agent.is_none() {
+        eprintln!(
+            "note: no --namespace/--agent given; showing the `global` namespace. \
+             Pass --agent <id> (or --namespace <ns>) to scope to one agent."
+        );
+        (Some("global".to_string()), None)
+    } else {
+        (namespace, agent)
+    }
 }
 
 async fn open_ctx(override_path: Option<PathBuf>) -> anyhow::Result<ApiContext> {
