@@ -27,7 +27,9 @@ use xvision_engine::autooptimizer::blob_store::BlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_cycle, CycleConfig};
-use xvision_engine::autooptimizer::eval_adapter::{CachedBacktestPaperTester, StubPaperTester};
+use xvision_engine::autooptimizer::eval_adapter::{
+    BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
+};
 use xvision_engine::autooptimizer::gate::GateVerdict;
 use xvision_engine::autooptimizer::judge::Judge;
 use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -150,6 +152,23 @@ pub struct RunCycleArgs {
         help = "Model for mutator+judge (overrides config); requires --provider"
     )]
     pub model: Option<String>,
+    /// Override the day-window (primary evaluation) start date (YYYY-MM-DD).
+    /// The config default spans ~20 months of 1h bars (~16k bars fetched per
+    /// candidate, on the day + baseline windows combined); narrow it here to
+    /// bound bar-fetch cost/latency. See F3 (QA 2026-06-04).
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub day_start: Option<chrono::NaiveDate>,
+    /// Override the day-window (primary evaluation) end date (YYYY-MM-DD).
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub day_end: Option<chrono::NaiveDate>,
+    /// Override the baseline-untouched (held-out overfitting guard) start date
+    /// (YYYY-MM-DD). Must fall after the day window.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub baseline_start: Option<chrono::NaiveDate>,
+    /// Override the baseline-untouched (held-out overfitting guard) end date
+    /// (YYYY-MM-DD).
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub baseline_end: Option<chrono::NaiveDate>,
 }
 
 #[derive(Args, Debug)]
@@ -904,6 +923,30 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         cfg.mutator.model = model.to_string();
     }
 
+    // F3: per-run evaluation-window overrides. The config default spans
+    // ~20 months of 1h bars, silently fetching ~16k bars per candidate;
+    // these flags let an operator bound bar-fetch cost/latency without
+    // editing autooptimizer.toml (QA 2026-06-04).
+    if let Some(d) = args.day_start {
+        cfg.day_window.start = d;
+    }
+    if let Some(d) = args.day_end {
+        cfg.day_window.end = d;
+    }
+    if let Some(d) = args.baseline_start {
+        cfg.baseline_untouched_window.start = d;
+    }
+    if let Some(d) = args.baseline_end {
+        cfg.baseline_untouched_window.end = d;
+    }
+    // Re-validate so an inverted/overlapping window from the flags fails
+    // fast with a clear message instead of deep in scenario synthesis.
+    cfg.validate().map_err(|e| {
+        CliError::usage(anyhow::anyhow!(
+            "invalid optimizer config after window overrides: {e}"
+        ))
+    })?;
+
     // Fail early if the effective mutator/judge provider is not launchable
     // (e.g. the keyless `test`/`anthropic` default with no runtime fallback),
     // rather than surfacing a confusing missing-API-key error deep in dispatch.
@@ -1049,6 +1092,15 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         ))
     };
 
+    // F2: enforce `--budget` as a real ceiling on cumulative paper-test
+    // inference cost. Without this wrapper the flag was validated, echoed,
+    // then ignored (QA 2026-06-04). The mock stub reports no cost, so
+    // wrapping it is harmless — the cap never trips on synthetic metrics.
+    let paper_tester: Box<dyn PaperTestRunner> = match args.budget {
+        Some(b) => Box::new(BudgetCappedPaperTester::new(paper_tester, b)),
+        None => paper_tester,
+    };
+
     let mut parent_strategies = HashMap::new();
     let mut explicit_parent_hashes = Vec::new();
     if let Some(ref strategy_id) = args.strategy {
@@ -1083,7 +1135,23 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         eprintln!("strategy: {s}");
     }
     if let Some(b) = args.budget {
-        eprintln!("budget: {b} USD");
+        // F2: the cap is now enforced (see BudgetCappedPaperTester above);
+        // describe what it actually does rather than echoing an ignored value.
+        eprintln!(
+            "budget cap: ${b} USD — once reported paper-test inference cost reaches \
+             this ceiling, the cycle stops before launching another backtest"
+        );
+    }
+    if args.mock {
+        // F4: a `--mock` cycle uses synthetic stub metrics and is a smoke
+        // test of the orchestration wiring only — make it explicit that it
+        // is NOT a real optimization run, so a "success" exit isn't mistaken
+        // for a recorded cycle in `xvn optimizer ls` (QA 2026-06-04).
+        eprintln!(
+            "mock mode: paper-test metrics are synthetic (deterministic stub). This is a \
+             smoke test of the cycle wiring — it does not perform real backtests and may not \
+             appear as a completed run in `xvn optimizer ls`."
+        );
     }
     let result = run_cycle(
         &pool,

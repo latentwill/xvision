@@ -1131,4 +1131,93 @@ mod tests {
         let loaded = store.get(&id).await.unwrap().expect("exists");
         assert_eq!(loaded.slots[0].max_tokens, Some(6000));
     }
+
+    // ── F1 regression: paper-test slot resolution ─────────────────────
+    //
+    // These exercise `agent::pipeline::resolve_agent_slots_for_strategy`,
+    // the pool-based resolver the autooptimizer paper-test adapters
+    // (`autooptimizer::eval_adapter`) now call. Those adapters used to
+    // pass an empty `&[]` slot slice into the backtest executor, so the
+    // candidate trader had no model/prompt binding and every decision
+    // came back `<no_response>` with 0 tokens — no real `xvn optimizer
+    // run-cycle` could complete (QA 2026-06-04, finding F1). The tests
+    // live here because this module owns the migrated agent-store pool
+    // harness (`fresh_pool` + `sample_slot`).
+
+    fn strategy_json_with_agents(agents: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "manifest": {
+                "id": "01HZSTRATEGYRESOLVE",
+                "display_name": "Resolve Test",
+                "plain_summary": "test",
+                "creator": "@test",
+                "template": "ma_crossover",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": [],
+                "risk_preset_or_config": "balanced",
+                "published_at": null,
+            },
+            "agents": agents,
+            "pipeline": { "kind": "single" },
+            "risk": crate::strategies::risk::RiskPreset::Balanced.expand(),
+            "mechanical_params": {},
+        })
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_slots_for_strategy_binds_attached_trader() {
+        let pool = fresh_pool().await;
+        let store = AgentStore::new(pool.clone());
+        let agent_id = store
+            .create(NewAgent {
+                name: "trader-v1".to_string(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![sample_slot()],
+                scope_strategy_id: None,
+            })
+            .await
+            .unwrap();
+
+        let raw = strategy_json_with_agents(serde_json::json!([
+            { "agent_id": agent_id, "role": "trader" }
+        ]));
+        let strategy: crate::strategies::Strategy = serde_json::from_value(raw).unwrap();
+
+        let slots = crate::agent::pipeline::resolve_agent_slots_for_strategy(&pool, &strategy)
+            .await
+            .unwrap();
+
+        assert_eq!(slots.len(), 1, "the attached trader agent must resolve to exactly one slot");
+        assert!(
+            slots[0].role.eq_ignore_ascii_case("trader"),
+            "resolved slot keeps the trader role"
+        );
+        assert!(
+            slots[0].slot.model.is_some(),
+            "resolved trader slot carries a model binding — the thing `&[]` left unset, \
+             causing the decision-0 `missing_response` failure"
+        );
+        assert!(
+            !slots[0].system_prompt.trim().is_empty(),
+            "resolved trader slot carries a system prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_slots_for_strategy_empty_for_no_agents() {
+        let pool = fresh_pool().await;
+        let raw = strategy_json_with_agents(serde_json::json!([]));
+        let strategy: crate::strategies::Strategy = serde_json::from_value(raw).unwrap();
+
+        let slots = crate::agent::pipeline::resolve_agent_slots_for_strategy(&pool, &strategy)
+            .await
+            .unwrap();
+
+        // No attached agents → empty, mirroring `api::eval::resolve_agent_slots`.
+        // The executor's deprecated `trader_slot` fallback covers legacy strategies.
+        assert!(slots.is_empty(), "a strategy with no agents resolves to no slots");
+    }
 }

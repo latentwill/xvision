@@ -815,7 +815,9 @@
       ]
     },
     {
-      "aliases": [],
+      "aliases": [
+        "ls"
+      ],
       "has_subcommands": false,
       "long_flags": [
         "--format",
@@ -2582,17 +2584,6 @@
       "path": [
         "help",
         "optimizer",
-        "run-cycle"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "optimizer",
         "gate"
       ]
     },
@@ -2695,6 +2686,17 @@
         "help",
         "optimizer",
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimizer",
+        "run-cycle"
       ]
     },
     {
@@ -5034,24 +5036,6 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
-        "--budget",
-        "--config",
-        "--db",
-        "--help",
-        "--mock",
-        "--session-id",
-        "--strategy"
-      ],
-      "mutates": true,
-      "path": [
-        "optimizer",
-        "run-cycle"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
         "--activate-if-pass",
         "--baseline-score",
         "--baseline-today-score",
@@ -5118,17 +5102,6 @@
         "optimizer",
         "help",
         "demote"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "optimizer",
-        "help",
-        "run-cycle"
       ]
     },
     {
@@ -5252,6 +5225,17 @@
         "optimizer",
         "help",
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimizer",
+        "help",
+        "run-cycle"
       ]
     },
     {
@@ -5445,6 +5429,30 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--baseline-end",
+        "--baseline-start",
+        "--budget",
+        "--config",
+        "--day-end",
+        "--day-start",
+        "--db",
+        "--help",
+        "--mock",
+        "--model",
+        "--provider",
+        "--session-id",
+        "--strategy"
+      ],
+      "mutates": true,
+      "path": [
+        "optimizer",
+        "run-cycle"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--help",
         "--venue"
       ],
@@ -5595,7 +5603,9 @@
       ]
     },
     {
-      "aliases": [],
+      "aliases": [
+        "ls"
+      ],
       "has_subcommands": false,
       "long_flags": [
         "--effective",
@@ -6830,6 +6840,7 @@
       ],
       "has_subcommands": false,
       "long_flags": [
+        "--filter",
         "--format",
         "--help",
         "--json"

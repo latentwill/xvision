@@ -52,7 +52,10 @@ pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canon
 pub use cycle::{run_cycle, CycleConfig, CycleResult};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
-pub use eval_adapter::{BacktestPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester};
+pub use eval_adapter::{
+    BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner,
+    StubPaperTester,
+};
 pub use gate::{evaluate, GateInput, GateVerdict};
 pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};

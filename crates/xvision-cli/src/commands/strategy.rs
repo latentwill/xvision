@@ -219,6 +219,10 @@ enum StrategyAction {
         /// Emit as JSON array (legacy alias for `--format json`).
         #[arg(long)]
         json: bool,
+        /// Case-insensitive substring filter applied to display_name and id.
+        /// Only strategies whose display_name or id contains FILTER are listed.
+        #[arg(long, value_name = "FILTER")]
+        filter: Option<String>,
     },
     /// Show a saved strategy as JSON. Output shape matches the
     /// `strategy` slot in `EvalRunExport` (q15 §3 / §6) — same
@@ -519,7 +523,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning, fields).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Diagnostics { id, json } => diagnostics(&id, json).await,
-        StrategyAction::Ls { format, json } => ls(format, json).await,
+        StrategyAction::Ls { format, json, filter } => ls(format, json, filter.as_deref()).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent {
@@ -1428,21 +1432,67 @@ fn print_diagnostics_text(diag: &StrategyDiagnostics) {
     }
 }
 
-async fn ls(format: Option<ListFormat>, json: bool) -> CliResult<()> {
+async fn ls(format: Option<ListFormat>, json: bool, filter: Option<&str>) -> CliResult<()> {
     let ids = store().list().await.exit_with(XvnExit::Upstream)?;
+
+    // Load each strategy to surface display_name; fall back to id on load error.
+    struct LsRow {
+        id: String,
+        display_name: String,
+    }
+    let mut rows: Vec<LsRow> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let display_name = store()
+            .load(&id)
+            .await
+            .map(|s| s.manifest.display_name)
+            .unwrap_or_else(|_| id.clone());
+        rows.push(LsRow { id, display_name });
+    }
+
+    // Apply optional case-insensitive substring filter across display_name and id.
+    if let Some(substr) = filter {
+        let lower = substr.to_lowercase();
+        rows.retain(|r| {
+            r.display_name.to_lowercase().contains(&lower) || r.id.to_lowercase().contains(&lower)
+        });
+    }
+
     // Resolve effective format: explicit --format wins, then --json, then default table.
     let effective = format.unwrap_or(if json { ListFormat::Json } else { ListFormat::Table });
     match effective {
         ListFormat::Table => {
-            for id in ids {
-                println!("{id}");
+            // Compute column width for aligned output.
+            let id_width = rows.iter().map(|r| r.id.len()).max().unwrap_or(2);
+            for r in &rows {
+                println!("{:<id_width$}  {}", r.id, r.display_name);
             }
         }
         ListFormat::Json => {
-            crate::io::print_json(&ids)?;
+            let out: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "display_name": r.display_name,
+                        "name": r.display_name,
+                    })
+                })
+                .collect();
+            crate::io::print_json(&out)?;
         }
         ListFormat::JsonCompact => {
-            crate::io::print_json_compact(&ids)?;
+            let out: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "display_name": r.display_name,
+                        "name": r.display_name,
+                    })
+                })
+                .collect();
+            crate::io::print_json_compact(&out)?;
         }
     }
     Ok(())
