@@ -1952,10 +1952,16 @@ mod tests {
 
     async fn ctx_with_audit() -> (ApiContext, tempfile::TempDir) {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::query(include_str!("../../migrations/001_api_audit.sql"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        // `delete()` counts a strategy's eval runs before removing it, so the
+        // eval_runs table (002) plus its `agent_id` column (014) must exist —
+        // otherwise the count query fails with "no such table/column".
+        for sql in [
+            include_str!("../../migrations/001_api_audit.sql"),
+            include_str!("../../migrations/002_eval.sql"),
+            include_str!("../../migrations/014_eval_agent_id.sql"),
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(strategy_store_dir(dir.path())).unwrap();
         let ctx = ApiContext::new(

@@ -520,8 +520,21 @@ mod tests {
         store.save(&s).await.unwrap();
 
         let mut loaded = store.load("01HZSTRATEGYRISK0000000002").await.unwrap();
-        // Simulate the only mutations set_filter makes.
+        // Simulate the mutations set_filter makes: it flips activation_mode to
+        // FilterGated AND attaches a filter (a FilterGated strategy with no
+        // filter fails the load invariant, so both must change together).
         loaded.activation_mode = xvision_filters::ActivationMode::FilterGated;
+        loaded.filter = Some(
+            serde_json::from_value(serde_json::json!({
+                "id": "f_01JX0000000000000000000000",
+                "strategy_id": "01HZSTRATEGYRISK0000000002",
+                "display_name": "test filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": { "all": [] }
+            }))
+            .expect("minimal filter must parse"),
+        );
         store.save(&loaded).await.unwrap();
 
         let after = store.load("01HZSTRATEGYRISK0000000002").await.unwrap();

@@ -405,19 +405,51 @@ mod tests {
         .await
     }
 
-    /// Build a fresh AppState with the operator-provided `[[providers]]`
-    /// TOML appended (or none, if empty). Lets tests exercise the
+    /// Build a fresh AppState with EXACTLY the operator-provided
+    /// `[[providers]]` TOML (or none, if empty). Lets tests exercise the
     /// provider-resolution branches in `build_dispatch_for_profile`.
+    ///
+    /// The workspace `config/default.toml` ships with starter providers
+    /// (gemini, nous-research). Strip those before appending `providers_toml`
+    /// so `""` genuinely yields a zero-provider config — otherwise the
+    /// "no providers configured" path can never be tested.
     async fn fresh_state_with_providers(providers_toml: &str) -> (AppState, TempDir) {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let mut cfg =
+        let base =
             std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
+        let mut cfg = strip_provider_blocks(&base);
         cfg.push_str(providers_toml);
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = AppState::new(xvn_home).await.expect("AppState::new");
         (state, tmp)
+    }
+
+    /// Remove every `[[providers]]` array-of-tables block from a TOML string.
+    /// A block runs from its `[[providers]]` header to the next top-level
+    /// section header (`[` at column 0) or EOF.
+    fn strip_provider_blocks(toml: &str) -> String {
+        let mut out = String::new();
+        let mut in_provider = false;
+        for line in toml.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("[[providers]]") {
+                in_provider = true;
+                continue;
+            }
+            if in_provider {
+                // A new top-level table / array-of-tables ends the block.
+                if line.starts_with('[') {
+                    in_provider = false;
+                } else {
+                    continue;
+                }
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
     }
 
     async fn seed_completed_run(pool: &SqlitePool) -> String {
