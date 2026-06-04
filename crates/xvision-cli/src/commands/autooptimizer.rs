@@ -136,7 +136,10 @@ pub struct RunCycleArgs {
     /// overriding `mutator.provider`/`judge.*` from autooptimizer.toml. Must
     /// name a provider registered in `$XVN_HOME/config/default.toml`
     /// (e.g. `openrouter`).
-    #[arg(long, help = "Provider for mutator+judge (overrides config); must be registered in default.toml")]
+    #[arg(
+        long,
+        help = "Provider for mutator+judge (overrides config); must be registered in default.toml"
+    )]
     pub provider: Option<String>,
     /// LLM model for BOTH the experiment writer (mutator) and the judge,
     /// overriding `mutator.model`/`judge.*` from autooptimizer.toml
@@ -1806,14 +1809,6 @@ kind = "openai-compat"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 
-[intern]
-provider = "anthropic"
-base_url = "https://api.anthropic.com"
-model = "x"
-api_key_env = "ANTHROPIC_API_KEY"
-temperature = 0.0
-max_tokens = 1024
-
 [trader]
 model_path = "models/x.gguf"
 temperature = 0.0
@@ -1827,6 +1822,13 @@ config = "off"
 step = 24
 horizon = 16
 bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
 "#;
 
     /// T2 regression: the optimizer's mutator/judge provider gate.
