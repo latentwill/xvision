@@ -87,6 +87,10 @@ pub async fn run_cycle(
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
     dspy_ctx: Option<&DspyContext>,
     cycle_id_override: Option<String>,
+    // F28: a cooperative cancel flag. When set, the cycle stops launching further
+    // mutations/backtests (checked between candidates and parents) so an operator
+    // can halt a long/expensive run. `None` = never cancelled.
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<CycleResult> {
     let cycle_id = cycle_id_override.unwrap_or_else(|| Ulid::new().to_string());
     let min_improvement =
@@ -131,7 +135,16 @@ pub async fn run_cycle(
     let mut findings_by_node: HashMap<ContentHash, Vec<Finding>> = HashMap::new();
     let mut no_candidate_count: usize = 0;
 
+    let is_cancelled = || {
+        cancel
+            .as_ref()
+            .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    };
+
     for parent_node in &parents {
+        if is_cancelled() {
+            break;
+        }
         let ph = parent_node.bundle_hash.to_hex();
         if let Some(parent_strategy) = cycle_config.parent_strategies.get(&ph) {
             progress(CycleProgressEvent::ParentSelected {
@@ -154,6 +167,7 @@ pub async fn run_cycle(
                 &mut findings_by_node,
                 dsr_prefix.as_deref(),
                 dspy_ctx,
+                cancel.as_ref(),
             )
             .await?;
             active_nodes.extend(active);
@@ -276,6 +290,7 @@ async fn process_parent_mutations<F>(
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
     dspy_ctx: Option<&DspyContext>,
+    cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
     F: Fn(CycleProgressEvent),
@@ -295,6 +310,10 @@ where
         .await?;
 
     for mutation_idx in 0..cycle_config.mutations_per_parent {
+        // F28: stop launching further candidates once the operator cancels.
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            break;
+        }
         // F32: a per-cycle, per-mutation exploration seed so the experiment writer
         // proposes DIVERSE candidates across cycles (it was deterministic — same
         // parent always yielded the identical candidate, so the optimizer never
