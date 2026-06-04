@@ -2,10 +2,19 @@
 // Accepts :hash param from the /autooptimizer/diff/:hash route.
 // Displays node metadata plus the stored strategy artifact for the experiment.
 
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
-import { useLineageNode, formatLineageStatus, formatGateVerdict, useBlob } from "./api";
+import { ApiError } from "@/api/client";
+import {
+  useLineageNode,
+  formatLineageStatus,
+  formatGateVerdict,
+  useBlob,
+  useRetireLineageNode,
+  autooptimizerKeys,
+} from "./api";
 
 export function DiffInspector() {
   const { hash } = useParams<{ hash: string }>();
@@ -126,6 +135,10 @@ function DiffInspectorContent({ hash }: { hash: string }) {
             )}
 
           </div>
+
+          {/* F29: retire (move to Rejected) — dashboard parity for
+              `xvn optimizer retire`. */}
+          <RetireAction hash={node.bundle_hash} isRejected={node.status === "rejected"} />
         </div>
       </Card>
 
@@ -173,6 +186,77 @@ function DiffInspectorContent({ hash }: { hash: string }) {
           )}
         </div>
       </Card>
+    </div>
+  );
+}
+
+/** F29: retire-this-candidate control. Two-click inline confirm (no popups, per
+ *  the dashboard UI rule) → POST /lineage/:hash/retire → invalidate the lineage
+ *  views so the node flips to Rejected everywhere. */
+function RetireAction({ hash, isRejected }: { hash: string; isRejected: boolean }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const retire = useRetireLineageNode();
+
+  if (isRejected) {
+    return (
+      <div className="flex items-center gap-2 border-t border-border pt-3 text-[12px] text-text-3">
+        This experiment is retired (Rejected).
+      </div>
+    );
+  }
+
+  const onConfirm = () => {
+    setError(null);
+    retire.mutate(hash, {
+      onSuccess: async () => {
+        setConfirming(false);
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineageNode(hash) }),
+          queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() }),
+          queryClient.invalidateQueries({ queryKey: autooptimizerKeys.cycles() }),
+        ]);
+      },
+      onError: (err) => {
+        setConfirming(false);
+        setError(err instanceof ApiError ? err.message : "Failed to retire experiment.");
+      },
+    });
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+      {confirming ? (
+        <>
+          <span className="text-[12px] text-text-2">Retire this experiment?</span>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={retire.isPending}
+            className="px-3 py-1.5 rounded-sm border border-red-500/30 text-red-600 dark:text-red-400 text-[13px] hover:bg-red-500/10 disabled:opacity-50"
+          >
+            {retire.isPending ? "Retiring…" : "Confirm retire"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            disabled={retire.isPending}
+            className="px-3 py-1.5 rounded-sm border border-border text-text-2 text-[13px] hover:bg-surface-card disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="px-3 py-1.5 rounded-sm border border-red-500/30 text-red-600 dark:text-red-400 text-[13px] hover:bg-red-500/10"
+        >
+          Retire experiment
+        </button>
+      )}
+      {error && <span className="text-[12px] text-red-500">{error}</span>}
     </div>
   );
 }

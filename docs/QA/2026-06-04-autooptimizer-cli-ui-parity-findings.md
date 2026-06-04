@@ -68,6 +68,19 @@ Parity gaps where a CLI verb has no API/UI equivalent:
 
 **Fix.** Add routes/UI affordances if these are meant to be operator-facing; otherwise document them as CLI-only.
 
+> **RESOLVED 2026-06-05.**
+> - **retire** — added `POST /api/autooptimizer/lineage/:hash/retire`
+>   (`LineageStore::set_status` → `Rejected`; idempotent; 404 on unknown hash) and
+>   a Retire control on the experiment detail (`DiffInspector`, two-click inline
+>   confirm per the no-popups rule). This is the *mutation-cycle* retire the
+>   finding called out — distinct from the distillation-Pattern `:id/demote`.
+> - **mutate-once** — already at UI parity: the dashboard run-cycle performs
+>   exactly one propose→gate→commit (`build_cycle_config` pins
+>   `mutations_per_parent: 1`) against the chosen parent, i.e. the dashboard
+>   equivalent of `xvn optimizer mutate-once`. A launch help line now states this.
+>   The CLI's `--dry-run` (propose+gate, no commit) stays **CLI-only** — a niche
+>   debugging affordance with no operator surface.
+
 ---
 
 ## What IS connected (so the fix is scoped, not total)

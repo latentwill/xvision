@@ -45,6 +45,43 @@ pub struct CycleRunSummary {
     pub unpriced_calls: Option<i64>,
 }
 
+/// F35.3: the live (or final) per-cycle cost + token totals, read straight from
+/// the `cycle_cost` row the cycle's background ticker persists every ~10s. Unlike
+/// [`get_cycle_run`], this does **not** require any `lineage_nodes` row to exist
+/// yet — so the Live tab can show climbing spend from the first tick, before the
+/// first candidate commits (the runaway-token case the operator hit). All fields
+/// are `None`/`false` until the first persist (or for a cycle that never ran).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CycleCost {
+    pub cycle_id: String,
+    pub cost_usd: Option<f64>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub unpriced_calls: Option<i64>,
+    /// True once a `cycle_cost` row exists for this id (i.e. the ticker has
+    /// persisted at least once). Lets the UI distinguish "no spend yet" from
+    /// "this cycle id is unknown".
+    pub recorded: bool,
+}
+
+/// Read the persisted cost/token totals for `cycle_id` directly from
+/// `cycle_cost`, independent of whether any lineage node exists yet. Best-effort:
+/// a missing table or row yields an all-`None`, `recorded: false` record rather
+/// than an error, so the Live-tab poll degrades gracefully.
+pub async fn get_cycle_cost(pool: &SqlitePool, cycle_id: &str) -> CycleCost {
+    let (cost_usd, input_tokens, output_tokens, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
+    let recorded =
+        cost_usd.is_some() || input_tokens.is_some() || output_tokens.is_some() || unpriced_calls.is_some();
+    CycleCost {
+        cycle_id: cycle_id.to_string(),
+        cost_usd,
+        input_tokens,
+        output_tokens,
+        unpriced_calls,
+        recorded,
+    }
+}
+
 /// Mutator provenance for a candidate (from `mutator_attribution`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeProvenance {

@@ -69,6 +69,19 @@ Note: `--provider/--model` set the *mutator/judge* model (operator infra), and t
 
 **Files.** `crates/xvision-engine/src/autooptimizer/mutator.rs` (`MutationKind` + `MutationDiff::apply_to` for the slot binding), the mutator prompt (`resources/prompts/autooptimizer/mutator-v1.md`), `validator.rs` (only registered providers), `inversion.rs` (treat a model swap as a real change, not symmetric noise).
 
+> **Status: DEFERRED (operator decision 2026-06-05).** A design pass before any code found the Files list above is necessary but *not sufficient* — F25 is materially bigger than it looks. Two blockers, plus the scoped-down plan to revive it:
+>
+> **Blocker 1 — the swap has no home in the artifact for real strategies.** Production strategies use the `AgentRef` composition model, where the trader's `(provider, model)` lives on the **shared Agent library record** (`AgentStore`), *not* in the `Strategy` artifact. `AgentRef` is `{agent_id, role, activates}` with no model override (`crates/xvision-engine/src/strategies/agent_ref.rs:57`), and `resolve_agent_slots_for_strategy` (`crates/xvision-engine/src/agent/pipeline.rs:996`) reads the model straight off `agent.slots.first()`. Mutating that would (a) pollute every other strategy referencing the agent and (b) leave the `Strategy` content hash unchanged → an identity no-op that `is_identity_diff`/the lineage layer (F12/F14) reject. The legacy `trader_slot: LLMSlot` path the Files hint targets only exists on pre-refactor strategies; on real `AgentRef` strategies a `trader_slot`-only swap is excluded by `applicable_mutation_kinds` exactly like `prose`. **A correct fix requires a new optional per-`AgentRef` `model_override` (+ maybe `provider_override`) field in the strategy artifact, honored at resolution** — a data-model change with ts-rs export + resolution-path implications, not a 4-file mutator tweak.
+>
+> **Blocker 2 — single-dispatch paper-test makes a *provider* swap re-trip F22.** The optimizer paper-test routes *every* trader decision through the cycle's one dispatch provider (`cycle_provider`); `preflight_trader_provider` (F22, `autooptimizer/preflight.rs`) blocks any strategy whose trader provider differs. So a provider swap re-opens the F22 cross-provider trap by construction. The only clean axis under the current design is a **model-only swap to another *registered* model that routes through the cycle's dispatch provider** (provider stays = cycle provider). A true provider axis needs the paper-test reworked to dispatch per-slot — a separate, larger change.
+>
+> **Scoped-down revival plan (if/when picked up):**
+> 1. Add `model_override: Option<String>` to `AgentRef` (serde-default, ts-rs `optional`); honor it in `resolve_agent_slots_for_strategy` (override > agent slot model). This is the real-strategy "home" for the swap and gives a distinct content hash → proper lineage, without touching the shared agent.
+> 2. Add `MutationKind::ModelSwap` + a `model_swap` field on `MutationDiff`; `apply_to` sets the trader ref's `model_override` (legacy strategies: `trader_slot.model`).
+> 3. Constrain to the **registered model catalog routed through the cycle's dispatch provider** — thread the available-providers/models list (`ProvidersService::providers_in_memory` + catalog, see `api/eval.rs:1559`) into `validate_mutation_diff` (currently a pure `(diff, base)` fn with no provider list) and the mutator prompt. Reject any swap to an unavailable model and any swap that would change the routed provider.
+> 4. `inversion.rs`: treat a model swap as a real change (carry it through invert; it is not symmetric noise).
+> 5. Gate like any other candidate (same backtest + objective); naturally pairs with F24's cost objective ("equal Sharpe at lower cost").
+
 ---
 
 ## Summary

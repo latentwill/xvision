@@ -282,6 +282,21 @@ impl LineageStore {
         rows.into_iter().map(row_to_node).collect()
     }
 
+    /// F29: set a lineage node's status (e.g. retire a cycle-produced candidate
+    /// by moving it to `Rejected`). Returns `true` when a row was updated, `false`
+    /// when no node with that hash exists. Idempotent — retiring an already-
+    /// rejected node is a no-op that still reports `true` (the row exists and is
+    /// in the requested state).
+    pub async fn set_status(&self, bundle_hash: &ContentHash, status: LineageStatus) -> Result<bool> {
+        let res = sqlx::query("UPDATE lineage_nodes SET status = ? WHERE bundle_hash = ?")
+            .bind(status.as_str())
+            .bind(bundle_hash.to_hex())
+            .execute(&self.pool)
+            .await
+            .context("set lineage_node status")?;
+        Ok(res.rows_affected() > 0)
+    }
+
     pub async fn active_leaves(&self) -> Result<Vec<LineageNode>> {
         let rows = sqlx::query(
             "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, diversity_score \

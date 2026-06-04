@@ -180,6 +180,57 @@ async fn cycle_cost_is_persisted_and_surfaced_in_list_and_detail() {
     assert_eq!(none.summary.cost_usd, None);
 }
 
+/// F35.3: the Live tab reads cost straight from `cycle_cost` via `get_cycle_cost`,
+/// independent of whether any lineage node exists yet — so climbing spend shows
+/// from the first ticker persist, before the first candidate commits (the
+/// runaway-token case). `get_cycle_run` (node-gated) would return None there.
+#[tokio::test]
+async fn get_cycle_cost_reads_cost_before_any_node_exists() {
+    use xvision_engine::autooptimizer::cycle_runs::get_cycle_cost;
+    use xvision_engine::autooptimizer::metering_dispatch::CycleMeter;
+
+    let pool = fresh_pool().await;
+
+    // No lineage node for this cycle yet — only the ticker has persisted cost.
+    let meter = CycleMeter {
+        spent_usd: 0.42,
+        unpriced_calls: 2,
+        input_tokens: 1000,
+        output_tokens: 50,
+    };
+    xvision_engine::autooptimizer::cycle_runs::persist_cycle_cost(
+        &pool,
+        "running-cycle",
+        &meter,
+        "2026-06-04T13:00:00Z",
+    )
+    .await
+    .unwrap();
+
+    // Node-gated detail can't see it yet...
+    assert!(
+        get_cycle_run(&pool, "running-cycle").await.unwrap().is_none(),
+        "no lineage node yet → detail is None"
+    );
+    // ...but the cost accessor surfaces the live spend.
+    let cost = get_cycle_cost(&pool, "running-cycle").await;
+    assert!(cost.recorded, "a persisted cost row means recorded=true");
+    assert_eq!(cost.cost_usd, Some(0.42));
+    assert_eq!(cost.input_tokens, Some(1000));
+    assert_eq!(cost.output_tokens, Some(50));
+    assert_eq!(cost.unpriced_calls, Some(2));
+}
+
+#[tokio::test]
+async fn get_cycle_cost_unknown_cycle_is_not_recorded() {
+    use xvision_engine::autooptimizer::cycle_runs::get_cycle_cost;
+    let pool = fresh_pool().await;
+    let cost = get_cycle_cost(&pool, "never-ran").await;
+    assert!(!cost.recorded, "unknown cycle → recorded=false");
+    assert_eq!(cost.cost_usd, None);
+    assert_eq!(cost.input_tokens, None);
+}
+
 /// F33: when two cycles produce the SAME candidate hash, the content-addressed
 /// `lineage_nodes` row keeps only one cycle's attribution — but the per-cycle
 /// evaluation edges let BOTH cycles see the candidate in their run-detail.
