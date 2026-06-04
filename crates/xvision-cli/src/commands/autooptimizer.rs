@@ -1348,6 +1348,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         },
         None,
         args.session_id.clone(),
+        None,
     )
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;

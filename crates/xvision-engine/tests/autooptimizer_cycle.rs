@@ -372,6 +372,7 @@ async fn run_cycle_smoke() {
         },
         None,
         None,
+        None,
     )
     .await;
 
@@ -520,6 +521,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         &judge,
         &SharpeByStopLoss,
         |_evt| {},
+        None,
         None,
         None,
     )

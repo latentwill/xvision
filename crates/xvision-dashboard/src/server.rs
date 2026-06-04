@@ -456,6 +456,11 @@ fn mutating_router(state: AppState) -> Router {
             "/api/autooptimizer/run-cycle",
             post(autooptimizer_cycle::start_cycle),
         )
+        // F28: cancel an in-flight optimizer cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/cancel",
+            post(autooptimizer_cycle::cancel_cycle),
+        )
         .route("/api/autooptimizer/run", post(flywheel::autooptimizer_run))
         .route(
             "/api/autooptimizer/:id/gate",

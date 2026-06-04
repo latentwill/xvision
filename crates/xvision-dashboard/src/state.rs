@@ -96,9 +96,42 @@ pub struct AppState {
     /// `xvn optimizer mutate-once --ipc-socket` connects; the SSE handler
     /// at `GET /api/autooptimizer/events` subscribes per request.
     pub autooptimizer_tx: tokio::sync::broadcast::Sender<CycleProgressEvent>,
+    /// F28: registry of cooperative cancel flags for in-flight optimizer cycles,
+    /// keyed by `cycle_id`. `start_cycle` registers a flag and passes it into
+    /// `run_cycle`; `POST /cycles/:id/cancel` sets it so the cycle stops
+    /// launching further candidates. Entries are removed when the cycle ends.
+    autooptimizer_cancels: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
 }
 
 impl AppState {
+    /// F28: register a fresh cancel flag for a cycle and return it (to thread
+    /// into `run_cycle`).
+    pub fn autooptimizer_register_cancel(&self, cycle_id: &str) -> Arc<std::sync::atomic::AtomicBool> {
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let Ok(mut map) = self.autooptimizer_cancels.lock() {
+            map.insert(cycle_id.to_string(), Arc::clone(&flag));
+        }
+        flag
+    }
+
+    /// F28: request cancellation of an in-flight cycle. Returns true if a running
+    /// cycle with that id was found and signalled.
+    pub fn autooptimizer_request_cancel(&self, cycle_id: &str) -> bool {
+        match self.autooptimizer_cancels.lock() {
+            Ok(map) => map.get(cycle_id).map(|f| {
+                f.store(true, std::sync::atomic::Ordering::Relaxed);
+                true
+            }).unwrap_or(false),
+            Err(_) => false,
+        }
+    }
+
+    /// F28: drop a cycle's cancel flag once it has finished.
+    pub fn autooptimizer_deregister_cancel(&self, cycle_id: &str) {
+        if let Ok(mut map) = self.autooptimizer_cancels.lock() {
+            map.remove(cycle_id);
+        }
+    }
     /// Open `xvn.db` under `xvn_home` (creating both if missing) and run the
     /// engine API migrations. Safe to call from `xvn dashboard serve` and from
     /// integration tests against a tempdir.
@@ -200,6 +233,7 @@ impl AppState {
             cli_runner,
             safety_manager,
             autooptimizer_tx,
+            autooptimizer_cancels: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
