@@ -1322,7 +1322,7 @@ async fn build_eval_dispatch(
             }
         };
         let findings_model = crate::eval::postprocess::findings_model_for_provider(&entry);
-        let dispatch = dispatch_from_provider(&entry).await?;
+        let dispatch = dispatch_from_provider(&ctx.xvn_home, &entry).await?;
         return Ok((dispatch, findings_model));
     }
 
@@ -1379,7 +1379,7 @@ async fn build_eval_dispatch(
     };
     validate_eval_provider_models(&entry, &runtime_slots)?;
     let findings_model = crate::eval::postprocess::findings_model_for_provider(&entry);
-    let dispatch = dispatch_from_provider(&entry).await?;
+    let dispatch = dispatch_from_provider(&ctx.xvn_home, &entry).await?;
     Ok((dispatch, findings_model))
 }
 
@@ -1906,16 +1906,22 @@ async fn resolve_agent_slots(
     Ok(out)
 }
 
-async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmDispatch>> {
+async fn dispatch_from_provider(xvn_home: &Path, entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmDispatch>> {
+    // Resolve the key with the SAME env-first-then-secrets-file priority that
+    // `provider check` uses, so a fresh `docker exec xvn-app xvn ...` (no key
+    // bridged into env) still finds the key persisted in
+    // `$XVN_HOME/secrets/providers.toml`. Env wins when both are present.
     let api_key = if entry.api_key_env.is_empty() {
         String::new()
     } else {
-        std::env::var(&entry.api_key_env).map_err(|_| {
-            ApiError::Validation(format!(
-                "no API key for provider `{}` (env var {} is unset). Paste a key in Settings → Providers or export {} before running eval.",
-                entry.name, entry.api_key_env, entry.api_key_env
-            ))
-        })?
+        crate::api::settings::providers::resolve_provider_key_value(xvn_home, entry)
+            .await?
+            .ok_or_else(|| {
+                ApiError::Validation(format!(
+                    "no API key for provider `{}` (env var {} is unset and no key stored in secrets/providers.toml). Paste a key in Settings → Providers or export {} before running eval.",
+                    entry.name, entry.api_key_env, entry.api_key_env
+                ))
+            })?
     };
     let no_auth_eval = matches!(
         entry.kind,
@@ -1947,16 +1953,20 @@ async fn dispatch_from_provider(entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmD
 /// half of [`dispatch_from_provider`]). Returns `Ok(None)` for keyless
 /// local endpoints, `Ok(Some(key))` otherwise, and a typed validation
 /// error when the configured env var is unset.
-fn resolve_provider_api_key(entry: &ProviderEntry) -> ApiResult<Option<String>> {
+async fn resolve_provider_api_key(xvn_home: &Path, entry: &ProviderEntry) -> ApiResult<Option<String>> {
     if entry.api_key_env.is_empty() {
         return Ok(None);
     }
-    let key = std::env::var(&entry.api_key_env).map_err(|_| {
-        ApiError::Validation(format!(
-            "no API key for provider `{}` (env var {} is unset). Paste a key in Settings → Providers or export {} before running eval.",
-            entry.name, entry.api_key_env, entry.api_key_env
-        ))
-    })?;
+    // Env-first-then-secrets-file fallback — mirrors `provider check`. Only
+    // error when BOTH env var and the secrets file lack the key.
+    let key = crate::api::settings::providers::resolve_provider_key_value(xvn_home, entry)
+        .await?
+        .ok_or_else(|| {
+            ApiError::Validation(format!(
+                "no API key for provider `{}` (env var {} is unset and no key stored in secrets/providers.toml). Paste a key in Settings → Providers or export {} before running eval.",
+                entry.name, entry.api_key_env, entry.api_key_env
+            ))
+        })?;
     if key.is_empty() && entry.kind != ProviderKind::LocalCandle {
         return Err(ApiError::Validation(format!(
             "provider `{}` has no API key set. Paste one in Settings → Providers.",
@@ -2130,7 +2140,7 @@ async fn spawn_cline_ctx(
                 .to_string(),
         )
     })?;
-    let api_key = resolve_provider_api_key(&entry)?;
+    let api_key = resolve_provider_api_key(&ctx.xvn_home, &entry).await?;
 
     // §2-B/§2-D: when recording is requested (per-run `trajectory_mode =
     // record`) AND we have a primary slot role to key it by, mint the
@@ -4520,9 +4530,7 @@ mod tests {
 
         // One combined body: the fetcher selects `bars[requested_symbol]`, so
         // each per-asset fetch extracts its own series. BTC ~101_769, ETH ~2_310.
-        let bar = |c: f64, t: &str| {
-            serde_json::json!({"t": t, "o": c, "h": c, "l": c, "c": c, "v": 1.0})
-        };
+        let bar = |c: f64, t: &str| serde_json::json!({"t": t, "o": c, "h": c, "l": c, "c": c, "v": 1.0});
         let body = serde_json::json!({
             "bars": {
                 "BTC/USD": [

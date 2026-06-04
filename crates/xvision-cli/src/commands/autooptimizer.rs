@@ -762,7 +762,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let parent_hash = ContentHash::from_hex(&args.parent_bundle_hash)
         .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent_bundle_hash: {e}")))?;
     let parent = load_strategy_blob(&blobs, &parent_hash).await?;
-    let binding = build_dispatch(args.mock, None, &cfg.mutator.provider, &cfg.mutator.model)?;
+    let binding = build_dispatch(args.mock, None, &cfg.mutator.provider, &cfg.mutator.model).await?;
     let dispatch = Arc::clone(&binding.dispatch);
 
     // AR-3: connect to the dashboard IPC socket if requested.
@@ -1005,7 +1005,8 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         Some(&xvn_home),
         &cfg.mutator.provider,
         &cfg.mutator.model,
-    )?;
+    )
+    .await?;
     let dispatch = Arc::clone(&binding.dispatch);
     let mutator = Mutator {
         provider: binding.provider.clone(),
@@ -1393,7 +1394,7 @@ struct DispatchBinding {
     dispatch: Arc<dyn LlmDispatch + Send + Sync>,
 }
 
-fn build_dispatch(
+async fn build_dispatch(
     mock: bool,
     xvn_home: Option<&Path>,
     requested_provider: &str,
@@ -1416,7 +1417,7 @@ fn build_dispatch(
         return Ok(DispatchBinding {
             provider: entry.name.clone(),
             model: normalize_model(requested_model),
-            dispatch: dispatch_from_provider_entry(entry)?,
+            dispatch: dispatch_from_provider_entry(xvn_home, entry).await?,
         });
     }
 
@@ -1426,7 +1427,7 @@ fn build_dispatch(
             return Ok(DispatchBinding {
                 provider: default_entry.name.clone(),
                 model: default_llm.model.clone(),
-                dispatch: dispatch_from_provider_entry(&default_entry)?,
+                dispatch: dispatch_from_provider_entry(xvn_home, &default_entry).await?,
             });
         }
     }
@@ -1449,7 +1450,7 @@ fn build_dispatch(
                 return Ok(DispatchBinding {
                     provider: entry.name.clone(),
                     model: default_llm.model.clone(),
-                    dispatch: dispatch_from_provider_entry(&entry)?,
+                    dispatch: dispatch_from_provider_entry(xvn_home, &entry).await?,
                 });
             }
         }
@@ -1531,13 +1532,29 @@ fn provider_entry_from_default_llm(default_llm: &xvision_core::config::Intern) -
     }
 }
 
-fn dispatch_from_provider_entry(entry: &ProviderEntry) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {
+async fn dispatch_from_provider_entry(
+    xvn_home: Option<&Path>,
+    entry: &ProviderEntry,
+) -> CliResult<Arc<dyn LlmDispatch + Send + Sync>> {
+    // Resolve the key with the SAME env-first-then-secrets-file priority that
+    // `provider check` uses (see
+    // `xvision_engine::api::settings::providers::resolve_provider_key_value`),
+    // so a fresh `docker exec xvn-app xvn optimizer ...` with no key bridged
+    // into env still finds the key persisted in
+    // `$XVN_HOME/secrets/providers.toml`. Env wins when both are present.
     let api_key = if entry.api_key_env.is_empty() {
         String::new()
     } else {
-        std::env::var(&entry.api_key_env).map_err(|_| {
+        let from_secrets = match xvn_home {
+            Some(home) => xvision_engine::api::settings::providers::resolve_provider_key_value(home, entry)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?,
+            // No XVN_HOME available (e.g. mutate-once without a home) — env only.
+            None => std::env::var(&entry.api_key_env).ok().filter(|v| !v.is_empty()),
+        };
+        from_secrets.ok_or_else(|| {
             CliError::auth(anyhow::anyhow!(
-                "no API key for provider `{}` (env var {} is unset)",
+                "no API key for provider `{}` (env var {} is unset and no key stored in secrets/providers.toml)",
                 entry.name,
                 entry.api_key_env
             ))

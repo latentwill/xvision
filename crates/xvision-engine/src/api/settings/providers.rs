@@ -1670,6 +1670,43 @@ pub async fn load_providers_secrets_into_env(xvn_home: &Path) -> ApiResult<usize
     Ok(applied)
 }
 
+/// Resolve the actual API key value for a provider entry, using the same
+/// env-first-then-secrets-file priority that `provider check` / `provider
+/// list` use to decide `api_key_set` (see [`entry_has_key`] and
+/// [`row_from_entry`]).
+///
+/// Priority:
+/// 1. The configured `api_key_env` env var, if set and non-empty (env wins,
+///    so CI / one-shot scripts stay deterministic).
+/// 2. The stored secret in `$XVN_HOME/secrets/providers.toml` keyed by
+///    provider name, if present and non-empty.
+///
+/// Returns `Ok(None)` only when neither source yields a key. Callers decide
+/// whether a missing key is fatal (network kinds) or acceptable (no-auth
+/// local kinds). This closes the divergence where the eval/optimizer RUN
+/// path read the env var ONLY and failed with "no API key" even though the
+/// secrets file held a valid key (`provider check` could see it but eval
+/// could not).
+pub async fn resolve_provider_key_value(xvn_home: &Path, entry: &ProviderEntry) -> ApiResult<Option<String>> {
+    // 1. Env var first (highest priority).
+    if !entry.api_key_env.is_empty() {
+        if let Ok(v) = std::env::var(&entry.api_key_env) {
+            if !v.is_empty() {
+                return Ok(Some(v));
+            }
+        }
+    }
+    // 2. Fall back to the stored secret, keyed by provider name — the same
+    //    file `provider check` reads.
+    let secrets = load_providers_secrets(xvn_home).await?;
+    if let Some(secret) = secrets.provider.get(&entry.name) {
+        if !secret.api_key.is_empty() {
+            return Ok(Some(secret.api_key.clone()));
+        }
+    }
+    Ok(None)
+}
+
 fn kind_to_str(k: ProviderKind) -> &'static str {
     match k {
         ProviderKind::Anthropic => "anthropic",
@@ -2109,5 +2146,71 @@ api_key_env = "K"
         let ctx = ctx_in(&dir).await;
         let err = remove(&ctx, &path, "nope").await.unwrap_err();
         assert!(matches!(err, ApiError::NotFound(_)), "got {err:?}");
+    }
+
+    fn entry_for(name: &str, env_var: &str) -> ProviderEntry {
+        ProviderEntry {
+            name: name.to_string(),
+            kind: ProviderKind::OpenaiCompat,
+            base_url: "https://api.example.com/v1".into(),
+            api_key_env: env_var.to_string(),
+            enabled_models: vec!["google/gemini-3.1-flash-lite".into()],
+        }
+    }
+
+    // T3 regression: the eval/optimizer RUN path used to read the provider key
+    // from the env var ONLY, so a fresh container (no key bridged into env)
+    // failed even when the key was persisted in `secrets/providers.toml` —
+    // which `provider check` could already see. `resolve_provider_key_value`
+    // now falls back to that file, closing the divergence.
+    #[tokio::test]
+    async fn resolve_key_falls_back_to_secrets_file_when_env_unset() {
+        let dir = TempDir::new().unwrap();
+        // Unique env var name so we don't collide with any real/other-test
+        // process env. Ensure it is UNSET — this is the fresh-container case.
+        let env_var = "XVN_PROVIDER_T3_OPENROUTER_KEY";
+        std::env::remove_var(env_var);
+
+        let entry = entry_for("openrouter", env_var);
+        // Persist the key in the same secrets file `provider check` reads.
+        upsert_provider_secret(dir.path(), "openrouter", env_var, "sk-secret-from-file")
+            .await
+            .unwrap();
+
+        // Before the fix this returned None/errored (env-only). Now it
+        // resolves from the file.
+        let resolved = resolve_provider_key_value(dir.path(), &entry).await.unwrap();
+        assert_eq!(resolved.as_deref(), Some("sk-secret-from-file"));
+    }
+
+    // Env var still takes priority over the stored secret (env overrides file).
+    #[tokio::test]
+    async fn resolve_key_prefers_env_over_secrets_file() {
+        let dir = TempDir::new().unwrap();
+        let env_var = "XVN_PROVIDER_T3_PRIORITY_KEY";
+        std::env::set_var(env_var, "sk-from-env");
+
+        let entry = entry_for("priorityprov", env_var);
+        upsert_provider_secret(dir.path(), "priorityprov", env_var, "sk-from-file")
+            .await
+            .unwrap();
+
+        let resolved = resolve_provider_key_value(dir.path(), &entry).await.unwrap();
+        assert_eq!(resolved.as_deref(), Some("sk-from-env"));
+        std::env::remove_var(env_var);
+    }
+
+    // Only when BOTH env and file lack the key do we return None (the caller
+    // then emits the accurate "no API key … and no key stored" error).
+    #[tokio::test]
+    async fn resolve_key_returns_none_when_env_and_file_both_missing() {
+        let dir = TempDir::new().unwrap();
+        let env_var = "XVN_PROVIDER_T3_ABSENT_KEY";
+        std::env::remove_var(env_var);
+
+        let entry = entry_for("absentprov", env_var);
+        // No secrets file written at all (NotFound → default empty map).
+        let resolved = resolve_provider_key_value(dir.path(), &entry).await.unwrap();
+        assert!(resolved.is_none(), "got {resolved:?}");
     }
 }
