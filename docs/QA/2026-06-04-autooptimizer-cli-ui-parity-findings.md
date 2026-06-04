@@ -8,7 +8,28 @@
 
 ---
 
-## F26 — [CRITICAL] The dashboard "Optimizer run" is stubbed — UI cycles never backtest
+## F26 — [CRITICAL] ✅ RESOLVED (PR #810) The dashboard "Optimizer run" is stubbed — UI cycles never backtest
+
+**Resolution (2026-06-04, PR #810).** `start_cycle` now builds the production
+`CachedBacktestPaperTester` (→ `build_cached_backtest_executor` → `Executor` →
+`run_pipeline`) from a fully-wired `ApiContext` (`state.api_context()`, event bus
++ observability) and the builtin `ToolRegistry`, wrapped in
+`BudgetCappedPaperTester` (unbounded ceiling until F28 adds a UI budget control)
+sharing one `CycleMeter`. The `StubPaperTester` and `stub_paper_tester()` are
+gone. Cost is metered at the dispatch boundary (`CostMeteringDispatch` over the
+experiment writer + judge + backtest decisions) and persisted via
+`persist_cycle_cost` after the run — F11/F23 now flow through the real dashboard
+path. The F22 cross-provider preflight was extracted to
+`xvision_engine::autooptimizer::preflight` and is called from BOTH the CLI and
+the dashboard (no parallel guard). **Single-path acceptance:** the dashboard now
+shares the exact `Executor`/`run_pipeline` brain as CLI/`eval run`/chat/live; the
+engine test `optimizer_adapter_matches_direct_eval_executor` is the invariant and
+its doc records the dashboard is on this path.
+
+---
+
+### (original finding)
+
 `POST /api/autooptimizer/run-cycle` (`crates/xvision-dashboard/src/routes/autooptimizer_cycle.rs:107`) passes a **`StubPaperTester`** (fixed `sharpe: 0.9`, `:309 stub_paper_tester()`) into `run_cycle`, instead of the real `CachedBacktestPaperTester` the CLI uses. So a UI-launched cycle runs a real mutation + judge, but **fakes the paper-test scoring** — parent and candidate both get `sharpe 0.9` → `improvement = 0.000000` → the gate rejects instantly.
 
 **Evidence (the operator's run):** cycle `01KT9DT0TWE0A9XT6PQNQST5NN`, candidate `42472e87` → **Day Sharpe 0.900 / Hold 0.900** (the stub's literal numbers), lineage node `first = last timestamp = 13:40:19.43` (same millisecond — no backtest ran; real CLI cycles take 5–9 min). Verdict: `rejected — improved by 0.000000`. This is the "launch → immediately rejected" the operator saw: the stub returns instantly and always ties.
