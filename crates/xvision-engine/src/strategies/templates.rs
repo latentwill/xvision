@@ -43,6 +43,11 @@ pub const EXAMPLE_SOURCE_TAG: &str = "source:example";
 pub const EXAMPLE_SCENARIO_QUICKSTART_BULL: &str = "example-quickstart-btc-bull-jan-2025";
 pub const EXAMPLE_SCENARIO_QUICKSTART_FLASH: &str = "example-quickstart-btc-flash-aug-2024";
 
+/// Stable strategy id for the seeded example trend-follower strategy.
+/// Used by `xvn example seed` to create the strategy and its scoped agent,
+/// and by the cleanup path to identify the seed-owned row.
+pub const EXAMPLE_STRATEGY_TREND_FOLLOWER_ID: &str = "example-trend-follower";
+
 /// Return app-facing example strategies for `xvn example seed`.
 /// Kept as an empty compatibility seam so older cleanup tests and callers can
 /// ask for example strategies without reintroducing broken agentless rows.
@@ -171,12 +176,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn example_strategies_are_not_seeded() {
+    fn example_strategies_function_returns_empty_compatibility_seam() {
+        // `example_strategies()` is a compatibility seam — it always returns an
+        // empty Vec. The actual strategy seeding (with a properly-wired agent)
+        // is driven by `xvision_cli::commands::example::seed::seed_strategies`
+        // which creates the agent in the AgentStore and the strategy via
+        // FilesystemStore. This function exists so callers can iterate over
+        // "example strategies" without needing to know about the seeder's
+        // internal mechanism.
         let strategies = example_strategies();
-        assert!(
-            strategies.is_empty(),
-            "example strategies are no longer seeded because they lack user-specific agents"
-        );
+        assert!(strategies.is_empty(), "example_strategies() must remain an empty seam");
     }
 
     #[test]
