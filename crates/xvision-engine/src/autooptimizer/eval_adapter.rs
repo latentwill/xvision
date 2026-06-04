@@ -141,31 +141,23 @@ pub struct CachedBacktestPaperTester {
     ctx: ApiContext,
     dispatch: Arc<dyn LlmDispatch + Send + Sync>,
     tools: Arc<ToolRegistry>,
-    /// F11: optional shared counter of paper-test model calls that had no
-    /// catalog price (token-bearing but unpriceable), so the CLI can report
-    /// "cost unknown — N calls unpriced" instead of a misleading `$0.00`.
-    unpriced_calls: Option<Arc<std::sync::Mutex<u64>>>,
 }
 
 impl CachedBacktestPaperTester {
+    /// Construct the production optimizer paper tester.
+    ///
+    /// F11 (QA run-4): realized cost is metered by routing `dispatch` through a
+    /// [`super::metering_dispatch::CostMeteringDispatch`] at the call site (the
+    /// CLI shares one meter across the backtest + mutator + judge). This tester
+    /// therefore does no cost bookkeeping of its own — the earlier
+    /// `model_calls.cost_usd` enrichment read $0.00 because the optimizer's
+    /// decision model_calls aren't linked to this run's `eval_run_id`.
     pub fn new(
         ctx: ApiContext,
         dispatch: Arc<dyn LlmDispatch + Send + Sync>,
         tools: Arc<ToolRegistry>,
     ) -> Self {
-        Self {
-            ctx,
-            dispatch,
-            tools,
-            unpriced_calls: None,
-        }
-    }
-
-    /// Attach a shared counter that accumulates paper-test model calls with no
-    /// catalog price (F11).
-    pub fn with_unpriced_counter(mut self, counter: Arc<std::sync::Mutex<u64>>) -> Self {
-        self.unpriced_calls = Some(counter);
-        self
+        Self { ctx, dispatch, tools }
     }
 }
 
@@ -195,7 +187,7 @@ impl CachedBacktestPaperTester {
         // decision 0 with `trader_output[missing_response]` for every strategy.
         let agent_slots =
             crate::agent::pipeline::resolve_agent_slots_for_strategy(&self.ctx.db, strategy).await?;
-        let mut metrics = executor
+        let metrics = executor
             .run(
                 &mut run,
                 strategy,
@@ -206,28 +198,6 @@ impl CachedBacktestPaperTester {
                 &store,
             )
             .await?;
-        // F11 (2026-06-04): the executor returns metrics *before* the eval
-        // finalize path (`api::eval::enrich_with_inference_cost`) runs, so the
-        // optimizer never saw a populated `inference_cost_quote_total` — the
-        // `--budget` meter summed 0 and `cycle cost:` printed $0.00 even though
-        // `model_calls.cost_usd` recorded real spend (~$2.04 for a gemini
-        // cycle). Enrich here from the same `model_calls` ledger so the metered
-        // total and the budget cap reflect realized paper-test inference cost.
-        if metrics.inference_cost_quote_total.is_none() {
-            if let Some(cost) =
-                crate::eval::cost::aggregate_eval_run_inference_cost(&self.ctx.db, &run.id).await
-            {
-                metrics.inference_cost_quote_total = Some(cost);
-            }
-        }
-        // F11: tally any unpriced calls so the operator isn't shown a
-        // misleading `$0.00` when a real (but uncatalogued) model was billed.
-        if let Some(counter) = &self.unpriced_calls {
-            let n = crate::eval::cost::aggregate_eval_run_unpriced_calls(&self.ctx.db, &run.id).await;
-            if n > 0 {
-                *counter.lock().expect("unpriced counter mutex poisoned") += n;
-            }
-        }
         Ok(metrics)
     }
 }
@@ -272,25 +242,20 @@ impl PaperTestRunner for StubPaperTester {
     }
 }
 
-/// Wraps another `PaperTestRunner` and enforces a USD ceiling on the
-/// cumulative paper-test inference cost. After each run reports
-/// `inference_cost_quote_total`, the cost is added to the accumulator; once
-/// the accumulator reaches `budget_usd`, the next `run` aborts the cycle
-/// instead of launching another (full-window) backtest.
+/// Wraps another `PaperTestRunner` and enforces a USD ceiling on cumulative
+/// cycle inference cost. Before each backtest it checks the shared meter and, if
+/// the accumulator has reached `budget_usd`, aborts the cycle instead of
+/// launching another (full-window) backtest.
 ///
-/// This caps the *dominant* cost surface — the per-candidate backtests the
-/// optimizer fans out (parents × mutations × two windows).
-///
-/// F11 (QA 2026-06-04) closed the two gaps that previously made the cap
-/// blind:
-///   1. The accumulator can be a *shared* handle (`new_with_handle`) that the
-///      mutator/judge `CostMeteringDispatch` also writes to, so the realized
-///      total — and therefore the cap — includes the experiment-writer and
-///      judge LLM calls, not just paper-test inference.
-///   2. The optimizer paper tester now enriches its returned metrics from the
-///      `model_calls` ledger (token-count × catalog pricing), so providers
-///      like OpenRouter that don't self-report `inference_cost_quote_total`
-///      still contribute their real cost and the cap can trip for them.
+/// F11 (QA run-4): the meter is fed by the cycle's shared
+/// [`super::metering_dispatch::CostMeteringDispatch`], which prices EVERY LLM
+/// call — backtest trader decisions, the experiment writer, and the judge —
+/// via the provider catalog as they happen. This wrapper therefore no longer
+/// reads cost from the returned metrics (the prior `model_calls.cost_usd`
+/// enrichment read $0.00 because the optimizer's decision calls aren't linked
+/// to the paper-test eval run id); it only gates on the shared total. Pass the
+/// shared handle via [`Self::new_with_handle`] (use `f64::INFINITY` to meter an
+/// unbudgeted cycle without ever tripping).
 ///
 /// It exists so `xvn optimizer run-cycle --budget` is a real guard rather than
 /// the silent no-op it used to be (QA 2026-06-04, F2/F11).
@@ -356,15 +321,14 @@ impl BudgetCappedPaperTester {
             }
         }
         // Preserve the canary label through the budget wrapper so the inner
-        // tester still relabels sabotage broker-rule noise.
-        let metrics = match canary {
-            Some(variant) => self.inner.run_canary(strategy, scenario, variant).await?,
-            None => self.inner.run(strategy, scenario).await?,
-        };
-        if let Some(cost) = metrics.inference_cost_quote_total {
-            *self.spent_quote.lock().expect("budget mutex poisoned") += cost;
+        // tester still relabels sabotage broker-rule noise. Cost is accumulated
+        // by the shared metering dispatch as the backtest runs — not from the
+        // returned metrics — so there's nothing to add here (doing so would
+        // double-count).
+        match canary {
+            Some(variant) => self.inner.run_canary(strategy, scenario, variant).await,
+            None => self.inner.run(strategy, scenario).await,
         }
-        Ok(metrics)
     }
 }
 

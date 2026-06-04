@@ -1199,7 +1199,15 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         model: binding.model.clone(),
     };
 
-    // Build paper tester. Backtests use the raw (un-metered) dispatch.
+    // Build paper tester. F11 (QA run-4): the paper-test backtests route through
+    // the SAME `CostMeteringDispatch` as the mutator/judge, so every backtest
+    // trader decision is priced via the provider catalog and accumulated into
+    // the shared meter. The previous approach (un-metered backtest dispatch +
+    // reading `model_calls.cost_usd` via the `agent_runs.eval_run_id` join)
+    // always read $0.00 because the optimizer paper-test records its decision
+    // model_calls under a run id that doesn't equal the paper-test eval run id,
+    // so the join matched nothing. Metering at the dispatch boundary needs no
+    // observability linkage and can't be missed.
     let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
         Box::new(StubPaperTester {
             metrics: MetricsSummary {
@@ -1221,14 +1229,11 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let ctx = ApiContext::open(&xvn_home, Actor::Cli { user })
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
-        Box::new(
-            CachedBacktestPaperTester::new(
-                ctx,
-                Arc::clone(&raw_dispatch),
-                Arc::new(ToolRegistry::default_with_builtins()),
-            )
-            .with_unpriced_counter(Arc::clone(&unpriced_handle)),
-        )
+        Box::new(CachedBacktestPaperTester::new(
+            ctx,
+            Arc::clone(&metered_dispatch),
+            Arc::new(ToolRegistry::default_with_builtins()),
+        ))
     };
 
     // F2/F11: enforce `--budget` as a real ceiling and always meter realized

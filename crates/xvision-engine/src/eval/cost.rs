@@ -194,27 +194,6 @@ pub async fn aggregate_eval_run_inference_cost(pool: &SqlitePool, eval_run_id: &
     result.filter(|&v| v > 0.0 && v.is_finite())
 }
 
-/// Count this eval run's model calls that have **no** recorded cost
-/// (`cost_usd IS NULL`) — i.e. the model's price wasn't in the catalog at record
-/// time. F11 (QA 2026-06-04): lets the optimizer report "cost unknown — N calls
-/// unpriced" instead of a misleading `$0.00` when a real provider (e.g. an
-/// OpenRouter model missing from the cached catalog) was billed but unpriceable.
-/// Returns `0` when the observability tables are absent.
-pub async fn aggregate_eval_run_unpriced_calls(pool: &SqlitePool, eval_run_id: &str) -> u64 {
-    let n: Option<i64> = sqlx::query_scalar(
-        "SELECT COUNT(*) \
-         FROM model_calls mc \
-         JOIN spans s ON s.id = mc.span_id \
-         JOIN agent_runs ar ON ar.id = s.run_id \
-         WHERE ar.eval_run_id = ? AND mc.cost_usd IS NULL",
-    )
-    .bind(eval_run_id)
-    .fetch_one(pool)
-    .await
-    .ok();
-    n.unwrap_or(0).max(0) as u64
-}
-
 fn positive_price(p: Option<f64>) -> Option<f64> {
     // OpenRouter's free routes (`"prompt": "0"`) are already filtered to
     // `None` at parse time, but we re-check here so a hand-edited cache
