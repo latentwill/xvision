@@ -132,3 +132,45 @@ If any of these three drifts (a fee default, a fill model, a slot field, an inpu
 - Run log: `/root/xvn-work/night-watch/optrun-geminilongv3-fixed-064038.log`
 - Cycle: `01KT8NSKE41J0S4MWZZPX9H7QQ` (lineage node `e3f9f8f378`, rejected, 0.0 delta) — currently only in `$XVN_HOME/lineage/lineage.db` (the F8 store split), not yet in the panel.
 - Real eval runs: `01KT8NV2EV/01KT8NXSCC/01KT8NZ2ZF/01KT8P1P3G/01KT8P4HA2` (filled); canary runs: `01KT8P32V2/01KT8P7H66` (0 fills, by design — F9).
+
+---
+
+## Resolution (shipped)
+
+All three findings + both minors implemented on branch
+`fix/optimizer-run-verification-f8-f10`.
+
+- **F8 — lineage store convergence.** The lineage DDL
+  (`lineage_nodes`/`mutator_attribution`/`lineage_embeddings`) now lives in one
+  shared `ensure_lineage_schema()` (`autooptimizer/lineage.rs`), applied to the
+  main `xvn.db` by both `ApiContext::open` (new guarded
+  `migrate_autooptimizer_lineage`) and the CLI `open_and_migrate_db`. The CLI
+  `run-cycle`/lineage `--db` default is now `$XVN_HOME/xvn.db` (the store the
+  dashboard panel reads), and `ApiContext::open` does a one-time best-effort
+  import of any pre-fix `lineage/lineage.db` (sentinel-guarded) so the existing
+  `01KT8NSKE…` cycle surfaces in the panel. **Scope note:** acceptance #3
+  (`xvn optimizer ls`/`inspect`) reads `autooptimizer_runs` — a *separate*
+  memory-distillation ledger, not the lineage mutation cycle; wiring mutation
+  cycles into it is a semantic mismatch, deferred as a follow-up. The panel
+  (the "where did my run go" gap, the doc's stated highest-value goal) is met.
+- **F9 — labeled honesty-check outcome.** `HonestyCheckResult` now carries
+  `sabotage_variant` + a human-readable `message`; `CycleProgressEvent::HonestyCheckRun`
+  carries both; the CLI prints `honesty check: …` and the optimizer panel renders
+  the message. A canary/sabotage label is threaded `canary.rs → PaperTestRunner::run_canary
+  → eval_adapter → Executor::with_canary_sabotage`; under that label the backtest
+  executor demotes the by-design broker-rule rejection from `WARN` to a `debug`
+  line annotated "expected (honesty-check sabotage)". A real (non-canary) run
+  still `WARN`s.
+- **F10 — harness parity.** One shared `synthesize_optimizer_day_scenario()`
+  builder replaces the duplicated inline `Scenario` literals in both the CLI and
+  the dashboard route (kills the maker-10/taker-25 + fill-model drift). Eval's
+  `resolve_agent_slots` now builds each slot through the shared
+  `resolve_agent_slot` helper (single-source slot fields). A parity integration
+  test (`tests/autooptimizer_eval_adapter.rs::optimizer_adapter_matches_direct_eval_executor`)
+  asserts the optimizer paper-test adapter and a direct eval `Executor` run yield
+  identical metrics for the same strategy+scenario+bars. (Full `run_inner`
+  executor-build unification deferred; both paths already share the `Executor`
+  + bar-load helpers.)
+- **Minors.** Identity (no-op) mutation diffs are skipped before paying for the
+  two backtests (and before a colliding lineage-node insert); `run-cycle` prints
+  `cycle cost: $X.XX` from the metered `--budget` accumulator.

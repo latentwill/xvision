@@ -196,6 +196,8 @@ where
                 reason: "no canary parent available".to_string(),
             },
             passed_check: true,
+            sabotage_variant: "none".to_string(),
+            message: "Honesty check skipped: no canary parent available this cycle.".to_string(),
         });
     };
     let s = &cycle_config.parent_strategies[&cn.bundle_hash.to_hex()];
@@ -220,6 +222,8 @@ where
     progress(CycleProgressEvent::HonestyCheckRun {
         cycle_id: cycle_id.to_string(),
         passed: check.passed_check,
+        sabotage_variant: check.sabotage_variant.clone(),
+        message: check.message.clone(),
     });
     Ok(check)
 }
@@ -273,6 +277,23 @@ where
                 Err(_) => continue,
             }
         };
+        // Minor (2026-06-04): short-circuit identity (no-op) diffs. A child
+        // byte-identical to its parent is a guaranteed 0.0 delta, so the two
+        // paper-test backtests gate_and_classify would run are pure waste — and
+        // its content hash equals the parent's, so inserting a lineage node for
+        // it would collide with (and overwrite) the parent node. Skip it.
+        let candidate = apply_mutation_params(parent_strategy, &diff);
+        match serde_json::to_value(&candidate) {
+            Ok(v) if ContentHash::of_json(&v) == parent_node.bundle_hash => {
+                tracing::debug!(
+                    cycle_id,
+                    parent_hash = %parent_node.bundle_hash.to_hex(),
+                    "skipping identity (no-op) mutation diff — guaranteed 0.0 delta, no backtest spent",
+                );
+                continue;
+            }
+            _ => {}
+        }
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),
             parent_hash: parent_node.bundle_hash.to_hex(),

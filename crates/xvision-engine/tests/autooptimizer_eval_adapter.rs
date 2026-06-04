@@ -164,3 +164,84 @@ async fn backtest_paper_tester_is_deterministic() {
     );
     assert_eq!(m1.sharpe, m2.sharpe, "sharpe must be stable");
 }
+
+/// F10 harness-parity guard (2026-06-04): the optimizer paper-test adapter and
+/// a direct eval `Executor` run — given the SAME strategy, scenario, bars, and
+/// dispatch — must produce identical metrics. The optimizer scores candidate
+/// strategies through `BacktestPaperTester`; `eval run` scores them through the
+/// `Executor` directly. If the adapter ever injects a divergent setup (a
+/// different fill model, warmup handling, or — the F1 bug — empty agent slots),
+/// the optimizer would score strategies under conditions `eval run` never
+/// applies and optimized winners would not transfer. This test fails the moment
+/// the two paths diverge.
+#[tokio::test]
+async fn optimizer_adapter_matches_direct_eval_executor() {
+    use xvision_engine::agent::pipeline::resolve_agent_slots_for_strategy;
+    use xvision_engine::eval::executor::{Executor, RunExecutor};
+    use xvision_engine::eval::run::{Run, RunMode};
+
+    let bars = test_bars(40);
+    #[allow(deprecated)]
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let strategy = minimal_strategy();
+
+    // Path A — the optimizer paper-test adapter.
+    let store_a = fresh_store().await;
+    let tester = BacktestPaperTester::with_bars(
+        store_a,
+        hold_dispatch(),
+        Arc::new(ToolRegistry::empty()),
+        bars.clone(),
+    );
+    let adapter_metrics = tester.run(&strategy, &scenario).await.unwrap();
+
+    // Path B — a direct eval `Executor` run, resolving slots through the same
+    // shared resolver the eval HTTP path uses.
+    let store_b = fresh_store().await;
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store_b.create(&run).await.unwrap();
+    let slots = resolve_agent_slots_for_strategy(store_b.pool(), &strategy)
+        .await
+        .unwrap();
+    let direct_metrics = Executor::with_bars(bars.clone())
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &slots,
+            hold_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store_b,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        adapter_metrics.n_decisions, direct_metrics.n_decisions,
+        "decision count must match across the optimizer adapter and a direct eval run"
+    );
+    assert_eq!(
+        adapter_metrics.n_trades, direct_metrics.n_trades,
+        "fill/trade count must match"
+    );
+    assert_eq!(
+        adapter_metrics.total_return_pct, direct_metrics.total_return_pct,
+        "gross return must match"
+    );
+    assert_eq!(adapter_metrics.sharpe, direct_metrics.sharpe, "sharpe must match");
+    assert_eq!(
+        adapter_metrics.win_rate, direct_metrics.win_rate,
+        "win rate must match"
+    );
+    assert_eq!(
+        adapter_metrics.max_drawdown_pct, direct_metrics.max_drawdown_pct,
+        "max drawdown must match"
+    );
+}

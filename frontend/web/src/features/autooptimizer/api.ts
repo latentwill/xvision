@@ -242,8 +242,13 @@ export function formatEventLabel(event: CycleProgressEvent): string {
     case "mutation_gated_passed":
     case "mutation_gated_dropped":
       return "Gate evaluated";
-    case "honesty_check_run":
-      return "Honesty check result";
+    case "honesty_check_run": {
+      // F9: prefer the labeled human-readable outcome (e.g. "Honesty check
+      // passed: sabotaged variant `kill-trades` …") so the operator sees the
+      // result rather than inferring it from raw broker-rule warnings.
+      const msg = (event as { message?: unknown }).message;
+      return typeof msg === "string" && msg.trim().length > 0 ? msg : "Honesty check result";
+    }
     case "judge_finding":
       return "Reviewer finished notes";
     case "diversity_scored":

@@ -4,9 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, Json};
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use ulid::Ulid;
 
 use xvision_core::config::ProviderKind;
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
@@ -21,15 +20,10 @@ use xvision_engine::autooptimizer::{
     lineage::{LineageNode, LineageStatus, LineageStore},
     mutator::Mutator,
     parent_policy::ParentPolicy,
-    scenario_synthesis::synthesize_baseline_untouched_scenario,
+    scenario_synthesis::{synthesize_baseline_untouched_scenario, synthesize_optimizer_day_scenario},
 };
 use xvision_engine::eval::run::MetricsSummary;
-use xvision_engine::eval::scenario::{
-    AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, Capital, DataSource, Fees,
-    FillModel, LatencyModel, LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode,
-    Scenario, ScenarioSource, SlippageModel, TimeWindow, Venue, VenueSettings, DEFAULT_WARMUP_BARS,
-};
-use xvision_engine::safety::VenueLabel;
+use xvision_engine::eval::scenario::Scenario;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
 
@@ -303,66 +297,12 @@ async fn load_strategy_parent(
 }
 
 fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
-    let start = Utc.from_utc_datetime(&cfg.day_window.start.and_hms_opt(0, 0, 0).expect("valid midnight"));
-    let end = Utc.from_utc_datetime(&cfg.day_window.end.and_hms_opt(0, 0, 0).expect("valid midnight"));
-    Ok(Scenario {
-        id: format!("ec-day-{}", Ulid::new()),
-        parent_scenario_id: None,
-        source: ScenarioSource::Generated,
-        display_name: "Optimizer cycle day window".into(),
-        description: format!(
-            "Synthesized day window {} – {}",
-            cfg.day_window.start, cfg.day_window.end
-        ),
-        tags: vec![],
-        notes: None,
-        asset_class: AssetClass::Crypto,
-        quote_currency: QuoteCurrency::Usd,
-        time_window: TimeWindow { start, end },
-        granularity: BarGranularity::Hour1,
-        timezone: "UTC".into(),
-        calendar: CalendarRef::Continuous24x7,
-        data_source: DataSource::AlpacaHistorical {
-            feed: None,
-            adjustment: AdjustmentMode::Raw,
-        },
-        venue: VenueSettings {
-            venue: Venue::Alpaca,
-            fees: Fees {
-                maker_bps: 10,
-                taker_bps: 25,
-            },
-            slippage: SlippageModel::None,
-            latency: LatencyModel {
-                decision_to_fill_ms: 250,
-            },
-            fill_model: FillModel {
-                market_order_fill: MarketOrderFill::FullAtClose,
-                limit_order_fill: LimitOrderFill::NeverFills,
-                partial_fills: false,
-                volume_constraints: None,
-            },
-            borrow_bps_per_day: 5.0,
-            overrides: vec![],
-        },
-        replay_mode: ReplayMode::Continuous,
-        capital: Capital::default(),
-        bar_cache_policy: BarCachePolicy {
-            cache_key: format!("ec-day-{}-{}", cfg.day_window.start, cfg.day_window.end),
-            refresh_policy: RefreshPolicy::NeverRefresh,
-            data_fetched_at: None,
-        },
-        warmup_bars: DEFAULT_WARMUP_BARS,
-        regime_label: None,
-        volatility_label: None,
-        trend_direction: None,
-        regime_derived: false,
-        created_at: Utc::now(),
-        created_by: "xvn-dashboard".into(),
-        archived_at: None,
-        venue_label: VenueLabel::Paper,
-        safety_limits: None,
-    })
+    // F10: delegate to the single shared optimizer scenario builder so the
+    // dashboard and CLI never drift on venue/fee/fill settings.
+    Ok(synthesize_optimizer_day_scenario(
+        &cfg.day_window,
+        "xvn-dashboard",
+    ))
 }
 
 fn stub_paper_tester() -> StubPaperTester {

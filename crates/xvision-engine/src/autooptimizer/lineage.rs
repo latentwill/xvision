@@ -41,6 +41,110 @@ impl LineageStatus {
     }
 }
 
+/// Idempotently create the autooptimizer lineage schema on `pool`.
+///
+/// F8 (2026-06-04): the dashboard reads/writes lineage on the main `xvn.db`
+/// pool (`AppState::pool`) while the CLI historically opened a *separate*
+/// `lineage/lineage.db`, so CLI-launched cycles never showed up in the
+/// optimizer panel. Both surfaces now converge on `xvn.db`; this is the single
+/// source of truth for the lineage DDL, called from both
+/// [`crate::api::ApiContext::open`] (so a dashboard-launched cycle can persist
+/// its root node) and the CLI `open_and_migrate_db` (so a `--db`-overridden
+/// run still self-provisions). Every statement is `CREATE … IF NOT EXISTS`
+/// plus a guarded `ADD COLUMN`, so re-running on an already-migrated DB — or a
+/// DB created by the older leaner CLI schema — is a no-op.
+///
+/// The schema deliberately matches what [`LineageStore`] writes/reads (no
+/// `diff_hash`/`metrics_*_hash` columns, no self-FK on `parent_hash`): the
+/// store never populated those and `INSERT OR REPLACE` ordering does not
+/// guarantee parent-before-child, so a self-FK would risk spurious failures.
+pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS lineage_nodes (
+            bundle_hash TEXT PRIMARY KEY,
+            parent_hash TEXT,
+            gate_verdict TEXT NOT NULL,
+            status TEXT NOT NULL,
+            cycle_id TEXT,
+            created_at TEXT NOT NULL,
+            diversity_score REAL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create lineage_nodes")?;
+    // Guard the column add for a DB that predates `diversity_score` (the
+    // pre-049 leaner shape some `lineage.db` files were created with).
+    if !table_has_column(pool, "lineage_nodes", "diversity_score").await? {
+        sqlx::query("ALTER TABLE lineage_nodes ADD COLUMN diversity_score REAL")
+            .execute(pool)
+            .await
+            .context("add lineage_nodes.diversity_score")?;
+    }
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS mutator_attribution (
+            bundle_hash TEXT PRIMARY KEY,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            proposed_at TEXT NOT NULL,
+            delta_sharpe REAL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create mutator_attribution")?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS lineage_embeddings (
+            bundle_hash TEXT PRIMARY KEY REFERENCES lineage_nodes(bundle_hash),
+            embedding_blob_hash TEXT NOT NULL,
+            embedding_dim INTEGER NOT NULL,
+            embedded_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create lineage_embeddings")?;
+    for (sql, label) in [
+        (
+            "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",
+            "idx_lineage_parent",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_lineage_status ON lineage_nodes(status)",
+            "idx_lineage_status",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_lineage_embeddings_bundle ON lineage_embeddings(bundle_hash)",
+            "idx_lineage_embeddings_bundle",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_attr_provider_model ON mutator_attribution(provider, model)",
+            "idx_attr_provider_model",
+        ),
+    ] {
+        sqlx::query(sql).execute(pool).await.context(label)?;
+    }
+    Ok(())
+}
+
+async fn table_has_column(pool: &SqlitePool, table: &str, column: &str) -> Result<bool> {
+    // `table` is a compile-time-constant identifier at every call site; assert
+    // it cannot smuggle SQL since `PRAGMA` cannot be parameterized.
+    if !table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        bail!("invalid table name for PRAGMA: {table}");
+    }
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await
+        .with_context(|| format!("inspect {table} columns"))?;
+    Ok(rows.iter().any(|row| {
+        row.try_get::<String, _>("name")
+            .map(|name| name == column)
+            .unwrap_or(false)
+    }))
+}
+
 pub struct LineageStore {
     pub pool: SqlitePool,
 }

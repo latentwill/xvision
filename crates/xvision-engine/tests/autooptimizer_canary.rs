@@ -161,16 +161,19 @@ fn gate_builder(
 #[test]
 fn build_sabotaged_strategy_is_deterministic() {
     let base = make_strategy();
-    let a = build_sabotaged_strategy(&base, 42);
-    let b = build_sabotaged_strategy(&base, 42);
+    let (a, av) = build_sabotaged_strategy(&base, 42);
+    let (b, bv) = build_sabotaged_strategy(&base, 42);
     assert_eq!(a, b, "same seed must produce identical sabotaged strategy");
+    assert_eq!(av, bv, "same seed must produce the same sabotage variant");
+    // 42 % 3 == 0 → kill-trades (zeroed position sizing).
+    assert_eq!(av.as_str(), "kill-trades");
 }
 
 #[test]
 fn sabotaged_strategy_differs_from_base() {
     let base = make_strategy();
     for seed in 0_u64..=2 {
-        let sabotaged = build_sabotaged_strategy(&base, seed);
+        let (sabotaged, _variant) = build_sabotaged_strategy(&base, seed);
         assert_ne!(
             sabotaged, base,
             "seed {seed} sabotaged strategy must differ from base"

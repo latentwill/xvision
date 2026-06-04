@@ -46,15 +46,14 @@ pub mod tournament;
 pub mod validator;
 
 pub use blob_store::BlobStore;
-pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult};
+pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult, SabotageVariant};
 pub use config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use cycle::{run_cycle, CycleConfig, CycleResult};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
 pub use eval_adapter::{
-    BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner,
-    StubPaperTester,
+    BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
 };
 pub use gate::{evaluate, GateInput, GateVerdict};
 pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};
