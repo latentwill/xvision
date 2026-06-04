@@ -179,6 +179,11 @@ pub struct RunCycleArgs {
     /// (YYYY-MM-DD).
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub baseline_end: Option<chrono::NaiveDate>,
+    /// F24: which metric the cycle optimizes. One of: sharpe (default),
+    /// total_return, max_drawdown, win_rate. Overrides `objective` in
+    /// autooptimizer.toml.
+    #[arg(long, value_name = "METRIC")]
+    pub objective: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -1149,6 +1154,15 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     if let Some(d) = args.baseline_end {
         cfg.baseline_untouched_window.end = d;
     }
+    // F24: select the optimization objective.
+    if let Some(obj) = args.objective.as_deref() {
+        cfg.objective = xvision_engine::autooptimizer::gate::Objective::parse(obj).ok_or_else(|| {
+            CliError::usage(anyhow::anyhow!(
+                "invalid --objective '{obj}'; expected one of: {}",
+                xvision_engine::autooptimizer::gate::Objective::all_labels().join(", ")
+            ))
+        })?;
+    }
     // Re-validate so an inverted/overlapping window from the flags fails
     // fast with a clear message instead of deep in scenario synthesis.
     cfg.validate().map_err(|e| {
@@ -1343,11 +1357,13 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         baseline_scenario,
         parent_strategies,
         explicit_parent_hashes,
+        objective: cfg.objective,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
 
     eprintln!("Starting optimizer cycle...");
+    eprintln!("objective: {}", cfg.objective.label());
     if let Some(ref s) = args.strategy {
         eprintln!("strategy: {s}");
     }

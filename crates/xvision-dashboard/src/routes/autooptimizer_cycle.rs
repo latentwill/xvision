@@ -439,6 +439,7 @@ fn build_cycle_config(
         baseline_scenario,
         parent_strategies,
         explicit_parent_hashes,
+        objective: cfg.objective,
     }
 }
 

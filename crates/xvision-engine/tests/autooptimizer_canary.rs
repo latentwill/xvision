@@ -155,6 +155,7 @@ fn gate_builder(
         parent_untouched_metrics: parent_untouched.clone(),
         child_untouched_metrics: child_untouched.clone(),
         min_improvement: 0.1,
+        objective: Default::default(),
     }
 }
 

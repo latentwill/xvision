@@ -15,7 +15,7 @@ use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
-use crate::autooptimizer::gate::{evaluate, GateInput, GateVerdict};
+use crate::autooptimizer::gate::{evaluate, GateInput, GateVerdict, Objective};
 use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -45,6 +45,8 @@ pub struct CycleConfig {
     pub parent_strategies: HashMap<String, Strategy>,
     /// Optional explicit parent bundle hashes.
     pub explicit_parent_hashes: Vec<ContentHash>,
+    /// F24: the metric this cycle optimizes (gate objective). Defaults to Sharpe.
+    pub objective: Objective,
 }
 
 pub struct CycleResult {
@@ -233,6 +235,7 @@ where
     };
     let s = &cycle_config.parent_strategies[&cn.bundle_hash.to_hex()];
     let mi = min_improvement;
+    let obj = cycle_config.objective;
     let check = run_honesty_check(
         s,
         mutator,
@@ -243,6 +246,7 @@ where
             parent_untouched_metrics: pu.clone(),
             child_untouched_metrics: cu.clone(),
             min_improvement: mi,
+            objective: obj,
         },
         &cycle_config.day_scenario,
         &cycle_config.baseline_scenario,
@@ -463,6 +467,7 @@ async fn gate_and_classify(
         parent_untouched,
         &child_untouched,
         min_improvement,
+        cycle_config.objective,
     );
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
@@ -614,6 +619,7 @@ fn gate_check(
     parent_untouched: &MetricsSummary,
     child_untouched: &MetricsSummary,
     min_improvement: f64,
+    objective: Objective,
 ) -> GateVerdict {
     evaluate(&GateInput {
         parent_day_metrics: parent_day.clone(),
@@ -621,5 +627,6 @@ fn gate_check(
         parent_untouched_metrics: parent_untouched.clone(),
         child_untouched_metrics: child_untouched.clone(),
         min_improvement,
+        objective,
     })
 }

@@ -1,4 +1,4 @@
-use xvision_engine::autooptimizer::gate::{evaluate, GateInput, GateVerdict};
+use xvision_engine::autooptimizer::gate::{evaluate, GateInput, GateVerdict, Objective};
 use xvision_engine::eval::MetricsSummary;
 
 fn metrics(sharpe: f64, max_drawdown_pct: f64) -> MetricsSummary {
@@ -26,7 +26,68 @@ fn make_input(
         parent_untouched_metrics: metrics(parent_untouched_sharpe, parent_untouched_dd),
         child_untouched_metrics: metrics(child_untouched_sharpe, child_untouched_dd),
         min_improvement,
+        objective: Objective::default(),
     }
+}
+
+// ── F24: configurable objective ──────────────────────────────────────────────
+
+fn m_full(sharpe: f64, total_return_pct: f64, win_rate: f64, max_drawdown_pct: f64) -> MetricsSummary {
+    MetricsSummary {
+        sharpe,
+        total_return_pct,
+        win_rate,
+        max_drawdown_pct,
+        ..MetricsSummary::default()
+    }
+}
+
+/// F24: with the `total_return` objective, a candidate that improves RETURN on
+/// both windows passes even though its Sharpe is flat (the old gate would have
+/// failed it — it only looked at Sharpe).
+#[test]
+fn total_return_objective_gates_on_return_not_sharpe() {
+    let input = GateInput {
+        parent_day_metrics: m_full(1.0, 5.0, 0.5, -10.0),
+        child_day_metrics: m_full(1.0, 9.0, 0.5, -10.0),
+        parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
+        child_untouched_metrics: m_full(1.0, 7.0, 0.5, -8.0),
+        min_improvement: 1.0,
+        objective: Objective::TotalReturn,
+    };
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+/// F24: with the `max_drawdown` objective, a candidate that REDUCES drawdown on
+/// both windows passes (improvement = parent - child, the minimize direction),
+/// and the non-objective drawdown guard is skipped.
+#[test]
+fn max_drawdown_objective_rewards_reducing_drawdown() {
+    let input = GateInput {
+        // child drawdown smaller (closer to 0) on both windows.
+        parent_day_metrics: m_full(1.0, 5.0, 0.5, -20.0),
+        child_day_metrics: m_full(1.0, 5.0, 0.5, -12.0),
+        parent_untouched_metrics: m_full(1.0, 5.0, 0.5, -18.0),
+        child_untouched_metrics: m_full(1.0, 5.0, 0.5, -10.0),
+        min_improvement: 1.0,
+        objective: Objective::MaxDrawdown,
+    };
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+/// F24: the held-out discipline still holds per objective — improving RETURN on
+/// the day window but NOT the untouched window is rejected.
+#[test]
+fn total_return_objective_requires_both_windows() {
+    let input = GateInput {
+        parent_day_metrics: m_full(1.0, 5.0, 0.5, -10.0),
+        child_day_metrics: m_full(1.0, 9.0, 0.5, -10.0),
+        parent_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0),
+        child_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0), // no untouched improvement
+        min_improvement: 1.0,
+        objective: Objective::TotalReturn,
+    };
+    assert!(matches!(evaluate(&input), GateVerdict::Fail { .. }));
 }
 
 /// Both Sharpe deltas clear the threshold; drawdown is stable → Pass.
