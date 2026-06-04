@@ -49,16 +49,26 @@ Operator-reported: the optimizer panel shows `$0.00` cost and no token usage, de
 
 **Acceptance.** (1) Meter persists incrementally (e.g. after each backtest) and/or is captured on cancel/crash so partial spend is never lost; (2) `/cycles/:id` returns the same cost/token fields as `/cycles`; (3) the Live tab streams running cost + tokens (pair with the F28 cancel button so an operator can see spend climbing and stop it). **Files:** `autooptimizer/cycle_runs.rs` (persist incrementally; detail query JOIN), `routes/autooptimizer.rs` (`:id` fields), `cycle.rs`/`progress.rs` (emit running totals as events), `frontend/.../LiveCycleView.tsx`.
 
+## F36 — [HIGH] Cancelled / failed / interrupted **eval runs** lose metrics (and cost) — same gap, whole eval layer
+F35 is the optimizer-cycle face of a broader bug: **the core eval path only persists metrics at `RunStore::finalize`**, which the cancel/fail/interrupt paths never reach. So any eval that doesn't finish cleanly silently loses its results. Confirmed in the live DB:
+- **Cancelled eval runs: 7 — ALL 7 have `metrics_json = NULL`** (tokens *are* retained, so token accounting is incremental but metrics/cost are not).
+- **Failed eval runs: 17 — ALL 17 have `metrics_json = NULL`, and 14 also have null/zero tokens.**
+- `metrics_json` is written only by `RunStore::finalize` (eval/run.rs:293); cancel (`routes/eval_runs.rs::cancel_run`) and failure paths mark status without persisting the metrics/cost accumulated so far.
+
+This matters beyond the optimizer: it's the **same engine all eval, optimizer paper-test, and LIVE runs share** (one `Executor`). A cancelled or crashed **live/real-money** run would likewise show no metrics/cost — bad for accounting and post-mortems. The coding agent should treat F35 (optimizer `cycle_cost`) and F36 (eval `metrics_json`/tokens/cost) as one "capture-on-interrupt" fix across the shared path.
+
+**Acceptance.** On cancel / failure / timeout / crash, an eval run persists the metrics + token + cost accumulated up to that point (status reflects partial/interrupted), rather than `NULL`. A test cancels a mid-flight run and asserts non-null partial metrics + cost. **Files:** `crates/xvision-engine/src/eval/run.rs` (`RunStore` — persist on cancel/fail, not only `finalize`), the executor decision loop (`eval/executor/backtest.rs` — flush partial metrics on interrupt), `routes/eval_runs.rs::cancel_run`.
+
 ---
 
 ## Suggested order for the next pass
-1. **F28 + F35** — UI window/budget/cancel **and** honest live cost+tokens (so the operator can see spend climb and stop it; the runaway run is the proof). Highest urgency now that F26 is live.
+1. **F28 + F35 + F36** — UI window/budget/cancel **and** honest live cost+tokens (so the operator can see spend climb and stop it; the runaway run is the proof). Highest urgency now that F26 is live.
 2. **F32** — make the mutator explore (without it, the optimizer never converges — the whole point).
 3. **F33 / F34** — attribution for duplicate candidates; concurrency guard.
 
 ## Status recap
 - **Fixed + verified:** F1–F18, F20, F21, F22(preflight), F23, F26, F30, F31, F11.
-- **Open:** **F28** (UI unbounded+uncancellable, now urgent), **F32** (deterministic mutator), **F33** (attribution collision), **F34** (concurrency), **F35** (UI shows $0.00/no tokens), plus prior **F24** (configurable objective), **F25** (model-swap axis), **F27** (panel run-list wiring), **F29** (mutate-once/retire UI).
+- **Open:** **F28** (UI unbounded+uncancellable, now urgent), **F32** (deterministic mutator), **F33** (attribution collision), **F34** (concurrency), **F35** (UI shows $0.00/no tokens), **F36** (cancelled/failed eval runs lose metrics+cost, whole eval layer), plus prior **F24** (configurable objective), **F25** (model-swap axis), **F27** (panel run-list wiring), **F29** (mutate-once/retire UI).
 
 ## Artifacts
 - Runaway UI cycle: 17 runs, 11.67M in / 115k out tokens, ~27 min, halted by `docker restart xvn-app`.
