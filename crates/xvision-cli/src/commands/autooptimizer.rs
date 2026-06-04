@@ -114,10 +114,10 @@ pub struct MutateOnceArgs {
 
 #[derive(Args, Debug)]
 pub struct RunCycleArgs {
-    /// Path to autooptimizer.toml. Defaults to ~/.xvn/autooptimizer.toml.
+    /// Path to autooptimizer.toml. Defaults to $XVN_HOME/autooptimizer.toml.
     #[arg(long)]
     pub config: Option<PathBuf>,
-    /// SQLite database path. Defaults to ~/.xvn/lineage/lineage.db.
+    /// SQLite database path. Defaults to $XVN_HOME/lineage/lineage.db.
     #[arg(long)]
     pub db: Option<PathBuf>,
     /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
@@ -137,7 +137,7 @@ pub struct RunCycleArgs {
 #[derive(Args, Debug)]
 pub struct DemoArgs {
     /// Path to the replay fixture JSON file.
-    /// Defaults to data/probes/autooptimizer/replay-fixture.json relative to the current directory.
+    /// Defaults to $XVN_HOME/probes/autooptimizer/replay-fixture.json.
     #[arg(long)]
     pub fixture: Option<PathBuf>,
     /// Print full event JSON; else print one line per event.
@@ -278,8 +278,9 @@ pub enum LineageOp {
 
 #[derive(Args, Debug)]
 pub struct LineageLsArgs {
+    /// SQLite database path. Defaults to $XVN_HOME/lineage/lineage.db.
     #[arg(long)]
-    pub db: String,
+    pub db: Option<PathBuf>,
     #[arg(long)]
     pub cycle: Option<String>,
     #[arg(long, default_value = "all")]
@@ -291,8 +292,9 @@ pub struct LineageLsArgs {
 #[derive(Args, Debug)]
 pub struct LineageShowArgs {
     pub bundle_hash: String,
+    /// SQLite database path. Defaults to $XVN_HOME/lineage/lineage.db.
     #[arg(long)]
-    pub db: String,
+    pub db: Option<PathBuf>,
 }
 
 struct LineageRow {
@@ -579,7 +581,8 @@ async fn run_retire(args: InspectArgs) -> CliResult<()> {
     Ok(())
 }
 
-async fn open_lineage_db(db: &str) -> CliResult<SqlitePool> {
+async fn open_lineage_db(db: &Path) -> CliResult<SqlitePool> {
+    let db = db.display();
     SqlitePool::connect(&format!("sqlite://{db}"))
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("open db {db}: {e}")))
@@ -651,7 +654,8 @@ async fn lineage_ls(args: LineageLsArgs) -> CliResult<()> {
             "--status must be 'active', 'rejected', or 'all'"
         )));
     }
-    let pool = open_lineage_db(&args.db).await?;
+    let db_path = resolve_lineage_db(args.db)?;
+    let pool = open_lineage_db(&db_path).await?;
     let rows = fetch_lineage_rows(&pool, args.cycle.as_deref(), &args.status, args.limit).await?;
     if rows.is_empty() {
         println!("(no experiments)");
@@ -677,7 +681,8 @@ async fn lineage_ls(args: LineageLsArgs) -> CliResult<()> {
 async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
     let hash = ContentHash::from_hex(&args.bundle_hash)
         .map_err(|e| CliError::usage(anyhow::anyhow!("invalid bundle_hash: {e}")))?;
-    let pool = open_lineage_db(&args.db).await?;
+    let db_path = resolve_lineage_db(args.db)?;
+    let pool = open_lineage_db(&db_path).await?;
     let store = LineageStore::new(pool);
     let node = store
         .get(&hash)
@@ -1107,19 +1112,7 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
 }
 
 async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
-    let fixture_path = match args.fixture {
-        Some(p) => p,
-        None => {
-            let default_rel = PathBuf::from("data/probes/autooptimizer/replay-fixture.json");
-            if default_rel.exists() {
-                default_rel
-            } else {
-                let home = dirs::home_dir()
-                    .ok_or_else(|| CliError::upstream(anyhow::anyhow!("cannot find home directory")))?;
-                home.join(".xvn/probes/autooptimizer/replay-fixture.json")
-            }
-        }
-    };
+    let fixture_path = resolve_demo_fixture(args.fixture)?;
 
     let raw = std::fs::read_to_string(&fixture_path).map_err(|e| {
         CliError::not_found(anyhow::anyhow!(
@@ -1174,13 +1167,49 @@ async fn ipc_send_event(stream: &mut Option<tokio::net::UnixStream>, ev: CyclePr
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn load_ar_config(path: Option<&Path>) -> CliResult<AutoOptimizerConfig> {
-    match path {
-        Some(p) => {
-            AutoOptimizerConfig::load(p).map_err(|e| CliError::usage(anyhow::anyhow!("load config: {e}")))
-        }
-        None => Ok(AutoOptimizerConfig::default()),
+/// Resolve the effective lineage SQLite path: an explicit `--db` override wins,
+/// otherwise default to `$XVN_HOME/lineage/lineage.db` (NOT `~/.xvn` or CWD).
+fn resolve_lineage_db(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
+    if let Some(p) = override_path {
+        return Ok(p);
     }
+    let xvn_home = crate::commands::home::resolve_xvn_home(None)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
+    Ok(xvn_home.join("lineage").join("lineage.db"))
+}
+
+/// Resolve the demo replay-fixture path: an explicit `--fixture` override wins,
+/// otherwise default to `$XVN_HOME/probes/autooptimizer/replay-fixture.json`
+/// (NOT CWD-relative or `~/.xvn`).
+fn resolve_demo_fixture(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
+    if let Some(p) = override_path {
+        return Ok(p);
+    }
+    let xvn_home = crate::commands::home::resolve_xvn_home(None)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
+    Ok(xvn_home
+        .join("probes")
+        .join("autooptimizer")
+        .join("replay-fixture.json"))
+}
+
+/// Load the autooptimizer config. An explicit `--config` override is required to
+/// exist and is loaded directly. With no override, prefer
+/// `$XVN_HOME/autooptimizer.toml` when present (NOT `~/.xvn`), otherwise fall
+/// back to the in-memory default so the cycle still runs without a config file.
+fn load_ar_config(path: Option<&Path>) -> CliResult<AutoOptimizerConfig> {
+    if let Some(p) = path {
+        return AutoOptimizerConfig::load(p)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("load config: {e}")));
+    }
+    let xvn_home = crate::commands::home::resolve_xvn_home(None)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
+    let default_path = xvn_home.join("autooptimizer.toml");
+    if default_path.exists() {
+        return AutoOptimizerConfig::load(&default_path)
+            .map_err(|e| CliError::usage(anyhow::anyhow!("load config: {e}")));
+    }
+    Ok(AutoOptimizerConfig::default())
 }
 
 async fn load_strategy_blob(blobs: &BlobStore, hash: &ContentHash) -> CliResult<Strategy> {
@@ -1657,5 +1686,86 @@ fn api_to_cli(op: &str, e: xvision_engine::api::ApiError) -> CliError {
             exit: XvnExit::Upstream,
             source: anyhow::anyhow!("{op}: {other}"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Regression for T1: the demo fixture, lineage `--db`, and `run-cycle`
+    /// config path defaults must resolve under the configured `$XVN_HOME`
+    /// (e.g. `/data`), NOT under `~/.xvn` or the current working directory.
+    ///
+    /// Before the fix, `resolve_demo_fixture` chased a CWD-relative
+    /// `data/probes/...` path and then `~/.xvn/probes/...`, and the lineage
+    /// `--db` flag was a required `String` with no `$XVN_HOME` default. This
+    /// test points `XVN_HOME` at a tempdir and asserts every resolved default
+    /// lives under that tempdir — which fails against the old `~/.xvn`/CWD
+    /// logic and passes against the resolver-backed defaults.
+    ///
+    /// `XVN_HOME` is process-global, so all assertions live in one test (no
+    /// parallel sibling can race the env var), and the prior value is saved
+    /// and restored.
+    #[test]
+    fn path_defaults_resolve_under_xvn_home() {
+        const KEY: &str = "XVN_HOME";
+
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_path_buf();
+
+        let prior = std::env::var(KEY).ok();
+        std::env::set_var(KEY, &home);
+
+        // Explicit overrides must win unchanged.
+        let override_db = home.join("custom").join("explicit.db");
+        let resolved_override = resolve_lineage_db(Some(override_db.clone())).expect("override db resolves");
+        let override_fix = home.join("custom").join("explicit-fixture.json");
+        let resolved_override_fix =
+            resolve_demo_fixture(Some(override_fix.clone())).expect("override fixture resolves");
+
+        // Defaults (no override) must land under $XVN_HOME.
+        let default_db = resolve_lineage_db(None).expect("default db resolves");
+        let default_fixture = resolve_demo_fixture(None).expect("default fixture resolves");
+
+        // Restore env before asserting so a failure cannot leak state.
+        match prior {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
+
+        assert_eq!(
+            resolved_override, override_db,
+            "explicit --db must be honored verbatim"
+        );
+        assert_eq!(
+            resolved_override_fix, override_fix,
+            "explicit --fixture must be honored verbatim"
+        );
+
+        assert_eq!(
+            default_db,
+            home.join("lineage").join("lineage.db"),
+            "default lineage db must be $XVN_HOME/lineage/lineage.db"
+        );
+        assert!(
+            default_db.starts_with(&home),
+            "default lineage db must live under $XVN_HOME, got {}",
+            default_db.display()
+        );
+
+        assert_eq!(
+            default_fixture,
+            home.join("probes")
+                .join("autooptimizer")
+                .join("replay-fixture.json"),
+            "default demo fixture must be $XVN_HOME/probes/autooptimizer/replay-fixture.json"
+        );
+        assert!(
+            default_fixture.starts_with(&home),
+            "default demo fixture must live under $XVN_HOME, got {}",
+            default_fixture.display()
+        );
     }
 }
