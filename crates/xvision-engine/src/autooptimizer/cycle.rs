@@ -6,8 +6,8 @@ use anyhow::{bail, Result};
 use chrono::Utc;
 use sqlx::SqlitePool;
 use ulid::Ulid;
-use xvision_observability::BlobStore;
 
+use crate::autooptimizer::blob_store::BlobStore;
 use crate::autooptimizer::canary::{run_honesty_check, HonestyCheckResult};
 use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::content_hash::ContentHash;
@@ -54,6 +54,12 @@ pub struct CycleResult {
     pub honesty_check: HonestyCheckResult,
     pub diversity_score: f64,
     pub findings_by_node: HashMap<ContentHash, Vec<Finding>>,
+    /// Number of (parent × mutation) iterations that yielded no usable
+    /// candidate — the experiment writer could not produce a distinct, valid
+    /// experiment (e.g. only no-op/identity diffs). Lets the CLI/panel
+    /// distinguish a genuinely empty cycle from one that gated a real candidate
+    /// (F14, QA 2026-06-04).
+    pub no_candidate_count: usize,
 }
 
 struct MutationOutcome {
@@ -63,11 +69,15 @@ struct MutationOutcome {
     verdict: GateVerdict,
     status: LineageStatus,
     delta_sharpe: f64,
+    /// F13: the candidate's metrics on the day + held-out windows, persisted so
+    /// the historic-run detail can show per-candidate backtest results.
+    child_day: MetricsSummary,
+    child_untouched: MetricsSummary,
 }
 
 pub async fn run_cycle(
     pool: &SqlitePool,
-    _blob_store: &BlobStore,
+    strategy_blob_store: &BlobStore,
     config: &AutoOptimizerConfig,
     cycle_config: &CycleConfig,
     parent_policy: &ParentPolicy,
@@ -119,6 +129,7 @@ pub async fn run_cycle(
     let mut active_nodes: Vec<LineageNode> = Vec::new();
     let mut rejected_nodes: Vec<LineageNode> = Vec::new();
     let mut findings_by_node: HashMap<ContentHash, Vec<Finding>> = HashMap::new();
+    let mut no_candidate_count: usize = 0;
 
     for parent_node in &parents {
         let ph = parent_node.bundle_hash.to_hex();
@@ -127,8 +138,9 @@ pub async fn run_cycle(
                 cycle_id: cycle_id.clone(),
                 parent_hash: ph,
             });
-            let (active, rejected) = process_parent_mutations(
+            let (active, rejected, nc) = process_parent_mutations(
                 pool,
+                strategy_blob_store,
                 parent_node,
                 parent_strategy,
                 &cycle_id,
@@ -146,6 +158,7 @@ pub async fn run_cycle(
             .await?;
             active_nodes.extend(active);
             rejected_nodes.extend(rejected);
+            no_candidate_count += nc;
         }
     }
 
@@ -160,6 +173,9 @@ pub async fn run_cycle(
         &progress,
     )
     .await?;
+    // F13: persist the honesty-check outcome so a historic cycle's detail can
+    // report it (it was previously emitted only over SSE / the CLI summary).
+    persist_honesty_check(pool, &cycle_id, &honesty_check).await;
     let diversity_score = diversity_decay_for_cycle(pool, &cycle_id).await.unwrap_or(0.0);
     Ok(CycleResult {
         cycle_id,
@@ -168,6 +184,7 @@ pub async fn run_cycle(
         honesty_check,
         diversity_score,
         findings_by_node,
+        no_candidate_count,
     })
 }
 
@@ -230,6 +247,7 @@ where
 
 async fn process_parent_mutations<F>(
     pool: &SqlitePool,
+    strategy_blob_store: &BlobStore,
     parent_node: &LineageNode,
     parent_strategy: &Strategy,
     cycle_id: &str,
@@ -243,7 +261,7 @@ async fn process_parent_mutations<F>(
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
     dspy_ctx: Option<&DspyContext>,
-) -> Result<(Vec<LineageNode>, Vec<LineageNode>)>
+) -> Result<(Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
     F: Fn(CycleProgressEvent),
 {
@@ -253,6 +271,7 @@ where
     );
     let mut active: Vec<LineageNode> = Vec::new();
     let mut rejected: Vec<LineageNode> = Vec::new();
+    let mut no_candidate_count: usize = 0;
     let parent_day = paper_tester
         .run(parent_strategy, &cycle_config.day_scenario)
         .await?;
@@ -262,37 +281,77 @@ where
 
     for _ in 0..cycle_config.mutations_per_parent {
         // When tournament_enabled, run the 3-candidate Borda-count tournament
-        // instead of a direct propose call. Incumbent win skips this iteration.
+        // instead of a direct propose call. Incumbent win means no candidate
+        // beat the parent this iteration.
+        //
+        // F14/F15 (2026-06-04): every "no usable candidate" branch now emits a
+        // `NoCandidate` event instead of a silent `continue`, so a cycle that
+        // produced nothing is distinguishable in the CLI summary and panel from
+        // one that gated a real experiment.
         let diff = if config.tournament_enabled {
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
             match runner.run_tournament(parent_strategy, config).await {
-                Ok(r) if r.incumbent_wins => continue,
+                Ok(r) if r.incumbent_wins => {
+                    no_candidate_count += 1;
+                    progress(CycleProgressEvent::NoCandidate {
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: parent_node.bundle_hash.to_hex(),
+                        reason: "tournament incumbent retained (no challenger improved on the parent)"
+                            .to_string(),
+                    });
+                    continue;
+                }
                 Ok(r) => r.winner_diff,
-                Err(_) => continue,
+                Err(e) => {
+                    no_candidate_count += 1;
+                    progress(CycleProgressEvent::NoCandidate {
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: parent_node.bundle_hash.to_hex(),
+                        reason: format!("tournament failed: {e}"),
+                    });
+                    continue;
+                }
             }
         } else {
             match mutator.propose(parent_strategy, config, dsr_prefix).await {
                 Ok(d) => d,
-                Err(_) => continue,
+                Err(e) => {
+                    // The mutator exhausted its retries without a distinct,
+                    // valid diff (e.g. every attempt was an identity/no-op —
+                    // F14). Surface it rather than exiting the iteration silently.
+                    no_candidate_count += 1;
+                    progress(CycleProgressEvent::NoCandidate {
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: parent_node.bundle_hash.to_hex(),
+                        reason: format!("experiment writer produced no usable candidate: {e}"),
+                    });
+                    continue;
+                }
             }
         };
-        // Minor (2026-06-04): short-circuit identity (no-op) diffs. A child
-        // byte-identical to its parent is a guaranteed 0.0 delta, so the two
-        // paper-test backtests gate_and_classify would run are pure waste — and
-        // its content hash equals the parent's, so inserting a lineage node for
-        // it would collide with (and overwrite) the parent node. Skip it.
-        let candidate = apply_mutation_params(parent_strategy, &diff);
-        match serde_json::to_value(&candidate) {
-            Ok(v) if ContentHash::of_json(&v) == parent_node.bundle_hash => {
-                tracing::debug!(
-                    cycle_id,
-                    parent_hash = %parent_node.bundle_hash.to_hex(),
-                    "skipping identity (no-op) mutation diff — guaranteed 0.0 delta, no backtest spent",
-                );
-                continue;
-            }
-            _ => {}
+        // F12 defensive guard: never gate or persist a child byte-identical to
+        // its parent. The mutator already rejects identity diffs, but the
+        // tournament path does not, and a no-op child's content hash equals the
+        // parent's — inserting it would overwrite (corrupt) the parent node and
+        // create a self-parent cycle in the lineage graph.
+        let candidate = diff.apply_to(parent_strategy);
+        let is_identity = serde_json::to_value(&candidate)
+            .map(|v| ContentHash::of_json(&v) == parent_node.bundle_hash)
+            .unwrap_or(false);
+        if is_identity {
+            tracing::debug!(
+                cycle_id,
+                parent_hash = %parent_node.bundle_hash.to_hex(),
+                "skipping identity (no-op) mutation diff — guaranteed 0.0 delta, no backtest spent",
+            );
+            no_candidate_count += 1;
+            progress(CycleProgressEvent::NoCandidate {
+                cycle_id: cycle_id.to_string(),
+                parent_hash: parent_node.bundle_hash.to_hex(),
+                reason: "experiment writer produced a no-op (identity) diff".to_string(),
+            });
+            continue;
         }
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),
@@ -313,7 +372,7 @@ where
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
-        let node = build_and_insert_node(pool, &outcome, parent_node, cycle_id).await?;
+        let node = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
         record_proposal(
             pool,
             &outcome.child_hash,
@@ -340,7 +399,7 @@ where
             rejected.push(node);
         }
     }
-    Ok((active, rejected))
+    Ok((active, rejected, no_candidate_count))
 }
 
 async fn gate_and_classify(
@@ -352,7 +411,7 @@ async fn gate_and_classify(
     parent_untouched: &MetricsSummary,
     min_improvement: f64,
 ) -> Result<MutationOutcome> {
-    let child = apply_mutation_params(parent_strategy, &diff);
+    let child = diff.apply_to(parent_strategy);
     let child_day = paper_tester.run(&child, &cycle_config.day_scenario).await?;
     let child_untouched = paper_tester.run(&child, &cycle_config.baseline_scenario).await?;
     let raw_verdict = gate_check(
@@ -395,15 +454,36 @@ async fn gate_and_classify(
         verdict,
         status,
         delta_sharpe,
+        child_day,
+        child_untouched,
     })
 }
 
 async fn build_and_insert_node(
     pool: &SqlitePool,
+    strategy_blob_store: &BlobStore,
     outcome: &MutationOutcome,
     parent_node: &LineageNode,
     cycle_id: &str,
 ) -> Result<LineageNode> {
+    let store = LineageStore::new(pool.clone());
+    // F12: `lineage_nodes` uses `INSERT OR REPLACE` keyed on `bundle_hash`. If a
+    // rejected candidate hashes to an already-*active* node (a re-derivation of
+    // a known-good strategy), replacing it would downgrade the active node to
+    // rejected and poison future re-runs/parent selection. Keep the active node
+    // and return it untouched rather than overwriting it with a rejection.
+    if outcome.status == LineageStatus::Rejected {
+        if let Some(existing) = store.get(&outcome.child_hash).await? {
+            if existing.status == LineageStatus::Active {
+                tracing::debug!(
+                    cycle_id,
+                    child_hash = %outcome.child_hash.to_hex(),
+                    "rejected candidate collides with an existing active node — keeping the active node",
+                );
+                return Ok(existing);
+            }
+        }
+    }
     let node = LineageNode {
         bundle_hash: outcome.child_hash,
         parent_hash: Some(parent_node.bundle_hash),
@@ -413,19 +493,76 @@ async fn build_and_insert_node(
         created_at: Utc::now(),
         diversity_score: None,
     };
-    LineageStore::new(pool.clone()).insert(&node).await?;
+    store.insert(&node).await?;
+
+    // F13: persist the candidate strategy blob so `GET /api/autooptimizer/blob/
+    // :hash` resolves the child (the cycle previously wrote only the parent
+    // root), enabling "candidate diff via blob" — parent vs child — in the
+    // run-detail surface.
+    if let Ok(child_json) = serde_json::to_value(&outcome.child) {
+        if let Err(e) = strategy_blob_store.put_json(&child_json).await {
+            tracing::warn!(child_hash = %outcome.child_hash.to_hex(), "failed to persist candidate blob: {e}");
+        }
+    }
+
+    // F13: persist per-candidate backtest metrics for the run-detail surface.
+    persist_node_metrics(
+        pool,
+        &outcome.child_hash,
+        &outcome.child_day,
+        &outcome.child_untouched,
+    )
+    .await;
+
     Ok(node)
 }
 
-fn apply_mutation_params(base: &Strategy, diff: &MutationDiff) -> Strategy {
-    assert!(diff.params.len() <= 64, "params count exceeds bound");
-    let mut s = base.clone();
-    if let serde_json::Value::Object(ref mut map) = s.mechanical_params {
-        for change in &diff.params {
-            map.insert(change.key.clone(), change.after.clone());
-        }
+/// F13: store the candidate's day + held-out `MetricsSummary` in the
+/// `lineage_node_metrics` side table. Best-effort — auxiliary detail must never
+/// abort the cycle (e.g. a pre-F13 DB that hasn't run `ensure_lineage_schema`);
+/// production provisions the table on `ApiContext::open` / CLI db-open.
+async fn persist_node_metrics(
+    pool: &SqlitePool,
+    child_hash: &ContentHash,
+    day: &MetricsSummary,
+    untouched: &MetricsSummary,
+) {
+    let day_json = serde_json::to_string(day).unwrap_or_else(|_| "null".to_string());
+    let untouched_json = serde_json::to_string(untouched).unwrap_or_else(|_| "null".to_string());
+    if let Err(e) = sqlx::query(
+        "INSERT OR REPLACE INTO lineage_node_metrics \
+         (bundle_hash, metrics_day_json, metrics_untouched_json) VALUES (?, ?, ?)",
+    )
+    .bind(child_hash.to_hex())
+    .bind(day_json)
+    .bind(untouched_json)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(child_hash = %child_hash.to_hex(), "failed to persist candidate metrics: {e}");
     }
-    s
+}
+
+/// F13: persist the per-cycle honesty-check (canary) outcome. Best-effort for
+/// the same reason as [`persist_node_metrics`].
+async fn persist_honesty_check(pool: &SqlitePool, cycle_id: &str, check: &HonestyCheckResult) {
+    if let Err(e) = sqlx::query(
+        "INSERT OR REPLACE INTO cycle_honesty_checks \
+         (cycle_id, passed, sabotage_variant, message, gate_verdict, parent_hash, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(cycle_id)
+    .bind(check.passed_check as i64)
+    .bind(&check.sabotage_variant)
+    .bind(&check.message)
+    .bind(check.gate_verdict.as_str())
+    .bind(check.parent_hash.to_hex())
+    .bind(Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(cycle_id, "failed to persist honesty check: {e}");
+    }
 }
 
 fn gate_check(

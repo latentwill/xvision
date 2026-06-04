@@ -17,6 +17,7 @@ use tempfile::TempDir;
 use ulid::Ulid;
 
 use xvision_engine::agent::llm::MockDispatch;
+use xvision_engine::autooptimizer::blob_store::BlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_cycle, CycleConfig};
@@ -36,7 +37,6 @@ use xvision_engine::eval::scenario::{
 };
 use xvision_engine::safety::VenueLabel;
 use xvision_engine::strategies::Strategy;
-use xvision_observability::BlobStore;
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -103,6 +103,13 @@ async fn fresh_pool() -> sqlx::SqlitePool {
     for sql in migrations {
         sqlx::query(sql).execute(&pool).await.expect("apply migration");
     }
+
+    // F13: provision the lineage side tables (lineage_node_metrics,
+    // cycle_honesty_checks) the runtime self-creates on db-open, so the cycle's
+    // best-effort persistence is actually exercised here.
+    xvision_engine::autooptimizer::lineage::ensure_lineage_schema(&pool)
+        .await
+        .expect("ensure lineage schema");
 
     pool
 }

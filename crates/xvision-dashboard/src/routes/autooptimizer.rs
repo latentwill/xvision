@@ -32,6 +32,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use xvision_engine::autooptimizer::{
+    cycle_runs::{get_cycle_run, list_cycle_runs, CycleRunDetail, CycleRunSummary},
     judge::Finding,
     lineage::{LineageNode, LineageStatus, LineageStore},
     mutator_ladder::{compute_ladder, MutatorScore},
@@ -66,6 +67,14 @@ pub struct DiversityQuery {
     pub cycle_id: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: i64,
+}
+
+#[derive(Deserialize, Default)]
+pub struct CycleRunListQuery {
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
 }
 
 fn default_limit() -> i64 {
@@ -186,6 +195,53 @@ pub async fn get_lineage_node(
         Some(n) => Ok(Json(n)),
         None => Err(DashboardError::NotFound(format!(
             "lineage node '{hash}' not found"
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/autooptimizer/cycles
+//
+// F13/F19 (QA 2026-06-04): a first-class "historic run" list derived from the
+// lineage nodes a completed `run-cycle` produced (grouped by cycle_id). The
+// pre-existing `GET /api/autooptimizer` list serves the memory-distillation
+// ledger, which mutation cycles deliberately don't write to; this surfaces the
+// cycles an operator actually ran.
+// ---------------------------------------------------------------------------
+
+pub async fn list_cycles(
+    State(state): State<AppState>,
+    Query(q): Query<CycleRunListQuery>,
+) -> Result<Json<Vec<CycleRunSummary>>, DashboardError> {
+    if !table_exists(&state.pool, "lineage_nodes").await? {
+        return Ok(Json(Vec::new()));
+    }
+    let runs = list_cycle_runs(&state.pool, q.limit, q.offset)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(Json(runs))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/autooptimizer/cycles/:cycle_id
+// ---------------------------------------------------------------------------
+
+pub async fn get_cycle(
+    Path(cycle_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<CycleRunDetail>, DashboardError> {
+    if !table_exists(&state.pool, "lineage_nodes").await? {
+        return Err(DashboardError::NotFound(format!(
+            "optimizer cycle '{cycle_id}' not found"
+        )));
+    }
+    match get_cycle_run(&state.pool, &cycle_id)
+        .await
+        .map_err(DashboardError::Internal)?
+    {
+        Some(detail) => Ok(Json(detail)),
+        None => Err(DashboardError::NotFound(format!(
+            "optimizer cycle '{cycle_id}' not found"
         ))),
     }
 }
@@ -347,7 +403,6 @@ async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, Dash
             .map_err(|e| DashboardError::Internal(e.into()))?;
     Ok(found.is_some())
 }
-
 
 fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, DashboardError> {
     use sqlx::Row;

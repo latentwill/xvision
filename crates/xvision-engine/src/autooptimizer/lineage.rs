@@ -105,6 +105,37 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("create lineage_embeddings")?;
+    // F13 (2026-06-04): per-candidate backtest metrics, so a completed cycle's
+    // detail can show each experiment's day/untouched MetricsSummary (kept in a
+    // side table to avoid widening the `LineageNode` struct that the dashboard,
+    // CLI, and every test construct).
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS lineage_node_metrics (
+            bundle_hash TEXT PRIMARY KEY REFERENCES lineage_nodes(bundle_hash),
+            metrics_day_json TEXT NOT NULL,
+            metrics_untouched_json TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create lineage_node_metrics")?;
+    // F13: the per-cycle honesty-check (canary) outcome — previously emitted
+    // only over SSE / the CLI summary and persisted nowhere, so a historic
+    // cycle's detail could not report it.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_honesty_checks (
+            cycle_id TEXT PRIMARY KEY,
+            passed INTEGER NOT NULL,
+            sabotage_variant TEXT NOT NULL,
+            message TEXT NOT NULL,
+            gate_verdict TEXT NOT NULL,
+            parent_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create cycle_honesty_checks")?;
     for (sql, label) in [
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",
@@ -173,7 +204,7 @@ impl LineageStore {
     }
 
     pub async fn get(&self, bundle_hash: &ContentHash) -> Result<Option<LineageNode>> {
-        let row = sqlx::query(SELECT_COLS)
+        let row = sqlx::query(&format!("{SELECT_COLS_PREFIX} WHERE bundle_hash = ?"))
             .bind(bundle_hash.to_hex())
             .fetch_optional(&self.pool)
             .await
@@ -210,10 +241,13 @@ impl LineageStore {
     }
 }
 
-const SELECT_COLS: &str = "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
-     created_at, diversity_score FROM lineage_nodes WHERE bundle_hash = ?";
+/// Shared `SELECT <cols> FROM lineage_nodes` prefix (no `WHERE`/`ORDER BY`), so
+/// every reader — `LineageStore` here and [`super::cycle_runs`] — selects the
+/// same column set in the same order that [`row_to_node`] expects.
+pub(crate) const SELECT_COLS_PREFIX: &str = "SELECT bundle_hash, parent_hash, gate_verdict, status, \
+     cycle_id, created_at, diversity_score FROM lineage_nodes";
 
-fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
+pub(crate) fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
     let bundle_hex: String = row.try_get("bundle_hash").context("bundle_hash")?;
     let parent_hex: Option<String> = row.try_get("parent_hash").context("parent_hash")?;
     let gate_str: String = row.try_get("gate_verdict").context("gate_verdict")?;

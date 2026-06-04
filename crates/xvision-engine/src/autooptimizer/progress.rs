@@ -53,6 +53,17 @@ pub enum CycleProgressEvent {
     ParentSelected { cycle_id: String, parent_hash: String },
     /// Fired when a mutation is proposed for a parent. Operator label: "Experiment proposed".
     MutationProposed { cycle_id: String, parent_hash: String },
+    /// Fired when a parent yields no usable candidate this cycle — the mutator
+    /// could not produce a distinct, valid experiment within its retry budget
+    /// (e.g. every attempt was a no-op/identity diff). Operator label: "No
+    /// experiment produced". Distinguishes a genuinely empty cycle from one that
+    /// gated a real candidate (F14, QA 2026-06-04).
+    NoCandidate {
+        cycle_id: String,
+        parent_hash: String,
+        #[serde(default)]
+        reason: String,
+    },
     /// Fired after the numeric gate evaluates a child mutation.
     MutationGated {
         cycle_id: String,
@@ -77,12 +88,6 @@ pub enum CycleProgressEvent {
         child_hash: String,
         severity: String,
         code: String,
-    },
-    /// Fired once the cycle summary is signed. Operator label: "Cycle summary signed".
-    CycleSealed {
-        cycle_id: String,
-        merkle_root: String,
-        node_count: usize,
     },
     /// Fired once the optimizer run task has completed. Operator label: "Optimizer run finished".
     CycleFinished {

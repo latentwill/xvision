@@ -100,13 +100,14 @@ pub async fn start_cycle(
         explicit_parent_hashes,
     );
     let tx = state.autooptimizer_tx.clone();
-    let obs_blob_store =
-        xvision_observability::BlobStore::new(state.xvn_home.join("lineage").join("obs-blobs"));
+    // F13: write candidate strategy blobs to the same `lineage/blobs` root the
+    // `/blob/:hash` endpoint reads, so cycle children are retrievable.
+    let cycle_blob_store = BlobStore::new(state.xvn_home.join("lineage").join("blobs"));
     tokio::spawn(async move {
         let paper_tester = Arc::new(stub_paper_tester());
         let result = run_cycle(
             &pool,
-            &obs_blob_store,
+            &cycle_blob_store,
             &cfg,
             &cycle_config,
             &ParentPolicy::RoundRobin,

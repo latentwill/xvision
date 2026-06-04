@@ -66,8 +66,12 @@ fn fixture_strategy() -> Strategy {
     .expect("fixture strategy deserializes")
 }
 
+// A genuinely strategy-altering diff. F14 (QA 2026-06-04): `propose` rejects
+// identity (no-op) diffs, and a prose-only edit targets an agent prompt (a
+// `Strategy` references agents by `AgentRef`), so it never changes the strategy
+// hash. A real candidate bumps an existing mechanical param.
 fn valid_diff_json() -> &'static str {
-    r#"{"kind":"prose","prose":[{"agent_role":"trader","before":"analyze market","after":"analyze market deeply"}],"params":[],"tools":{"added":[],"removed":[]},"rationale":"deeper analysis"}"#
+    r#"{"kind":"param","prose":[],"params":[{"key":"ema_fast","before":12,"after":20}],"tools":{"added":[],"removed":[]},"rationale":"faster EMA crossover"}"#
 }
 
 async fn fresh_pool() -> sqlx::SqlitePool {

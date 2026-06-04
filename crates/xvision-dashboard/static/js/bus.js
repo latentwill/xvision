@@ -27,11 +27,11 @@ const DISPLAY_LABELS = {
   cycle_started:          "Optimizer run started",
   parent_selected:        "Parent selected",
   mutation_proposed:      "Experiment proposed",
+  no_candidate:           "No experiment produced",
   mutation_gated_passed:  "Experiment kept",
   mutation_gated_dropped: "Experiment dropped",
   honesty_check_run:      "Honesty check result",
   judge_finding:          "Reviewer finished notes",
-  cycle_sealed:           "Cycle summary signed",
   cycle_finished:         "Optimizer run finished",
 };
 

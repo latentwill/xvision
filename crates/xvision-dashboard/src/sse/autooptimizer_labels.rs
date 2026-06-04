@@ -23,11 +23,11 @@ pub fn display_label(event: &CycleProgressEvent) -> &'static str {
         CycleStarted { .. } => "Optimizer run started",
         ParentSelected { .. } => "Parent selected",
         MutationProposed { .. } => "Experiment proposed",
+        NoCandidate { .. } => "No experiment produced",
         MutationGated { passed: true, .. } => "Experiment kept",
         MutationGated { passed: false, .. } => "Experiment dropped",
         HonestyCheckRun { .. } => "Honesty check result",
         JudgeFinding { .. } => "Reviewer finished notes",
-        CycleSealed { .. } => "Cycle summary signed",
         CycleFinished { .. } => "Optimizer run finished",
     }
 }
@@ -42,11 +42,11 @@ pub fn event_kind(event: &CycleProgressEvent) -> &'static str {
         CycleStarted { .. } => "cycle_started",
         ParentSelected { .. } => "parent_selected",
         MutationProposed { .. } => "mutation_proposed",
+        NoCandidate { .. } => "no_candidate",
         MutationGated { passed: true, .. } => "mutation_gated_passed",
         MutationGated { passed: false, .. } => "mutation_gated_dropped",
         HonestyCheckRun { .. } => "honesty_check_run",
         JudgeFinding { .. } => "judge_finding",
-        CycleSealed { .. } => "cycle_sealed",
         CycleFinished { .. } => "cycle_finished",
     }
 }
@@ -103,11 +103,11 @@ mod tests {
             code: "J001".into(),
         }
     }
-    fn cycle_sealed() -> CycleProgressEvent {
-        CycleProgressEvent::CycleSealed {
+    fn no_candidate() -> CycleProgressEvent {
+        CycleProgressEvent::NoCandidate {
             cycle_id: "c1".into(),
-            merkle_root: "root".into(),
-            node_count: 2,
+            parent_hash: "abc".into(),
+            reason: "all proposals were no-ops".into(),
         }
     }
     fn cycle_finished() -> CycleProgressEvent {
@@ -126,7 +126,7 @@ mod tests {
         assert_eq!(display_label(&mutation_gated_dropped()), "Experiment dropped");
         assert_eq!(display_label(&honesty_check_run()), "Honesty check result");
         assert_eq!(display_label(&judge_finding()), "Reviewer finished notes");
-        assert_eq!(display_label(&cycle_sealed()), "Cycle summary signed");
+        assert_eq!(display_label(&no_candidate()), "No experiment produced");
         assert_eq!(display_label(&cycle_finished()), "Optimizer run finished");
     }
 
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(event_kind(&mutation_gated_dropped()), "mutation_gated_dropped");
         assert_eq!(event_kind(&honesty_check_run()), "honesty_check_run");
         assert_eq!(event_kind(&judge_finding()), "judge_finding");
-        assert_eq!(event_kind(&cycle_sealed()), "cycle_sealed");
+        assert_eq!(event_kind(&no_candidate()), "no_candidate");
         assert_eq!(event_kind(&cycle_finished()), "cycle_finished");
     }
 }
