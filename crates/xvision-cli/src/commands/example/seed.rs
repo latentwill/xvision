@@ -1,13 +1,21 @@
 //! `xvn example seed [--reset]` implementation.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use xvision_engine::agents::{AgentSlot, AgentStore, Capability, InputsPolicy, NewAgent};
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::eval::scenario_store;
+use xvision_engine::strategies::manifest::{PublicManifest, RegimeFit};
+use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
-use xvision_engine::strategies::templates::{example_scenarios, is_example_scenario, is_example_strategy};
+use xvision_engine::strategies::templates::{
+    example_scenarios, is_example_scenario, is_example_strategy, EXAMPLE_STRATEGY_CREATOR,
+    EXAMPLE_STRATEGY_TREND_FOLLOWER_ID,
+};
+use xvision_engine::strategies::{ActivationMode, AgentRef, PipelineDef, Strategy};
 
 use crate::commands::example::{api_to_cli, CliResultUnit, SeedArgs};
 use crate::exit::CliError;
@@ -77,7 +85,7 @@ pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResul
         ..SeedSummary::default()
     };
 
-    seed_strategies(&strategy_store, args.reset, &mut summary).await?;
+    seed_strategies(&ctx, &strategy_store, args.reset, &mut summary).await?;
     seed_scenarios(&ctx, args.reset, &mut summary).await?;
     write_tutorial(&xvn_home, &mut summary).await?;
     seed_autooptimizer_config(&xvn_home, &mut summary).await?;
@@ -93,7 +101,31 @@ pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResul
     Ok(())
 }
 
-async fn seed_strategies(store: &FilesystemStore, _reset: bool, summary: &mut SeedSummary) -> CliResultUnit {
+/// System prompt for the example trend-follower agent.
+///
+/// Must be ≥ 200 characters and must not start with the default placeholder
+/// text (see `validate_agent_for_save`). Kept here rather than in a data file
+/// so the seeder is self-contained and the binary needs no extra asset.
+const EXAMPLE_TRADER_PROMPT: &str = "\
+You are a momentum trend-follower trading BTC/USD on hourly bars. \
+Read the supplied OHLCV price history and emit exactly one JSON decision: \
+{\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0..1.0,\"justification\":\"<one sentence>\"}. \
+Reasoning guide: \
+(1) Identify the dominant short-term trend from recent highs/lows and EMA slope direction. \
+(2) Only open positions that align with the trend; prefer flat or hold when bars are range-bound or conflicting. \
+(3) Conviction above 0.7 requires clear momentum evidence (e.g. higher highs, bullish engulfing). \
+(4) Do not omit the action field. Do not wrap in markdown fences.\
+";
+
+async fn seed_strategies(
+    ctx: &ApiContext,
+    store: &FilesystemStore,
+    reset: bool,
+    summary: &mut SeedSummary,
+) -> CliResultUnit {
+    let agent_store = AgentStore::new(ctx.db.clone());
+
+    // ── 1. Remove legacy seed-owned strategies (all ids) ───────────────────
     let existing_ids = store
         .list()
         .await
@@ -104,13 +136,115 @@ async fn seed_strategies(store: &FilesystemStore, _reset: bool, summary: &mut Se
             Err(_) => continue,
         };
         if is_example_strategy(&strategy) {
-            store
-                .delete(&id)
-                .await
-                .map_err(|e| CliError::upstream(anyhow::anyhow!("delete {id}: {e}")))?;
-            summary.strategies_removed.push(id);
+            // On reset (or always for legacy rows): also clean up any
+            // scoped agents that were attached to this strategy so the
+            // DB stays consistent.
+            if reset || id != EXAMPLE_STRATEGY_TREND_FOLLOWER_ID {
+                let _ = agent_store.delete_scoped_to(&id).await;
+                store
+                    .delete(&id)
+                    .await
+                    .map_err(|e| CliError::upstream(anyhow::anyhow!("delete {id}: {e}")))?;
+                summary.strategies_removed.push(id);
+            }
         }
     }
+
+    // ── 2. Idempotency check — skip if already seeded and not reset ─────────
+    if !reset {
+        if let Ok(existing) = store.load(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID).await {
+            if is_example_strategy(&existing) && !existing.agents.is_empty() {
+                summary
+                    .strategies_skipped
+                    .push(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into());
+                return Ok(());
+            }
+        }
+    }
+
+    // ── 3. Create the scoped trader agent ───────────────────────────────────
+    let agent_id = agent_store
+        .create(NewAgent {
+            name: "Example trend-follower trader".into(),
+            description: "Default trader agent seeded with `xvn example seed`. \
+                          Swap the model and prompt to match your strategy."
+                .into(),
+            tags: vec!["source:example".into()],
+            slots: vec![AgentSlot {
+                name: "trader".into(),
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+                system_prompt: EXAMPLE_TRADER_PROMPT.into(),
+                skill_ids: vec![],
+                max_tokens: None,
+                max_wall_ms: None,
+                temperature: None,
+                prompt_version: AgentSlot::compute_prompt_version(EXAMPLE_TRADER_PROMPT),
+                inputs_policy: InputsPolicy::Raw,
+                bar_history_limit: None,
+                memory_mode: Default::default(),
+                noop_skip: None,
+                capabilities: BTreeSet::from([Capability::Trader]),
+                delta_briefing: None,
+            }],
+            scope_strategy_id: Some(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into()),
+        })
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("create example agent: {e}")))?;
+
+    // ── 4. Create the example strategy with the agent attached ──────────────
+    let strategy = Strategy {
+        manifest: PublicManifest {
+            id: EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into(),
+            display_name: "Example — BTC/USD Trend Follower".into(),
+            plain_summary: "Seeded example strategy. Follows hourly BTC/USD momentum. \
+                            Edit or clone this to build your own strategy."
+                .into(),
+            creator: EXAMPLE_STRATEGY_CREATOR.into(),
+            template: "trend_follower".into(),
+            regime_fit: vec![RegimeFit::TrendingBull],
+            asset_universe: vec!["BTC/USD".into()],
+            decision_cadence_minutes: 60,
+            attested_with: vec!["anthropic.claude-haiku-4-5".into()],
+            required_tools: vec![],
+            risk_preset_or_config: "balanced".into(),
+            published_at: None,
+            min_warmup_bars: None,
+            color: None,
+            execution_mode: Default::default(),
+            capital_mode: Default::default(),
+        },
+        hypothesis: None,
+        agents: vec![AgentRef {
+            agent_id,
+            role: "trader".into(),
+            activates: Some(Capability::Trader),
+        }],
+        pipeline: PipelineDef::single(),
+        regime_slot: None,
+        intern_slot: None,
+        trader_slot: None,
+        risk: RiskPreset::Balanced.expand(),
+        mechanical_params: serde_json::json!({"ema_fast": 12, "ema_slow": 26}),
+        decision_mode: Default::default(),
+        mechanistic_config: None,
+        activation_mode: ActivationMode::EveryBar,
+        filter: None,
+        // Acknowledge every-bar dispatch for the out-of-the-box example so
+        // `eval validate` passes without requiring the operator to add a filter
+        // first. Operators who clone this strategy should unset this and add a
+        // filter once they understand the cost model.
+        acknowledge_no_filter: true,
+    };
+
+    store
+        .save(&strategy)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("save example strategy: {e}")))?;
+
+    summary
+        .strategies_created
+        .push(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into());
     Ok(())
 }
 
@@ -294,6 +428,7 @@ mod tests {
     use xvision_engine::strategies::slot::LLMSlot;
     use xvision_engine::strategies::templates::{
         EXAMPLE_SCENARIO_QUICKSTART_BULL, EXAMPLE_SCENARIO_QUICKSTART_FLASH, EXAMPLE_STRATEGY_CREATOR,
+        EXAMPLE_STRATEGY_TREND_FOLLOWER_ID,
     };
     use xvision_engine::strategies::{ActivationMode, PipelineDef, Strategy};
 
@@ -349,7 +484,7 @@ mod tests {
             reset,
             ..SeedSummary::default()
         };
-        seed_strategies(&store, reset, &mut summary).await.unwrap();
+        seed_strategies(&ctx, &store, reset, &mut summary).await.unwrap();
         seed_scenarios(&ctx, reset, &mut summary).await.unwrap();
         write_tutorial(xvn_home, &mut summary).await.unwrap();
         seed_autooptimizer_config(xvn_home, &mut summary).await.unwrap();
@@ -357,13 +492,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn first_seed_creates_scenarios_and_tutorial() {
+    async fn first_seed_creates_strategy_with_trader_agent() {
+        // Regression test for T7: `example-trend-follower` must be seeded with
+        // at least one AgentRef whose role is "trader". Before this fix the
+        // strategy was not seeded at all, so `eval run`/`eval validate` failed
+        // with "strategy has no agent attached".
         let dir = tempdir().unwrap();
         let summary = seed_fresh(dir.path(), false).await;
 
-        assert!(summary.strategies_created.is_empty());
+        // Strategy is created.
+        assert!(
+            summary
+                .strategies_created
+                .contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
+            "expected example-trend-follower in strategies_created, got: {:?}",
+            summary.strategies_created,
+        );
         assert!(summary.strategies_skipped.is_empty());
         assert!(summary.strategies_removed.is_empty());
+
+        // The strategy on disk has >= 1 agent with role "trader".
+        let store = FilesystemStore::new(strategy_store_dir(dir.path()));
+        let strategy = store
+            .load(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID)
+            .await
+            .expect("example-trend-follower must exist after seed");
+        let has_trader = strategy.agents.iter().any(|a| a.canonical_role() == "trader");
+        assert!(
+            has_trader,
+            "seeded example strategy must have >= 1 agent with role 'trader', agents: {:?}",
+            strategy.agents,
+        );
+    }
+
+    #[tokio::test]
+    async fn first_seed_creates_scenarios_and_tutorial() {
+        let dir = tempdir().unwrap();
+        let summary = seed_fresh(dir.path(), false).await;
 
         assert_eq!(summary.scenarios_created.len(), 2);
         assert!(summary
@@ -385,19 +550,36 @@ mod tests {
         let dir = tempdir().unwrap();
         seed_fresh(dir.path(), false).await;
         let second = seed_fresh(dir.path(), false).await;
+        // Strategy is skipped, not re-created.
         assert!(second.strategies_created.is_empty());
-        assert!(second.strategies_skipped.is_empty());
+        assert_eq!(
+            second.strategies_skipped,
+            vec![EXAMPLE_STRATEGY_TREND_FOLLOWER_ID]
+        );
         assert!(second.scenarios_created.is_empty());
         assert_eq!(second.scenarios_skipped.len(), 2);
     }
 
     #[tokio::test]
-    async fn reset_recreates_unreferenced_scenarios_without_strategies() {
+    async fn reset_recreates_strategy_and_scenarios() {
         let dir = tempdir().unwrap();
         seed_fresh(dir.path(), false).await;
         let second = seed_fresh(dir.path(), true).await;
-        assert!(second.strategies_removed.is_empty());
-        assert!(second.strategies_created.is_empty());
+        // On reset the strategy is removed and re-created.
+        assert!(
+            second
+                .strategies_removed
+                .contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
+            "reset must remove the example strategy, removed: {:?}",
+            second.strategies_removed,
+        );
+        assert!(
+            second
+                .strategies_created
+                .contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
+            "reset must recreate the example strategy, created: {:?}",
+            second.strategies_created,
+        );
         // No eval_runs exist yet, so example scenarios delete cleanly and
         // get re-inserted from the curated set.
         assert_eq!(second.scenarios_removed.len(), 2);
@@ -407,18 +589,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seed_prunes_legacy_example_strategies() {
+    async fn seed_prunes_legacy_agentless_example_strategy() {
+        // A legacy strategy file (agentless, creator = @xvision-examples) is
+        // pruned and replaced with the properly-wired version on the next seed.
         let dir = tempdir().unwrap();
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
         let legacy = strategy_fixture("example-trend-follower", EXAMPLE_STRATEGY_CREATOR);
+        // The fixture has `agents: Vec::new()` — this is the broken shape.
+        assert!(
+            legacy.agents.is_empty(),
+            "fixture must represent the old agentless shape"
+        );
         store.save(&legacy).await.unwrap();
 
         let summary = seed_fresh(dir.path(), false).await;
 
-        assert_eq!(summary.strategies_removed, vec!["example-trend-follower"]);
-        assert!(store.load("example-trend-follower").await.is_err());
-        assert!(summary.strategies_created.is_empty());
-        assert!(summary.strategies_skipped.is_empty());
+        // Legacy row is pruned (agents.is_empty → treated as stale) and
+        // re-created with a real agent.
+        assert!(
+            summary
+                .strategies_removed
+                .contains(&"example-trend-follower".to_string())
+                || summary
+                    .strategies_created
+                    .contains(&"example-trend-follower".to_string()),
+            "expected prune+recreate of the agentless legacy row, \
+             removed={:?} created={:?}",
+            summary.strategies_removed,
+            summary.strategies_created,
+        );
+        let loaded = store.load("example-trend-follower").await.unwrap();
+        assert!(
+            !loaded.agents.is_empty(),
+            "after seed, example-trend-follower must have >= 1 agent"
+        );
     }
 
     #[tokio::test]
