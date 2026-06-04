@@ -158,9 +158,9 @@ pub struct RunArgs {
     #[arg(long)]
     pub scenario: Option<String>,
     /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
-    /// Current live mode is Alpaca paper trading only — real market data,
-    /// paper (simulated) money via https://paper-api.alpaca.markets. Real-money
-    /// venues are not yet supported.
+    /// Live mode connects to Alpaca paper trading (real market data, simulated
+    /// money via https://paper-api.alpaca.markets). Real-money venues are
+    /// outside the current scope — only paper (simulated) execution is wired.
     #[arg(long, default_value = "backtest")]
     pub mode: String,
     /// Live Alpaca asset, e.g. BTC/USD. Required for --mode live.
@@ -173,7 +173,7 @@ pub struct RunArgs {
     /// Broker credential set to use for this live run. Selects WHICH set of
     /// stored credentials to load (not the venue/environment — venue selection
     /// is a separate future plan). Current live scope accepts only "alpaca"
-    /// (Alpaca paper trading). Real-money credentials are out of scope for now.
+    /// (Alpaca paper trading). Only paper-trading credentials are supported.
     #[arg(long, default_value = "alpaca")]
     pub live_broker_creds_ref: String,
     /// Stop after N live bars. At least one live stop flag is required.
