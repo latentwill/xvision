@@ -1,5 +1,20 @@
 # AutoOptimizer Run-5 — verification + new findings (F28, F32–F34) — coding-agent handoff
 
+> ## Resolution status (2026-06-05)
+> The run-5 set was worked end-to-end. **Merged:**
+> - **F36 + F35** (capture-on-interrupt: partial metrics/tokens/cost on cancel/fail/timeout/crash across eval + optimizer; incremental cost ticker) — PR #813
+> - **F32** (deterministic mutator → per-cycle exploration seed + temperature) — PR #814
+> - **F28 backend** (UI budget cap + window controls + `cycles/:id/cancel` route + cooperative cancel) — PR #815
+> - **F34** (cross-process workspace run-lock serializes cycles) — PR #816
+> - **F24** (configurable optimization objective: sharpe/total_return/max_drawdown/win_rate) — PR #817
+> - **F33** (per-cycle attribution edges so duplicate candidates aren't lost) — PR #818
+> - **F28 frontend** (launch-form budget/window inputs + Cancel button) — PR #819
+>
+> **Remaining (handed off — not yet done):**
+> - **F25** (MED) — model/provider mutation axis. Deferred deliberately: doing it safely requires threading the *registered-provider* list into the mutator/validator so a `ModelSwap` can't propose an unavailable provider (which would re-open the F22 cross-provider trap). Scope it with that guard first. Files per the F25 section.
+> - **F35 item #3** (live cost/tokens streaming in the Live tab) — frontend only; the backend now persists incrementally so the data exists. Wire `useCycleRuns()` / a per-cycle cost poll into the Live tab.
+> - **F29** (LOW) — mutate-once/retire UI parity.
+
 **Date:** 2026-06-04
 **Deploy:** `xvision:deploy-latest` (image built 15:19Z = 23:19 +0800) — PRs **#809 (F23)**, **#810 (F26)**, **#811 (F30)**, **#812 (F31)**.
 **Test:** ran a CLI cycle (small windows) **and** a UI/dashboard cycle (`POST /api/autooptimizer/run-cycle`) on `gemini_long_gate_v3` simultaneously, to verify the now-unified path. Verified the headline fixes — and the run surfaced four issues that need the next pass.
