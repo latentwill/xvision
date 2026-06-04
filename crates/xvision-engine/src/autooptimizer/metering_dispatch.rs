@@ -1,19 +1,23 @@
 //! Cost-metering `LlmDispatch` decorator for the optimizer cycle.
 //!
-//! F11 (QA 2026-06-04): `xvn optimizer run-cycle --budget` only metered the
-//! paper-test backtests; the experiment-writer (mutator) and judge LLM calls
-//! went through a raw dispatch and were invisible to the cap and the printed
-//! `cycle cost:`. This decorator wraps the mutator/judge dispatch and adds each
-//! call's realized token cost (token counts × catalog pricing — the exact same
-//! `compute_token_cost_usd_from_catalog` path `model_calls.cost_usd` uses) into
-//! a shared accumulator that the [`super::eval_adapter::BudgetCappedPaperTester`]
-//! also writes to, so the budget cap and the realized total cover every LLM
-//! call the cycle makes.
+//! F11 (QA 2026-06-04): `xvn optimizer run-cycle` printed `cycle cost: $0.00`
+//! and `--budget` never tripped, because the cost path depended on the
+//! `model_calls` observability ledger via the `agent_runs.eval_run_id` join —
+//! and the optimizer's backtest decisions aren't linked to the paper-test eval
+//! run id, so the join matched nothing.
 //!
-//! Pricing is best-effort: when the wrapped provider's catalog isn't cached (or
-//! the model isn't priced), the call contributes `0` — the same "unknown is not
-//! zero" stance as `crate::eval::cost`, where a missing price is never surfaced
-//! as a misleading `$0.00`.
+//! This decorator meters at the dispatch boundary instead. The CLI wraps the
+//! ONE dispatch every LLM call funnels through — the paper-test backtest trader
+//! decisions AND the experiment writer (mutator) AND the judge — so each call's
+//! realized token cost (token counts × catalog pricing, the exact same
+//! `compute_token_cost_usd_from_catalog` path `model_calls.cost_usd` uses) is
+//! added to a shared accumulator the [`super::eval_adapter::BudgetCappedPaperTester`]
+//! gates on. No observability linkage; nothing can be missed.
+//!
+//! Pricing is best-effort: when the provider catalog isn't cached (or the model
+//! isn't priced), the call contributes `0` and is counted as `unpriced` — the
+//! same "unknown is not zero" stance as `crate::eval::cost`, so the CLI can say
+//! "N call(s) with unknown price" instead of a misleading `$0.00`.
 
 use std::sync::{Arc, Mutex};
 
@@ -74,5 +78,116 @@ impl LlmDispatch for CostMeteringDispatch {
             None => {}
         }
         Ok(resp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::llm::{ContentBlock, LlmResponse, StopReason};
+    use chrono::Utc;
+    use xvision_core::providers::{Catalog, ModelEntry};
+
+    /// Inner dispatch returning fixed token counts so the meter has something to
+    /// price. Every backtest trader decision / mutator / judge call funnels
+    /// through `complete`; this stands in for one.
+    struct FixedTokensDispatch {
+        input: u32,
+        output: u32,
+    }
+
+    #[async_trait]
+    impl LlmDispatch for FixedTokensDispatch {
+        async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text { text: "{}".into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: self.input,
+                output_tokens: self.output,
+            })
+        }
+    }
+
+    fn priced_catalog() -> Arc<Catalog> {
+        Arc::new(Catalog {
+            provider: "openrouter".into(),
+            fetched_at: Utc::now(),
+            source_url: "test".into(),
+            models: vec![ModelEntry {
+                id: "google/gemini-3.1-flash-lite".into(),
+                display_name: None,
+                context_window: None,
+                max_output_tokens: None,
+                supports_reasoning: None,
+                supports_tools: None,
+                pricing_per_million_input_usd: Some(0.1),
+                pricing_per_million_output_usd: Some(0.4),
+                raw: serde_json::Value::Null,
+            }],
+        })
+    }
+
+    fn req(model: &str) -> LlmRequest {
+        LlmRequest {
+            model: model.into(),
+            system_prompt: String::new(),
+            messages: vec![],
+            max_tokens: None,
+            tools: vec![],
+            temperature: None,
+            response_schema: None,
+            cache_control: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn meters_priced_calls_into_shared_handle() {
+        let spent = Arc::new(Mutex::new(0.0));
+        let unpriced = Arc::new(Mutex::new(0u64));
+        let dispatch = CostMeteringDispatch::new(
+            Arc::new(FixedTokensDispatch {
+                input: 1_000_000,
+                output: 1_000_000,
+            }),
+            vec![priced_catalog()],
+            Arc::clone(&spent),
+            Arc::clone(&unpriced),
+        );
+
+        dispatch
+            .complete(req("google/gemini-3.1-flash-lite"))
+            .await
+            .unwrap();
+
+        // 1M in * $0.1/Mtok + 1M out * $0.4/Mtok = $0.50.
+        assert!(
+            (*spent.lock().unwrap() - 0.5).abs() < 1e-9,
+            "priced call must accumulate cost"
+        );
+        assert_eq!(*unpriced.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn counts_unpriced_calls_without_crashing() {
+        let spent = Arc::new(Mutex::new(0.0));
+        let unpriced = Arc::new(Mutex::new(0u64));
+        let dispatch = CostMeteringDispatch::new(
+            Arc::new(FixedTokensDispatch {
+                input: 100,
+                output: 100,
+            }),
+            vec![priced_catalog()],
+            Arc::clone(&spent),
+            Arc::clone(&unpriced),
+        );
+
+        // A model the catalog doesn't price → counted as unpriced, $0 spent.
+        dispatch
+            .complete(req("anthropic/claude-sonnet-4.6"))
+            .await
+            .unwrap();
+
+        assert_eq!(*spent.lock().unwrap(), 0.0);
+        assert_eq!(*unpriced.lock().unwrap(), 1);
     }
 }
