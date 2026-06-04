@@ -35,6 +35,14 @@ pub struct CycleRunSummary {
     pub first_created_at: String,
     /// RFC-3339 timestamp of the latest node in the cycle.
     pub last_created_at: String,
+    /// F23: per-cycle realized cost + token usage (from `cycle_cost`). `None`
+    /// for cycles that predate cost metering or weren't run via the CLI.
+    pub cost_usd: Option<f64>,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    /// Count of LLM calls billed against a model with no catalog price (the
+    /// metered cost is a lower bound when this is > 0).
+    pub unpriced_calls: Option<i64>,
 }
 
 /// Mutator provenance for a candidate (from `mutator_attribution`).
@@ -85,15 +93,20 @@ pub struct CycleRunDetail {
 /// `cycle_id` (seeded root strategies that were never run) are excluded.
 pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Result<Vec<CycleRunSummary>> {
     let rows = sqlx::query(
-        "SELECT cycle_id, \
+        "SELECT ln.cycle_id AS cycle_id, \
                 COUNT(*) AS node_count, \
-                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_count, \
-                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count, \
-                MIN(created_at) AS first_created_at, \
-                MAX(created_at) AS last_created_at \
-         FROM lineage_nodes \
-         WHERE cycle_id IS NOT NULL \
-         GROUP BY cycle_id \
+                SUM(CASE WHEN ln.status = 'active' THEN 1 ELSE 0 END) AS active_count, \
+                SUM(CASE WHEN ln.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count, \
+                MIN(ln.created_at) AS first_created_at, \
+                MAX(ln.created_at) AS last_created_at, \
+                cc.cost_usd AS cost_usd, \
+                cc.input_tokens AS input_tokens, \
+                cc.output_tokens AS output_tokens, \
+                cc.unpriced_calls AS unpriced_calls \
+         FROM lineage_nodes ln \
+         LEFT JOIN cycle_cost cc ON cc.cycle_id = ln.cycle_id \
+         WHERE ln.cycle_id IS NOT NULL \
+         GROUP BY ln.cycle_id \
          ORDER BY last_created_at DESC \
          LIMIT ? OFFSET ?",
     )
@@ -103,6 +116,57 @@ pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Resu
     .await
     .context("list_cycle_runs query")?;
     rows.into_iter().map(row_to_cycle_summary).collect()
+}
+
+/// Persist a cycle's metered token usage + realized cost (F23). `INSERT OR
+/// REPLACE` so re-running the same `cycle_id` overwrites.
+pub async fn persist_cycle_cost(
+    pool: &SqlitePool,
+    cycle_id: &str,
+    meter: &super::metering_dispatch::CycleMeter,
+    created_at: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT OR REPLACE INTO cycle_cost \
+         (cycle_id, input_tokens, output_tokens, cost_usd, unpriced_calls, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(cycle_id)
+    .bind(meter.input_tokens as i64)
+    .bind(meter.output_tokens as i64)
+    .bind(meter.spent_usd)
+    .bind(meter.unpriced_calls as i64)
+    .bind(created_at)
+    .execute(pool)
+    .await
+    .context("persist cycle_cost")?;
+    Ok(())
+}
+
+/// `(cost_usd, input_tokens, output_tokens, unpriced_calls)` for a cycle, or all
+/// `None` when no cost row exists / the table is absent.
+async fn load_cycle_cost(
+    pool: &SqlitePool,
+    cycle_id: &str,
+) -> (Option<f64>, Option<i64>, Option<i64>, Option<i64>) {
+    let row = sqlx::query(
+        "SELECT cost_usd, input_tokens, output_tokens, unpriced_calls \
+         FROM cycle_cost WHERE cycle_id = ?",
+    )
+    .bind(cycle_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    match row {
+        Some(r) => (
+            r.try_get("cost_usd").ok(),
+            r.try_get("input_tokens").ok(),
+            r.try_get("output_tokens").ok(),
+            r.try_get("unpriced_calls").ok(),
+        ),
+        None => (None, None, None, None),
+    }
 }
 
 /// Fetch one cycle's summary + all of its nodes (ordered oldest-first), or
@@ -125,6 +189,7 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
         .filter(|n| matches!(n.status, super::lineage::LineageStatus::Active))
         .count() as i64;
     let node_count = nodes.len() as i64;
+    let (cost_usd, input_tokens, output_tokens, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
     let summary = CycleRunSummary {
         cycle_id: cycle_id.to_string(),
         node_count,
@@ -138,6 +203,10 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
             .last()
             .map(|n| n.created_at.to_rfc3339())
             .unwrap_or_default(),
+        cost_usd,
+        input_tokens,
+        output_tokens,
+        unpriced_calls,
     };
 
     // Enrich each node with its persisted metrics + mutator provenance
@@ -236,5 +305,10 @@ fn row_to_cycle_summary(row: sqlx::sqlite::SqliteRow) -> Result<CycleRunSummary>
         rejected_count: row.try_get("rejected_count").context("rejected_count")?,
         first_created_at: row.try_get("first_created_at").context("first_created_at")?,
         last_created_at: row.try_get("last_created_at").context("last_created_at")?,
+        // LEFT JOIN — NULL (→ None) when the cycle has no cost row.
+        cost_usd: row.try_get("cost_usd").ok(),
+        input_tokens: row.try_get("input_tokens").ok(),
+        output_tokens: row.try_get("output_tokens").ok(),
+        unpriced_calls: row.try_get("unpriced_calls").ok(),
     })
 }

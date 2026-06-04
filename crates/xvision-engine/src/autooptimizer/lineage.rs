@@ -136,6 +136,23 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("create cycle_honesty_checks")?;
+    // F23 (2026-06-04): per-cycle token usage + realized cost, so the CLI
+    // summary, `inspect <cycle>`, and the optimizer panel can show what a cycle
+    // consumed (cycles are token-heavy). Metered in-memory across every LLM call
+    // and persisted once at cycle end.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_cost (
+            cycle_id TEXT PRIMARY KEY,
+            input_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            cost_usd REAL NOT NULL,
+            unpriced_calls INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create cycle_cost")?;
     for (sql, label) in [
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",

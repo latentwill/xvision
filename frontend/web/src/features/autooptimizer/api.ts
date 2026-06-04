@@ -109,6 +109,24 @@ export async function listLineageNodes(): Promise<LineageNode[]> {
   return apiFetch<LineageNode[]>("/api/autooptimizer/lineage");
 }
 
+/** One historic optimizer cycle (grouped from lineage) with F23 tokens + cost. */
+export type CycleRunSummary = {
+  cycle_id: string;
+  node_count: number;
+  active_count: number;
+  rejected_count: number;
+  first_created_at: string;
+  last_created_at: string;
+  cost_usd?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  unpriced_calls?: number | null;
+};
+
+export async function listCycleRuns(): Promise<CycleRunSummary[]> {
+  return apiFetch<CycleRunSummary[]>("/api/autooptimizer/cycles");
+}
+
 export async function getLineageNode(hash: string): Promise<LineageNode> {
   return apiFetch<LineageNode>(`/api/autooptimizer/lineage/${encodeURIComponent(hash)}`);
 }
@@ -141,6 +159,7 @@ export const autooptimizerKeys = {
   lineage: () => [...autooptimizerKeys.all, "lineage"] as const,
   lineageNode: (hash: string) => [...autooptimizerKeys.all, "lineage", hash] as const,
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
+  cycles: () => [...autooptimizerKeys.all, "cycles"] as const,
   diversity: (q?: DiversityQuery) =>
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
   blob: (hash: string | null | undefined) =>
@@ -153,6 +172,15 @@ export function useLineageNodes() {
   return useQuery({
     queryKey: autooptimizerKeys.lineage(),
     queryFn: listLineageNodes,
+    staleTime: 30_000,
+  });
+}
+
+/** F23: historic cycles with per-cycle tokens + realized cost. */
+export function useCycleRuns() {
+  return useQuery({
+    queryKey: autooptimizerKeys.cycles(),
+    queryFn: listCycleRuns,
     staleTime: 30_000,
   });
 }

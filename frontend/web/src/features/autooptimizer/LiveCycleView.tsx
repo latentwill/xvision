@@ -10,6 +10,8 @@ import {
   formatEventLabel,
   startRunCycle,
   useLineageNodes,
+  useCycleRuns,
+  type CycleRunSummary,
   autooptimizerKeys,
 } from "./api";
 import {
@@ -472,12 +474,23 @@ function ActiveLineagesSectionFull({ nodes }: { nodes: LineageNode[] }) {
 
 // ─── Recent cycles section ────────────────────────────────────────────────────
 
-function CycleRow({ group }: { group: CycleGroup }) {
+// F23: compact token count, e.g. 1_935_625 → "1.9M".
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function CycleRow({ group, cost }: { group: CycleGroup; cost?: CycleRunSummary }) {
   const firstSeen = group.nodes[group.nodes.length - 1]?.created_at ?? "";
   const diversityScores = group.nodes
     .map((n) => n.diversity_score)
     .filter((s): s is number => s != null);
   const bestDiversity = diversityScores.length > 0 ? Math.max(...diversityScores) : null;
+  const totalTokens =
+    cost?.input_tokens != null && cost?.output_tokens != null
+      ? cost.input_tokens + cost.output_tokens
+      : null;
   return (
     <tr className="border-b border-border last:border-0 hover:bg-surface-elev/40">
       <td className="px-4 py-2 font-mono text-[12px] text-text">
@@ -488,6 +501,19 @@ function CycleRow({ group }: { group: CycleGroup }) {
         {group.activeCount}
       </td>
       <td className="px-4 py-2 text-right font-mono text-text-3">
+        {cost?.cost_usd != null ? (
+          <span title={cost.unpriced_calls ? `${cost.unpriced_calls} call(s) unpriced` : undefined}>
+            ${cost.cost_usd.toFixed(4)}
+            {cost.unpriced_calls ? "+" : ""}
+          </span>
+        ) : (
+          "—"
+        )}
+      </td>
+      <td className="px-4 py-2 text-right font-mono text-text-3">
+        {totalTokens != null ? formatTokens(totalTokens) : "—"}
+      </td>
+      <td className="px-4 py-2 text-right font-mono text-text-3">
         {bestDiversity != null ? bestDiversity.toFixed(3) : "—"}
       </td>
       <td className="px-4 py-2 text-text-3">{formatRelativeDate(firstSeen)}</td>
@@ -495,7 +521,13 @@ function CycleRow({ group }: { group: CycleGroup }) {
   );
 }
 
-function CycleTable({ groups }: { groups: CycleGroup[] }) {
+function CycleTable({
+  groups,
+  costByCycle,
+}: {
+  groups: CycleGroup[];
+  costByCycle: Map<string, CycleRunSummary>;
+}) {
   return (
     <div className="rounded-md border border-border overflow-hidden">
       <table className="w-full text-[13px] border-collapse">
@@ -504,13 +536,19 @@ function CycleTable({ groups }: { groups: CycleGroup[] }) {
             <th className="text-left font-medium text-text-3 px-4 py-2">Cycle ID</th>
             <th className="text-right font-medium text-text-3 px-4 py-2">Experiments</th>
             <th className="text-right font-medium text-text-3 px-4 py-2">Kept</th>
+            <th className="text-right font-medium text-text-3 px-4 py-2">Cost</th>
+            <th className="text-right font-medium text-text-3 px-4 py-2">Tokens</th>
             <th className="text-right font-medium text-text-3 px-4 py-2">Best diversity</th>
             <th className="text-left font-medium text-text-3 px-4 py-2">First seen</th>
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => (
-            <CycleRow key={g.cycle_id ?? "null"} group={g} />
+            <CycleRow
+              key={g.cycle_id ?? "null"}
+              group={g}
+              cost={g.cycle_id ? costByCycle.get(g.cycle_id) : undefined}
+            />
           ))}
         </tbody>
       </table>
@@ -526,6 +564,8 @@ function RecentCyclesSectionFull({
   onTabChange?: (tab: string) => void;
 }) {
   const groups = buildCycleGroups(nodes).slice(0, 10);
+  const { data: cycleRuns = [] } = useCycleRuns();
+  const costByCycle = new Map<string, CycleRunSummary>(cycleRuns.map((c) => [c.cycle_id, c]));
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -550,7 +590,7 @@ function RecentCyclesSectionFull({
           <p className="text-[13px] text-text-3">No cycles yet</p>
         </div>
       ) : (
-        <CycleTable groups={groups} />
+        <CycleTable groups={groups} costByCycle={costByCycle} />
       )}
     </div>
   );

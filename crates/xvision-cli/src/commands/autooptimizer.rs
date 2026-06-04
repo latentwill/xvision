@@ -41,7 +41,7 @@ use xvision_engine::autooptimizer::lineage::{
     ensure_lineage_schema, LineageNode, LineageStatus, LineageStore,
 };
 use xvision_engine::autooptimizer::local_dispatch::AutoOptimizerLocalDispatch;
-use xvision_engine::autooptimizer::metering_dispatch::CostMeteringDispatch;
+use xvision_engine::autooptimizer::metering_dispatch::{CostMeteringDispatch, CycleMeter};
 use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
@@ -554,14 +554,22 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
         Ok(cycles) if !cycles.is_empty() => {
             println!("\nMutation cycles (`xvn optimizer run-cycle`):");
             println!(
-                "  {:<28}  {:>5}  {:>5}  {:>5}  {}",
-                "Cycle", "Nodes", "Kept", "Drop", "Last"
+                "  {:<28}  {:>5}  {:>5}  {:>5}  {:>9}  {:>10}  {}",
+                "Cycle", "Nodes", "Kept", "Drop", "Cost", "Tokens", "Last"
             );
             for c in cycles {
                 let last = c.last_created_at.get(..19).unwrap_or(&c.last_created_at);
+                let cost = c
+                    .cost_usd
+                    .map(|v| format!("${v:.4}"))
+                    .unwrap_or_else(|| "—".to_string());
+                let tokens = match (c.input_tokens, c.output_tokens) {
+                    (Some(i), Some(o)) => format!("{}", i + o),
+                    _ => "—".to_string(),
+                };
                 println!(
-                    "  {:<28}  {:>5}  {:>5}  {:>5}  {}",
-                    c.cycle_id, c.node_count, c.active_count, c.rejected_count, last
+                    "  {:<28}  {:>5}  {:>5}  {:>5}  {:>9}  {:>10}  {}",
+                    c.cycle_id, c.node_count, c.active_count, c.rejected_count, cost, tokens, last
                 );
             }
             println!(
@@ -633,6 +641,19 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
     );
     println!("first node: {}", s.first_created_at);
     println!("last node:  {}", s.last_created_at);
+
+    // F23: per-cycle tokens + cost (None for cycles run before cost metering).
+    if let (Some(in_t), Some(out_t)) = (s.input_tokens, s.output_tokens) {
+        println!("tokens:     {in_t} in / {out_t} out ({} total)", in_t + out_t);
+    }
+    if let Some(cost) = s.cost_usd {
+        match s.unpriced_calls {
+            Some(n) if n > 0 => println!(
+                "cost:       ${cost:.4} metered + {n} call(s) with unknown price (refresh catalog to meter them)"
+            ),
+            _ => println!("cost:       ${cost:.4}"),
+        }
+    }
 
     if let Some(h) = &detail.honesty_check {
         println!(
@@ -1164,28 +1185,23 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     .await?;
     let raw_dispatch = Arc::clone(&binding.dispatch);
 
-    // F11: a single shared cost meter spanning the whole cycle — the
-    // paper-test budget wrapper and the mutator/judge metering dispatch both
-    // accumulate into it, so `--budget` caps and `cycle cost:` reports realized
-    // spend across paper-test inference AND experiment-writer/judge calls.
-    let spent_handle: Arc<std::sync::Mutex<f64>> = Arc::new(std::sync::Mutex::new(0.0));
-    // F11: count model calls billed against a model that has no catalog price, so
-    // the realized-cost line can say "unknown — N calls unpriced" instead of a
-    // misleading `$0.00` (the run-3 regression: a real $0.37 gemini cycle still
-    // printed $0.00 because the cached catalog lacked that model's price).
-    let unpriced_handle: Arc<std::sync::Mutex<u64>> = Arc::new(std::sync::Mutex::new(0));
+    // F11/F23: one shared meter for the whole cycle — tokens, realized cost, and
+    // unpriced-call count. The paper-test budget gate and the metering dispatch
+    // (backtest decisions + experiment writer + judge) all share it, so
+    // `--budget` caps and the summary reports tokens + cost across every LLM call.
+    let meter: Arc<std::sync::Mutex<CycleMeter>> = Arc::new(std::sync::Mutex::new(CycleMeter::default()));
 
-    // Price mutator/judge completions through the provider catalog (best-effort;
-    // an uncached/unpriced model contributes $0, same "unknown ≠ zero" stance
-    // as the model_calls cost path). Backtests are NOT routed through this
-    // wrapper — their cost is already metered via `model_calls`, so wrapping
-    // them too would double-count.
+    // Price every cycle completion through the provider catalog (best-effort; an
+    // uncached/unpriced model contributes $0 and is counted as unpriced — same
+    // "unknown ≠ zero" stance as the model_calls cost path). F11 (run-4): the
+    // paper-test backtests route through this wrapper too, so realized cost is
+    // metered at the dispatch boundary rather than via a model_calls join that
+    // never matched the optimizer's runs.
     let metering_catalogs = load_metering_catalogs(&xvn_home, &binding.provider).await;
     let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
         Arc::clone(&raw_dispatch),
         metering_catalogs,
-        Arc::clone(&spent_handle),
-        Arc::clone(&unpriced_handle),
+        Arc::clone(&meter),
     ));
     let mutator = Mutator {
         provider: binding.provider.clone(),
@@ -1238,14 +1254,14 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
 
     // F2/F11: enforce `--budget` as a real ceiling and always meter realized
     // cost. Without `--budget` the cap is `f64::INFINITY` (never trips) but the
-    // shared `spent_handle` still accumulates, so `cycle cost:` is correct on
+    // shared meter still accumulates, so the tokens + cost summary is correct on
     // every run, not just budgeted ones. The mock stub reports no paper-test
     // cost, so the cap never trips on synthetic metrics.
     let budget_cap = args.budget.unwrap_or(f64::INFINITY);
     let paper_tester: Box<dyn PaperTestRunner> = Box::new(BudgetCappedPaperTester::new_with_handle(
         paper_tester,
         budget_cap,
-        Arc::clone(&spent_handle),
+        Arc::clone(&meter),
     ));
 
     let mut parent_strategies = HashMap::new();
@@ -1349,25 +1365,45 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         );
     }
 
-    // F11: realized cycle cost, metered from the model_calls ledger (paper-test)
-    // + the provider catalog (experiment-writer/judge). Be honest when a real
-    // model was billed but its price wasn't in the cached catalog: report the
-    // known-priced subtotal AND the count of unpriced calls, rather than a
-    // misleading `$0.00` that looks free.
+    // F23: surface per-cycle token usage AND cost (cycles are token-heavy).
+    // Both are metered at the dispatch boundary across every LLM call (backtest
+    // decisions + experiment writer + judge). Be honest when a real model was
+    // billed but its price wasn't in the cached catalog: report the known-priced
+    // subtotal AND the unpriced-call count, never a misleading `$0.00`.
+    let totals = *meter.lock().expect("meter mutex poisoned");
+    eprintln!(
+        "tokens: {} in / {} out ({} total)",
+        totals.input_tokens,
+        totals.output_tokens,
+        totals.input_tokens + totals.output_tokens,
+    );
+    if totals.unpriced_calls > 0 {
+        eprintln!(
+            "cycle cost: ${:.4} metered + {} call(s) with UNKNOWN price — realized spend is higher. \
+             The model's price is missing from the cached catalog; run \
+             `xvn provider refresh-models --name {}` to enable full cost metering (and the \
+             `--budget` ceiling) for it.",
+            totals.spent_usd, totals.unpriced_calls, cfg.mutator.provider,
+        );
+    } else {
+        eprintln!(
+            "cycle cost: ${:.4} (metered across backtest + experiment-writer + judge)",
+            totals.spent_usd
+        );
+    }
+
+    // F23: persist the per-cycle tokens + cost so `xvn optimizer inspect <cycle>`,
+    // `GET /api/autooptimizer/cycles/:id`, and the panel can show them after the
+    // run. Best-effort — a failure here must not fail the cycle.
+    if let Err(e) = xvision_engine::autooptimizer::cycle_runs::persist_cycle_cost(
+        &pool,
+        &result.cycle_id,
+        &totals,
+        &Utc::now().to_rfc3339(),
+    )
+    .await
     {
-        let spent = *spent_handle.lock().expect("budget mutex poisoned");
-        let unpriced = *unpriced_handle.lock().expect("unpriced mutex poisoned");
-        if unpriced > 0 {
-            eprintln!(
-                "cycle cost: ${spent:.2} metered + {unpriced} call(s) with UNKNOWN price — realized \
-                 spend is higher. The model's price is missing from the cached catalog; run \
-                 `xvn provider refresh-models --name {}` to enable full cost metering (and the \
-                 `--budget` ceiling) for it.",
-                cfg.mutator.provider,
-            );
-        } else {
-            eprintln!("cycle cost: ${spent:.2} (metered paper-test + experiment-writer/judge inference)");
-        }
+        eprintln!("note: could not persist cycle cost: {e}");
     }
 
     println!("cycle_id={}", result.cycle_id);
