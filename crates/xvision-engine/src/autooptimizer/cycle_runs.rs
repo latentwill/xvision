@@ -92,8 +92,20 @@ pub struct CycleRunDetail {
 /// List completed cycles, most-recent first, paginated. Cycles with a NULL
 /// `cycle_id` (seeded root strategies that were never run) are excluded.
 pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Result<Vec<CycleRunSummary>> {
+    // F33: derive each cycle's candidate set from the per-cycle evaluation edges
+    // UNION the legacy `lineage_nodes.cycle_id` attribution (so cycles that ran
+    // before the edge table still appear). The UNION dedups (cycle_id,
+    // bundle_hash), and the join to `lineage_nodes` supplies each candidate's
+    // status/time. A cycle that re-derived a shared candidate is now counted for
+    // BOTH cycles instead of only the content-addressed-row owner.
+    super::lineage::ensure_lineage_schema(pool).await.ok();
     let rows = sqlx::query(
-        "SELECT ln.cycle_id AS cycle_id, \
+        "WITH cn AS ( \
+            SELECT cycle_id, bundle_hash FROM cycle_node_evaluations \
+            UNION \
+            SELECT cycle_id, bundle_hash FROM lineage_nodes WHERE cycle_id IS NOT NULL \
+         ) \
+         SELECT cn.cycle_id AS cycle_id, \
                 COUNT(*) AS node_count, \
                 SUM(CASE WHEN ln.status = 'active' THEN 1 ELSE 0 END) AS active_count, \
                 SUM(CASE WHEN ln.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count, \
@@ -103,10 +115,10 @@ pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Resu
                 cc.input_tokens AS input_tokens, \
                 cc.output_tokens AS output_tokens, \
                 cc.unpriced_calls AS unpriced_calls \
-         FROM lineage_nodes ln \
-         LEFT JOIN cycle_cost cc ON cc.cycle_id = ln.cycle_id \
-         WHERE ln.cycle_id IS NOT NULL \
-         GROUP BY ln.cycle_id \
+         FROM cn \
+         JOIN lineage_nodes ln ON ln.bundle_hash = cn.bundle_hash \
+         LEFT JOIN cycle_cost cc ON cc.cycle_id = cn.cycle_id \
+         GROUP BY cn.cycle_id \
          ORDER BY last_created_at DESC \
          LIMIT ? OFFSET ?",
     )
@@ -172,9 +184,18 @@ async fn load_cycle_cost(
 /// Fetch one cycle's summary + all of its nodes (ordered oldest-first), or
 /// `None` when no node carries that `cycle_id`.
 pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<CycleRunDetail>> {
+    // F33: resolve this cycle's candidates from the evaluation edges UNION the
+    // legacy `cycle_id` column, so a candidate this cycle evaluated still shows
+    // even when another cycle owns the content-addressed `lineage_nodes` row.
+    super::lineage::ensure_lineage_schema(pool).await.ok();
     let node_rows = sqlx::query(&format!(
-        "{SELECT_COLS_PREFIX} WHERE cycle_id = ? ORDER BY created_at ASC"
+        "{SELECT_COLS_PREFIX} WHERE bundle_hash IN ( \
+            SELECT bundle_hash FROM cycle_node_evaluations WHERE cycle_id = ? \
+            UNION \
+            SELECT bundle_hash FROM lineage_nodes WHERE cycle_id = ? \
+         ) ORDER BY created_at ASC"
     ))
+    .bind(cycle_id)
     .bind(cycle_id)
     .fetch_all(pool)
     .await
