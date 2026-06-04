@@ -9,6 +9,7 @@ import {
   type LineageNode,
   formatEventLabel,
   startRunCycle,
+  cancelRunCycle,
   useLineageNodes,
   useCycleRuns,
   type CycleRunSummary,
@@ -139,6 +140,8 @@ function LivePageHeader({
   const keptThisWeek = countKeptThisWeek(nodes);
   const totalExperiments = nodes.length;
   const activeLineages = countActiveLineages(nodes);
+  // F28: cancel an in-flight cycle (stops it before the next candidate).
+  const cancelMutation = useMutation({ mutationFn: cancelRunCycle });
   const headline =
     isRunning && activeCycleId
       ? `Optimizer run in progress · ${activeCycleId}`
@@ -160,6 +163,16 @@ function LivePageHeader({
         </p>
       </div>
       <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+        {isRunning && activeCycleId && (
+          <button
+            type="button"
+            onClick={() => cancelMutation.mutate(activeCycleId)}
+            disabled={cancelMutation.isPending}
+            className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/10 disabled:opacity-50 transition-colors"
+          >
+            {cancelMutation.isPending ? "Cancelling…" : "Cancel run"}
+          </button>
+        )}
         <a
           href="#optimizer-run-controls"
           className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:text-text hover:border-border-strong transition-colors"
@@ -192,6 +205,12 @@ function LaunchStrip() {
   const [strategyId, setStrategyId] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launchMessage, setLaunchMessage] = useState<string | null>(null);
+  // F28: optional budget cap + evaluation window. Empty = no cap / config default.
+  const [budgetUsd, setBudgetUsd] = useState("");
+  const [dayStart, setDayStart] = useState("");
+  const [dayEnd, setDayEnd] = useState("");
+  const [baselineStart, setBaselineStart] = useState("");
+  const [baselineEnd, setBaselineEnd] = useState("");
   const { data: strategies, isPending: strategiesLoading } = useQuery({
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
@@ -217,12 +236,28 @@ function LaunchStrip() {
     if (!trimmed) { setLaunchError("Select a strategy"); return; }
     setLaunchError(null);
     setLaunchMessage(null);
+    // F28: parse + validate the optional budget cap.
+    let budget: number | null = null;
+    if (budgetUsd.trim() !== "") {
+      const n = Number(budgetUsd);
+      if (!Number.isFinite(n) || n <= 0) {
+        setLaunchError("Budget must be a positive USD amount");
+        return;
+      }
+      budget = n;
+    }
+    const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
     launchMutation.mutate({
       strategy_id: trimmed,
       mutator_provider: getStoredMutatorProvider(),
       mutator_model: getStoredMutatorModel(),
       judge_provider: getStoredJudgeProvider(),
       judge_model: getStoredJudgeModel(),
+      budget_usd: budget,
+      day_start: orNull(dayStart),
+      day_end: orNull(dayEnd),
+      baseline_start: orNull(baselineStart),
+      baseline_end: orNull(baselineEnd),
     });
   };
   const isRunning = launchMutation.isPending;
@@ -254,6 +289,35 @@ function LaunchStrip() {
           </>
         )}
       </select>
+      {/* F28: budget cap + evaluation window — bound a UI cycle's cost/length.
+          Empty fields use no cap / the config default window. */}
+      <label htmlFor="optimizer-budget" className="text-[12px] text-text-3 mt-1">
+        Budget cap (USD, optional)
+      </label>
+      <input
+        id="optimizer-budget"
+        type="number"
+        min="0"
+        step="0.01"
+        inputMode="decimal"
+        value={budgetUsd}
+        onChange={(e) => setBudgetUsd(e.target.value)}
+        disabled={isRunning}
+        placeholder="no cap"
+        aria-label="Budget cap in USD"
+        className={`${inp} w-full`}
+      />
+      <span className="text-[12px] text-text-3 mt-1">Evaluation window (optional)</span>
+      <div className="grid grid-cols-2 gap-2">
+        <input type="date" value={dayStart} onChange={(e) => setDayStart(e.target.value)}
+          disabled={isRunning} aria-label="Day window start" className={inp} />
+        <input type="date" value={dayEnd} onChange={(e) => setDayEnd(e.target.value)}
+          disabled={isRunning} aria-label="Day window end" className={inp} />
+        <input type="date" value={baselineStart} onChange={(e) => setBaselineStart(e.target.value)}
+          disabled={isRunning} aria-label="Baseline window start" className={inp} />
+        <input type="date" value={baselineEnd} onChange={(e) => setBaselineEnd(e.target.value)}
+          disabled={isRunning} aria-label="Baseline window end" className={inp} />
+      </div>
       <button
         type="button"
         onClick={() => { void handleLaunch(); }}
