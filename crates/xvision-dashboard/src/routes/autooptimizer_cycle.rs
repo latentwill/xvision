@@ -150,6 +150,12 @@ pub async fn start_cycle(
     // live — not the deterministic stub that always tied and rejected everything.
     let api_ctx = state.api_context();
     let backtest_dispatch = Arc::clone(&metered_mutator);
+    // F35: generate the cycle id up-front so a background ticker can persist the
+    // running cost/tokens INCREMENTALLY under it. Previously the cost was written
+    // once at cycle end, so a killed/crashed UI cycle (the runaway-token case)
+    // recorded $0.00 — the operator's "cost shows $0.00" report. With an upfront
+    // id + ticker, partial spend survives an interrupt.
+    let cycle_id = ulid::Ulid::new().to_string();
     tokio::spawn(async move {
         // The production paper tester: real cached-backtest Executor, metered at
         // the dispatch boundary, with the shared per-cycle meter feeding both the
@@ -164,6 +170,29 @@ pub async fn start_cycle(
         let paper_tester: Box<dyn PaperTestRunner> = Box::new(
             BudgetCappedPaperTester::new_with_handle(Box::new(cached), f64::INFINITY, Arc::clone(&meter)),
         );
+
+        // F35: incremental cost/token persistence. Every 10s, snapshot the shared
+        // meter into `cycle_cost` under the known cycle id so the panel shows
+        // climbing spend during the run and a killed cycle keeps its partial cost.
+        let ticker_pool = pool.clone();
+        let ticker_meter = Arc::clone(&meter);
+        let ticker_cycle_id = cycle_id.clone();
+        let ticker = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let totals = *ticker_meter.lock().expect("meter mutex poisoned");
+                let _ = persist_cycle_cost(
+                    &ticker_pool,
+                    &ticker_cycle_id,
+                    &totals,
+                    &Utc::now().to_rfc3339(),
+                )
+                .await;
+            }
+        });
+
         let result = run_cycle(
             &pool,
             &cycle_blob_store,
@@ -177,24 +206,23 @@ pub async fn start_cycle(
                 let _ = tx.send(ev);
             },
             None,
-            None,
+            Some(cycle_id.clone()),
         )
         .await;
-        match result {
-            Ok(result) => {
-                // F23/F26: persist the per-cycle tokens + cost so the panel and
-                // `GET /api/autooptimizer/cycles/:id` show real spend after the run.
-                // Best-effort — a failure here must not mask the completed cycle.
-                let totals = *meter.lock().expect("meter mutex poisoned");
-                if let Err(e) =
-                    persist_cycle_cost(&pool, &result.cycle_id, &totals, &Utc::now().to_rfc3339()).await
-                {
-                    tracing::warn!(error = %e, "persist optimizer cycle cost failed");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "optimizer cycle failed");
-            }
+        // Stop the ticker; we persist the final totals below.
+        ticker.abort();
+        // F23/F26/F35: persist the FINAL per-cycle tokens + cost so the panel and
+        // `GET /api/autooptimizer/cycles/:id` show real spend after the run.
+        // Best-effort — a failure here must not mask the completed cycle. Keyed by
+        // the upfront `cycle_id` so this lands even if `run_cycle` errored.
+        let totals = *meter.lock().expect("meter mutex poisoned");
+        if let Err(e) =
+            persist_cycle_cost(&pool, &cycle_id, &totals, &Utc::now().to_rfc3339()).await
+        {
+            tracing::warn!(error = %e, "persist optimizer cycle cost failed");
+        }
+        if let Err(e) = result {
+            tracing::warn!(error = %e, "optimizer cycle failed");
         }
     });
     Ok((

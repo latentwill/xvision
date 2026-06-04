@@ -889,12 +889,52 @@ impl Executor {
         // to one asset per timestamp and is byte-identical to the old
         // per-bar path. `timeline_idx` drives the RunTick progress %.
         let mut timeline_idx: usize = 0;
+        // F36 (capture-on-interrupt): persist accumulated metrics+tokens every
+        // PARTIAL_PERSIST_INTERVAL so a run that never reaches `finalize`
+        // (cancelled / timed out / crashed) isn't left with NULL metrics. The
+        // cancel checkpoint below also persists a final snapshot before bailing.
+        let mut last_partial_persist = Instant::now();
         for (&ts, assets_at_ts) in &timeline {
             // Update the logical clock to this timestamp before any
             // decision-side work. Live impls ignore this.
             clock.advance_to(ts);
             if store.is_terminal(&run.id).await? {
+                // F36: capture the partial metrics+tokens accumulated up to the
+                // interrupt before bailing.
+                persist_partial_snapshot(
+                    store,
+                    &run.id,
+                    &equity_curve,
+                    initial,
+                    equity,
+                    strategy.manifest.decision_cadence_minutes,
+                    realized_count,
+                    wins,
+                    n_trades,
+                    decision_idx,
+                    total_input_tokens,
+                    total_output_tokens,
+                )
+                .await;
                 anyhow::bail!("eval run stopped");
+            }
+            if last_partial_persist.elapsed() >= PARTIAL_PERSIST_INTERVAL {
+                persist_partial_snapshot(
+                    store,
+                    &run.id,
+                    &equity_curve,
+                    initial,
+                    equity,
+                    strategy.manifest.decision_cadence_minutes,
+                    realized_count,
+                    wins,
+                    n_trades,
+                    decision_idx,
+                    total_input_tokens,
+                    total_output_tokens,
+                )
+                .await;
+                last_partial_persist = Instant::now();
             }
             // Cadence gate: only fire on timestamps whose minute-aligned
             // value is divisible by the strategy's cadence. Timestamp-level
@@ -1357,6 +1397,22 @@ impl Executor {
                 // for the A/B-cache pairing acceptance criterion.
                 let parsed: TraderOutput = if strategy.decision_mode == DecisionMode::Mechanistic {
                     if store.is_terminal(&run.id).await? {
+                        // F36: capture partial metrics+tokens before bailing.
+                        persist_partial_snapshot(
+                            store,
+                            &run.id,
+                            &equity_curve,
+                            initial,
+                            equity,
+                            strategy.manifest.decision_cadence_minutes,
+                            realized_count,
+                            wins,
+                            n_trades,
+                            decision_idx,
+                            total_input_tokens,
+                            total_output_tokens,
+                        )
+                        .await;
                         finish_decision_span_error!("eval run stopped");
                         anyhow::bail!("eval run stopped");
                     }
@@ -1449,6 +1505,22 @@ impl Executor {
                     }
 
                     if store.is_terminal(&run.id).await? {
+                        // F36: capture partial metrics+tokens before bailing.
+                        persist_partial_snapshot(
+                            store,
+                            &run.id,
+                            &equity_curve,
+                            initial,
+                            equity,
+                            strategy.manifest.decision_cadence_minutes,
+                            realized_count,
+                            wins,
+                            n_trades,
+                            decision_idx,
+                            total_input_tokens,
+                            total_output_tokens,
+                        )
+                        .await;
                         finish_decision_span_error!("eval run stopped");
                         anyhow::bail!("eval run stopped");
                     }
@@ -1552,6 +1624,22 @@ impl Executor {
                 }; // closes if decision_mode == Mechanistic { ... } else { match ... }
 
                 if store.is_terminal(&run.id).await? {
+                    // F36: capture partial metrics+tokens before bailing.
+                    persist_partial_snapshot(
+                        store,
+                        &run.id,
+                        &equity_curve,
+                        initial,
+                        equity,
+                        strategy.manifest.decision_cadence_minutes,
+                        realized_count,
+                        wins,
+                        n_trades,
+                        decision_idx,
+                        total_input_tokens,
+                        total_output_tokens,
+                    )
+                    .await;
                     finish_decision_span_error!("eval run stopped");
                     anyhow::bail!("eval run stopped");
                 }
@@ -2403,12 +2491,25 @@ impl Executor {
         }
 
         if store.is_terminal(&run.id).await? {
+            // F36: capture the (now near-complete) accumulators before bailing.
+            let partial = compute_run_metrics(
+                &equity_curve,
+                initial,
+                equity,
+                strategy.manifest.decision_cadence_minutes,
+                realized_count,
+                wins,
+                n_trades,
+                decision_idx,
+                None,
+            );
+            let _ = store
+                .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
+                .await;
             anyhow::bail!("eval run stopped");
         }
 
-        let returns = equity_to_returns(&equity_curve);
         let cadence_minutes = strategy.manifest.decision_cadence_minutes;
-        let periods_per_year = annualization_periods_per_year(cadence_minutes);
         let strategy_return_pct = total_return_pct(initial, equity);
 
         // Compute the four automatic baselines over the same cadence-gated bar
@@ -2417,22 +2518,19 @@ impl Executor {
         // iteration exactly.
         let baselines = build_baselines_report(&decision_bars, initial, cadence_minutes, strategy_return_pct);
 
-        let metrics = MetricsSummary {
-            total_return_pct: strategy_return_pct,
-            sharpe: sharpe_from_returns(&returns, periods_per_year),
-            max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 {
-                wins as f64 / realized_count as f64
-            } else {
-                0.0
-            },
+        // inference_cost_quote_total + net_return_pct populated post-finalize by
+        // api::eval::enrich_with_inference_cost.
+        let metrics = compute_run_metrics(
+            &equity_curve,
+            initial,
+            equity,
+            cadence_minutes,
+            realized_count,
+            wins,
             n_trades,
-            n_decisions: decision_idx,
-            baselines: Some(baselines),
-            // inference_cost_quote_total + net_return_pct populated
-            // post-finalize by api::eval::enrich_with_inference_cost.
-            ..Default::default()
-        };
+            decision_idx,
+            Some(baselines),
+        );
 
         run.actual_input_tokens = Some(total_input_tokens);
         run.actual_output_tokens = Some(total_output_tokens);
@@ -2672,10 +2770,45 @@ impl Executor {
         let stop_policy = runtime.stop_policy.clone();
 
         let mut bar_count: u32 = 0;
+        // F36: capture-on-interrupt for the live loop too — a cancelled or
+        // crashed live/real-money run must record the metrics+tokens it
+        // accumulated, not NULL.
+        let mut last_partial_persist = Instant::now();
         loop {
             // (c) cancellation / external stop.
             if store.is_terminal(&run.id).await? {
+                let partial = compute_run_metrics(
+                    &equity_curve,
+                    initial,
+                    equity,
+                    strategy.manifest.decision_cadence_minutes,
+                    realized_count,
+                    wins,
+                    n_trades,
+                    decision_idx,
+                    None,
+                );
+                let _ = store
+                    .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
+                    .await;
                 anyhow::bail!("eval run stopped");
+            }
+            if last_partial_persist.elapsed() >= PARTIAL_PERSIST_INTERVAL {
+                let partial = compute_run_metrics(
+                    &equity_curve,
+                    initial,
+                    equity,
+                    strategy.manifest.decision_cadence_minutes,
+                    realized_count,
+                    wins,
+                    n_trades,
+                    decision_idx,
+                    None,
+                );
+                let _ = store
+                    .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
+                    .await;
+                last_partial_persist = Instant::now();
             }
 
             // (a) stream end — `next_tagged()` returns `None` only once ALL
@@ -2876,30 +3009,36 @@ impl Executor {
         drop(runtime);
 
         if store.is_terminal(&run.id).await? {
+            let partial = compute_run_metrics(
+                &equity_curve,
+                initial,
+                equity,
+                strategy.manifest.decision_cadence_minutes,
+                realized_count,
+                wins,
+                n_trades,
+                decision_idx,
+                None,
+            );
+            let _ = store
+                .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
+                .await;
             anyhow::bail!("eval run stopped");
         }
 
-        let returns = equity_to_returns(&equity_curve);
-        let cadence_minutes = strategy.manifest.decision_cadence_minutes;
-        let periods_per_year = annualization_periods_per_year(cadence_minutes);
-        let strategy_return_pct = total_return_pct(initial, equity);
-
-        let metrics = MetricsSummary {
-            total_return_pct: strategy_return_pct,
-            sharpe: sharpe_from_returns(&returns, periods_per_year),
-            max_drawdown_pct: max_drawdown_pct(&equity_curve),
-            win_rate: if realized_count > 0 {
-                wins as f64 / realized_count as f64
-            } else {
-                0.0
-            },
+        // Live runs do not compute the four backtest baselines (they replay a
+        // single forward stream, not a fixed window).
+        let metrics = compute_run_metrics(
+            &equity_curve,
+            initial,
+            equity,
+            strategy.manifest.decision_cadence_minutes,
+            realized_count,
+            wins,
             n_trades,
-            n_decisions: decision_idx,
-            // Live runs do not compute the four backtest baselines (they
-            // replay a single forward stream, not a fixed window).
-            baselines: None,
-            ..Default::default()
-        };
+            decision_idx,
+            None,
+        );
 
         run.actual_input_tokens = Some(total_input_tokens);
         run.actual_output_tokens = Some(total_output_tokens);
@@ -3996,6 +4135,84 @@ fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
 /// `BaselinesReport` type (stored in `metrics_json`). The two structs have
 /// identical shapes but live in different crates; this function bridges them
 /// without requiring the eval crate to import the engine's types.
+/// F36: how often the executor flushes partial metrics+tokens to the DB during
+/// a run, so an interrupt loses at most this much progress. Bounds the periodic
+/// recompute cost regardless of run length.
+const PARTIAL_PERSIST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// F36: snapshot the accumulators into a partial [`MetricsSummary`] and persist
+/// it (best-effort, no status change) so a cancelled/timed-out/crashed run keeps
+/// the metrics+tokens it had so far instead of leaving `metrics_json = NULL`.
+/// Called right before each cancel-bail and on the periodic timer. `baselines`
+/// is `None` here (recomputed only at clean finish — keeps the snapshot cheap).
+#[allow(clippy::too_many_arguments)]
+async fn persist_partial_snapshot(
+    store: &RunStore,
+    run_id: &str,
+    equity_curve: &[f64],
+    initial: f64,
+    equity: f64,
+    cadence_minutes: u32,
+    realized_count: u32,
+    wins: u32,
+    n_trades: u32,
+    decision_idx: u32,
+    input_tokens: u64,
+    output_tokens: u64,
+) {
+    let metrics = compute_run_metrics(
+        equity_curve,
+        initial,
+        equity,
+        cadence_minutes,
+        realized_count,
+        wins,
+        n_trades,
+        decision_idx,
+        None,
+    );
+    let _ = store
+        .persist_partial(run_id, &metrics, input_tokens, output_tokens)
+        .await;
+}
+
+/// Compute a [`MetricsSummary`] from the live accumulators. Extracted (F36) so
+/// the same computation feeds both the final `finalize` write and the periodic
+/// "capture-on-interrupt" partial persists — a cancelled/timed-out run records
+/// the metrics it accumulated instead of `NULL`. `baselines` is passed by the
+/// caller: the backtest finalize supplies the four computed baselines; live runs
+/// and the cheap periodic snapshots pass `None` (baselines are recomputed only
+/// at clean finish).
+#[allow(clippy::too_many_arguments)]
+fn compute_run_metrics(
+    equity_curve: &[f64],
+    initial: f64,
+    equity: f64,
+    cadence_minutes: u32,
+    realized_count: u32,
+    wins: u32,
+    n_trades: u32,
+    decision_idx: u32,
+    baselines: Option<BaselinesReport>,
+) -> MetricsSummary {
+    let returns = equity_to_returns(equity_curve);
+    let periods_per_year = annualization_periods_per_year(cadence_minutes);
+    MetricsSummary {
+        total_return_pct: total_return_pct(initial, equity),
+        sharpe: sharpe_from_returns(&returns, periods_per_year),
+        max_drawdown_pct: max_drawdown_pct(equity_curve),
+        win_rate: if realized_count > 0 {
+            wins as f64 / realized_count as f64
+        } else {
+            0.0
+        },
+        n_trades,
+        n_decisions: decision_idx,
+        baselines,
+        ..Default::default()
+    }
+}
+
 fn build_baselines_report(
     bars: &[Ohlcv],
     initial_equity: f64,

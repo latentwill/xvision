@@ -366,6 +366,37 @@ impl RunStore {
         Ok(res.rows_affected() > 0)
     }
 
+    /// F36 (capture-on-interrupt): persist the metrics + token totals
+    /// accumulated *so far* without changing status or `completed_at`. The
+    /// executor calls this periodically and right before bailing on
+    /// cancel/timeout, so a run that never reaches [`finalize`] (cancelled,
+    /// failed, timed out, or crashed) still records its partial metrics+tokens
+    /// instead of leaving `metrics_json = NULL`. Safe on any row (queued /
+    /// running / terminal); `finalize` overwrites it with the full metrics on a
+    /// clean finish. Best-effort: returns `Ok(false)` when no row matched.
+    pub async fn persist_partial(
+        &self,
+        id: &str,
+        metrics: &MetricsSummary,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<bool> {
+        let metrics_json = serde_json::to_string(metrics).context("serialize partial metrics")?;
+        let res = sqlx::query(
+            "UPDATE eval_runs \
+             SET metrics_json = ?, actual_input_tokens = ?, actual_output_tokens = ? \
+             WHERE id = ?",
+        )
+        .bind(&metrics_json)
+        .bind(input_tokens as i64)
+        .bind(output_tokens as i64)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("persist partial eval_run metrics")?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Mark an active run completed: persist metrics_json, set completed_at =
     /// now, flip status to Completed. Terminal rows are never revived.
     pub async fn finalize(&self, id: &str, metrics: &MetricsSummary) -> Result<()> {
