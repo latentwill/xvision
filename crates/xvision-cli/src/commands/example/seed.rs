@@ -17,6 +17,32 @@ use crate::exit::CliError;
 /// looked up on disk at runtime.
 const EXAMPLE_README: &str = include_str!("../../../../../data/examples/README.md");
 
+/// Default autooptimizer.toml seeded under `$XVN_HOME` so a first
+/// `xvn optimizer run-cycle` points the experiment writer (mutator) and the
+/// judge at a registered, launchable provider instead of the keyless
+/// `test`/`anthropic` default. `openrouter` + `google/gemini-3.1-flash-lite`
+/// is the verified-cheap combo. Only written when absent — never clobbers an
+/// operator-authored config.
+const DEFAULT_AUTOOPTIMIZER_TOML: &str = "\
+# Seeded by `xvn example seed`. Points the optimizer's experiment writer
+# (mutator) and judge at a registered, launchable provider. `openrouter` must
+# be present in $XVN_HOME/config/default.toml for this to dispatch.
+min_improvement = 0.05
+
+[baseline_untouched_window]
+start = \"2025-09-01\"
+end = \"2025-12-01\"
+
+[day_window]
+start = \"2024-01-01\"
+end = \"2025-09-01\"
+
+[mutator]
+provider = \"openrouter\"
+model = \"google/gemini-3.1-flash-lite\"
+max_retries = 2
+";
+
 #[derive(Debug, Default, Serialize)]
 struct SeedSummary {
     reset: bool,
@@ -31,6 +57,9 @@ struct SeedSummary {
     /// existing row is preserved as-is so audit history stays intact.
     scenarios_preserved_referenced: Vec<String>,
     tutorial_path: String,
+    /// Path to the seeded autooptimizer.toml, or empty when one already
+    /// existed (left untouched).
+    autooptimizer_config_path: String,
 }
 
 pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResultUnit {
@@ -51,6 +80,7 @@ pub async fn run(xvn_home_override: Option<PathBuf>, args: SeedArgs) -> CliResul
     seed_strategies(&strategy_store, args.reset, &mut summary).await?;
     seed_scenarios(&ctx, args.reset, &mut summary).await?;
     write_tutorial(&xvn_home, &mut summary).await?;
+    seed_autooptimizer_config(&xvn_home, &mut summary).await?;
 
     if args.json {
         let body = serde_json::to_string_pretty(&summary)
@@ -171,6 +201,26 @@ async fn write_tutorial(xvn_home: &Path, summary: &mut SeedSummary) -> CliResult
     Ok(())
 }
 
+/// Seed a default `$XVN_HOME/autooptimizer.toml` pointing the optimizer's
+/// mutator + judge at a registered, launchable provider. Idempotent and
+/// non-destructive: if the file already exists it is left untouched (operator
+/// edits win) and `autooptimizer_config_path` stays empty in the summary.
+async fn seed_autooptimizer_config(xvn_home: &Path, summary: &mut SeedSummary) -> CliResultUnit {
+    let config_path = xvn_home.join("autooptimizer.toml");
+    if config_path.exists() {
+        // Never clobber an existing config.
+        return Ok(());
+    }
+    tokio::fs::create_dir_all(xvn_home)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("create {}: {e}", xvn_home.display())))?;
+    tokio::fs::write(&config_path, DEFAULT_AUTOOPTIMIZER_TOML)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("write {}: {e}", config_path.display())))?;
+    summary.autooptimizer_config_path = config_path.display().to_string();
+    Ok(())
+}
+
 fn print_human_summary(s: &SeedSummary) {
     if s.reset {
         println!("xvn example seed --reset");
@@ -230,6 +280,9 @@ fn print_human_summary(s: &SeedSummary) {
         }
     }
     println!("tutorial: {}", s.tutorial_path);
+    if !s.autooptimizer_config_path.is_empty() {
+        println!("optimizer config: {}", s.autooptimizer_config_path);
+    }
 }
 
 #[cfg(test)]
@@ -299,6 +352,7 @@ mod tests {
         seed_strategies(&store, reset, &mut summary).await.unwrap();
         seed_scenarios(&ctx, reset, &mut summary).await.unwrap();
         write_tutorial(xvn_home, &mut summary).await.unwrap();
+        seed_autooptimizer_config(xvn_home, &mut summary).await.unwrap();
         summary
     }
 
@@ -408,6 +462,51 @@ mod tests {
             .scenarios_removed
             .iter()
             .any(|id| id == xvision_engine::strategies::templates::EXAMPLE_SCENARIO_QUICKSTART_FLASH));
+    }
+
+    #[tokio::test]
+    async fn seed_writes_autooptimizer_config_at_registered_provider() {
+        use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
+
+        let dir = tempdir().unwrap();
+        let summary = seed_fresh(dir.path(), false).await;
+
+        let config_path = dir.path().join("autooptimizer.toml");
+        assert!(config_path.exists(), "seed must write autooptimizer.toml");
+        assert_eq!(
+            summary.autooptimizer_config_path,
+            config_path.display().to_string()
+        );
+
+        // The seeded file must parse and point mutator/judge at a registered,
+        // launchable provider — NOT the keyless test/anthropic default.
+        let cfg = AutoOptimizerConfig::load(&config_path).expect("seeded config parses");
+        cfg.validate().expect("seeded config validates");
+        assert_eq!(cfg.mutator.provider, "openrouter");
+        assert_eq!(cfg.mutator.model, "google/gemini-3.1-flash-lite");
+        assert_ne!(cfg.mutator.provider, "test");
+        assert_ne!(cfg.mutator.provider, "anthropic");
+    }
+
+    #[tokio::test]
+    async fn seed_does_not_clobber_existing_autooptimizer_config() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("autooptimizer.toml");
+        let operator_body = "# operator-authored\nmin_improvement = 0.10\n\
+            [baseline_untouched_window]\nstart = \"2025-01-01\"\nend = \"2025-02-01\"\n\
+            [day_window]\nstart = \"2024-01-01\"\nend = \"2024-06-01\"\n\
+            [mutator]\nprovider = \"deepseek\"\nmodel = \"deepseek-v4-pro\"\nmax_retries = 1\n";
+        tokio::fs::write(&config_path, operator_body).await.unwrap();
+
+        let summary = seed_fresh(dir.path(), false).await;
+
+        // Existing config is left byte-for-byte intact and not reported.
+        let after = tokio::fs::read_to_string(&config_path).await.unwrap();
+        assert_eq!(after, operator_body, "seed must not clobber operator config");
+        assert!(
+            summary.autooptimizer_config_path.is_empty(),
+            "summary must not claim to have written a config when one existed"
+        );
     }
 
     #[tokio::test]
