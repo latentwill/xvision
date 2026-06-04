@@ -536,12 +536,25 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     // generic parser failure. The original text is preserved verbatim in
     // the returned ContentBlock so the downstream parser sees exactly what
     // the agent submitted.
-    let _: serde_json::Value =
-        serde_json::from_str(&decision_json).map_err(|source| ClineRuntimeError::DecisionNotJson {
-            run_id: run_id.clone(),
-            role: role.clone(),
-            source,
-        })?;
+    let _: serde_json::Value = match serde_json::from_str(&decision_json) {
+        Ok(json) => json,
+        Err(source) => {
+            let err = ClineRuntimeError::DecisionNotJson {
+                run_id: run_id.clone(),
+                role: role.clone(),
+                source,
+            };
+            // F5 correction: a completed sidecar step with malformed decision
+            // JSON is still a failed child run from the eval engine's
+            // perspective. Override the sidecar's completed terminal event
+            // just like the no-decision path above.
+            if let Some(obs) = input.obs.as_ref() {
+                tokio::task::yield_now().await;
+                obs.emit_child_run_failed(&run_id, err.to_string()).await;
+            }
+            return Err(err.into());
+        }
+    };
 
     Ok(LlmResponse {
         // The existing decision parser (`dispatch_capability::parse_*` and
