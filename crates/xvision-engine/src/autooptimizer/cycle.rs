@@ -245,6 +245,21 @@ where
     Ok(check)
 }
 
+/// F32: derive a deterministic exploration seed for the experiment writer from
+/// the (unique-per-cycle) `cycle_id` mixed with the mutation index. FNV-1a — no
+/// external deps, stable within a build, and varies every cycle so successive
+/// cycles on the same parent propose diverse candidates instead of one fixed
+/// tweak. A test asserts distinct seeds yield distinct candidates.
+pub fn exploration_seed_for(cycle_id: &str, mutation_idx: usize) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in cycle_id.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h ^= mutation_idx as u64;
+    h.wrapping_mul(0x0000_0100_0000_01b3)
+}
+
 async fn process_parent_mutations<F>(
     pool: &SqlitePool,
     strategy_blob_store: &BlobStore,
@@ -279,7 +294,13 @@ where
         .run(parent_strategy, &cycle_config.baseline_scenario)
         .await?;
 
-    for _ in 0..cycle_config.mutations_per_parent {
+    for mutation_idx in 0..cycle_config.mutations_per_parent {
+        // F32: a per-cycle, per-mutation exploration seed so the experiment writer
+        // proposes DIVERSE candidates across cycles (it was deterministic — same
+        // parent always yielded the identical candidate, so the optimizer never
+        // explored). The cycle_id is unique per cycle (ULID), so hashing it varies
+        // the seed every run; mixing the mutation index varies it within a cycle.
+        let exploration_seed = exploration_seed_for(cycle_id, mutation_idx);
         // When tournament_enabled, run the 3-candidate Borda-count tournament
         // instead of a direct propose call. Incumbent win means no candidate
         // beat the parent this iteration.
@@ -314,7 +335,10 @@ where
                 }
             }
         } else {
-            match mutator.propose(parent_strategy, config, dsr_prefix).await {
+            match mutator
+                .propose(parent_strategy, config, dsr_prefix, exploration_seed)
+                .await
+            {
                 Ok(d) => d,
                 Err(e) => {
                     // The mutator exhausted its retries without a distinct,

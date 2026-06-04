@@ -236,6 +236,7 @@ impl Mutator {
         base: &Strategy,
         config: &AutoOptimizerConfig,
         dsr_prefix: Option<&str>,
+        exploration_seed: u64,
     ) -> anyhow::Result<MutationDiff> {
         let program_md = program_view::to_markdown(base);
         let mut last_errors: Option<Vec<ValidationError>> = None;
@@ -258,14 +259,26 @@ impl Mutator {
         let param_keys = tunable_param_keys(base);
 
         for attempt in 0..max_attempts {
-            let user_text = build_user_payload(&program_md, &kinds, &param_keys, last_errors.as_deref());
+            let user_text = build_user_payload(
+                &program_md,
+                &kinds,
+                &param_keys,
+                last_errors.as_deref(),
+                exploration_seed,
+            );
             let req = LlmRequest {
                 model: self.model.clone(),
                 system_prompt: build_system_prompt(dsr_prefix),
                 messages: vec![Message::user_text(user_text)],
                 max_tokens: None,
                 tools: vec![],
-                temperature: None,
+                // F32: the experiment writer was deterministic (temperature None +
+                // a fixed prompt), so the same parent produced the IDENTICAL
+                // candidate every cycle — the optimizer could never explore or
+                // converge. Sample with a non-zero, per-cycle-jittered temperature
+                // and a per-cycle exploration nonce in the prompt so successive
+                // cycles propose diverse candidates.
+                temperature: Some(exploration_temperature(exploration_seed)),
                 response_schema: None,
                 cache_control: None,
             };
@@ -348,11 +361,21 @@ fn build_system_prompt(dsr_prefix: Option<&str>) -> String {
     }
 }
 
+/// F32: per-cycle sampling temperature for the experiment writer. Jittered by the
+/// exploration seed within an exploratory band (0.7–1.1) so different cycles
+/// sample differently — the deterministic `temperature: None` produced the same
+/// candidate every cycle. The band stays below fully-random so proposals remain
+/// coherent JSON edits.
+fn exploration_temperature(exploration_seed: u64) -> f64 {
+    0.7 + (exploration_seed % 5) as f64 * 0.1
+}
+
 fn build_user_payload(
     program_md: &str,
     allowed_kinds: &[String],
     param_keys: &[String],
     previous_errors: Option<&[ValidationError]>,
+    exploration_seed: u64,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
     let keys_section = if param_keys.is_empty() {
@@ -378,8 +401,20 @@ fn build_user_payload(
         }
     };
 
+    // F32: a per-cycle exploration directive. The variant id varies per cycle
+    // (and per mutation), steering the writer to a DIFFERENT starting point each
+    // run instead of re-proposing the single most obvious tweak forever. Combined
+    // with the non-zero temperature, this makes successive cycles diverge so the
+    // optimizer can actually search the space.
+    let exploration_section = format!(
+        "\n\nExploration directive (variant {exploration_seed}): do NOT default to the single \
+         most obvious change. Use this variant id as a hint to pick a different parameter and/or a \
+         different direction/magnitude than you would by default, so that repeated runs on this \
+         same strategy explore the space rather than re-proposing one fixed tweak."
+    );
+
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
