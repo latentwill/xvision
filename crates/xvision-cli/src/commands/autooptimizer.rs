@@ -1035,7 +1035,11 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     )
     .await;
 
-    let diff = propose(&parent, &cfg, &dispatch)
+    // F32: derive the exploration seed from this mutate-once cycle id so the
+    // experiment writer samples diversely (shared helper with the cycle path).
+    let exploration_seed =
+        xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
+    let diff = propose(&parent, &cfg, &dispatch, exploration_seed)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
     let child = diff.apply_to(&parent);
@@ -1950,6 +1954,7 @@ async fn propose(
     base: &Strategy,
     cfg: &AutoOptimizerConfig,
     dispatch: &Arc<dyn LlmDispatch + Send + Sync>,
+    exploration_seed: u64,
 ) -> anyhow::Result<MutationDiff> {
     let mutator = Mutator {
         provider: "anthropic".into(),
@@ -1957,7 +1962,7 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg, None).await
+    mutator.propose(base, cfg, None, exploration_seed).await
 }
 
 fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {
