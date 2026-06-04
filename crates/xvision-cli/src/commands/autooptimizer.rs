@@ -10,9 +10,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::Utc;
 use clap::{Args, Subcommand};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use ulid::Ulid;
 
@@ -32,12 +34,16 @@ use xvision_engine::autooptimizer::eval_adapter::{
 };
 use xvision_engine::autooptimizer::gate::GateVerdict;
 use xvision_engine::autooptimizer::judge::Judge;
-use xvision_engine::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
+use xvision_engine::autooptimizer::lineage::{
+    ensure_lineage_schema, LineageNode, LineageStatus, LineageStore,
+};
 use xvision_engine::autooptimizer::local_dispatch::AutoOptimizerLocalDispatch;
 use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
-use xvision_engine::autooptimizer::scenario_synthesis::synthesize_baseline_untouched_scenario;
+use xvision_engine::autooptimizer::scenario_synthesis::{
+    synthesize_baseline_untouched_scenario, synthesize_optimizer_day_scenario,
+};
 use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
@@ -119,7 +125,7 @@ pub struct RunCycleArgs {
     /// Path to autooptimizer.toml. Defaults to $XVN_HOME/autooptimizer.toml.
     #[arg(long)]
     pub config: Option<PathBuf>,
-    /// SQLite database path. Defaults to $XVN_HOME/lineage/lineage.db.
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
     #[arg(long)]
     pub db: Option<PathBuf>,
     /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
@@ -315,7 +321,7 @@ pub enum LineageOp {
 
 #[derive(Args, Debug)]
 pub struct LineageLsArgs {
-    /// SQLite database path. Defaults to $XVN_HOME/lineage/lineage.db.
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
     #[arg(long)]
     pub db: Option<PathBuf>,
     #[arg(long)]
@@ -329,7 +335,7 @@ pub struct LineageLsArgs {
 #[derive(Args, Debug)]
 pub struct LineageShowArgs {
     pub bundle_hash: String,
-    /// SQLite database path. Defaults to $XVN_HOME/lineage/lineage.db.
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
     #[arg(long)]
     pub db: Option<PathBuf>,
 }
@@ -871,7 +877,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         println!("verdict: {}", verdict.as_str());
         return Ok(());
     }
-    let db_path = args.db.unwrap_or_else(default_db_path);
+    let db_path = resolve_lineage_db(args.db)?;
     let pool = open_and_migrate_db(&db_path).await?;
     blobs
         .put_json(&child_json)
@@ -952,9 +958,9 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // rather than surfacing a confusing missing-API-key error deep in dispatch.
     require_launchable_provider(args.mock, &xvn_home, &cfg.mutator.provider)?;
 
-    let db_path = args
-        .db
-        .unwrap_or_else(|| xvn_home.join("lineage").join("lineage.db"));
+    // F8: converge on the main `xvn.db` so CLI cycles land where the dashboard
+    // optimizer panel reads (it queries `state.pool` = `$XVN_HOME/xvn.db`).
+    let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
     let pool = open_and_migrate_db(&db_path).await?;
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
@@ -963,80 +969,11 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let obs_blob_root = xvn_home.join("lineage").join("obs-blobs");
     let obs_blob_store = xvision_observability::BlobStore::new(obs_blob_root);
 
-    // Build day + baseline scenarios from config windows.
-    let day_scenario = {
-        use chrono::TimeZone;
-        use xvision_core::Capital;
-        use xvision_data::alpaca::BarGranularity;
-        use xvision_engine::eval::scenario::DEFAULT_WARMUP_BARS;
-        use xvision_engine::eval::scenario::{
-            AssetClass, BarCachePolicy, CalendarRef, DataSource, Fees, FillModel, LatencyModel,
-            LimitOrderFill, MarketOrderFill, QuoteCurrency, RefreshPolicy, ReplayMode, ScenarioSource,
-            SlippageModel, TimeWindow, Venue, VenueSettings,
-        };
-        use xvision_engine::safety::VenueLabel;
-
-        let start = Utc.from_utc_datetime(&cfg.day_window.start.and_hms_opt(0, 0, 0).expect("valid hms"));
-        let end = Utc.from_utc_datetime(&cfg.day_window.end.and_hms_opt(0, 0, 0).expect("valid hms"));
-        xvision_engine::eval::scenario::Scenario {
-            id: format!("ec-day-{}", Ulid::new()),
-            parent_scenario_id: None,
-            source: ScenarioSource::Generated,
-            display_name: "Optimizer cycle day window".into(),
-            description: format!(
-                "Synthesized day window {} – {}",
-                cfg.day_window.start, cfg.day_window.end
-            ),
-            tags: vec![],
-            notes: None,
-            asset_class: AssetClass::Crypto,
-            quote_currency: QuoteCurrency::Usd,
-            time_window: TimeWindow { start, end },
-            granularity: BarGranularity::Hour1,
-            timezone: "UTC".into(),
-            calendar: CalendarRef::Continuous24x7,
-            data_source: DataSource::AlpacaHistorical {
-                feed: None,
-                adjustment: xvision_engine::eval::scenario::AdjustmentMode::Raw,
-            },
-            venue: VenueSettings {
-                venue: Venue::Alpaca,
-                fees: Fees {
-                    maker_bps: 10,
-                    taker_bps: 25,
-                },
-                slippage: SlippageModel::None,
-                latency: LatencyModel {
-                    decision_to_fill_ms: 250,
-                },
-                fill_model: FillModel {
-                    market_order_fill: MarketOrderFill::FullAtClose,
-                    limit_order_fill: LimitOrderFill::NeverFills,
-                    partial_fills: false,
-                    volume_constraints: None,
-                },
-                overrides: vec![],
-                borrow_bps_per_day: 5.0,
-            },
-            replay_mode: ReplayMode::Continuous,
-            capital: Capital::default(),
-            bar_cache_policy: BarCachePolicy {
-                cache_key: format!("ec-day-{}-{}", cfg.day_window.start, cfg.day_window.end),
-                refresh_policy: RefreshPolicy::NeverRefresh,
-                data_fetched_at: None,
-            },
-            warmup_bars: DEFAULT_WARMUP_BARS,
-            regime_label: None,
-            volatility_label: None,
-            trend_direction: None,
-            regime_derived: false,
-            created_at: Utc::now(),
-            created_by: "xvn-cli".into(),
-            archived_at: None,
-            venue_label: VenueLabel::Paper,
-            safety_limits: None,
-        }
-    };
+    // F10: build the day scenario through the single shared optimizer scenario
+    // builder (was an inline literal duplicated with the dashboard route — a
+    // fee/fill tweak in one would silently diverge the optimizer's scoring
+    // conditions). Only `created_by` differs per entry point.
+    let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, "xvn-cli");
 
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
@@ -1096,8 +1033,16 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // inference cost. Without this wrapper the flag was validated, echoed,
     // then ignored (QA 2026-06-04). The mock stub reports no cost, so
     // wrapping it is harmless — the cap never trips on synthetic metrics.
+    // Keep a handle to the metered spend so the realized cycle cost can be
+    // printed at the end (minor find, 2026-06-04). Only populated when
+    // `--budget` is set, which is the only path that meters inference cost.
+    let mut spent_handle: Option<Arc<std::sync::Mutex<f64>>> = None;
     let paper_tester: Box<dyn PaperTestRunner> = match args.budget {
-        Some(b) => Box::new(BudgetCappedPaperTester::new(paper_tester, b)),
+        Some(b) => {
+            let wrapped = BudgetCappedPaperTester::new(paper_tester, b);
+            spent_handle = Some(wrapped.spent_quote_handle());
+            Box::new(wrapped)
+        }
         None => paper_tester,
     };
 
@@ -1172,6 +1117,18 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     )
     .await
     .map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
+
+    // F9: surface the honesty-check (canary) outcome as a labeled line so the
+    // operator can tell the deliberate sabotage from a real broker fault,
+    // rather than inferring it from the raw `min_order_size_violation` warnings
+    // the sabotaged variant provokes by design.
+    eprintln!("honesty check: {}", result.honesty_check.message);
+
+    // Minor: realized cycle cost (only metered when `--budget` is set; F2).
+    if let Some(handle) = &spent_handle {
+        let spent = *handle.lock().expect("budget mutex poisoned");
+        eprintln!("cycle cost: ${spent:.2} (metered paper-test inference)");
+    }
 
     println!("cycle_id={}", result.cycle_id);
 
@@ -1272,14 +1229,20 @@ async fn ipc_send_event(stream: &mut Option<tokio::net::UnixStream>, ev: CyclePr
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /// Resolve the effective lineage SQLite path: an explicit `--db` override wins,
-/// otherwise default to `$XVN_HOME/lineage/lineage.db` (NOT `~/.xvn` or CWD).
+/// otherwise default to the shared `$XVN_HOME/xvn.db` (NOT `~/.xvn` or CWD).
+///
+/// F8 (2026-06-04): converged onto `xvn.db`, the same store the dashboard
+/// optimizer panel reads, so `xvn optimizer` lineage subcommands and the panel
+/// share one source of truth. The legacy `$XVN_HOME/lineage/lineage.db` is
+/// imported into `xvn.db` once on dashboard/server boot
+/// (`ApiContext::open` → `import_legacy_lineage_db`).
 fn resolve_lineage_db(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
     if let Some(p) = override_path {
         return Ok(p);
     }
     let xvn_home = crate::commands::home::resolve_xvn_home(None)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
-    Ok(xvn_home.join("lineage").join("lineage.db"))
+    Ok(xvn_home.join("xvn.db"))
 }
 
 /// Resolve the demo replay-fixture path: an explicit `--fixture` override wins,
@@ -1722,91 +1685,28 @@ async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
         std::fs::create_dir_all(parent)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage db dir: {e}")))?;
     }
-    let url = format!("sqlite://{}?mode=rwc", db_path.display());
-    let pool = SqlitePool::connect(&url)
+    // F8: the lineage store is now the shared `xvn.db`, opened concurrently by
+    // the dashboard server. Use the same SQLite recipe `ApiContext::open` uses
+    // (WAL + busy timeout + bounded pool + foreign keys) so a CLI `run-cycle`
+    // contending with the running dashboard doesn't hit SQLITE_BUSY.
+    let opts = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(15))
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(8)
+        .connect_with(opts)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("open lineage db: {e}")))?;
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS lineage_nodes (
-            bundle_hash TEXT PRIMARY KEY,
-            parent_hash TEXT,
-            gate_verdict TEXT NOT NULL,
-            status TEXT NOT NULL,
-            cycle_id TEXT,
-            created_at TEXT NOT NULL,
-            diversity_score REAL
-        )",
-    )
-    .execute(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage_nodes: {e}")))?;
-    if !sqlite_table_has_column(&pool, "lineage_nodes", "diversity_score").await? {
-        sqlx::query("ALTER TABLE lineage_nodes ADD COLUMN diversity_score REAL")
-            .execute(&pool)
-            .await
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("add lineage_nodes.diversity_score: {e}")))?;
-    }
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS mutator_attribution (
-            bundle_hash TEXT PRIMARY KEY,
-            provider TEXT NOT NULL,
-            model TEXT NOT NULL,
-            prompt_version TEXT NOT NULL,
-            proposed_at TEXT NOT NULL,
-            delta_sharpe REAL
-        )",
-    )
-    .execute(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("create mutator_attribution: {e}")))?;
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS lineage_embeddings (
-            bundle_hash TEXT PRIMARY KEY REFERENCES lineage_nodes(bundle_hash),
-            embedding_blob_hash TEXT NOT NULL,
-            embedding_dim INTEGER NOT NULL,
-            embedded_at TEXT NOT NULL
-        )",
-    )
-    .execute(&pool)
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage_embeddings: {e}")))?;
-    for (sql, label) in [
-        (
-            "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",
-            "idx_lineage_parent",
-        ),
-        (
-            "CREATE INDEX IF NOT EXISTS idx_lineage_status ON lineage_nodes(status)",
-            "idx_lineage_status",
-        ),
-        (
-            "CREATE INDEX IF NOT EXISTS idx_lineage_embeddings_bundle ON lineage_embeddings(bundle_hash)",
-            "idx_lineage_embeddings_bundle",
-        ),
-        (
-            "CREATE INDEX IF NOT EXISTS idx_attr_provider_model ON mutator_attribution(provider, model)",
-            "idx_attr_provider_model",
-        ),
-    ] {
-        sqlx::query(sql)
-            .execute(&pool)
-            .await
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("create {label}: {e}")))?;
-    }
-    Ok(pool)
-}
-
-async fn sqlite_table_has_column(pool: &SqlitePool, table: &str, column: &str) -> CliResult<bool> {
-    assert!(table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
-    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
-        .fetch_all(pool)
+    // Single source of truth for the lineage DDL (shared with the engine's
+    // `ApiContext::open`). Idempotent — no-op on an already-provisioned DB.
+    ensure_lineage_schema(&pool)
         .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("inspect {table} columns: {e}")))?;
-    Ok(rows.iter().any(|row| {
-        row.try_get::<String, _>("name")
-            .map(|name| name == column)
-            .unwrap_or(false)
-    }))
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("ensure lineage schema: {e}")))?;
+    Ok(pool)
 }
 
 async fn insert_lineage_node(
@@ -1834,12 +1734,6 @@ async fn insert_lineage_node(
 
 fn default_blob_dir() -> PathBuf {
     BlobStore::default_root().unwrap_or_else(|_| PathBuf::from(".xvn/lineage/blobs"))
-}
-
-fn default_db_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".xvn/lineage/lineage.db")
 }
 
 fn parse_embedding_json(raw: &str) -> CliResult<Vec<f32>> {
@@ -2034,8 +1928,8 @@ sqlite_url = "sqlite://x.db"
 
         assert_eq!(
             default_db,
-            home.join("lineage").join("lineage.db"),
-            "default lineage db must be $XVN_HOME/lineage/lineage.db"
+            home.join("xvn.db"),
+            "default lineage db must be the shared $XVN_HOME/xvn.db (F8 convergence)"
         );
         assert!(
             default_db.starts_with(&home),

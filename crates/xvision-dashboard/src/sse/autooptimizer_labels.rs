@@ -91,6 +91,8 @@ mod tests {
         CycleProgressEvent::HonestyCheckRun {
             cycle_id: "c1".into(),
             passed: true,
+            sabotage_variant: "kill-trades".into(),
+            message: "Honesty check passed: sabotaged variant `kill-trades` was correctly rejected.".into(),
         }
     }
     fn judge_finding() -> CycleProgressEvent {

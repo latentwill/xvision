@@ -133,7 +133,7 @@ async fn delete_removes_strategy_from_store_and_list() {
     let strategy_strategy = create_sample_strategy(&ctx).await;
     let id = strategy_strategy.manifest.id.clone();
 
-    strategy::delete(&ctx, &id).await.unwrap();
+    strategy::delete(&ctx, &id, false).await.unwrap();
 
     let get = strategy::get(&ctx, &id).await;
     assert!(
@@ -204,7 +204,7 @@ async fn delete_sweeps_scoped_agents_but_leaves_workspace_agents() {
         .await
         .unwrap();
 
-    strategy::delete(&ctx, &strategy_id).await.unwrap();
+    strategy::delete(&ctx, &strategy_id, false).await.unwrap();
     assert!(
         agent_store.get(&workspace_id).await.unwrap().is_some(),
         "workspace agent should survive strategy delete",
@@ -227,7 +227,7 @@ async fn delete_sweeps_scoped_agents_but_leaves_workspace_agents() {
 #[tokio::test]
 async fn delete_unknown_strategy_returns_not_found() {
     let (ctx, _dir) = test_context().await;
-    let err = strategy::delete(&ctx, "01TOTALLYMISSINGAGENTID000")
+    let err = strategy::delete(&ctx, "01TOTALLYMISSINGAGENTID000", false)
         .await
         .unwrap_err();
 

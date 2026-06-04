@@ -60,7 +60,17 @@ pub enum CycleProgressEvent {
         passed: bool,
     },
     /// Fired after the honesty check runs. Operator label: "Honesty check run".
-    HonestyCheckRun { cycle_id: String, passed: bool },
+    /// F9: carries the sabotage variant + a human-readable message so the CLI
+    /// summary and optimizer panel can render a labeled outcome instead of the
+    /// operator having to infer it from raw broker-rule warnings.
+    HonestyCheckRun {
+        cycle_id: String,
+        passed: bool,
+        #[serde(default)]
+        sabotage_variant: String,
+        #[serde(default)]
+        message: String,
+    },
     /// Fired for each judge finding on an active child. Operator label: "Judge finding".
     JudgeFinding {
         cycle_id: String,

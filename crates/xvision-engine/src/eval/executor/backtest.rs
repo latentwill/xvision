@@ -172,6 +172,14 @@ pub struct Executor {
     /// spawned a Cline client for this run. `None` keeps dispatch on
     /// `LlmDispatch` regardless of `agent_runtime`.
     cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
+    /// F9 (2026-06-04): when `Some(variant)`, this run is an autooptimizer
+    /// honesty-check (canary) executing a deliberately-sabotaged strategy
+    /// (`kill-trades`, `remove-loss-limit`, `absurd-cadence`). The broker-rule
+    /// rejection site demotes blocking violations to `debug` annotated as
+    /// "expected (honesty-check sabotage)" rather than emitting a bare `WARN
+    /// min_order_size_violation` that an operator cannot distinguish from a
+    /// real fault. `None` (every real run) keeps the `WARN` intact.
+    canary_sabotage: Option<String>,
 }
 
 impl Executor {
@@ -225,6 +233,7 @@ impl Executor {
             injected_asset_bars: None,
             agent_runtime: Default::default(),
             cline: None,
+            canary_sabotage: None,
         })
     }
 
@@ -256,6 +265,7 @@ impl Executor {
             injected_asset_bars: None,
             agent_runtime: Default::default(),
             cline: None,
+            canary_sabotage: None,
         }
     }
 
@@ -283,6 +293,7 @@ impl Executor {
             injected_asset_bars: None,
             agent_runtime: Default::default(),
             cline: None,
+            canary_sabotage: None,
         }
     }
 
@@ -304,6 +315,7 @@ impl Executor {
             injected_asset_bars: None,
             agent_runtime: Default::default(),
             cline: None,
+            canary_sabotage: None,
         }
     }
 
@@ -378,6 +390,15 @@ impl Executor {
     /// Inject per-asset bar series for multi-asset backtests.
     pub fn with_asset_bars(mut self, bars: BTreeMap<xvision_core::trading::AssetSymbol, Vec<Ohlcv>>) -> Self {
         self.injected_asset_bars = Some(bars);
+        self
+    }
+
+    /// F9 — mark this run as an autooptimizer honesty-check (canary) executing
+    /// the named sabotage variant, so broker-rule rejections it provokes by
+    /// design are relabeled as expected honesty-check noise rather than logged
+    /// as bare `WARN min_order_size_violation`.
+    pub fn with_canary_sabotage(mut self, variant: impl Into<String>) -> Self {
+        self.canary_sabotage = Some(variant.into());
         self
     }
 
@@ -1617,8 +1638,7 @@ impl Executor {
                 //     exceed the cap is vetoed. Re-opening / adjusting an asset
                 //     that is already in-position is not blocked.
                 let applied_action: String = {
-                    let is_new_open =
-                        applied_action == "long_open" || applied_action == "short_open";
+                    let is_new_open = applied_action == "long_open" || applied_action == "short_open";
                     if !is_new_open {
                         applied_action
                     } else {
@@ -1632,8 +1652,7 @@ impl Executor {
                         }
                         let kill_pct = strategy.risk.daily_loss_kill_pct;
                         let realized_today = book.realized() - daily_realized_at_day_start;
-                        let daily_loss_breached =
-                            kill_pct > 0.0 && realized_today <= -(kill_pct * initial);
+                        let daily_loss_breached = kill_pct > 0.0 && realized_today <= -(kill_pct * initial);
 
                         // Max concurrent positions: count distinct assets that
                         // currently hold a non-flat position. The asset being
@@ -1642,9 +1661,8 @@ impl Executor {
                         let max_positions = strategy.risk.max_concurrent_positions;
                         let open_positions = book.open_position_count();
                         let already_open = book.position(asset_sym).abs() > f64::EPSILON;
-                        let max_positions_breached = max_positions > 0
-                            && !already_open
-                            && open_positions >= max_positions as usize;
+                        let max_positions_breached =
+                            max_positions > 0 && !already_open && open_positions >= max_positions as usize;
 
                         if daily_loss_breached || max_positions_breached {
                             let reason = if daily_loss_breached {
@@ -1779,7 +1797,27 @@ impl Executor {
                                 ),
                                 created_at: None,
                             };
-                            if is_blocking {
+                            if is_blocking && self.canary_sabotage.is_some() {
+                                // F9: this is an autooptimizer honesty-check
+                                // (canary) running a deliberately-sabotaged
+                                // strategy. Its broker-rule rejections are
+                                // expected (e.g. `kill-trades` zero-sizes every
+                                // order → min-order-notional). Demote to debug
+                                // and label so the operator does not mistake
+                                // them for a real broker fault.
+                                tracing::debug!(
+                                    run_id = %run.id,
+                                    decision_index = decision_idx,
+                                    asset = %asset,
+                                    specific_rule = %violation.specific_rule,
+                                    action = %applied_action,
+                                    sabotage_variant = %self
+                                        .canary_sabotage
+                                        .as_deref()
+                                        .unwrap_or("unknown"),
+                                    "honesty-check canary: broker rule rejected order — expected (honesty-check sabotage)",
+                                );
+                            } else if is_blocking {
                                 tracing::warn!(
                                     run_id = %run.id,
                                     decision_index = decision_idx,
@@ -2023,8 +2061,7 @@ impl Executor {
                         // config fallback) needs it. When warmup leaves ATR
                         // unavailable, `atr_sl_price`/`atr_tp_price` no-op, so
                         // no spurious stop fires.
-                        let entry_atr = if effective_sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some()
-                        {
+                        let entry_atr = if effective_sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some() {
                             crate::eval::executor::sltp::compute_atr14(history_slice)
                         } else {
                             None

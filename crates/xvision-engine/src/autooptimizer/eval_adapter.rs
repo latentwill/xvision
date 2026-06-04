@@ -25,6 +25,22 @@ use crate::tools::ToolRegistry;
 #[async_trait]
 pub trait PaperTestRunner: Send + Sync {
     async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary>;
+
+    /// F9: run a deliberately-sabotaged honesty-check (canary) strategy,
+    /// tagging the run with the sabotage variant so the backtest executor
+    /// relabels broker-rule rejections produced *by design* (e.g. the
+    /// `kill-trades` variant zero-sizes every order → min-order-notional
+    /// rejection) as expected honesty-check noise rather than emitting them as
+    /// bare `WARN min_order_size_violation`. The default ignores the label, so
+    /// stub/test runners and any future implementor are unaffected.
+    async fn run_canary(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        _sabotage_variant: &str,
+    ) -> Result<MetricsSummary> {
+        self.run(strategy, scenario).await
+    }
 }
 
 pub struct BacktestPaperTester {
@@ -59,13 +75,20 @@ impl BacktestPaperTester {
     }
 }
 
-#[async_trait]
-impl PaperTestRunner for BacktestPaperTester {
-    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
-        let executor = match self.injected_bars.as_ref() {
+impl BacktestPaperTester {
+    async fn run_inner(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        canary: Option<&str>,
+    ) -> Result<MetricsSummary> {
+        let mut executor = match self.injected_bars.as_ref() {
             Some(bars) => Executor::with_bars(bars.clone()),
             None => Executor::new(),
         };
+        if let Some(variant) = canary {
+            executor = executor.with_canary_sabotage(variant);
+        }
         let mut run = Run::new_queued(
             strategy.manifest.id.clone(),
             scenario.id.clone(),
@@ -92,6 +115,22 @@ impl PaperTestRunner for BacktestPaperTester {
     }
 }
 
+#[async_trait]
+impl PaperTestRunner for BacktestPaperTester {
+    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
+        self.run_inner(strategy, scenario, None).await
+    }
+
+    async fn run_canary(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        sabotage_variant: &str,
+    ) -> Result<MetricsSummary> {
+        self.run_inner(strategy, scenario, Some(sabotage_variant)).await
+    }
+}
+
 /// Backtest paper tester that sources bars through the eval cache wrapper.
 ///
 /// `BacktestPaperTester::new` preserves the legacy fixture-loader behavior
@@ -114,11 +153,15 @@ impl CachedBacktestPaperTester {
     }
 }
 
-#[async_trait]
-impl PaperTestRunner for CachedBacktestPaperTester {
-    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
+impl CachedBacktestPaperTester {
+    async fn run_inner(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        canary: Option<&str>,
+    ) -> Result<MetricsSummary> {
         ensure_scenario_persisted(&self.ctx, scenario).await?;
-        let executor = build_cached_backtest_executor(&self.ctx, strategy, scenario).await?;
+        let executor = build_cached_backtest_executor(&self.ctx, strategy, scenario, canary).await?;
         let store = RunStore::new(self.ctx.db.clone());
         let mut run = Run::new_queued(
             strategy.manifest.id.clone(),
@@ -147,6 +190,22 @@ impl PaperTestRunner for CachedBacktestPaperTester {
                 &store,
             )
             .await
+    }
+}
+
+#[async_trait]
+impl PaperTestRunner for CachedBacktestPaperTester {
+    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
+        self.run_inner(strategy, scenario, None).await
+    }
+
+    async fn run_canary(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        sabotage_variant: &str,
+    ) -> Result<MetricsSummary> {
+        self.run_inner(strategy, scenario, Some(sabotage_variant)).await
     }
 }
 
@@ -193,7 +252,7 @@ impl PaperTestRunner for StubPaperTester {
 pub struct BudgetCappedPaperTester {
     inner: Box<dyn PaperTestRunner>,
     budget_usd: f64,
-    spent_quote: std::sync::Mutex<f64>,
+    spent_quote: Arc<std::sync::Mutex<f64>>,
 }
 
 impl BudgetCappedPaperTester {
@@ -201,14 +260,26 @@ impl BudgetCappedPaperTester {
         Self {
             inner,
             budget_usd,
-            spent_quote: std::sync::Mutex::new(0.0),
+            spent_quote: Arc::new(std::sync::Mutex::new(0.0)),
         }
+    }
+
+    /// Shared handle to the running total of metered paper-test inference cost
+    /// (USD). The CLI clones this before boxing the tester so it can print the
+    /// realized "cycle cost: $X.XX" once the cycle finishes (minor find,
+    /// 2026-06-04 — F2 metered cost for the cap but never surfaced the total).
+    pub fn spent_quote_handle(&self) -> Arc<std::sync::Mutex<f64>> {
+        Arc::clone(&self.spent_quote)
     }
 }
 
-#[async_trait]
-impl PaperTestRunner for BudgetCappedPaperTester {
-    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
+impl BudgetCappedPaperTester {
+    async fn run_budgeted(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        canary: Option<&str>,
+    ) -> Result<MetricsSummary> {
         // Pre-check in a scoped block so the lock is released before the
         // `.await` below (never hold a std Mutex across an await point).
         {
@@ -222,7 +293,12 @@ impl PaperTestRunner for BudgetCappedPaperTester {
                 );
             }
         }
-        let metrics = self.inner.run(strategy, scenario).await?;
+        // Preserve the canary label through the budget wrapper so the inner
+        // tester still relabels sabotage broker-rule noise.
+        let metrics = match canary {
+            Some(variant) => self.inner.run_canary(strategy, scenario, variant).await?,
+            None => self.inner.run(strategy, scenario).await?,
+        };
         if let Some(cost) = metrics.inference_cost_quote_total {
             *self.spent_quote.lock().expect("budget mutex poisoned") += cost;
         }
@@ -230,10 +306,28 @@ impl PaperTestRunner for BudgetCappedPaperTester {
     }
 }
 
+#[async_trait]
+impl PaperTestRunner for BudgetCappedPaperTester {
+    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
+        self.run_budgeted(strategy, scenario, None).await
+    }
+
+    async fn run_canary(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        sabotage_variant: &str,
+    ) -> Result<MetricsSummary> {
+        self.run_budgeted(strategy, scenario, Some(sabotage_variant))
+            .await
+    }
+}
+
 async fn build_cached_backtest_executor(
     ctx: &ApiContext,
     strategy: &Strategy,
     scenario: &Scenario,
+    canary: Option<&str>,
 ) -> Result<Executor> {
     let active = active_assets(&strategy.manifest.asset_universe, None)?;
     let first_asset = *active.first().context("strategy asset_universe resolved empty")?;
@@ -259,6 +353,11 @@ async fn build_cached_backtest_executor(
 
     if let Some(recorder) = ctx.memory_recorder.clone() {
         executor = executor.with_memory_recorder(recorder);
+    }
+    // F9: tag honesty-check (canary) runs so the executor relabels the
+    // by-design broker-rule rejections as expected honesty-check noise.
+    if let Some(variant) = canary {
+        executor = executor.with_canary_sabotage(variant);
     }
 
     Ok(executor)

@@ -382,6 +382,11 @@ impl ApiContext {
         migrate_optimization_store(&pool).await?;
         migrate_holdout(&pool).await?;
         migrate_agent_slot_max_wall_ms(&pool).await?;
+        // F8: the autooptimizer lineage tables now live in xvn.db (shared by
+        // the dashboard panel read path and CLI run-cycle writes).
+        migrate_autooptimizer_lineage(&pool).await?;
+        // F8 one-time import of any pre-fix `lineage/lineage.db` (non-fatal).
+        import_legacy_lineage_db(&pool, xvn_home).await;
 
         // V2D Phase 3.3: open the memory store + (optionally) the
         // default OpenAI embedder. Failures here are NON-fatal — the
@@ -903,6 +908,93 @@ async fn migrate_agent_slot_max_wall_ms(pool: &SqlitePool) -> ApiResult<()> {
             .await?;
     }
     Ok(())
+}
+
+/// F8 (2026-06-04): provision the autooptimizer lineage schema
+/// (`lineage_nodes`, `mutator_attribution`, `lineage_embeddings`) on the main
+/// `xvn.db` pool. Migrations 048–050 defined this schema but were never wired
+/// into the embedded migrator, so `xvn.db` had no `lineage_nodes` table — the
+/// dashboard panel's `table_exists` guard returned empty and CLI-launched
+/// cycles (which wrote a *separate* `lineage/lineage.db`) never appeared.
+/// Both surfaces now share `xvn.db`; the DDL lives once in
+/// [`crate::autooptimizer::lineage::ensure_lineage_schema`] and is applied here
+/// (dashboard/server boot) and by the CLI `open_and_migrate_db` (CLI boot).
+async fn migrate_autooptimizer_lineage(pool: &SqlitePool) -> ApiResult<()> {
+    crate::autooptimizer::lineage::ensure_lineage_schema(pool)
+        .await
+        .map_err(|e| ApiError::Internal(format!("autooptimizer lineage schema: {e}")))
+}
+
+/// F8 one-time import: copy lineage rows from a legacy
+/// `$XVN_HOME/lineage/lineage.db` (written by pre-fix CLI `run-cycle` runs)
+/// into the now-canonical `xvn.db` so prior CLI cycles aren't lost from the
+/// optimizer panel. Best-effort and non-fatal — a failure here must never
+/// block `ApiContext::open`. Guarded by a sentinel file so the ATTACH+copy
+/// runs at most once per home; `INSERT OR IGNORE` keeps it safe even if the
+/// sentinel is removed.
+async fn import_legacy_lineage_db(pool: &SqlitePool, xvn_home: &Path) {
+    let legacy = xvn_home.join("lineage").join("lineage.db");
+    let sentinel = xvn_home.join("lineage").join(".imported-into-xvn-db");
+    if !legacy.exists() || sentinel.exists() {
+        return;
+    }
+    match copy_legacy_lineage(pool, &legacy).await {
+        Ok(copied) => {
+            if let Err(e) = tokio::fs::write(&sentinel, b"imported\n").await {
+                tracing::warn!(error = %e, "F8: lineage import succeeded but sentinel write failed");
+            }
+            if copied > 0 {
+                tracing::info!(rows = copied, "F8: imported legacy lineage.db rows into xvn.db");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "F8: legacy lineage.db import skipped (non-fatal)");
+        }
+    }
+}
+
+async fn copy_legacy_lineage(pool: &SqlitePool, legacy: &Path) -> Result<u64, sqlx::Error> {
+    // ATTACH the legacy file and copy each lineage table. `INSERT OR IGNORE`
+    // means existing rows (same primary key) are preserved, not overwritten,
+    // and lineage_nodes is copied before lineage_embeddings so the embeddings
+    // FK resolves. Tables may be absent in the legacy file (older shape) —
+    // those copies are wrapped so a missing source table is a no-op.
+    //
+    // ATTACH/DETACH are connection-scoped, so the whole sequence must run on a
+    // single pooled connection — `pool.execute(...)` could otherwise pick a
+    // different connection per statement and the attached schema would vanish.
+    let mut conn = pool.acquire().await?;
+    let legacy_str = legacy.to_string_lossy().replace('\'', "''");
+    sqlx::query(&format!("ATTACH DATABASE '{legacy_str}' AS legacy_lineage"))
+        .execute(&mut *conn)
+        .await?;
+    let mut copied: u64 = 0;
+    for sql in [
+        "INSERT OR IGNORE INTO lineage_nodes \
+         (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, diversity_score) \
+         SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at, diversity_score \
+         FROM legacy_lineage.lineage_nodes",
+        "INSERT OR IGNORE INTO mutator_attribution \
+         (bundle_hash, provider, model, prompt_version, proposed_at, delta_sharpe) \
+         SELECT bundle_hash, provider, model, prompt_version, proposed_at, delta_sharpe \
+         FROM legacy_lineage.mutator_attribution",
+        "INSERT OR IGNORE INTO lineage_embeddings \
+         (bundle_hash, embedding_blob_hash, embedding_dim, embedded_at) \
+         SELECT bundle_hash, embedding_blob_hash, embedding_dim, embedded_at \
+         FROM legacy_lineage.lineage_embeddings",
+    ] {
+        match sqlx::query(sql).execute(&mut *conn).await {
+            Ok(res) => copied += res.rows_affected(),
+            // A missing source table in the legacy file is expected for older
+            // shapes; skip it rather than aborting the whole import.
+            Err(e) => tracing::debug!(error = %e, "F8: legacy table copy skipped"),
+        }
+    }
+    // DETACH on the same connection; ignore detach errors.
+    let _ = sqlx::query("DETACH DATABASE legacy_lineage")
+        .execute(&mut *conn)
+        .await;
+    Ok(copied)
 }
 
 /// Apply migration 021: `eval_batches` table + `eval_runs.batch_id` column.

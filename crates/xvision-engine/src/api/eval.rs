@@ -30,7 +30,7 @@ use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
-use crate::agent::pipeline::{agent_slot_to_llm_slot, ResolvedAgentSlot};
+use crate::agent::pipeline::ResolvedAgentSlot;
 use crate::agents::AgentStore;
 use crate::api::audit::{self, Outcome};
 use crate::api::scenario as api_scenario;
@@ -1884,24 +1884,16 @@ async fn resolve_agent_slots(
         let slot = agent.slots.first().ok_or_else(|| {
             ApiError::Validation(format!("agent {} has no executable slots", agent.agent_id))
         })?;
-        out.push(ResolvedAgentSlot {
-            role: agent_ref.role.clone(),
-            slot: agent_slot_to_llm_slot(&agent_ref.role, slot),
-            system_prompt: slot.system_prompt.clone(),
-            max_tokens: slot.resolve_max_tokens(),
-            max_wall_ms: slot.resolve_max_wall_ms(),
-            temperature: slot.temperature,
-            inputs_policy: slot.inputs_policy,
-            bar_history_limit: slot.bar_history_limit,
-            memory_mode: slot.memory_mode,
-            agent_id: agent.agent_id.clone(),
-            // Snapshot the slot's full capabilities set so the Phase B
-            // dispatcher's `resolve_activates` picks the right primary
-            // capability when `AgentRef.activates` is `None` (e.g.
-            // Phase E starter templates with non-Trader sets).
-            capabilities: slot.capabilities.clone(),
-            noop_skip: slot.noop_skip.unwrap_or(true),
-        });
+        // F10: build the resolved slot through the single shared
+        // `resolve_agent_slot` helper (also used by the pool-based
+        // `resolve_agent_slots_for_strategy` the optimizer paper-test path
+        // calls) so the executor-ready slot fields never drift between the
+        // two resolvers. This loop keeps the HTTP-typed errors above.
+        out.push(crate::agent::pipeline::resolve_agent_slot(
+            &agent_ref.role,
+            slot,
+            &agent.agent_id,
+        ));
     }
     Ok(out)
 }
