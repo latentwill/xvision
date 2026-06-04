@@ -1906,10 +1906,7 @@ async fn resolve_agent_slots(
     Ok(out)
 }
 
-async fn dispatch_from_provider(
-    xvn_home: &Path,
-    entry: &ProviderEntry,
-) -> ApiResult<Arc<dyn LlmDispatch>> {
+async fn dispatch_from_provider(xvn_home: &Path, entry: &ProviderEntry) -> ApiResult<Arc<dyn LlmDispatch>> {
     // Resolve the key with the SAME env-first-then-secrets-file priority that
     // `provider check` uses, so a fresh `docker exec xvn-app xvn ...` (no key
     // bridged into env) still finds the key persisted in
@@ -1956,10 +1953,7 @@ async fn dispatch_from_provider(
 /// half of [`dispatch_from_provider`]). Returns `Ok(None)` for keyless
 /// local endpoints, `Ok(Some(key))` otherwise, and a typed validation
 /// error when the configured env var is unset.
-async fn resolve_provider_api_key(
-    xvn_home: &Path,
-    entry: &ProviderEntry,
-) -> ApiResult<Option<String>> {
+async fn resolve_provider_api_key(xvn_home: &Path, entry: &ProviderEntry) -> ApiResult<Option<String>> {
     if entry.api_key_env.is_empty() {
         return Ok(None);
     }
@@ -4536,9 +4530,7 @@ mod tests {
 
         // One combined body: the fetcher selects `bars[requested_symbol]`, so
         // each per-asset fetch extracts its own series. BTC ~101_769, ETH ~2_310.
-        let bar = |c: f64, t: &str| {
-            serde_json::json!({"t": t, "o": c, "h": c, "l": c, "c": c, "v": 1.0})
-        };
+        let bar = |c: f64, t: &str| serde_json::json!({"t": t, "o": c, "h": c, "l": c, "c": c, "v": 1.0});
         let body = serde_json::json!({
             "bars": {
                 "BTC/USD": [

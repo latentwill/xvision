@@ -739,8 +739,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let parent_hash = ContentHash::from_hex(&args.parent_bundle_hash)
         .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent_bundle_hash: {e}")))?;
     let parent = load_strategy_blob(&blobs, &parent_hash).await?;
-    let binding =
-        build_dispatch(args.mock, None, &cfg.mutator.provider, &cfg.mutator.model).await?;
+    let binding = build_dispatch(args.mock, None, &cfg.mutator.provider, &cfg.mutator.model).await?;
     let dispatch = Arc::clone(&binding.dispatch);
 
     // AR-3: connect to the dashboard IPC socket if requested.
@@ -1419,11 +1418,9 @@ async fn dispatch_from_provider_entry(
         String::new()
     } else {
         let from_secrets = match xvn_home {
-            Some(home) => xvision_engine::api::settings::providers::resolve_provider_key_value(
-                home, entry,
-            )
-            .await
-            .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?,
+            Some(home) => xvision_engine::api::settings::providers::resolve_provider_key_value(home, entry)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("{e}")))?,
             // No XVN_HOME available (e.g. mutate-once without a home) — env only.
             None => std::env::var(&entry.api_key_env).ok().filter(|v| !v.is_empty()),
         };

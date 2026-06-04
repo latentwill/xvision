@@ -1687,10 +1687,7 @@ pub async fn load_providers_secrets_into_env(xvn_home: &Path) -> ApiResult<usize
 /// path read the env var ONLY and failed with "no API key" even though the
 /// secrets file held a valid key (`provider check` could see it but eval
 /// could not).
-pub async fn resolve_provider_key_value(
-    xvn_home: &Path,
-    entry: &ProviderEntry,
-) -> ApiResult<Option<String>> {
+pub async fn resolve_provider_key_value(xvn_home: &Path, entry: &ProviderEntry) -> ApiResult<Option<String>> {
     // 1. Env var first (highest priority).
     if !entry.api_key_env.is_empty() {
         if let Ok(v) = std::env::var(&entry.api_key_env) {
@@ -2182,9 +2179,7 @@ api_key_env = "K"
 
         // Before the fix this returned None/errored (env-only). Now it
         // resolves from the file.
-        let resolved = resolve_provider_key_value(dir.path(), &entry)
-            .await
-            .unwrap();
+        let resolved = resolve_provider_key_value(dir.path(), &entry).await.unwrap();
         assert_eq!(resolved.as_deref(), Some("sk-secret-from-file"));
     }
 
@@ -2200,9 +2195,7 @@ api_key_env = "K"
             .await
             .unwrap();
 
-        let resolved = resolve_provider_key_value(dir.path(), &entry)
-            .await
-            .unwrap();
+        let resolved = resolve_provider_key_value(dir.path(), &entry).await.unwrap();
         assert_eq!(resolved.as_deref(), Some("sk-from-env"));
         std::env::remove_var(env_var);
     }
@@ -2217,9 +2210,7 @@ api_key_env = "K"
 
         let entry = entry_for("absentprov", env_var);
         // No secrets file written at all (NotFound → default empty map).
-        let resolved = resolve_provider_key_value(dir.path(), &entry)
-            .await
-            .unwrap();
+        let resolved = resolve_provider_key_value(dir.path(), &entry).await.unwrap();
         assert!(resolved.is_none(), "got {resolved:?}");
     }
 }
