@@ -124,7 +124,9 @@ async fn seed_strategies(
     if !reset {
         if let Ok(existing) = store.load(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID).await {
             if is_example_strategy(&existing) && !existing.agents.is_empty() {
-                summary.strategies_skipped.push(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into());
+                summary
+                    .strategies_skipped
+                    .push(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into());
                 return Ok(());
             }
         }
@@ -210,7 +212,9 @@ async fn seed_strategies(
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("save example strategy: {e}")))?;
 
-    summary.strategies_created.push(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into());
+    summary
+        .strategies_created
+        .push(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into());
     Ok(())
 }
 
@@ -444,7 +448,9 @@ mod tests {
 
         // Strategy is created.
         assert!(
-            summary.strategies_created.contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
+            summary
+                .strategies_created
+                .contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
             "expected example-trend-follower in strategies_created, got: {:?}",
             summary.strategies_created,
         );
@@ -457,10 +463,7 @@ mod tests {
             .load(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID)
             .await
             .expect("example-trend-follower must exist after seed");
-        let has_trader = strategy
-            .agents
-            .iter()
-            .any(|a| a.canonical_role() == "trader");
+        let has_trader = strategy.agents.iter().any(|a| a.canonical_role() == "trader");
         assert!(
             has_trader,
             "seeded example strategy must have >= 1 agent with role 'trader', agents: {:?}",
@@ -495,7 +498,10 @@ mod tests {
         let second = seed_fresh(dir.path(), false).await;
         // Strategy is skipped, not re-created.
         assert!(second.strategies_created.is_empty());
-        assert_eq!(second.strategies_skipped, vec![EXAMPLE_STRATEGY_TREND_FOLLOWER_ID]);
+        assert_eq!(
+            second.strategies_skipped,
+            vec![EXAMPLE_STRATEGY_TREND_FOLLOWER_ID]
+        );
         assert!(second.scenarios_created.is_empty());
         assert_eq!(second.scenarios_skipped.len(), 2);
     }
@@ -507,12 +513,16 @@ mod tests {
         let second = seed_fresh(dir.path(), true).await;
         // On reset the strategy is removed and re-created.
         assert!(
-            second.strategies_removed.contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
+            second
+                .strategies_removed
+                .contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
             "reset must remove the example strategy, removed: {:?}",
             second.strategies_removed,
         );
         assert!(
-            second.strategies_created.contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
+            second
+                .strategies_created
+                .contains(&EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.to_string()),
             "reset must recreate the example strategy, created: {:?}",
             second.strategies_created,
         );
@@ -532,7 +542,10 @@ mod tests {
         let store = FilesystemStore::new(strategy_store_dir(dir.path()));
         let legacy = strategy_fixture("example-trend-follower", EXAMPLE_STRATEGY_CREATOR);
         // The fixture has `agents: Vec::new()` — this is the broken shape.
-        assert!(legacy.agents.is_empty(), "fixture must represent the old agentless shape");
+        assert!(
+            legacy.agents.is_empty(),
+            "fixture must represent the old agentless shape"
+        );
         store.save(&legacy).await.unwrap();
 
         let summary = seed_fresh(dir.path(), false).await;
@@ -540,8 +553,12 @@ mod tests {
         // Legacy row is pruned (agents.is_empty → treated as stale) and
         // re-created with a real agent.
         assert!(
-            summary.strategies_removed.contains(&"example-trend-follower".to_string())
-                || summary.strategies_created.contains(&"example-trend-follower".to_string()),
+            summary
+                .strategies_removed
+                .contains(&"example-trend-follower".to_string())
+                || summary
+                    .strategies_created
+                    .contains(&"example-trend-follower".to_string()),
             "expected prune+recreate of the agentless legacy row, \
              removed={:?} created={:?}",
             summary.strategies_removed,

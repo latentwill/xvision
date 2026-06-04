@@ -185,7 +185,10 @@ mod tests {
         // "example strategies" without needing to know about the seeder's
         // internal mechanism.
         let strategies = example_strategies();
-        assert!(strategies.is_empty(), "example_strategies() must remain an empty seam");
+        assert!(
+            strategies.is_empty(),
+            "example_strategies() must remain an empty seam"
+        );
     }
 
     #[test]
