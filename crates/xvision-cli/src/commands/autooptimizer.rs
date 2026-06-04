@@ -1187,7 +1187,10 @@ fn resolve_demo_fixture(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
     }
     let xvn_home = crate::commands::home::resolve_xvn_home(None)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
-    Ok(xvn_home.join("probes").join("autooptimizer").join("replay-fixture.json"))
+    Ok(xvn_home
+        .join("probes")
+        .join("autooptimizer")
+        .join("replay-fixture.json"))
 }
 
 /// Load the autooptimizer config. An explicit `--config` override is required to
@@ -1717,8 +1720,7 @@ mod tests {
 
         // Explicit overrides must win unchanged.
         let override_db = home.join("custom").join("explicit.db");
-        let resolved_override =
-            resolve_lineage_db(Some(override_db.clone())).expect("override db resolves");
+        let resolved_override = resolve_lineage_db(Some(override_db.clone())).expect("override db resolves");
         let override_fix = home.join("custom").join("explicit-fixture.json");
         let resolved_override_fix =
             resolve_demo_fixture(Some(override_fix.clone())).expect("override fixture resolves");
@@ -1733,7 +1735,10 @@ mod tests {
             None => std::env::remove_var(KEY),
         }
 
-        assert_eq!(resolved_override, override_db, "explicit --db must be honored verbatim");
+        assert_eq!(
+            resolved_override, override_db,
+            "explicit --db must be honored verbatim"
+        );
         assert_eq!(
             resolved_override_fix, override_fix,
             "explicit --fixture must be honored verbatim"
@@ -1752,7 +1757,9 @@ mod tests {
 
         assert_eq!(
             default_fixture,
-            home.join("probes").join("autooptimizer").join("replay-fixture.json"),
+            home.join("probes")
+                .join("autooptimizer")
+                .join("replay-fixture.json"),
             "default demo fixture must be $XVN_HOME/probes/autooptimizer/replay-fixture.json"
         );
         assert!(
