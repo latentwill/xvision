@@ -30,7 +30,7 @@ pub struct InspectArgs {
     pub xvn_home: Option<PathBuf>,
 
     /// Path to the sqlite database that holds the agent_runs tables.
-    /// Defaults to `<xvn_home>/data/store.db` to match the engine's
+    /// Defaults to `<xvn_home>/xvn.db` to match the engine's
     /// default store location.
     #[arg(long)]
     pub db: Option<PathBuf>,
@@ -173,7 +173,7 @@ async fn open_pool(
                 Some(h) => h.to_path_buf(),
                 None => default_xvn_home(),
             };
-            home.join("data").join("store.db")
+            home.join("xvn.db")
         }
     };
 

@@ -977,6 +977,46 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
     }
 }
 
+/// Resolve every `AgentRef` on a strategy into the executor-ready
+/// `Vec<ResolvedAgentSlot>`, loading each agent's slot from the agent
+/// library by `agent_id`.
+///
+/// This is the pool-based sibling of `api::eval::resolve_agent_slots`
+/// (which takes an `ApiContext` and returns `ApiError`s for the HTTP
+/// surface). Non-HTTP callers — notably the autooptimizer paper-test
+/// adapters in `autooptimizer::eval_adapter`, which used to pass an
+/// empty `&[]` slice and so produced a trader with no model/prompt
+/// binding (every decision a `<no_response>` no-op) — use this variant
+/// to feed the executor the same resolved slots the normal eval path
+/// does.
+///
+/// Returns an empty vec for legacy strategies with no attached agents,
+/// mirroring `resolve_agent_slots`; the caller's executor still has the
+/// deprecated `trader_slot`/`intern_slot`/`regime_slot` fallback path.
+pub async fn resolve_agent_slots_for_strategy(
+    pool: &sqlx::SqlitePool,
+    strategy: &Strategy,
+) -> anyhow::Result<Vec<ResolvedAgentSlot>> {
+    if strategy.agents.is_empty() {
+        return Ok(Vec::new());
+    }
+    let agent_store = crate::agents::AgentStore::new(pool.clone());
+    let mut out = Vec::with_capacity(strategy.agents.len());
+    for agent_ref in &strategy.agents {
+        let agent = agent_store
+            .get(&agent_ref.agent_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("load agent {}: {e}", agent_ref.agent_id))?
+            .ok_or_else(|| anyhow::anyhow!("agent {} not found", agent_ref.agent_id))?;
+        let slot = agent
+            .slots
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("agent {} has no executable slots", agent.agent_id))?;
+        out.push(resolve_agent_slot(&agent_ref.role, slot, &agent.agent_id));
+    }
+    Ok(out)
+}
+
 /// Legacy `LLMSlot` path (regime/intern/trader slots on the older
 /// `Strategy` shape) has no operator-side `max_tokens` field. To keep
 /// existing legacy strategies on their previous budget after the q15
