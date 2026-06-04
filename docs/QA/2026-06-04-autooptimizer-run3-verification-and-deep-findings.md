@@ -72,6 +72,39 @@ Even though `--provider openrouter --model google/gemini-3.1-flash-lite` was pas
 - Plumbing/observability fixes from earlier waves hold: cycles run end-to-end, lineage is unified + UI-visible (F8/F13), canary is quiet + labeled (F9), eval engine is shared (F10), re-runs unblocked + ancestry safe (F12), no-candidate is explicit (F15), mutate-once/flywheel/inspect work (F16/F17/F13).
 - The gate/keep machinery itself is sound (`mutate-once --mock` → `Gate: passed`). The remaining work is real candidate generation (F21/F14) and runnable paper-tests (F22), then proving a kept improvement (F20).
 
+## Resolution (2026-06-04, branch `fix/optimizer-real-keep-f20-f22`)
+
+All of F11, F14, F18, F20, F21, F22 addressed — the optimizer can now produce and
+**keep** a real improvement.
+
+- **F14/F20/F21 (the unlock)** — Param mutations can now target `risk.<field>`
+  (every strategy's only tunable surface when `mechanical_params` is empty):
+  `MutationDiff::apply_to`, the validator, and the inversion-pair check all route
+  risk params through the typed `RiskConfig` (the inversion check previously
+  ignored them, which alone would have rejected every risk mutation as "symmetric
+  noise"). The experiment writer is now told the exact tunable keys and is only
+  offered structurally-applicable kinds (`prose`, a guaranteed no-op for
+  agent-referencing strategies, is excluded). New integration test
+  `run_cycle_keeps_improving_risk_param_candidate` proves the
+  mutate → gate → **keep** loop end-to-end (an active child with a parent).
+- **F22** — A CLI preflight blocks a cycle whose agentless/legacy-trader strategy
+  routes through a provider different from the cycle's dispatch (the
+  `anthropic.claude-sonnet-4.6` → openrouter 400 case), failing fast with
+  guidance instead of a confusing cross-provider error.
+- **F11** — Unpriced model calls are now counted; `cycle cost:` reports the
+  metered subtotal **plus** an explicit "N call(s) with UNKNOWN price — realized
+  spend is higher; run `xvn provider refresh-models`" instead of a misleading
+  `$0.00`. (The OpenRouter fetcher already ingests pricing correctly — the `—`
+  was a stale cached catalog, an operational refresh, not a code bug.)
+- **F18** — The demo replay now skips event variants it doesn't recognize (with a
+  note) instead of aborting, so a stale deployed fixture (`cycle_sealed`) no
+  longer breaks the whole no-API-key smoke path; the repo fixture is already on
+  the current vocabulary.
+
+Pre-existing, unrelated breakage left untouched: the `filter_gated`-without-`filter`
+strategy-load tests (`strategies::store`, `api::strategy`), the orphaned
+`autooptimizer_session.rs`, and the env-dependent `eval::review` provider test.
+
 ## Artifacts
 - v3 re-run (no_candidate, param error): `/root/xvn-work/night-watch/optrun-v3-f11f19-112351.log` (cycle `01KT9605JTQMT9MV14P4BY230S`)
 - example-trend-follower (anthropic 400): `/root/xvn-work/night-watch/optrun-example-tf-113559.log` (cycle `01KT96PCDNER7EMX6AP2BWN3HB`)

@@ -401,3 +401,147 @@ async fn run_cycle_smoke() {
     // No CycleSealed events should appear (provenance layer removed).
     let _ = Ulid::new(); // suppress unused import lint
 }
+
+// ── F20: a real risk-param mutation is gated on backtests and KEPT ────────────
+
+/// Paper tester whose Sharpe tracks the strategy's `risk.stop_loss_atr_multiple`
+/// knob, so a mutation that changes it produces a directional (non-noise)
+/// backtest result the gate + inversion-pair can act on.
+struct SharpeByStopLoss;
+
+#[async_trait::async_trait]
+impl xvision_engine::autooptimizer::eval_adapter::PaperTestRunner for SharpeByStopLoss {
+    async fn run(&self, strategy: &Strategy, _scenario: &Scenario) -> anyhow::Result<MetricsSummary> {
+        Ok(MetricsSummary {
+            sharpe: strategy.risk.stop_loss_atr_multiple,
+            ..metrics_stub(strategy.risk.stop_loss_atr_multiple)
+        })
+    }
+}
+
+fn risk_param_diff_json() -> String {
+    // make_strategy()'s risk.stop_loss_atr_multiple is 2.0; widen it to 3.0.
+    serde_json::json!({
+        "kind": "param",
+        "prose": [],
+        "params": [{"key": "risk.stop_loss_atr_multiple", "before": 2.0, "after": 3.0}],
+        "tools": {"added": [], "removed": []},
+        "rationale": "a wider ATR stop reduces whipsaw exits"
+    })
+    .to_string()
+}
+
+fn mock_text(text: String) -> xvision_engine::agent::llm::LlmResponse {
+    xvision_engine::agent::llm::LlmResponse {
+        content: vec![xvision_engine::agent::llm::ContentBlock::Text { text }],
+        stop_reason: xvision_engine::agent::llm::StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
+    }
+}
+
+/// F20 (QA 2026-06-04): proves the mutate → gate → **keep** loop end-to-end on a
+/// real risk-param mutation. Before F14/F20 this was impossible: the only
+/// tunable surface real strategies have is `risk.*`, which the validator
+/// rejected and `apply_to`/the inversion check ignored, so every candidate was a
+/// no-op and no improvement could ever be kept.
+#[tokio::test]
+async fn run_cycle_keeps_improving_risk_param_candidate() {
+    let pool = fresh_pool().await;
+    let strategy = make_strategy();
+    let bundle_hash =
+        ContentHash::of_json(&serde_json::to_value(&strategy).expect("strategy must serialise"));
+    LineageStore::new(pool.clone())
+        .insert(&LineageNode {
+            bundle_hash,
+            parent_hash: None,
+            gate_verdict: GateVerdict::Pass,
+            status: LineageStatus::Active,
+            cycle_id: None,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            diversity_score: None,
+        })
+        .await
+        .expect("insert root lineage node");
+
+    let blob_dir = TempDir::new().expect("create temp blob dir");
+    let blob_store = BlobStore::new(blob_dir.path().join("blobs"));
+
+    // Mutator returns a risk-param experiment; judge returns findings. The
+    // canary does not call the dispatch. One spare response for safety.
+    let dispatch = Arc::new(MockDispatch::sequence(vec![
+        mock_text(risk_param_diff_json()),
+        mock_text(valid_findings_json()),
+        mock_text(valid_findings_json()),
+    ]));
+    let mutator = Mutator {
+        provider: "mock".into(),
+        model: "mock-model".into(),
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        max_retries: 0,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        provider: "mock".into(),
+        model: "mock-model".into(),
+    };
+
+    let ar_config = AutoOptimizerConfig {
+        min_improvement: 0.05,
+        ..AutoOptimizerConfig::default()
+    };
+    let day_scenario = make_scenario("day-keep", 2024, 2025);
+    let baseline_scenario = make_scenario("baseline-keep", 2025, 2026);
+
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(bundle_hash.to_hex(), strategy);
+
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: 1,
+        sabotage_seed: 42,
+        judge_provider: "mock".into(),
+        judge_model: "mock-model".into(),
+        prompt_version: "v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes: Vec::new(),
+    };
+
+    let result = run_cycle(
+        &pool,
+        &blob_store,
+        &ar_config,
+        &cycle_config,
+        &ParentPolicy::RoundRobin,
+        &mutator,
+        &judge,
+        &SharpeByStopLoss,
+        |_evt| {},
+        None,
+        None,
+    )
+    .await
+    .expect("run_cycle must return Ok");
+
+    assert_eq!(
+        result.active_nodes.len(),
+        1,
+        "the improving risk-param candidate must be KEPT (active). no_candidate={}, rejected={}",
+        result.no_candidate_count,
+        result.rejected_nodes.len()
+    );
+    let kept = &result.active_nodes[0];
+    assert_eq!(
+        kept.parent_hash,
+        Some(bundle_hash),
+        "the kept candidate must be a child of the seeded root (a real lineage improvement)"
+    );
+    assert_ne!(
+        kept.bundle_hash, bundle_hash,
+        "the kept candidate must differ from its parent (not an identity no-op)"
+    );
+    assert_eq!(result.no_candidate_count, 0, "a real candidate was produced");
+}

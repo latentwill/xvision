@@ -79,8 +79,8 @@ pub async fn run_inversion_pair(
     baseline_scenario: &Scenario,
 ) -> Result<InversionPairResult> {
     let reverse_diff = invert_mutation(forward_diff);
-    let forward_child = apply_params(parent, forward_diff);
-    let reverse_child = apply_params(parent, &reverse_diff);
+    let forward_child = forward_diff.apply_to(parent);
+    let reverse_child = reverse_diff.apply_to(parent);
 
     let forward_day = paper_tester.run(&forward_child, day_scenario).await?;
     let forward_untouched = paper_tester.run(&forward_child, baseline_scenario).await?;
@@ -96,17 +96,4 @@ pub async fn run_inversion_pair(
         reverse_untouched,
         symmetric_noise: sharpe_delta < EPSILON,
     })
-}
-
-/// Applies `ParamChange` entries in `diff` to `mechanical_params` on a clone
-/// of `base`. Prose and tool edits require the agent store and are deferred.
-fn apply_params(base: &Strategy, diff: &MutationDiff) -> Strategy {
-    assert!(diff.params.len() <= MAX_PARAMS, "params count exceeds bound");
-    let mut s = base.clone();
-    if let serde_json::Value::Object(ref mut map) = s.mechanical_params {
-        for change in &diff.params {
-            map.insert(change.key.clone(), change.after.clone());
-        }
-    }
-    s
 }

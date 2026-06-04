@@ -25,7 +25,7 @@ markdown, prose, or extra keys outside the JSON object.
   ],
   "params": [
     {
-      "key": "<key from mechanical_params — must exist in the strategy>",
+      "key": "<one of the strategy's tunable parameter keys — see the list in the user message>",
       "before": <current value — must match exactly>,
       "after": <proposed new value>
     }
@@ -44,9 +44,15 @@ Rules:
 - For `prose` experiments: `before` must be the actual current prompt text, not
   a placeholder. `agent_role` must exactly match a role in the strategy's agents
   list (case-insensitive).
-- For `param` experiments: `key` must be an existing key in mechanical_params.
-  `before` must equal the current value. Integer period/window/lookback params
-  must remain positive integers after the change.
+- For `param` experiments: `key` must be exactly one of the tunable parameter
+  keys listed in the user message. These include `mechanical_params` keys AND
+  risk-config knobs addressed as `risk.<field>` (e.g. `risk.stop_loss_atr_multiple`,
+  `risk.risk_pct_per_trade`, `risk.max_leverage`, `risk.daily_loss_kill_pct`).
+  Most strategies have an empty `mechanical_params`, so the `risk.<field>` knobs
+  are usually the only `param` lever available — prefer them. `before` must equal
+  the current value shown in the program view's Risk config / Mechanical params.
+  Integer period/window/lookback params must remain positive integers after the
+  change.
 - For `tool` experiments: tool names may only contain letters, digits, and
   underscores (max 64 chars). You cannot remove a tool that isn't present; you
   cannot add a tool that is already present.

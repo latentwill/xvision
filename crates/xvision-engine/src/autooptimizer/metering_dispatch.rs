@@ -31,6 +31,10 @@ pub struct CostMeteringDispatch {
     /// Running total of metered cost (USD). Shared with the paper-test budget
     /// meter so one ceiling covers the whole cycle.
     spent: Arc<Mutex<f64>>,
+    /// Count of completions whose model had no catalog price (token-bearing but
+    /// unpriceable). F11: surfaced so `cycle cost:` can say "unknown — N calls
+    /// unpriced" instead of a misleading `$0.00`.
+    unpriced: Arc<Mutex<u64>>,
 }
 
 impl CostMeteringDispatch {
@@ -38,11 +42,13 @@ impl CostMeteringDispatch {
         inner: Arc<dyn LlmDispatch + Send + Sync>,
         catalogs: Vec<Arc<Catalog>>,
         spent: Arc<Mutex<f64>>,
+        unpriced: Arc<Mutex<u64>>,
     ) -> Self {
         Self {
             inner,
             catalogs,
             spent,
+            unpriced,
         }
     }
 
@@ -61,8 +67,11 @@ impl LlmDispatch for CostMeteringDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
         let model = req.model.clone();
         let resp = self.inner.complete(req).await?;
-        if let Some(cost) = self.price(&model, resp.input_tokens as u64, resp.output_tokens as u64) {
-            *self.spent.lock().expect("metering mutex poisoned") += cost;
+        let used_tokens = resp.input_tokens as u64 + resp.output_tokens as u64;
+        match self.price(&model, resp.input_tokens as u64, resp.output_tokens as u64) {
+            Some(cost) => *self.spent.lock().expect("metering mutex poisoned") += cost,
+            None if used_tokens > 0 => *self.unpriced.lock().expect("metering mutex poisoned") += 1,
+            None => {}
         }
         Ok(resp)
     }

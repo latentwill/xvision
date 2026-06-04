@@ -62,6 +62,80 @@ pub fn empty_mutation() -> MutationDiff {
     }
 }
 
+/// Numeric `RiskConfig` fields the mutator may tune via `risk.<field>` param
+/// keys. F14/F20 (QA 2026-06-04): the real strategies on the node all have an
+/// empty `mechanical_params`; their only tunable knobs live in `risk`, so
+/// without this the optimizer could never produce a valid param experiment for
+/// any real strategy. Keep in sync with `RiskConfig` (xvision-risk).
+pub const RISK_PARAM_FIELDS: &[&str] = &[
+    "risk_pct_per_trade",
+    "max_concurrent_positions",
+    "max_leverage",
+    "stop_loss_atr_multiple",
+    "daily_loss_kill_pct",
+    "max_position_pct_nav",
+];
+
+/// If `key` addresses a tunable `risk` field — either `risk.<field>` or a bare
+/// `<field>` that isn't shadowed by a `mechanical_params` key — return the field
+/// name; otherwise `None` (the key targets `mechanical_params`).
+pub fn risk_field_for_key(base: &Strategy, key: &str) -> Option<String> {
+    if let Some(field) = key.strip_prefix("risk.") {
+        return RISK_PARAM_FIELDS.contains(&field).then(|| field.to_string());
+    }
+    let shadowed_by_mechanical = base
+        .mechanical_params
+        .as_object()
+        .map(|m| m.contains_key(key))
+        .unwrap_or(false);
+    if !shadowed_by_mechanical && RISK_PARAM_FIELDS.contains(&key) {
+        return Some(key.to_string());
+    }
+    None
+}
+
+/// The param keys an experiment may target on `base`: every `mechanical_params`
+/// top-level key plus `risk.<field>` for each tunable risk knob. Used to tell
+/// the experiment writer which keys exist (F21) and to render a helpful
+/// `unknown_param` error.
+pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
+    let mut keys = Vec::new();
+    if let Some(mp) = base.mechanical_params.as_object() {
+        for (k, v) in mp {
+            // Only scalar leaves are directly tunable.
+            if !v.is_object() && !v.is_array() {
+                keys.push(k.clone());
+            }
+        }
+    }
+    for f in RISK_PARAM_FIELDS {
+        keys.push(format!("risk.{f}"));
+    }
+    keys
+}
+
+/// The mutation kinds that are *structurally applicable* to `base`, intersected
+/// with the operator-allowed kinds (F21). `param` is applicable whenever the
+/// strategy exposes a tunable key (always, since every strategy has a `risk`
+/// config). `tool` stays as allowed. `prose` is excluded: a `Strategy`
+/// references library agents by `AgentRef`, so a prompt edit cannot change the
+/// strategy artifact — proposing it only ever yields a no-op (identity) the
+/// gate must reject. Excluding it steers the experiment writer to a lever that
+/// can actually move the strategy instead of burning the retry budget.
+pub fn applicable_mutation_kinds(base: &Strategy, allowed: &[String]) -> Vec<String> {
+    let has_params = !tunable_param_keys(base).is_empty();
+    allowed
+        .iter()
+        .filter(|k| match k.as_str() {
+            "param" => has_params,
+            "tool" => true,
+            "prose" => false,
+            _ => false,
+        })
+        .cloned()
+        .collect()
+}
+
 impl MutationDiff {
     pub fn is_empty(&self) -> bool {
         self.prose.is_empty()
@@ -73,11 +147,14 @@ impl MutationDiff {
     /// Apply this diff to `base`, returning the candidate strategy.
     ///
     /// This is the **canonical** apply used by the cycle orchestrator, the
-    /// `mutate-once` CLI verb, and the mutator's own identity check, so all
-    /// three agree on what a diff actually changes. It applies:
-    ///   - `params`: dot-path keys into `mechanical_params` (nested objects are
-    ///     created as needed), so a change to `risk.max_positions` lands at the
-    ///     right depth instead of a flat top-level key.
+    /// inversion-pair check, the `mutate-once` CLI verb, and the mutator's own
+    /// identity check, so all of them agree on what a diff actually changes. It
+    /// applies:
+    ///   - `params` targeting `risk.<field>` (or a bare risk-field name): routed
+    ///     into the typed `risk` config via a JSON round-trip (F14/F20 — this is
+    ///     the only tunable surface real strategies have).
+    ///   - `params` otherwise: dot-path keys into `mechanical_params` (nested
+    ///     objects are created as needed).
     ///   - `tools`: add/remove against `manifest.required_tools`.
     ///
     /// Prose edits are intentionally **not** applied here: a `Strategy`
@@ -85,13 +162,27 @@ impl MutationDiff {
     /// home in the strategy artifact's content hash. A prose-only diff is
     /// therefore an identity (no-op) at the strategy level — [`Mutator::propose`]
     /// detects that and retries for a real change rather than emitting a
-    /// guaranteed-zero candidate (F14, QA 2026-06-04). Before this was unified,
-    /// the cycle path applied params only (flat, no tools), so a valid tool or
-    /// nested-param experiment was silently dropped as "identity".
+    /// guaranteed-zero candidate.
     pub fn apply_to(&self, base: &Strategy) -> Strategy {
         let mut s = base.clone();
+        // Route risk-targeted params through a single JSON round-trip of the
+        // typed risk config so an invalid value can't half-apply.
+        let mut risk_json = serde_json::to_value(&s.risk).unwrap_or(serde_json::Value::Null);
+        let mut risk_touched = false;
         for change in &self.params {
-            set_param_value(&mut s.mechanical_params, &change.key, change.after.clone());
+            if let Some(field) = risk_field_for_key(base, &change.key) {
+                if let Some(obj) = risk_json.as_object_mut() {
+                    obj.insert(field, change.after.clone());
+                    risk_touched = true;
+                }
+            } else {
+                set_param_value(&mut s.mechanical_params, &change.key, change.after.clone());
+            }
+        }
+        if risk_touched {
+            if let Ok(new_risk) = serde_json::from_value(risk_json) {
+                s.risk = new_risk;
+            }
         }
         for added in &self.tools.added {
             if !s.manifest.required_tools.contains(added) {
@@ -152,12 +243,22 @@ impl Mutator {
 
         assert!(max_attempts >= 1, "max_attempts must be at least 1");
 
+        // F21: only offer the experiment writer the kinds that can actually
+        // change this strategy, and tell it exactly which param keys exist
+        // (mechanical + risk.*), so it stops proposing non-existent params or a
+        // prose edit that can't be applied.
+        let kinds = applicable_mutation_kinds(base, &config.allowed_mutation_kinds);
+        let kinds = if kinds.is_empty() {
+            // Defensive: never send an empty kind list. `param` is universally
+            // applicable because every strategy carries a risk config.
+            vec!["param".to_string()]
+        } else {
+            kinds
+        };
+        let param_keys = tunable_param_keys(base);
+
         for attempt in 0..max_attempts {
-            let user_text = build_user_payload(
-                &program_md,
-                &config.allowed_mutation_kinds,
-                last_errors.as_deref(),
-            );
+            let user_text = build_user_payload(&program_md, &kinds, &param_keys, last_errors.as_deref());
             let req = LlmRequest {
                 model: self.model.clone(),
                 system_prompt: build_system_prompt(dsr_prefix),
@@ -250,9 +351,23 @@ fn build_system_prompt(dsr_prefix: Option<&str>) -> String {
 fn build_user_payload(
     program_md: &str,
     allowed_kinds: &[String],
+    param_keys: &[String],
     previous_errors: Option<&[ValidationError]>,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
+    let keys_section = if param_keys.is_empty() {
+        "\n\nThis strategy exposes no tunable parameter keys; do not propose a `param` experiment."
+            .to_string()
+    } else {
+        format!(
+            "\n\nTunable parameter keys (a `param` experiment's `key` MUST be exactly one of these):\n{}",
+            param_keys
+                .iter()
+                .map(|k| format!("  - {k}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
     let errors_section = match previous_errors {
         None => String::new(),
         Some(errs) => {
@@ -264,7 +379,7 @@ fn build_user_payload(
     };
 
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{errors_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -386,6 +501,64 @@ mod tests {
         let child = diff.apply_to(&base);
         assert!(child.manifest.required_tools.contains(&"macd".to_string()));
         assert!(!child.manifest.required_tools.contains(&"rsi".to_string()));
+    }
+
+    #[test]
+    fn apply_to_routes_risk_param_into_risk_config() {
+        // F14/F20: the real tunable surface. `risk.<field>` (and the bare field)
+        // must land on the typed risk config, not be dumped into mechanical_params.
+        let base = fixture_strategy();
+        let before = base.risk.stop_loss_atr_multiple;
+        for key in ["risk.stop_loss_atr_multiple", "stop_loss_atr_multiple"] {
+            let diff = diff_with(
+                vec![ParamChange {
+                    key: key.into(),
+                    before: serde_json::json!(before),
+                    after: serde_json::json!(3.5),
+                }],
+                vec![],
+                vec![],
+            );
+            let child = diff.apply_to(&base);
+            assert_eq!(
+                child.risk.stop_loss_atr_multiple, 3.5,
+                "key {key} must update risk"
+            );
+            assert!(
+                child.mechanical_params.get("stop_loss_atr_multiple").is_none(),
+                "risk param must not leak into mechanical_params for key {key}"
+            );
+            // And it's a real change, not an identity no-op.
+            assert!(
+                !is_identity_diff(&diff, &base),
+                "risk change must not be identity for {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn tunable_keys_include_risk_fields() {
+        let base = fixture_strategy();
+        let keys = tunable_param_keys(&base);
+        assert!(keys.contains(&"risk.stop_loss_atr_multiple".to_string()));
+        assert!(keys.contains(&"risk.risk_pct_per_trade".to_string()));
+        // mechanical_params scalar keys are included too.
+        assert!(keys.contains(&"ema_fast".to_string()));
+    }
+
+    #[test]
+    fn applicable_kinds_drop_prose_and_keep_param() {
+        let base = fixture_strategy();
+        let allowed = vec!["prose".into(), "param".into(), "tool".into()];
+        let kinds = applicable_mutation_kinds(&base, &allowed);
+        assert!(
+            kinds.contains(&"param".to_string()),
+            "param is always applicable (risk exists)"
+        );
+        assert!(
+            !kinds.contains(&"prose".to_string()),
+            "prose is a structural no-op, excluded"
+        );
     }
 
     #[test]
