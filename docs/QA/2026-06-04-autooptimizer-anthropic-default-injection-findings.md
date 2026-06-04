@@ -30,7 +30,28 @@ operator stand up the unregistered `anthropic`.
 
 ---
 
-## F31 — [MED] `attested_with` (provenance metadata) masquerades as the operational binding
+## F31 — [MED] ✅ RESOLVED (PR pending) `attested_with` (provenance metadata) masquerades as the operational binding
+
+**Resolution (2026-06-04).** `LLMSlot::effective_model()`
+(`crates/xvision-engine/src/strategies/slot.rs`) no longer falls back to
+`attested_with`. An unset/blank `model` now resolves to an **empty string** (the slot
+is *unbound*) instead of silently promoting the provenance string to the operational
+model. Provenance can no longer become the binding: a model-less legacy `trader_slot`
+whose `attested_with` was `anthropic.claude-sonnet-4.6` no longer dispatches anthropic.
+New-schema agent slots are unaffected — `agent_slot_to_llm_slot` already sets `model`
+explicitly whenever the agent has one, so only truly model-less legacy slots change
+(operator-confirmed acceptable: "if they don't have an agent that's fine"). A new
+`LLMSlot::has_model_binding()` makes the unbound state explicit, and the optimizer
+preflight now rejects an unbound legacy trader with a clear "no model configured"
+message rather than letting the cycle dispatch an empty model id. The `attested_with`
+field doc and the `effective_model`/preflight doc comments were corrected to state
+provenance is never the binding. Regression tests:
+`effective_model_never_promotes_attested_provenance` (+ explicit-binding and
+blank-model cases) in `slot.rs`; full engine lib suite (1010 tests) green.
+
+---
+
+### (original finding)
 
 **Root mechanism behind F30 (operator-confirmed, 2026-06-04).** Nothing overwrites the
 strategy at runtime — `anthropic` is baked into the strategy's *persisted* content and then
