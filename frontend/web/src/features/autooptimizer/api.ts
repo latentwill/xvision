@@ -77,6 +77,13 @@ export type StartRunCycleRequest = {
   mutator_model?: string | null;
   judge_provider?: string | null;
   judge_model?: string | null;
+  // F28: token budget ceiling (USD) + per-run evaluation window overrides
+  // (YYYY-MM-DD). Omit for no cap / the config default window.
+  budget_usd?: number | null;
+  day_start?: string | null;
+  day_end?: string | null;
+  baseline_start?: string | null;
+  baseline_end?: string | null;
 };
 
 export type StartRunCycleResponse = {
@@ -150,6 +157,14 @@ export async function startRunCycle(
 
 export async function getBlob<T = StrategyBlob>(hash: string): Promise<T> {
   return apiFetch<T>(`/api/autooptimizer/blob/${encodeURIComponent(hash)}`);
+}
+
+/** F28: request cancellation of an in-flight optimizer cycle. */
+export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResponse> {
+  return apiFetch<StartRunCycleResponse>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/cancel`,
+    { method: "POST" },
+  );
 }
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
