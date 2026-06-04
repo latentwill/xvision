@@ -132,6 +132,21 @@ pub struct RunCycleArgs {
     /// Token budget in USD for this cycle (overrides config).
     #[arg(long, help = "Token budget in USD for this cycle (overrides config)")]
     pub budget: Option<f64>,
+    /// LLM provider for BOTH the experiment writer (mutator) and the judge,
+    /// overriding `mutator.provider`/`judge.*` from autooptimizer.toml. Must
+    /// name a provider registered in `$XVN_HOME/config/default.toml`
+    /// (e.g. `openrouter`).
+    #[arg(long, help = "Provider for mutator+judge (overrides config); must be registered in default.toml")]
+    pub provider: Option<String>,
+    /// LLM model for BOTH the experiment writer (mutator) and the judge,
+    /// overriding `mutator.model`/`judge.*` from autooptimizer.toml
+    /// (e.g. `google/gemini-3.1-flash-lite`). Requires `--provider`.
+    #[arg(
+        long,
+        requires = "provider",
+        help = "Model for mutator+judge (overrides config); requires --provider"
+    )]
+    pub model: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -873,7 +888,24 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
 
     let xvn_home = crate::commands::home::resolve_xvn_home(None)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
-    let cfg = load_ar_config(args.config.as_deref())?;
+    let mut cfg = load_ar_config(args.config.as_deref())?;
+
+    // CLI `--provider`/`--model` override BOTH the experiment writer (mutator)
+    // and the judge. They feed `cfg.mutator.*` here; the judge binding below is
+    // derived from the same mutator provider/model, so a single override flows
+    // to both dispatch sites. `--model` requires `--provider` (clap-enforced).
+    if let Some(provider) = args.provider.as_deref() {
+        cfg.mutator.provider = provider.to_string();
+    }
+    if let Some(model) = args.model.as_deref() {
+        cfg.mutator.model = model.to_string();
+    }
+
+    // Fail early if the effective mutator/judge provider is not launchable
+    // (e.g. the keyless `test`/`anthropic` default with no runtime fallback),
+    // rather than surfacing a confusing missing-API-key error deep in dispatch.
+    require_launchable_provider(args.mock, &xvn_home, &cfg.mutator.provider)?;
+
     let db_path = args
         .db
         .unwrap_or_else(|| xvn_home.join("lineage").join("lineage.db"));
@@ -1288,6 +1320,70 @@ fn validate_budget_usd(budget: f64) -> CliResult<()> {
     Ok(())
 }
 
+/// Decide whether the effective mutator/judge provider can be launched against
+/// the operator's runtime config, BEFORE doing any cycle setup work.
+///
+/// This mirrors `build_dispatch`'s resolution order: a provider is launchable
+/// when running `--mock`, when it is registered by name in
+/// `$XVN_HOME/config/default.toml`, or when it is one of the
+/// runtime-default-LLM aliases (`test`/empty) and a `default_llm` is actually
+/// configured. The only resolution path it deliberately rejects is the legacy
+/// keyless Anthropic fallback (`test`/`anthropic` with no `default_llm`), which
+/// historically surfaced as a confusing "ANTHROPIC_API_KEY unset" error deep in
+/// dispatch and meant a real cycle had never succeeded.
+///
+/// On rejection it returns a usage error that names the providers actually
+/// registered in `default.toml` and tells the operator to pass
+/// `--provider/--model` or set `autooptimizer.toml`.
+fn require_launchable_provider(mock: bool, xvn_home: &Path, provider: &str) -> CliResult<()> {
+    if mock {
+        return Ok(());
+    }
+
+    let runtime = load_runtime_config_optional(Some(xvn_home))?;
+
+    // Registered by name → launchable.
+    if let Some(cfg) = runtime.as_ref() {
+        if cfg.providers.iter().any(|p| p.name == provider) {
+            return Ok(());
+        }
+        // Matches the default_llm-derived provider name → launchable.
+        if let Some(default_llm) = cfg.default_llm.as_ref() {
+            if provider == provider_entry_from_default_llm(default_llm).name {
+                return Ok(());
+            }
+        }
+    }
+
+    // `test`/empty alias resolves to the runtime default_llm, but only when one
+    // is configured. Without it, the only remaining path is the keyless
+    // Anthropic fallback — reject it here.
+    if should_use_runtime_default_llm(provider)
+        && runtime.as_ref().and_then(|c| c.default_llm.as_ref()).is_some()
+    {
+        return Ok(());
+    }
+
+    let registered: Vec<String> = runtime
+        .as_ref()
+        .map(|c| c.providers.iter().map(|p| p.name.clone()).collect())
+        .unwrap_or_default();
+    let registered_list = if registered.is_empty() {
+        "(none configured in default.toml)".to_string()
+    } else {
+        registered.join(", ")
+    };
+
+    Err(CliError::usage(anyhow::anyhow!(
+        "optimizer run-cycle: mutator/judge provider {provider:?} is not launchable \
+         (no matching provider in $XVN_HOME/config/default.toml and no runtime default_llm). \
+         Registered providers: {registered_list}. \
+         Pass --provider <name> --model <model> (e.g. --provider openrouter \
+         --model google/gemini-3.1-flash-lite), or set mutator.provider/model in \
+         $XVN_HOME/autooptimizer.toml to a registered provider."
+    )))
+}
+
 struct DispatchBinding {
     provider: String,
     model: String,
@@ -1693,6 +1789,111 @@ fn api_to_cli(op: &str, e: xvision_engine::api::ApiError) -> CliError {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// Minimal runtime config that registers an `openrouter` provider, used to
+    /// exercise `require_launchable_provider`'s resolution. Mirrors the shape in
+    /// `provider.rs`'s `MIN_CONFIG`, with the openrouter row the optimizer
+    /// override is meant to dispatch against.
+    const OPENROUTER_CONFIG: &str = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "openrouter"
+kind = "openai-compat"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+[intern]
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+model = "x"
+api_key_env = "ANTHROPIC_API_KEY"
+temperature = 0.0
+max_tokens = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+"#;
+
+    /// T2 regression: the optimizer's mutator/judge provider gate.
+    ///
+    /// (1) `--provider`/`--model` must override `cfg.mutator.provider/model`
+    ///     (and, by derivation, the judge) before dispatch.
+    /// (2) `require_launchable_provider` must ACCEPT a provider registered in
+    ///     `default.toml` (e.g. the overridden `openrouter`).
+    /// (3) It must REJECT the keyless `test`/`anthropic` default when no
+    ///     `default_llm` fallback exists, with an error naming the registered
+    ///     providers — this is the original "cycle never succeeded" bug.
+    ///
+    /// `XVN_CONFIG_PATH` is process-global, so all assertions share one test
+    /// (no parallel sibling can race the env var) and the prior value is saved
+    /// and restored before any assertion can fail.
+    #[test]
+    fn run_cycle_provider_override_and_launchable_gate() {
+        const KEY: &str = "XVN_CONFIG_PATH";
+
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().to_path_buf();
+        let config_path = home.join("config").join("default.toml");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(&config_path, OPENROUTER_CONFIG).unwrap();
+
+        // (1) Apply the same override logic run_cycle_cmd uses.
+        let mut cfg = AutoOptimizerConfig::default();
+        assert_eq!(cfg.mutator.provider, "test", "default is the keyless alias");
+        let provider_override = Some("openrouter".to_string());
+        let model_override = Some("google/gemini-3.1-flash-lite".to_string());
+        if let Some(p) = provider_override.as_deref() {
+            cfg.mutator.provider = p.to_string();
+        }
+        if let Some(m) = model_override.as_deref() {
+            cfg.mutator.model = m.to_string();
+        }
+        assert_eq!(cfg.mutator.provider, "openrouter");
+        assert_eq!(cfg.mutator.model, "google/gemini-3.1-flash-lite");
+
+        let prior = std::env::var(KEY).ok();
+        std::env::set_var(KEY, &config_path);
+
+        // (2) Overridden provider is registered → launchable.
+        let ok = require_launchable_provider(false, &home, &cfg.mutator.provider);
+        // (3) Default keyless alias with no default_llm → rejected.
+        let rejected = require_launchable_provider(false, &home, "test");
+        // mock always passes regardless of provider.
+        let mock_ok = require_launchable_provider(true, &home, "test");
+
+        match prior {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
+
+        assert!(ok.is_ok(), "registered openrouter must be launchable: {ok:?}");
+        assert!(mock_ok.is_ok(), "--mock must bypass the provider gate");
+        let err = rejected.expect_err("keyless `test` default must be rejected early");
+        let msg = format!("{:#}", err.source);
+        assert!(
+            msg.contains("openrouter"),
+            "error must name the registered providers, got: {msg}"
+        );
+        assert!(
+            msg.contains("--provider"),
+            "error must tell the operator to pass --provider, got: {msg}"
+        );
+    }
 
     /// Regression for T1: the demo fixture, lineage `--db`, and `run-cycle`
     /// config path defaults must resolve under the configured `$XVN_HOME`
