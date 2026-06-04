@@ -1169,6 +1169,11 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // accumulate into it, so `--budget` caps and `cycle cost:` reports realized
     // spend across paper-test inference AND experiment-writer/judge calls.
     let spent_handle: Arc<std::sync::Mutex<f64>> = Arc::new(std::sync::Mutex::new(0.0));
+    // F11: count model calls billed against a model that has no catalog price, so
+    // the realized-cost line can say "unknown — N calls unpriced" instead of a
+    // misleading `$0.00` (the run-3 regression: a real $0.37 gemini cycle still
+    // printed $0.00 because the cached catalog lacked that model's price).
+    let unpriced_handle: Arc<std::sync::Mutex<u64>> = Arc::new(std::sync::Mutex::new(0));
 
     // Price mutator/judge completions through the provider catalog (best-effort;
     // an uncached/unpriced model contributes $0, same "unknown ≠ zero" stance
@@ -1180,6 +1185,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         Arc::clone(&raw_dispatch),
         metering_catalogs,
         Arc::clone(&spent_handle),
+        Arc::clone(&unpriced_handle),
     ));
     let mutator = Mutator {
         provider: binding.provider.clone(),
@@ -1215,11 +1221,14 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let ctx = ApiContext::open(&xvn_home, Actor::Cli { user })
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
-        Box::new(CachedBacktestPaperTester::new(
-            ctx,
-            Arc::clone(&raw_dispatch),
-            Arc::new(ToolRegistry::default_with_builtins()),
-        ))
+        Box::new(
+            CachedBacktestPaperTester::new(
+                ctx,
+                Arc::clone(&raw_dispatch),
+                Arc::new(ToolRegistry::default_with_builtins()),
+            )
+            .with_unpriced_counter(Arc::clone(&unpriced_handle)),
+        )
     };
 
     // F2/F11: enforce `--budget` as a real ceiling and always meter realized
@@ -1239,6 +1248,8 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     if let Some(ref strategy_id) = args.strategy {
         let (bundle_hash, strategy) =
             load_strategy_parent(strategy_id, &xvn_home, &lineage_store, &strategy_blob_store).await?;
+        // F22: fail fast with guidance instead of a confusing cross-provider 400.
+        preflight_trader_provider(&strategy, strategy_id, &cfg.mutator.provider, args.mock)?;
         parent_strategies.insert(bundle_hash.to_hex(), strategy);
         explicit_parent_hashes.push(bundle_hash);
     }
@@ -1333,13 +1344,25 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         );
     }
 
-    // F11: realized cycle cost, always metered (paper-test inference enriched
-    // from the model_calls ledger + experiment-writer/judge calls priced via
-    // the provider catalog). $0.00 here now means genuinely-zero or
-    // unknown-price, not "the meter was never wired".
+    // F11: realized cycle cost, metered from the model_calls ledger (paper-test)
+    // + the provider catalog (experiment-writer/judge). Be honest when a real
+    // model was billed but its price wasn't in the cached catalog: report the
+    // known-priced subtotal AND the count of unpriced calls, rather than a
+    // misleading `$0.00` that looks free.
     {
         let spent = *spent_handle.lock().expect("budget mutex poisoned");
-        eprintln!("cycle cost: ${spent:.2} (metered paper-test + experiment-writer/judge inference)");
+        let unpriced = *unpriced_handle.lock().expect("unpriced mutex poisoned");
+        if unpriced > 0 {
+            eprintln!(
+                "cycle cost: ${spent:.2} metered + {unpriced} call(s) with UNKNOWN price — realized \
+                 spend is higher. The model's price is missing from the cached catalog; run \
+                 `xvn provider refresh-models --name {}` to enable full cost metering (and the \
+                 `--budget` ceiling) for it.",
+                cfg.mutator.provider,
+            );
+        } else {
+            eprintln!("cycle cost: ${spent:.2} (metered paper-test + experiment-writer/judge inference)");
+        }
     }
 
     println!("cycle_id={}", result.cycle_id);
@@ -1407,8 +1430,22 @@ async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
     );
 
     for raw_event in &fixture.events {
-        let event: CycleProgressEvent = serde_json::from_value(raw_event.clone())
-            .map_err(|e| CliError::usage(anyhow::anyhow!("malformed fixture event: {e}")))?;
+        // F18 (QA 2026-06-04): be resilient to event variants the current build
+        // no longer knows about. The taxonomy evolves (e.g. `cycle_sealed` was
+        // removed, `no_candidate` added); a stale fixture on a deployed node must
+        // not abort the whole no-API-key smoke path — skip the unknown event with
+        // a note and keep replaying the rest.
+        let event: CycleProgressEvent = match serde_json::from_value(raw_event.clone()) {
+            Ok(ev) => ev,
+            Err(e) => {
+                let kind = raw_event
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("<unknown>");
+                eprintln!("demo: skipping unrecognized event '{kind}' ({e})");
+                continue;
+            }
+        };
         if args.verbose {
             let json_line = serde_json::to_string(&event)
                 .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize event: {e}")))?;
@@ -1616,6 +1653,51 @@ fn validate_budget_usd(budget: f64) -> CliResult<()> {
 /// On rejection it returns a usage error that names the providers actually
 /// registered in `default.toml` and tells the operator to pass
 /// `--provider/--model` or set `autooptimizer.toml`.
+/// F22 (QA 2026-06-04): block a cycle whose strategy would route its paper-test
+/// trader through a provider that differs from the cycle's dispatch provider.
+///
+/// The optimizer paper-test uses a single dispatch (the cycle's
+/// `--provider`/`mutator.provider`, e.g. `openrouter`) for every backtest
+/// decision, sending each slot's model id as-is. An agentless strategy with a
+/// legacy `trader_slot` pinned to a different provider (e.g. the seeded examples'
+/// `anthropic.claude-sonnet-4.6`) therefore sends an anthropic-format model id to
+/// openrouter and dies with a confusing `... is not a valid model ID` 400.
+///
+/// Rather than that cross-provider 400, fail fast with guidance. Mechanistic
+/// (non-LLM) strategies and agent-backed strategies (whose agents resolve to
+/// their own provider) are unaffected.
+fn preflight_trader_provider(
+    strategy: &Strategy,
+    strategy_id: &str,
+    cycle_provider: &str,
+    mock: bool,
+) -> CliResult<()> {
+    if mock || strategy.decision_mode == xvision_engine::strategies::DecisionMode::Mechanistic {
+        return Ok(());
+    }
+    // Only the agentless legacy-trader path can silently route to a foreign
+    // provider; agent-backed strategies carry their own resolvable slots.
+    if !strategy.agents.is_empty() {
+        return Ok(());
+    }
+    let Some(slot) = &strategy.trader_slot else {
+        return Ok(());
+    };
+    let slot_provider = slot.provider.as_deref().unwrap_or("").trim().to_string();
+    if slot_provider.is_empty() || slot_provider.eq_ignore_ascii_case(cycle_provider) {
+        return Ok(());
+    }
+    Err(CliError::usage(anyhow::anyhow!(
+        "strategy {strategy_id} routes its trader through provider '{slot_provider}' \
+         (model '{model}'), but this optimizer cycle dispatches to '{cycle_provider}'. The \
+         paper-test would send a '{slot_provider}'-format model id to '{cycle_provider}' and \
+         fail with a cross-provider error. Re-run with `--provider {slot_provider}` and a \
+         matching `--model`, use a strategy whose trader provider is '{cycle_provider}', or \
+         convert the strategy to a mechanistic (non-LLM) decision mode.",
+        model = slot.effective_model(),
+    )))
+}
+
 fn require_launchable_provider(mock: bool, xvn_home: &Path, provider: &str) -> CliResult<()> {
     if mock {
         return Ok(());

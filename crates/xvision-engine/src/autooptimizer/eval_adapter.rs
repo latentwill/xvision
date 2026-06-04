@@ -141,6 +141,10 @@ pub struct CachedBacktestPaperTester {
     ctx: ApiContext,
     dispatch: Arc<dyn LlmDispatch + Send + Sync>,
     tools: Arc<ToolRegistry>,
+    /// F11: optional shared counter of paper-test model calls that had no
+    /// catalog price (token-bearing but unpriceable), so the CLI can report
+    /// "cost unknown — N calls unpriced" instead of a misleading `$0.00`.
+    unpriced_calls: Option<Arc<std::sync::Mutex<u64>>>,
 }
 
 impl CachedBacktestPaperTester {
@@ -149,7 +153,19 @@ impl CachedBacktestPaperTester {
         dispatch: Arc<dyn LlmDispatch + Send + Sync>,
         tools: Arc<ToolRegistry>,
     ) -> Self {
-        Self { ctx, dispatch, tools }
+        Self {
+            ctx,
+            dispatch,
+            tools,
+            unpriced_calls: None,
+        }
+    }
+
+    /// Attach a shared counter that accumulates paper-test model calls with no
+    /// catalog price (F11).
+    pub fn with_unpriced_counter(mut self, counter: Arc<std::sync::Mutex<u64>>) -> Self {
+        self.unpriced_calls = Some(counter);
+        self
     }
 }
 
@@ -202,6 +218,14 @@ impl CachedBacktestPaperTester {
                 crate::eval::cost::aggregate_eval_run_inference_cost(&self.ctx.db, &run.id).await
             {
                 metrics.inference_cost_quote_total = Some(cost);
+            }
+        }
+        // F11: tally any unpriced calls so the operator isn't shown a
+        // misleading `$0.00` when a real (but uncatalogued) model was billed.
+        if let Some(counter) = &self.unpriced_calls {
+            let n = crate::eval::cost::aggregate_eval_run_unpriced_calls(&self.ctx.db, &run.id).await;
+            if n > 0 {
+                *counter.lock().expect("unpriced counter mutex poisoned") += n;
             }
         }
         Ok(metrics)

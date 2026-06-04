@@ -73,23 +73,32 @@ fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<V
     }
 }
 
+/// Resolve a param key to its current value on `base`. F14: a key may address
+/// a top-level `mechanical_params` entry OR a tunable `risk.<field>` (or a bare
+/// risk-field name not shadowed by a mechanical key). Returns `None` when the
+/// key matches no tunable surface.
+fn resolve_param_current_value(base: &Strategy, key: &str) -> Option<serde_json::Value> {
+    if let Some(field) = crate::autooptimizer::mutator::risk_field_for_key(base, key) {
+        let risk = serde_json::to_value(&base.risk).ok()?;
+        return risk.get(&field).cloned();
+    }
+    base.mechanical_params
+        .as_object()
+        .and_then(|mp| mp.get(key).cloned())
+}
+
 fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut Vec<ValidationError>) {
-    let Some(mp) = base.mechanical_params.as_object() else {
-        for (i, change) in params.iter().enumerate() {
-            errors.push(ValidationError::with_path(
-                "unknown_param",
-                format!("Param '{}' not found in strategy mechanical params.", change.key),
-                format!("params[{i}].key"),
-            ));
-        }
-        return;
-    };
+    let valid_keys = crate::autooptimizer::mutator::tunable_param_keys(base);
     for (i, change) in params.iter().enumerate() {
         let path_key = format!("params[{i}].key");
-        let Some(current_val) = mp.get(&change.key) else {
+        let Some(current_val) = resolve_param_current_value(base, &change.key) else {
             errors.push(ValidationError::with_path(
                 "unknown_param",
-                format!("Param '{}' not found in strategy mechanical params.", change.key),
+                format!(
+                    "Param '{}' is not a tunable key on this strategy. Valid keys: [{}].",
+                    change.key,
+                    valid_keys.join(", ")
+                ),
                 path_key,
             ));
             continue;
@@ -105,7 +114,7 @@ fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut 
             ));
             continue;
         }
-        if &change.before != current_val {
+        if change.before != current_val {
             errors.push(ValidationError::with_path(
                 "stale_param_baseline",
                 format!(
