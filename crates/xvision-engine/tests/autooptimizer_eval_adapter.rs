@@ -174,6 +174,16 @@ async fn backtest_paper_tester_is_deterministic() {
 /// the optimizer would score strategies under conditions `eval run` never
 /// applies and optimized winners would not transfer. This test fails the moment
 /// the two paths diverge.
+///
+/// F26 (2026-06-04): the dashboard run-cycle route is now ON this same path. It
+/// builds the production `CachedBacktestPaperTester`, which constructs its
+/// `Executor` via `build_cached_backtest_executor` and resolves agent slots
+/// through the identical `resolve_agent_slots_for_strategy` used here and by the
+/// eval HTTP path — replacing the old `StubPaperTester` that always tied and
+/// rejected. So CLI, dashboard, chat rail, and live all converge on the single
+/// `Executor`/`run_pipeline` brain this test pins. The asserted agent-slot
+/// resolution below is the guard that the real backtest (which the dashboard now
+/// runs) does not regress to the empty-slots F1 failure.
 #[tokio::test]
 async fn optimizer_adapter_matches_direct_eval_executor() {
     use xvision_engine::agent::pipeline::resolve_agent_slots_for_strategy;
@@ -207,6 +217,10 @@ async fn optimizer_adapter_matches_direct_eval_executor() {
         RunMode::Backtest,
     );
     store_b.create(&run).await.unwrap();
+    // F26: the production `CachedBacktestPaperTester` the dashboard now uses
+    // resolves slots through this same shared resolver before running the
+    // Executor. The metric-equality assertions below are what fail the moment the
+    // two paths diverge (a divergent slot set would change decisions/trades).
     let slots = resolve_agent_slots_for_strategy(store_b.pool(), &strategy)
         .await
         .unwrap();
