@@ -633,12 +633,23 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
     );
     println!("first node: {}", s.first_created_at);
     println!("last node:  {}", s.last_created_at);
+
+    if let Some(h) = &detail.honesty_check {
+        println!(
+            "\nhonesty check: {} (sabotage `{}`) — {}",
+            if h.passed { "passed" } else { "FAILED" },
+            h.sabotage_variant,
+            h.message
+        );
+    }
+
     println!("\nNodes:");
     println!(
-        "  {:<12}  {:<10}  {:<12}  {}",
-        "Experiment", "Status", "Parent", "Gate"
+        "  {:<12}  {:<8}  {:<12}  {:<9}  {:<9}  {}",
+        "Experiment", "Status", "Parent", "Day Shrp", "Hold Shrp", "Mutator"
     );
-    for n in &detail.nodes {
+    for cn in &detail.nodes {
+        let n = &cn.node;
         let exp = n.bundle_hash.to_hex();
         let exp_short = exp.get(..10).unwrap_or(&exp);
         let parent = n
@@ -651,16 +662,28 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
             LineageStatus::Active => "kept",
             LineageStatus::Rejected => "dropped",
         };
+        let day_sharpe = cn
+            .metrics_day
+            .as_ref()
+            .map(|m| format!("{:.3}", m.sharpe))
+            .unwrap_or_else(|| "—".to_string());
+        let hold_sharpe = cn
+            .metrics_untouched
+            .as_ref()
+            .map(|m| format!("{:.3}", m.sharpe))
+            .unwrap_or_else(|| "—".to_string());
+        let mutator = cn
+            .provenance
+            .as_ref()
+            .map(|p| format!("{}/{}", p.provider, p.model))
+            .unwrap_or_else(|| "—".to_string());
         println!(
-            "  {:<12}  {:<10}  {:<12}  {}",
-            exp_short,
-            status,
-            parent_short,
-            n.gate_verdict.as_str()
+            "  {exp_short:<12}  {status:<8}  {parent_short:<12}  {day_sharpe:<9}  {hold_sharpe:<9}  {mutator}"
         );
     }
     println!(
-        "\nFull genealogy: `xvn optimizer lineage ls --cycle {}`.",
+        "\nCandidate strategy JSON: `GET /api/autooptimizer/blob/<experiment-hash>`. \
+         Full genealogy: `xvn optimizer lineage ls --cycle {}`.",
         s.cycle_id
     );
 }
@@ -1121,10 +1144,6 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
-    // Observability blob store (required by run_cycle signature).
-    let obs_blob_root = xvn_home.join("lineage").join("obs-blobs");
-    let obs_blob_store = xvision_observability::BlobStore::new(obs_blob_root);
-
     // F10: build the day scenario through the single shared optimizer scenario
     // builder (was an inline literal duplicated with the dashboard route — a
     // fee/fill tweak in one would silently diverge the optimizer's scoring
@@ -1269,7 +1288,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     }
     let result = run_cycle(
         &pool,
-        &obs_blob_store,
+        &strategy_blob_store,
         &cfg,
         &cycle_config,
         &parent_policy,

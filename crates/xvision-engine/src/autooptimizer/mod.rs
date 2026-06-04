@@ -53,7 +53,10 @@ pub use config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, Loosen
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use cycle::{run_cycle, CycleConfig, CycleResult};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
-pub use cycle_runs::{get_cycle_run, list_cycle_runs, CycleRunDetail, CycleRunSummary};
+pub use cycle_runs::{
+    get_cycle_run, list_cycle_runs, CycleNodeDetail, CycleRunDetail, CycleRunSummary, HonestyCheckRecord,
+    NodeProvenance,
+};
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
 pub use eval_adapter::{
     BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,

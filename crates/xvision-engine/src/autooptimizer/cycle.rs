@@ -6,8 +6,8 @@ use anyhow::{bail, Result};
 use chrono::Utc;
 use sqlx::SqlitePool;
 use ulid::Ulid;
-use xvision_observability::BlobStore;
 
+use crate::autooptimizer::blob_store::BlobStore;
 use crate::autooptimizer::canary::{run_honesty_check, HonestyCheckResult};
 use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::content_hash::ContentHash;
@@ -69,11 +69,15 @@ struct MutationOutcome {
     verdict: GateVerdict,
     status: LineageStatus,
     delta_sharpe: f64,
+    /// F13: the candidate's metrics on the day + held-out windows, persisted so
+    /// the historic-run detail can show per-candidate backtest results.
+    child_day: MetricsSummary,
+    child_untouched: MetricsSummary,
 }
 
 pub async fn run_cycle(
     pool: &SqlitePool,
-    _blob_store: &BlobStore,
+    strategy_blob_store: &BlobStore,
     config: &AutoOptimizerConfig,
     cycle_config: &CycleConfig,
     parent_policy: &ParentPolicy,
@@ -136,6 +140,7 @@ pub async fn run_cycle(
             });
             let (active, rejected, nc) = process_parent_mutations(
                 pool,
+                strategy_blob_store,
                 parent_node,
                 parent_strategy,
                 &cycle_id,
@@ -168,6 +173,9 @@ pub async fn run_cycle(
         &progress,
     )
     .await?;
+    // F13: persist the honesty-check outcome so a historic cycle's detail can
+    // report it (it was previously emitted only over SSE / the CLI summary).
+    persist_honesty_check(pool, &cycle_id, &honesty_check).await;
     let diversity_score = diversity_decay_for_cycle(pool, &cycle_id).await.unwrap_or(0.0);
     Ok(CycleResult {
         cycle_id,
@@ -239,6 +247,7 @@ where
 
 async fn process_parent_mutations<F>(
     pool: &SqlitePool,
+    strategy_blob_store: &BlobStore,
     parent_node: &LineageNode,
     parent_strategy: &Strategy,
     cycle_id: &str,
@@ -363,7 +372,7 @@ where
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
-        let node = build_and_insert_node(pool, &outcome, parent_node, cycle_id).await?;
+        let node = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
         record_proposal(
             pool,
             &outcome.child_hash,
@@ -445,11 +454,14 @@ async fn gate_and_classify(
         verdict,
         status,
         delta_sharpe,
+        child_day,
+        child_untouched,
     })
 }
 
 async fn build_and_insert_node(
     pool: &SqlitePool,
+    strategy_blob_store: &BlobStore,
     outcome: &MutationOutcome,
     parent_node: &LineageNode,
     cycle_id: &str,
@@ -482,7 +494,75 @@ async fn build_and_insert_node(
         diversity_score: None,
     };
     store.insert(&node).await?;
+
+    // F13: persist the candidate strategy blob so `GET /api/autooptimizer/blob/
+    // :hash` resolves the child (the cycle previously wrote only the parent
+    // root), enabling "candidate diff via blob" — parent vs child — in the
+    // run-detail surface.
+    if let Ok(child_json) = serde_json::to_value(&outcome.child) {
+        if let Err(e) = strategy_blob_store.put_json(&child_json).await {
+            tracing::warn!(child_hash = %outcome.child_hash.to_hex(), "failed to persist candidate blob: {e}");
+        }
+    }
+
+    // F13: persist per-candidate backtest metrics for the run-detail surface.
+    persist_node_metrics(
+        pool,
+        &outcome.child_hash,
+        &outcome.child_day,
+        &outcome.child_untouched,
+    )
+    .await;
+
     Ok(node)
+}
+
+/// F13: store the candidate's day + held-out `MetricsSummary` in the
+/// `lineage_node_metrics` side table. Best-effort — auxiliary detail must never
+/// abort the cycle (e.g. a pre-F13 DB that hasn't run `ensure_lineage_schema`);
+/// production provisions the table on `ApiContext::open` / CLI db-open.
+async fn persist_node_metrics(
+    pool: &SqlitePool,
+    child_hash: &ContentHash,
+    day: &MetricsSummary,
+    untouched: &MetricsSummary,
+) {
+    let day_json = serde_json::to_string(day).unwrap_or_else(|_| "null".to_string());
+    let untouched_json = serde_json::to_string(untouched).unwrap_or_else(|_| "null".to_string());
+    if let Err(e) = sqlx::query(
+        "INSERT OR REPLACE INTO lineage_node_metrics \
+         (bundle_hash, metrics_day_json, metrics_untouched_json) VALUES (?, ?, ?)",
+    )
+    .bind(child_hash.to_hex())
+    .bind(day_json)
+    .bind(untouched_json)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(child_hash = %child_hash.to_hex(), "failed to persist candidate metrics: {e}");
+    }
+}
+
+/// F13: persist the per-cycle honesty-check (canary) outcome. Best-effort for
+/// the same reason as [`persist_node_metrics`].
+async fn persist_honesty_check(pool: &SqlitePool, cycle_id: &str, check: &HonestyCheckResult) {
+    if let Err(e) = sqlx::query(
+        "INSERT OR REPLACE INTO cycle_honesty_checks \
+         (cycle_id, passed, sabotage_variant, message, gate_verdict, parent_hash, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(cycle_id)
+    .bind(check.passed_check as i64)
+    .bind(&check.sabotage_variant)
+    .bind(&check.message)
+    .bind(check.gate_verdict.as_str())
+    .bind(check.parent_hash.to_hex())
+    .bind(Utc::now().to_rfc3339())
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(cycle_id, "failed to persist honesty check: {e}");
+    }
 }
 
 fn gate_check(

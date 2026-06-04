@@ -105,6 +105,37 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("create lineage_embeddings")?;
+    // F13 (2026-06-04): per-candidate backtest metrics, so a completed cycle's
+    // detail can show each experiment's day/untouched MetricsSummary (kept in a
+    // side table to avoid widening the `LineageNode` struct that the dashboard,
+    // CLI, and every test construct).
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS lineage_node_metrics (
+            bundle_hash TEXT PRIMARY KEY REFERENCES lineage_nodes(bundle_hash),
+            metrics_day_json TEXT NOT NULL,
+            metrics_untouched_json TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create lineage_node_metrics")?;
+    // F13: the per-cycle honesty-check (canary) outcome — previously emitted
+    // only over SSE / the CLI summary and persisted nowhere, so a historic
+    // cycle's detail could not report it.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_honesty_checks (
+            cycle_id TEXT PRIMARY KEY,
+            passed INTEGER NOT NULL,
+            sabotage_variant TEXT NOT NULL,
+            message TEXT NOT NULL,
+            gate_verdict TEXT NOT NULL,
+            parent_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create cycle_honesty_checks")?;
     for (sql, label) in [
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",

@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use super::lineage::{row_to_node, LineageNode, SELECT_COLS_PREFIX};
+use crate::eval::run::MetricsSummary;
 
 /// One completed (or in-progress) optimizer cycle, aggregated from the lineage
 /// nodes that share its `cycle_id`.
@@ -36,12 +37,48 @@ pub struct CycleRunSummary {
     pub last_created_at: String,
 }
 
-/// A single cycle plus every lineage node it produced.
+/// Mutator provenance for a candidate (from `mutator_attribution`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeProvenance {
+    pub provider: String,
+    pub model: String,
+    pub prompt_version: String,
+    pub delta_sharpe: Option<f64>,
+}
+
+/// One lineage node enriched with the per-candidate detail a historic-run view
+/// needs: backtest metrics on both windows and mutator provenance (F13). The
+/// candidate strategy itself is fetched via `GET /api/autooptimizer/blob/:hash`
+/// keyed on the node's `bundle_hash` (its parent via `parent_hash`), which is
+/// how the run-detail surfaces the candidate diff.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CycleNodeDetail {
+    #[serde(flatten)]
+    pub node: LineageNode,
+    pub metrics_day: Option<MetricsSummary>,
+    pub metrics_untouched: Option<MetricsSummary>,
+    pub provenance: Option<NodeProvenance>,
+}
+
+/// The per-cycle honesty-check (canary) outcome (from `cycle_honesty_checks`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HonestyCheckRecord {
+    pub passed: bool,
+    pub sabotage_variant: String,
+    pub message: String,
+    pub gate_verdict: String,
+    pub parent_hash: String,
+    pub created_at: String,
+}
+
+/// A single cycle plus every candidate it produced (with metrics + provenance)
+/// and its honesty-check outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleRunDetail {
     #[serde(flatten)]
     pub summary: CycleRunSummary,
-    pub nodes: Vec<LineageNode>,
+    pub nodes: Vec<CycleNodeDetail>,
+    pub honesty_check: Option<HonestyCheckRecord>,
 }
 
 /// List completed cycles, most-recent first, paginated. Cycles with a NULL
@@ -102,7 +139,93 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
             .map(|n| n.created_at.to_rfc3339())
             .unwrap_or_default(),
     };
-    Ok(Some(CycleRunDetail { summary, nodes }))
+
+    // Enrich each node with its persisted metrics + mutator provenance
+    // (best-effort: a node predating the F13 side tables simply has `None`).
+    let mut detailed = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let hash = node.bundle_hash.to_hex();
+        let (metrics_day, metrics_untouched) = load_node_metrics(pool, &hash).await;
+        let provenance = load_node_provenance(pool, &hash).await;
+        detailed.push(CycleNodeDetail {
+            node,
+            metrics_day,
+            metrics_untouched,
+            provenance,
+        });
+    }
+
+    let honesty_check = load_honesty_check(pool, cycle_id).await;
+
+    Ok(Some(CycleRunDetail {
+        summary,
+        nodes: detailed,
+        honesty_check,
+    }))
+}
+
+async fn load_node_metrics(
+    pool: &SqlitePool,
+    bundle_hash: &str,
+) -> (Option<MetricsSummary>, Option<MetricsSummary>) {
+    let row = sqlx::query(
+        "SELECT metrics_day_json, metrics_untouched_json FROM lineage_node_metrics WHERE bundle_hash = ?",
+    )
+    .bind(bundle_hash)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let Some(row) = row else {
+        return (None, None);
+    };
+    let day = row
+        .try_get::<String, _>("metrics_day_json")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    let untouched = row
+        .try_get::<String, _>("metrics_untouched_json")
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok());
+    (day, untouched)
+}
+
+async fn load_node_provenance(pool: &SqlitePool, bundle_hash: &str) -> Option<NodeProvenance> {
+    let row = sqlx::query(
+        "SELECT provider, model, prompt_version, delta_sharpe \
+         FROM mutator_attribution WHERE bundle_hash = ?",
+    )
+    .bind(bundle_hash)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    Some(NodeProvenance {
+        provider: row.try_get("provider").ok()?,
+        model: row.try_get("model").ok()?,
+        prompt_version: row.try_get("prompt_version").ok()?,
+        delta_sharpe: row.try_get("delta_sharpe").ok(),
+    })
+}
+
+async fn load_honesty_check(pool: &SqlitePool, cycle_id: &str) -> Option<HonestyCheckRecord> {
+    let row = sqlx::query(
+        "SELECT passed, sabotage_variant, message, gate_verdict, parent_hash, created_at \
+         FROM cycle_honesty_checks WHERE cycle_id = ?",
+    )
+    .bind(cycle_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    Some(HonestyCheckRecord {
+        passed: row.try_get::<i64, _>("passed").ok()? != 0,
+        sabotage_variant: row.try_get("sabotage_variant").ok()?,
+        message: row.try_get("message").ok()?,
+        gate_verdict: row.try_get("gate_verdict").ok()?,
+        parent_hash: row.try_get("parent_hash").ok()?,
+        created_at: row.try_get("created_at").ok()?,
+    })
 }
 
 fn row_to_cycle_summary(row: sqlx::sqlite::SqliteRow) -> Result<CycleRunSummary> {
