@@ -25,15 +25,34 @@ use crate::exit::CliError;
 /// looked up on disk at runtime.
 const EXAMPLE_README: &str = include_str!("../../../../../data/examples/README.md");
 
+/// The registered, launchable provider/model the example seed binds everything
+/// to — the seeded `autooptimizer.toml` mutator/judge AND the seeded example
+/// trader agent.
+///
+/// F30 (2026-06-04): the seeded example trader was previously hardcoded to
+/// `anthropic` / `claude-haiku-4-5` (and the manifest to `anthropic.claude-*`),
+/// a default-injection that is NOT registered on an `openrouter`-only node — so a
+/// freshly-seeded example was immediately unrunnable and tripped the optimizer's
+/// F22 cross-provider guard. The file already pointed the *optimizer config* at
+/// `openrouter`/`google/gemini-3.1-flash-lite`; binding the trader to the SAME
+/// constants keeps the whole seed internally consistent and free of any literal
+/// `anthropic.claude-*` production default. `openrouter` must be present in
+/// `$XVN_HOME/config/default.toml` for either surface to dispatch.
+const SEED_DEFAULT_PROVIDER: &str = "openrouter";
+const SEED_DEFAULT_MODEL: &str = "google/gemini-3.1-flash-lite";
+
 /// Default autooptimizer.toml seeded under `$XVN_HOME` so a first
 /// `xvn optimizer run-cycle` points the experiment writer (mutator) and the
 /// judge at a registered, launchable provider instead of the keyless
-/// `test`/`anthropic` default. `openrouter` + `google/gemini-3.1-flash-lite`
-/// is the verified-cheap combo. Only written when absent — never clobbers an
-/// operator-authored config.
-const DEFAULT_AUTOOPTIMIZER_TOML: &str = "\
+/// `test`/`anthropic` default. Derived from [`SEED_DEFAULT_PROVIDER`] /
+/// [`SEED_DEFAULT_MODEL`] so the optimizer config and the seeded trader can never
+/// drift apart. Only written when absent — never clobbers an operator-authored
+/// config.
+fn default_autooptimizer_toml() -> String {
+    format!(
+        "\
 # Seeded by `xvn example seed`. Points the optimizer's experiment writer
-# (mutator) and judge at a registered, launchable provider. `openrouter` must
+# (mutator) and judge at a registered, launchable provider. `{provider}` must
 # be present in $XVN_HOME/config/default.toml for this to dispatch.
 min_improvement = 0.05
 
@@ -46,10 +65,14 @@ start = \"2024-01-01\"
 end = \"2025-09-01\"
 
 [mutator]
-provider = \"openrouter\"
-model = \"google/gemini-3.1-flash-lite\"
+provider = \"{provider}\"
+model = \"{model}\"
 max_retries = 2
-";
+",
+        provider = SEED_DEFAULT_PROVIDER,
+        model = SEED_DEFAULT_MODEL,
+    )
+}
 
 #[derive(Debug, Default, Serialize)]
 struct SeedSummary {
@@ -172,8 +195,12 @@ async fn seed_strategies(
             tags: vec!["source:example".into()],
             slots: vec![AgentSlot {
                 name: "trader".into(),
-                provider: "anthropic".into(),
-                model: "claude-haiku-4-5".into(),
+                // F30: bind to the registered seed default (openrouter/gemini),
+                // NOT a hardcoded `anthropic` literal that an openrouter-only node
+                // can't dispatch. Same provider/model the seeded optimizer config
+                // uses — see SEED_DEFAULT_PROVIDER/MODEL.
+                provider: SEED_DEFAULT_PROVIDER.into(),
+                model: SEED_DEFAULT_MODEL.into(),
                 system_prompt: EXAMPLE_TRADER_PROMPT.into(),
                 skill_ids: vec![],
                 max_tokens: None,
@@ -205,7 +232,9 @@ async fn seed_strategies(
             regime_fit: vec![RegimeFit::TrendingBull],
             asset_universe: vec!["BTC/USD".into()],
             decision_cadence_minutes: 60,
-            attested_with: vec!["anthropic.claude-haiku-4-5".into()],
+            // F30: provenance follows the seeded trader's actual binding
+            // (openrouter/gemini), not a stale `anthropic.claude-*` literal.
+            attested_with: vec![format!("{SEED_DEFAULT_PROVIDER}.{SEED_DEFAULT_MODEL}")],
             required_tools: vec![],
             risk_preset_or_config: "balanced".into(),
             published_at: None,
@@ -348,7 +377,7 @@ async fn seed_autooptimizer_config(xvn_home: &Path, summary: &mut SeedSummary) -
     tokio::fs::create_dir_all(xvn_home)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("create {}: {e}", xvn_home.display())))?;
-    tokio::fs::write(&config_path, DEFAULT_AUTOOPTIMIZER_TOML)
+    tokio::fs::write(&config_path, default_autooptimizer_toml())
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("write {}: {e}", config_path.display())))?;
     summary.autooptimizer_config_path = config_path.display().to_string();
@@ -522,6 +551,70 @@ mod tests {
             has_trader,
             "seeded example strategy must have >= 1 agent with role 'trader', agents: {:?}",
             strategy.agents,
+        );
+    }
+
+    #[tokio::test]
+    async fn seeded_example_trader_binds_to_registered_provider_not_anthropic() {
+        // F30 regression: the seeded example trader must NOT be hardcoded to a
+        // literal `anthropic.claude-*` default-injection. On an openrouter-only
+        // node that binding is unrunnable and trips the optimizer's F22
+        // cross-provider guard. The trader (and its provenance) must resolve to
+        // the SAME registered provider the seeded optimizer config uses.
+        let dir = tempdir().unwrap();
+        seed_fresh(dir.path(), false).await;
+
+        let store = FilesystemStore::new(strategy_store_dir(dir.path()));
+        let strategy = store
+            .load(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID)
+            .await
+            .expect("example-trend-follower must exist after seed");
+
+        // Manifest provenance carries no stale `anthropic.claude-*` literal.
+        for att in &strategy.manifest.attested_with {
+            assert!(
+                !att.to_ascii_lowercase().contains("anthropic"),
+                "seeded manifest attested_with must not inject anthropic, got: {att}"
+            );
+        }
+        assert!(
+            strategy
+                .manifest
+                .attested_with
+                .iter()
+                .any(|a| a.contains(SEED_DEFAULT_PROVIDER)),
+            "seeded manifest attested_with must reference the registered seed provider '{SEED_DEFAULT_PROVIDER}', got: {:?}",
+            strategy.manifest.attested_with,
+        );
+
+        // The scoped trader agent's slot resolves to the registered seed default,
+        // not anthropic.
+        let agent_ref = strategy
+            .agents
+            .iter()
+            .find(|a| a.canonical_role() == "trader")
+            .expect("seeded strategy must have a trader agent");
+        let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test-user".into() })
+            .await
+            .expect("open ctx");
+        let agent = AgentStore::new(ctx.db.clone())
+            .get(&agent_ref.agent_id)
+            .await
+            .expect("load seeded agent")
+            .expect("seeded trader agent must exist");
+        let slot = agent
+            .slots
+            .iter()
+            .find(|s| s.capabilities.contains(&Capability::Trader))
+            .expect("seeded agent must have a trader slot");
+        assert_eq!(
+            slot.provider, SEED_DEFAULT_PROVIDER,
+            "seeded trader slot must bind to the registered seed provider, not a hardcoded default"
+        );
+        assert_eq!(slot.model, SEED_DEFAULT_MODEL);
+        assert_ne!(
+            slot.provider, "anthropic",
+            "F30: seeded trader must not inject an anthropic default"
         );
     }
 

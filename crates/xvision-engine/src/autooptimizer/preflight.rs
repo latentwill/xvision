@@ -80,12 +80,17 @@ pub async fn preflight_trader_provider(
         if !slot_provider.eq_ignore_ascii_case(cycle_provider) {
             return Err(PreflightReject {
                 message: format!(
-                    "strategy {strategy_id} routes its trader through provider '{slot_provider}' \
-                     (model '{model}'), but this optimizer cycle dispatches to '{cycle_provider}'. The \
-                     paper-test would send a '{slot_provider}'-format model id to '{cycle_provider}' \
-                     and fail with a cross-provider error. Re-run with provider '{slot_provider}' and \
-                     a matching model, use a strategy whose trader provider is '{cycle_provider}', \
-                     or convert the strategy to a mechanistic (non-LLM) decision mode."
+                    "strategy {strategy_id}'s trader is pinned to provider '{slot_provider}' \
+                     (model '{model}'), which differs from this cycle's provider '{cycle_provider}'. \
+                     The paper-test reuses the strategy's own trader model (so optimized winners stay \
+                     interchangeable), so it would send a '{slot_provider}'-format model id to \
+                     '{cycle_provider}' and fail with a cross-provider error. Fix: re-author the \
+                     strategy's trader onto a registered provider — '{cycle_provider}' is already \
+                     registered here, so point the trader at it (the seeded examples were previously \
+                     hardcoded to 'anthropic', which an openrouter-only node can't dispatch — see F30). \
+                     If '{slot_provider}' really is a provider you have registered, run the cycle with \
+                     that provider instead; or convert the strategy to a mechanistic (non-LLM) \
+                     decision mode."
                 ),
             });
         }
