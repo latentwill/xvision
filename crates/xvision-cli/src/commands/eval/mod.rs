@@ -104,6 +104,7 @@ pub enum Op {
     /// Run an eval against the selected scenario and strategy.
     Run(RunArgs),
     /// List eval runs (most recent first).
+    #[command(visible_alias = "ls")]
     List(ListArgs),
     /// Show a single run by id.
     #[command(visible_alias = "get")]
@@ -154,7 +155,7 @@ pub struct RunArgs {
     /// Strategy agent id from `xvn strategy ls`.
     #[arg(long)]
     pub strategy: String,
-    /// Scenario id from `xvn eval scenarios`.
+    /// Scenario id from `xvn scenario ls`.
     #[arg(long)]
     pub scenario: Option<String>,
     /// Run mode: `backtest` or `live` (`paper` is a legacy alias for `backtest`).
@@ -2693,5 +2694,21 @@ mod tests {
         let line = render_aggregate_cost_line(false, Some(2.0), true).expect("line");
         assert!(line.contains("$2.0000"), "line: {line}");
         assert!(!line.contains('*'), "no asterisk when complete: {line}");
+    }
+
+    /// Regression: `xvn eval ls` must resolve to the `list` subcommand via
+    /// the `ls` visible alias. This test FAILS before the alias is added and
+    /// PASSES after — if the alias is ever removed the test will catch it.
+    #[test]
+    fn eval_list_has_ls_visible_alias() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let eval = cmd.find_subcommand("eval").expect("eval subcommand");
+        let list = eval.find_subcommand("list").expect("list subcommand");
+        let aliases: Vec<&str> = list.get_visible_aliases().collect();
+        assert!(
+            aliases.contains(&"ls"),
+            "expected `ls` visible alias on `xvn eval list`; aliases: {aliases:?}",
+        );
     }
 }

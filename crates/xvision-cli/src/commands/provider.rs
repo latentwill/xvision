@@ -45,6 +45,7 @@ enum ProviderAction {
     /// human-readable table; pass `--effective` for the canonical
     /// launchability rollup (provider/has_key/launchable/per-model
     /// enablement) shared with the dashboard and `xvn doctor`.
+    #[command(visible_alias = "ls")]
     List {
         /// Emit the canonical `EffectiveProvider` rows backed by the
         /// `providers::effective_providers` helper. Same shape served by
@@ -610,6 +611,22 @@ api_key_env = "K"
             .unwrap();
         let cfg = xvision_core::config::load_runtime(&config).unwrap();
         assert!(!cfg.providers.iter().any(|p| p.name == "ephemeral"));
+    }
+
+    /// Regression: `xvn provider ls` must resolve to the `list` subcommand
+    /// (visible alias). This test FAILS before the alias is added and PASSES
+    /// after — if the alias is ever removed the test will catch it.
+    #[test]
+    fn provider_list_has_ls_visible_alias() {
+        use clap::CommandFactory;
+        let cmd = crate::Cli::command();
+        let provider = cmd.find_subcommand("provider").expect("provider subcommand");
+        let list = provider.find_subcommand("list").expect("list subcommand");
+        let aliases: Vec<&str> = list.get_visible_aliases().collect();
+        assert!(
+            aliases.contains(&"ls"),
+            "expected `ls` visible alias on `xvn provider list`; aliases: {aliases:?}",
+        );
     }
 
     #[test]
