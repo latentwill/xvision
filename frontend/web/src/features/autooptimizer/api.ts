@@ -22,10 +22,15 @@ import { apiFetch } from "@/api/client";
 export type LineageStatus = "active" | "rejected" | "quarantined";
 
 /** A single experiment in the genealogy tree. */
+/** Wire shape of a Rust `GateVerdict`: `Pass` → `"Pass"`, `Fail { reason }` →
+ *  `{ Fail: { reason } }`. The DB form (`"passed"` / `"rejected:<reason>"`) also
+ *  flows through here. Always render via {@link formatGateVerdict}. */
+export type GateVerdictWire = string | { Pass?: null; Fail?: { reason: string } };
+
 export type LineageNode = {
   bundle_hash: string;
   parent_hash?: string | null;
-  gate_verdict?: string | null;
+  gate_verdict?: GateVerdictWire | null;
   status: LineageStatus;
   cycle_id?: string | null;
   created_at: string;
@@ -202,22 +207,34 @@ export function formatLineageStatus(status: LineageStatus): string {
   }
 }
 
-/** Map gate_verdict wire value to operator-facing label. */
-export function formatGateVerdict(verdict?: string | null): string {
-  if (!verdict) return "Pending";
-  switch (verdict.toLowerCase()) {
-    case "accepted":
-    case "pass":
-      return "Accepted";
-    case "rejected":
-    case "fail":
-    case "ghost":
-      return "Rejected";
-    case "quarantined":
-      return "Suspect";
-    default:
-      return verdict;
+/** Map gate_verdict wire value to operator-facing label.
+ *
+ * The Rust `GateVerdict` enum serializes `Pass` as the string `"Pass"` but
+ * `Fail { reason }` as an OBJECT `{ "Fail": { "reason": "…" } }`. The DB form is
+ * `"passed"` / `"rejected:<reason>"`. This formatter accepts any of those shapes
+ * — and is defensive about unexpected ones — so a rejected lineage node can't
+ * crash the Genealogy / Provenance tabs (calling `.toLowerCase()` on an object
+ * threw, blanking the whole tab).
+ */
+export function formatGateVerdict(verdict?: unknown): string {
+  if (verdict == null) return "Pending";
+
+  // Object form (Rust externally-tagged enum): { Pass: … } | { Fail: { reason } }.
+  if (typeof verdict === "object") {
+    const o = verdict as Record<string, unknown>;
+    if ("Fail" in o || "fail" in o) return "Rejected";
+    if ("Pass" in o || "pass" in o) return "Accepted";
+    return "Rejected";
   }
+
+  const key = String(verdict).toLowerCase();
+  if (key === "accepted" || key === "pass" || key === "passed") return "Accepted";
+  if (key === "quarantined") return "Suspect";
+  // `rejected:<reason>` / `fail:<reason>` carry a suffix — match the prefix.
+  if (key.startsWith("rejected") || key.startsWith("fail") || key === "ghost") {
+    return "Rejected";
+  }
+  return String(verdict);
 }
 
 /** Map CycleProgressEvent.event_type to a plain-language operator label. */
