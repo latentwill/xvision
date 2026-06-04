@@ -96,6 +96,7 @@ fn slot_input<'a>(
         cline_client: client,
         trajectory_mode: xvision_engine::agent::execute_cline::TrajectoryMode::Record,
         record_slot_role: None,
+        obs: None,
     }
 }
 

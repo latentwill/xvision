@@ -175,18 +175,42 @@ impl AgentRunRecorder for SqliteRecorder {
             }
 
             RunEvent::RunFinished(e) => {
-                sqlx::query(
-                    "UPDATE agent_runs \
-                     SET status = ?, finished_at = ?, final_artifact_id = ?, error = ? \
-                     WHERE id = ?",
-                )
-                .bind(e.status.as_db_str())
-                .bind(ts(&e.finished_at))
-                .bind(&e.final_artifact_id)
-                .bind(&e.error)
-                .bind(&e.run_id)
-                .execute(&self.pool)
-                .await?;
+                // xvnej F5 (2026-06-04): `failed` is terminal-sticky. A child
+                // step row (`<run>::<role>::cycleN`) can receive a late,
+                // unconditional `completed` from the Cline sidecar even when
+                // the step actually failed; pair that with the engine's
+                // `emit_child_run_failed` and the two events race. Guard the
+                // recorder so a `completed` finish never downgrades a row that
+                // is already `failed`, regardless of arrival order. All other
+                // transitions (completed/failed over running/queued) are
+                // unaffected because their existing status isn't `failed`.
+                if e.status.as_db_str() == "completed" {
+                    sqlx::query(
+                        "UPDATE agent_runs \
+                         SET status = ?, finished_at = ?, final_artifact_id = ?, error = ? \
+                         WHERE id = ? AND status != 'failed'",
+                    )
+                    .bind(e.status.as_db_str())
+                    .bind(ts(&e.finished_at))
+                    .bind(&e.final_artifact_id)
+                    .bind(&e.error)
+                    .bind(&e.run_id)
+                    .execute(&self.pool)
+                    .await?;
+                } else {
+                    sqlx::query(
+                        "UPDATE agent_runs \
+                         SET status = ?, finished_at = ?, final_artifact_id = ?, error = ? \
+                         WHERE id = ?",
+                    )
+                    .bind(e.status.as_db_str())
+                    .bind(ts(&e.finished_at))
+                    .bind(&e.final_artifact_id)
+                    .bind(&e.error)
+                    .bind(&e.run_id)
+                    .execute(&self.pool)
+                    .await?;
+                }
                 self.drop_run_spans(&e.run_id).await;
             }
 

@@ -679,6 +679,78 @@ fn classify_metadata_patch_error(err: anyhow::Error, id: &str) -> DashboardError
     DashboardError::Internal(err)
 }
 
+// ---------------------------------------------------------------------------
+// F4 — singular-path / wrong-method hint handlers
+//
+// Several clients probed the singular `/api/strategy/{id}` surface with
+// methods that are either unrouted there (PUT, POST directly on /:id) or only
+// available via a different HTTP method (GET on /:id/validate, which is POST).
+// Axum would return a bare 405 with no body. The handlers below intercept those
+// probes and return a structured JSON error whose message mirrors the tone of
+// the existing engine-level hint ("id matches an agent; did you mean agents.get?").
+//
+// The hint format follows the `DashboardError` response envelope:
+//   { "code": "method_not_allowed", "message": "<operator-readable hint>" }
+//
+// These are registered via extra method chains on the existing route entries in
+// `server.rs`. They carry no `State` extractor — they return a fixed body.
+// ---------------------------------------------------------------------------
+
+/// `PUT /api/strategy/:id` → 405 with a hint.
+///
+/// The strategy surface does not expose PUT on the singular path.
+/// PATCH is the update verb: `PATCH /api/strategy/:id` updates metadata fields.
+pub async fn put_method_hint() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(serde_json::json!({
+            "code": "method_not_allowed",
+            "message": "PUT is not supported on this path. \
+                To update strategy metadata use PATCH /api/strategy/{id} \
+                (fields: display_name, plain_summary, asset_universe, \
+                decision_cadence_minutes, color). \
+                For sub-resources use the dedicated routes, e.g. \
+                PUT /api/strategy/{id}/slot/{role} or PUT /api/strategy/{id}/risk."
+        })),
+    )
+}
+
+/// `POST /api/strategy/:id` → 405 with a hint.
+///
+/// POST is not a valid verb on the strategy instance path. To create a new
+/// strategy use `POST /api/strategies` (plural). Sub-resource actions use
+/// their own paths (e.g. `POST /api/strategy/:id/clone`).
+pub async fn post_method_hint() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(serde_json::json!({
+            "code": "method_not_allowed",
+            "message": "POST is not supported on /api/strategy/{id}. \
+                To create a strategy use POST /api/strategies (plural). \
+                To clone an existing strategy use POST /api/strategy/{id}/clone. \
+                To validate a draft use POST /api/strategy/{id}/validate."
+        })),
+    )
+}
+
+/// `GET /api/strategy/:id/validate` → 405 with a hint.
+///
+/// The validate endpoint is POST-only: `POST /api/strategy/:id/validate`.
+/// GET is not supported; validation re-runs engine checks on demand and is
+/// not idempotent-safe as a GET.
+pub async fn validate_get_hint() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(serde_json::json!({
+            "code": "method_not_allowed",
+            "message": "GET is not supported on /api/strategy/{id}/validate. \
+                Use POST /api/strategy/{id}/validate to re-run validation. \
+                The response carries { ok, errors } — validation failures \
+                return 200 with ok: false, not a 4xx."
+        })),
+    )
+}
+
 #[cfg(test)]
 pub mod get {
     //! Shape: `cargo test -p xvision-dashboard strategies::get` (per the

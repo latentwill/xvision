@@ -3380,8 +3380,33 @@ fn missing_bars_validation(scenario: &Scenario, source_error: Option<String>) ->
 /// before the spawn so missing-config errors return as `ApiError::Validation`
 /// rather than landing in the row's `error` field. Strategy/scenario lookups
 /// also happen up-front for the same reason.
+///
+/// Wraps `start_run_inner` with the standard audit-on-both-paths pattern so
+/// validation failures (400s) are visible in `api_audit` just like successes.
+/// `target` is `None` on the error path (no run row exists yet); callers can
+/// correlate the failure via `args_json` (carries `agent_id` + `scenario_id`).
 pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     let started = Instant::now();
+    let args_json = serde_json::to_string(&req).ok();
+    let result = start_run_inner(ctx, req).await;
+    let (outcome, target) = match &result {
+        Ok(detail) => (Outcome::Ok, Some(detail.summary.id.clone())),
+        Err(e) => (Outcome::Error(e.to_string()), None),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "start",
+        target.as_deref(),
+        args_json.as_deref(),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDetail> {
     validate_provider_override_shape(req.provider_override.as_ref())?;
     validate_live_request_shape(&req)?;
     let strategy = api_strategy::get(ctx, &req.agent_id).await?;
@@ -3551,18 +3576,6 @@ pub async fn start_run(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<RunDe
         em.emit_run_started(objective, obs_config.retention.mode.as_db_str())
             .await;
     }
-
-    let args_json = serde_json::to_string(&req).ok();
-    let _ = audit::record(
-        ctx,
-        "eval",
-        "start",
-        Some(&run.id),
-        args_json.as_deref(),
-        Outcome::Ok,
-        started.elapsed().as_millis() as i64,
-    )
-    .await;
 
     // F-1 (eval-launch-concurrency-cap, 2026-05-19): cap how many runs
     // can be in flight against a single upstream `(provider, model)`

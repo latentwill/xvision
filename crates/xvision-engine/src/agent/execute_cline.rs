@@ -296,6 +296,22 @@ pub struct ClineSlotInput<'a> {
     ///
     /// [`TrajectoryKey`]: xvision_observability::trajectory::key::TrajectoryKey
     pub record_slot_role: Option<String>,
+    /// Optional observability emitter threaded from the eval executor. When
+    /// `Some`, the executor's failure path calls
+    /// [`crate::agent::observability::ObsEmitter::emit_child_run_failed`] to
+    /// correct the child `agent_runs` row status after a failed step.
+    ///
+    /// The sidecar always emits `event.run_finished(completed)` via the event
+    /// socket on `end_run`, even when the step itself failed — this causes
+    /// F5: the child row (id = `{eval_run_id}::{role}::cycleN`) is left as
+    /// `completed` while the parent is `failed`. Publishing a corrective
+    /// `RunFinished(Failed)` AFTER `end_run` (so the sidecar's notification
+    /// has been processed first) ensures the final recorded status is `failed`.
+    ///
+    /// `None` disables the correction (unit tests, legacy callers without an
+    /// obs emitter wired). The successful path does NOT call this — the
+    /// sidecar's `completed` status is correct and should be preserved.
+    pub obs: Option<crate::agent::observability::ObsEmitter>,
 }
 
 impl ClineSlotInput<'_> {
@@ -472,19 +488,48 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
                 hint = "max_tokens may be too low for this model — increase to ≥2048 in agent slot settings",
             );
         }
-        return Err(ClineRuntimeError::StepNotCompleted {
-            run_id,
-            role,
+        let err = ClineRuntimeError::StepNotCompleted {
+            run_id: run_id.clone(),
+            role: role.clone(),
             status: step.status,
             error: step.error,
+        };
+        // F5 correction: the sidecar emits `event.run_finished(completed)`
+        // on `end_run` even when the step failed. Override the child run's
+        // status to `failed` so `agent_runs` for this cycle reflects the
+        // actual outcome.
+        //
+        // Ordering: yield once so the event-sink's background socket reader
+        // can process the sidecar's `event.run_finished(completed)` first.
+        // Our `failed` UPDATE then arrives second and wins. Without the
+        // yield the relative order of the socket event and our direct bus
+        // publish is non-deterministic, and `completed` could overwrite
+        // `failed` if the socket event arrives late.
+        if let Some(obs) = input.obs.as_ref() {
+            tokio::task::yield_now().await;
+            obs.emit_child_run_failed(&run_id, err.to_string()).await;
         }
-        .into());
+        return Err(err.into());
     }
 
-    let decision_json = step.decision_json.ok_or_else(|| ClineRuntimeError::NoDecision {
-        run_id: run_id.clone(),
-        role: role.clone(),
-    })?;
+    let decision_json = match step.decision_json {
+        Some(json) => json,
+        None => {
+            let err = ClineRuntimeError::NoDecision {
+                run_id: run_id.clone(),
+                role: role.clone(),
+            };
+            // F5 correction: same as StepNotCompleted — the sidecar
+            // reports `completed` (via `event.run_finished`) but no
+            // decision was submitted, so the run actually failed. Yield
+            // once before publishing so the socket event arrives first.
+            if let Some(obs) = input.obs.as_ref() {
+                tokio::task::yield_now().await;
+                obs.emit_child_run_failed(&run_id, err.to_string()).await;
+            }
+            return Err(err.into());
+        }
+    };
 
     // Validate the payload parses as JSON here so the typed error is
     // attributable to the Cline runtime rather than surfacing later as a
@@ -777,6 +822,7 @@ mod tests {
             cline_client: client,
             trajectory_mode: TrajectoryMode::default(),
             record_slot_role: None,
+            obs: None,
         }
     }
 

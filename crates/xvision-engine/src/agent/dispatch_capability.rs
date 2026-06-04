@@ -499,6 +499,10 @@ async fn execute_slot_for_runtime(
             // not the per-cycle pipeline dispatch.
             trajectory_mode: crate::agent::execute_cline::TrajectoryMode::Record,
             record_slot_role,
+            // F5: thread the parent-run emitter so the failure path can
+            // correct the child `agent_runs` row status (see
+            // `ClineSlotInput::obs` field docs).
+            obs: input.obs.clone(),
         })
         .await;
     }

@@ -171,6 +171,31 @@ pub async fn templates(State(state): State<AppState>) -> Result<Json<TemplatesRe
     Ok(Json(TemplatesResponse { items }))
 }
 
+// ---------------------------------------------------------------------------
+// F4 — wrong-method hint handler for /api/agents/:id
+//
+// The agents instance path is registered with PUT (update) and DELETE
+// (archive) only. PATCH on that path returns a bare 405. The handler below
+// intercepts PATCH and returns a structured hint that mirrors the tone of the
+// engine-level "id matches an agent; did you mean agents.get?" message.
+// ---------------------------------------------------------------------------
+
+/// `PATCH /api/agents/:id` → 405 with a hint.
+///
+/// The agent surface uses PUT for full updates, not PATCH. Use
+/// `PUT /api/agents/:id` with the full agent body to update an agent.
+pub async fn patch_method_hint() -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    (
+        axum::http::StatusCode::METHOD_NOT_ALLOWED,
+        Json(serde_json::json!({
+            "code": "method_not_allowed",
+            "message": "PATCH is not supported on /api/agents/{id}. \
+                Use PUT /api/agents/{id} to update an agent (full replacement body required). \
+                To validate an agent's configuration use POST /api/agents/{id}/validate."
+        })),
+    )
+}
+
 #[cfg(test)]
 pub mod get {
     //! Shape: `cargo test -p xvision-dashboard agents::get` (q15-

@@ -241,9 +241,41 @@ async fn probe_http(
     }
 
     match req.send().await {
-        Ok(_resp) => {
-            // Any HTTP response (200, 401, 403, …) means the server is up.
-            (true, None)
+        Ok(resp) => {
+            // xvnej F1 (2026-06-04): "reachable" is not the same as "usable".
+            // The old behavior treated *any* HTTP response as a pass, so a
+            // provider that 402s on no-credits or 401s on a bad key sailed
+            // through preflight and then failed the trader call on the same
+            // provider. Treat auth/billing rejections as preflight FAILURES —
+            // these statuses come from the same key/account the run will use,
+            // so they are predictive of a real launch failure.
+            //
+            // Deliberately NOT failed here: 404/405 (many OpenAI-compat
+            // providers simply don't expose `/models` listing), 429
+            // (throttled but usable), and 5xx (often a transient blip). Those
+            // stay reachable to avoid refusing a provider that would actually
+            // serve completions; `--skip-preflight` remains the escape hatch.
+            use reqwest::StatusCode;
+            match resp.status() {
+                StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (
+                    false,
+                    Some(format!(
+                        "provider rejected authentication (HTTP {}) at {probe_url}. \
+                         Check the API key for this provider in Settings → Providers.",
+                        resp.status().as_u16()
+                    )),
+                ),
+                StatusCode::PAYMENT_REQUIRED | StatusCode::PROXY_AUTHENTICATION_REQUIRED => (
+                    false,
+                    Some(format!(
+                        "provider reports a billing/credit problem (HTTP {}) at {probe_url}. \
+                         Top up credits or switch the provider/model before launching.",
+                        resp.status().as_u16()
+                    )),
+                ),
+                // 2xx and the ambiguous-but-up statuses (404/405/429/5xx).
+                _ => (true, None),
+            }
         }
         Err(e) => {
             let msg = if e.is_timeout() {
@@ -437,6 +469,54 @@ mod tests {
         assert!(
             err.contains("not registered") || err.contains("config"),
             "unexpected error: {err}"
+        );
+    }
+
+    // ── xvnej F1: reachable-but-unusable status handling ────────────────────
+
+    async fn preflight_status(status: u16) -> PreflightResult {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/models"))
+            .respond_with(wiremock::ResponseTemplate::new(status))
+            .mount(&server)
+            .await;
+        let (ctx, _dir) = test_ctx_with_provider("p", "openai-compat", &server.uri()).await;
+        let mut results = preflight_providers(&ctx, &["p".to_string()]).await;
+        results.pop().expect("one result")
+    }
+
+    #[tokio::test]
+    async fn payment_required_marks_provider_unusable() {
+        // HTTP 402 (e.g. OpenRouter "Insufficient credits") must FAIL preflight
+        // rather than pass as "reachable" — the same false green light that let
+        // run 01KT3KCA launch and then die at the trader.
+        let r = preflight_status(402).await;
+        assert!(!r.reachable, "402 must not pass preflight");
+        let err = r.error.unwrap_or_default();
+        assert!(err.contains("billing") || err.contains("402"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_marks_provider_unusable() {
+        let r = preflight_status(401).await;
+        assert!(!r.reachable, "401 must not pass preflight");
+        let err = r.error.unwrap_or_default();
+        assert!(
+            err.contains("authentication") || err.contains("401"),
+            "got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn not_found_on_models_stays_reachable() {
+        // Many OpenAI-compat providers don't expose `/models`; a 404 there must
+        // NOT refuse the launch (avoid false negatives) — only auth/billing do.
+        let r = preflight_status(404).await;
+        assert!(
+            r.reachable,
+            "404 on /models should stay reachable, got error={:?}",
+            r.error
         );
     }
 
