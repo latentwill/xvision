@@ -262,7 +262,7 @@ impl PaperTestRunner for StubPaperTester {
 pub struct BudgetCappedPaperTester {
     inner: Box<dyn PaperTestRunner>,
     budget_usd: f64,
-    spent_quote: Arc<std::sync::Mutex<f64>>,
+    meter: Arc<std::sync::Mutex<super::metering_dispatch::CycleMeter>>,
 }
 
 impl BudgetCappedPaperTester {
@@ -270,33 +270,27 @@ impl BudgetCappedPaperTester {
         Self {
             inner,
             budget_usd,
-            spent_quote: Arc::new(std::sync::Mutex::new(0.0)),
+            meter: Arc::new(std::sync::Mutex::new(
+                super::metering_dispatch::CycleMeter::default(),
+            )),
         }
     }
 
-    /// Like [`Self::new`] but accumulates into a caller-provided handle so the
-    /// cycle's mutator/judge metering shares one running total with the
-    /// paper-test meter (F11). Pass `f64::INFINITY` for `budget_usd` to meter
-    /// without ever tripping (an unbudgeted cycle that still wants a correct
-    /// realized `cycle cost:`).
+    /// Like [`Self::new`] but gates on a caller-provided [`CycleMeter`] so the
+    /// cycle's metering dispatch (backtest + mutator + judge) and this budget
+    /// gate share one running total (F11/F23). Pass `f64::INFINITY` for
+    /// `budget_usd` to meter without ever tripping (an unbudgeted cycle that
+    /// still wants a correct realized `cycle cost:` + token totals).
     pub fn new_with_handle(
         inner: Box<dyn PaperTestRunner>,
         budget_usd: f64,
-        spent_quote: Arc<std::sync::Mutex<f64>>,
+        meter: Arc<std::sync::Mutex<super::metering_dispatch::CycleMeter>>,
     ) -> Self {
         Self {
             inner,
             budget_usd,
-            spent_quote,
+            meter,
         }
-    }
-
-    /// Shared handle to the running total of metered paper-test inference cost
-    /// (USD). The CLI clones this before boxing the tester so it can print the
-    /// realized "cycle cost: $X.XX" once the cycle finishes (minor find,
-    /// 2026-06-04 — F2 metered cost for the cap but never surfaced the total).
-    pub fn spent_quote_handle(&self) -> Arc<std::sync::Mutex<f64>> {
-        Arc::clone(&self.spent_quote)
     }
 }
 
@@ -310,7 +304,7 @@ impl BudgetCappedPaperTester {
         // Pre-check in a scoped block so the lock is released before the
         // `.await` below (never hold a std Mutex across an await point).
         {
-            let spent = *self.spent_quote.lock().expect("budget mutex poisoned");
+            let spent = self.meter.lock().expect("budget mutex poisoned").spent_usd;
             if spent >= self.budget_usd {
                 anyhow::bail!(
                     "optimizer cycle --budget of ${:.4} reached (spent ${:.4} on paper-test \

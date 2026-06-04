@@ -65,7 +65,7 @@ pub use gate::{evaluate, GateInput, GateVerdict};
 pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
 pub use local_dispatch::AutoOptimizerLocalDispatch;
-pub use metering_dispatch::CostMeteringDispatch;
+pub use metering_dispatch::{CostMeteringDispatch, CycleMeter};
 pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, ToolDiff};
 pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, MutatorScore};
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};

@@ -130,3 +130,52 @@ async fn get_cycle_run_enriches_metrics_provenance_and_honesty() {
     assert!(h.passed);
     assert_eq!(h.sabotage_variant, "kill-trades");
 }
+
+#[tokio::test]
+async fn cycle_cost_is_persisted_and_surfaced_in_list_and_detail() {
+    use xvision_engine::autooptimizer::cycle_runs::persist_cycle_cost;
+    use xvision_engine::autooptimizer::metering_dispatch::CycleMeter;
+
+    let pool = fresh_pool().await;
+    let store = LineageStore::new(pool.clone());
+    store
+        .insert(&node(b"c1", LineageStatus::Active, "cycle-cost", 10))
+        .await
+        .unwrap();
+
+    let meter = CycleMeter {
+        spent_usd: 0.1306,
+        unpriced_calls: 0,
+        input_tokens: 1_935_625,
+        output_tokens: 18_859,
+    };
+    persist_cycle_cost(&pool, "cycle-cost", &meter, "2026-06-04T13:00:00Z")
+        .await
+        .unwrap();
+
+    // List surfaces cost via the LEFT JOIN.
+    let runs = list_cycle_runs(&pool, 50, 0).await.unwrap();
+    let r = runs
+        .iter()
+        .find(|r| r.cycle_id == "cycle-cost")
+        .expect("cycle present");
+    assert_eq!(r.cost_usd, Some(0.1306));
+    assert_eq!(r.input_tokens, Some(1_935_625));
+    assert_eq!(r.output_tokens, Some(18_859));
+
+    // Detail surfaces the same (flattened summary).
+    let detail = get_cycle_run(&pool, "cycle-cost")
+        .await
+        .unwrap()
+        .expect("cycle exists");
+    assert_eq!(detail.summary.cost_usd, Some(0.1306));
+    assert_eq!(detail.summary.input_tokens, Some(1_935_625));
+
+    // A cycle with no cost row → None (not a crash).
+    store
+        .insert(&node(b"d1", LineageStatus::Active, "no-cost", 11))
+        .await
+        .unwrap();
+    let none = get_cycle_run(&pool, "no-cost").await.unwrap().expect("exists");
+    assert_eq!(none.summary.cost_usd, None);
+}

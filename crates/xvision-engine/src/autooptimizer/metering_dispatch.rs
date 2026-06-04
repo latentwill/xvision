@@ -27,32 +27,44 @@ use xvision_core::providers::Catalog;
 use crate::agent::llm::{LlmDispatch, LlmRequest, LlmResponse};
 use crate::eval::cost::compute_token_cost_usd_from_catalog;
 
-/// Wraps an [`LlmDispatch`] and accumulates realized USD cost per completion.
+/// Running totals for one optimizer cycle, accumulated as LLM calls complete.
+/// F23 (QA 2026-06-04): a cycle is token-heavy, so the operator needs to see
+/// both tokens and cost. The meter is the single in-memory source — every LLM
+/// call (backtest decisions, experiment writer, judge) funnels through the
+/// wrapping [`CostMeteringDispatch`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CycleMeter {
+    /// Realized USD cost of priced calls.
+    pub spent_usd: f64,
+    /// Count of token-bearing calls whose model had no catalog price.
+    pub unpriced_calls: u64,
+    /// Total input (prompt) tokens across all calls.
+    pub input_tokens: u64,
+    /// Total output (completion) tokens across all calls.
+    pub output_tokens: u64,
+}
+
+/// Wraps an [`LlmDispatch`] and accumulates tokens + realized USD cost per
+/// completion into a shared [`CycleMeter`].
 pub struct CostMeteringDispatch {
     inner: Arc<dyn LlmDispatch + Send + Sync>,
     /// Catalogs scanned (in order) to price a call's `(model, tokens)`.
     catalogs: Vec<Arc<Catalog>>,
-    /// Running total of metered cost (USD). Shared with the paper-test budget
-    /// meter so one ceiling covers the whole cycle.
-    spent: Arc<Mutex<f64>>,
-    /// Count of completions whose model had no catalog price (token-bearing but
-    /// unpriceable). F11: surfaced so `cycle cost:` can say "unknown — N calls
-    /// unpriced" instead of a misleading `$0.00`.
-    unpriced: Arc<Mutex<u64>>,
+    /// Shared per-cycle running totals (cost + unpriced + tokens). The
+    /// paper-test budget gate reads `spent_usd` from the same handle.
+    meter: Arc<Mutex<CycleMeter>>,
 }
 
 impl CostMeteringDispatch {
     pub fn new(
         inner: Arc<dyn LlmDispatch + Send + Sync>,
         catalogs: Vec<Arc<Catalog>>,
-        spent: Arc<Mutex<f64>>,
-        unpriced: Arc<Mutex<u64>>,
+        meter: Arc<Mutex<CycleMeter>>,
     ) -> Self {
         Self {
             inner,
             catalogs,
-            spent,
-            unpriced,
+            meter,
         }
     }
 
@@ -71,11 +83,18 @@ impl LlmDispatch for CostMeteringDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
         let model = req.model.clone();
         let resp = self.inner.complete(req).await?;
-        let used_tokens = resp.input_tokens as u64 + resp.output_tokens as u64;
-        match self.price(&model, resp.input_tokens as u64, resp.output_tokens as u64) {
-            Some(cost) => *self.spent.lock().expect("metering mutex poisoned") += cost,
-            None if used_tokens > 0 => *self.unpriced.lock().expect("metering mutex poisoned") += 1,
-            None => {}
+        let in_t = resp.input_tokens as u64;
+        let out_t = resp.output_tokens as u64;
+        let cost = self.price(&model, in_t, out_t);
+        {
+            let mut m = self.meter.lock().expect("metering mutex poisoned");
+            m.input_tokens += in_t;
+            m.output_tokens += out_t;
+            match cost {
+                Some(c) => m.spent_usd += c,
+                None if in_t + out_t > 0 => m.unpriced_calls += 1,
+                None => {}
+            }
         }
         Ok(resp)
     }
@@ -141,17 +160,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn meters_priced_calls_into_shared_handle() {
-        let spent = Arc::new(Mutex::new(0.0));
-        let unpriced = Arc::new(Mutex::new(0u64));
+    async fn meters_priced_calls_and_tokens_into_shared_meter() {
+        let meter = Arc::new(Mutex::new(CycleMeter::default()));
         let dispatch = CostMeteringDispatch::new(
             Arc::new(FixedTokensDispatch {
                 input: 1_000_000,
                 output: 1_000_000,
             }),
             vec![priced_catalog()],
-            Arc::clone(&spent),
-            Arc::clone(&unpriced),
+            Arc::clone(&meter),
         );
 
         dispatch
@@ -159,35 +176,40 @@ mod tests {
             .await
             .unwrap();
 
+        let m = *meter.lock().unwrap();
         // 1M in * $0.1/Mtok + 1M out * $0.4/Mtok = $0.50.
         assert!(
-            (*spent.lock().unwrap() - 0.5).abs() < 1e-9,
+            (m.spent_usd - 0.5).abs() < 1e-9,
             "priced call must accumulate cost"
         );
-        assert_eq!(*unpriced.lock().unwrap(), 0);
+        assert_eq!(m.unpriced_calls, 0);
+        assert_eq!(m.input_tokens, 1_000_000);
+        assert_eq!(m.output_tokens, 1_000_000);
     }
 
     #[tokio::test]
-    async fn counts_unpriced_calls_without_crashing() {
-        let spent = Arc::new(Mutex::new(0.0));
-        let unpriced = Arc::new(Mutex::new(0u64));
+    async fn counts_unpriced_calls_but_still_tallies_tokens() {
+        let meter = Arc::new(Mutex::new(CycleMeter::default()));
         let dispatch = CostMeteringDispatch::new(
             Arc::new(FixedTokensDispatch {
                 input: 100,
-                output: 100,
+                output: 50,
             }),
             vec![priced_catalog()],
-            Arc::clone(&spent),
-            Arc::clone(&unpriced),
+            Arc::clone(&meter),
         );
 
-        // A model the catalog doesn't price → counted as unpriced, $0 spent.
+        // A model the catalog doesn't price → counted as unpriced, $0 spent,
+        // but the tokens are still tallied (the operator still sees usage).
         dispatch
             .complete(req("anthropic/claude-sonnet-4.6"))
             .await
             .unwrap();
 
-        assert_eq!(*spent.lock().unwrap(), 0.0);
-        assert_eq!(*unpriced.lock().unwrap(), 1);
+        let m = *meter.lock().unwrap();
+        assert_eq!(m.spent_usd, 0.0);
+        assert_eq!(m.unpriced_calls, 1);
+        assert_eq!(m.input_tokens, 100);
+        assert_eq!(m.output_tokens, 50);
     }
 }
