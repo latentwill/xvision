@@ -189,7 +189,12 @@ All of F11–F19 addressed. Summary of what changed:
   derives run list/detail from `lineage_nodes` grouped by `cycle_id`; dashboard
   `GET /api/autooptimizer/cycles[/:cycle_id]`; `xvn optimizer ls` shows a
   "Mutation cycles" section and `inspect <cycle_id>` shows the cycle detail
-  (falling back to the distillation ledger otherwise).
+  (falling back to the distillation ledger otherwise). The detail now carries
+  the full acceptance-#2 record: gate verdict + reason, candidate strategy via
+  the blob endpoint (children are persisted during the cycle), per-candidate
+  day/held-out backtest metrics (`lineage_node_metrics`), mutator provenance
+  (joined from `mutator_attribution`), and the honesty-check result
+  (`cycle_honesty_checks`).
 - **F14** — `Mutator::propose` detects/retries identity diffs; a unified
   `MutationDiff::apply_to` applies nested params + tools (the old cycle path
   applied flat params only, silently dropping valid tool/nested experiments as
