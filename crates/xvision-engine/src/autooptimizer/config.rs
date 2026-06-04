@@ -67,13 +67,21 @@ impl Default for AutoOptimizerConfig {
     fn default() -> Self {
         Self {
             min_improvement: 0.05,
-            baseline_untouched_window: BaselineUntouchedWindow {
-                start: NaiveDate::from_ymd_opt(2025, 9, 1).expect("valid date"),
-                end: NaiveDate::from_ymd_opt(2025, 12, 1).expect("valid date"),
-            },
+            // F3 (QA 2026-06-04): the previous default spanned ~20 months of
+            // 1h bars (day 2024-01→2025-09) plus a 3-month held-out window,
+            // so a no-config `run-cycle` silently fetched ~16k bars per
+            // candidate. Default to a compact, recent, contiguous span
+            // (3-month day window + 1-month held-out baseline) that keeps the
+            // train-before-holdout ordering; operators who want the larger
+            // window set it in autooptimizer.toml or via the --day-*/
+            // --baseline-* flags.
             day_window: DayWindow {
-                start: NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date"),
-                end: NaiveDate::from_ymd_opt(2025, 9, 1).expect("valid date"),
+                start: NaiveDate::from_ymd_opt(2025, 1, 1).expect("valid date"),
+                end: NaiveDate::from_ymd_opt(2025, 4, 1).expect("valid date"),
+            },
+            baseline_untouched_window: BaselineUntouchedWindow {
+                start: NaiveDate::from_ymd_opt(2025, 4, 1).expect("valid date"),
+                end: NaiveDate::from_ymd_opt(2025, 5, 1).expect("valid date"),
             },
             loosening_schedule: None,
             mutator: MutatorConfig {
@@ -102,8 +110,19 @@ impl AutoOptimizerConfig {
     }
 
     pub fn default_path() -> anyhow::Result<PathBuf> {
+        // Honor `$XVN_HOME` first (same precedence as the CLI's
+        // `resolve_xvn_home`: explicit override → `$XVN_HOME` → `$HOME/.xvn`).
+        // The CLI layer already overrides this with the resolved home (the T1
+        // fix), but a direct caller of `default_path()` previously got the
+        // stale `~/.xvn` regardless of `$XVN_HOME` — a latent path landmine
+        // (QA 2026-06-04, finding F7).
+        if let Ok(home) = std::env::var("XVN_HOME") {
+            if !home.is_empty() {
+                return Ok(PathBuf::from(home).join("autooptimizer.toml"));
+            }
+        }
         let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
-        Ok(home.join(".xvn/autooptimizer.toml"))
+        Ok(home.join(".xvn").join("autooptimizer.toml"))
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {

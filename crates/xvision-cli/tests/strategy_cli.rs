@@ -341,8 +341,23 @@ fn create_from_file_emits_json_envelope() {
 
     let out = xvn(&["strategy", "ls", "--json"], dir.path());
     assert!(out.status.success());
-    let ids: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(ids.contains(&id.to_string()), "ids: {ids:?}");
+    // F5 (QA 2026-06-04): `ls --json` rows are now objects carrying
+    // `id` + `display_name` (+ `name` alias) instead of bare id strings,
+    // so a strategy is findable by name.
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let ids: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r["id"].as_str().map(String::from))
+        .collect();
+    assert!(ids.contains(&id.to_string()), "rows: {rows:?}");
+    let row = rows
+        .iter()
+        .find(|r| r["id"] == id)
+        .expect("created strategy present in ls --json");
+    assert!(
+        row.get("display_name").and_then(|v| v.as_str()).is_some(),
+        "each ls --json row exposes display_name: {row:?}"
+    );
 }
 
 #[test]
