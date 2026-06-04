@@ -169,8 +169,6 @@ async fn strategies_list_returns_seeded_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
-            decision_mode: Default::default(),
-            mechanistic_config: None,
         })
         .await
         .unwrap();
@@ -1277,8 +1275,6 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
-            decision_mode: Default::default(),
-            mechanistic_config: None,
         })
         .await
         .unwrap();
@@ -1592,4 +1588,49 @@ async fn eval_export_unknown_run_id_is_404() {
     let (server, _tmp) = boot().await;
     let response = server.get("/api/eval/runs/01NOSUCHRUN0000000000000/export").await;
     response.assert_status(StatusCode::NOT_FOUND);
+}
+
+// xvnej F4 (2026-06-04): the singular `/api/strategy/{id}` namespace returned
+// bare 405s for PUT/POST/GET-validate, costing users dead-end probes. These
+// assert the helpful "did you mean ..." hints (envelope `{code,message}`).
+
+#[tokio::test]
+async fn singular_strategy_put_returns_method_hint() {
+    let (server, _tmp) = boot().await;
+    let response = server.put("/api/strategy/01HZSTRATEGYHINT0000000001").await;
+    response.assert_status(StatusCode::METHOD_NOT_ALLOWED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "method_not_allowed");
+    assert!(
+        body["message"].as_str().unwrap().contains("PATCH"),
+        "PUT hint should point at PATCH: {body}"
+    );
+}
+
+#[tokio::test]
+async fn singular_strategy_post_returns_method_hint() {
+    let (server, _tmp) = boot().await;
+    let response = server.post("/api/strategy/01HZSTRATEGYHINT0000000001").await;
+    response.assert_status(StatusCode::METHOD_NOT_ALLOWED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "method_not_allowed");
+    assert!(
+        body["message"].as_str().unwrap().contains("/api/strategies"),
+        "POST hint should point at the plural create route: {body}"
+    );
+}
+
+#[tokio::test]
+async fn singular_strategy_get_validate_returns_method_hint() {
+    let (server, _tmp) = boot().await;
+    let response = server
+        .get("/api/strategy/01HZSTRATEGYHINT0000000001/validate")
+        .await;
+    response.assert_status(StatusCode::METHOD_NOT_ALLOWED);
+    let body: serde_json::Value = response.json();
+    assert_eq!(body["code"], "method_not_allowed");
+    assert!(
+        body["message"].as_str().unwrap().contains("POST"),
+        "GET /validate hint should point at POST: {body}"
+    );
 }

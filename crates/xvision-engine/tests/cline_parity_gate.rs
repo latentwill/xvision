@@ -173,6 +173,7 @@ async fn cline_record_matches_llm_dispatch_over_fixed_cycles() {
             cline_client: client.clone(),
             trajectory_mode: TrajectoryMode::Record,
             record_slot_role: None,
+            obs: None,
         })
         .await
         .expect("cline-record must produce an LlmResponse");

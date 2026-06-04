@@ -11,6 +11,7 @@
 //  1. POST   /api/agents                              agents::create
 //  2. PUT    /api/agents/:id                          agents::update
 //  3. DELETE /api/agents/:id                          agents::archive
+//  3b. PATCH /api/agents/:id                          agents::patch_method_hint  (F4 hint → 405)
 //  4. POST   /api/agents/:id/validate                 agents::validate
 //  5. POST   /api/skills                              skills::create
 //  6. PUT    /api/skills/:id                          skills::update
@@ -18,6 +19,8 @@
 //  8. POST   /api/strategies                          strategies::post_create
 //  9. DELETE /api/strategy/:id                        strategies::delete
 // 10. PATCH  /api/strategy/:id                        strategies::patch_metadata
+// 10b. PUT   /api/strategy/:id                        strategies::put_method_hint  (F4 hint → 405)
+// 10c. POST  /api/strategy/:id                        strategies::post_method_hint (F4 hint → 405)
 // 11. POST   /api/strategy/:id/clone                  strategies::clone
 // 12. PUT    /api/strategy/:id/slot/:role             strategies::put_slot
 // 13. POST   /api/strategy/:id/agents                 strategies::post_add_agent
@@ -28,6 +31,7 @@
 // 17b. PUT   /api/strategy/:id/mechanical_params      strategies::put_mechanical_params
 // 17c. PUT/DELETE /api/strategy/:id/filter            strategies::put_filter / delete_filter
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
+// 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -359,7 +363,10 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/agents", post(agents::create))
         .route(
             "/api/agents/:id",
-            put(agents::update).delete(agents::archive),
+            put(agents::update)
+                .delete(agents::archive)
+                // F4: PATCH /api/agents/:id → 405 with a hint pointing to PUT.
+                .patch(agents::patch_method_hint),
         )
         .route("/api/agents/:id/validate", post(agents::validate))
         // ── Skills ────────────────────────────────────────────────────────
@@ -372,7 +379,14 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/strategies", post(strategies::post_create))
         .route(
             "/api/strategy/:id",
-            delete(strategies::delete).patch(strategies::patch_metadata),
+            delete(strategies::delete)
+                .patch(strategies::patch_metadata)
+                // F4: PUT and POST on the singular path → 405 with actionable hints.
+                // PUT is not a valid verb here (use PATCH for metadata updates).
+                // POST is not valid either (use POST /api/strategies to create,
+                // or POST /api/strategy/:id/clone to clone).
+                .put(strategies::put_method_hint)
+                .post(strategies::post_method_hint),
         )
         .route("/api/strategy/:id/clone", post(strategies::clone))
         .route("/api/strategy/:id/slot/:role", put(strategies::put_slot))
@@ -389,7 +403,12 @@ fn mutating_router(state: AppState) -> Router {
             put(strategies::put_mechanical_params),
         )
         .route("/api/strategy/:id/filter", put(strategies::put_filter))
-        .route("/api/strategy/:id/validate", post(strategies::post_validate))
+        .route(
+            "/api/strategy/:id/validate",
+            post(strategies::post_validate)
+                // F4: GET /api/strategy/:id/validate → 405 with a hint pointing to POST.
+                .get(strategies::validate_get_hint),
+        )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(
             "/api/strategies-folder/import",

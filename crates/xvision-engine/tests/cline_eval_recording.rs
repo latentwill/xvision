@@ -174,6 +174,7 @@ fn record_input<'a>(
         trajectory_mode: TrajectoryMode::Record,
         // §2-B: record on, coupled to the slot role / TrajectoryKey.slot_role.
         record_slot_role: Some(SLOT_ROLE.into()),
+        obs: None,
     }
 }
 
@@ -199,6 +200,7 @@ fn replay_input<'a>(
         cline_client: client,
         trajectory_mode: TrajectoryMode::Replay { recording_id, store },
         record_slot_role: None,
+        obs: None,
     }
 }
 

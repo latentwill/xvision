@@ -330,7 +330,10 @@ pub fn resolve(config_path: &Path, overrides: &CliOverrides) -> Result<ResolvedV
             target: "xvision_observability",
             "full_debug retention enabled. Prompts, responses, and tool \
              payloads may be stored on disk. Disable for shared / client \
-             work."
+             work. To lower retention run: \
+             `xvn obs retention set --mode redacted` \
+             or set env var XVISION_OBSERVABILITY_RETENTION=redacted \
+             before starting."
         );
     }
 

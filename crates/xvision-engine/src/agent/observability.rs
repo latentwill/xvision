@@ -411,6 +411,30 @@ impl ObsEmitter {
             .await;
     }
 
+    /// Correct a child run's terminal status when the child run id differs
+    /// from this emitter's own `run_id`. Used by the Cline executor to
+    /// override the sidecar's `event.run_finished(completed)` notification
+    /// when the step actually failed — the sidecar always emits
+    /// `run_finished(completed)` on `end_run`, even for a failed step, so
+    /// without this correction the child `agent_runs` row would be left as
+    /// `completed` while its parent is `failed`.
+    ///
+    /// Publishes only `RunFinished` (no `state.transition` span) because the
+    /// child run row was managed by the sidecar-side event stream; the
+    /// emitter does not own its span history. The recorder's `UPDATE WHERE id
+    /// = run_id` will overwrite whatever the sidecar last wrote.
+    pub async fn emit_child_run_failed(&self, child_run_id: &str, error: String) {
+        self.bus
+            .publish(RunEvent::RunFinished(RunFinishedEvent {
+                run_id: child_run_id.to_string(),
+                finished_at: Utc::now(),
+                status: RunStatus::Failed,
+                final_artifact_id: None,
+                error: Some(error),
+            }))
+            .await;
+    }
+
     /// Emit an instantaneous `state.transition` span recording a
     /// change in run lifecycle status. Open and immediate close-ok so
     /// the trace dock renders it as a point event rather than a

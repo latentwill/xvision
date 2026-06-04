@@ -201,6 +201,7 @@ fn replay_input<'a>(
         cline_client: client,
         trajectory_mode: TrajectoryMode::Replay { recording_id, store },
         record_slot_role: None,
+        obs: None,
     }
 }
 

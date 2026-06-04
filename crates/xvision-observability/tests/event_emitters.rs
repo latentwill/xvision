@@ -9,13 +9,71 @@ use chrono::Utc;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::sync::Arc;
 use xvision_observability::{
-    AgentRunRecorder, EngineEvent, RunEvent, RunStartedEvent, SpanKind, SpanStartedEvent, SqliteRecorder,
-    SupervisorNoteEvent,
+    AgentRunRecorder, EngineEvent, RunEvent, RunFinishedEvent, RunStartedEvent, RunStatus, SpanKind,
+    SpanStartedEvent, SqliteRecorder, SupervisorNoteEvent,
 };
 
 const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_eval.sql");
 const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
 const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
+
+async fn run_status(pool: &SqlitePool, run_id: &str) -> String {
+    sqlx::query_scalar::<_, String>("SELECT status FROM agent_runs WHERE id = ?")
+        .bind(run_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+fn finished(run_id: &str, status: RunStatus, error: Option<&str>) -> RunEvent {
+    RunEvent::RunFinished(RunFinishedEvent {
+        run_id: run_id.into(),
+        finished_at: Utc::now(),
+        status,
+        final_artifact_id: None,
+        error: error.map(|s| s.to_string()),
+    })
+}
+
+// xvnej F5 (2026-06-04): a failed step row must not be downgraded to
+// `completed` by a late, unconditional sidecar `run_finished(completed)`.
+// The recorder makes `failed` terminal-sticky, so the child row ends up
+// `failed` regardless of which event lands first.
+
+#[tokio::test]
+async fn failed_is_sticky_against_late_completed() {
+    let run_id = "run::trader::cycle0";
+    let pool = pool_with_run(run_id).await;
+    let rec = SqliteRecorder::new(pool.clone());
+
+    rec.handle_event(&finished(run_id, RunStatus::Failed, Some("step did not complete")))
+        .await
+        .unwrap();
+    // Late, unconditional `completed` from the sidecar — must NOT win.
+    rec.handle_event(&finished(run_id, RunStatus::Completed, None))
+        .await
+        .unwrap();
+
+    assert_eq!(run_status(&pool, run_id).await, "failed");
+}
+
+#[tokio::test]
+async fn failed_overwrites_prior_completed() {
+    let run_id = "run::trader::cycle0";
+    let pool = pool_with_run(run_id).await;
+    let rec = SqliteRecorder::new(pool.clone());
+
+    // Opposite arrival order: `completed` lands first, then the engine's
+    // `emit_child_run_failed`. `failed` must still win.
+    rec.handle_event(&finished(run_id, RunStatus::Completed, None))
+        .await
+        .unwrap();
+    rec.handle_event(&finished(run_id, RunStatus::Failed, Some("step did not complete")))
+        .await
+        .unwrap();
+
+    assert_eq!(run_status(&pool, run_id).await, "failed");
+}
 
 async fn pool_with_run(run_id: &str) -> SqlitePool {
     let pool = SqlitePoolOptions::new()
