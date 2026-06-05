@@ -705,13 +705,18 @@ impl Mutator {
         };
 
         for attempt in 0..max_attempts {
+            // F32 (run-7): rotate the exploration seed per attempt so the focus
+            // parameter — `param_keys[seed % len]` — actually changes across
+            // retries. Without this, every retry re-derives the SAME focus and
+            // `already_tried` fires until the budget is exhausted with no escape.
+            let attempt_seed = exploration_seed.wrapping_add(attempt as u64);
             let user_text = build_user_payload(
                 &program_md,
                 &kinds,
                 &param_keys,
                 &filter_paths,
                 last_errors.as_deref(),
-                exploration_seed,
+                attempt_seed,
                 memory_context,
                 avoid.len(),
             );
@@ -726,8 +731,8 @@ impl Mutator {
                 // candidate every cycle — the optimizer could never explore or
                 // converge. Sample with a non-zero, per-cycle-jittered temperature
                 // and a per-cycle exploration nonce in the prompt so successive
-                // cycles propose diverse candidates.
-                temperature: Some(exploration_temperature(exploration_seed)),
+                // cycles propose diverse candidates. Also jitter per attempt.
+                temperature: Some(exploration_temperature(attempt_seed)),
                 response_schema: None,
                 cache_control: None,
             };
@@ -1491,5 +1496,52 @@ mod tests {
         assert!(desc.contains("ΔSharpe -0.40"), "{desc}");
         assert!(desc.contains("(rejected)"), "{desc}");
         assert_eq!(desc.lines().count(), 1, "must be one line: {desc}");
+    }
+
+    #[test]
+    fn retry_rotates_focus_param_across_attempts() {
+        // F32 (run-7): successive retry attempts must use a different focus param
+        // so the exploration directive names a different key each attempt. With
+        // the old code, `exploration_seed` was fixed and `param_keys[seed % len]`
+        // never changed across retries — `already_tried` became unescapable.
+        let keys: Vec<String> = (0..4).map(|i| format!("risk.k{i}")).collect();
+        // Use a base seed where wrapping_add(1) selects a different key.
+        // With 4 keys: seed % 4 vs (seed+1) % 4 differ unless seed is a multiple
+        // of 4 wrapping-around exactly — pick seed=9 for robustness.
+        let base_seed = 9u64;
+        let filter_paths: Vec<(String, serde_json::Value)> = vec![];
+        let p0 = build_user_payload(
+            "prog",
+            &["param".to_string()],
+            &keys,
+            &filter_paths,
+            None,
+            base_seed.wrapping_add(0),
+            None,
+            0,
+        );
+        let p1 = build_user_payload(
+            "prog",
+            &["param".to_string()],
+            &keys,
+            &filter_paths,
+            None,
+            base_seed.wrapping_add(1),
+            None,
+            0,
+        );
+        // The focus directive must name a different key for attempt 0 vs attempt 1.
+        // Since `build_user_payload` embeds the focus in the exploration_section,
+        // the payloads must differ when the seed selects different keys.
+        assert_ne!(
+            p0, p1,
+            "attempt 0 and attempt 1 must produce different exploration directives (different focus params)"
+        );
+        // Also verify the key selected for seed=9 differs from seed=10.
+        let key0 = &keys[(base_seed as usize) % keys.len()];
+        let key1 = &keys[(base_seed.wrapping_add(1) as usize) % keys.len()];
+        assert_ne!(key0, key1, "seed 9 and seed 10 must index different keys in a 4-key list");
+        assert!(p0.contains(key0.as_str()), "attempt 0 payload must mention the focus key for seed 9: {p0}");
+        assert!(p1.contains(key1.as_str()), "attempt 1 payload must mention the focus key for seed 10: {p1}");
     }
 }
