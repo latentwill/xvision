@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Suspense, lazy, useEffect } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
+import { router } from "./routes";
 
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import {
@@ -66,6 +67,14 @@ beforeEach(() => {
 afterEach(() => {
   consoleErrorSpy.mockRestore();
   vi.restoreAllMocks();
+});
+
+describe("router route topology", () => {
+  it("exposes /optimizer and keeps the legacy /autooptimizer path registered", () => {
+    const serialized = JSON.stringify(router.routes);
+    expect(serialized).toContain("optimizer");
+    expect(serialized).toContain("autooptimizer");
+  });
 });
 
 describe("RouteLoaded clears reload-attempted flag only after Suspense resolves", () => {

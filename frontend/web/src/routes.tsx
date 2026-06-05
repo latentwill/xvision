@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { noteSuccessfulPageLoad } from "@/lib/chunk-reload";
@@ -56,7 +56,9 @@ const ChartsOverview = lazy(() => import("./routes/charts/ChartsOverview").then(
 const ChartsCompare = lazy(() => import("./routes/charts/ChartsCompare").then((m) => ({ default: m.ChartsCompare })));
 const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").then((m) => ({ default: m.ChartsAnnotated })));
 const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
-const AutoOptimizerLayout = lazy(() => import("./features/autooptimizer/AutoOptimizerLayout").then((m) => ({ default: m.AutoOptimizerLayout })));
+const OptimizerHome = lazy(() => import("./features/autooptimizer/screens/OptimizerHome").then((m) => ({ default: m.OptimizerHome })));
+const OptimizerCycle = lazy(() => import("./features/autooptimizer/screens/CycleDetail").then((m) => ({ default: m.CycleDetail })));
+const OptimizerExperiment = lazy(() => import("./features/autooptimizer/screens/ExperimentDetail").then((m) => ({ default: m.ExperimentDetail })));
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
@@ -78,6 +80,11 @@ function RouteLoaded() {
     noteSuccessfulPageLoad();
   }, []);
   return null;
+}
+
+function LegacyDiffRedirect() {
+  const { hash } = useParams<{ hash: string }>();
+  return <Navigate to={`/optimizer/experiment/${hash ?? ""}`} replace />;
 }
 
 function page(element: ReactNode) {
@@ -196,12 +203,16 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        path: "autooptimizer",
+        path: "optimizer",
         children: [
-          { index: true, element: page(<AutoOptimizerLayout />) },
-          { path: "diff/:hash", element: page(<AutoOptimizerLayout />) },
+          { index: true, element: page(<OptimizerHome />) },
+          { path: "cycle/:cycleId", element: page(<OptimizerCycle />) },
+          { path: "experiment/:hash", element: page(<OptimizerExperiment />) },
         ],
       },
+      // Legacy deep-links (bookmarks, old SSE/diff URLs) → new optimizer surface.
+      { path: "autooptimizer", element: <Navigate to="/optimizer" replace /> },
+      { path: "autooptimizer/diff/:hash", element: <LegacyDiffRedirect /> },
       { path: "docs", element: page(<DocsRoute />) },
       {
         path: "settings",

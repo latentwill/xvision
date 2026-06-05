@@ -50,7 +50,7 @@ export function HealthPill() {
     );
   }
 
-  const { status, probes } = q.data;
+  const { status, probes = [] } = q.data;
   // Compose a hover popover summary. Native `title=` is enough for v1; richer
   // popovers come with the chat-rail / command-palette plans.
   const summary = probes

@@ -336,7 +336,7 @@ function LaunchStrip() {
         <span className="text-[13px] text-danger">{launchError}</span>
       )}
       {launchMessage !== null && (
-        <span className="text-[13px] text-green-500">{launchMessage}</span>
+        <span className="text-[13px] text-gold">{launchMessage}</span>
       )}
     </div>
   );
@@ -721,7 +721,7 @@ function LiveCostTicker({
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 
-export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => void } = {}) {
+export function LiveCycleView({ onTabChange, embedded = false }: { onTabChange?: (tab: string) => void; embedded?: boolean } = {}) {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -764,17 +764,19 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
 
   return (
     <div className="space-y-6">
-      <LivePageHeader
-        nodes={lineageNodes}
-        isRunning={isRunning}
-        activeCycleId={activeCycleId}
-        onTabChange={onTabChange}
-      />
+      {!embedded && (
+        <LivePageHeader
+          nodes={lineageNodes}
+          isRunning={isRunning}
+          activeCycleId={activeCycleId}
+          onTabChange={onTabChange}
+        />
+      )}
       <div className="flex items-center gap-3">
         <span
           className={[
             "inline-block w-2 h-2 rounded-full",
-            connected ? "bg-green-500" : "bg-text-3",
+            connected ? "bg-gold" : "bg-text-3",
           ].join(" ")}
           aria-label={connected ? "Connected" : "Disconnected"}
         />
@@ -789,7 +791,9 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
         <KeptNextCard nodes={lineageNodes} />
       </div>
       <ActiveLineagesSectionFull nodes={lineageNodes} />
-      <RecentCyclesSectionFull nodes={lineageNodes} onTabChange={onTabChange} />
+      {!embedded && (
+        <RecentCyclesSectionFull nodes={lineageNodes} onTabChange={onTabChange} />
+      )}
     </div>
   );
 }

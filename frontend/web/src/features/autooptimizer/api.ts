@@ -112,8 +112,17 @@ function buildDiversityUrl(q?: DiversityQuery): string {
 
 // ─── Fetch functions ──────────────────────────────────────────────────────────
 
-export async function listLineageNodes(): Promise<LineageNode[]> {
-  return apiFetch<LineageNode[]>("/api/autooptimizer/lineage");
+export type LineageQuery = { cycleId?: string; status?: LineageStatus; limit?: number };
+
+export async function listLineageNodes(q?: LineageQuery): Promise<LineageNode[]> {
+  const params = new URLSearchParams();
+  if (q?.cycleId) params.set("cycle_id", q.cycleId);
+  if (q?.status) params.set("status", q.status);
+  if (q?.limit != null) params.set("limit", String(q.limit));
+  const qs = params.toString();
+  return apiFetch<LineageNode[]>(
+    qs ? `/api/autooptimizer/lineage?${qs}` : "/api/autooptimizer/lineage",
+  );
 }
 
 /** One historic optimizer cycle (grouped from lineage) with F23 tokens + cost. */
@@ -130,8 +139,24 @@ export type CycleRunSummary = {
   unpriced_calls?: number | null;
 };
 
+/** Full detail for one cycle: summary fields + its lineage nodes + honesty check. */
+export type CycleRunDetail = CycleRunSummary & {
+  nodes: LineageNode[];
+  honesty_check?: {
+    passed: boolean;
+    sabotage_variant: string;
+    message: string;
+  } | null;
+};
+
 export async function listCycleRuns(): Promise<CycleRunSummary[]> {
   return apiFetch<CycleRunSummary[]>("/api/autooptimizer/cycles");
+}
+
+export async function getCycleRun(cycleId: string): Promise<CycleRunDetail> {
+  return apiFetch<CycleRunDetail>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}`,
+  );
 }
 
 /** F35.3: live per-cycle cost/tokens, read straight from `cycle_cost`. Unlike a
@@ -205,10 +230,12 @@ export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResp
 
 export const autooptimizerKeys = {
   all: ["autooptimizer"] as const,
-  lineage: () => [...autooptimizerKeys.all, "lineage"] as const,
+  lineage: (q?: LineageQuery) =>
+    [...autooptimizerKeys.all, "lineage", q ?? {}] as const,
   lineageNode: (hash: string) => [...autooptimizerKeys.all, "lineage", hash] as const,
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   cycles: () => [...autooptimizerKeys.all, "cycles"] as const,
+  cycle: (id: string) => [...autooptimizerKeys.cycles(), id] as const,
   cycleCost: (cycleId: string | null | undefined) =>
     [...autooptimizerKeys.all, "cycle-cost", cycleId ?? ""] as const,
   diversity: (q?: DiversityQuery) =>
@@ -219,10 +246,10 @@ export const autooptimizerKeys = {
 
 // ─── TanStack Query hooks ─────────────────────────────────────────────────────
 
-export function useLineageNodes() {
+export function useLineageNodes(q?: LineageQuery) {
   return useQuery({
-    queryKey: autooptimizerKeys.lineage(),
-    queryFn: listLineageNodes,
+    queryKey: autooptimizerKeys.lineage(q),
+    queryFn: () => listLineageNodes(q),
     staleTime: 30_000,
   });
 }
@@ -232,6 +259,15 @@ export function useCycleRuns() {
   return useQuery({
     queryKey: autooptimizerKeys.cycles(),
     queryFn: listCycleRuns,
+    staleTime: 30_000,
+  });
+}
+
+export function useCycleRun(cycleId: string | undefined) {
+  return useQuery({
+    queryKey: autooptimizerKeys.cycle(cycleId ?? ""),
+    queryFn: () => getCycleRun(cycleId!),
+    enabled: !!cycleId,
     staleTime: 30_000,
   });
 }
