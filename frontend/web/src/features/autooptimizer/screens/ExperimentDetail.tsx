@@ -19,7 +19,7 @@ export function ExperimentDetail() {
           items={[
             { label: "OPTIMIZER", to: "/optimizer" },
             { label: "cycle", to: node?.cycle_id ? `/optimizer/cycle/${encodeURIComponent(node.cycle_id)}` : undefined },
-            { label: "Experiment" },
+            { label: hash.slice(0, 10) },
           ]}
         />
 

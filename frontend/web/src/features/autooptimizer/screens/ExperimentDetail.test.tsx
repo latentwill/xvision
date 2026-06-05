@@ -14,6 +14,7 @@ describe("ExperimentDetail", () => {
         return { bundle_hash: "deadbeefcafe", parent_hash: "0000", gate_verdict: "Pass",
                  status: "active", cycle_id: "cyc-1", created_at: "2026-06-01T00:00:00Z" };
       }
+      if (url.includes("/health")) return { status: "ok", probes: [] };
       return {}; // blobs
     });
     renderWithProviders(
@@ -22,7 +23,10 @@ describe("ExperimentDetail", () => {
       </Routes>,
       { route: "/optimizer/experiment/deadbeefcafe" },
     );
-    await waitFor(() => expect(screen.getByText(/deadbeef/)).toBeInTheDocument());
+    await waitFor(() => {
+      const headings = screen.getAllByRole("heading", { level: 1 });
+      expect(headings.some((h) => /deadbeef/.test(h.textContent ?? ""))).toBe(true);
+    });
     expect(screen.getByText("What this experiment changed")).toBeInTheDocument();
     expect(screen.getByText("Per-regime evaluation")).toBeInTheDocument(); // EmptyPanel stub
     expect(screen.getByText("Flight recorder")).toBeInTheDocument();        // EmptyPanel stub
