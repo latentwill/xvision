@@ -88,6 +88,10 @@ pub async fn run_cycle(
     paper_tester: &dyn PaperTestRunner,
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
     dspy_ctx: Option<&DspyContext>,
+    // P2 (cortex-memory): when `Some`, the Judge recalls prior distilled
+    // findings before judging and records new ones back to
+    // `autooptimizer:judge`. `None` = today's behavior (default off).
+    memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cycle_id_override: Option<String>,
     // F28: a cooperative cancel flag. When set, the cycle stops launching further
     // mutations/backtests (checked between candidates and parents) so an operator
@@ -169,6 +173,7 @@ pub async fn run_cycle(
                 &mut findings_by_node,
                 dsr_prefix.as_deref(),
                 dspy_ctx,
+                memory,
                 cancel.as_ref(),
             )
             .await?;
@@ -294,6 +299,7 @@ async fn process_parent_mutations<F>(
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
     dspy_ctx: Option<&DspyContext>,
+    memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
@@ -313,6 +319,38 @@ where
         .run(parent_strategy, &cycle_config.baseline_scenario)
         .await?;
 
+    // P3: recall prior optimizer outcomes on similar strategies (once per
+    // parent) to advise the experiment writer. Best-effort and eval-temporal-
+    // safe — forward the scenario start so Patterns trained inside the window
+    // can't leak; any recall error / missing embedder degrades to `None`
+    // (plain prompt) and never fails the cycle. This is advisory only; the F32
+    // exploration seed + hard avoid-set still govern exact repeats.
+    let mutation_memory_context: Option<String> = match memory {
+        None => None,
+        Some(mem) => {
+            let query = crate::autooptimizer::program_view::to_markdown(parent_strategy);
+            match mem
+                .recall_in_namespace(
+                    crate::autooptimizer::mutator::MUTATIONS_NS,
+                    &query,
+                    5,
+                    Some(cycle_config.day_scenario.time_window.start),
+                )
+                .await
+            {
+                Ok(crate::agent::memory_recorder::RecallResult::Hits { matches, .. })
+                    if !matches.is_empty() =>
+                {
+                    Some(crate::agent::memory_recorder::render_recalled_patterns(&matches))
+                }
+                Ok(_) => None,
+                Err(e) => {
+                    tracing::warn!("mutator memory recall failed (best-effort, ignoring): {e}");
+                    None
+                }
+            }
+        }
+    };
     // F32: every candidate this parent has ALREADY produced (across all prior
     // cycles), so the mutator can be steered away from re-deriving them and any
     // duplicate is dropped before it spends a backtest. Best-effort: a lineage
@@ -371,7 +409,14 @@ where
             }
         } else {
             match mutator
-                .propose(parent_strategy, config, dsr_prefix, exploration_seed, &avoid)
+                .propose(
+                    parent_strategy,
+                    config,
+                    dsr_prefix,
+                    exploration_seed,
+                    mutation_memory_context.as_deref(),
+                    &avoid,
+                )
                 .await
             {
                 Ok(d) => d,
@@ -456,6 +501,37 @@ where
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
+        // P3 write-back: record EVERY gated candidate's outcome (both Active and
+        // Rejected) as an Observation in the mutations namespace, so a later
+        // distillation pass can promote recurring lessons (e.g. "raising leverage
+        // past Nx degraded holdout") into Patterns the experiment writer recalls
+        // across runs. Best-effort and eval-temporal-safe; never fail the cycle.
+        if let Some(mem) = memory {
+            let status_label = if outcome.status == LineageStatus::Active {
+                "active"
+            } else {
+                "rejected"
+            };
+            let obs = crate::autooptimizer::mutator::describe_mutation_outcome(
+                &outcome.diff,
+                outcome.delta_sharpe,
+                status_label,
+            );
+            if let Err(e) = mem
+                .record_observation_in_namespace(
+                    crate::autooptimizer::mutator::MUTATIONS_NS,
+                    &obs,
+                    cycle_id.to_string(),
+                    "autooptimizer".to_string(),
+                    0,
+                    cycle_config.day_scenario.time_window.start,
+                    cycle_config.day_scenario.time_window.end,
+                )
+                .await
+            {
+                tracing::warn!("mutator outcome write-back failed (best-effort, ignoring): {e}");
+            }
+        }
         let node = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
         // F32: remember this candidate so later mutations this cycle (and the
         // mutator's own retries) won't re-derive it.
@@ -470,7 +546,18 @@ where
         .await?;
         if outcome.status == LineageStatus::Active {
             record_outcome(pool, &outcome.child_hash, outcome.delta_sharpe).await?;
-            let findings = run_judge(judge, parent_strategy, &outcome.child, &outcome.diff, "").await?;
+            // P2: pass the recorder + eval scenario start so judge recall is
+            // temporally safe (Patterns trained inside the scenario can't leak).
+            let findings = run_judge(
+                judge,
+                parent_strategy,
+                &outcome.child,
+                &outcome.diff,
+                "",
+                memory,
+                Some(cycle_config.day_scenario.time_window.start),
+            )
+            .await?;
             for f in &findings {
                 progress(CycleProgressEvent::JudgeFinding {
                     cycle_id: cycle_id.to_string(),
@@ -478,6 +565,31 @@ where
                     severity: format!("{:?}", f.severity),
                     code: f.code.clone(),
                 });
+            }
+            // P2 write-back: record each real finding as an Observation in the
+            // judge namespace so a later distillation pass can promote recurring
+            // ones to Patterns. Best-effort — never fail the cycle on a memory
+            // error; skip the synthetic parse-error finding.
+            if let Some(mem) = memory {
+                for f in &findings {
+                    if f.code == "parse_error" {
+                        continue;
+                    }
+                    if let Err(e) = mem
+                        .record_observation_in_namespace(
+                            crate::autooptimizer::judge::JUDGE_MEMORY_NS,
+                            &format!("[{}] {}", f.code, f.summary),
+                            cycle_id.to_string(),
+                            "autooptimizer".to_string(),
+                            0,
+                            cycle_config.day_scenario.time_window.start,
+                            cycle_config.day_scenario.time_window.end,
+                        )
+                        .await
+                    {
+                        tracing::warn!("judge finding write-back failed (best-effort, ignoring): {e}");
+                    }
+                }
             }
             handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await?;
             findings_by_node.insert(outcome.child_hash, findings);

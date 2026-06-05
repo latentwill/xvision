@@ -394,7 +394,7 @@ impl ApiContext {
         // boot paths don't regress when the operator hasn't configured
         // OpenAI yet. A `None` recorder turns every per-slot recall
         // / write into a no-op at the dispatcher boundary.
-        let memory_recorder = match build_memory_recorder().await {
+        let memory_recorder = match build_memory_recorder(xvn_home).await {
             Ok(r) => Some(r),
             Err(e) => {
                 tracing::warn!(
@@ -565,15 +565,18 @@ impl ApiContext {
     }
 }
 
-/// V2D Phase 3.3: assemble the `MemoryRecorder` ApiContext uses for
-/// auto-recall / auto-write. Opens (or creates) the memory SQLite DB
-/// under `$XVN_MEMORY_DB` (overridable) or `~/.xvn/memory.db`, then
-/// tries to build the default OpenAI embedder from the operator's
-/// `OPENAI_API_KEY` + optional `OPENAI_BASE_URL`. When no embedder
-/// config is present the recorder is still built (`new`, not
-/// `with_embedder`) so the dispatcher can emit
-/// `memory_disabled_no_embedder` for any non-Off slot.
-async fn build_memory_recorder() -> anyhow::Result<Arc<crate::agent::memory_recorder::MemoryRecorder>> {
+/// V2D Phase 3.3 / Cortex Phase 0: assemble the `MemoryRecorder`
+/// ApiContext uses for auto-recall / auto-write. Opens (or creates) the
+/// memory SQLite DB under `$XVN_MEMORY_DB` (overridable) or
+/// `~/.xvn/memory.db`, then provisions an embedder via
+/// [`build_default_embedder`] (provider-aware, with an optional offline
+/// `local` fallback — NO hard OpenAI dependency). When no embedder source
+/// is configured the recorder is still built (`new`, not `with_embedder`)
+/// so the dispatcher can emit `memory_disabled_no_embedder` for any
+/// non-Off slot. Every failure here is non-fatal at the call site.
+async fn build_memory_recorder(
+    xvn_home: &Path,
+) -> anyhow::Result<Arc<crate::agent::memory_recorder::MemoryRecorder>> {
     let memory_db_path = std::env::var("XVN_MEMORY_DB")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -593,7 +596,7 @@ async fn build_memory_recorder() -> anyhow::Result<Arc<crate::agent::memory_reco
 
     let store = Arc::new(xvision_memory::store::MemoryStore::open(&memory_db_path).await?);
 
-    let embedder = build_default_embedder();
+    let embedder = build_default_embedder(xvn_home).await;
     let recorder = match embedder {
         Some(e) => crate::agent::memory_recorder::MemoryRecorder::with_embedder(Arc::clone(&store), e),
         None => crate::agent::memory_recorder::MemoryRecorder::new(Arc::clone(&store)),
@@ -601,25 +604,97 @@ async fn build_memory_recorder() -> anyhow::Result<Arc<crate::agent::memory_reco
     Ok(Arc::new(recorder))
 }
 
-/// Build the default OpenAI embedder from environment-resolved
-/// provider credentials. Returns `None` when no `OPENAI_API_KEY` is
-/// available so the engine boots without embeddings; the dispatcher
-/// then emits `memory_disabled_no_embedder` for any non-Off slot.
+/// Provision the default memory embedder WITHOUT a hard OpenAI
+/// dependency. The resolution order is locked in
+/// [`crate::agent::embedder_choice`] (local override → explicit provider
+/// opt-in → `OPENAI_API_KEY` env → conservative api.openai.com
+/// auto-detect → none). Returns `None` when nothing is configured so the
+/// engine boots without embeddings; the dispatcher then emits
+/// `memory_disabled_no_embedder` for any non-Off slot.
 ///
-/// The full provider-config lookup (read from `secrets/providers.toml`,
-/// honour brokers, etc.) is a follow-up — for now the env path is the
-/// minimal seam that satisfies the Phase 3 acceptance ("OpenAI
-/// embedder at engine startup") without dragging the providers crate
-/// into ApiContext::open.
-fn build_default_embedder() -> Option<Arc<dyn xvision_memory::embedder::Embedder>> {
-    let api_key = std::env::var("OPENAI_API_KEY").ok().filter(|s| !s.is_empty())?;
-    let base_url = std::env::var("OPENAI_BASE_URL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-    Some(Arc::new(crate::agent::openai_embedder::OpenAiEmbedder::new(
-        base_url, api_key,
-    )))
+/// This loads the operator's configured providers + resolved keys (env
+/// var first, then `secrets/providers.toml`) and feeds them, alongside the
+/// relevant env vars, into the pure `resolve_embedder_choice` decision
+/// function. The async I/O lives here; the decision itself is unit-tested
+/// in isolation (`tests/memory_embedder_provisioning.rs`).
+async fn build_default_embedder(
+    xvn_home: &Path,
+) -> Option<Arc<dyn xvision_memory::embedder::Embedder>> {
+    use crate::agent::embedder_choice::EmbedderChoice;
+
+    match resolve_embedder_choice_from_env(xvn_home).await {
+        EmbedderChoice::Local => {
+            tracing::warn!(
+                "memory: using the offline LocalEmbedder (default offline fallback when no \
+                 real provider/key is configured, or via XVN_MEMORY_EMBEDDER=local / \
+                 memory.toml embedder=local); recall quality is lexical/DEGRADED — \
+                 configure an OpenAI provider or key for semantic recall"
+            );
+            Some(Arc::new(crate::agent::local_embedder::LocalEmbedder::new()))
+        }
+        EmbedderChoice::OpenAiCompat {
+            base_url,
+            api_key,
+            model,
+        } => {
+            tracing::info!(base_url = %base_url, model = %model, "memory: embedder provisioned");
+            Some(Arc::new(
+                crate::agent::openai_embedder::OpenAiEmbedder::new(base_url, api_key).with_model(model),
+            ))
+        }
+        EmbedderChoice::None => {
+            tracing::info!(
+                "memory: no embedder configured (no XVN_MEMORY_EMBEDDER, \
+                 XVN_MEMORY_EMBEDDER_PROVIDER, OPENAI_API_KEY, or auto-detectable \
+                 OpenAI provider); recall/record will no-op"
+            );
+            None
+        }
+    }
+}
+
+/// Resolve the memory embedder source from the real process env +
+/// `xvn_home`'s configured providers, returning the pure
+/// [`EmbedderChoice`] WITHOUT instantiating any embedder. Shared by
+/// `build_default_embedder` (which then constructs the embedder) and
+/// `api::memory::status` (which only reports the choice). Best-effort —
+/// a missing/invalid config yields an empty provider set, not an error.
+pub(crate) async fn resolve_embedder_choice_from_env(
+    xvn_home: &Path,
+) -> crate::agent::embedder_choice::EmbedderChoice {
+    use crate::agent::embedder_choice::{resolve_embedder_choice, EmbedderEnv};
+
+    let config_path = xvision_core::config::runtime_config_path(xvn_home);
+
+    let providers = settings::providers::effective_providers_with_paths(xvn_home, &config_path)
+        .await
+        .unwrap_or_default();
+    let resolved_provider_keys =
+        settings::providers::resolved_provider_keys(xvn_home, &config_path)
+            .await
+            .unwrap_or_default();
+
+    // Cortex deployment: fold in the persisted memory-settings embedder
+    // choice (off/local/auto/<provider>) so the default `auto` falls back to
+    // the offline Local embedder and the React settings card can steer the
+    // source. Best-effort — a missing/invalid file yields the default Auto.
+    let memory_config_path = xvn_home.join("config").join("memory.toml");
+    let memory_cfg = settings::memory::load_from_file(&memory_config_path);
+
+    let env = EmbedderEnv {
+        memory_embedder: std::env::var("XVN_MEMORY_EMBEDDER").ok(),
+        memory_embedder_provider: std::env::var("XVN_MEMORY_EMBEDDER_PROVIDER").ok(),
+        memory_embedder_model: std::env::var("XVN_MEMORY_EMBEDDER_MODEL").ok(),
+        openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
+        openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        config_embedder: Some(memory_cfg.embedder.as_config_string()),
+        config_embedder_model: memory_cfg.embedder_model.clone(),
+        config_embedder_base_url: memory_cfg.embedder_base_url.clone(),
+        memory_embedder_base_url: std::env::var("XVN_MEMORY_EMBEDDER_BASE_URL").ok(),
+        resolved_provider_keys,
+    };
+
+    resolve_embedder_choice(&env, &providers)
 }
 
 async fn table_exists(pool: &SqlitePool, table: &str) -> ApiResult<bool> {

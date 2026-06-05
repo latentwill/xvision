@@ -12,6 +12,89 @@ use crate::strategies::Strategy;
 
 const PROMPT_TEMPLATE: &str = include_str!("../../prompts/autooptimizer/mutator-v1.md");
 
+/// Cortex namespace the mutator records gated candidate outcomes to and recalls
+/// prior outcomes from. This is the **generalized cross-run/cross-framework**
+/// memory layer: it surfaces what kinds of changes helped or hurt on similar
+/// strategies in earlier runs so the experiment writer can build on wins and
+/// avoid repeating failures.
+///
+/// It is **advisory only** and coexists with the F32 exact-repeat guarantee.
+/// The hard avoid-set / `already_tried` lineage content hashes remain the
+/// authoritative defence against proposing a byte-identical repeat; memory does
+/// not replace or weaken that — it just generalizes the lesson across runs and
+/// frameworks. Both layers stay: memory advises, the avoid-set governs exact
+/// repeats. Subsurface (developer-facing) name per the autooptimizer
+/// terminology lock; never collapses to bare `optimizer`.
+pub const MUTATIONS_NS: &str = "autooptimizer:mutations";
+
+/// A compact, human-readable one-line summary of a gated candidate's outcome,
+/// suitable for recording as an Observation in [`MUTATIONS_NS`] (and later
+/// recall once distilled into a Pattern).
+///
+/// For a single-param change it reads e.g.
+/// `param risk.stop_loss_atr_multiple 2.0→3.5 ⇒ ΔSharpe -0.40 (rejected)`; for
+/// prose/tool diffs it falls back to a short kind-based summary plus the same
+/// `⇒ ΔSharpe {:+.2} ({status_label})` suffix. Always a single line.
+pub fn describe_mutation_outcome(diff: &MutationDiff, delta_sharpe: f64, status_label: &str) -> String {
+    let lever = match diff.kind {
+        MutationKind::Param => {
+            if let Some(p) = diff.params.first() {
+                let extra = if diff.params.len() > 1 {
+                    format!(" (+{} more)", diff.params.len() - 1)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "param {} {}→{}{}",
+                    p.key,
+                    compact_json(&p.before),
+                    compact_json(&p.after),
+                    extra
+                )
+            } else {
+                "param (none)".to_string()
+            }
+        }
+        MutationKind::Tool => {
+            let added = diff.tools.added.join("+");
+            let removed = diff.tools.removed.join("-");
+            let mut parts = Vec::new();
+            if !added.is_empty() {
+                parts.push(format!("+{added}"));
+            }
+            if !removed.is_empty() {
+                parts.push(format!("-{removed}"));
+            }
+            format!(
+                "tool {}",
+                if parts.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    parts.join(" ")
+                }
+            )
+        }
+        MutationKind::Prose => {
+            let role = diff.prose.first().map(|p| p.agent_role.as_str()).unwrap_or("?");
+            format!("prose {role}")
+        }
+    };
+    // Strip any embedded newlines defensively so the result is always one line.
+    let lever = lever.replace('\n', " ");
+    format!("{lever} ⇒ ΔSharpe {delta_sharpe:+.2} ({status_label})")
+}
+
+/// Render a JSON scalar compactly for the outcome descriptor (drops quotes on
+/// strings, prints numbers/bools/null plainly). Non-scalar values fall back to
+/// their compact JSON form.
+fn compact_json(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => "null".to_string(),
+        other => other.to_string(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MutationKind {
@@ -237,6 +320,7 @@ impl Mutator {
         config: &AutoOptimizerConfig,
         dsr_prefix: Option<&str>,
         exploration_seed: u64,
+        memory_context: Option<&str>,
         avoid: &std::collections::HashSet<ContentHash>,
     ) -> anyhow::Result<MutationDiff> {
         let program_md = program_view::to_markdown(base);
@@ -266,6 +350,7 @@ impl Mutator {
                 &param_keys,
                 last_errors.as_deref(),
                 exploration_seed,
+                memory_context,
                 avoid.len(),
             );
             let req = LlmRequest {
@@ -417,6 +502,7 @@ fn build_user_payload(
     param_keys: &[String],
     previous_errors: Option<&[ValidationError]>,
     exploration_seed: u64,
+    memory_context: Option<&str>,
     avoid_count: usize,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
@@ -481,8 +567,20 @@ fn build_user_payload(
         )
     };
 
+    // P3: advisory cross-run/cross-framework memory. When recall surfaced prior
+    // optimizer outcomes on similar strategies, prepend them before the final
+    // instruction so the writer can build on wins and avoid repeating failures.
+    // This is advisory ONLY — it does not relax the F32 exploration directive
+    // above or the hard avoid-set (exact-repeat dedup) the orchestrator enforces.
+    let memory_section = match memory_context {
+        Some(ctx) if !ctx.trim().is_empty() => format!(
+            "\n\nPrior optimizer outcomes on similar strategies (advisory — avoid repeating failures, build on wins):\n{ctx}"
+        ),
+        _ => String::new(),
+    };
+
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}{no_repeat_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -696,5 +794,59 @@ mod tests {
             vec![],
         );
         assert!(!is_identity_diff(&real, &base));
+    }
+
+    #[test]
+    fn build_user_payload_includes_memory_section_when_present() {
+        let kinds = vec!["param".to_string()];
+        let keys = vec!["risk.max_leverage".to_string()];
+        let ctx = "param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)";
+        let with = build_user_payload("prog", &kinds, &keys, None, 7, Some(ctx));
+        assert!(
+            with.contains("Prior optimizer outcomes on similar strategies"),
+            "memory section header missing: {with}"
+        );
+        assert!(with.contains(ctx), "memory context text missing: {with}");
+        // F32 exploration directive must still be present alongside memory.
+        assert!(
+            with.contains("Exploration directive"),
+            "F32 exploration section must remain: {with}"
+        );
+
+        // None / empty → no memory section, but F32 exploration still present.
+        let without = build_user_payload("prog", &kinds, &keys, None, 7, None);
+        assert!(
+            !without.contains("Prior optimizer outcomes on similar strategies"),
+            "memory section must be absent when None: {without}"
+        );
+        assert!(
+            without.contains("Exploration directive"),
+            "F32 exploration section must remain when no memory: {without}"
+        );
+
+        let empty = build_user_payload("prog", &kinds, &keys, None, 7, Some("   "));
+        assert!(
+            !empty.contains("Prior optimizer outcomes on similar strategies"),
+            "blank memory context must be treated as absent: {empty}"
+        );
+    }
+
+    #[test]
+    fn describe_mutation_outcome_param_change_compact_form() {
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "risk.stop_loss_atr_multiple".into(),
+                before: serde_json::json!(2.0),
+                after: serde_json::json!(3.5),
+            }],
+            vec![],
+            vec![],
+        );
+        let desc = describe_mutation_outcome(&diff, -0.40, "rejected");
+        assert!(desc.contains("risk.stop_loss_atr_multiple"), "{desc}");
+        assert!(desc.contains("2.0→3.5"), "{desc}");
+        assert!(desc.contains("ΔSharpe -0.40"), "{desc}");
+        assert!(desc.contains("(rejected)"), "{desc}");
+        assert_eq!(desc.lines().count(), 1, "must be one line: {desc}");
     }
 }

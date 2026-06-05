@@ -351,6 +351,31 @@ pub async fn effective_providers_with_paths(
     Ok(rows)
 }
 
+/// Resolve every configured provider's actual API key, keyed by provider
+/// name. Uses the same env-first-then-secrets-file priority as
+/// [`resolve_provider_key_value`], so a provider with a key only in
+/// `secrets/providers.toml` (never exported to env) still resolves.
+///
+/// Providers with no usable key are simply omitted from the map. Used by
+/// the Cortex memory embedder provisioning (`build_default_embedder`) to
+/// build the pure resolver's `EmbedderEnv::resolved_provider_keys` without
+/// duplicating the env/secrets precedence logic.
+pub async fn resolved_provider_keys(
+    xvn_home: &Path,
+    config_path: &Path,
+) -> ApiResult<std::collections::HashMap<String, String>> {
+    let cfg = load_cfg(config_path).await?;
+    let mut out = std::collections::HashMap::new();
+    for entry in cfg.providers.iter().filter(|p| !p.name.starts_with('_')) {
+        if let Some(key) = resolve_provider_key_value(xvn_home, entry).await? {
+            if !key.is_empty() {
+                out.insert(entry.name.clone(), key);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Look up the launch verdict for a specific `(provider, model)` pair.
 ///
 /// Returns `Ok(entry)` only when the helper's `launchable` predicate is

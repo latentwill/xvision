@@ -82,6 +82,15 @@ const RAIL_MODE_LS = "xvn.chat_rail.mode";
 const RAIL_HISTORY_COLLAPSED_LS = "xvn.chat_rail.history_collapsed";
 const RAIL_CONTEXT_MODE_LS = "xvn.chat_rail.context_mode";
 
+// Backoff ladder for the resolveSession self-heal. Mirrors the unified-SSE
+// reconnect schedule in `api/chat_rail.ts`. resolveSession runs in a one-shot
+// effect with no query-style retry, so a transient failure (e.g. a `502`
+// during a backend deploy/restart window, where `tailscale serve` has no
+// upstream for a few seconds) would otherwise leave the rail sessionless —
+// no session id → no stream → dead rail — until a manual page refresh. The
+// last entry repeats, so recovery keeps trying indefinitely (never gives up).
+const RESOLVE_BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
+
 function readPersistedMode(): ChatSessionMode {
   const v = safeStorageGet(RAIL_MODE_LS);
   return v === "act" ? "act" : "research";
@@ -172,6 +181,15 @@ export function ChatRail({
   // instead of triggering a duplicate resolveSession that would mint
   // two sessions and silently lose one's reply.
   const recoveringSessionRef = useRef<Promise<string | null> | null>(null);
+  // resolveSession self-heal state. `resolveAttemptRef` indexes the backoff
+  // ladder; `resolveRetryTimerRef` holds the pending retry timer so it can be
+  // cancelled on scope change / unmount; bumping `resolveNonce` re-runs the
+  // resolve effect (it's a dep) without otherwise touching scope/session.
+  const resolveAttemptRef = useRef(0);
+  const resolveRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const [resolveNonce, setResolveNonce] = useState(0);
 
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
@@ -328,19 +346,46 @@ export function ChatRail({
       try {
         const resolved = await resolveSession(scope);
         if (cancelled) return;
+        // Recovered: if we'd been retrying a failed resolve (deploy window),
+        // the sessions list and providers catalog may still be parked in an
+        // error state — refetch them so the whole rail is usable again, not
+        // just the freshly-resolved session.
+        const wasRetrying = resolveAttemptRef.current > 0;
+        resolveAttemptRef.current = 0;
         sessionIdRef.current = resolved.session_id;
         setSessionId(resolved.session_id);
         setMode(resolved.mode ?? "research");
         setBubbles(historyToBubbles(resolved.history));
+        if (wasRetrying) {
+          void qc.invalidateQueries({ queryKey: settingsKeys.providers() });
+          void qc.invalidateQueries({ queryKey: ["chat-rail", "sessions"] });
+        }
       } catch (e) {
         if (cancelled) return;
         setError(formatErr(e));
+        // Self-heal: schedule a backoff retry by bumping the nonce. Without
+        // this the rail would stay sessionless until a manual refresh.
+        const delay =
+          RESOLVE_BACKOFF_MS[
+            Math.min(resolveAttemptRef.current, RESOLVE_BACKOFF_MS.length - 1)
+          ]!;
+        resolveAttemptRef.current += 1;
+        if (resolveRetryTimerRef.current) {
+          clearTimeout(resolveRetryTimerRef.current);
+        }
+        resolveRetryTimerRef.current = setTimeout(() => {
+          setResolveNonce((n) => n + 1);
+        }, delay);
       }
     })();
     return () => {
       cancelled = true;
+      if (resolveRetryTimerRef.current) {
+        clearTimeout(resolveRetryTimerRef.current);
+        resolveRetryTimerRef.current = null;
+      }
     };
-  }, [abortActiveStream, open, key, scope, sessionId, variant]);
+  }, [abortActiveStream, open, key, scope, sessionId, variant, resolveNonce, qc]);
 
   useEffect(() => {
     if (variant === "desktop" && !open) abortActiveStream();

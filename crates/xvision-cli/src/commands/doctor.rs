@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use serde::Serialize;
+use xvision_engine::api::memory::{self as memory_api, MemoryStatus};
 use xvision_engine::api::settings::providers::{self, EffectiveProvider};
 
 #[derive(Args, Debug)]
@@ -40,6 +41,14 @@ struct DoctorReport {
     /// Empty when the config file is missing (`config_exists == false`).
     #[serde(default)]
     providers: Vec<EffectiveProvider>,
+    /// Cortex memory health: store path + writability, embedder
+    /// presence/source, grace window, per-namespace live-observation
+    /// counts. Sourced from `api::memory::status` so the doctor report
+    /// can't drift from `xvn memory status`. Defaults (all-empty) when the
+    /// store can't be opened (e.g. read-only home), so the report still
+    /// renders.
+    #[serde(default)]
+    memory: MemoryStatus,
 }
 
 pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
@@ -60,6 +69,14 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         Vec::new()
     };
 
+    // Memory health is best-effort: a read-only home or absent store must
+    // not abort the report (doctor exists to surface such conditions). On
+    // any failure we fall back to the default (all-empty) MemoryStatus.
+    let memory: MemoryStatus = match memory_api::open_default_store().await {
+        Ok(store) => memory_api::status(&store, &xvn_home).await.unwrap_or_default(),
+        Err(_) => MemoryStatus::default(),
+    };
+
     let report = DoctorReport {
         xvn_home: xvn_home.display().to_string(),
         db_path: xvn_home.join("xvn.db").display().to_string(),
@@ -73,6 +90,7 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         broker_secrets_exists: broker_secrets_path.exists(),
         remote_target: std::env::var("XVN_REMOTE_URL").unwrap_or_else(|_| "local".to_string()),
         providers,
+        memory,
     };
 
     if cmd.json {
@@ -104,6 +122,20 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
                 );
             }
         }
+        println!("memory");
+        println!("  store_path          {}", report.memory.store_path);
+        println!("  writable            {}", report.memory.writable);
+        println!("  embedder_present    {}", report.memory.embedder_present);
+        println!(
+            "  embedder_id         {}",
+            report.memory.embedder_id.as_deref().unwrap_or("-")
+        );
+        println!(
+            "  embedder_source     {}",
+            report.memory.embedder_source.as_deref().unwrap_or("-")
+        );
+        println!("  grace_days          {}", report.memory.grace_days);
+        println!("  namespaces          {}", report.memory.namespaces.len());
     }
 
     Ok(())

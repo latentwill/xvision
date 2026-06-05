@@ -6,6 +6,7 @@ import {
 } from "@/theme/themes";
 import { useTheme } from "@/theme/useTheme";
 import { RestartTourButton } from "@/features/onboarding";
+import { MemorySettingsCard } from "./MemorySettingsCard";
 
 function swatchFor(value: string) {
   const id: ResolvedTheme = value === "auto" ? "dark" : (value as ResolvedTheme);
@@ -90,6 +91,8 @@ export function SettingsGeneralRoute() {
           <RestartTourButton />
         </div>
       </Card>
+
+      <MemorySettingsCard />
 
       {/*
         Retention-mode UI intentionally disabled for now. The backend

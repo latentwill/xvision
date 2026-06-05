@@ -122,7 +122,9 @@ async fn propose_returns_ok_on_first_valid_response() {
         max_retries: 2,
     };
 
-    let result = mutator.propose(&base, &default_config(), None, 42, &Default::default()).await;
+    let result = mutator
+        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .await;
 
     assert!(result.is_ok(), "expected Ok but got: {:?}", result);
     let captured = spy.captured.lock().unwrap();
@@ -143,7 +145,9 @@ async fn propose_retries_on_invalid_response_succeeds_on_retry() {
         max_retries: 2,
     };
 
-    let result = mutator.propose(&base, &default_config(), None, 42, &Default::default()).await;
+    let result = mutator
+        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .await;
 
     assert!(
         result.is_ok(),
@@ -167,7 +171,9 @@ async fn propose_returns_err_after_max_retries() {
         max_retries: 2,
     };
 
-    let result = mutator.propose(&base, &default_config(), None, 42, &Default::default()).await;
+    let result = mutator
+        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .await;
 
     assert!(result.is_err(), "expected Err after exhausting retries");
     let err_msg = result.unwrap_err().to_string();
@@ -197,7 +203,9 @@ async fn propose_includes_validation_errors_in_retry_prompt() {
         max_retries: 2,
     };
 
-    let result = mutator.propose(&base, &default_config(), None, 42, &Default::default()).await;
+    let result = mutator
+        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .await;
     assert!(result.is_ok(), "expected Ok on retry: {:?}", result);
 
     let captured = spy.captured.lock().unwrap();

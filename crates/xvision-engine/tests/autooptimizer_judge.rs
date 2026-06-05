@@ -97,7 +97,7 @@ async fn run_judge_returns_findings_from_valid_mock_response() {
         model: "test-model".into(),
     };
 
-    let result = run_judge(&judge, &strategy, &strategy, &diff, "3 trades in window").await;
+    let result = run_judge(&judge, &strategy, &strategy, &diff, "3 trades in window", None, None).await;
 
     assert!(result.is_ok(), "expected Ok but got: {:?}", result);
     let findings = result.unwrap();
@@ -129,6 +129,8 @@ async fn run_judge_prompt_does_not_contain_metric_values() {
         &strategy,
         &diff,
         "2 longs, 1 short, all closed",
+        None,
+        None,
     )
     .await;
     assert!(result.is_ok(), "expected Ok: {:?}", result);
@@ -168,7 +170,7 @@ async fn run_judge_surfaces_clear_error_on_malformed_response() {
         model: "test-model".into(),
     };
 
-    let result = run_judge(&judge, &strategy, &strategy, &diff, "some tape").await;
+    let result = run_judge(&judge, &strategy, &strategy, &diff, "some tape", None, None).await;
 
     assert!(result.is_ok(), "malformed response should return Ok, not Err");
     let findings = result.unwrap();

@@ -337,6 +337,8 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/settings/daemon", get(settings::daemon::get))
         .route("/api/settings/identity", get(settings::identity::get))
         .route("/api/settings/observability", get(settings::observability::get))
+        .route("/api/settings/memory", get(settings::memory::get))
+        .route("/api/settings/memory/status", get(settings::memory::status))
         .route("/api/settings/providers", get(settings::providers::list))
         .route("/api/settings/providers/:name", get(settings::providers::show))
         .route(
@@ -509,6 +511,7 @@ fn mutating_router(state: AppState) -> Router {
         )
         // ── Settings: observability ───────────────────────────────────────
         .route("/api/settings/observability", put(settings::observability::put))
+        .route("/api/settings/memory", put(settings::memory::put))
         // ── Settings: providers ───────────────────────────────────────────
         .route("/api/settings/providers", post(settings::providers::add))
         .route(

@@ -1055,8 +1055,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
 
     // F32: derive the exploration seed from this mutate-once cycle id so the
     // experiment writer samples diversely (shared helper with the cycle path).
-    let exploration_seed =
-        xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
+    let exploration_seed = xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
     let diff = propose(&parent, &cfg, &dispatch, exploration_seed)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
@@ -1198,10 +1197,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // `xvn.db`; running both at once starved each other (a CLI cycle was
     // timeout-killed at 9.7 min while a dashboard cycle ran). Refuse to start if
     // another cycle already holds the lock, with a clear message.
-    let cycle_lock_id = args
-        .session_id
-        .clone()
-        .unwrap_or_else(|| Ulid::new().to_string());
+    let cycle_lock_id = args.session_id.clone().unwrap_or_else(|| Ulid::new().to_string());
     let lock_holder = format!(
         "cli:{}",
         std::env::var("USER")
@@ -1293,6 +1289,24 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // model_calls under a run id that doesn't equal the paper-test eval run id,
     // so the join matched nothing. Metering at the dispatch boundary needs no
     // observability linkage and can't be missed.
+    // Cortex memory: the optimizer Judge can recall prior distilled
+    // findings and write new ones back. Default ON (config-backed) — the
+    // env `XVN_OPTIMIZER_MEMORY` override wins when set (`1`/`true` → on,
+    // `0`/`false` → off); otherwise the persisted `memory.toml`
+    // `optimizer_enabled` (default true) applies. We capture the recorder
+    // from the `ApiContext` before it is moved into the paper tester. The
+    // mock path never opens a context, so memory stays off there.
+    let mut opt_mem: Option<Arc<xvision_engine::agent::memory_recorder::MemoryRecorder>> = None;
+    let optimizer_memory_enabled = match std::env::var("XVN_OPTIMIZER_MEMORY").ok().as_deref() {
+        Some("1") | Some("true") => true,
+        Some("0") | Some("false") => false,
+        _ => {
+            xvision_engine::api::settings::memory::load_from_file(
+                &xvn_home.join("config").join("memory.toml"),
+            )
+            .optimizer_enabled
+        }
+    };
     let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
         Box::new(StubPaperTester {
             metrics: MetricsSummary {
@@ -1314,6 +1328,9 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let ctx = ApiContext::open(&xvn_home, Actor::Cli { user })
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
+        if optimizer_memory_enabled {
+            opt_mem = ctx.memory_recorder.clone();
+        }
         Box::new(CachedBacktestPaperTester::new(
             ctx,
             Arc::clone(&metered_dispatch),
@@ -1414,6 +1431,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             }
         },
         None,
+        opt_mem.as_deref(),
         Some(cycle_lock_id.clone()),
         None,
     )
@@ -2036,7 +2054,14 @@ async fn propose(
     // `mutate-once` is a single-shot experiment with no lineage-history context
     // here; the run-cycle path supplies the F32 avoid-set.
     mutator
-        .propose(base, cfg, None, exploration_seed, &std::collections::HashSet::new())
+        .propose(
+            base,
+            cfg,
+            None,
+            exploration_seed,
+            None,
+            &std::collections::HashSet::new(),
+        )
         .await
 }
 
