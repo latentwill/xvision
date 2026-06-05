@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/primitives/Card";
@@ -15,6 +16,23 @@ const BUILTIN_EMBEDDER_OPTIONS: { value: string; label: string }[] = [
   { value: "off", label: "Off" },
   { value: "local", label: "Local (offline, lexical)" },
   { value: "auto", label: "Auto (best available)" },
+];
+
+// Sentinel option that reveals the free-text custom-model input.
+const CUSTOM_MODEL_SENTINEL = "__custom__";
+
+// Curated embedding-model names. These are model ids your provider serves
+// (e.g. `ollama pull nomic-embed-text`); Local/Off ignore the model. The
+// empty value means "provider default" (clears back to the resolver
+// default).
+const CURATED_EMBEDDING_MODELS: { value: string; label: string }[] = [
+  { value: "", label: "Provider default" },
+  { value: "nomic-embed-text", label: "nomic-embed-text (Ollama)" },
+  { value: "mxbai-embed-large", label: "mxbai-embed-large (Ollama)" },
+  { value: "bge-m3", label: "bge-m3 (Ollama)" },
+  { value: "snowflake-arctic-embed2", label: "snowflake-arctic-embed2 (Ollama)" },
+  { value: "qwen3-embedding", label: "qwen3-embedding (Ollama)" },
+  { value: "all-minilm", label: "all-minilm (Ollama)" },
 ];
 
 /**
@@ -74,12 +92,63 @@ export function MemorySettingsCard() {
 
   const busy = mutation.isPending || settingsQuery.isLoading;
 
+  // The persisted model id (or empty string for "provider default").
+  const persistedModel = settings?.embedder_model ?? "";
+  // Whether the persisted model is a curated value; if not (and non-empty),
+  // the picker starts in Custom mode showing the value in the text input.
+  const isCuratedModel = CURATED_EMBEDDING_MODELS.some(
+    (m) => m.value === persistedModel,
+  );
+  // Custom-input mode: revealed by selecting "Custom…", or implied when the
+  // persisted model is a non-curated value.
+  const [customMode, setCustomMode] = useState(false);
+  const [customDraft, setCustomDraft] = useState("");
+
+  // Sync local custom state when the persisted settings load/change.
+  useEffect(() => {
+    if (persistedModel && !isCuratedModel) {
+      setCustomMode(true);
+      setCustomDraft(persistedModel);
+    }
+  }, [persistedModel, isCuratedModel]);
+
+  // The model picker is hidden for the "off" source (no embeddings at all).
+  const showModelPicker = (settings?.embedder ?? "off") !== "off";
+
+  // The <select> value: the curated value, the custom sentinel, or empty.
+  const modelSelectValue = customMode
+    ? CUSTOM_MODEL_SENTINEL
+    : isCuratedModel
+      ? persistedModel
+      : "";
+
   function onEmbedderChange(value: string) {
     mutation.mutate({
       embedder: value,
       chat_enabled: null,
       optimizer_enabled: null,
+      embedder_model: null,
     });
+  }
+
+  function submitModel(value: string) {
+    mutation.mutate({
+      embedder: null,
+      chat_enabled: null,
+      optimizer_enabled: null,
+      embedder_model: value,
+    });
+  }
+
+  function onModelSelectChange(value: string) {
+    if (value === CUSTOM_MODEL_SENTINEL) {
+      setCustomMode(true);
+      setCustomDraft(persistedModel && !isCuratedModel ? persistedModel : "");
+      return;
+    }
+    setCustomMode(false);
+    // Curated value (or "" for provider default) → persist immediately.
+    submitModel(value);
   }
 
   function onChatToggle(enabled: boolean) {
@@ -87,6 +156,7 @@ export function MemorySettingsCard() {
       embedder: null,
       chat_enabled: enabled,
       optimizer_enabled: null,
+      embedder_model: null,
     });
   }
 
@@ -95,6 +165,7 @@ export function MemorySettingsCard() {
       embedder: null,
       chat_enabled: null,
       optimizer_enabled: enabled,
+      embedder_model: null,
     });
   }
 
@@ -148,6 +219,58 @@ export function MemorySettingsCard() {
           ))}
         </select>
       </div>
+
+      {/* Embedding model — only relevant when a real embedder is in use. */}
+      {showModelPicker ? (
+        <div className="mt-4 space-y-1.5">
+          <label
+            htmlFor="memory-embedder-model"
+            className="block text-[13px] font-medium text-text-2"
+          >
+            Embedding model
+          </label>
+          <select
+            id="memory-embedder-model"
+            aria-label="Embedding model"
+            className="w-full max-w-sm rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text disabled:opacity-60"
+            value={modelSelectValue}
+            disabled={busy}
+            onChange={(e) => onModelSelectChange(e.target.value)}
+          >
+            {CURATED_EMBEDDING_MODELS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+            <option value={CUSTOM_MODEL_SENTINEL}>Custom…</option>
+          </select>
+          {customMode ? (
+            <input
+              id="memory-embedder-model-custom"
+              aria-label="Custom embedding model"
+              type="text"
+              placeholder="e.g. nomic-embed-text"
+              className="mt-1.5 w-full max-w-sm rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text disabled:opacity-60"
+              value={customDraft}
+              disabled={busy}
+              onChange={(e) => setCustomDraft(e.target.value)}
+              onBlur={() => submitModel(customDraft)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitModel(customDraft);
+                }
+              }}
+            />
+          ) : null}
+          <small className="block text-[11px] leading-snug text-text-3">
+            The model name your provider serves (e.g.{" "}
+            <code>ollama pull nomic-embed-text</code>). Local and Off ignore
+            this. Don&apos;t switch models mid-corpus — the embeddings live in
+            separate spaces.
+          </small>
+        </div>
+      ) : null}
 
       {/* Toggles */}
       <div className="mt-4 grid gap-2 sm:grid-cols-2">

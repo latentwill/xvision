@@ -33,6 +33,7 @@ function memoryReport(overrides: Partial<MemoryReport> = {}): MemoryReport {
     embedder: "auto",
     chat_enabled: true,
     optimizer_enabled: false,
+    embedder_model: null,
     persisted: true,
     ...overrides,
   };
@@ -120,6 +121,7 @@ describe("MemorySettingsCard", () => {
         embedder: "local",
         chat_enabled: null,
         optimizer_enabled: null,
+        embedder_model: null,
       });
     });
   });
@@ -137,6 +139,7 @@ describe("MemorySettingsCard", () => {
         embedder: null,
         chat_enabled: false,
         optimizer_enabled: null,
+        embedder_model: null,
       });
     });
   });
@@ -146,5 +149,63 @@ describe("MemorySettingsCard", () => {
     expect(
       await findByText(/openai:text-embedding-3-small/),
     ).toBeInTheDocument();
+  });
+
+  it("renders the embedding-model picker with curated options when source is not off", async () => {
+    const { findByLabelText } = renderCard();
+    const modelSelect = (await findByLabelText(
+      "Embedding model",
+    )) as HTMLSelectElement;
+    const values = Array.from(modelSelect.options).map((o) => o.value);
+    expect(values).toContain("nomic-embed-text");
+    expect(values).toContain("qwen3-embedding");
+    // "Provider default" (empty) and a Custom escape hatch are offered.
+    expect(values).toContain("");
+    expect(values).toContain("__custom__");
+  });
+
+  it("does not render the model picker when embedder source is off", async () => {
+    vi.mocked(settingsApi.getMemorySettings).mockResolvedValue(
+      memoryReport({ embedder: "off" }),
+    );
+    const { findByLabelText, queryByLabelText } = renderCard();
+    // Embedder source select is still there.
+    await findByLabelText("Embedder source");
+    expect(queryByLabelText("Embedding model")).toBeNull();
+  });
+
+  it("calls updateMemorySettings with the chosen model on change", async () => {
+    const { findByLabelText } = renderCard();
+    const modelSelect = await findByLabelText("Embedding model");
+    fireEvent.change(modelSelect, { target: { value: "nomic-embed-text" } });
+    await waitFor(() => {
+      expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
+        embedder: null,
+        chat_enabled: null,
+        optimizer_enabled: null,
+        embedder_model: "nomic-embed-text",
+      });
+    });
+  });
+
+  it("reveals a custom model input that also sends embedder_model", async () => {
+    const { findByLabelText, queryByLabelText } = renderCard();
+    const modelSelect = await findByLabelText("Embedding model");
+    // No custom input until "Custom…" is selected.
+    expect(queryByLabelText("Custom embedding model")).toBeNull();
+    fireEvent.change(modelSelect, { target: { value: "__custom__" } });
+    const customInput = (await findByLabelText(
+      "Custom embedding model",
+    )) as HTMLInputElement;
+    fireEvent.change(customInput, { target: { value: "my-local-embed" } });
+    fireEvent.blur(customInput);
+    await waitFor(() => {
+      expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
+        embedder: null,
+        chat_enabled: null,
+        optimizer_enabled: null,
+        embedder_model: "my-local-embed",
+      });
+    });
   });
 });

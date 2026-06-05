@@ -99,7 +99,26 @@ dependency. The source is resolved in this order:
    real api.openai.com. Conservative — non-OpenAI providers are never
    auto-picked (they may lack an `/embeddings` endpoint); use the explicit
    opt-in in step 2 for those.
-5. Otherwise no embedder — recall/record degrade to a no-op (never crashes).
+5. Otherwise the offline `Local` embedder (memory works out of the box;
+   semantic quality is degraded vs. a real provider). Only an explicit `off`
+   (env `XVN_MEMORY_EMBEDDER=off` or the dashboard Memory card) yields no
+   embedder, with recall/record degrading to a no-op (never crashes).
+
+**Local embeddings via Ollama (no API key).** `ollama pull nomic-embed-text`
+(or `qwen3-embedding`, `mxbai-embed-large`, `bge-m3`, …), then add an
+**Ollama** provider in Settings → Providers with base_url
+`http://localhost:11434/v1` (the `/v1` is **required** — the embedder POSTs
+`{base_url}/embeddings`). Ollama is a no-auth kind, so it resolves with an
+empty key. Pick it as the **Embedder source** and set the **Embedding
+model** in the Memory card.
+
+**Embedding-model precedence:** `XVN_MEMORY_EMBEDDER_MODEL` (env) →
+`embedder_model` in `$XVN_HOME/config/memory.toml` (the dashboard Memory
+card) → `text-embedding-3-small` (default). The dimension differs per model;
+the store records each observation's real vector length, so this is handled
+automatically. The embedder id is model-aware (`openaicompat:<model>`), so
+embeddings from different models stay in separate vector spaces — don't
+switch embedders mid-corpus (or `xvn memory forget` and re-embed).
 
 The memory store lives at `XVN_MEMORY_DB` (defaulted onto the data volume by
 the entrypoint). Inspect health with `xvn memory status` (or the `memory`

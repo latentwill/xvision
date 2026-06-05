@@ -68,7 +68,12 @@ pub struct EmbedderEnv {
     /// the embeddings backend (OpenAI-compatible).
     pub memory_embedder_provider: Option<String>,
     /// `XVN_MEMORY_EMBEDDER_MODEL` — overrides the embedding model id.
+    /// Wins over `config_embedder_model`.
     pub memory_embedder_model: Option<String>,
+    /// The persisted embedding model id from `$XVN_HOME/config/memory.toml`
+    /// (`MemoryConfig.embedder_model`). Used when the env override above is
+    /// unset; `None` → [`DEFAULT_EMBEDDER_MODEL`].
+    pub config_embedder_model: Option<String>,
     /// `OPENAI_API_KEY`.
     pub openai_api_key: Option<String>,
     /// `OPENAI_BASE_URL`.
@@ -122,9 +127,22 @@ fn is_real_openai(base_url: &str) -> bool {
     base_url.contains("api.openai.com")
 }
 
-/// Try to build an `OpenAiCompat` choice from a named provider with a
-/// resolvable key. Returns `None` when the provider isn't found or has no
-/// usable key (so the caller can decide the fallback).
+/// Kinds (the `EffectiveProvider::kind` string) that treat an empty API key
+/// as no-auth — a local embeddings server that needs no credential. Mirrors
+/// the `optional_auth` / `no_auth_kind` notion in
+/// `api::settings::providers` (Ollama / llama.cpp / local-candle). A
+/// selected provider of one of these kinds resolves to `OpenAiCompat` with
+/// an empty `api_key` rather than falling through to `Local`.
+fn is_no_auth_kind(kind: &str) -> bool {
+    matches!(kind, "ollama" | "llama-cpp" | "local-candle")
+}
+
+/// Try to build an `OpenAiCompat` choice from a named provider. Returns
+/// `None` when the provider isn't found, or when it genuinely needs a key
+/// (auth-bearing kind) and none is resolvable — so the caller can decide
+/// the fallback. A no-auth kind (Ollama / llama.cpp / local-candle)
+/// resolves even with no key, using whatever key is present (possibly
+/// empty).
 fn provider_choice(
     env: &EmbedderEnv,
     providers: &[EffectiveProvider],
@@ -132,10 +150,16 @@ fn provider_choice(
     model: &str,
 ) -> Option<EmbedderChoice> {
     let p = providers.iter().find(|p| p.provider == name)?;
-    let key = resolved_key(env, name)?;
+    let key = match resolved_key(env, name) {
+        Some(k) => k.to_string(),
+        // No usable key: only proceed for no-auth kinds (empty key is fine);
+        // an auth-bearing provider with no key falls through (returns None).
+        None if is_no_auth_kind(&p.kind) => String::new(),
+        None => return None,
+    };
     Some(EmbedderChoice::OpenAiCompat {
         base_url: p.base_url.clone(),
-        api_key: key.to_string(),
+        api_key: key,
         model: model.to_string(),
     })
 }
@@ -167,7 +191,9 @@ fn auto_openai_choice(
 /// so memory works out of the box; only an explicit `off` (env or config)
 /// yields `None`.
 pub fn resolve_embedder_choice(env: &EmbedderEnv, providers: &[EffectiveProvider]) -> EmbedderChoice {
+    // Model precedence: env override → persisted config model → default.
     let model = non_empty(&env.memory_embedder_model)
+        .or_else(|| non_empty(&env.config_embedder_model))
         .unwrap_or(DEFAULT_EMBEDDER_MODEL)
         .to_string();
 
@@ -240,13 +266,14 @@ impl EmbedderChoice {
     /// `embedder_id` the resolved choice will report, mirroring each
     /// concrete embedder's `Embedder::id()`. `None` for
     /// [`EmbedderChoice::None`]. Used by `xvn memory status` / `xvn doctor`
-    /// to surface the embedder without instantiating it (the
-    /// `OpenAiCompat` id is fixed to the default-model form today, matching
-    /// `OpenAiEmbedder::id()`).
-    pub fn embedder_id(&self) -> Option<&'static str> {
+    /// to surface the embedder without instantiating it. The `OpenAiCompat`
+    /// id is model-aware (`openaicompat:<model>`), matching
+    /// `OpenAiEmbedder::id()`, so the store keeps nomic / qwen / openai
+    /// embeddings in separate vector spaces.
+    pub fn embedder_id(&self) -> Option<String> {
         match self {
-            EmbedderChoice::Local => Some("local:hash-v1"),
-            EmbedderChoice::OpenAiCompat { .. } => Some("openai:text-embedding-3-small"),
+            EmbedderChoice::Local => Some("local:hash-v1".to_string()),
+            EmbedderChoice::OpenAiCompat { model, .. } => Some(format!("openaicompat:{model}")),
             EmbedderChoice::None => None,
         }
     }
@@ -267,9 +294,13 @@ mod tests {
     use super::*;
 
     fn ep(name: &str, base_url: &str, has_key: bool) -> EffectiveProvider {
+        ep_kind(name, base_url, has_key, "openai-compat")
+    }
+
+    fn ep_kind(name: &str, base_url: &str, has_key: bool, kind: &str) -> EffectiveProvider {
         EffectiveProvider {
             provider: name.to_string(),
-            kind: "openai-compat".to_string(),
+            kind: kind.to_string(),
             base_url: base_url.to_string(),
             api_key_env: String::new(),
             enabled: true,
@@ -355,6 +386,79 @@ mod tests {
     #[test]
     fn config_naming_unresolvable_provider_falls_back_to_local() {
         // Config names a provider that has no usable key → Local, NOT None.
+        let env = EmbedderEnv {
+            config_embedder: Some("myproxy".into()),
+            ..Default::default()
+        };
+        let providers = vec![ep("myproxy", "https://proxy.internal/v1", false)];
+        assert_eq!(resolve_embedder_choice(&env, &providers), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn config_ollama_provider_no_key_resolves_with_empty_key_and_model() {
+        // A selected Ollama-kind provider with NO key must resolve to
+        // OpenAiCompat with an empty api_key (no-auth) + the config model —
+        // it must NOT fall through to Local.
+        let env = EmbedderEnv {
+            config_embedder: Some("ollama".into()),
+            config_embedder_model: Some("nomic-embed-text".into()),
+            ..Default::default()
+        };
+        let providers = vec![ep_kind("ollama", "http://localhost:11434/v1", false, "ollama")];
+        match resolve_embedder_choice(&env, &providers) {
+            EmbedderChoice::OpenAiCompat {
+                base_url,
+                api_key,
+                model,
+            } => {
+                assert_eq!(base_url, "http://localhost:11434/v1");
+                assert_eq!(api_key, "");
+                assert_eq!(model, "nomic-embed-text");
+            }
+            other => panic!("expected OpenAiCompat for no-auth Ollama, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn env_model_overrides_config_model() {
+        // XVN_MEMORY_EMBEDDER_MODEL beats the persisted config model.
+        let env = EmbedderEnv {
+            config_embedder: Some("ollama".into()),
+            config_embedder_model: Some("nomic-embed-text".into()),
+            memory_embedder_model: Some("qwen3-embedding".into()),
+            ..Default::default()
+        };
+        let providers = vec![ep_kind("ollama", "http://localhost:11434/v1", false, "ollama")];
+        match resolve_embedder_choice(&env, &providers) {
+            EmbedderChoice::OpenAiCompat { model, .. } => {
+                assert_eq!(model, "qwen3-embedding");
+            }
+            other => panic!("expected OpenAiCompat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_model_alone_threads_into_auto_openai() {
+        // config_embedder_model with the default auto path (real openai
+        // provider + key) sets the model on the resolved choice.
+        let mut env = EmbedderEnv {
+            config_embedder_model: Some("text-embedding-3-large".into()),
+            ..Default::default()
+        };
+        env.resolved_provider_keys.insert("openai".into(), "sk-live".into());
+        let providers = vec![ep("openai", "https://api.openai.com/v1", true)];
+        match resolve_embedder_choice(&env, &providers) {
+            EmbedderChoice::OpenAiCompat { model, .. } => {
+                assert_eq!(model, "text-embedding-3-large");
+            }
+            other => panic!("expected OpenAiCompat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_naming_auth_provider_without_key_still_falls_back_to_local() {
+        // An auth-bearing (openai-compat) provider with no key still falls
+        // through to Local — the no-auth relaxation is kind-gated.
         let env = EmbedderEnv {
             config_embedder: Some("myproxy".into()),
             ..Default::default()

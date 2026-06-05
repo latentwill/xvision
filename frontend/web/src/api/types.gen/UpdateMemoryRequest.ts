@@ -8,4 +8,10 @@ export type UpdateMemoryRequest = {
 /**
  * New embedder source as a flat string (`off`/`local`/`auto`/<provider>).
  */
-embedder: string | null, chat_enabled: boolean | null, optimizer_enabled: boolean | null, };
+embedder: string | null, chat_enabled: boolean | null, optimizer_enabled: boolean | null, 
+/**
+ * New embedding model id. An empty/whitespace string clears it back to
+ * the resolver default (stored as `None`); `None` here leaves the
+ * persisted value untouched (partial update).
+ */
+embedder_model: string | null, };

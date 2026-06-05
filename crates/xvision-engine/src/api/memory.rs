@@ -1124,8 +1124,8 @@ pub struct MemoryStatus {
     pub writable: bool,
     /// True when an embedder source resolved (recall/record can embed).
     pub embedder_present: bool,
-    /// The embedder id (`local:hash-v1`, `openai:text-embedding-3-small`)
-    /// when present.
+    /// The embedder id (`local:hash-v1`, `openaicompat:<model>` e.g.
+    /// `openaicompat:nomic-embed-text`) when present.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub embedder_id: Option<String>,
     /// Which resolution branch won (`local`, `openai-compat`).
@@ -1172,7 +1172,7 @@ pub async fn status(store: &MemoryStore, xvn_home: &std::path::Path) -> ApiResul
         store_path: store_path.display().to_string(),
         writable,
         embedder_present,
-        embedder_id: choice.embedder_id().map(str::to_string),
+        embedder_id: choice.embedder_id(),
         embedder_source: choice.source_label().map(str::to_string),
         grace_days: xvision_memory::store::forget_grace_days(),
         namespaces,

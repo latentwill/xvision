@@ -6,6 +6,12 @@
  */
 export type MemoryReport = { embedder: string, chat_enabled: boolean, optimizer_enabled: boolean, 
 /**
+ * The persisted embedding model id, or `null` when none is set (the
+ * resolver default applies). The card renders this as the embedding-
+ * model picker value; empty/clear sends `""` which stores `None`.
+ */
+embedder_model: string | null, 
+/**
  * True when the persisted config file exists. False → defaults are in
  * force; the UI renders "Default" vs "Custom".
  */

@@ -498,6 +498,37 @@ export OPENAI_API_KEY=sk-...                     # optional: OPENAI_BASE_URL for
 export XVN_MEMORY_EMBEDDER=local
 ```
 
+**1b. Local embeddings via Ollama (no API key, pick your model).** Run
+embeddings on a local Ollama server and choose the model from the dashboard
+— no OpenAI dependency. Ollama exposes an OpenAI-compatible
+`/v1/embeddings` endpoint, so the existing embedder transport just works:
+
+```bash
+ollama pull nomic-embed-text        # or qwen3-embedding, mxbai-embed-large, bge-m3, …
+```
+
+Then in **Settings → Providers**, add an **Ollama** provider with base_url
+`http://localhost:11434/v1`. The trailing **`/v1` is required** — the
+embedder POSTs `{base_url}/embeddings`, so the URL must resolve to
+`http://localhost:11434/v1/embeddings`. (Ollama is a no-auth kind; leave the
+API key blank.)
+
+Finally, in **Settings → General → Memory**:
+- **Embedder source** = your Ollama provider.
+- **Embedding model** = `nomic-embed-text` (or `qwen3-embedding`, etc.) — or
+  pick **Custom…** to type any model name your server serves.
+
+The embedding dimension differs per model (nomic = 768, openai-3-small =
+1536); the store records each observation's real vector length, so this is
+handled automatically. The resolved embedder id is **model-aware**
+(`openaicompat:nomic-embed-text`), so switching models keeps the vector
+spaces separate — but recall only matches within the same id. **Don't switch
+embedders mid-corpus**; if you do, `xvn memory forget --namespace <ns>` the
+affected namespaces and re-embed.
+
+The env override `XVN_MEMORY_EMBEDDER_MODEL` still wins over the dashboard
+pick, for operators who script it.
+
 **2. Confirm the substrate is healthy.**
 
 ```bash

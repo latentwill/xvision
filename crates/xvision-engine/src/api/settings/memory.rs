@@ -126,6 +126,13 @@ pub struct MemoryConfig {
     /// Whether the optimizer records+recalls by default. Default ON.
     #[serde(default = "default_true")]
     pub optimizer_enabled: bool,
+    /// Embedding model id to request from the embeddings provider (e.g.
+    /// `nomic-embed-text`, `qwen3-embedding`, `text-embedding-3-small`).
+    /// `None` ≡ "use the resolver default" ([`crate::agent::embedder_choice::DEFAULT_EMBEDDER_MODEL`]).
+    /// Ignored by the offline `Local` / `Off` sources (they have no model
+    /// concept). The env override `XVN_MEMORY_EMBEDDER_MODEL` still wins.
+    #[serde(default)]
+    pub embedder_model: Option<String>,
 }
 
 impl Default for MemoryConfig {
@@ -134,6 +141,7 @@ impl Default for MemoryConfig {
             embedder: MemoryEmbedderSource::Auto,
             chat_enabled: true,
             optimizer_enabled: true,
+            embedder_model: None,
         }
     }
 }
@@ -192,6 +200,10 @@ pub struct MemoryReport {
     pub embedder: String,
     pub chat_enabled: bool,
     pub optimizer_enabled: bool,
+    /// The persisted embedding model id, or `null` when none is set (the
+    /// resolver default applies). The card renders this as the embedding-
+    /// model picker value; empty/clear sends `""` which stores `None`.
+    pub embedder_model: Option<String>,
     /// True when the persisted config file exists. False → defaults are in
     /// force; the UI renders "Default" vs "Custom".
     pub persisted: bool,
@@ -213,6 +225,11 @@ pub struct UpdateMemoryRequest {
     pub chat_enabled: Option<bool>,
     #[serde(default)]
     pub optimizer_enabled: Option<bool>,
+    /// New embedding model id. An empty/whitespace string clears it back to
+    /// the resolver default (stored as `None`); `None` here leaves the
+    /// persisted value untouched (partial update).
+    #[serde(default)]
+    pub embedder_model: Option<String>,
 }
 
 fn config_path(ctx: &ApiContext) -> PathBuf {
@@ -224,6 +241,7 @@ fn report_from_cfg(cfg: &MemoryConfig, persisted: bool) -> MemoryReport {
         embedder: cfg.embedder.as_config_string(),
         chat_enabled: cfg.chat_enabled,
         optimizer_enabled: cfg.optimizer_enabled,
+        embedder_model: cfg.embedder_model.clone(),
         persisted,
     }
 }
@@ -266,6 +284,11 @@ pub async fn set(ctx: &ApiContext, req: UpdateMemoryRequest) -> ApiResult<Memory
     }
     if let Some(o) = req.optimizer_enabled {
         cfg.optimizer_enabled = o;
+    }
+    if let Some(m) = req.embedder_model.as_deref() {
+        // Trim; empty ≡ "clear back to the resolver default" → None.
+        let t = m.trim();
+        cfg.embedder_model = if t.is_empty() { None } else { Some(t.to_string()) };
     }
 
     MemoryConfig::write_to_file(&path, &cfg)
@@ -327,6 +350,7 @@ mod tests {
         assert_eq!(cfg.embedder, MemoryEmbedderSource::Auto);
         assert!(cfg.chat_enabled);
         assert!(cfg.optimizer_enabled);
+        assert_eq!(cfg.embedder_model, None);
     }
 
     #[test]
@@ -371,6 +395,7 @@ mod tests {
                 embedder: Some("local".into()),
                 chat_enabled: Some(false),
                 optimizer_enabled: Some(true),
+                embedder_model: None,
             },
         )
         .await
@@ -397,6 +422,7 @@ mod tests {
                 embedder: Some("local".into()),
                 chat_enabled: Some(false),
                 optimizer_enabled: Some(true),
+                embedder_model: None,
             },
         )
         .await
@@ -409,6 +435,7 @@ mod tests {
                 embedder: None,
                 chat_enabled: None,
                 optimizer_enabled: Some(false),
+                embedder_model: None,
             },
         )
         .await
@@ -416,5 +443,93 @@ mod tests {
         assert_eq!(report.embedder, "local");
         assert!(!report.chat_enabled);
         assert!(!report.optimizer_enabled);
+    }
+
+    #[tokio::test]
+    async fn embedder_model_round_trips() {
+        let (ctx, _tmp) = test_ctx().await;
+        // Default: no model set.
+        let report = get(&ctx).await.unwrap();
+        assert_eq!(report.embedder_model, None);
+
+        // Set a model.
+        let report = set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder: Some("ollama".into()),
+                embedder_model: Some("nomic-embed-text".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.embedder_model.as_deref(), Some("nomic-embed-text"));
+
+        let after = get(&ctx).await.unwrap();
+        assert_eq!(after.embedder_model.as_deref(), Some("nomic-embed-text"));
+        assert_eq!(after.embedder, "ollama");
+    }
+
+    #[tokio::test]
+    async fn empty_embedder_model_clears_to_none() {
+        let (ctx, _tmp) = test_ctx().await;
+        // Seed a model.
+        set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder_model: Some("qwen3-embedding".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // Clear via empty string.
+        let report = set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder_model: Some("   ".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.embedder_model, None);
+
+        // A None on a later update leaves it untouched (still None here).
+        let report = set(
+            &ctx,
+            UpdateMemoryRequest {
+                chat_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.embedder_model, None);
+    }
+
+    #[tokio::test]
+    async fn embedder_model_partial_update_preserved() {
+        let (ctx, _tmp) = test_ctx().await;
+        set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder_model: Some("bge-m3".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // Update an unrelated field; model must survive.
+        let report = set(
+            &ctx,
+            UpdateMemoryRequest {
+                optimizer_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.embedder_model.as_deref(), Some("bge-m3"));
     }
 }
