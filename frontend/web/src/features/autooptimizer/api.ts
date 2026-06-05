@@ -181,10 +181,12 @@ export async function getBlob<T = StrategyBlob>(hash: string): Promise<T> {
 
 export const autooptimizerKeys = {
   all: ["autooptimizer"] as const,
-  lineage: () => [...autooptimizerKeys.all, "lineage"] as const,
+  lineage: (q?: LineageQuery) =>
+    [...autooptimizerKeys.all, "lineage", q ?? {}] as const,
   lineageNode: (hash: string) => [...autooptimizerKeys.all, "lineage", hash] as const,
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   cycles: () => [...autooptimizerKeys.all, "cycles"] as const,
+  cycle: (id: string) => [...autooptimizerKeys.cycles(), id] as const,
   diversity: (q?: DiversityQuery) =>
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
   blob: (hash: string | null | undefined) =>
@@ -195,7 +197,7 @@ export const autooptimizerKeys = {
 
 export function useLineageNodes(q?: LineageQuery) {
   return useQuery({
-    queryKey: [...autooptimizerKeys.lineage(), q ?? {}],
+    queryKey: autooptimizerKeys.lineage(q),
     queryFn: () => listLineageNodes(q),
     staleTime: 30_000,
   });
@@ -210,12 +212,9 @@ export function useCycleRuns() {
   });
 }
 
-export const cycleRunKey = (id: string) =>
-  [...autooptimizerKeys.cycles(), id] as const;
-
 export function useCycleRun(cycleId: string | undefined) {
   return useQuery({
-    queryKey: cycleRunKey(cycleId ?? ""),
+    queryKey: autooptimizerKeys.cycle(cycleId ?? ""),
     queryFn: () => getCycleRun(cycleId!),
     enabled: !!cycleId,
     staleTime: 30_000,
