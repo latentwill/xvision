@@ -2,14 +2,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use sqlx::SqlitePool;
 use ulid::Ulid;
 
 use crate::autooptimizer::blob_store::BlobStore;
 use crate::autooptimizer::canary::{run_honesty_check, HonestyCheckResult};
-use crate::autooptimizer::config::{AutoOptimizerConfig, RegimeSide, RegimeWindow};
+use crate::autooptimizer::config::{validate_regime_set, AutoOptimizerConfig, RegimeSide, RegimeWindow};
 use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
@@ -354,12 +354,29 @@ where
     let mut active: Vec<LineageNode> = Vec::new();
     let mut rejected: Vec<LineageNode> = Vec::new();
     let mut no_candidate_count: usize = 0;
-    let parent_day = paper_tester
-        .run(parent_strategy, &cycle_config.day_scenario)
-        .await?;
-    let parent_untouched = paper_tester
-        .run(parent_strategy, &cycle_config.baseline_scenario)
-        .await?;
+
+    // Fix 6: Only backtest the parent on the legacy day/baseline scenarios when
+    // regime_set is empty. When regime_set is non-empty, the legacy day+baseline
+    // metrics are never used for classification — only per-regime backtests drive
+    // the gate. Skipping these runs avoids wasted backtests.
+    let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() {
+        let pd = paper_tester
+            .run(parent_strategy, &cycle_config.day_scenario)
+            .await?;
+        let pu = paper_tester
+            .run(parent_strategy, &cycle_config.baseline_scenario)
+            .await?;
+        (pd, pu)
+    } else {
+        (MetricsSummary::default(), MetricsSummary::default())
+    };
+
+    // Fix 2 + 3: validate regime set (duplicate labels, day/baseline overlap)
+    // before entering the mutation loop. Returns immediately on the first
+    // violation so invalid configs are caught before any backtest cost is paid.
+    if !cycle_config.regime_set.is_empty() {
+        validate_regime_set(&cycle_config.regime_set)?;
+    }
 
     // Phase 2: pre-compute parent metrics once per regime window so every child
     // mutation in this loop can reuse them. Empty when regime_set is empty.
@@ -711,22 +728,54 @@ async fn gate_and_classify(
         };
 
         // Aggregate delta_sharpe as mean of per-regime deltas.
-        let delta_sharpe = if regime_rows.is_empty() {
-            child_day.sharpe - parent_day.sharpe
-        } else {
+        // (When regime_set is non-empty, regime_rows is always non-empty;
+        // the fallback branch is unreachable but retained for completeness.)
+        let delta_sharpe = if !regime_rows.is_empty() {
             regime_rows.iter().map(|r| r.delta_sharpe).sum::<f64>() / regime_rows.len() as f64
+        } else {
+            // Fallback: unreachable when regime_set is non-empty and validation passes.
+            child_day.sharpe - parent_day.sharpe
         };
 
-        // Use the aggregate status directly — no inversion-pair check on the
-        // regime path (the multi-window anti-overfit rule replaces that guard).
-        let verdict = match regime_status {
-            LineageStatus::Active => GateVerdict::Pass,
-            LineageStatus::Quarantined => GateVerdict::Fail {
-                reason: "regime-matrix: passes some but not bull+bear".to_string(),
-            },
-            LineageStatus::Rejected => GateVerdict::Fail {
-                reason: "regime-matrix: fails all regimes".to_string(),
-            },
+        // Fix 4: restore the inversion-pair guard for regime-path Active candidates.
+        // The multi-window rule filters overfit by requiring improvement across
+        // multiple market regimes, but a symmetric noise mutation can still pass
+        // every regime window (the forward and reverse diffs both look good in
+        // each regime). Run the same inversion check the legacy path uses —
+        // scoped only to Active candidates — and downgrade to Rejected on noise.
+        let (regime_status, verdict) = match regime_status {
+            LineageStatus::Active => {
+                let inv = run_inversion_pair(
+                    parent_strategy,
+                    &diff,
+                    paper_tester,
+                    &cycle_config.day_scenario,
+                    &cycle_config.baseline_scenario,
+                )
+                .await?;
+                if inv.symmetric_noise {
+                    (
+                        LineageStatus::Rejected,
+                        GateVerdict::Fail {
+                            reason: "inversion-pair symmetric noise".to_string(),
+                        },
+                    )
+                } else {
+                    (LineageStatus::Active, GateVerdict::Pass)
+                }
+            }
+            LineageStatus::Quarantined => (
+                LineageStatus::Quarantined,
+                GateVerdict::Fail {
+                    reason: "regime-matrix: passes some but not bull+bear".to_string(),
+                },
+            ),
+            LineageStatus::Rejected => (
+                LineageStatus::Rejected,
+                GateVerdict::Fail {
+                    reason: "regime-matrix: fails all regimes".to_string(),
+                },
+            ),
         };
 
         return Ok(MutationOutcome {
@@ -802,7 +851,9 @@ fn build_regime_scenario_pair(
 
     let parse_date = |s: &str| -> Result<chrono::DateTime<Utc>> {
         let nd: NaiveDate = s.parse().map_err(|e| anyhow::anyhow!("parse date '{}': {}", s, e))?;
-        Ok(Utc.from_utc_datetime(&nd.and_hms_opt(0, 0, 0).expect("midnight")))
+        let midnight = nd.and_hms_opt(0, 0, 0)
+            .ok_or_else(|| anyhow::anyhow!("could not construct midnight for date '{}'", s))?;
+        Ok(Utc.from_utc_datetime(&midnight))
     };
 
     let day_start = parse_date(&rw.day.start)?;
@@ -850,6 +901,13 @@ fn build_regime_scenario_pair(
     Ok((day_scen, base_scen))
 }
 
+/// Returns `true` when the new outcome status is Rejected or Quarantined —
+/// i.e. a worse outcome that must not overwrite an existing Active node in the
+/// `INSERT OR REPLACE`-keyed `lineage_nodes` table.
+fn should_preserve_active_collision(new_status: &LineageStatus) -> bool {
+    matches!(new_status, LineageStatus::Rejected | LineageStatus::Quarantined)
+}
+
 async fn build_and_insert_node(
     pool: &SqlitePool,
     strategy_blob_store: &BlobStore,
@@ -874,17 +932,18 @@ async fn build_and_insert_node(
         tracing::warn!(cycle_id, error = %e, "failed to record cycle_node_evaluations edge");
     }
     // F12: `lineage_nodes` uses `INSERT OR REPLACE` keyed on `bundle_hash`. If a
-    // rejected candidate hashes to an already-*active* node (a re-derivation of
-    // a known-good strategy), replacing it would downgrade the active node to
-    // rejected and poison future re-runs/parent selection. Keep the active node
-    // and return it untouched rather than overwriting it with a rejection.
-    if outcome.status == LineageStatus::Rejected {
+    // non-active candidate (Rejected *or* Quarantined) hashes to an already-*active*
+    // node (a re-derivation of a known-good strategy), replacing it would downgrade
+    // the active node and poison future re-runs/parent selection. Keep the active
+    // node and return it untouched rather than overwriting it with a worse outcome.
+    if should_preserve_active_collision(&outcome.status) {
         if let Some(existing) = store.get(&outcome.child_hash).await? {
             if existing.status == LineageStatus::Active {
                 tracing::debug!(
                     cycle_id,
                     child_hash = %outcome.child_hash.to_hex(),
-                    "rejected candidate collides with an existing active node — keeping the active node",
+                    new_status = ?outcome.status,
+                    "candidate collides with an existing active node — keeping the active node",
                 );
                 return Ok(existing);
             }
@@ -921,21 +980,20 @@ async fn build_and_insert_node(
     .await;
 
     // Phase 2: persist per-regime results when the regime-matrix path was used.
+    // Unlike `persist_node_metrics` (auxiliary display data), the regime rows are
+    // the audit trail that proves why a kept/suspect node was classified as it was.
+    // A silent failure here would leave nodes with no per-regime record, making
+    // operator review impossible. Propagate so the caller surfaces the error.
     if !outcome.regime_rows.is_empty() {
         let created_at = Utc::now().to_rfc3339();
-        if let Err(e) = insert_regime_results(
+        insert_regime_results(
             pool,
             &outcome.child_hash.to_hex(),
             &outcome.regime_rows,
             &created_at,
         )
         .await
-        {
-            tracing::warn!(
-                child_hash = %outcome.child_hash.to_hex(),
-                "failed to persist regime results: {e}",
-            );
-        }
+        .with_context(|| format!("failed to persist regime results for {}", outcome.child_hash.to_hex()))?;
     }
 
     Ok(node)
@@ -1092,6 +1150,24 @@ mod tests {
         let kept = vec![active_node()];
         assert!(honesty_check_warranted(&kept, &[]), "a kept candidate warrants the check");
         assert!(honesty_check_warranted(&[], &kept), "a rejected candidate warrants the check");
+    }
+
+    /// Fix 1: the collision-guard predicate must return true for both Rejected
+    /// and Quarantined (not just Rejected), and false for Active.
+    #[test]
+    fn should_preserve_active_collision_covers_rejected_and_quarantined() {
+        assert!(
+            should_preserve_active_collision(&LineageStatus::Rejected),
+            "Rejected must trigger the guard"
+        );
+        assert!(
+            should_preserve_active_collision(&LineageStatus::Quarantined),
+            "Quarantined must trigger the guard — a Quarantined insert must not overwrite an Active node"
+        );
+        assert!(
+            !should_preserve_active_collision(&LineageStatus::Active),
+            "Active should NOT trigger the guard — a new Active outcome may overwrite an older Active"
+        );
     }
 
     /// Bull passes, BearOrShock fails → aggregate is Quarantined (Suspect).
