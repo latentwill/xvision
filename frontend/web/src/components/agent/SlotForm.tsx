@@ -301,6 +301,7 @@ export function SlotForm({
             onChange={(e) =>
               patch("memory_mode", e.target.value as AgentSlot["memory_mode"])
             }
+            aria-describedby={`slot-${index}-memory-help`}
             className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text focus:outline-none focus:border-gold/40"
           >
             <option value="off">Off</option>
@@ -308,6 +309,21 @@ export function SlotForm({
             <option value="agent_scoped">Agent-scoped (this agent only)</option>
           </select>
         </Field>
+        {/* Help text lives OUTSIDE <Field> so it does not pollute the
+            select's accessible name (Field wraps its children in a
+            <label>; nesting copy here would break label-text queries
+            like findByLabelText("Memory")). The aria-describedby link
+            from the select still associates this description. */}
+        <small
+          id={`slot-${index}-memory-help`}
+          className="block mt-1.5 text-[11.5px] text-text-3 leading-snug"
+        >
+          Off = no memory (the default). Global shares learnings across all
+          memory-enabled agents in this workspace. Agent-scoped recalls only
+          this agent's own prior decisions. Requires an embedder — check{" "}
+          <span className="font-mono">xvn memory status</span>; recall is a
+          no-op without one.
+        </small>
       </div>
 
       {slot.skill_ids.length > 0 ? (

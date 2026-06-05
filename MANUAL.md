@@ -480,6 +480,59 @@ secrets inline. The setup script writes `$REPO_ROOT/.env.local`
 
 ---
 
+## Enable Cortex memory on an agent (verify end-to-end)
+
+Cortex memory (the in-process `xvision-memory` layer) lets a memory-enabled
+agent recall its salient prior decisions before acting and write new ones
+back. It is **default-off** on every surface and requires an embedder.
+
+**1. Provision an embedder.** Set one of (see `docker/README.md` for the
+full resolution order):
+
+```bash
+# Reuse a registered OpenAI-compatible provider's key (no hard OpenAI dep):
+export XVN_MEMORY_EMBEDDER_PROVIDER=openai      # a provider with an /embeddings endpoint
+# …or fall back to the plain OpenAI env path:
+export OPENAI_API_KEY=sk-...                     # optional: OPENAI_BASE_URL for a proxy
+# …or, for an offline/dev box with no embedding API (low recall quality):
+export XVN_MEMORY_EMBEDDER=local
+```
+
+**2. Confirm the substrate is healthy.**
+
+```bash
+xvn memory status        # store path + writable?, embedder present + id, grace days, namespaces
+xvn doctor --json | jq .memory
+```
+
+`embedder_present: true` is required for recall to do anything. With no
+embedder the agent path still runs — recall just no-ops (you'll see
+`memory_disabled_no_embedder` in traces).
+
+**3. Enable memory on a slot.** In the dashboard, open the agent, and on a
+slot set **Memory** to `Global` (shared across agents) or `Agent-scoped`
+(this agent only). Save. (CLI/API equivalent: persist the slot with
+`memory_mode = "global" | "agent_scoped"`.)
+
+**4. Verify recall across runs.** Run two eval cycles over the same agent:
+
+```bash
+xvn memory status        # observation count for the slot's namespace should grow after run 1
+# run a second eval; in the trace dock (or obs stream) the second run shows a
+# `memory_recall` event with k>0 hits, and the trader prompt carries a
+# <prior_observations> block.
+```
+
+Backtest temporal-safety holds automatically: recall in an eval/backtest
+context excludes future-dated Patterns (the scenario-start filter), so a
+replay can never leak knowledge from after its window.
+
+**Disable / clean up.** Set the slot's Memory back to `Off`, or clear a
+namespace with `xvn memory forget --namespace <ns>` (soft-delete; restore
+within the grace window via `xvn memory undo-forget`).
+
+---
+
 ## Scale tiers
 
 xvision's design assumes a single operator at v1. Several architectural

@@ -285,6 +285,31 @@ describe("SlotForm.changeProvider", () => {
     expect(next.bar_history_limit).toBe(1000);
   });
 
+  it("renders the Memory control defaulting to Off and persists a change through onChange", async () => {
+    // P1 (cortex-memory deployment): the per-slot Memory control must be
+    // present (default Off) and thread `memory_mode` through onChange so an
+    // operator can enable recall/record on a strategy agent.
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+
+      default_model: null,
+    });
+
+    const onChange = vi.fn();
+    renderSlot({
+      slot: makeSlot(), // memory_mode omitted → control shows "off"
+      onChange,
+    });
+
+    const memory = (await screen.findByLabelText("Memory")) as HTMLSelectElement;
+    expect(memory.value).toBe("off");
+
+    fireEvent.change(memory, { target: { value: "agent_scoped" } });
+    expect(onChange).toHaveBeenCalled();
+    const next = onChange.mock.calls.at(-1)![0] as AgentSlot;
+    expect(next.memory_mode).toBe("agent_scoped");
+  });
+
   it("preserves an empty model when changing providers (no spurious change)", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [
