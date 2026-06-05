@@ -190,15 +190,14 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
         return;
     };
 
-    // Build the set of valid paths from the live AST.
-    let tunable: HashSet<String> = filter_tunable_paths(filter)
-        .into_iter()
-        .map(|(p, _)| p)
-        .collect();
+    // Map each valid path to its CURRENT live value, so we can both reject
+    // unknown paths and catch stale baselines (mirrors `stale_param_baseline`).
+    let tunable: std::collections::HashMap<String, serde_json::Value> =
+        filter_tunable_paths(filter).into_iter().collect();
 
     for (i, edit) in edits.iter().enumerate() {
         // Path must be one of the enumerated tunable paths.
-        if !tunable.contains(&edit.path) {
+        let Some(current) = tunable.get(&edit.path) else {
             errors.push(ValidationError::with_path(
                 "unknown_filter_path",
                 format!(
@@ -209,11 +208,12 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
                 format!("filter[{i}].path"),
             ));
             continue;
-        }
+        };
+
         // `after` must be a number (or null for max_wakeups_per_day).
         let is_nullable = edit.path == "max_wakeups_per_day";
         if edit.after.is_null() && is_nullable {
-            // null is valid for max_wakeups_per_day
+            // null is valid for max_wakeups_per_day → stays None.
         } else if !edit.after.is_number() {
             errors.push(ValidationError::with_path(
                 "invalid_filter_value",
@@ -225,7 +225,99 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
                 ),
                 format!("filter[{i}].after"),
             ));
+            continue;
+        } else if let Some(suffix) = filter_op_param_suffix(&edit.path) {
+            // Parameterized operators must stay strictly positive: the filter
+            // parser rejects e.g. `above_for_0` / `within_pct_0`, so applying a
+            // zero (or negative) `after` would mint a Strategy artifact that can
+            // no longer be deserialized (codex P2, run-7). The u32-window ops
+            // additionally require an integer value (matching `value_as_u32` in
+            // `set_filter_value`).
+            let valid = if suffix == "within_pct" {
+                edit.after.as_f64().map(|f| f > 0.0).unwrap_or(false)
+            } else {
+                is_positive_integer(&edit.after)
+            };
+            if !valid {
+                errors.push(ValidationError::with_path(
+                    "invalid_filter_value",
+                    format!(
+                        "Filter operator path '{}' requires a positive {}; got {:?}.",
+                        edit.path,
+                        if suffix == "within_pct" { "number" } else { "integer" },
+                        edit.after,
+                    ),
+                    format!("filter[{i}].after"),
+                ));
+                continue;
+            }
         }
+
+        // Stale baseline: `before` must match the live value (numeric-tolerant so
+        // an int vs float representation — 25 vs 25.0 — isn't a false reject).
+        // The reverse mutation uses `before`, so a stale baseline would make the
+        // inversion-pair check compare against the wrong filter (codex P2).
+        if !filter_values_equal(&edit.before, current) {
+            errors.push(ValidationError::with_path(
+                "stale_filter_baseline",
+                format!(
+                    "Filter path '{}' baseline is stale: 'before' ({:?}) must match the current value ({:?}).",
+                    edit.path, edit.before, current,
+                ),
+                format!("filter[{i}].before"),
+            ));
+        }
+    }
+}
+
+/// u32-window parameterized operators (encode their parameter in the DSL token,
+/// e.g. `above_for_3`). The filter parser requires the parameter to be > 0.
+const FILTER_U32_WINDOW_OPS: &[&str] = &[
+    "above_for",
+    "below_for",
+    "crossed_above",
+    "crossed_below",
+    "slope_gt",
+    "slope_lt",
+    "zscore_gt",
+    "zscore_lt",
+];
+
+/// If `path` addresses a parameterized filter operator
+/// (`conditions.<i>.op.<suffix>`), return the operator suffix
+/// (`above_for`, `within_pct`, …); otherwise `None`. Only parameterized
+/// operators ever produce an `op.*` tunable path.
+fn filter_op_param_suffix(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("conditions.")?;
+    let tail = rest.split_once('.').map(|(_, t)| t)?; // drop the index
+    let suffix = tail.strip_prefix("op.")?;
+    if suffix == "within_pct" || FILTER_U32_WINDOW_OPS.contains(&suffix) {
+        Some(suffix)
+    } else {
+        None
+    }
+}
+
+/// True when `v` is a positive integer value (accepts both integer and
+/// integer-valued-float JSON, matching `set_filter_value`'s `value_as_u32`).
+/// Used to require `>= 1` for u32-window operator params.
+fn is_positive_integer(v: &serde_json::Value) -> bool {
+    if let Some(n) = v.as_u64() {
+        return n >= 1;
+    }
+    if let Some(f) = v.as_f64() {
+        return f >= 1.0 && f.fract() == 0.0;
+    }
+    false
+}
+
+/// Numeric-tolerant equality for filter baseline comparison: two JSON numbers
+/// compare by their f64 value (so `25` == `25.0`); otherwise fall back to
+/// structural equality (handles `null` == `null` for `max_wakeups_per_day`).
+fn filter_values_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
     }
 }
 
@@ -431,6 +523,80 @@ mod tests {
         assert!(
             validate_mutation_diff(&diff, &base).is_ok(),
             "null max_wakeups_per_day must be accepted"
+        );
+    }
+
+    #[test]
+    fn filter_edit_stale_baseline_rejected() {
+        // codex P2: `before` must match the live value, else the reverse
+        // mutation inverts against the wrong baseline. ADX is 25.0; before=20.0
+        // is stale.
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(20.0), // wrong — live value is 25.0
+            after: serde_json::json!(28.0),
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "stale_filter_baseline"),
+            "stale before must produce stale_filter_baseline: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_baseline_int_vs_float_not_stale() {
+        // 25 (int) must be accepted as the baseline for a 25.0 (float) live value
+        // — representation difference is not staleness.
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25), // int form of the 25.0 live value
+            after: serde_json::json!(28.0),
+        }]);
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "int-vs-float baseline must not be treated as stale"
+        );
+    }
+
+    fn fixture_filter_strategy_with_window_op() -> Strategy {
+        // Same as fixture_filter_strategy but the condition uses a parameterized
+        // window operator (`above_for_3`), exposing `conditions.0.op.above_for`.
+        let mut v = serde_json::to_value(fixture_filter_strategy()).unwrap();
+        v["filter"]["conditions"]["all"][0]["op"] = serde_json::json!("above_for_3");
+        serde_json::from_value(v).expect("window-op fixture must deserialise")
+    }
+
+    #[test]
+    fn filter_edit_zero_window_operator_rejected() {
+        // codex P2: `above_for_0` can't be deserialized by the filter parser, so
+        // a 0 (or negative/fractional) value on a u32-window op must be rejected
+        // before it mints an unparseable artifact.
+        let base = fixture_filter_strategy_with_window_op();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.op.above_for".to_string(),
+            before: serde_json::json!(3),
+            after: serde_json::json!(0), // invalid → would serialize to above_for_0
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "invalid_filter_value"),
+            "zero window-op value must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_positive_window_operator_accepted() {
+        let base = fixture_filter_strategy_with_window_op();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.op.above_for".to_string(),
+            before: serde_json::json!(3),
+            after: serde_json::json!(5), // valid positive integer
+        }]);
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "positive window-op value must be accepted"
         );
     }
 
