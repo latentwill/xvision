@@ -31,6 +31,21 @@ SEED_STRATEGIES_DIR="${XVN_SEED_STRATEGIES_DIR:-/strategies}"
 mkdir -p "$DATA_DIR"
 mkdir -p "$XVN_HOME"
 
+# Cortex memory store lives on the writable data volume so it survives
+# container recreation (the default $HOME/.xvn path is ephemeral inside the
+# container). Default it under $XVN_HOME unless the operator overrides it,
+# and make sure the parent dir exists + is owned by the runtime user — a
+# prior QA bug had a root-owned dir under the volume causing uid-1000
+# writes to fail.
+export XVN_MEMORY_DB="${XVN_MEMORY_DB:-$XVN_HOME/memory.db}"
+MEMORY_DB_DIR="$(dirname "$XVN_MEMORY_DB")"
+mkdir -p "$MEMORY_DB_DIR"
+# Best-effort: only attempt the chown when we're root (rootless/uid-1000
+# containers can't chown and don't need to — they already own the dir).
+if [[ "$(id -u)" == "0" ]]; then
+  chown -R "$(id -u):$(id -g)" "$MEMORY_DB_DIR" 2>/dev/null || true
+fi
+
 if [[ -d "$SEED_PROBES_DIR" ]]; then
   mkdir -p "$DATA_DIR/probes"
   cp -Rn "$SEED_PROBES_DIR"/. "$DATA_DIR/probes"/

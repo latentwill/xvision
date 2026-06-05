@@ -1069,13 +1069,7 @@ pub fn agent_namespace(agent_id: &str) -> String {
 /// in a `OnceCell` so we don't spin up a pool per HTTP request in
 /// steady state.
 pub async fn open_default_store() -> ApiResult<Arc<MemoryStore>> {
-    let path = std::env::var("XVN_MEMORY_DB")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .map(|h| h.join(".xvn").join("memory.db"))
-                .unwrap_or_else(|| std::path::PathBuf::from(".xvn-memory.db"))
-        });
+    let path = default_memory_db_path();
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             tokio::fs::create_dir_all(parent).await.ok();
@@ -1085,6 +1079,117 @@ pub async fn open_default_store() -> ApiResult<Arc<MemoryStore>> {
         .await
         .map_err(|e| ApiError::Internal(format!("memory: open store {}: {e}", path.display())))?;
     Ok(Arc::new(store))
+}
+
+/// The resolved memory-store path, honoring the same
+/// `$XVN_MEMORY_DB` → `~/.xvn/memory.db` → `.xvn-memory.db` chain that
+/// `ApiContext::open` and `open_default_store` use. Exposed so the status
+/// surface can report the path without opening the store.
+pub fn default_memory_db_path() -> std::path::PathBuf {
+    std::env::var("XVN_MEMORY_DB")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .map(|h| h.join(".xvn").join("memory.db"))
+                .unwrap_or_else(|| std::path::PathBuf::from(".xvn-memory.db"))
+        })
+}
+
+/// Per-namespace live-observation count for the status report.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryNamespaceStatus {
+    pub namespace: String,
+    pub live_observations: u64,
+}
+
+/// Operator health snapshot for the Cortex memory layer. Consumed by
+/// `xvn memory status` and folded into `xvn doctor` so both surfaces
+/// report the same store path, embedder presence/source, grace window,
+/// and per-namespace live-observation counts from a single source.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct MemoryStatus {
+    /// Resolved memory DB path (`$XVN_MEMORY_DB` chain).
+    pub store_path: String,
+    /// Whether the store's parent dir is writable by this process.
+    pub writable: bool,
+    /// True when an embedder source resolved (recall/record can embed).
+    pub embedder_present: bool,
+    /// The embedder id (`local:hash-v1`, `openai:text-embedding-3-small`)
+    /// when present.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub embedder_id: Option<String>,
+    /// Which resolution branch won (`local`, `openai-compat`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub embedder_source: Option<String>,
+    /// The soft-delete grace window in days (`XVN_MEMORY_FORGET_GRACE_DAYS`).
+    pub grace_days: u32,
+    /// Per-namespace live-observation counts.
+    pub namespaces: Vec<MemoryNamespaceStatus>,
+}
+
+/// Assemble the [`MemoryStatus`] health snapshot. Resolves the embedder
+/// SOURCE without instantiating it (no network call), reports the store
+/// path + writability, the configured grace window, and per-namespace
+/// live-observation counts.
+pub async fn status(store: &MemoryStore, xvn_home: &std::path::Path) -> ApiResult<MemoryStatus> {
+    let store_path = default_memory_db_path();
+
+    // Writability: probe the parent dir (the file may not exist yet).
+    let writable = match store_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => dir_is_writable(parent),
+        // No parent component (bare filename) → cwd.
+        _ => dir_is_writable(std::path::Path::new(".")),
+    };
+
+    let choice = crate::api::resolve_embedder_choice_from_env(xvn_home).await;
+    let embedder_present = !matches!(
+        choice,
+        crate::agent::embedder_choice::EmbedderChoice::None
+    );
+
+    // Reuse the namespace rollup, then count live observations per namespace.
+    let ns_list = list_namespaces(store).await?;
+    let namespaces = ns_list
+        .items
+        .into_iter()
+        .map(|n| MemoryNamespaceStatus {
+            namespace: n.namespace,
+            live_observations: n.observations,
+        })
+        .collect();
+
+    Ok(MemoryStatus {
+        store_path: store_path.display().to_string(),
+        writable,
+        embedder_present,
+        embedder_id: choice.embedder_id().map(str::to_string),
+        embedder_source: choice.source_label().map(str::to_string),
+        grace_days: xvision_memory::store::forget_grace_days(),
+        namespaces,
+    })
+}
+
+/// Best-effort directory-writability probe: create + remove a temp file.
+/// Falls back to `false` on any error (missing dir, read-only mount).
+fn dir_is_writable(dir: &std::path::Path) -> bool {
+    let probe = dir.join(format!(".xvn-memory-write-probe-{}", std::process::id()));
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]
@@ -1685,5 +1790,49 @@ mod tests {
     #[tokio::test]
     async fn agent_namespace_helper_matches_v2d_convention() {
         assert_eq!(agent_namespace("abc"), "agent:abc");
+    }
+
+    #[test]
+    fn memory_status_serializes_expected_fields() {
+        let status = MemoryStatus {
+            store_path: "/data/memory.db".into(),
+            writable: true,
+            embedder_present: true,
+            embedder_id: Some("local:hash-v1".into()),
+            embedder_source: Some("local".into()),
+            grace_days: 14,
+            namespaces: vec![MemoryNamespaceStatus {
+                namespace: "global".into(),
+                live_observations: 3,
+            }],
+        };
+
+        let v = serde_json::to_value(&status).expect("serialize MemoryStatus");
+        assert_eq!(v["store_path"], "/data/memory.db");
+        assert_eq!(v["writable"], true);
+        assert_eq!(v["embedder_present"], true);
+        assert_eq!(v["embedder_id"], "local:hash-v1");
+        assert_eq!(v["embedder_source"], "local");
+        assert_eq!(v["grace_days"], 14);
+        assert_eq!(v["namespaces"][0]["namespace"], "global");
+        assert_eq!(v["namespaces"][0]["live_observations"], 3);
+
+        // Round-trips back through Deserialize (the doctor report embeds it).
+        let back: MemoryStatus = serde_json::from_value(v).expect("deserialize");
+        assert_eq!(back, status);
+
+        // Optional embedder fields are omitted when absent.
+        let none = MemoryStatus {
+            store_path: "/data/memory.db".into(),
+            writable: false,
+            embedder_present: false,
+            embedder_id: None,
+            embedder_source: None,
+            grace_days: 0,
+            namespaces: vec![],
+        };
+        let v2 = serde_json::to_value(&none).expect("serialize");
+        assert!(v2.get("embedder_id").is_none());
+        assert!(v2.get("embedder_source").is_none());
     }
 }

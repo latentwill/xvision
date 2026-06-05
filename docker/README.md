@@ -77,6 +77,36 @@ assets in the data volume.
 | `MANTLE_RPC_URL` / `MANTLE_DEPLOYER_KEY` | Mantle access (identity image only) | none |
 | `RUST_LOG` | Tracing filter | unset |
 | `XVISION_OBSERVABILITY_RETENTION` | Agent-run retention mode (`full_debug`, `redacted`, `hash_only`) | `full_debug` |
+| `XVN_MEMORY_DB` | Cortex memory SQLite path. The entrypoint defaults it onto the writable data volume so memory survives container recreation | `$XVN_HOME/memory.db` |
+| `XVN_MEMORY_EMBEDDER` | Set to `local` to use the offline, deterministic `LocalEmbedder` (no network; **degraded recall quality** — dev/offline only). Any other value is ignored | unset |
+| `XVN_MEMORY_EMBEDDER_PROVIDER` | Name of a configured provider to use as the embeddings backend (OpenAI-compatible `/embeddings`). Explicit opt-in — wins even when the provider is not api.openai.com | unset |
+| `XVN_MEMORY_EMBEDDER_MODEL` | Override the embedding model id | `text-embedding-3-small` |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` | Direct OpenAI embedder credentials. Used when no `XVN_MEMORY_EMBEDDER`/`..._PROVIDER` override is set | base URL defaults to `https://api.openai.com/v1` |
+
+### Cortex memory embedder
+
+The memory layer ("Cortex") provisions an embedder WITHOUT a hard OpenAI
+dependency. The source is resolved in this order:
+
+1. `XVN_MEMORY_EMBEDDER=local` → the offline deterministic `LocalEmbedder`
+   (logs a degraded-quality warning; for dev / CI / air-gapped use only).
+2. `XVN_MEMORY_EMBEDDER_PROVIDER=<name>` → that configured provider's
+   `base_url` + key (OpenAI-compatible `/embeddings`), even when it is not
+   api.openai.com.
+3. `OPENAI_API_KEY` set → the OpenAI env path (`OPENAI_BASE_URL` overrides
+   the host).
+4. Auto-detect: a configured, keyed provider whose `base_url` points at the
+   real api.openai.com. Conservative — non-OpenAI providers are never
+   auto-picked (they may lack an `/embeddings` endpoint); use the explicit
+   opt-in in step 2 for those.
+5. Otherwise no embedder — recall/record degrade to a no-op (never crashes).
+
+The memory store lives at `XVN_MEMORY_DB` (defaulted onto the data volume by
+the entrypoint). Inspect health with `xvn memory status` (or the `memory`
+block of `xvn doctor --json`): it reports the store path + writability, the
+resolved embedder id/source, the forget grace window, and per-namespace
+live-observation counts. Memory is **default-off on every surface** — these
+vars provision capability only; nothing starts writing memory automatically.
 
 The retention default ships as `full_debug` so operators can read prompts
 and responses in the trace dock from the first run. For shared / client
