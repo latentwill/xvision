@@ -13,12 +13,15 @@ use serde::{Deserialize, Serialize};
 
 use xvision_core::config::ProviderKind;
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
+use xvision_engine::api::memory;
 use xvision_engine::autooptimizer::{
     blob_store::BlobStore,
     config::AutoOptimizerConfig,
     content_hash::ContentHash,
     cycle::{run_cycle, CycleConfig},
     cycle_runs::persist_cycle_cost,
+    dspy_bridge::LiveDspyBridge,
+    dspy_flywheel::DspyContext,
     eval_adapter::{BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner},
     gate::GateVerdict,
     judge::Judge,
@@ -241,6 +244,30 @@ pub async fn start_cycle(
     } else {
         None
     };
+    // DSPy in-loop bridge: when `dspy_enabled = true`, open the memory store
+    // and build a `DspyContext` with a `LiveDspyBridge` before the spawn so
+    // the owned context can be moved into the task.  Mirrors the `cycle_memory`
+    // pattern above.  The bridge reuses `metered_mutator` (the
+    // `CostMeteringDispatch`-wrapped mutator dispatch) so DSPy reflection is
+    // priced through the shared per-cycle meter.
+    let cycle_dspy_ctx: Option<DspyContext> = if cfg.dspy_enabled {
+        match memory::open_default_store().await {
+            Ok(store) => Some(DspyContext {
+                store,
+                bridge: std::sync::Arc::new(LiveDspyBridge {
+                    dispatch: std::sync::Arc::clone(&metered_mutator),
+                    model: cfg.mutator.model.clone(),
+                }),
+                namespace: "autooptimizer:dspy".to_string(),
+            }),
+            Err(e) => {
+                tracing::warn!(error = %e, "dspy_enabled but could not open memory store; skipping DSPy context");
+                None
+            }
+        }
+    } else {
+        None
+    };
     tokio::spawn(async move {
         // The production paper tester: real cached-backtest Executor, metered at
         // the dispatch boundary, with the shared per-cycle meter feeding both the
@@ -292,7 +319,9 @@ pub async fn start_cycle(
             move |ev| {
                 let _ = tx.send(ev);
             },
-            None,
+            // DSPy in-loop: `Some` when `dspy_enabled = true` and the store
+            // opened successfully; `None` otherwise (operator opt-in default off).
+            cycle_dspy_ctx.as_ref(),
             // Cortex memory: optimizer recall/record (default ON, config-backed).
             cycle_memory.as_deref(),
             Some(cycle_id.clone()),
