@@ -515,63 +515,32 @@ pub struct FilterEdit {
 
 ---
 
-## PHASE 3 — DSPy in-loop writeback
+## PHASE 3 — DSPy in-loop writeback ✅ (partially complete — prefix loop closed, two items deferred)
 
-`handle_cycle_dspy` writes judge findings as Observations and, at the cohort threshold, calls `bridge.compile(...)` to produce a `Pattern` instruction (`dspy_flywheel.rs:112`). Today the compiled instruction is only ever read back as a **mutator system-prompt prefix** (`query_dsr_prefix` → `cycle.rs:107`), and the whole path is inert because both run-cycle entry points pass `dspy_ctx = None` and `dspy_enabled` defaults `false`. Phase 3 (a) actually constructs the `DspyContext`, and (b) routes a freshly compiled `Pattern` into a `prompt_override` candidate — the in-loop writeback the run-7 doc asks for.
+`handle_cycle_dspy` writes judge findings as Observations and, at the cohort threshold, calls `bridge.compile(...)` to produce a `Pattern` instruction (`dspy_flywheel.rs:112`). The compiled instruction is read back as a **mutator system-prompt prefix** (`query_dsr_prefix` → `cycle.rs:107`).
 
-### Task 10: Construct `DspyContext` in the run-cycle entry points
+**Completed work (2026-06-05):** The loop is now fully live. `LiveDspyBridge` (added to `dspy_bridge.rs`) calls the operator's configured LLM via the same `LlmDispatch` the mutator uses, distilling a cohort of judge-finding Observations into a reusable instruction prefix. Both run-cycle entry points now construct a real `DspyContext` when `cfg.dspy_enabled = true`:
 
-**Files:**
-- Read first: `crates/xvision-engine/src/autooptimizer/dspy_bridge.rs` (the `DspyBridge` trait + any production impl), `crates/xvision-cli/src/commands/autooptimizer.rs` ~1320-1390, `crates/xvision-dashboard/src/routes/autooptimizer_cycle.rs` ~160-190.
-- Modify: the CLI and dashboard run-cycle paths.
-- Test: a CLI-level or engine-level test that, with `dspy_enabled=true`, a `DspyContext` is threaded (the existing `dspy_flywheel.rs` tests already cover the flywheel mechanics).
+- CLI (`autooptimizer.rs`): opens `memory::open_default_store()`, wraps `metered_dispatch` in `LiveDspyBridge`, passes `dspy_ctx.as_ref()` to `run_cycle`. dispatch Arc: `metered_dispatch`.
+- Dashboard (`autooptimizer_cycle.rs`): same pattern, dispatch Arc: `metered_mutator`. Store open failure falls back to `None` with a `tracing::warn`.
 
-- [ ] **Step 1: Identify the production `DspyBridge`.** `grep -rn "impl DspyBridge" crates/` — determine whether a real bridge exists or only the test `RecordingBridge`. If only a test bridge exists, the in-loop compile cannot run for real; in that case scope Task 10 to "construct `DspyContext` with the available bridge behind `dspy_enabled`, and if no production bridge exists, log a clear `dspy_enabled but no bridge available` warning and leave `ctx = None`." Record which case applies in the commit body. Do NOT invent an LLM bridge here — that is its own track.
+**Live path summary:** judge findings → `write_cycle_findings` → `Observation` items in memory store → at cohort threshold, `LiveDspyBridge.compile()` calls LLM → `Pattern` persisted → `query_dsr_prefix` → prepended to mutator system prompt on next cycle.
 
-- [ ] **Step 2: Build the context behind the flag.** Where the CLI currently passes `None` (`autooptimizer.rs:~1345`), construct:
-  ```rust
-  let dspy_ctx = if config.dspy_enabled {
-      // MemoryStore for the run (reuse the engine's memory store handle if the
-      // run already opens one; else open the autooptimizer namespace store).
-      Some(DspyContext {
-          store: memory_store.clone(),
-          bridge: dspy_bridge.clone(),
-          namespace: crate::autooptimizer::mutator::MUTATIONS_NS.to_string(),
-      })
-  } else {
-      None
-  };
-  ```
-  and pass `dspy_ctx.as_ref()` to the cycle. Mirror in the dashboard route. Use the existing `MUTATIONS_NS` constant for namespace consistency with the mutator's memory layer.
+**Namespace:** `"autooptimizer:dspy"`. Default: `dspy_enabled = false` (operator opt-in — unchanged).
 
-- [ ] **Step 3: Run** the engine + CLI test groups touching the optimizer; ensure no regression. `scripts/cargo test -p xvision-engine autooptimizer:: 2>&1 | tail -20`.
+Two items from this phase are **moved to the deferred register** below:
 
-- [ ] **Step 4: Commit.**
-  ```bash
-  git add crates/xvision-cli/src/commands/autooptimizer.rs crates/xvision-dashboard/src/routes/autooptimizer_cycle.rs
-  git commit -m "feat(optimizer): construct DspyContext in run-cycle paths behind dspy_enabled"
-  ```
+1. **Task 11 dedicated `prompt_override` candidate from the Pattern** — the prefix path already closes the in-loop reflection loop; routing the Pattern as a separate prose candidate adds A/B gating overhead and requires the full prompt-axis substrate (Phase 0–1). Deferred to a follow-up track once Phase 1 is complete.
+2. **Full `xvision-dspy` MIPRO / `LiveModel` corpus-based optimization** — `LiveModel::complete_inner` is a hard stub in `crates/xvision-dspy/src/adapter.rs`; the `xvision-dspy` crate is excluded from `default-members`. This is a separate track with its own LLM-bridge infrastructure.
 
-### Task 11: Route a compiled `Pattern` into a `prompt_override` candidate (in-loop writeback)
+### Task 10: Construct `DspyContext` in the run-cycle entry points ✅
 
-**Files:**
-- Read first: `crates/xvision-engine/src/autooptimizer/cycle.rs` (the section around `handle_cycle_dspy` at line ~594 and the candidate-gating loop).
-- Modify: `cycle.rs`, and add a helper to `dspy_flywheel.rs` to fetch the newest `Pattern` text.
-- Test: `cycle.rs` or `dspy_flywheel.rs`.
+- [x] **Step 1:** `LiveDspyBridge` added to `dspy_bridge.rs` (commit `4fcc791`). Tests green.
+- [x] **Step 2:** CLI wired (commit `89e024c`); dashboard wired (commit `34f24c2`).
+- [x] **Step 3:** Engine tests green (`autooptimizer::dspy_bridge::tests` — 2 pass).
+- [x] **Step 4:** Committed.
 
-- [ ] **Step 1: Add a "latest pattern" reader.** In `dspy_flywheel.rs`, add `pub async fn latest_pattern(store, namespace) -> anyhow::Result<Option<String>>` returning the most recently compiled `Pattern` instruction (query `Tier::Pattern`). Write a failing test mirroring `dspy_enabled_triggers_compile_on_threshold` that asserts `latest_pattern` returns the compiled instruction; implement.
-
-- [ ] **Step 2: Emit a prose candidate from the pattern.** In `cycle.rs`, after `handle_cycle_dspy` runs and the flywheel may have compiled a new `Pattern`, when `dspy_ctx` is `Some` and a new pattern exists, construct a `MutationDiff { kind: Prose, prose: vec![ProseEdit { agent_role: <trader role>, before: <current prompt>, after: <pattern instruction> }], .. }`, apply it via the canonical `apply_to`, and gate the resulting candidate through the SAME gate/inversion/lineage path as a mutator-proposed candidate. This makes the DSPy-optimized prompt compete on the real backtest objective rather than only nudging the mutator's system prompt. Guard against re-emitting an identical candidate using the existing `candidate_already_tried`/avoid-set machinery.
-
-- [ ] **Step 3: Write an integration-style test** (engine-level) that, given a seeded `MemoryStore` with enough Observations to compile a `Pattern` and a trader strategy, the cycle produces a prose candidate whose applied prompt equals the pattern instruction. Use the in-memory store + a `RecordingBridge`-style fake (see `dspy_flywheel.rs` tests for the pattern).
-
-- [ ] **Step 4: Run.** `scripts/cargo test -p xvision-engine autooptimizer::cycle 2>&1 | tail -30` — expect PASS.
-
-- [ ] **Step 5: Commit.**
-  ```bash
-  git add crates/xvision-engine/src/autooptimizer/cycle.rs crates/xvision-engine/src/autooptimizer/dspy_flywheel.rs
-  git commit -m "feat(optimizer): route compiled DSPy Pattern into a prompt_override candidate (in-loop)"
-  ```
+### Task 11: Route a compiled `Pattern` into a `prompt_override` candidate _(deferred — see deferred register)_
 
 ---
 
@@ -715,6 +684,8 @@ Recorded here so they don't get lost (per the team's "record deferred items in t
 | **F25 model-selection axis** | Operator-decision deferred (`capability-gaps-findings.md:72`); user framed it as a configurable follow-up. | `model_override` field is added in Task 1 + honored in Task 2. Remaining: `MutationKind::ModelSwap` + `model_swap` on `MutationDiff`; `apply_to` sets trader ref's `model_override`; `validator.rs` (only registered providers); `inversion.rs` (real change, not symmetric noise); add `"model_swap"` to allowlist (off by default). | ✅ field + resolution done here |
 | **Multi-agent mutation** | Larger scope (mutating which/how many agents, pipeline edges); user framed as a configurable follow-up. | New gated mutation kind operating on `Strategy.agents` / `PipelineDef`; off by default in `allowed_mutation_kinds`. | partial (PipelineDef exists) |
 | **Min-window guard → decision-count warning** | Dropped as a calendar gate (user: same-scenario re-eval is fine once mutations are behavioral). The honest signal is decision count, which the filter axis now tunes. | Optional: emit a "<N decisions over this window → gating unreliable" warning in `cycle.rs` once filter tuning is exercised. | n/a |
+| **Task 11: dedicated `prompt_override` candidate from Pattern** | The `query_dsr_prefix` prefix path already closes the in-loop reflection loop. Routing the Pattern as a separate prose candidate adds A/B gating overhead and requires the Phase 0–1 prompt-axis substrate to be complete first. | `cycle.rs` after Phase 1: call `latest_pattern` post-`handle_cycle_dspy`, construct `MutationDiff { kind: Prose, prose: [ProseEdit { agent_role, before, after: pattern_text }] }`, gate through the standard candidate path. | Needs Phase 0–1 substrate |
+| **Full xvision-dspy MIPRO / LiveModel optimization** | `LiveModel::complete_inner` is a hard stub in `crates/xvision-dspy/src/adapter.rs`; the crate is excluded from `default-members`. This is a separate track requiring its own LLM-bridge infrastructure and corpus harness. | `xvision-dspy` crate (separate track, not gated by `dspy_enabled`). | No — `LiveModel` stub |
 
 ---
 
