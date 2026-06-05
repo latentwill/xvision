@@ -358,6 +358,30 @@ describe("ChatRail", () => {
     });
   });
 
+  it("self-heals a failed session resolve without a manual refresh", async () => {
+    // A backend deploy/restart leaves `tailscale serve` with no upstream for
+    // a few seconds → resolveSession 502s. Before the self-heal, this one-shot
+    // effect would never retry and the rail stayed sessionless until the user
+    // refreshed. Now it must retry on a backoff and recover on its own.
+    vi.mocked(chatApi.resolveSession)
+      .mockRejectedValueOnce(new Error("502 Bad Gateway"))
+      .mockResolvedValue({ session_id: "old-session", history: [] });
+
+    renderRail();
+
+    // First attempt fails.
+    await waitFor(() =>
+      expect(chatApi.resolveSession).toHaveBeenCalledTimes(1),
+    );
+
+    // Without any remount, the backoff retry fires (~500ms) and resolves.
+    await waitFor(
+      () => expect(chatApi.resolveSession).toHaveBeenCalledTimes(2),
+      { timeout: 3000 },
+    );
+    expect(chatApi.resolveSession).toHaveBeenLastCalledWith(workspaceScope);
+  });
+
   it("does not block app startup when Safari storage access is unavailable", () => {
     const blockedStorage = {
       getItem() {
