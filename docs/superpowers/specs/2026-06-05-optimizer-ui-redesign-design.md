@@ -262,15 +262,31 @@ register — never cut silently, per project convention).
 - `⏳` panels (eval matrix, gate buckets, per-regime cards, flight recorder, attesters, evening
   summary) render as honest `EmptyPanel` stubs labeled with their owning phase.
 
-### Deferred-items register (moved out of Phase 1)
+### Delivered in Phase 2 (regime matrix — 2026-06-05, branch `feat/optimizer-regime-matrix-p2`)
+
+- **Backend:** `LineageStatus::Quarantined` (wire `quarantined` / operator "Suspect"); configurable
+  `regime_set: Vec<RegimeWindow>` on `AutoOptimizerConfig` (serde-default empty ⇒ legacy 2-scenario
+  path unchanged); `aggregate_regime_verdicts` gate (Kept = Bull AND Bear/Shock both pass, Suspect =
+  single-regime evidence, Dropped = fails); migration 055 + `autooptimizer_regime_results` table;
+  orchestrator regime loop with parent-per-regime caching, inversion guard restored for Active
+  candidates, unique/non-overlapping regime validation, fail-loud persistence; Suspect tier
+  counted end-to-end in `CycleRunSummary.suspect_count`, SSE `outcome` field, CLI summary/filter/
+  display; dashboard `quarantined` parse fixed (was 500); `/cycles/:id` payload carries
+  `suspect_count` + `regime_results` per node.
+- **Frontend:** `DeltaCell` heat primitive; `GateBuckets` panel; `EvalMatrix` (experiments × regimes
+  heatmap); `RegimeCards` (per-experiment per-regime cards); all three wired into the Cycle and
+  Experiment screens replacing the Phase-2 `EmptyPanel` stubs. `useExperimentRegimeResults` hook
+  piggybacks on `useCycleRun` to source per-experiment regime data without a new endpoint.
+
+### Deferred-items register (still open)
 
 | Item | Was marked | Now owned by | Why |
 |---|---|---|---|
-| Per-writer **real experiment attribution** in the writers panel (list a writer's actual experiments, not stats) | §4.1 `✅` | **Phase 2** | `/lineage` carries no `provider`/`model`; `mutator_attribution` exists but is only joined into `/cycles/:id` today. Needs a backend join (`mutator_attribution` → `/lineage`) to avoid fabricated association. Phase-1 shows the writer's real `/ladder` stats instead. |
-| **Experiment-kind pill** + why/what-changed summary in the cycle experiments table | §4.2 `✅ core` | **Phase 2** | The backend emits no structured experiment "kind"; deriving it requires per-node blob diffing (N fetches) or a backend field. `ExperimentPill` primitive is built and tested, ready to wire when the data lands. |
-| **Top-Δ-Sharpe** column (Home recent-cycles + cycle hero) | §4.1/§4.2 | **Phase 2** | Δ-Sharpe-vs-parent is a regime-matrix output; not available pre-Phase-2. |
-| Richer cycle/experiment **hero metrics** (regimes-kept, sign-offs, per-regime equity) | §4.2/§4.3 | **Phases 2/4** | Depend on regime results (P2) and attesters (P4). |
-| Parent-diff **Copy diff / Full manifest** actions + collapsed-unchanged sections | §4.3 | **Phase 2** | Polish; current panel shows changed fields only. Also: cap rows for very large blobs. |
+| Per-writer **real experiment attribution** (list a writer's actual experiments) | §4.1 `✅` | **Phase 3** | `/lineage` carries no `provider`/`model`; real attribution needs a backend join of `mutator_attribution` into the `/lineage` endpoint. |
+| **Experiment-kind pill** + why/what-changed summary in cycle experiments table | §4.2 `✅ core` | **Phase 3** | Backend emits no structured experiment "kind"; `ExperimentPill` primitive ready, needs a backend field or N-fetch blob-diff. |
+| **Top-Δ-Sharpe** column (Home/Cycle hero) | §4.1/§4.2 | **Phase 3** | Available once regime-matrix data is queried server-side (e.g. `MAX(delta_sharpe)` across regime results per cycle). |
+| **Flight recorder** (per-experiment trace panel) | Phase 3 | **Phase 3** | `agent_runs`/`spans` not yet linked to optimizer experiments. |
+| **Attesters + sign-off receipts + evening summary** | Phase 4 | **Phase 4** | New concept; no backend yet. |
+| Parent-diff **Copy diff / Full manifest** actions + collapsed-unchanged sections | §4.3 | **Phase 3** | Polish; also: add row cap for large blobs. |
 
-`ExperimentPill` is intentionally retained as a tested Phase-2 building block (its data source
-arrives with the regime matrix); it is not dead code to be removed.
+`ExperimentPill` is built and tested; it will be wired in Phase 3 alongside experiment-kind attribution.
