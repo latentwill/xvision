@@ -4,6 +4,7 @@ import { useCycleRun } from "../api";
 import { Breadcrumb } from "../ui/Breadcrumb";
 import { EmptyPanel } from "../ui/EmptyPanel";
 import { CycleExperimentsTable } from "../panels/CycleExperimentsTable";
+import { LineageTreePanel } from "../panels/LineageTreePanel";
 
 function stat(label: string, value: string, tone = "text-text") {
   return (
@@ -45,6 +46,8 @@ export function CycleDetail() {
         <EmptyPanel title="Eval matrix" phase={2} hint="Experiments × regimes heat-map of Δ-Sharpe — lights up when the regime matrix runs." />
 
         <CycleExperimentsTable cycleId={cycleId} />
+
+        <LineageTreePanel cycleId={cycleId} />
 
         <EmptyPanel title="Attester activity" phase={4} hint="Local attester sign-offs (endorse / question / reject) per experiment, once attesters ship." />
         <EmptyPanel title="Evening summary preview" phase={4} hint="The local, unpublished nightly summary of kept experiments, once sign-off ships." />
