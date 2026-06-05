@@ -21,6 +21,7 @@ use chrono::{DateTime, Utc};
 use xvision_memory::embedder::{Embedder, StaticEmbedder};
 use xvision_memory::store::MemoryStore;
 use xvision_memory::types::{MemoryItem, MemoryMatch, MemoryMode, Namespace, Tier};
+use xvision_observability::Redactor;
 
 #[derive(Debug)]
 pub enum RecallResult {
@@ -218,13 +219,20 @@ impl MemoryRecorder {
         let Some(embedder) = &self.embedder else {
             return Ok(None);
         };
-        let emb = embedder.embed(text).await?;
+        // Cross-cutting invariant: every memory write routes through the
+        // observability redactor so a secret-shaped token (API key, JWT,
+        // private key, mnemonic) pasted into an agent/chat surface is never
+        // embedded or persisted. This is the single chokepoint for the
+        // custom-namespace surfaces (judge/mutator/chat); redacting here is
+        // idempotent if a caller already redacted (e.g. the chat rail).
+        let redacted = Redactor::new().redact(text).text;
+        let emb = embedder.embed(&redacted).await?;
         let id = ulid::Ulid::new().to_string();
         let item = MemoryItem {
             id: id.clone(),
             namespace: namespace.to_string(),
             tier: Tier::Observation,
-            text: text.to_string(),
+            text: redacted,
             embedding: emb,
             created_at: chrono::Utc::now(),
             run_id: Some(run_id),
@@ -357,6 +365,39 @@ mod tests {
                 .await
                 .expect("count ok"),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn record_observation_redacts_secret_shaped_tokens() {
+        // Cross-cutting closeout: the shared write primitive must redact
+        // before persisting so a pasted secret never lands in memory.
+        let store = store().await;
+        let rec =
+            MemoryRecorder::with_static_embedder(store.clone(), "static-test", vec![0.4, 0.5, 0.6]);
+        let win = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let secret = "sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        rec.record_observation_in_namespace(
+            "n",
+            &format!("user pasted a key {secret} into chat"),
+            "run-1".to_string(),
+            "chat".to_string(),
+            0,
+            win,
+            win,
+        )
+        .await
+        .expect("record ok");
+
+        let texts = store
+            .list_live_observation_texts("n", 10)
+            .await
+            .expect("list ok");
+        assert_eq!(texts.len(), 1);
+        assert!(
+            !texts[0].contains(secret),
+            "raw secret must not be persisted, got: {}",
+            texts[0]
         );
     }
 

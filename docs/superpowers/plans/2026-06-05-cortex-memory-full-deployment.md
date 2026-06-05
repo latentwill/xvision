@@ -241,6 +241,24 @@ Key substrate references (verified file:line):
 
 ---
 
+## Cross-cutting closeout — RESULTS (2026-06-05 implementation)
+
+Implemented on branch `feat/cortex-memory-deployment` (P0–P4 + closeout). Status of each cross-cutting item:
+
+- ✅ **Dependency guard:** `cargo tree -p xvision-engine` and `-p xvision-dashboard` → no `dspy-rs` / `rig-core`. Clean. The new memory path is plain `xvision-memory` + `Embedder`.
+- ✅ **Temporal-safety audit:** all new eval-context recalls forward `Some(day_scenario.time_window.start)` — Judge (`judge.rs` `recall_in_namespace(..., scenario_start)`, fed `Some(start)` from `cycle.rs`) and mutator (`cycle.rs` `recall_in_namespace(MUTATIONS_NS, .., Some(start))`). The live chat recall (`wizard_loop.rs`) passes `None`. The only remaining `query(.., None)` in cycle context is the pre-existing `dspy_flywheel::query_dsr_prefix` (gated behind `dspy_enabled=false`, static-embedding, untouched). Each surface has a regression test.
+- ✅ **Default-Off + best-effort:** every surface is opt-in (per-slot `memory_mode`; Judge/mutator behind CLI `XVN_OPTIMIZER_MEMORY`, dashboard `None`; chat behind `XVN_CHAT_MEMORY`). No recall/record/embedder/store/redact error can fail an agent/turn/cycle — verified per phase.
+- ✅ **Redaction before write:** consolidated at the single chokepoint `MemoryRecorder::record_observation_in_namespace` (redacts via `xvision_observability::Redactor` before embedding **and** persisting), covering Judge + mutator + chat. The chat rail also pre-redacts (idempotent, defense-in-depth). Tests: `record_observation_redacts_secret_shaped_tokens` (engine) + `write_back_redacts_pasted_secret` (dashboard). NOTE: the pre-existing strategy-agent path (`execute.rs` `record()`) was left unchanged — it stores the model's own decision text and is out of this plan's diff; a future pass can route it through the same redactor.
+- ✅ **Retention soft-delete + grace:** `xvn memory forget` / `xvn memory undo-forget` work within the grace window (`XVN_MEMORY_FORGET_GRACE_DAYS`, default 14); the new `xvn memory status` reports `grace_days`.
+
+### Deferred follow-ups (recorded here per the deferred-items convention)
+
+- ⏳ **Observability events on the three new surfaces.** `memory_recall` / `memory_write` `UnifiedEvent`s currently fire only on the strategy-agent dispatch path (`execute.rs` via `input.obs`). The shared explicit-namespace primitives (`recall_in_namespace` / `record_observation_in_namespace`) used by Judge/mutator/chat do **not** emit trace-dock events (they have no `obs` handle). Functionality is unaffected (recall/record work; `tracing` logs fire), but the trace dock won't show memory hits/writes for those surfaces. Follow-up: thread an obs emitter into the primitive (or emit at each call site) so all four surfaces render in the trace dock with per-surface labels.
+- ⏳ **Automatic retention janitor.** `api::memory::sweep_expired` → `MemoryStore::hard_delete_expired(grace_days)` exists and is correct, but is **not wired into any scheduler** — expired hard-delete is manual-only today (this is a pre-existing substrate gap, not introduced here). Follow-up: invoke `sweep_expired` from the dashboard/CLI background janitor loop on the grace cadence.
+- ⏳ **Dashboard-side optimizer memory + DSPy flywheel enablement (plan Steps 2.4/3.6 partial).** Judge/mutator memory is enabled via the CLI (`XVN_OPTIMIZER_MEMORY=1`); the dashboard `run-cycle` path passes `None` until `AppState`-threaded enablement lands (the P4 recorder-on-`AppState` seam makes this a small follow-up). The optional DSPy flywheel path (Step 3.6) was intentionally **not** enabled (kept offline-only; `dspy_enabled` unchanged).
+
+---
+
 ## Self-review checklist (completed by plan author)
 
 - **Spec coverage:** all four named surfaces have a phase (strategy agents = P1, review/Judge = P2, optimizer = P3, chat rail = P4) over a shared substrate (P0) + cross-cutting closeout. ✅
