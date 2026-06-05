@@ -208,17 +208,23 @@ fn two_filter_strategy(cadence: u32) -> (Strategy, Vec<ResolvedAgentSlot>) {
             agent_id: "f1".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-        },
+        prompt_override: None,
+        model_override: None,
+},
         AgentRef {
             agent_id: "f2".into(),
             role: "vol_filter".into(),
             activates: Some(Capability::Filter),
-        },
+        prompt_override: None,
+        model_override: None,
+},
         AgentRef {
             agent_id: "t".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        },
+        prompt_override: None,
+        model_override: None,
+},
     ];
     let slots = vec![
         resolved("regime_filter"),

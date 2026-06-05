@@ -31,6 +31,7 @@ fn param_diff() -> MutationDiff {
             added: Vec::new(),
             removed: Vec::new(),
         },
+        filter: Vec::new(),
         rationale: "widen stop".into(),
     }
 }
@@ -69,6 +70,7 @@ fn describe_mutation_outcome_prose_and_tools() {
             added: Vec::new(),
             removed: Vec::new(),
         },
+        filter: Vec::new(),
         rationale: "x".into(),
     };
     let d = describe_mutation_outcome(&prose, 0.12, "active");
@@ -84,6 +86,7 @@ fn describe_mutation_outcome_prose_and_tools() {
             added: vec!["macd".into()],
             removed: vec!["rsi".into()],
         },
+        filter: Vec::new(),
         rationale: "x".into(),
     };
     let t = describe_mutation_outcome(&tools, -0.05, "rejected");

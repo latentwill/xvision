@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::autooptimizer::mutator::{MutationDiff, ParamChange, ProseEdit};
+use crate::autooptimizer::mutator::{
+    filter_tunable_paths, set_filter_value, FilterEdit, MutationDiff, ParamChange, ProseEdit,
+};
 use crate::strategies::{agent_ref::canonical_role, Strategy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +42,7 @@ pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<()
     validate_prose_edits(&diff.prose, base, &mut errors);
     validate_param_changes(&diff.params, base, &mut errors);
     validate_tools(&diff.tools.removed, &diff.tools.added, base, &mut errors);
+    validate_filter_edits(&diff.filter, base, &mut errors);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -50,24 +53,30 @@ pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<()
 fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<ValidationError>) {
     let known_roles: HashSet<String> = base.agents.iter().map(|a| a.role.clone()).collect();
     for (i, edit) in prose.iter().enumerate() {
+        // The `agent_role` must match an agent in the strategy so apply_to has
+        // a real home (the AgentRef's prompt_override). An unknown role means
+        // the edit is a structural no-op and the writer is targeting a ghost slot.
         if !known_roles.contains(&canonical_role(&edit.agent_role)) {
             errors.push(ValidationError::with_path(
-                "unknown_agent_role",
+                "unknown_role",
                 format!(
-                    "Experiment writer referenced unknown agent role '{}'.",
-                    edit.agent_role
+                    "Experiment writer referenced unknown agent role '{}'. \
+                     Valid roles: [{}].",
+                    edit.agent_role,
+                    known_roles.iter().cloned().collect::<Vec<_>>().join(", ")
                 ),
                 format!("prose[{i}].agent_role"),
             ));
         }
-        // Strategy stores only AgentRef (agent_id + role), not inline prose.
-        // Without the Agent store, the only enforceable baseline check is
-        // that the caller supplied a non-empty `before` value.
-        if edit.before.is_empty() {
+        // `after` is the COMPLETE replacement prompt; it must not be blank.
+        // An empty `after` would erase the agent's prompt entirely, which is
+        // never a coherent experiment.
+        if edit.after.trim().is_empty() {
             errors.push(ValidationError::with_path(
-                "stale_prose_baseline",
-                "Experiment writer must supply the current prompt text in 'before'.",
-                format!("prose[{i}].before"),
+                "empty_prose",
+                "Prose experiment 'after' must not be empty or whitespace; \
+                 supply the complete replacement prompt text.",
+                format!("prose[{i}].after"),
             ));
         }
     }
@@ -170,6 +179,174 @@ fn validate_param_after_value(
     }
 }
 
+fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec<ValidationError>) {
+    if edits.is_empty() {
+        return;
+    }
+    // Require that the strategy has a filter to edit.
+    let Some(filter) = base.filter.as_ref() else {
+        errors.push(ValidationError::new(
+            "no_filter",
+            "Strategy has no filter; `filter` experiments require `strategy.filter` to be present.",
+        ));
+        return;
+    };
+
+    // Map each valid path to its CURRENT live value, so we can both reject
+    // unknown paths and catch stale baselines (mirrors `stale_param_baseline`).
+    let tunable: std::collections::HashMap<String, serde_json::Value> =
+        filter_tunable_paths(filter).into_iter().collect();
+
+    let errors_at_entry = errors.len();
+
+    for (i, edit) in edits.iter().enumerate() {
+        // Path must be one of the enumerated tunable paths.
+        let Some(current) = tunable.get(&edit.path) else {
+            errors.push(ValidationError::with_path(
+                "unknown_filter_path",
+                format!(
+                    "Filter path '{}' is not a tunable path on this strategy's filter. \
+                     Use the paths listed in the user message.",
+                    edit.path
+                ),
+                format!("filter[{i}].path"),
+            ));
+            continue;
+        };
+
+        // `after` must be a number (or null for max_wakeups_per_day).
+        let is_nullable = edit.path == "max_wakeups_per_day";
+        if edit.after.is_null() && is_nullable {
+            // null is valid for max_wakeups_per_day → stays None.
+        } else if !edit.after.is_number() {
+            errors.push(ValidationError::with_path(
+                "invalid_filter_value",
+                format!(
+                    "Filter path '{}' requires a numeric value{}; got {:?}.",
+                    edit.path,
+                    if is_nullable { " or null" } else { "" },
+                    edit.after,
+                ),
+                format!("filter[{i}].after"),
+            ));
+            continue;
+        } else if let Some(suffix) = filter_op_param_suffix(&edit.path) {
+            // Parameterized operators must stay strictly positive: the filter
+            // parser rejects e.g. `above_for_0` / `within_pct_0`, so applying a
+            // zero (or negative) `after` would mint a Strategy artifact that can
+            // no longer be deserialized (codex P2, run-7). The u32-window ops
+            // additionally require an integer value (matching `value_as_u32` in
+            // `set_filter_value`).
+            let valid = if suffix == "within_pct" {
+                edit.after.as_f64().map(|f| f > 0.0).unwrap_or(false)
+            } else {
+                is_positive_integer(&edit.after)
+            };
+            if !valid {
+                errors.push(ValidationError::with_path(
+                    "invalid_filter_value",
+                    format!(
+                        "Filter operator path '{}' requires a positive {}; got {:?}.",
+                        edit.path,
+                        if suffix == "within_pct" { "number" } else { "integer" },
+                        edit.after,
+                    ),
+                    format!("filter[{i}].after"),
+                ));
+                continue;
+            }
+        }
+
+        // Stale baseline: `before` must match the live value (numeric-tolerant so
+        // an int vs float representation — 25 vs 25.0 — isn't a false reject).
+        // The reverse mutation uses `before`, so a stale baseline would make the
+        // inversion-pair check compare against the wrong filter (codex P2).
+        if !filter_values_equal(&edit.before, current) {
+            errors.push(ValidationError::with_path(
+                "stale_filter_baseline",
+                format!(
+                    "Filter path '{}' baseline is stale: 'before' ({:?}) must match the current value ({:?}).",
+                    edit.path, edit.before, current,
+                ),
+                format!("filter[{i}].before"),
+            ));
+        }
+    }
+
+    // Whole-filter validation (codex P2): even when every edit is individually
+    // well-formed, the RESULT may violate filter invariants the per-path checks
+    // don't see — indicator-specific bounds (RSI/ADX 0..=100), `between` ranges
+    // with lo >= hi, `max_wakeups_per_day` outside 1..=1440, etc. Apply the edits
+    // to a clone and run the filter crate's own validator so an invalid candidate
+    // is rejected HERE (clean retry) instead of blowing up at backtest time. Only
+    // run when the per-edit checks were clean, so the message isn't noise on top
+    // of an already-reported bad edit.
+    if errors.len() == errors_at_entry {
+        let mut candidate = filter.clone();
+        for edit in edits {
+            set_filter_value(&mut candidate, &edit.path, &edit.after);
+        }
+        if let Err(e) = xvision_filters::validate(&candidate) {
+            errors.push(ValidationError::with_path(
+                "invalid_filter_result",
+                format!("Applying the filter edit(s) produces an invalid filter: {e}"),
+                "filter",
+            ));
+        }
+    }
+}
+
+/// u32-window parameterized operators (encode their parameter in the DSL token,
+/// e.g. `above_for_3`). The filter parser requires the parameter to be > 0.
+const FILTER_U32_WINDOW_OPS: &[&str] = &[
+    "above_for",
+    "below_for",
+    "crossed_above",
+    "crossed_below",
+    "slope_gt",
+    "slope_lt",
+    "zscore_gt",
+    "zscore_lt",
+];
+
+/// If `path` addresses a parameterized filter operator
+/// (`conditions.<i>.op.<suffix>`), return the operator suffix
+/// (`above_for`, `within_pct`, …); otherwise `None`. Only parameterized
+/// operators ever produce an `op.*` tunable path.
+fn filter_op_param_suffix(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("conditions.")?;
+    let tail = rest.split_once('.').map(|(_, t)| t)?; // drop the index
+    let suffix = tail.strip_prefix("op.")?;
+    if suffix == "within_pct" || FILTER_U32_WINDOW_OPS.contains(&suffix) {
+        Some(suffix)
+    } else {
+        None
+    }
+}
+
+/// True when `v` is a positive integer value (accepts both integer and
+/// integer-valued-float JSON, matching `set_filter_value`'s `value_as_u32`).
+/// Used to require `>= 1` for u32-window operator params.
+fn is_positive_integer(v: &serde_json::Value) -> bool {
+    if let Some(n) = v.as_u64() {
+        return n >= 1;
+    }
+    if let Some(f) = v.as_f64() {
+        return f >= 1.0 && f.fract() == 0.0;
+    }
+    false
+}
+
+/// Numeric-tolerant equality for filter baseline comparison: two JSON numbers
+/// compare by their f64 value (so `25` == `25.0`); otherwise fall back to
+/// structural equality (handles `null` == `null` for `max_wakeups_per_day`).
+fn filter_values_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    }
+}
+
 fn is_valid_tool_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 64 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
@@ -203,5 +380,291 @@ fn validate_tools(removed: &[String], added: &[String], base: &Strategy, errors:
                 "tools.added",
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::autooptimizer::mutator::{FilterEdit, MutationKind, ToolDiff};
+
+    fn fixture_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000B",
+                "display_name": "Validator Test Strategy",
+                "plain_summary": "Minimal strategy for validator tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000B", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {}
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialise")
+    }
+
+    fn prose_diff(agent_role: &str, after: &str) -> MutationDiff {
+        MutationDiff {
+            kind: MutationKind::Prose,
+            prose: vec![ProseEdit {
+                agent_role: agent_role.into(),
+                before: String::new(),
+                after: after.into(),
+            }],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![],
+            rationale: "test".into(),
+        }
+    }
+
+    fn fixture_filter_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000F",
+                "display_name": "Filter Validator Test Strategy",
+                "plain_summary": "",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000F", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {},
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000V",
+                "strategy_id": "01HZTEST00000000000000000F",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                    ]
+                },
+                "cooldown_bars": 3
+            }
+        });
+        serde_json::from_value(v).expect("fixture filter strategy must deserialise")
+    }
+
+    fn filter_diff(edits: Vec<FilterEdit>) -> MutationDiff {
+        MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: edits,
+            rationale: "test filter mutation".into(),
+        }
+    }
+
+    #[test]
+    fn filter_edit_valid_path_and_numeric_value_accepted() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25.0),
+            after: serde_json::json!(28.0),
+        }]);
+        assert!(validate_mutation_diff(&diff, &base).is_ok(), "valid filter edit must be accepted");
+    }
+
+    #[test]
+    fn filter_edit_unknown_path_rejected() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.99.rhs.numeric".to_string(), // invalid index
+            before: serde_json::json!(25.0),
+            after: serde_json::json!(28.0),
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "unknown_filter_path"),
+            "unknown path must produce unknown_filter_path error: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_wrong_type_rejected() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25.0),
+            after: serde_json::json!("not-a-number"), // wrong type
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "invalid_filter_value"),
+            "non-numeric after must produce invalid_filter_value error: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_no_filter_in_strategy_rejected() {
+        let base = fixture_strategy(); // no filter
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25.0),
+            after: serde_json::json!(28.0),
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "no_filter"),
+            "no filter must produce no_filter error: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_max_wakeups_null_accepted() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "max_wakeups_per_day".to_string(),
+            before: serde_json::Value::Null,
+            after: serde_json::Value::Null, // null → null is valid (keeps it None)
+        }]);
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "null max_wakeups_per_day must be accepted"
+        );
+    }
+
+    #[test]
+    fn filter_edit_result_validation_rejects_out_of_range_wakeups() {
+        // codex P2: each edit is individually well-formed (numeric, correct
+        // baseline) but the RESULTING filter violates a filter invariant
+        // (max_wakeups_per_day must be in [1, 1440]). The whole-filter validation
+        // must reject it here rather than letting it fail at backtest time.
+        let base = fixture_filter_strategy(); // max_wakeups_per_day is None (null)
+        let diff = filter_diff(vec![FilterEdit {
+            path: "max_wakeups_per_day".to_string(),
+            before: serde_json::Value::Null,
+            after: serde_json::json!(5000), // out of [1, 1440]
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "invalid_filter_result"),
+            "out-of-range result must produce invalid_filter_result: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_stale_baseline_rejected() {
+        // codex P2: `before` must match the live value, else the reverse
+        // mutation inverts against the wrong baseline. ADX is 25.0; before=20.0
+        // is stale.
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(20.0), // wrong — live value is 25.0
+            after: serde_json::json!(28.0),
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "stale_filter_baseline"),
+            "stale before must produce stale_filter_baseline: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_baseline_int_vs_float_not_stale() {
+        // 25 (int) must be accepted as the baseline for a 25.0 (float) live value
+        // — representation difference is not staleness.
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25), // int form of the 25.0 live value
+            after: serde_json::json!(28.0),
+        }]);
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "int-vs-float baseline must not be treated as stale"
+        );
+    }
+
+    fn fixture_filter_strategy_with_window_op() -> Strategy {
+        // Same as fixture_filter_strategy but the condition uses a parameterized
+        // window operator (`above_for_3`), exposing `conditions.0.op.above_for`.
+        let mut v = serde_json::to_value(fixture_filter_strategy()).unwrap();
+        v["filter"]["conditions"]["all"][0]["op"] = serde_json::json!("above_for_3");
+        serde_json::from_value(v).expect("window-op fixture must deserialise")
+    }
+
+    #[test]
+    fn filter_edit_zero_window_operator_rejected() {
+        // codex P2: `above_for_0` can't be deserialized by the filter parser, so
+        // a 0 (or negative/fractional) value on a u32-window op must be rejected
+        // before it mints an unparseable artifact.
+        let base = fixture_filter_strategy_with_window_op();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.op.above_for".to_string(),
+            before: serde_json::json!(3),
+            after: serde_json::json!(0), // invalid → would serialize to above_for_0
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "invalid_filter_value"),
+            "zero window-op value must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_positive_window_operator_accepted() {
+        let base = fixture_filter_strategy_with_window_op();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.op.above_for".to_string(),
+            before: serde_json::json!(3),
+            after: serde_json::json!(5), // valid positive integer
+        }]);
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "positive window-op value must be accepted"
+        );
+    }
+
+    #[test]
+    fn prose_edit_requires_nonempty_after_and_known_role() {
+        let base = fixture_strategy();
+        // empty after -> error
+        let empty = prose_diff("trader", "");
+        assert!(
+            validate_mutation_diff(&empty, &base).is_err(),
+            "empty after must be rejected"
+        );
+        // unknown role -> error
+        let unknown = prose_diff("ghost", "do X");
+        assert!(
+            validate_mutation_diff(&unknown, &base).is_err(),
+            "unknown role must be rejected"
+        );
+        // good -> ok
+        let ok = prose_diff("trader", "Trade with-trend only.");
+        assert!(
+            validate_mutation_diff(&ok, &base).is_ok(),
+            "valid prose diff must be accepted"
+        );
     }
 }

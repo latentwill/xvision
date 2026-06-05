@@ -497,6 +497,8 @@ mod tests {
                 agent_id: "x".into(),
                 role: "main".into(),
                 activates: None,
+                prompt_override: None,
+                model_override: None,
             }],
             pipeline: PipelineDef::sequential(),
             ..strategy

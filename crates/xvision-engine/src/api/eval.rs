@@ -1889,11 +1889,14 @@ async fn resolve_agent_slots(
         // `resolve_agent_slots_for_strategy` the optimizer paper-test path
         // calls) so the executor-ready slot fields never drift between the
         // two resolvers. This loop keeps the HTTP-typed errors above.
-        out.push(crate::agent::pipeline::resolve_agent_slot(
-            &agent_ref.role,
-            slot,
-            &agent.agent_id,
-        ));
+        let mut resolved = crate::agent::pipeline::resolve_agent_slot(&agent_ref.role, slot, &agent.agent_id);
+        // Honor per-AgentRef prompt/model overrides on the EVAL path too — the
+        // optimizer gates candidates by backtest through here, so the override
+        // must take effect or prompt/model mutations would be runtime no-ops
+        // (identical ΔSharpe to the parent → always rejected). Centralized in
+        // `apply_agent_ref_overrides` so both resolvers behave identically.
+        crate::agent::pipeline::apply_agent_ref_overrides(&mut resolved, agent_ref);
+        out.push(resolved);
     }
     Ok(out)
 }
@@ -4342,6 +4345,8 @@ mod tests {
                 agent_id: "01TESTAGENT".into(),
                 role: "trader".into(),
                 activates: None,
+                prompt_override: None,
+                model_override: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,

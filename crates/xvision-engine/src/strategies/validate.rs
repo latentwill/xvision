@@ -508,6 +508,8 @@ mod preflight_tests {
                 agent_id: "01HZAGENT".into(),
                 role: "trader".into(),
                 activates: None,
+                prompt_override: None,
+                model_override: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,

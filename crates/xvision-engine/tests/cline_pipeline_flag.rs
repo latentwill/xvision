@@ -77,7 +77,9 @@ fn trader_strategy() -> Strategy {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),

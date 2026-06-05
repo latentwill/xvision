@@ -208,3 +208,27 @@ OpenRouter `usage_daily: $0.724` (at time of check, before C3/C4 completed).
 3. **Parent selection** — include all active leaf nodes as parent candidates, not just roots. Weight by gate score.
 4. **Skip honesty check on no_candidate** — early-exit before running canary evals.
 5. **Minimum window guidance** — enforce or document `--day-end - --day-start >= 14 days` for BTC/ETH/SOL 1h strategies to ensure ≥200 decisions for reliable delta detection.
+
+---
+
+## Resolution status (2026-06-06, PR #829)
+
+All run-7 findings addressed on branch `feat/optimizer-mutation-axes`:
+
+| Finding | Resolution |
+|---|---|
+| Mutation space useless for agent strategies — prompt locked out | ✅ Phase 1: prose mutations now write to `AgentRef.prompt_override`, changing the content hash. Both resolvers apply it at eval time (codex P1 fix). |
+| Mutation space useless for agent strategies — filter locked out | ✅ Phase 2: `MutationKind::Filter` walks the typed `Filter` AST; validate rejects stale baselines, zero-value window ops, and invalid resulting filters (codex P2-C/D fixes). |
+| DSPy not wired in-loop | ✅ Phase 3: `LiveDspyBridge` (real LLM reflection over observation cohort) wired into CLI + dashboard run-cycle behind `dspy_enabled`; compiled Pattern feeds mutator system prompt via existing `query_dsr_prefix` path. |
+| F32 retry seed fixed → `already_tried` still unescapable within one `propose()` | ✅ Phase 4 Task 12: `exploration_seed.wrapping_add(attempt)` rotates focus param per retry. |
+| Parent selection stuck at root (hash-proxy stub) | ✅ Phase 4 Task 13: `select_parents` ranks by real stored `delta_sharpe` from `mutator_attribution`; hash-proxy is last-resort fallback only. |
+| Honesty check runs on no-candidate cycles | ✅ Phase 4 Task 14: `honesty_check_warranted()` predicate skips canary evals when no candidate was gated. |
+| Min-window guard | ⏸️ Dropped by operator decision — same-scenario re-eval is meaningful once mutations are behavioral. |
+
+**Deferred** (gated `allowed_mutation_kinds` follow-ups, substrate already in place):
+- F25 model-selection axis — `model_override` field + resolver landed here; `MutationKind::ModelSwap` axis is a separate PR.
+- Multi-agent mutation — `PipelineDef` exists; mutation kind to be added.
+- Dedicated `prompt_override` candidate from DSPy Pattern — the prefix path closes the loop; explicit candidate routing deferred.
+- Full `xvision-dspy` MIPRO/`LiveModel` corpus optimization — `LiveModel::complete_inner` is a hard stub; separate track.
+
+**Deployed-image lag note:** the run-7 session tested image `2026-06-05T01:47Z` which was ~32 commits behind `origin/main`. Several findings (F32 seed-focus mechanism via PR #823, `active_leaves` parent query) were already partly fixed on main; the residuals addressed here are correctly scoped.

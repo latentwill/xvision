@@ -105,7 +105,9 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
                 agent_id: agent.agent_id,
                 role: "trader".into(),
                 activates: Some(Capability::Trader),
-            }],
+            prompt_override: None,
+            model_override: None,
+}],
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,
                 edges: vec![],

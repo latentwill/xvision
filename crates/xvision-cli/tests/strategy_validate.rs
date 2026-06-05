@@ -118,7 +118,9 @@ fn seed_strategy_with_trader(
                 agent_id: agent_id.clone(),
                 role: role.clone(),
                 activates: None,
-            }],
+            prompt_override: None,
+            model_override: None,
+}],
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,
                 edges: vec![],
@@ -168,7 +170,9 @@ fn seed_strategy_with_missing_agent(home: &Path, strategy_name: &str) -> String 
             agent_id: "01MISSINGAGENTREF0000000000".into(),
             role: "trader".into(),
             activates: Some(xvision_engine::agents::Capability::Trader),
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         pipeline: PipelineDef {
             kind: PipelineKind::Single,
             edges: vec![],

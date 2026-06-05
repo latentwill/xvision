@@ -20,6 +20,7 @@ fn mutation_diff_round_trips_through_serde_json() {
             added: vec!["tool_a".into()],
             removed: vec!["tool_b".into()],
         },
+        filter: Vec::new(),
         rationale: "improve accuracy".into(),
     };
 
@@ -57,6 +58,7 @@ fn is_empty_reflects_content() {
             added: Vec::new(),
             removed: Vec::new(),
         },
+        filter: Vec::new(),
         rationale: String::new(),
     };
     assert!(!with_prose.is_empty());
@@ -73,6 +75,7 @@ fn is_empty_reflects_content() {
             added: Vec::new(),
             removed: Vec::new(),
         },
+        filter: Vec::new(),
         rationale: String::new(),
     };
     assert!(!with_params.is_empty());
@@ -85,6 +88,7 @@ fn is_empty_reflects_content() {
             added: vec!["new_tool".into()],
             removed: Vec::new(),
         },
+        filter: Vec::new(),
         rationale: String::new(),
     };
     assert!(!with_tools_added.is_empty());
@@ -97,6 +101,7 @@ fn is_empty_reflects_content() {
             added: Vec::new(),
             removed: vec!["old_tool".into()],
         },
+        filter: Vec::new(),
         rationale: String::new(),
     };
     assert!(!with_tools_removed.is_empty());

@@ -30,6 +30,8 @@ fn fixture_strategy() -> Strategy {
             agent_id: "01HZAGENT01".into(),
             role: "trader".into(),
             activates: None,
+            prompt_override: None,
+            model_override: None,
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,

@@ -1008,7 +1008,9 @@ async fn new_atomic(
             agent_id: agent_id.clone(),
             role: role.clone(),
             activates: None,
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
@@ -1710,7 +1712,9 @@ async fn add_filter(
             agent_id: filter_agent_id.to_string(),
             role: filter_role.clone(),
             activates: Some(Capability::Filter),
-        },
+        prompt_override: None,
+        model_override: None,
+},
     );
 
     // Append the conditional edge filter→gates.
@@ -2370,7 +2374,9 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
                 agent_id: agent.agent_id,
                 role,
                 activates: None,
-            });
+            prompt_override: None,
+            model_override: None,
+});
         }
 
         strategy.agents = agent_refs;

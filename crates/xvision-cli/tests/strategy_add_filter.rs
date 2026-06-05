@@ -113,7 +113,9 @@ fn seed_strategy_with_trader(home: &Path) -> (String, String) {
                 agent_id: trader_id.clone(),
                 role: "trader".into(),
                 activates: Some(Capability::Trader),
-            }],
+            prompt_override: None,
+            model_override: None,
+}],
             pipeline: PipelineDef {
                 kind: PipelineKind::Single,
                 edges: vec![],

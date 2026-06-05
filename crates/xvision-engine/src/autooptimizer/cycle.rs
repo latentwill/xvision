@@ -183,17 +183,42 @@ pub async fn run_cycle(
         }
     }
 
-    let honesty_check = run_cycle_canary(
-        &parents,
-        cycle_config,
-        config,
-        mutator,
-        paper_tester,
-        min_improvement,
-        &cycle_id,
-        &progress,
-    )
-    .await?;
+    // run-7: when this cycle produced NO gated candidate (every parent yielded
+    // no_candidate, so nothing was backtested), running the sabotage/canary evals
+    // is pure waste — there is no candidate whose gating to sanity-check. Skip it
+    // and record a skipped result, mirroring the existing "no canary parent"
+    // skipped representation (sabotage_variant "none" + a skipped message).
+    let honesty_check = if honesty_check_warranted(&active_nodes, &rejected_nodes) {
+        run_cycle_canary(
+            &parents,
+            cycle_config,
+            config,
+            mutator,
+            paper_tester,
+            min_improvement,
+            &cycle_id,
+            &progress,
+        )
+        .await?
+    } else {
+        let skipped = HonestyCheckResult {
+            parent_hash: ContentHash::of_bytes(b""),
+            gate_verdict: GateVerdict::Fail {
+                reason: "no candidate produced".to_string(),
+            },
+            passed_check: true,
+            sabotage_variant: "none".to_string(),
+            message: "Honesty check skipped: no candidate was produced this cycle (nothing to verify)."
+                .to_string(),
+        };
+        progress(CycleProgressEvent::HonestyCheckRun {
+            cycle_id: cycle_id.clone(),
+            passed: skipped.passed_check,
+            sabotage_variant: skipped.sabotage_variant.clone(),
+            message: skipped.message.clone(),
+        });
+        skipped
+    };
     // F13: persist the honesty-check outcome so a historic cycle's detail can
     // report it (it was previously emitted only over SSE / the CLI summary).
     persist_honesty_check(pool, &cycle_id, &honesty_check).await;
@@ -207,6 +232,15 @@ pub async fn run_cycle(
         findings_by_node,
         no_candidate_count,
     })
+}
+
+/// The honesty check (sabotage canary) only adds value when the cycle actually
+/// gated a candidate. When every parent yielded `no_candidate` — so nothing was
+/// backtested — there is no gating to sanity-check, and running the canary evals
+/// is pure waste (run-7 finding). Returns `true` iff at least one candidate was
+/// gated (kept or rejected) this cycle.
+fn honesty_check_warranted(active: &[LineageNode], rejected: &[LineageNode]) -> bool {
+    !active.is_empty() || !rejected.is_empty()
 }
 
 async fn run_cycle_canary<F>(
@@ -796,4 +830,35 @@ fn gate_check(
         min_improvement,
         objective,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::autooptimizer::gate::GateVerdict;
+
+    fn active_node() -> LineageNode {
+        LineageNode {
+            bundle_hash: ContentHash::of_bytes(b"candidate"),
+            parent_hash: None,
+            gate_verdict: GateVerdict::Pass,
+            status: LineageStatus::Active,
+            cycle_id: Some("c".into()),
+            created_at: Utc::now(),
+            diversity_score: None,
+        }
+    }
+
+    #[test]
+    fn honesty_check_skipped_when_no_candidate_gated() {
+        // run-7: no gated candidate (both empty) => not warranted (skip the canary).
+        assert!(!honesty_check_warranted(&[], &[]));
+    }
+
+    #[test]
+    fn honesty_check_runs_when_a_candidate_was_gated() {
+        let kept = vec![active_node()];
+        assert!(honesty_check_warranted(&kept, &[]), "a kept candidate warrants the check");
+        assert!(honesty_check_warranted(&[], &kept), "a rejected candidate warrants the check");
+    }
 }

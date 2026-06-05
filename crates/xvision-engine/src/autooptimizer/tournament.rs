@@ -385,6 +385,7 @@ mod tests {
                 added: vec![],
                 removed: vec![],
             },
+            filter: vec![],
             rationale: "test rationale".into(),
         })
         .unwrap()

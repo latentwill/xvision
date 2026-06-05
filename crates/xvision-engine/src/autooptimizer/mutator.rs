@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use xvision_filters::{Filter, Operator, Operand, ConditionTree};
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 use crate::autooptimizer::config::AutoOptimizerConfig;
@@ -78,6 +79,24 @@ pub fn describe_mutation_outcome(diff: &MutationDiff, delta_sharpe: f64, status_
             let role = diff.prose.first().map(|p| p.agent_role.as_str()).unwrap_or("?");
             format!("prose {role}")
         }
+        MutationKind::Filter => {
+            if let Some(fe) = diff.filter.first() {
+                let extra = if diff.filter.len() > 1 {
+                    format!(" (+{} more)", diff.filter.len() - 1)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "filter {} {}→{}{}",
+                    fe.path,
+                    compact_json(&fe.before),
+                    compact_json(&fe.after),
+                    extra
+                )
+            } else {
+                "filter (none)".to_string()
+            }
+        }
     };
     // Strip any embedded newlines defensively so the result is always one line.
     let lever = lever.replace('\n', " ");
@@ -101,6 +120,20 @@ pub enum MutationKind {
     Prose,
     Param,
     Tool,
+    Filter,
+}
+
+/// One incremental change to a numeric threshold inside the strategy's typed
+/// `Filter` AST, addressed by a stable dotted path (see `filter_tunable_paths`).
+/// Examples:
+///   `path = "conditions.0.rhs.numeric"`, `before = 25.0`, `after = 28.0`
+///   `path = "conditions.0.op.within_pct"`, `before = 1.5`, `after = 2.0`
+///   `path = "cooldown_bars"`, `before = 3`, `after = 6`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterEdit {
+    pub path: String,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +162,8 @@ pub struct MutationDiff {
     pub prose: Vec<ProseEdit>,
     pub params: Vec<ParamChange>,
     pub tools: ToolDiff,
+    #[serde(default)]
+    pub filter: Vec<FilterEdit>,
     pub rationale: String,
 }
 
@@ -141,6 +176,7 @@ pub fn empty_mutation() -> MutationDiff {
             added: Vec::new(),
             removed: Vec::new(),
         },
+        filter: Vec::new(),
         rationale: String::new(),
     }
 }
@@ -197,22 +233,314 @@ pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
     keys
 }
 
+/// Walk the typed `Filter` AST and return a stable dotted path + current JSON
+/// value for every mutatable numeric node:
+///   - Each `Condition`'s `lhs`/`rhs` `Numeric(f64)` operands
+///   - Each `Condition`'s `lhs`/`rhs` `Range(lo, hi)` — as `.range.lo` / `.range.hi`
+///   - Each parameterized `Operator` argument (e.g. `op.above_for`, `op.within_pct`)
+///   - `cooldown_bars` (u32)
+///   - `max_wakeups_per_day` (Option<u32>; null when None)
+///
+/// Path scheme (symmetric with `set_filter_value`):
+///   `conditions.<i>.lhs.numeric` — lhs Numeric at condition index i
+///   `conditions.<i>.rhs.numeric` — rhs Numeric at condition index i
+///   `conditions.<i>.lhs.range.lo` / `.range.hi` — lhs Range operand components
+///   `conditions.<i>.rhs.range.lo` / `.range.hi` — rhs Range operand components
+///   `conditions.<i>.op.above_for` — AboveFor(n) parameter
+///   `conditions.<i>.op.below_for` — BelowFor(n) parameter
+///   `conditions.<i>.op.crossed_above` — CrossedAbove(n) parameter
+///   `conditions.<i>.op.crossed_below` — CrossedBelow(n) parameter
+///   `conditions.<i>.op.slope_gt` — SlopeGt(n) parameter
+///   `conditions.<i>.op.slope_lt` — SlopeLt(n) parameter
+///   `conditions.<i>.op.zscore_gt` — ZscoreGt(n) parameter
+///   `conditions.<i>.op.zscore_lt` — ZscoreLt(n) parameter
+///   `conditions.<i>.op.within_pct` — WithinPct(pct) parameter
+///   `cooldown_bars` — Filter::cooldown_bars
+///   `max_wakeups_per_day` — Filter::max_wakeups_per_day (null when None)
+pub fn filter_tunable_paths(filter: &Filter) -> Vec<(String, serde_json::Value)> {
+    let mut paths: Vec<(String, serde_json::Value)> = Vec::new();
+
+    let conditions = filter.conditions.conditions();
+    for (i, cond) in conditions.iter().enumerate() {
+        let prefix = format!("conditions.{i}");
+        // LHS
+        match &cond.lhs {
+            Operand::Numeric(v) => {
+                paths.push((format!("{prefix}.lhs.numeric"), serde_json::json!(v)));
+            }
+            Operand::Range(lo, hi) => {
+                paths.push((format!("{prefix}.lhs.range.lo"), serde_json::json!(lo)));
+                paths.push((format!("{prefix}.lhs.range.hi"), serde_json::json!(hi)));
+            }
+            Operand::Indicator(_) => {}
+        }
+        // RHS
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                paths.push((format!("{prefix}.rhs.numeric"), serde_json::json!(v)));
+            }
+            Operand::Range(lo, hi) => {
+                paths.push((format!("{prefix}.rhs.range.lo"), serde_json::json!(lo)));
+                paths.push((format!("{prefix}.rhs.range.hi"), serde_json::json!(hi)));
+            }
+            Operand::Indicator(_) => {}
+        }
+        // Parameterized operators
+        match cond.op {
+            Operator::AboveFor(n) => {
+                paths.push((format!("{prefix}.op.above_for"), serde_json::json!(n)));
+            }
+            Operator::BelowFor(n) => {
+                paths.push((format!("{prefix}.op.below_for"), serde_json::json!(n)));
+            }
+            Operator::CrossedAbove(n) => {
+                paths.push((format!("{prefix}.op.crossed_above"), serde_json::json!(n)));
+            }
+            Operator::CrossedBelow(n) => {
+                paths.push((format!("{prefix}.op.crossed_below"), serde_json::json!(n)));
+            }
+            Operator::SlopeGt(n) => {
+                paths.push((format!("{prefix}.op.slope_gt"), serde_json::json!(n)));
+            }
+            Operator::SlopeLt(n) => {
+                paths.push((format!("{prefix}.op.slope_lt"), serde_json::json!(n)));
+            }
+            Operator::ZscoreGt(n) => {
+                paths.push((format!("{prefix}.op.zscore_gt"), serde_json::json!(n)));
+            }
+            Operator::ZscoreLt(n) => {
+                paths.push((format!("{prefix}.op.zscore_lt"), serde_json::json!(n)));
+            }
+            Operator::WithinPct(pct) => {
+                paths.push((format!("{prefix}.op.within_pct"), serde_json::json!(pct)));
+            }
+            // Non-parameterized operators — no tunable value
+            Operator::Gt
+            | Operator::Lt
+            | Operator::Gte
+            | Operator::Lte
+            | Operator::Eq
+            | Operator::CrossesAbove
+            | Operator::CrossesBelow
+            | Operator::Between => {}
+        }
+    }
+
+    // Scalar filter-level fields
+    paths.push(("cooldown_bars".to_string(), serde_json::json!(filter.cooldown_bars)));
+    paths.push((
+        "max_wakeups_per_day".to_string(),
+        match filter.max_wakeups_per_day {
+            Some(n) => serde_json::json!(n),
+            None => serde_json::Value::Null,
+        },
+    ));
+
+    paths
+}
+
+/// Coerce a JSON number to u32, accepting both integer and float representations
+/// (e.g. `4` or `4.0`). Returns None for non-numeric or negative/overflow values.
+fn value_as_u32(value: &serde_json::Value) -> Option<u32> {
+    if let Some(n) = value.as_u64() {
+        return u32::try_from(n).ok();
+    }
+    if let Some(f) = value.as_f64() {
+        if f >= 0.0 && f.fract() == 0.0 && f <= u32::MAX as f64 {
+            return Some(f as u32);
+        }
+    }
+    None
+}
+
+/// Set the value at `path` (a dotted path produced by `filter_tunable_paths`)
+/// in `filter`. Returns `true` if the path resolved and the value was written,
+/// `false` if the path is unknown (no panic, no partial write).
+///
+/// The path scheme mirrors `filter_tunable_paths` exactly — every path that
+/// function emits must resolve here, and nothing else must.
+pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Value) -> bool {
+    if path == "cooldown_bars" {
+        // Accept both integer and float JSON numbers (LLM may emit 4.0).
+        if let Some(n) = value_as_u32(value) {
+            filter.cooldown_bars = n;
+            return true;
+        }
+        return false;
+    }
+    if path == "max_wakeups_per_day" {
+        if value.is_null() {
+            filter.max_wakeups_per_day = None;
+            return true;
+        }
+        if let Some(n) = value_as_u32(value) {
+            filter.max_wakeups_per_day = Some(n);
+            return true;
+        }
+        return false;
+    }
+
+    // Parse condition paths: "conditions.<i>.<rest>"
+    let parts: Vec<&str> = path.splitn(3, '.').collect();
+    if parts.len() == 3 && parts[0] == "conditions" {
+        let Ok(idx) = parts[1].parse::<usize>() else {
+            return false;
+        };
+        let rest = parts[2];
+        let conditions = match &mut filter.conditions {
+            ConditionTree::All(v) | ConditionTree::Any(v) => v,
+        };
+        let Some(cond) = conditions.get_mut(idx) else {
+            return false;
+        };
+
+        match rest {
+            "lhs.numeric" => {
+                if let Some(v) = value.as_f64() {
+                    cond.lhs = Operand::Numeric(v);
+                    return true;
+                }
+                return false;
+            }
+            "rhs.numeric" => {
+                if let Some(v) = value.as_f64() {
+                    cond.rhs = Operand::Numeric(v);
+                    return true;
+                }
+                return false;
+            }
+            "lhs.range.lo" => {
+                if let Some(new_lo) = value.as_f64() {
+                    if let Operand::Range(lo, _) = &mut cond.lhs {
+                        *lo = new_lo;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            "lhs.range.hi" => {
+                if let Some(new_hi) = value.as_f64() {
+                    if let Operand::Range(_, hi) = &mut cond.lhs {
+                        *hi = new_hi;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            "rhs.range.lo" => {
+                if let Some(new_lo) = value.as_f64() {
+                    if let Operand::Range(lo, _) = &mut cond.rhs {
+                        *lo = new_lo;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            "rhs.range.hi" => {
+                if let Some(new_hi) = value.as_f64() {
+                    if let Operand::Range(_, hi) = &mut cond.rhs {
+                        *hi = new_hi;
+                        return true;
+                    }
+                }
+                return false;
+            }
+            "op.above_for" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::AboveFor(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.below_for" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::BelowFor(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.crossed_above" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::CrossedAbove(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.crossed_below" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::CrossedBelow(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.slope_gt" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::SlopeGt(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.slope_lt" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::SlopeLt(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.zscore_gt" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::ZscoreGt(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.zscore_lt" => {
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::ZscoreLt(n);
+                    return true;
+                }
+                return false;
+            }
+            "op.within_pct" => {
+                if let Some(pct) = value.as_f64() {
+                    cond.op = Operator::WithinPct(pct);
+                    return true;
+                }
+                return false;
+            }
+            _ => return false,
+        }
+    }
+
+    false
+}
+
 /// The mutation kinds that are *structurally applicable* to `base`, intersected
 /// with the operator-allowed kinds (F21). `param` is applicable whenever the
 /// strategy exposes a tunable key (always, since every strategy has a `risk`
-/// config). `tool` stays as allowed. `prose` is excluded: a `Strategy`
-/// references library agents by `AgentRef`, so a prompt edit cannot change the
-/// strategy artifact — proposing it only ever yields a no-op (identity) the
-/// gate must reject. Excluding it steers the experiment writer to a lever that
-/// can actually move the strategy instead of burning the retry budget.
+/// config). `tool` stays as allowed. `prose` is applicable when the strategy
+/// has at least one `AgentRef` to carry a `prompt_override` (Phase 0 substrate):
+/// a prose edit sets `AgentRef.prompt_override` and changes the strategy content
+/// hash, so it is a real change — not a no-op — on any agent strategy. For
+/// agentless/pre-refactor strategies there is still no home, so prose is
+/// excluded there. `filter` is applicable when the strategy has a `filter`
+/// (`base.filter.is_some()`); the AST-walk tunable-path enumeration and
+/// apply/validate support (Phase 2) back this arm.
 pub fn applicable_mutation_kinds(base: &Strategy, allowed: &[String]) -> Vec<String> {
     let has_params = !tunable_param_keys(base).is_empty();
+    // Prose is applicable iff the strategy has at least one agent to carry a
+    // `prompt_override` (Phase 0). For agentless/pre-refactor strategies there
+    // is still no home, so prose stays excluded there.
+    let has_prompt_home = !base.agents.is_empty();
+    // Filter is applicable when the strategy has a typed Filter to walk.
+    let has_filter = base.filter.is_some();
     allowed
         .iter()
         .filter(|k| match k.as_str() {
             "param" => has_params,
             "tool" => true,
-            "prose" => false,
+            "prose" => has_prompt_home,
+            "filter" => has_filter,
             _ => false,
         })
         .cloned()
@@ -225,6 +553,7 @@ impl MutationDiff {
             && self.params.is_empty()
             && self.tools.added.is_empty()
             && self.tools.removed.is_empty()
+            && self.filter.is_empty()
     }
 
     /// Apply this diff to `base`, returning the candidate strategy.
@@ -239,13 +568,12 @@ impl MutationDiff {
     ///   - `params` otherwise: dot-path keys into `mechanical_params` (nested
     ///     objects are created as needed).
     ///   - `tools`: add/remove against `manifest.required_tools`.
-    ///
-    /// Prose edits are intentionally **not** applied here: a `Strategy`
-    /// references library agents by `AgentRef`, so an agent-prompt edit has no
-    /// home in the strategy artifact's content hash. A prose-only diff is
-    /// therefore an identity (no-op) at the strategy level — [`Mutator::propose`]
-    /// detects that and retries for a real change rather than emitting a
-    /// guaranteed-zero candidate.
+    ///   - `prose`: each `ProseEdit` sets the matching `AgentRef.prompt_override`
+    ///     on the strategy (matched by `canonical_role`). This lands in the
+    ///     `Strategy` content hash — so the override is part of proper lineage —
+    ///     without touching the shared `Agent` library record. An edit naming a
+    ///     role no agent plays is a no-op (the validator rejects those upstream;
+    ///     apply stays total).
     pub fn apply_to(&self, base: &Strategy) -> Strategy {
         let mut s = base.clone();
         // Route risk-targeted params through a single JSON round-trip of the
@@ -274,6 +602,28 @@ impl MutationDiff {
         }
         for removed in &self.tools.removed {
             s.manifest.required_tools.retain(|t| t != removed);
+        }
+        // Prose edits land on the trader AgentRef's prompt_override (Phase 0
+        // substrate). Matching by canonical role keeps lineage stable: the
+        // override changes the Strategy content hash WITHOUT touching the shared
+        // Agent library record. An edit naming a role no agent plays is a no-op
+        // (the validator rejects those upstream; apply stays total).
+        for edit in &self.prose {
+            let target = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
+            if let Some(a) = s.agents.iter_mut().find(|a| a.canonical_role() == target) {
+                a.prompt_override = Some(edit.after.clone());
+            }
+        }
+        // Filter edits resolve path → AST node and write `after`. An unresolved
+        // path or a wrong-type value is a silent no-op (validator rejects those
+        // upstream; apply stays total). The filter field is cloned before mutation
+        // so a partial-failure edit doesn't leave the filter half-changed.
+        if let Some(ref mut f) = s.filter {
+            for edit in &self.filter {
+                // Ignore the return value; validator already ensured the path
+                // resolves and the value has the right type.
+                set_filter_value(f, &edit.path, &edit.after);
+            }
         }
         s
     }
@@ -342,14 +692,31 @@ impl Mutator {
             kinds
         };
         let param_keys = tunable_param_keys(base);
+        // Filter paths: enumerate once per propose call (same filter for all attempts).
+        // Only computed when "filter" is in the applicable kinds to avoid walking
+        // a filter that won't be offered.
+        let filter_paths: Vec<(String, serde_json::Value)> = if kinds.iter().any(|k| k == "filter") {
+            base.filter
+                .as_ref()
+                .map(filter_tunable_paths)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
 
         for attempt in 0..max_attempts {
+            // F32 (run-7): rotate the exploration seed per attempt so the focus
+            // parameter — `param_keys[seed % len]` — actually changes across
+            // retries. Without this, every retry re-derives the SAME focus and
+            // `already_tried` fires until the budget is exhausted with no escape.
+            let attempt_seed = exploration_seed.wrapping_add(attempt as u64);
             let user_text = build_user_payload(
                 &program_md,
                 &kinds,
                 &param_keys,
+                &filter_paths,
                 last_errors.as_deref(),
-                exploration_seed,
+                attempt_seed,
                 memory_context,
                 avoid.len(),
             );
@@ -364,8 +731,8 @@ impl Mutator {
                 // candidate every cycle — the optimizer could never explore or
                 // converge. Sample with a non-zero, per-cycle-jittered temperature
                 // and a per-cycle exploration nonce in the prompt so successive
-                // cycles propose diverse candidates.
-                temperature: Some(exploration_temperature(exploration_seed)),
+                // cycles propose diverse candidates. Also jitter per attempt.
+                temperature: Some(exploration_temperature(attempt_seed)),
                 response_schema: None,
                 cache_control: None,
             };
@@ -500,13 +867,22 @@ fn build_user_payload(
     program_md: &str,
     allowed_kinds: &[String],
     param_keys: &[String],
+    filter_paths: &[(String, serde_json::Value)],
     previous_errors: Option<&[ValidationError]>,
     exploration_seed: u64,
     memory_context: Option<&str>,
     avoid_count: usize,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
-    let keys_section = if param_keys.is_empty() {
+    let param_allowed = allowed_kinds.iter().any(|k| k == "param");
+    // Codex P2: only show param key list when `param` is actually allowed. A
+    // filter-only config that still shows risk.* keys steers the model to propose
+    // a param mutation that the cycle loop accepts (validate_mutation_diff does not
+    // enforce the allowed-kinds list). Gate the section and the F32 focus directive
+    // together so the prompt never references a disallowed mutation axis.
+    let keys_section = if !param_allowed {
+        String::new()
+    } else if param_keys.is_empty() {
         "\n\nThis strategy exposes no tunable parameter keys; do not propose a `param` experiment."
             .to_string()
     } else {
@@ -518,6 +894,22 @@ fn build_user_payload(
                 .collect::<Vec<_>>()
                 .join("\n")
         )
+    };
+    // Filter paths section: only included when "filter" is in allowed kinds and
+    // the strategy has a filter (non-empty paths list). Guides the experiment
+    // writer to propose valid dotted paths from the live AST.
+    let filter_section = if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+        format!(
+            "\n\nTunable filter paths (a `filter` experiment's `path` MUST be exactly one of these; \
+             `before` must match the current value shown):\n{}",
+            filter_paths
+                .iter()
+                .map(|(p, v)| format!("  - {p}: {v}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    } else {
+        String::new()
     };
     let errors_section = match previous_errors {
         None => String::new(),
@@ -539,16 +931,26 @@ fn build_user_payload(
     // materially different prompt ⇒ a different candidate, even from a fully
     // deterministic model. (Pairs with the hard `already_tried` reject in
     // `propose`, which guarantees a previously-seen candidate is never re-emitted.)
-    let exploration_section = if param_keys.is_empty() {
+    // Build a focus key from the ALLOWED axes only. For param-allowed configs,
+    // rotate across risk.* keys. For filter-only configs, rotate across filter
+    // paths. Falls back to a generic directive when no focusable axis is present.
+    let focusable_keys: Vec<String> = if param_allowed && !param_keys.is_empty() {
+        param_keys.to_vec()
+    } else if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+        filter_paths.iter().map(|(p, _)| p.clone()).collect()
+    } else {
+        vec![]
+    };
+    let exploration_section = if focusable_keys.is_empty() {
         format!(
             "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
              the single most obvious one, so repeated runs explore rather than re-propose one tweak."
         )
     } else {
-        let focus = &param_keys[(exploration_seed as usize) % param_keys.len()];
+        let focus = &focusable_keys[(exploration_seed as usize) % focusable_keys.len()];
         format!(
-            "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
-             parameter `{focus}` — propose a meaningful change to its value (a clear direction and \
+            "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on \
+             `{focus}` — propose a meaningful change to its value (a clear direction and \
              magnitude). This focus is chosen to make successive runs on this strategy explore \
              different levers rather than re-proposing one fixed tweak. If `{focus}` genuinely \
              cannot be improved, you may target another listed key, but do not default to the most \
@@ -580,7 +982,7 @@ fn build_user_payload(
     };
 
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{filter_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -655,6 +1057,7 @@ mod tests {
             prose: Vec::new(),
             params,
             tools: ToolDiff { added, removed },
+            filter: Vec::new(),
             rationale: "test".into(),
         }
     }
@@ -748,18 +1151,21 @@ mod tests {
     }
 
     #[test]
-    fn applicable_kinds_drop_prose_and_keep_param() {
-        let base = fixture_strategy();
+    fn applicable_kinds_allow_prose_when_strategy_has_an_agent() {
+        let base = fixture_strategy(); // has a trader AgentRef
         let allowed = vec!["prose".into(), "param".into(), "tool".into()];
         let kinds = applicable_mutation_kinds(&base, &allowed);
-        assert!(
-            kinds.contains(&"param".to_string()),
-            "param is always applicable (risk exists)"
-        );
-        assert!(
-            !kinds.contains(&"prose".to_string()),
-            "prose is a structural no-op, excluded"
-        );
+        assert!(kinds.contains(&"prose".to_string()), "prose now has a home (AgentRef override)");
+        assert!(kinds.contains(&"param".to_string()), "param always applicable (risk exists)");
+    }
+
+    #[test]
+    fn applicable_kinds_drop_prose_when_strategy_has_no_agents() {
+        let mut base = fixture_strategy();
+        base.agents.clear();
+        let allowed = vec!["prose".into(), "param".into()];
+        let kinds = applicable_mutation_kinds(&base, &allowed);
+        assert!(!kinds.contains(&"prose".to_string()), "no agent => no prompt home => prose excluded");
     }
 
     #[test]
@@ -800,8 +1206,9 @@ mod tests {
     fn build_user_payload_includes_memory_section_when_present() {
         let kinds = vec!["param".to_string()];
         let keys = vec!["risk.max_leverage".to_string()];
+        let filter_paths: Vec<(String, serde_json::Value)> = vec![];
         let ctx = "param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)";
-        let with = build_user_payload("prog", &kinds, &keys, None, 7, Some(ctx));
+        let with = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some(ctx), 0);
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
             "memory section header missing: {with}"
@@ -814,7 +1221,7 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, None, 7, None);
+        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0);
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -824,11 +1231,304 @@ mod tests {
             "F32 exploration section must remain when no memory: {without}"
         );
 
-        let empty = build_user_payload("prog", &kinds, &keys, None, 7, Some("   "));
+        let empty = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some("   "), 0);
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
         );
+    }
+
+    #[test]
+    fn build_user_payload_includes_filter_paths_when_filter_kind_allowed() {
+        let kinds = vec!["filter".to_string(), "param".to_string()];
+        let keys = vec!["risk.max_leverage".to_string()];
+        let filter_paths = vec![
+            ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
+            ("cooldown_bars".to_string(), serde_json::json!(3u32)),
+        ];
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, None, 0);
+        assert!(
+            payload.contains("Tunable filter paths"),
+            "filter section header must be present: {payload}"
+        );
+        assert!(
+            payload.contains("conditions.0.rhs.numeric"),
+            "filter path must be listed: {payload}"
+        );
+        assert!(
+            payload.contains("cooldown_bars"),
+            "cooldown_bars path must be listed: {payload}"
+        );
+
+        // When filter is NOT in allowed kinds, section must be absent.
+        let kinds_no_filter = vec!["param".to_string()];
+        let no_filter_payload =
+            build_user_payload("prog", &kinds_no_filter, &keys, &filter_paths, None, 5, None, 0);
+        assert!(
+            !no_filter_payload.contains("Tunable filter paths"),
+            "filter section must be absent when filter not in allowed kinds: {no_filter_payload}"
+        );
+    }
+
+    #[test]
+    fn build_user_payload_hides_param_keys_when_param_not_allowed() {
+        // codex P2: a filter-only config must NOT show param keys or focus the
+        // exploration directive on a risk.* parameter — that steers the model to
+        // propose a param mutation it would then return as the diff.
+        let kinds = vec!["filter".to_string()];
+        let keys = vec!["risk.max_leverage".to_string(), "risk.stop_loss_atr_multiple".to_string()];
+        let filter_paths = vec![
+            ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
+            ("cooldown_bars".to_string(), serde_json::json!(3u32)),
+        ];
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0);
+
+        // Param key list and risk.* references must be absent.
+        assert!(
+            !payload.contains("risk.max_leverage"),
+            "param key must not appear in filter-only payload: {payload}"
+        );
+        assert!(
+            !payload.contains("Tunable parameter keys"),
+            "param keys section header must not appear: {payload}"
+        );
+        // Exploration directive must focus on a FILTER path, not a param key.
+        assert!(
+            !payload.contains("risk.stop_loss_atr_multiple"),
+            "exploration focus must not name a risk.* param in filter-only mode: {payload}"
+        );
+        // Filter section must still appear.
+        assert!(
+            payload.contains("Tunable filter paths"),
+            "filter section must still be present: {payload}"
+        );
+    }
+
+    #[test]
+    fn apply_to_writes_prose_into_trader_prompt_override() {
+        let base = fixture_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Prose,
+            prose: vec![ProseEdit {
+                agent_role: "trader".into(),
+                before: String::new(),
+                after: "Trade only with-trend; size down in chop.".into(),
+            }],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: Vec::new(),
+            rationale: "test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let trader = child.agents.iter().find(|a| a.canonical_role() == "trader").unwrap();
+        assert_eq!(
+            trader.prompt_override.as_deref(),
+            Some("Trade only with-trend; size down in chop.")
+        );
+        // And it is a REAL change (distinct content hash), not an identity no-op.
+        assert!(!is_identity_diff(&diff, &base), "prose change must alter the strategy");
+    }
+
+    #[test]
+    fn apply_to_prose_for_unknown_role_is_noop() {
+        // A prose edit naming a role no strategy agent plays leaves the strategy
+        // unchanged (validator rejects it upstream; apply stays total/safe).
+        let base = fixture_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Prose,
+            prose: vec![ProseEdit { agent_role: "nonexistent".into(), before: String::new(), after: "x".into() }],
+            params: vec![], tools: ToolDiff { added: vec![], removed: vec![] }, filter: Vec::new(), rationale: "t".into(),
+        };
+        assert!(is_identity_diff(&diff, &base), "unknown-role prose must be a no-op");
+    }
+
+    fn fixture_filter_strategy() -> Strategy {
+        // Strategy with a Filter: ADX > 25, cooldown_bars=3
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000F",
+                "display_name": "Filter Test Strategy",
+                "plain_summary": "Strategy with a filter for mutation tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000F", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {},
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000A",
+                "strategy_id": "01HZTEST00000000000000000F",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                    ]
+                },
+                "cooldown_bars": 3
+            }
+        });
+        serde_json::from_value(v).expect("fixture filter strategy must deserialise")
+    }
+
+    #[test]
+    fn filter_tunable_paths_returns_rhs_numeric_and_cooldown_bars() {
+        let base = fixture_filter_strategy();
+        let filter = base.filter.as_ref().expect("fixture has a filter");
+        let paths = filter_tunable_paths(filter);
+        let path_map: std::collections::HashMap<String, serde_json::Value> = paths.into_iter().collect();
+
+        // rhs of condition 0 is Numeric(25.0) → should appear as "conditions.0.rhs.numeric"
+        assert!(
+            path_map.contains_key("conditions.0.rhs.numeric"),
+            "expected conditions.0.rhs.numeric in paths: {:?}", path_map.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            path_map["conditions.0.rhs.numeric"],
+            serde_json::json!(25.0),
+            "rhs numeric value should be 25.0"
+        );
+
+        // cooldown_bars = 3
+        assert!(path_map.contains_key("cooldown_bars"), "expected cooldown_bars in paths");
+        assert_eq!(path_map["cooldown_bars"], serde_json::json!(3u32));
+
+        // max_wakeups_per_day = null (None)
+        assert!(path_map.contains_key("max_wakeups_per_day"), "expected max_wakeups_per_day in paths");
+        assert!(path_map["max_wakeups_per_day"].is_null(), "max_wakeups_per_day should be null when None");
+    }
+
+    #[test]
+    fn filter_kind_mutation_diff_serde_round_trip() {
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(28.0),
+            }],
+            rationale: "increase ADX threshold for stronger trend signal".into(),
+        };
+        let json = serde_json::to_string(&diff).expect("serialize");
+        // Verify the kind serializes as "filter"
+        assert!(json.contains("\"filter\""), "kind must serialize as \"filter\": {json}");
+        let restored: MutationDiff = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.kind, MutationKind::Filter);
+        assert_eq!(restored.filter.len(), 1);
+        assert_eq!(restored.filter[0].path, "conditions.0.rhs.numeric");
+        assert_eq!(restored.filter[0].before, serde_json::json!(25.0));
+        assert_eq!(restored.filter[0].after, serde_json::json!(28.0));
+    }
+
+    #[test]
+    fn apply_to_filter_edit_changes_rhs_threshold() {
+        let base = fixture_filter_strategy();
+        // Initial rhs is 25.0 from fixture; change it to 28.0
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(28.0),
+            }],
+            rationale: "increase ADX threshold".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter.conditions.conditions().first().expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!((v - 28.0).abs() < 1e-9, "rhs should be 28.0, got {v}");
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+        assert!(
+            !is_identity_diff(&diff, &base),
+            "filter change must not be identity"
+        );
+    }
+
+    #[test]
+    fn apply_to_filter_edit_unknown_path_is_noop() {
+        let base = fixture_filter_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![FilterEdit {
+                path: "conditions.99.rhs.numeric".to_string(), // invalid index
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(50.0),
+            }],
+            rationale: "invalid path".into(),
+        };
+        // Should be identity since path doesn't resolve
+        assert!(
+            is_identity_diff(&diff, &base),
+            "unknown path filter edit must be a no-op"
+        );
+    }
+
+    #[test]
+    fn filter_tunable_paths_symmetry_property() {
+        // PROPERTY TEST: for every (path, cur) from filter_tunable_paths,
+        // set_filter_value returns true and a re-walk shows the new value at path.
+        let base = fixture_filter_strategy();
+        let filter_orig = base.filter.as_ref().expect("fixture has filter");
+        let paths = filter_tunable_paths(filter_orig);
+        assert!(!paths.is_empty(), "fixture filter should have tunable paths");
+        for (path, cur) in &paths {
+            let new_val: serde_json::Value = if cur.is_null() {
+                serde_json::json!(5u32) // set max_wakeups_per_day to some value
+            } else if let Some(n) = cur.as_f64() {
+                serde_json::json!(n + 1.0) // increment by 1
+            } else {
+                continue; // skip non-numeric (shouldn't happen)
+            };
+            let mut filter_copy = filter_orig.clone();
+            let applied = set_filter_value(&mut filter_copy, path, &new_val);
+            assert!(applied, "set_filter_value must return true for path '{path}'");
+            // Re-walk to verify the new value
+            let new_paths: std::collections::HashMap<String, serde_json::Value> =
+                filter_tunable_paths(&filter_copy).into_iter().collect();
+            assert!(
+                new_paths.contains_key(path.as_str()),
+                "path '{path}' must still be present after set"
+            );
+            let found = &new_paths[path.as_str()];
+            // For null→u32 case (max_wakeups_per_day), new_val is 5
+            if cur.is_null() {
+                assert_eq!(found, &serde_json::json!(5u32), "path '{path}' should show new value");
+            } else {
+                // Numeric comparison allowing f64 rounding
+                let expected = new_val.as_f64().unwrap();
+                let actual = found.as_f64().unwrap_or(f64::NAN);
+                assert!(
+                    (actual - expected).abs() < 1e-6,
+                    "path '{path}' expected {expected}, got {actual}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -848,5 +1548,52 @@ mod tests {
         assert!(desc.contains("ΔSharpe -0.40"), "{desc}");
         assert!(desc.contains("(rejected)"), "{desc}");
         assert_eq!(desc.lines().count(), 1, "must be one line: {desc}");
+    }
+
+    #[test]
+    fn retry_rotates_focus_param_across_attempts() {
+        // F32 (run-7): successive retry attempts must use a different focus param
+        // so the exploration directive names a different key each attempt. With
+        // the old code, `exploration_seed` was fixed and `param_keys[seed % len]`
+        // never changed across retries — `already_tried` became unescapable.
+        let keys: Vec<String> = (0..4).map(|i| format!("risk.k{i}")).collect();
+        // Use a base seed where wrapping_add(1) selects a different key.
+        // With 4 keys: seed % 4 vs (seed+1) % 4 differ unless seed is a multiple
+        // of 4 wrapping-around exactly — pick seed=9 for robustness.
+        let base_seed = 9u64;
+        let filter_paths: Vec<(String, serde_json::Value)> = vec![];
+        let p0 = build_user_payload(
+            "prog",
+            &["param".to_string()],
+            &keys,
+            &filter_paths,
+            None,
+            base_seed.wrapping_add(0),
+            None,
+            0,
+        );
+        let p1 = build_user_payload(
+            "prog",
+            &["param".to_string()],
+            &keys,
+            &filter_paths,
+            None,
+            base_seed.wrapping_add(1),
+            None,
+            0,
+        );
+        // The focus directive must name a different key for attempt 0 vs attempt 1.
+        // Since `build_user_payload` embeds the focus in the exploration_section,
+        // the payloads must differ when the seed selects different keys.
+        assert_ne!(
+            p0, p1,
+            "attempt 0 and attempt 1 must produce different exploration directives (different focus params)"
+        );
+        // Also verify the key selected for seed=9 differs from seed=10.
+        let key0 = &keys[(base_seed as usize) % keys.len()];
+        let key1 = &keys[(base_seed.wrapping_add(1) as usize) % keys.len()];
+        assert_ne!(key0, key1, "seed 9 and seed 10 must index different keys in a 4-key list");
+        assert!(p0.contains(key0.as_str()), "attempt 0 payload must mention the focus key for seed 9: {p0}");
+        assert!(p1.contains(key1.as_str()), "attempt 1 payload must mention the focus key for seed 10: {p1}");
     }
 }

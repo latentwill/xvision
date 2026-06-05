@@ -65,7 +65,10 @@ pub struct MutatorConfig {
 }
 
 fn default_allowed_mutation_kinds() -> Vec<String> {
-    vec!["prose".into(), "param".into(), "tool".into()]
+    // "filter" is enabled by default (Phase 2). Existing autooptimizer.toml
+    // files that pin the `allowed_mutation_kinds` list keep their pin; only
+    // configs that rely on the #[serde(default)] path pick up "filter" here.
+    vec!["prose".into(), "param".into(), "tool".into(), "filter".into()]
 }
 
 impl Default for AutoOptimizerConfig {
@@ -175,5 +178,32 @@ impl AutoOptimizerConfig {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_allowed_mutation_kinds_includes_filter() {
+        let defaults = default_allowed_mutation_kinds();
+        assert!(
+            defaults.contains(&"filter".to_string()),
+            "default allowed_mutation_kinds must include \"filter\"; got: {defaults:?}"
+        );
+        // Existing defaults must still be present.
+        assert!(defaults.contains(&"prose".to_string()), "prose missing from defaults");
+        assert!(defaults.contains(&"param".to_string()), "param missing from defaults");
+        assert!(defaults.contains(&"tool".to_string()), "tool missing from defaults");
+    }
+
+    #[test]
+    fn autooptimizer_config_default_includes_filter_kind() {
+        let config = AutoOptimizerConfig::default();
+        assert!(
+            config.allowed_mutation_kinds.contains(&"filter".to_string()),
+            "AutoOptimizerConfig::default must include \"filter\" in allowed_mutation_kinds"
+        );
     }
 }

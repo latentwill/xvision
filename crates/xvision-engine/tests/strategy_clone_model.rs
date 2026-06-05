@@ -151,7 +151,9 @@ fn seed_strategy(id: &str, agent_id: &str) -> Strategy {
             agent_id: agent_id.into(),
             role: "trader".into(),
             activates: None,
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
@@ -350,6 +352,62 @@ async fn clone_without_override_creates_verbatim_copy_with_cloned_from_set() {
     assert_eq!(
         cloned_agent.slots[0].system_prompt,
         source_agent.slots[0].system_prompt
+    );
+}
+
+/// P2 (run-7 codex review): cloning WITH a provider/model override bakes the
+/// new model into the cloned agent's slot. A carried-over `model_override` on
+/// the cloned `AgentRef` would shadow that at resolution and silently resolve
+/// to the OLD model, so `clone_strategy_full` must CLEAR `model_override` when
+/// an override pair is supplied — even (especially) when the source already had
+/// a stale override.
+#[tokio::test]
+async fn clone_with_override_clears_stale_model_override_on_ref() {
+    let (ctx, _d) = open_api_context().await;
+    write_default_config(&ctx, &config_with_key_env("OPENROUTER_CLONE_TEST_CLEAROVR"));
+    // The override path validates the provider is launchable (key present).
+    // The env var name is unique to this test, so setting it is not racy.
+    std::env::set_var("OPENROUTER_CLONE_TEST_CLEAROVR", "sk-test-clearovr");
+
+    let agent_id = seed_trader_agent(&ctx, "openrouter", "deepseek/deepseek-chat").await;
+    let source_id = "01HZSTRATEGYCLONECLEAROVR";
+    let mut strategy = seed_strategy(source_id, &agent_id);
+    // Source carries a stale per-ref model override that must NOT survive a
+    // clone-with-new-model.
+    strategy.agents[0].model_override = Some("stale/old-model".into());
+    persist_strategy(&ctx, &strategy).await;
+
+    let out = api_strategy::clone_strategy_full(
+        &ctx,
+        source_id,
+        CloneStrategyFullReq {
+            display_name: Some("override-clone".into()),
+            provider: Some("openrouter".into()),
+            model: Some("deepseek/deepseek-chat".into()),
+        },
+    )
+    .await
+    .expect("clone with valid override should succeed");
+
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let cloned = store.load(&out.strategy_id).await.expect("load clone");
+    assert_eq!(
+        cloned.agents[0].model_override, None,
+        "stale model_override must be cleared when cloning with an override pair"
+    );
+
+    // The new model is baked into the cloned agent's slot instead.
+    let cloned_agent = agents_api::get(&ctx, &out.agent_ids[0])
+        .await
+        .expect("load cloned agent");
+    assert_eq!(cloned_agent.slots[0].model, "deepseek/deepseek-chat");
+    assert_eq!(cloned_agent.slots[0].provider, "openrouter");
+
+    // Source untouched.
+    let source_reloaded = store.load(source_id).await.expect("reload source");
+    assert_eq!(
+        source_reloaded.agents[0].model_override.as_deref(),
+        Some("stale/old-model")
     );
 }
 

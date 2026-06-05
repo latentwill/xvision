@@ -19,4 +19,21 @@ export type AgentRef = { agent_id: string, role: string,
  * first capability in `BTreeSet` order" — which is `Trader` for
  * every legacy/pre-033 slot. Spec Decision 2.
  */
-activates?: Capability, };
+activates?: Capability, 
+/**
+ * Optional per-strategy override of the referenced agent's trader-slot
+ * system prompt. `None` (the default) = use the shared agent library
+ * prompt verbatim. `Some(p)` makes THIS strategy run with prompt `p`
+ * without mutating the shared `Agent` record — so the override lands in
+ * the `Strategy` content hash (proper lineage) and never leaks into other
+ * strategies that reference the same agent. This is the "home" that makes
+ * `prose` optimizer mutations reachable (run-7 finding; F25 design pass).
+ */
+prompt_override?: string, 
+/**
+ * Optional per-strategy override of the referenced agent's trader-slot
+ * `(provider/)model`. Same rationale as `prompt_override`. Reserved for the
+ * deferred F25 model-swap mutation axis; honored at resolution today so the
+ * axis is a pure mutator/validator add later.
+ */
+model_override?: string, };
