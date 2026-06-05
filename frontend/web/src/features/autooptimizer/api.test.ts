@@ -1,6 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 
-import { formatGateVerdict } from "./api";
+import { formatGateVerdict, getCycleRun, listLineageNodes, type CycleRunDetail } from "./api";
+import * as client from "@/api/client";
+
+afterEach(() => vi.restoreAllMocks());
+
+describe("autooptimizer api additions", () => {
+  it("getCycleRun fetches the per-cycle detail endpoint", async () => {
+    const spy = vi
+      .spyOn(client, "apiFetch")
+      .mockResolvedValue({ cycle_id: "cyc-1", nodes: [] } as unknown as CycleRunDetail);
+    await getCycleRun("cyc 1");
+    expect(spy).toHaveBeenCalledWith(
+      "/api/autooptimizer/cycles/cyc%201",
+    );
+  });
+
+  it("listLineageNodes forwards a cycle_id filter", async () => {
+    const spy = vi.spyOn(client, "apiFetch").mockResolvedValue([]);
+    await listLineageNodes({ cycleId: "cyc-1" });
+    expect(spy).toHaveBeenCalledWith(
+      "/api/autooptimizer/lineage?cycle_id=cyc-1",
+    );
+  });
+});
 
 // Regression: rejected lineage nodes serialize `gate_verdict` as the Rust
 // externally-tagged enum object `{ Fail: { reason } }`, not a string. The old
