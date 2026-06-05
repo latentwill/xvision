@@ -186,3 +186,38 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
 
     GateVerdict::Pass
 }
+
+use crate::autooptimizer::config::RegimeSide;
+use crate::autooptimizer::lineage::LineageStatus;
+
+/// Aggregate per-regime gate verdicts into a lineage status per the anti-overfit
+/// rule: Kept (Active) iff a Bull AND a BearOrShock regime both pass; Suspect
+/// (Quarantined) if any regime passes but not the both-sides rule; Dropped
+/// (Rejected) if no regime passes.
+pub fn aggregate_regime_verdicts(results: &[(RegimeSide, GateVerdict)]) -> LineageStatus {
+    let passed = |s: RegimeSide| results.iter().any(|(side, v)| *side == s && matches!(v, GateVerdict::Pass));
+    let any_pass = results.iter().any(|(_, v)| matches!(v, GateVerdict::Pass));
+    if passed(RegimeSide::Bull) && passed(RegimeSide::BearOrShock) {
+        LineageStatus::Active
+    } else if any_pass {
+        LineageStatus::Quarantined
+    } else {
+        LineageStatus::Rejected
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregation_kept_needs_bull_and_bear() {
+        use crate::autooptimizer::config::RegimeSide::*;
+        let pass = GateVerdict::Pass;
+        let fail = GateVerdict::Fail { reason: "neg".into() };
+        assert_eq!(aggregate_regime_verdicts(&[(Bull, pass.clone()), (BearOrShock, pass.clone())]), LineageStatus::Active);
+        assert_eq!(aggregate_regime_verdicts(&[(Bull, pass.clone()), (BearOrShock, fail.clone())]), LineageStatus::Quarantined);
+        assert_eq!(aggregate_regime_verdicts(&[(Bull, fail.clone()), (BearOrShock, fail.clone())]), LineageStatus::Rejected);
+        assert_eq!(aggregate_regime_verdicts(&[(Bull, pass.clone()), (Chop, pass.clone())]), LineageStatus::Quarantined);
+    }
+}
