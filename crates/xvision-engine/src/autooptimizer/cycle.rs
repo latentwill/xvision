@@ -1,6 +1,6 @@
 //! Optimizer cycle orchestrator — AR-2 Task 9.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};
 use chrono::Utc;
@@ -313,6 +313,18 @@ where
         .run(parent_strategy, &cycle_config.baseline_scenario)
         .await?;
 
+    // F32: every candidate this parent has ALREADY produced (across all prior
+    // cycles), so the mutator can be steered away from re-deriving them and any
+    // duplicate is dropped before it spends a backtest. Best-effort: a lineage
+    // read failure just yields an empty set (the in-mutator guard still holds for
+    // candidates produced within this cycle). Accumulates within the cycle too.
+    let lineage = LineageStore::new(pool.clone());
+    let mut avoid: HashSet<ContentHash> = lineage
+        .children_of(&parent_node.bundle_hash)
+        .await
+        .map(|kids| kids.into_iter().map(|n| n.bundle_hash).collect())
+        .unwrap_or_default();
+
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
@@ -359,7 +371,7 @@ where
             }
         } else {
             match mutator
-                .propose(parent_strategy, config, dsr_prefix, exploration_seed)
+                .propose(parent_strategy, config, dsr_prefix, exploration_seed, &avoid)
                 .await
             {
                 Ok(d) => d,
@@ -383,9 +395,10 @@ where
         // parent's — inserting it would overwrite (corrupt) the parent node and
         // create a self-parent cycle in the lineage graph.
         let candidate = diff.apply_to(parent_strategy);
-        let is_identity = serde_json::to_value(&candidate)
-            .map(|v| ContentHash::of_json(&v) == parent_node.bundle_hash)
-            .unwrap_or(false);
+        let candidate_hash = serde_json::to_value(&candidate)
+            .map(|v| ContentHash::of_json(&v))
+            .ok();
+        let is_identity = candidate_hash.as_ref() == Some(&parent_node.bundle_hash);
         if is_identity {
             tracing::debug!(
                 cycle_id,
@@ -399,6 +412,30 @@ where
                 reason: "experiment writer produced a no-op (identity) diff".to_string(),
             });
             continue;
+        }
+        // F32 backstop: drop a candidate this parent has already produced (in a
+        // prior cycle OR earlier this cycle) before it spends four backtests on a
+        // known result. The mutator's `already_tried` retry normally prevents this,
+        // but this also covers the tournament path and any model that ignores the
+        // retry hint — the hard guarantee that repeat cycles can't re-evaluate the
+        // same candidate forever.
+        if let Some(h) = candidate_hash.as_ref() {
+            if avoid.contains(h) {
+                tracing::debug!(
+                    cycle_id,
+                    parent_hash = %parent_node.bundle_hash.to_hex(),
+                    child_hash = %h.to_hex(),
+                    "skipping duplicate candidate already evaluated on this parent — no backtest spent",
+                );
+                no_candidate_count += 1;
+                progress(CycleProgressEvent::NoCandidate {
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: parent_node.bundle_hash.to_hex(),
+                    reason: "experiment writer re-derived a candidate already evaluated on this parent"
+                        .to_string(),
+                });
+                continue;
+            }
         }
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),
@@ -420,6 +457,9 @@ where
             passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
         let node = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
+        // F32: remember this candidate so later mutations this cycle (and the
+        // mutator's own retries) won't re-derive it.
+        avoid.insert(outcome.child_hash);
         record_proposal(
             pool,
             &outcome.child_hash,
