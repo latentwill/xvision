@@ -1,8 +1,5 @@
 import { Fragment, useState } from "react";
-import { Link } from "react-router-dom";
-import { useLadder, useLineageNodes, type MutatorScore, formatGateVerdict } from "../api";
-import { GateBadge } from "../ui/GateBadge";
-import { groupNodesByWriter } from "./writer-provenance";
+import { useLadder, type MutatorScore } from "../api";
 
 function acceptRate(s: MutatorScore): number {
   return s.proposals > 0 ? s.accepted / s.proposals : 0;
@@ -10,14 +7,11 @@ function acceptRate(s: MutatorScore): number {
 
 export function ExperimentWritersPanel() {
   const { data, isLoading, isError } = useLadder();
-  const lineageQuery = useLineageNodes();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const rows = [...(data ?? [])].sort(
     (a, b) => b.avg_delta_sharpe - a.avg_delta_sharpe,
   );
-
-  const writerGroups = groupNodesByWriter(lineageQuery.data ?? [], rows);
 
   function toggle(key: string) {
     setExpanded((prev) => {
@@ -62,8 +56,6 @@ export function ExperimentWritersPanel() {
                 const key = `${s.provider}/${s.model}/${s.prompt_version}`;
                 const rate = acceptRate(s);
                 const isOpen = expanded.has(key);
-                const group = writerGroups.find((g) => g.key === key);
-                const recentNodes = (group?.nodes ?? []).slice(0, 5);
 
                 return (
                   <Fragment key={key}>
@@ -101,28 +93,31 @@ export function ExperimentWritersPanel() {
                     </tr>
                     {isOpen && (
                       <tr className="bg-surface-elev/40">
-                        <td colSpan={5} className="pb-2 pl-6 pr-3 pt-1">
-                          {recentNodes.length === 0 ? (
-                            <p className="text-[11px] text-text-3">No recent experiments for this writer.</p>
-                          ) : (
-                            <ul className="space-y-1">
-                              {recentNodes.map((node) => {
-                                const verdict = formatGateVerdict(node.gate_verdict);
-                                return (
-                                  <li key={node.bundle_hash} className="flex items-center gap-2 text-[11px]">
-                                    <Link
-                                      to={`/optimizer/experiment/${node.bundle_hash}`}
-                                      className="font-mono text-text hover:underline"
-                                    >
-                                      {node.bundle_hash.slice(0, 10)}
-                                    </Link>
-                                    <GateBadge verdict={verdict} status={node.status} />
-                                    <span className="text-text-3">{node.status}</span>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          )}
+                        <td colSpan={5} className="pb-3 pl-6 pr-3 pt-2">
+                          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
+                            <dt className="text-text-3">Prompt version</dt>
+                            <dd className="font-mono text-text">{s.prompt_version}</dd>
+
+                            <dt className="text-text-3">Proposals</dt>
+                            <dd className="font-mono text-text">{s.proposals}</dd>
+
+                            <dt className="text-text-3">Accepted</dt>
+                            <dd className="font-mono text-text">{s.accepted}</dd>
+
+                            <dt className="text-text-3">Rejected (overfit)</dt>
+                            <dd className="font-mono text-text">{s.rejected_overfit}</dd>
+
+                            <dt className="text-text-3">Accept rate</dt>
+                            <dd className="font-mono text-text">{Math.round(rate * 100)}%</dd>
+
+                            <dt className="text-text-3">Avg ΔSharpe</dt>
+                            <dd className={`font-mono ${s.avg_delta_sharpe >= 0 ? "text-gold" : "text-danger"}`}>
+                              {s.avg_delta_sharpe >= 0 ? "+" : ""}{s.avg_delta_sharpe.toFixed(2)}
+                            </dd>
+                          </dl>
+                          <p className="mt-2 text-[10px] text-text-3">
+                            Per-experiment provenance for this writer arrives with the regime-matrix backend (Phase 2).
+                          </p>
                         </td>
                       </tr>
                     )}
