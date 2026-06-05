@@ -52,6 +52,12 @@ struct CachedRunDetail {
 pub struct AppState {
     pub pool: SqlitePool,
     pub xvn_home: PathBuf,
+    /// Cortex-memory recorder for the chat rail (P4). `Some` only when
+    /// `XVN_CHAT_MEMORY` is set (`1`/`true`) at server start AND the
+    /// bootstrap `ApiContext` has a provisioned recorder. Default OFF: env
+    /// unset → `None` → zero recall/write, chat behaves exactly as today.
+    /// Behind an `Arc` so `AppState` stays cheaply `Clone`.
+    pub chat_memory: Option<Arc<xvision_engine::agent::memory_recorder::MemoryRecorder>>,
     /// Singleton live-stream event bus. Constructed once at server start and
     /// shared across all HTTP requests via `api_context()`.
     pub event_bus: Arc<RunEventBus>,
@@ -156,6 +162,22 @@ impl AppState {
         .with_context(|| format!("open ApiContext at {}", xvn_home.display()))?;
         let pool = bootstrap_ctx.db.clone();
 
+        // P4 chat-rail memory: capture the bootstrap context's provider-aware
+        // recorder ONLY when the operator opted in via XVN_CHAT_MEMORY. Default
+        // OFF — env unset → None → no recall/write-back. When set but no
+        // embedder is provisioned, `memory_recorder` may still be Some with no
+        // embedder; recall then returns NoEmbedder and write-back no-ops, which
+        // is the intended best-effort degrade.
+        let chat_memory = if std::env::var("XVN_CHAT_MEMORY")
+            .ok()
+            .filter(|v| v == "1" || v == "true")
+            .is_some()
+        {
+            bootstrap_ctx.memory_recorder.clone()
+        } else {
+            None
+        };
+
         // Hydrate the process env with persisted provider API keys so backend
         // constructors that call std::env::var(api_key_env) see the keys the
         // operator pasted via Settings → Providers. Env vars set in the shell
@@ -221,6 +243,7 @@ impl AppState {
         Ok(Self {
             pool,
             xvn_home,
+            chat_memory,
             event_bus: Arc::new(RunEventBus::new()),
             obs_event_bus,
             obs_broadcast,

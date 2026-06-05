@@ -357,6 +357,9 @@ pub async fn chat(
     let message = body.message;
     let profile = body.profile;
     let cli_runner = state.cli_runner();
+    // P4 cortex-memory: clone the recorder handle before spawn so the loop can
+    // attach it without moving the whole `AppState` into the task.
+    let chat_memory = state.chat_memory.clone();
 
     // Phase 1.2: in addition to the legacy WizardEvent SSE, project every
     // WizardEvent into a UnifiedEvent, persist it to the session_events log,
@@ -455,7 +458,7 @@ pub async fn chat(
         )
         .await
         {
-            Ok(w) => w,
+            Ok(w) => w.with_chat_memory(chat_memory),
             Err(e) => {
                 let _ = tx
                     .send(WizardEvent::Error {

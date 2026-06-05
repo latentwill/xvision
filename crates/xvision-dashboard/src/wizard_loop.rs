@@ -32,6 +32,9 @@ use crate::cli_jobs::store::CliJobStore;
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
+use xvision_engine::agent::memory_recorder::{
+    render_recalled_patterns, MemoryRecorder, RecallResult,
+};
 use xvision_engine::agents::AgentSlot;
 use xvision_engine::api::agents as api_agents;
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
@@ -55,8 +58,8 @@ use xvision_engine::focus;
 use xvision_engine::strategies::ActivationMode;
 use xvision_engine::strategies_folder;
 use xvision_observability::{
-    Actor as UnifiedActor, CheckpointWrittenEvent, FocusEvent, ToolDenied, ToolPolicyChecked,
-    ToolPolicyOutcome, TypedError, UnifiedPayload,
+    Actor as UnifiedActor, CheckpointWrittenEvent, FocusEvent, Redactor, ToolDenied,
+    ToolPolicyChecked, ToolPolicyOutcome, TypedError, UnifiedPayload,
 };
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
@@ -243,6 +246,13 @@ pub struct WizardLoop {
     /// Pending events queued during the current `next_event` invocation.
     pending: Vec<WizardEvent>,
     is_done: bool,
+    /// P4 cortex-memory: scope-namespaced recall + redacted write-back.
+    /// `Some` only when the dashboard was started with `XVN_CHAT_MEMORY` and a
+    /// recorder was provisioned (set via [`WizardLoop::with_chat_memory`]).
+    /// `None` → no recall and no write-back; the loop behaves exactly as it did
+    /// before P4. Recall/record errors are always swallowed — memory is
+    /// best-effort and must never fail a chat turn.
+    chat_memory: Option<Arc<MemoryRecorder>>,
 }
 
 /// Hard cap on consecutive failures of the **same tool with the same
@@ -649,6 +659,16 @@ enum ScenarioResolution {
     NeedsClarification(serde_json::Value),
 }
 
+/// Truncate `text` to at most `max` chars, appending `…` when trimmed.
+/// Char-based (not byte-based) so it never splits a multi-byte UTF-8 scalar.
+fn truncate(text: &str, max: usize) -> String {
+    let mut s: String = text.chars().take(max).collect();
+    if text.chars().count() > max {
+        s.push('…');
+    }
+    s
+}
+
 impl WizardLoop {
     /// Construct a session-aware wizard loop. The user's `new_message` is
     /// persisted as a `user` text block in the chat session store BEFORE
@@ -724,7 +744,17 @@ impl WizardLoop {
             tool_failure_streak: 0,
             pending: vec![],
             is_done: false,
+            chat_memory: None,
         })
+    }
+
+    /// Attach the cortex-memory recorder for scope-namespaced recall +
+    /// redacted write-back (P4). Chainable so call sites read
+    /// `WizardLoop::new_with_profile(...).await?.with_chat_memory(state.chat_memory.clone())`.
+    /// Pass `None` (or skip the call) to leave memory disabled.
+    pub fn with_chat_memory(mut self, mem: Option<Arc<MemoryRecorder>>) -> Self {
+        self.chat_memory = mem;
+        self
     }
 
     /// Pop one event. The caller streams these to the client one-by-one
@@ -849,12 +879,124 @@ impl WizardLoop {
             ),
             runtime = self.agent_runtime_prompt_section(),
         );
-        match self.load_focus_section().await {
+        let assembled = match self.load_focus_section().await {
             Some((section, ev)) => {
                 self.policy_events.push(ev);
                 format!("{base}\n{section}\n")
             }
             None => base,
+        };
+        // P4 cortex-memory recall: prepend the scope's prior salient
+        // observations (Patterns) ahead of the assembled prompt so the model
+        // sees them first. Best-effort — any recall failure (no embedder, no
+        // recorder, store error) returns the assembled prompt unchanged.
+        self.prepend_recalled_memory(assembled).await
+    }
+
+    /// Best-effort cortex recall. When `chat_memory` is set and the session
+    /// has a latest user message, recall the top-k Patterns in the scope's
+    /// `chat:` namespace and prepend the rendered `<prior_observations>` block
+    /// to `assembled`. Live context → `scenario_start = None` (no temporal
+    /// filter). Never propagates: `system_prompt` returns `String`, so every
+    /// error path returns `assembled` untouched.
+    async fn prepend_recalled_memory(&self, assembled: String) -> String {
+        let Some(recorder) = &self.chat_memory else {
+            return assembled;
+        };
+        let Some(query) = self.latest_text_for_role("user").await else {
+            return assembled;
+        };
+        let namespace = self.scope.memory_namespace();
+        match recorder
+            .recall_in_namespace(&namespace, &query, 5, None)
+            .await
+        {
+            Ok(RecallResult::Hits { matches, .. }) if !matches.is_empty() => {
+                format!("{}\n\n{}", render_recalled_patterns(&matches), assembled)
+            }
+            Ok(_) => assembled,
+            Err(e) => {
+                tracing::warn!(
+                    target: "xvision::dashboard::chat_rail",
+                    session_id = %self.session_id,
+                    namespace = %namespace,
+                    error = %e,
+                    "chat-memory recall failed; proceeding without prior observations"
+                );
+                assembled
+            }
+        }
+    }
+
+    /// Scan the persisted chat history in reverse for the latest message with
+    /// `role`, returning its first `Text` block content. Used to source the
+    /// recall query (latest user turn) and the write-back assistant text.
+    /// Best-effort: a store read error yields `None`.
+    async fn latest_text_for_role(&self, role: &str) -> Option<String> {
+        let history = ChatSessionStore::load_history(&self.pool, &self.session_id)
+            .await
+            .ok()?;
+        for cm in history.iter().rev() {
+            if cm.role != role {
+                continue;
+            }
+            for block in &cm.content_blocks {
+                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                        if !text.is_empty() {
+                            return Some(text.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Best-effort cortex write-back on a clean turn completion. Builds a
+    /// concise observation from the latest user message + this turn's
+    /// assistant text, runs it through the observability [`Redactor`] so a
+    /// pasted secret is never persisted, and records it as an Observation in
+    /// the scope's `chat:` namespace. Live context → source window =
+    /// `now..now`, provenance scenario `"chat"`. A no-op when memory is
+    /// disabled; every error is logged and swallowed (never fails the turn).
+    async fn write_back_memory(&self, assistant_text: &str) {
+        let Some(recorder) = &self.chat_memory else {
+            return;
+        };
+        if assistant_text.trim().is_empty() {
+            return;
+        }
+        let user_text = self.latest_text_for_role("user").await.unwrap_or_default();
+        let observation = format!(
+            "User asked: {}\nAssistant concluded: {}",
+            truncate(&user_text, 200),
+            truncate(assistant_text, 400),
+        );
+        // Redact BEFORE persisting — a pasted API key / mnemonic must never
+        // land in the memory store.
+        let redacted = Redactor::new().redact(&observation).text;
+        let namespace = self.scope.memory_namespace();
+        let now = Utc::now();
+        if let Err(e) = recorder
+            .record_observation_in_namespace(
+                &namespace,
+                &redacted,
+                self.session_id.clone(),
+                "chat".to_string(),
+                0,
+                now,
+                now,
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "xvision::dashboard::chat_rail",
+                session_id = %self.session_id,
+                namespace = %namespace,
+                error = %e,
+                "chat-memory write-back failed; continuing"
+            );
         }
     }
 
@@ -991,6 +1133,20 @@ impl WizardLoop {
                     ChatSessionStore::append(&self.pool, &self.session_id, "user", &nudge_blocks).await?;
                     continue;
                 }
+                // P4 cortex-memory write-back: this is the clean text-only
+                // completion. Record a redacted observation of the turn into
+                // the scope namespace before signalling Done. Best-effort —
+                // errors are logged, never propagated.
+                let assistant_text = resp
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } if !text.is_empty() => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                self.write_back_memory(&assistant_text).await;
                 self.is_done = true;
                 self.pending.push(WizardEvent::Done {
                     draft_id: self.last_draft_id.clone(),
