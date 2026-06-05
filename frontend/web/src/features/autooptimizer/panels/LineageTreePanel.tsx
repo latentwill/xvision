@@ -27,19 +27,35 @@ function buildTree(nodes: LineageNode[]): TreeNode[] {
       roots.push(treeNode);
     }
   }
-  // Fallback: if every node points at another node (pure cycle), roots would be
-  // empty and nothing would render.  Promote all nodes as flat roots instead.
-  if (roots.length === 0 && nodes.length > 0) {
-    for (const n of nodes) {
+
+  // After wiring up parent→child edges, collect all hashes reachable from the
+  // normal roots via a DFS.  Any node that is NOT reachable (e.g. it belongs
+  // to a separate a→b→a cycle that has no external entry point) would be
+  // silently dropped by the render loop.  Promote those unreachable nodes as
+  // additional flat roots so every node renders exactly once.
+  const reachable = new Set<string>();
+  function markReachable(tn: TreeNode, branch: Set<string>): void {
+    if (reachable.has(tn.node.bundle_hash) || branch.has(tn.node.bundle_hash)) return;
+    reachable.add(tn.node.bundle_hash);
+    const nextBranch = new Set(branch);
+    nextBranch.add(tn.node.bundle_hash);
+    for (const child of tn.children) {
+      markReachable(child, nextBranch);
+    }
+  }
+  for (const root of roots) {
+    markReachable(root, new Set());
+  }
+  for (const n of nodes) {
+    if (!reachable.has(n.bundle_hash)) {
       roots.push({ node: n, children: [] });
     }
   }
+
   return roots;
 }
 
 // ─── Recursive row renderer ────────────────────────────────────────────────────
-
-const MAX_TREE_DEPTH = 50;
 
 function TreeRow({
   treeNode,
@@ -51,9 +67,10 @@ function TreeRow({
   visited: Set<string>;
 }) {
   const { node } = treeNode;
-  // Guard: never render a node we've already rendered in this branch, and cap
-  // depth to prevent any residual cycle from causing an infinite loop.
-  if (visited.has(node.bundle_hash) || depth > MAX_TREE_DEPTH) {
+  // Guard: never render a node we've already rendered in this branch.
+  // buildTree guarantees a single-parent forest + the visited set guarantees
+  // termination for any residual cycle, so no arbitrary depth cap is needed.
+  if (visited.has(node.bundle_hash)) {
     return null;
   }
   const nextVisited = new Set(visited);
