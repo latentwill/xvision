@@ -129,7 +129,7 @@ async fn successive_cycles_on_same_parent_produce_diverse_candidates() {
     for cid in cycle_ids {
         let seed = exploration_seed_for(cid, 0);
         let diff = mutator
-            .propose(&base, &cfg, None, seed)
+            .propose(&base, &cfg, None, seed, None)
             .await
             .expect("propose should succeed");
         let candidate = diff.apply_to(&base);

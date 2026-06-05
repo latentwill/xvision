@@ -319,6 +319,41 @@ where
         .run(parent_strategy, &cycle_config.baseline_scenario)
         .await?;
 
+    // P3: recall prior optimizer outcomes on similar strategies (once per
+    // parent) to advise the experiment writer. Best-effort and eval-temporal-
+    // safe — forward the scenario start so Patterns trained inside the window
+    // can't leak; any recall error / missing embedder degrades to `None`
+    // (plain prompt) and never fails the cycle. This is advisory only; the F32
+    // exploration seed + hard avoid-set still govern exact repeats.
+    let mutation_memory_context: Option<String> = match memory {
+        None => None,
+        Some(mem) => {
+            let query = crate::autooptimizer::program_view::to_markdown(parent_strategy);
+            match mem
+                .recall_in_namespace(
+                    crate::autooptimizer::mutator::MUTATIONS_NS,
+                    &query,
+                    5,
+                    Some(cycle_config.day_scenario.time_window.start),
+                )
+                .await
+            {
+                Ok(crate::agent::memory_recorder::RecallResult::Hits { matches, .. })
+                    if !matches.is_empty() =>
+                {
+                    Some(crate::agent::memory_recorder::render_recalled_patterns(&matches))
+                }
+                Ok(_) => None,
+                Err(e) => {
+                    tracing::warn!(
+                        "mutator memory recall failed (best-effort, ignoring): {e}"
+                    );
+                    None
+                }
+            }
+        }
+    };
+
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
@@ -365,7 +400,13 @@ where
             }
         } else {
             match mutator
-                .propose(parent_strategy, config, dsr_prefix, exploration_seed)
+                .propose(
+                    parent_strategy,
+                    config,
+                    dsr_prefix,
+                    exploration_seed,
+                    mutation_memory_context.as_deref(),
+                )
                 .await
             {
                 Ok(d) => d,
@@ -425,6 +466,39 @@ where
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
+        // P3 write-back: record EVERY gated candidate's outcome (both Active and
+        // Rejected) as an Observation in the mutations namespace, so a later
+        // distillation pass can promote recurring lessons (e.g. "raising leverage
+        // past Nx degraded holdout") into Patterns the experiment writer recalls
+        // across runs. Best-effort and eval-temporal-safe; never fail the cycle.
+        if let Some(mem) = memory {
+            let status_label = if outcome.status == LineageStatus::Active {
+                "active"
+            } else {
+                "rejected"
+            };
+            let obs = crate::autooptimizer::mutator::describe_mutation_outcome(
+                &outcome.diff,
+                outcome.delta_sharpe,
+                status_label,
+            );
+            if let Err(e) = mem
+                .record_observation_in_namespace(
+                    crate::autooptimizer::mutator::MUTATIONS_NS,
+                    &obs,
+                    cycle_id.to_string(),
+                    "autooptimizer".to_string(),
+                    0,
+                    cycle_config.day_scenario.time_window.start,
+                    cycle_config.day_scenario.time_window.end,
+                )
+                .await
+            {
+                tracing::warn!(
+                    "mutator outcome write-back failed (best-effort, ignoring): {e}"
+                );
+            }
+        }
         let node = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
         record_proposal(
             pool,

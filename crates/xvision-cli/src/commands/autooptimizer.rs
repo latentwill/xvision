@@ -2034,7 +2034,7 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg, None, exploration_seed).await
+    mutator.propose(base, cfg, None, exploration_seed, None).await
 }
 
 fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {
