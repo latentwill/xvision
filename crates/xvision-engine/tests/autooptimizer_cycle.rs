@@ -372,6 +372,7 @@ async fn run_cycle_smoke() {
             events_clone.lock().unwrap().push(evt);
         },
         None,
+        None, // memory (P2 cortex): off in this test
         None,
         None,
     )
@@ -524,6 +525,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         &SharpeByStopLoss,
         |_evt| {},
         None,
+        None, // memory (P2 cortex): off in this test
         None,
         None,
     )

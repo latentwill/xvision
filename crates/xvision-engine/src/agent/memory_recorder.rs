@@ -160,6 +160,86 @@ impl MemoryRecorder {
         self.store.upsert_observation(&item, embedder.id()).await?;
         Ok(Some(id))
     }
+
+    /// Explicit-namespace Pattern recall — the shared cortex primitive
+    /// for subsurface call sites (autooptimizer Judge in P2; the
+    /// Mutator/seed paths in P3/P4) that address a custom namespace
+    /// rather than the slot-derived `global` / `agent:{id}` namespaces
+    /// `recall` produces via [`Namespace::for_mode`].
+    ///
+    /// Surfaces **Patterns only** — that is the store's `query`
+    /// contract; a freshly written Observation is not recalled here.
+    /// `current_scenario_start` is forwarded verbatim so eval callers
+    /// keep temporal safety (`Some(scenario.time_window.start)`); `None`
+    /// = live/no temporal filter. No embedder → `NoEmbedder` (best-effort
+    /// callers degrade to the plain prompt).
+    pub async fn recall_in_namespace(
+        &self,
+        namespace: &str,
+        query_text: &str,
+        k: usize,
+        current_scenario_start: Option<DateTime<Utc>>,
+    ) -> anyhow::Result<RecallResult> {
+        let Some(embedder) = &self.embedder else {
+            return Ok(RecallResult::NoEmbedder {
+                namespace: namespace.to_string(),
+            });
+        };
+        let q = embedder.embed(query_text).await?;
+        let hits = self
+            .store
+            .query(namespace, &q, k, current_scenario_start)
+            .await?;
+        Ok(RecallResult::Hits {
+            namespace: namespace.to_string(),
+            matches: hits,
+            // No surrounding per-decision loop on these subsurface call
+            // sites; `0` is the conventional non-eval default (mirrors
+            // `recall`).
+            decision_id: 0,
+        })
+    }
+
+    /// Explicit-namespace Observation write — the write-back half of
+    /// the cortex primitive. Caller supplies full provenance; the source
+    /// window doubles as the temporal anchor the distillation pass reads
+    /// when computing a Pattern's `training_window_end`. No embedder →
+    /// `Ok(None)` (best-effort no-op). Returns the new item id.
+    pub async fn record_observation_in_namespace(
+        &self,
+        namespace: &str,
+        text: &str,
+        run_id: String,
+        scenario_id: String,
+        cycle_idx: i64,
+        source_window_start: DateTime<Utc>,
+        source_window_end: DateTime<Utc>,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(embedder) = &self.embedder else {
+            return Ok(None);
+        };
+        let emb = embedder.embed(text).await?;
+        let id = ulid::Ulid::new().to_string();
+        let item = MemoryItem {
+            id: id.clone(),
+            namespace: namespace.to_string(),
+            tier: Tier::Observation,
+            text: text.to_string(),
+            embedding: emb,
+            created_at: chrono::Utc::now(),
+            run_id: Some(run_id),
+            scenario_id: Some(scenario_id),
+            cycle_idx: Some(cycle_idx),
+            source_window_start: Some(source_window_start),
+            source_window_end: Some(source_window_end),
+            training_window_end: None,
+            promotion_state: None,
+            attestation_id: None,
+            forgotten_at: None,
+        };
+        self.store.upsert_observation(&item, embedder.id()).await?;
+        Ok(Some(id))
+    }
 }
 
 /// Truncate `text` to at most 160 chars, appending `…` when trimmed.
@@ -189,4 +269,124 @@ pub fn render_recalled_patterns(matches: &[MemoryMatch]) -> String {
     }
     out.push_str("</prior_observations>");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    async fn store() -> Arc<MemoryStore> {
+        Arc::new(
+            MemoryStore::open_in_memory()
+                .await
+                .expect("in-memory store opens"),
+        )
+    }
+
+    fn seed_pattern(ns: &str, text: &str) -> MemoryItem {
+        MemoryItem {
+            id: ulid::Ulid::new().to_string(),
+            namespace: ns.to_string(),
+            tier: Tier::Pattern,
+            text: text.to_string(),
+            // The recorder's StaticEmbedder returns a fixed vector for
+            // every input, so any non-empty embedding here matches the
+            // query vector (cosine == 1.0) and surfaces deterministically.
+            embedding: vec![0.1, 0.2, 0.3],
+            created_at: Utc::now(),
+            run_id: None,
+            scenario_id: None,
+            cycle_idx: None,
+            source_window_start: None,
+            source_window_end: None,
+            training_window_end: None,
+            promotion_state: Some("active".to_string()),
+            attestation_id: None,
+            forgotten_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn recall_in_namespace_surfaces_seeded_pattern() {
+        let store = store().await;
+        let pat = seed_pattern("n", "raising leverage past 3x degraded holdout");
+        store
+            .upsert_pattern(&pat, "static-test")
+            .await
+            .expect("seed pattern");
+
+        let rec = MemoryRecorder::with_static_embedder(store, "static-test", vec![0.1, 0.2, 0.3]);
+        let res = rec
+            .recall_in_namespace("n", "leverage", 3, None)
+            .await
+            .expect("recall ok");
+        match res {
+            RecallResult::Hits { namespace, matches, .. } => {
+                assert_eq!(namespace, "n");
+                assert_eq!(matches.len(), 1, "expected the seeded pattern");
+                assert!(matches[0].text.contains("raising leverage"));
+            }
+            other => panic!("expected Hits, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn record_observation_in_namespace_writes_an_observation() {
+        let store = store().await;
+        let rec =
+            MemoryRecorder::with_static_embedder(store.clone(), "static-test", vec![0.4, 0.5, 0.6]);
+
+        let win = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let id = rec
+            .record_observation_in_namespace(
+                "n",
+                "obs text",
+                "run-1".to_string(),
+                "autooptimizer".to_string(),
+                0,
+                win,
+                win,
+            )
+            .await
+            .expect("record ok");
+        assert!(id.is_some(), "embedder present → id returned");
+        assert_eq!(
+            store
+                .count_live_observations("n")
+                .await
+                .expect("count ok"),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn no_embedder_degrades_silently() {
+        let store = store().await;
+        let rec = MemoryRecorder::new(store);
+
+        match rec
+            .recall_in_namespace("n", "q", 3, None)
+            .await
+            .expect("recall ok")
+        {
+            RecallResult::NoEmbedder { namespace } => assert_eq!(namespace, "n"),
+            other => panic!("expected NoEmbedder, got {other:?}"),
+        }
+
+        let win = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        let id = rec
+            .record_observation_in_namespace(
+                "n",
+                "obs",
+                "run-1".to_string(),
+                "autooptimizer".to_string(),
+                0,
+                win,
+                win,
+            )
+            .await
+            .expect("record ok");
+        assert!(id.is_none(), "no embedder → no write");
+    }
 }

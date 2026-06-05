@@ -283,6 +283,8 @@ pub async fn start_cycle(
                 let _ = tx.send(ev);
             },
             None,
+            // P2: cortex-memory in dashboard cycles lands when AppState carries a recorder (P4); CLI is the P2 enablement path (XVN_OPTIMIZER_MEMORY=1).
+            None,
             Some(cycle_id.clone()),
             Some(cancel_flag),
         )

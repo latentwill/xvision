@@ -88,6 +88,10 @@ pub async fn run_cycle(
     paper_tester: &dyn PaperTestRunner,
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
     dspy_ctx: Option<&DspyContext>,
+    // P2 (cortex-memory): when `Some`, the Judge recalls prior distilled
+    // findings before judging and records new ones back to
+    // `autooptimizer:judge`. `None` = today's behavior (default off).
+    memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cycle_id_override: Option<String>,
     // F28: a cooperative cancel flag. When set, the cycle stops launching further
     // mutations/backtests (checked between candidates and parents) so an operator
@@ -169,6 +173,7 @@ pub async fn run_cycle(
                 &mut findings_by_node,
                 dsr_prefix.as_deref(),
                 dspy_ctx,
+                memory,
                 cancel.as_ref(),
             )
             .await?;
@@ -294,6 +299,7 @@ async fn process_parent_mutations<F>(
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
     dspy_ctx: Option<&DspyContext>,
+    memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
@@ -430,7 +436,18 @@ where
         .await?;
         if outcome.status == LineageStatus::Active {
             record_outcome(pool, &outcome.child_hash, outcome.delta_sharpe).await?;
-            let findings = run_judge(judge, parent_strategy, &outcome.child, &outcome.diff, "").await?;
+            // P2: pass the recorder + eval scenario start so judge recall is
+            // temporally safe (Patterns trained inside the scenario can't leak).
+            let findings = run_judge(
+                judge,
+                parent_strategy,
+                &outcome.child,
+                &outcome.diff,
+                "",
+                memory,
+                Some(cycle_config.day_scenario.time_window.start),
+            )
+            .await?;
             for f in &findings {
                 progress(CycleProgressEvent::JudgeFinding {
                     cycle_id: cycle_id.to_string(),
@@ -438,6 +455,33 @@ where
                     severity: format!("{:?}", f.severity),
                     code: f.code.clone(),
                 });
+            }
+            // P2 write-back: record each real finding as an Observation in the
+            // judge namespace so a later distillation pass can promote recurring
+            // ones to Patterns. Best-effort — never fail the cycle on a memory
+            // error; skip the synthetic parse-error finding.
+            if let Some(mem) = memory {
+                for f in &findings {
+                    if f.code == "parse_error" {
+                        continue;
+                    }
+                    if let Err(e) = mem
+                        .record_observation_in_namespace(
+                            crate::autooptimizer::judge::JUDGE_MEMORY_NS,
+                            &format!("[{}] {}", f.code, f.summary),
+                            cycle_id.to_string(),
+                            "autooptimizer".to_string(),
+                            0,
+                            cycle_config.day_scenario.time_window.start,
+                            cycle_config.day_scenario.time_window.end,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            "judge finding write-back failed (best-effort, ignoring): {e}"
+                        );
+                    }
+                }
             }
             handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await?;
             findings_by_node.insert(outcome.child_hash, findings);
