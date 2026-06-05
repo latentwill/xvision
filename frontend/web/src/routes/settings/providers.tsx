@@ -122,15 +122,18 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
     isCustom: false,
     keyHelp: "Optional — leave blank for local Ollama.",
   },
-  {
-    value: "llama-cpp",
-    label: "llama.cpp server",
-    wireKind: "llama-cpp",
-    defaultName: "llama-cpp",
-    defaultBaseUrl: "http://localhost:8080",
-    isCustom: false,
-    keyHelp: "Optional — leave blank for local llama-server.",
-  },
+  // llama.cpp provider preset temporarily disabled — Ollama is the supported
+  // local backend for now. Backend `ProviderKind::LlamaCpp` support remains, so
+  // re-enabling is just restoring this block.
+  // {
+  //   value: "llama-cpp",
+  //   label: "llama.cpp server",
+  //   wireKind: "llama-cpp",
+  //   defaultName: "llama-cpp",
+  //   defaultBaseUrl: "http://localhost:8080",
+  //   isCustom: false,
+  //   keyHelp: "Optional — leave blank for local llama-server.",
+  // },
   {
     value: "custom",
     label: "Custom (Together, vLLM, self-hosted, …)",
@@ -167,7 +170,8 @@ const PROVIDER_KIND_FILTER: FilterDef = {
     { value: "anthropic", label: "Anthropic" },
     { value: "openai-compat", label: "OpenAI-compat" },
     { value: "ollama", label: "Ollama" },
-    { value: "llama-cpp", label: "llama.cpp" },
+    // llama.cpp filter disabled (see KIND_OPTIONS note above).
+    // { value: "llama-cpp", label: "llama.cpp" },
   ],
 };
 
@@ -391,6 +395,12 @@ function ProviderRowView({
       });
     },
   });
+  // The Test / Refresh / Pick-models actions probe the provider's catalog
+  // endpoint. They're available once we can authenticate — either a key is
+  // set, or the provider is a no-auth kind (Ollama, llama.cpp, no-auth custom
+  // localhost) where `api_key_env` is empty. Gating purely on `api_key_set`
+  // hid every action for Ollama, which has no key by design.
+  const canProbe = row.api_key_set || !row.api_key_env;
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
@@ -426,7 +436,7 @@ function ProviderRowView({
         </td>
         <td className="py-2 pr-0 text-right">
           <div className="inline-flex items-center gap-2">
-            {row.api_key_set ? (
+            {canProbe ? (
               <button
                 onClick={() => test.mutate()}
                 disabled={test.isPending}
@@ -436,7 +446,7 @@ function ProviderRowView({
                 {test.isPending ? "Testing…" : "Test"}
               </button>
             ) : null}
-            {row.api_key_set ? (
+            {canProbe ? (
               <button
                 onClick={() => refresh.mutate()}
                 disabled={refresh.isPending}
@@ -450,7 +460,7 @@ function ProviderRowView({
                     : "Refresh"}
               </button>
             ) : null}
-            {row.api_key_set ? (
+            {canProbe ? (
               <button
                 onClick={() => setManaging((m) => !m)}
                 title="Pick which models from this provider show up in the chat-rail dropdown"
@@ -615,7 +625,8 @@ function EditProviderForm({
             <option value="openai-compat">openai-compat</option>
             <option value="local-candle">local-candle</option>
             <option value="ollama">ollama</option>
-            <option value="llama-cpp">llama-cpp</option>
+            {/* llama-cpp disabled (see KIND_OPTIONS note); backend still supports it. */}
+            {/* <option value="llama-cpp">llama-cpp</option> */}
           </select>
         </Field>
         <Field label="Base URL">
