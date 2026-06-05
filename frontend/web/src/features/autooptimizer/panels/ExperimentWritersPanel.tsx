@@ -54,6 +54,7 @@ export function ExperimentWritersPanel() {
             <tbody className="font-mono">
               {rows.map((s) => {
                 const key = `${s.provider}/${s.model}/${s.prompt_version}`;
+                const regionId = `writer-detail-${key.replace(/\//g, "-").replace(/[^a-zA-Z0-9-]/g, "")}`;
                 const rate = acceptRate(s);
                 const isOpen = expanded.has(key);
 
@@ -64,6 +65,7 @@ export function ExperimentWritersPanel() {
                         <button
                           type="button"
                           aria-expanded={isOpen}
+                          aria-controls={regionId}
                           onClick={() => toggle(key)}
                           className="flex w-full items-center gap-2 text-left"
                         >
@@ -93,7 +95,13 @@ export function ExperimentWritersPanel() {
                     </tr>
                     {isOpen && (
                       <tr className="bg-surface-elev/40">
-                        <td colSpan={5} className="pb-3 pl-6 pr-3 pt-2">
+                        <td
+                          id={regionId}
+                          role="region"
+                          aria-label={`${s.model} details`}
+                          colSpan={5}
+                          className="pb-3 pl-6 pr-3 pt-2"
+                        >
                           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[11px]">
                             <dt className="text-text-3">Prompt version</dt>
                             <dd className="font-mono text-text">{s.prompt_version}</dd>

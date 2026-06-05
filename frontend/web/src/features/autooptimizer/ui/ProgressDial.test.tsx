@@ -12,4 +12,11 @@ describe("ProgressDial", () => {
     render(<ProgressDial value={1.8} />);
     expect(screen.getByText("100%")).toBeInTheDocument();
   });
+  it("renders the track circle with the theme token stroke var(--border-strong)", () => {
+    const { container } = render(<ProgressDial value={0.5} />);
+    // The first <circle> is the track (background ring); the second is the fill arc.
+    const trackCircle = container.querySelector("circle");
+    expect(trackCircle).not.toBeNull();
+    expect(trackCircle!.getAttribute("stroke")).toBe("var(--border-strong)");
+  });
 });

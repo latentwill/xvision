@@ -266,7 +266,7 @@ function LaunchStrip() {
         <span className="text-[13px] text-danger">{launchError}</span>
       )}
       {launchMessage !== null && (
-        <span className="text-[13px] text-green-500">{launchMessage}</span>
+        <span className="text-[13px] text-gold">{launchMessage}</span>
       )}
     </div>
   );
