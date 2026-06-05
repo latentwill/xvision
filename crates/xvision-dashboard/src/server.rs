@@ -315,6 +315,12 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/cycles/:cycle_id",
             get(autooptimizer_route::get_cycle),
         )
+        // F35.3: live per-cycle cost/tokens (reads `cycle_cost` directly so it
+        // streams during a run, before the first node commits).
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/cost",
+            get(autooptimizer_route::get_cycle_cost_handler),
+        )
         // Flywheel memory-distillation detail — catch-all after static AR-3 routes.
         .route("/api/autooptimizer/:id", get(flywheel::autooptimizer_get))
         // AR-3: live cycle progress stream for the dashboard autooptimizer surface.
@@ -455,6 +461,17 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/run-cycle",
             post(autooptimizer_cycle::start_cycle),
+        )
+        // F28: cancel an in-flight optimizer cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/cancel",
+            post(autooptimizer_cycle::cancel_cycle),
+        )
+        // F29: retire a cycle-produced candidate (move its lineage node to
+        // Rejected) — dashboard parity for `xvn optimizer retire`.
+        .route(
+            "/api/autooptimizer/lineage/:hash/retire",
+            post(autooptimizer_route::retire_lineage_node),
         )
         .route("/api/autooptimizer/run", post(flywheel::autooptimizer_run))
         .route(

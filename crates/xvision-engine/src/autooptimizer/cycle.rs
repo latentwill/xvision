@@ -1,6 +1,6 @@
 //! Optimizer cycle orchestrator — AR-2 Task 9.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Result};
 use chrono::Utc;
@@ -15,7 +15,7 @@ use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
-use crate::autooptimizer::gate::{evaluate, GateInput, GateVerdict};
+use crate::autooptimizer::gate::{evaluate, GateInput, GateVerdict, Objective};
 use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -45,6 +45,8 @@ pub struct CycleConfig {
     pub parent_strategies: HashMap<String, Strategy>,
     /// Optional explicit parent bundle hashes.
     pub explicit_parent_hashes: Vec<ContentHash>,
+    /// F24: the metric this cycle optimizes (gate objective). Defaults to Sharpe.
+    pub objective: Objective,
 }
 
 pub struct CycleResult {
@@ -87,6 +89,10 @@ pub async fn run_cycle(
     progress: impl Fn(CycleProgressEvent) + Send + Sync,
     dspy_ctx: Option<&DspyContext>,
     cycle_id_override: Option<String>,
+    // F28: a cooperative cancel flag. When set, the cycle stops launching further
+    // mutations/backtests (checked between candidates and parents) so an operator
+    // can halt a long/expensive run. `None` = never cancelled.
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<CycleResult> {
     let cycle_id = cycle_id_override.unwrap_or_else(|| Ulid::new().to_string());
     let min_improvement =
@@ -131,7 +137,16 @@ pub async fn run_cycle(
     let mut findings_by_node: HashMap<ContentHash, Vec<Finding>> = HashMap::new();
     let mut no_candidate_count: usize = 0;
 
+    let is_cancelled = || {
+        cancel
+            .as_ref()
+            .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    };
+
     for parent_node in &parents {
+        if is_cancelled() {
+            break;
+        }
         let ph = parent_node.bundle_hash.to_hex();
         if let Some(parent_strategy) = cycle_config.parent_strategies.get(&ph) {
             progress(CycleProgressEvent::ParentSelected {
@@ -154,6 +169,7 @@ pub async fn run_cycle(
                 &mut findings_by_node,
                 dsr_prefix.as_deref(),
                 dspy_ctx,
+                cancel.as_ref(),
             )
             .await?;
             active_nodes.extend(active);
@@ -219,6 +235,7 @@ where
     };
     let s = &cycle_config.parent_strategies[&cn.bundle_hash.to_hex()];
     let mi = min_improvement;
+    let obj = cycle_config.objective;
     let check = run_honesty_check(
         s,
         mutator,
@@ -229,6 +246,7 @@ where
             parent_untouched_metrics: pu.clone(),
             child_untouched_metrics: cu.clone(),
             min_improvement: mi,
+            objective: obj,
         },
         &cycle_config.day_scenario,
         &cycle_config.baseline_scenario,
@@ -243,6 +261,21 @@ where
         message: check.message.clone(),
     });
     Ok(check)
+}
+
+/// F32: derive a deterministic exploration seed for the experiment writer from
+/// the (unique-per-cycle) `cycle_id` mixed with the mutation index. FNV-1a — no
+/// external deps, stable within a build, and varies every cycle so successive
+/// cycles on the same parent propose diverse candidates instead of one fixed
+/// tweak. A test asserts distinct seeds yield distinct candidates.
+pub fn exploration_seed_for(cycle_id: &str, mutation_idx: usize) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in cycle_id.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h ^= mutation_idx as u64;
+    h.wrapping_mul(0x0000_0100_0000_01b3)
 }
 
 async fn process_parent_mutations<F>(
@@ -261,6 +294,7 @@ async fn process_parent_mutations<F>(
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
     dspy_ctx: Option<&DspyContext>,
+    cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
     F: Fn(CycleProgressEvent),
@@ -279,7 +313,29 @@ where
         .run(parent_strategy, &cycle_config.baseline_scenario)
         .await?;
 
-    for _ in 0..cycle_config.mutations_per_parent {
+    // F32: every candidate this parent has ALREADY produced (across all prior
+    // cycles), so the mutator can be steered away from re-deriving them and any
+    // duplicate is dropped before it spends a backtest. Best-effort: a lineage
+    // read failure just yields an empty set (the in-mutator guard still holds for
+    // candidates produced within this cycle). Accumulates within the cycle too.
+    let lineage = LineageStore::new(pool.clone());
+    let mut avoid: HashSet<ContentHash> = lineage
+        .children_of(&parent_node.bundle_hash)
+        .await
+        .map(|kids| kids.into_iter().map(|n| n.bundle_hash).collect())
+        .unwrap_or_default();
+
+    for mutation_idx in 0..cycle_config.mutations_per_parent {
+        // F28: stop launching further candidates once the operator cancels.
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            break;
+        }
+        // F32: a per-cycle, per-mutation exploration seed so the experiment writer
+        // proposes DIVERSE candidates across cycles (it was deterministic — same
+        // parent always yielded the identical candidate, so the optimizer never
+        // explored). The cycle_id is unique per cycle (ULID), so hashing it varies
+        // the seed every run; mixing the mutation index varies it within a cycle.
+        let exploration_seed = exploration_seed_for(cycle_id, mutation_idx);
         // When tournament_enabled, run the 3-candidate Borda-count tournament
         // instead of a direct propose call. Incumbent win means no candidate
         // beat the parent this iteration.
@@ -314,7 +370,10 @@ where
                 }
             }
         } else {
-            match mutator.propose(parent_strategy, config, dsr_prefix).await {
+            match mutator
+                .propose(parent_strategy, config, dsr_prefix, exploration_seed, &avoid)
+                .await
+            {
                 Ok(d) => d,
                 Err(e) => {
                     // The mutator exhausted its retries without a distinct,
@@ -336,9 +395,10 @@ where
         // parent's — inserting it would overwrite (corrupt) the parent node and
         // create a self-parent cycle in the lineage graph.
         let candidate = diff.apply_to(parent_strategy);
-        let is_identity = serde_json::to_value(&candidate)
-            .map(|v| ContentHash::of_json(&v) == parent_node.bundle_hash)
-            .unwrap_or(false);
+        let candidate_hash = serde_json::to_value(&candidate)
+            .map(|v| ContentHash::of_json(&v))
+            .ok();
+        let is_identity = candidate_hash.as_ref() == Some(&parent_node.bundle_hash);
         if is_identity {
             tracing::debug!(
                 cycle_id,
@@ -352,6 +412,30 @@ where
                 reason: "experiment writer produced a no-op (identity) diff".to_string(),
             });
             continue;
+        }
+        // F32 backstop: drop a candidate this parent has already produced (in a
+        // prior cycle OR earlier this cycle) before it spends four backtests on a
+        // known result. The mutator's `already_tried` retry normally prevents this,
+        // but this also covers the tournament path and any model that ignores the
+        // retry hint — the hard guarantee that repeat cycles can't re-evaluate the
+        // same candidate forever.
+        if let Some(h) = candidate_hash.as_ref() {
+            if avoid.contains(h) {
+                tracing::debug!(
+                    cycle_id,
+                    parent_hash = %parent_node.bundle_hash.to_hex(),
+                    child_hash = %h.to_hex(),
+                    "skipping duplicate candidate already evaluated on this parent — no backtest spent",
+                );
+                no_candidate_count += 1;
+                progress(CycleProgressEvent::NoCandidate {
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: parent_node.bundle_hash.to_hex(),
+                    reason: "experiment writer re-derived a candidate already evaluated on this parent"
+                        .to_string(),
+                });
+                continue;
+            }
         }
         progress(CycleProgressEvent::MutationProposed {
             cycle_id: cycle_id.to_string(),
@@ -373,6 +457,9 @@ where
             passed: matches!(outcome.verdict, GateVerdict::Pass),
         });
         let node = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
+        // F32: remember this candidate so later mutations this cycle (and the
+        // mutator's own retries) won't re-derive it.
+        avoid.insert(outcome.child_hash);
         record_proposal(
             pool,
             &outcome.child_hash,
@@ -420,6 +507,7 @@ async fn gate_and_classify(
         parent_untouched,
         &child_untouched,
         min_improvement,
+        cycle_config.objective,
     );
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
@@ -467,6 +555,21 @@ async fn build_and_insert_node(
     cycle_id: &str,
 ) -> Result<LineageNode> {
     let store = LineageStore::new(pool.clone());
+    // F33: record this cycle's evaluation edge to the candidate up-front (before
+    // the F12 active-node guard below can early-return), so a cycle that
+    // re-derives an existing candidate still attributes it to itself in the
+    // run-detail surface — even though the content-addressed `lineage_nodes` row
+    // belongs to whichever cycle wrote it first.
+    if let Err(e) = crate::autooptimizer::lineage::record_cycle_node_eval(
+        pool,
+        cycle_id,
+        &outcome.child_hash.to_hex(),
+        &Utc::now().to_rfc3339(),
+    )
+    .await
+    {
+        tracing::warn!(cycle_id, error = %e, "failed to record cycle_node_evaluations edge");
+    }
     // F12: `lineage_nodes` uses `INSERT OR REPLACE` keyed on `bundle_hash`. If a
     // rejected candidate hashes to an already-*active* node (a re-derivation of
     // a known-good strategy), replacing it would downgrade the active node to
@@ -571,6 +674,7 @@ fn gate_check(
     parent_untouched: &MetricsSummary,
     child_untouched: &MetricsSummary,
     min_improvement: f64,
+    objective: Objective,
 ) -> GateVerdict {
     evaluate(&GateInput {
         parent_day_metrics: parent_day.clone(),
@@ -578,5 +682,6 @@ fn gate_check(
         parent_untouched_metrics: parent_untouched.clone(),
         child_untouched_metrics: child_untouched.clone(),
         min_improvement,
+        objective,
     })
 }

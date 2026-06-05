@@ -13,7 +13,7 @@
 //   Mutator        → "Experiment writer"
 //   gate_verdict   displayed as "Accepted" / "Rejected" / "Suspect"
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
 
 // ─── Wire shapes ──────────────────────────────────────────────────────────────
@@ -77,6 +77,13 @@ export type StartRunCycleRequest = {
   mutator_model?: string | null;
   judge_provider?: string | null;
   judge_model?: string | null;
+  // F28: token budget ceiling (USD) + per-run evaluation window overrides
+  // (YYYY-MM-DD). Omit for no cap / the config default window.
+  budget_usd?: number | null;
+  day_start?: string | null;
+  day_end?: string | null;
+  baseline_start?: string | null;
+  baseline_end?: string | null;
 };
 
 export type StartRunCycleResponse = {
@@ -152,6 +159,40 @@ export async function getCycleRun(cycleId: string): Promise<CycleRunDetail> {
   );
 }
 
+/** F35.3: live per-cycle cost/tokens, read straight from `cycle_cost`. Unlike a
+ *  cycle's detail this is populated by the background ticker every ~10s while the
+ *  cycle runs — and before the first candidate commits — so the Live tab can show
+ *  climbing spend. `recorded` is false until the first persist / for unknown ids. */
+export type CycleCost = {
+  cycle_id: string;
+  cost_usd?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  unpriced_calls?: number | null;
+  recorded: boolean;
+};
+
+export async function getCycleCost(cycleId: string): Promise<CycleCost> {
+  return apiFetch<CycleCost>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/cost`,
+  );
+}
+
+/** F29: retire a cycle-produced candidate (move its lineage node to Rejected) —
+ *  dashboard parity for `xvn optimizer retire`. */
+export type RetireResponse = {
+  bundle_hash: string;
+  status: string;
+  message: string;
+};
+
+export async function retireLineageNode(hash: string): Promise<RetireResponse> {
+  return apiFetch<RetireResponse>(
+    `/api/autooptimizer/lineage/${encodeURIComponent(hash)}/retire`,
+    { method: "POST" },
+  );
+}
+
 export async function getLineageNode(hash: string): Promise<LineageNode> {
   return apiFetch<LineageNode>(`/api/autooptimizer/lineage/${encodeURIComponent(hash)}`);
 }
@@ -177,6 +218,14 @@ export async function getBlob<T = StrategyBlob>(hash: string): Promise<T> {
   return apiFetch<T>(`/api/autooptimizer/blob/${encodeURIComponent(hash)}`);
 }
 
+/** F28: request cancellation of an in-flight optimizer cycle. */
+export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResponse> {
+  return apiFetch<StartRunCycleResponse>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {
@@ -187,6 +236,8 @@ export const autooptimizerKeys = {
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   cycles: () => [...autooptimizerKeys.all, "cycles"] as const,
   cycle: (id: string) => [...autooptimizerKeys.cycles(), id] as const,
+  cycleCost: (cycleId: string | null | undefined) =>
+    [...autooptimizerKeys.all, "cycle-cost", cycleId ?? ""] as const,
   diversity: (q?: DiversityQuery) =>
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
   blob: (hash: string | null | undefined) =>
@@ -218,6 +269,30 @@ export function useCycleRun(cycleId: string | undefined) {
     queryFn: () => getCycleRun(cycleId!),
     enabled: !!cycleId,
     staleTime: 30_000,
+  });
+}
+
+/** F35.3: poll the running cycle's live cost/tokens. Pass the active cycle id
+ *  (derived from the SSE `cycle_started` event); polling stops once `enabled` is
+ *  false (cycle finished/cancelled). 5s cadence matches the backend's ~10s ticker
+ *  closely enough for a live ticker without hammering the DB. */
+export function useCycleCost(
+  cycleId: string | null | undefined,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: autooptimizerKeys.cycleCost(cycleId),
+    queryFn: () => getCycleCost(cycleId!),
+    enabled: !!cycleId && enabled,
+    refetchInterval: enabled ? 5_000 : false,
+    staleTime: 0,
+  });
+}
+
+/** F29: retire a lineage node (move it to Rejected). */
+export function useRetireLineageNode() {
+  return useMutation({
+    mutationFn: (hash: string) => retireLineageNode(hash),
   });
 }
 

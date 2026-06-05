@@ -179,6 +179,11 @@ pub struct RunCycleArgs {
     /// (YYYY-MM-DD).
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub baseline_end: Option<chrono::NaiveDate>,
+    /// F24: which metric the cycle optimizes. One of: sharpe (default),
+    /// total_return, max_drawdown, win_rate. Overrides `objective` in
+    /// autooptimizer.toml.
+    #[arg(long, value_name = "METRIC")]
+    pub objective: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -834,12 +839,24 @@ async fn fetch_lineage_rows(
 ) -> CliResult<Vec<LineageRow>> {
     const SEL: &str =
         "SELECT bundle_hash, parent_hash, status, cycle_id, created_at, gate_verdict FROM lineage_nodes";
+    // F33: resolve a cycle's experiments the SAME way `get_cycle_run` (the
+    // dashboard / `optimizer cycle show`) does — the per-cycle evaluation edges
+    // UNION the legacy `cycle_id` column — so the CLI `lineage ls --cycle` can't
+    // contradict the dashboard (previously a candidate a cycle evaluated but
+    // whose content-addressed row is owned by another cycle showed in the
+    // dashboard yet "(no experiments)" here).
+    const CYCLE_PRED: &str = "bundle_hash IN ( \
+        SELECT bundle_hash FROM cycle_node_evaluations WHERE cycle_id = ? \
+        UNION \
+        SELECT bundle_hash FROM lineage_nodes WHERE cycle_id = ? )";
+    ensure_lineage_schema(pool).await.ok();
     let lim = limit as i64;
     let raw = if status == "all" {
         if let Some(c) = cycle {
             sqlx::query(&format!(
-                "{SEL} WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?"
+                "{SEL} WHERE {CYCLE_PRED} ORDER BY created_at DESC LIMIT ?"
             ))
+            .bind(c)
             .bind(c)
             .bind(lim)
             .fetch_all(pool)
@@ -852,8 +869,9 @@ async fn fetch_lineage_rows(
         }
     } else if let Some(c) = cycle {
         sqlx::query(&format!(
-            "{SEL} WHERE cycle_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"
+            "{SEL} WHERE {CYCLE_PRED} AND status = ? ORDER BY created_at DESC LIMIT ?"
         ))
+        .bind(c)
         .bind(c)
         .bind(status)
         .bind(lim)
@@ -1035,7 +1053,11 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     )
     .await;
 
-    let diff = propose(&parent, &cfg, &dispatch)
+    // F32: derive the exploration seed from this mutate-once cycle id so the
+    // experiment writer samples diversely (shared helper with the cycle path).
+    let exploration_seed =
+        xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
+    let diff = propose(&parent, &cfg, &dispatch, exploration_seed)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
     let child = diff.apply_to(&parent);
@@ -1145,6 +1167,15 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     if let Some(d) = args.baseline_end {
         cfg.baseline_untouched_window.end = d;
     }
+    // F24: select the optimization objective.
+    if let Some(obj) = args.objective.as_deref() {
+        cfg.objective = xvision_engine::autooptimizer::gate::Objective::parse(obj).ok_or_else(|| {
+            CliError::usage(anyhow::anyhow!(
+                "invalid --objective '{obj}'; expected one of: {}",
+                xvision_engine::autooptimizer::gate::Objective::all_labels().join(", ")
+            ))
+        })?;
+    }
     // Re-validate so an inverted/overlapping window from the flags fails
     // fast with a clear message instead of deep in scenario synthesis.
     cfg.validate().map_err(|e| {
@@ -1162,6 +1193,44 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // optimizer panel reads (it queries `state.pool` = `$XVN_HOME/xvn.db`).
     let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
     let pool = open_and_migrate_db(&db_path).await?;
+
+    // F34: serialize cycles per workspace. The CLI and dashboard share one
+    // `xvn.db`; running both at once starved each other (a CLI cycle was
+    // timeout-killed at 9.7 min while a dashboard cycle ran). Refuse to start if
+    // another cycle already holds the lock, with a clear message.
+    let cycle_lock_id = args
+        .session_id
+        .clone()
+        .unwrap_or_else(|| Ulid::new().to_string());
+    let lock_holder = format!(
+        "cli:{}",
+        std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "operator".into())
+    );
+    match xvision_engine::autooptimizer::run_lock::try_acquire(
+        &pool,
+        &cycle_lock_id,
+        &lock_holder,
+        Utc::now(),
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("acquire cycle lock: {e}")))?
+    {
+        xvision_engine::autooptimizer::run_lock::Acquire::Acquired => {}
+        xvision_engine::autooptimizer::run_lock::Acquire::Busy {
+            cycle_id,
+            holder,
+            acquired_at,
+        } => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "an optimizer cycle is already running on this workspace (cycle {cycle_id}, \
+                 holder {holder}, since {acquired_at}). Wait for it to finish or cancel it before \
+                 starting another — concurrent cycles starve each other."
+            )));
+        }
+    }
+
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
@@ -1301,11 +1370,13 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         baseline_scenario,
         parent_strategies,
         explicit_parent_hashes,
+        objective: cfg.objective,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
 
     eprintln!("Starting optimizer cycle...");
+    eprintln!("objective: {}", cfg.objective.label());
     if let Some(ref s) = args.strategy {
         eprintln!("strategy: {s}");
     }
@@ -1343,10 +1414,14 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             }
         },
         None,
-        args.session_id.clone(),
+        Some(cycle_lock_id.clone()),
+        None,
     )
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
+    .await;
+    // F34: release the workspace lock as soon as the cycle ends (success or
+    // failure), before post-processing, so the next cycle isn't blocked.
+    let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_lock_id).await;
+    let result = result.map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
 
     // F9: surface the honesty-check (canary) outcome as a labeled line so the
     // operator can tell the deliberate sabotage from a real broker fault,
@@ -1950,6 +2025,7 @@ async fn propose(
     base: &Strategy,
     cfg: &AutoOptimizerConfig,
     dispatch: &Arc<dyn LlmDispatch + Send + Sync>,
+    exploration_seed: u64,
 ) -> anyhow::Result<MutationDiff> {
     let mutator = Mutator {
         provider: "anthropic".into(),
@@ -1957,7 +2033,11 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg, None).await
+    // `mutate-once` is a single-shot experiment with no lineage-history context
+    // here; the run-cycle path supplies the F32 avoid-set.
+    mutator
+        .propose(base, cfg, None, exploration_seed, &std::collections::HashSet::new())
+        .await
 }
 
 fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {

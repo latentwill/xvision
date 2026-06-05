@@ -153,6 +153,24 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("create cycle_cost")?;
+    // F33 (2026-06-04): per-cycle → candidate evaluation edges. `lineage_nodes`
+    // is content-addressed (PK = bundle_hash) with a single `cycle_id`, so when
+    // two cycles produce the SAME candidate hash, `INSERT OR REPLACE` keeps only
+    // one cycle's attribution and the other cycle's `inspect`/detail shows empty.
+    // This many-to-many edge records that a cycle evaluated a candidate
+    // independently of which cycle won the content-addressed node row, so each
+    // cycle's run-detail reflects the candidates IT evaluated.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS cycle_node_evaluations (
+            cycle_id TEXT NOT NULL,
+            bundle_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (cycle_id, bundle_hash)
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create cycle_node_evaluations")?;
     for (sql, label) in [
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",
@@ -173,6 +191,29 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     ] {
         sqlx::query(sql).execute(pool).await.context(label)?;
     }
+    Ok(())
+}
+
+/// F33: record that `cycle_id` evaluated candidate `bundle_hash`. Idempotent
+/// (`INSERT OR IGNORE`) so a re-derived candidate within a cycle isn't double
+/// counted. Independent of the content-addressed `lineage_nodes` row, so two
+/// cycles that produce the same candidate each keep their own attribution.
+pub async fn record_cycle_node_eval(
+    pool: &SqlitePool,
+    cycle_id: &str,
+    bundle_hash: &str,
+    created_at: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO cycle_node_evaluations (cycle_id, bundle_hash, created_at) \
+         VALUES (?, ?, ?)",
+    )
+    .bind(cycle_id)
+    .bind(bundle_hash)
+    .bind(created_at)
+    .execute(pool)
+    .await
+    .context("record cycle_node_evaluations")?;
     Ok(())
 }
 
@@ -239,6 +280,21 @@ impl LineageStore {
         .await
         .context("children_of lineage_node")?;
         rows.into_iter().map(row_to_node).collect()
+    }
+
+    /// F29: set a lineage node's status (e.g. retire a cycle-produced candidate
+    /// by moving it to `Rejected`). Returns `true` when a row was updated, `false`
+    /// when no node with that hash exists. Idempotent — retiring an already-
+    /// rejected node is a no-op that still reports `true` (the row exists and is
+    /// in the requested state).
+    pub async fn set_status(&self, bundle_hash: &ContentHash, status: LineageStatus) -> Result<bool> {
+        let res = sqlx::query("UPDATE lineage_nodes SET status = ? WHERE bundle_hash = ?")
+            .bind(status.as_str())
+            .bind(bundle_hash.to_hex())
+            .execute(&self.pool)
+            .await
+            .context("set lineage_node status")?;
+        Ok(res.rows_affected() > 0)
     }
 
     pub async fn active_leaves(&self) -> Result<Vec<LineageNode>> {

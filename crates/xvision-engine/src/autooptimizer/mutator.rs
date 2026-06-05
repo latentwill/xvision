@@ -236,6 +236,8 @@ impl Mutator {
         base: &Strategy,
         config: &AutoOptimizerConfig,
         dsr_prefix: Option<&str>,
+        exploration_seed: u64,
+        avoid: &std::collections::HashSet<ContentHash>,
     ) -> anyhow::Result<MutationDiff> {
         let program_md = program_view::to_markdown(base);
         let mut last_errors: Option<Vec<ValidationError>> = None;
@@ -258,14 +260,27 @@ impl Mutator {
         let param_keys = tunable_param_keys(base);
 
         for attempt in 0..max_attempts {
-            let user_text = build_user_payload(&program_md, &kinds, &param_keys, last_errors.as_deref());
+            let user_text = build_user_payload(
+                &program_md,
+                &kinds,
+                &param_keys,
+                last_errors.as_deref(),
+                exploration_seed,
+                avoid.len(),
+            );
             let req = LlmRequest {
                 model: self.model.clone(),
                 system_prompt: build_system_prompt(dsr_prefix),
                 messages: vec![Message::user_text(user_text)],
                 max_tokens: None,
                 tools: vec![],
-                temperature: None,
+                // F32: the experiment writer was deterministic (temperature None +
+                // a fixed prompt), so the same parent produced the IDENTICAL
+                // candidate every cycle — the optimizer could never explore or
+                // converge. Sample with a non-zero, per-cycle-jittered temperature
+                // and a per-cycle exploration nonce in the prompt so successive
+                // cycles propose diverse candidates.
+                temperature: Some(exploration_temperature(exploration_seed)),
                 response_schema: None,
                 cache_control: None,
             };
@@ -302,6 +317,26 @@ impl Mutator {
                             path: None,
                         }]);
                     }
+                    Ok(()) if candidate_already_tried(&diff, base, avoid) => {
+                        // F32: the proposed candidate is byte-identical to one this
+                        // parent ALREADY produced in an earlier experiment/cycle.
+                        // Re-emitting it re-spends a backtest on a known result and
+                        // is exactly the fixed point that made repeat cycles never
+                        // explore (the real model collapses to the single "most
+                        // obvious" tweak regardless of temperature). Reject and
+                        // retry, steering the writer to genuinely new territory —
+                        // a hard, model-independent guarantee that the optimizer
+                        // never re-evaluates a candidate it has already seen.
+                        last_errors = Some(vec![ValidationError {
+                            code: "already_tried".into(),
+                            message: "this exact candidate was already evaluated on this parent in a \
+                                      prior experiment; propose a DIFFERENT change — a different \
+                                      parameter key, or a clearly different direction/magnitude for \
+                                      the same key"
+                                .into(),
+                            path: None,
+                        }]);
+                    }
                     Ok(()) => return Ok(diff),
                     Err(errors) => {
                         last_errors = Some(errors);
@@ -316,6 +351,25 @@ impl Mutator {
             .unwrap_or_else(|| "unknown error".into());
 
         anyhow::bail!("mutator failed after {} attempt(s): {}", max_attempts, error_text)
+    }
+}
+
+/// True when applying `diff` to `base` yields a candidate whose content hash is
+/// already in `avoid` — i.e. this parent already produced this exact candidate in
+/// an earlier experiment/cycle. F32: re-emitting it would re-spend a backtest on a
+/// known result; rejecting it is the hard, model-independent guarantee that
+/// successive cycles can't re-derive the same losing candidate forever.
+fn candidate_already_tried(
+    diff: &MutationDiff,
+    base: &Strategy,
+    avoid: &std::collections::HashSet<ContentHash>,
+) -> bool {
+    if avoid.is_empty() {
+        return false;
+    }
+    match serde_json::to_value(diff.apply_to(base)) {
+        Ok(c) => avoid.contains(&ContentHash::of_json(&c)),
+        Err(_) => false,
     }
 }
 
@@ -348,11 +402,22 @@ fn build_system_prompt(dsr_prefix: Option<&str>) -> String {
     }
 }
 
+/// F32: per-cycle sampling temperature for the experiment writer. Jittered by the
+/// exploration seed within an exploratory band (0.7–1.1) so different cycles
+/// sample differently — the deterministic `temperature: None` produced the same
+/// candidate every cycle. The band stays below fully-random so proposals remain
+/// coherent JSON edits.
+fn exploration_temperature(exploration_seed: u64) -> f64 {
+    0.7 + (exploration_seed % 5) as f64 * 0.1
+}
+
 fn build_user_payload(
     program_md: &str,
     allowed_kinds: &[String],
     param_keys: &[String],
     previous_errors: Option<&[ValidationError]>,
+    exploration_seed: u64,
+    avoid_count: usize,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
     let keys_section = if param_keys.is_empty() {
@@ -378,8 +443,46 @@ fn build_user_payload(
         }
     };
 
+    // F32: a SUBSTANTIVE per-cycle exploration directive. The previous version
+    // only passed a cosmetic "variant N" nonce + a non-zero temperature, which a
+    // real model (e.g. gemini-flash-lite) ignores — it collapses the constrained
+    // experiment space to the single most obvious tweak every cycle, so repeat
+    // cycles re-derived the byte-identical candidate and never explored. Instead,
+    // use the exploration seed to NAME a concrete focus parameter the writer must
+    // experiment on. Different cycles ⇒ different seed ⇒ different focus key ⇒ a
+    // materially different prompt ⇒ a different candidate, even from a fully
+    // deterministic model. (Pairs with the hard `already_tried` reject in
+    // `propose`, which guarantees a previously-seen candidate is never re-emitted.)
+    let exploration_section = if param_keys.is_empty() {
+        format!(
+            "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
+             the single most obvious one, so repeated runs explore rather than re-propose one tweak."
+        )
+    } else {
+        let focus = &param_keys[(exploration_seed as usize) % param_keys.len()];
+        format!(
+            "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
+             parameter `{focus}` — propose a meaningful change to its value (a clear direction and \
+             magnitude). This focus is chosen to make successive runs on this strategy explore \
+             different levers rather than re-proposing one fixed tweak. If `{focus}` genuinely \
+             cannot be improved, you may target another listed key, but do not default to the most \
+             obvious change."
+        )
+    };
+    // F32: when this parent has already produced candidates in prior experiments,
+    // tell the writer so it aims for genuinely new territory (the `already_tried`
+    // gate will reject any duplicate and force a retry regardless).
+    let no_repeat_section = if avoid_count == 0 {
+        String::new()
+    } else {
+        format!(
+            "\n\nThis parent has already been experimented on {avoid_count} time(s); your proposal \
+             MUST differ from every prior candidate. An exact repeat will be rejected."
+        )
+    };
+
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}{no_repeat_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 

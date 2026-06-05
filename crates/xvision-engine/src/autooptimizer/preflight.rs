@@ -70,6 +70,22 @@ pub async fn preflight_trader_provider(
             }
         }
     } else if let Some(slot) = &strategy.trader_slot {
+        // F31: a legacy `trader_slot` with no explicit model binding is *unbound*
+        // — it no longer silently derives a model from `attested_with` provenance.
+        // Reject with a clear message instead of letting the cycle dispatch an
+        // empty model id (or, pre-F31, a surprise anthropic one).
+        if !slot.has_model_binding() {
+            return Err(PreflightReject {
+                message: format!(
+                    "strategy {strategy_id}'s trader has no model configured: its legacy \
+                     trader_slot sets no explicit `model` (the `attested_with` field is \
+                     provenance only and is no longer used as a binding — see F31). \
+                     Re-author the trader with an explicit provider + model on the registered \
+                     provider '{cycle_provider}', attach an agent, or convert the strategy to a \
+                     mechanistic (non-LLM) decision mode."
+                ),
+            });
+        }
         let model = slot.effective_model();
         if let Some(p) = infer_trader_provider(slot.provider.as_deref().unwrap_or(""), &model) {
             routes.push((p, model));
@@ -80,12 +96,17 @@ pub async fn preflight_trader_provider(
         if !slot_provider.eq_ignore_ascii_case(cycle_provider) {
             return Err(PreflightReject {
                 message: format!(
-                    "strategy {strategy_id} routes its trader through provider '{slot_provider}' \
-                     (model '{model}'), but this optimizer cycle dispatches to '{cycle_provider}'. The \
-                     paper-test would send a '{slot_provider}'-format model id to '{cycle_provider}' \
-                     and fail with a cross-provider error. Re-run with provider '{slot_provider}' and \
-                     a matching model, use a strategy whose trader provider is '{cycle_provider}', \
-                     or convert the strategy to a mechanistic (non-LLM) decision mode."
+                    "strategy {strategy_id}'s trader is pinned to provider '{slot_provider}' \
+                     (model '{model}'), which differs from this cycle's provider '{cycle_provider}'. \
+                     The paper-test reuses the strategy's own trader model (so optimized winners stay \
+                     interchangeable), so it would send a '{slot_provider}'-format model id to \
+                     '{cycle_provider}' and fail with a cross-provider error. Fix: re-author the \
+                     strategy's trader onto a registered provider — '{cycle_provider}' is already \
+                     registered here, so point the trader at it (the seeded examples were previously \
+                     hardcoded to 'anthropic', which an openrouter-only node can't dispatch — see F30). \
+                     If '{slot_provider}' really is a provider you have registered, run the cycle with \
+                     that provider instead; or convert the strategy to a mechanistic (non-LLM) \
+                     decision mode."
                 ),
             });
         }
@@ -93,12 +114,15 @@ pub async fn preflight_trader_provider(
     Ok(())
 }
 
-/// Infer the provider a trader slot will actually route to.
+/// Infer the provider a trader slot will actually route to, from its explicit
+/// `provider` and resolved model id.
 ///
-/// F22 (QA 2026-06-04): the legacy seeded examples carry a `trader_slot` with no
-/// explicit `provider`/`model` — only `attested_with = "anthropic.claude-sonnet-4.6"`,
-/// which `effective_model()` returns. So keying off `slot.provider` alone (the
-/// first F22 attempt) misses them. Infer from the model id format instead:
+/// F22 (QA 2026-06-04): a slot may carry no explicit `provider`, only a model
+/// id, so keying off `slot.provider` alone misses the real route. Infer from the
+/// model id format instead. (F31: `effective_model()` no longer falls back to
+/// `attested_with`, so a truly model-less slot now yields an empty model here →
+/// `None`; the unbound case is rejected up-front in `preflight_trader_provider`.)
+/// Inference rules:
 ///   - explicit `provider` always wins;
 ///   - an OpenRouter `vendor/model` id (slash) is served by the openrouter route;
 ///   - an attestation id with a known `<provider>.<model>` dotted prefix

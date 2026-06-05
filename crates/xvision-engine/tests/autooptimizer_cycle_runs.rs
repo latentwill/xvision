@@ -179,3 +179,97 @@ async fn cycle_cost_is_persisted_and_surfaced_in_list_and_detail() {
     let none = get_cycle_run(&pool, "no-cost").await.unwrap().expect("exists");
     assert_eq!(none.summary.cost_usd, None);
 }
+
+/// F35.3: the Live tab reads cost straight from `cycle_cost` via `get_cycle_cost`,
+/// independent of whether any lineage node exists yet — so climbing spend shows
+/// from the first ticker persist, before the first candidate commits (the
+/// runaway-token case). `get_cycle_run` (node-gated) would return None there.
+#[tokio::test]
+async fn get_cycle_cost_reads_cost_before_any_node_exists() {
+    use xvision_engine::autooptimizer::cycle_runs::get_cycle_cost;
+    use xvision_engine::autooptimizer::metering_dispatch::CycleMeter;
+
+    let pool = fresh_pool().await;
+
+    // No lineage node for this cycle yet — only the ticker has persisted cost.
+    let meter = CycleMeter {
+        spent_usd: 0.42,
+        unpriced_calls: 2,
+        input_tokens: 1000,
+        output_tokens: 50,
+    };
+    xvision_engine::autooptimizer::cycle_runs::persist_cycle_cost(
+        &pool,
+        "running-cycle",
+        &meter,
+        "2026-06-04T13:00:00Z",
+    )
+    .await
+    .unwrap();
+
+    // Node-gated detail can't see it yet...
+    assert!(
+        get_cycle_run(&pool, "running-cycle").await.unwrap().is_none(),
+        "no lineage node yet → detail is None"
+    );
+    // ...but the cost accessor surfaces the live spend.
+    let cost = get_cycle_cost(&pool, "running-cycle").await;
+    assert!(cost.recorded, "a persisted cost row means recorded=true");
+    assert_eq!(cost.cost_usd, Some(0.42));
+    assert_eq!(cost.input_tokens, Some(1000));
+    assert_eq!(cost.output_tokens, Some(50));
+    assert_eq!(cost.unpriced_calls, Some(2));
+}
+
+#[tokio::test]
+async fn get_cycle_cost_unknown_cycle_is_not_recorded() {
+    use xvision_engine::autooptimizer::cycle_runs::get_cycle_cost;
+    let pool = fresh_pool().await;
+    let cost = get_cycle_cost(&pool, "never-ran").await;
+    assert!(!cost.recorded, "unknown cycle → recorded=false");
+    assert_eq!(cost.cost_usd, None);
+    assert_eq!(cost.input_tokens, None);
+}
+
+/// F33: when two cycles produce the SAME candidate hash, the content-addressed
+/// `lineage_nodes` row keeps only one cycle's attribution — but the per-cycle
+/// evaluation edges let BOTH cycles see the candidate in their run-detail.
+#[tokio::test]
+async fn duplicate_candidate_is_attributed_to_every_evaluating_cycle() {
+    use xvision_engine::autooptimizer::lineage::record_cycle_node_eval;
+
+    let pool = fresh_pool().await;
+    let store = LineageStore::new(pool.clone());
+
+    // The shared candidate's lineage_nodes row is owned by cycle-A (it wrote it
+    // first); cycle-B re-derived the identical candidate.
+    let shared = node(b"shared-candidate", LineageStatus::Active, "cycle-A", 10);
+    let shared_hex = shared.bundle_hash.to_hex();
+    store.insert(&shared).await.unwrap();
+
+    // Both cycles record an evaluation edge to the same candidate.
+    record_cycle_node_eval(&pool, "cycle-A", &shared_hex, "2026-06-04T10:00:00+00:00")
+        .await
+        .unwrap();
+    record_cycle_node_eval(&pool, "cycle-B", &shared_hex, "2026-06-04T12:00:00+00:00")
+        .await
+        .unwrap();
+
+    // F33 fix: cycle-B's detail shows the candidate even though the node row is
+    // attributed to cycle-A (previously this returned empty).
+    let detail_b = get_cycle_run(&pool, "cycle-B")
+        .await
+        .unwrap()
+        .expect("cycle-B must resolve via its evaluation edge");
+    assert_eq!(detail_b.nodes.len(), 1, "cycle-B must see the shared candidate");
+    assert_eq!(detail_b.nodes[0].node.bundle_hash.to_hex(), shared_hex);
+
+    // And cycle-A still sees it too.
+    let detail_a = get_cycle_run(&pool, "cycle-A").await.unwrap().expect("cycle-A exists");
+    assert_eq!(detail_a.nodes.len(), 1);
+
+    // The list surfaces both cycles.
+    let runs = list_cycle_runs(&pool, 50, 0).await.unwrap();
+    let ids: std::collections::HashSet<_> = runs.iter().map(|r| r.cycle_id.clone()).collect();
+    assert!(ids.contains("cycle-A") && ids.contains("cycle-B"), "both cycles must list, got {ids:?}");
+}

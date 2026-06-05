@@ -6,9 +6,81 @@
 
 ---
 
-## F30 — [HIGH] `anthropic.claude-*` is hardcoded as a default where the operator chose openrouter
+## F30 — [HIGH] ✅ RESOLVED (PR pending) `anthropic.claude-*` is hardcoded as a default where the operator chose openrouter
 
-A strategy "designed with openrouter" ends up bound to anthropic because production code **injects an anthropic default**, even on a node where anthropic is not a registered provider (this node has only `openrouter` + `deepseek`). This is the root cause of the F22 example failure, and per the operator it's a **recurring** bug ("was in the code early on too").
+**Resolution (2026-06-04).** The example seeder no longer injects any `anthropic.claude-*`
+literal. `crates/xvision-cli/src/commands/example/seed.rs` now binds the seeded trader
+agent (and the manifest `attested_with` provenance, and the seeded `autooptimizer.toml`)
+to shared `SEED_DEFAULT_PROVIDER`/`SEED_DEFAULT_MODEL` constants =
+`openrouter` / `google/gemini-3.1-flash-lite` — the same registered combo the optimizer
+config already used, so the optimizer config and the example trader can no longer drift.
+A regression test (`seeded_example_trader_binds_to_registered_provider_not_anthropic`)
+loads the seeded strategy + its scoped agent and asserts the slot resolves to the
+registered provider with no `anthropic` in the binding or provenance. **Operational
+note:** a node with the OLD on-disk legacy example (the drifted `anthropic.claude-sonnet-4.6`
+form) is corrected by re-running `xvn example seed --reset`, which deletes the legacy
+example and recreates it on the registered provider. The audit candidates
+(`agents/store.rs`, `validator.rs`, `execute_cline.rs`, `recovery.rs`, `eval/review/*`)
+were triaged and confirmed `#[cfg(test)]` fixtures / legitimate support — **no other
+production default-injection site exists.** See also **F31** for the deeper mechanism.
+
+The preflight guidance (F22) was also reworded to lead with "re-author the trader onto a
+registered provider" and to reference F30, instead of misleadingly suggesting the
+operator stand up the unregistered `anthropic`.
+
+---
+
+## F31 — [MED] ✅ RESOLVED (PR pending) `attested_with` (provenance metadata) masquerades as the operational binding
+
+**Resolution (2026-06-04).** `LLMSlot::effective_model()`
+(`crates/xvision-engine/src/strategies/slot.rs`) no longer falls back to
+`attested_with`. An unset/blank `model` now resolves to an **empty string** (the slot
+is *unbound*) instead of silently promoting the provenance string to the operational
+model. Provenance can no longer become the binding: a model-less legacy `trader_slot`
+whose `attested_with` was `anthropic.claude-sonnet-4.6` no longer dispatches anthropic.
+New-schema agent slots are unaffected — `agent_slot_to_llm_slot` already sets `model`
+explicitly whenever the agent has one, so only truly model-less legacy slots change
+(operator-confirmed acceptable: "if they don't have an agent that's fine"). A new
+`LLMSlot::has_model_binding()` makes the unbound state explicit, and the optimizer
+preflight now rejects an unbound legacy trader with a clear "no model configured"
+message rather than letting the cycle dispatch an empty model id. The `attested_with`
+field doc and the `effective_model`/preflight doc comments were corrected to state
+provenance is never the binding. Regression tests:
+`effective_model_never_promotes_attested_provenance` (+ explicit-binding and
+blank-model cases) in `slot.rs`; full engine lib suite (1010 tests) green.
+
+---
+
+### (original finding)
+
+**Root mechanism behind F30 (operator-confirmed, 2026-06-04).** Nothing overwrites the
+strategy at runtime — `anthropic` is baked into the strategy's *persisted* content and then
+read as the operational binding via a metadata fallback. The exact chain for a legacy-schema
+example (empty `agents[]`, populated legacy `trader_slot`):
+
+1. `trader_slot` has `provider: None`, `model: None`, only `attested_with: "anthropic.claude-sonnet-4.6"`.
+2. `LLMSlot::effective_model()` (`crates/xvision-engine/src/strategies/slot.rs:32`) falls back
+   to `attested_with` when `model` is empty — so the model *becomes* `anthropic.claude-sonnet-4.6`.
+3. `infer_trader_provider("", "anthropic.claude-sonnet-4.6")` parses the `anthropic.` prefix →
+   provider `anthropic` → mismatch vs the openrouter cycle → fast-fail.
+
+The contradiction: `LLMSlot.attested_with`'s own field doc (`slot.rs:7-11`) says it is
+"Informational… **Never gates eval-launch** — the operator's `provider`+`model` binding is
+authoritative." But `effective_model()` promotes it to the binding whenever explicit
+`provider`/`model` are absent. So a slot with no real model silently "becomes" whatever its
+provenance string says. F30 stops the *seeder* from persisting a bad provenance value, but the
+masquerade itself remains a latent footgun for any legacy/hand-authored slot.
+
+**Why not fixed in the F30 PR:** removing the `effective_model()` → `attested_with` fallback is a
+resolver-semantics change with real blast radius — legacy on-disk strategies with model-less
+`trader_slot`s currently rely on it to resolve *any* model at all; dropping it would leave them
+unbound. The correct fix is a deliberate decision (a migration that promotes `attested_with` →
+explicit `model` for legacy slots, or making model-less slots an explicit "unbound — needs a
+provider" state rather than silently deriving one from provenance). Tracked here so it isn't lost.
+
+**Acceptance (when taken on):** a model-less slot never derives its operational provider/model
+from `attested_with`; legacy strategies are migrated to carry an explicit binding; a test asserts
+provenance can never become the binding.
 
 ### Confirmed production default-injection
 - **Example seeder** `crates/xvision-cli/src/commands/example/seed.rs` (production, *before* the `#[cfg(test)]` at L422):

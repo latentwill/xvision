@@ -3,7 +3,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +44,18 @@ pub struct StartCycleBody {
     pub mutator_model: Option<String>,
     pub judge_provider: Option<String>,
     pub judge_model: Option<String>,
+    /// F28: token budget in USD for this cycle. Once the metered paper-test cost
+    /// reaches this ceiling the cycle stops before launching another backtest.
+    /// Omit (or null) for no cap. Mirrors the CLI `--budget`.
+    pub budget_usd: Option<f64>,
+    /// F28: per-run evaluation window overrides (YYYY-MM-DD), mirroring the CLI
+    /// `--day-*/--baseline-*` flags. Without these a UI launch ran the full
+    /// ~20-month default window (~16k bars/candidate). Narrow them to bound
+    /// bar-fetch cost/latency.
+    pub day_start: Option<chrono::NaiveDate>,
+    pub day_end: Option<chrono::NaiveDate>,
+    pub baseline_start: Option<chrono::NaiveDate>,
+    pub baseline_end: Option<chrono::NaiveDate>,
 }
 
 #[derive(Serialize)]
@@ -52,7 +68,37 @@ pub async fn start_cycle(
     State(state): State<AppState>,
     Json(body): Json<StartCycleBody>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
-    let cfg = load_optimizer_config()?;
+    let mut cfg = load_optimizer_config()?;
+    // F28: apply per-run evaluation-window overrides (bound bar-fetch cost), then
+    // re-validate so an inverted/overlapping window fails fast with a clear
+    // message instead of deep in scenario synthesis. Mirrors the CLI run-cycle.
+    if let Some(d) = body.day_start {
+        cfg.day_window.start = d;
+    }
+    if let Some(d) = body.day_end {
+        cfg.day_window.end = d;
+    }
+    if let Some(d) = body.baseline_start {
+        cfg.baseline_untouched_window.start = d;
+    }
+    if let Some(d) = body.baseline_end {
+        cfg.baseline_untouched_window.end = d;
+    }
+    cfg.validate().map_err(|e| DashboardError::Validation {
+        field: "window".into(),
+        msg: format!("invalid optimizer window after overrides: {e}"),
+    })?;
+    // F28: validate the budget ceiling up-front (a non-positive/NaN cap is a
+    // client error, not a silently-ignored one).
+    if let Some(b) = body.budget_usd {
+        if !b.is_finite() || b <= 0.0 {
+            return Err(DashboardError::Validation {
+                field: "budget_usd".into(),
+                msg: "budget_usd must be a finite positive USD value".into(),
+            });
+        }
+    }
+    let budget_cap = body.budget_usd.unwrap_or(f64::INFINITY);
     let mutator_provider = body
         .mutator_provider
         .unwrap_or_else(|| cfg.mutator.provider.clone());
@@ -150,6 +196,41 @@ pub async fn start_cycle(
     // live — not the deterministic stub that always tied and rejected everything.
     let api_ctx = state.api_context();
     let backtest_dispatch = Arc::clone(&metered_mutator);
+    // F35: generate the cycle id up-front so a background ticker can persist the
+    // running cost/tokens INCREMENTALLY under it. Previously the cost was written
+    // once at cycle end, so a killed/crashed UI cycle (the runaway-token case)
+    // recorded $0.00 — the operator's "cost shows $0.00" report. With an upfront
+    // id + ticker, partial spend survives an interrupt.
+    let cycle_id = ulid::Ulid::new().to_string();
+    // F34: serialize cycles per workspace (cross-process via the shared DB lock).
+    // Refuse to launch if a CLI or dashboard cycle is already running, instead of
+    // starving each other.
+    match xvision_engine::autooptimizer::run_lock::try_acquire(
+        &state.pool,
+        &cycle_id,
+        "dashboard",
+        Utc::now(),
+    )
+    .await
+    .map_err(DashboardError::Internal)?
+    {
+        xvision_engine::autooptimizer::run_lock::Acquire::Acquired => {}
+        xvision_engine::autooptimizer::run_lock::Acquire::Busy {
+            cycle_id: holder_cycle,
+            holder,
+            acquired_at,
+        } => {
+            return Err(DashboardError::Conflict(format!(
+                "an optimizer cycle is already running on this workspace (cycle {holder_cycle}, \
+                 holder {holder}, since {acquired_at}). Wait for it to finish or cancel it before \
+                 starting another."
+            )));
+        }
+    }
+    // F28: register a cooperative cancel flag for this cycle so
+    // `POST /cycles/:id/cancel` can stop it. Deregistered when the cycle ends.
+    let cancel_flag = state.autooptimizer_register_cancel(&cycle_id);
+    let state_for_dereg = state.clone();
     tokio::spawn(async move {
         // The production paper tester: real cached-backtest Executor, metered at
         // the dispatch boundary, with the shared per-cycle meter feeding both the
@@ -159,11 +240,36 @@ pub async fn start_cycle(
             backtest_dispatch,
             Arc::new(ToolRegistry::default_with_builtins()),
         );
-        // F28 (UI budget control) will thread a real ceiling here; until then the
-        // cap is unbounded but the meter still accumulates realized cost.
+        // F28: enforce the operator-set budget ceiling. Once the metered
+        // paper-test cost reaches `budget_cap`, the cycle stops before launching
+        // another backtest (no cap → f64::INFINITY). This is the guard against the
+        // runaway token spew an unbounded UI cycle could produce.
         let paper_tester: Box<dyn PaperTestRunner> = Box::new(
-            BudgetCappedPaperTester::new_with_handle(Box::new(cached), f64::INFINITY, Arc::clone(&meter)),
+            BudgetCappedPaperTester::new_with_handle(Box::new(cached), budget_cap, Arc::clone(&meter)),
         );
+
+        // F35: incremental cost/token persistence. Every 10s, snapshot the shared
+        // meter into `cycle_cost` under the known cycle id so the panel shows
+        // climbing spend during the run and a killed cycle keeps its partial cost.
+        let ticker_pool = pool.clone();
+        let ticker_meter = Arc::clone(&meter);
+        let ticker_cycle_id = cycle_id.clone();
+        let ticker = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let totals = *ticker_meter.lock().expect("meter mutex poisoned");
+                let _ = persist_cycle_cost(
+                    &ticker_pool,
+                    &ticker_cycle_id,
+                    &totals,
+                    &Utc::now().to_rfc3339(),
+                )
+                .await;
+            }
+        });
+
         let result = run_cycle(
             &pool,
             &cycle_blob_store,
@@ -177,24 +283,28 @@ pub async fn start_cycle(
                 let _ = tx.send(ev);
             },
             None,
-            None,
+            Some(cycle_id.clone()),
+            Some(cancel_flag),
         )
         .await;
-        match result {
-            Ok(result) => {
-                // F23/F26: persist the per-cycle tokens + cost so the panel and
-                // `GET /api/autooptimizer/cycles/:id` show real spend after the run.
-                // Best-effort — a failure here must not mask the completed cycle.
-                let totals = *meter.lock().expect("meter mutex poisoned");
-                if let Err(e) =
-                    persist_cycle_cost(&pool, &result.cycle_id, &totals, &Utc::now().to_rfc3339()).await
-                {
-                    tracing::warn!(error = %e, "persist optimizer cycle cost failed");
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "optimizer cycle failed");
-            }
+        // Stop the ticker; we persist the final totals below.
+        ticker.abort();
+        // F28: drop the cancel flag now the cycle is finished.
+        state_for_dereg.autooptimizer_deregister_cancel(&cycle_id);
+        // F34: release the workspace cycle lock so the next cycle can run.
+        let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_id).await;
+        // F23/F26/F35: persist the FINAL per-cycle tokens + cost so the panel and
+        // `GET /api/autooptimizer/cycles/:id` show real spend after the run.
+        // Best-effort — a failure here must not mask the completed cycle. Keyed by
+        // the upfront `cycle_id` so this lands even if `run_cycle` errored.
+        let totals = *meter.lock().expect("meter mutex poisoned");
+        if let Err(e) =
+            persist_cycle_cost(&pool, &cycle_id, &totals, &Utc::now().to_rfc3339()).await
+        {
+            tracing::warn!(error = %e, "persist optimizer cycle cost failed");
+        }
+        if let Err(e) = result {
+            tracing::warn!(error = %e, "optimizer cycle failed");
         }
     });
     Ok((
@@ -204,6 +314,31 @@ pub async fn start_cycle(
             message: "Optimizer run started. Watch the Live tab for progress.".into(),
         }),
     ))
+}
+
+/// F28: `POST /api/autooptimizer/cycles/:cycle_id/cancel` — request cancellation
+/// of an in-flight optimizer cycle. Sets the cooperative cancel flag so the cycle
+/// stops launching further candidates (the current backtest, if any, finishes —
+/// bounded — then the cycle returns). 404 if no cycle with that id is running.
+pub async fn cancel_cycle(
+    State(state): State<AppState>,
+    Path(cycle_id): Path<String>,
+) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
+    if state.autooptimizer_request_cancel(&cycle_id) {
+        Ok((
+            StatusCode::ACCEPTED,
+            Json(StartCycleResponse {
+                started: false,
+                message: format!(
+                    "Cancellation requested for cycle {cycle_id}; it will stop before the next candidate."
+                ),
+            }),
+        ))
+    } else {
+        Err(DashboardError::NotFound(format!(
+            "no in-flight optimizer cycle '{cycle_id}'"
+        )))
+    }
 }
 
 fn load_optimizer_config() -> Result<AutoOptimizerConfig, DashboardError> {
@@ -304,6 +439,7 @@ fn build_cycle_config(
         baseline_scenario,
         parent_strategies,
         explicit_parent_hashes,
+        objective: cfg.objective,
     }
 }
 

@@ -38,6 +38,11 @@ pub struct AutoOptimizerConfig {
     /// Defaults to false; set in autooptimizer.toml to opt in.
     #[serde(default)]
     pub tournament_enabled: bool,
+    /// F24: the metric the mutation cycle optimizes (gate objective). Defaults to
+    /// Sharpe; operators can select `total_return`, `max_drawdown`, or `win_rate`
+    /// via autooptimizer.toml or the CLI `--objective` flag.
+    #[serde(default)]
+    pub objective: crate::autooptimizer::gate::Objective,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +99,7 @@ impl Default for AutoOptimizerConfig {
             dspy_enabled: false,
             dspy_pattern_cohort_threshold: default_dspy_pattern_cohort_threshold(),
             tournament_enabled: false,
+            objective: crate::autooptimizer::gate::Objective::default(),
         }
     }
 }
