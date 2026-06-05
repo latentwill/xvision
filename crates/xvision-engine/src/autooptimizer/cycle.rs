@@ -9,13 +9,13 @@ use ulid::Ulid;
 
 use crate::autooptimizer::blob_store::BlobStore;
 use crate::autooptimizer::canary::{run_honesty_check, HonestyCheckResult};
-use crate::autooptimizer::config::AutoOptimizerConfig;
+use crate::autooptimizer::config::{AutoOptimizerConfig, RegimeSide, RegimeWindow};
 use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
-use crate::autooptimizer::gate::{evaluate, GateInput, GateVerdict, Objective};
+use crate::autooptimizer::gate::{aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective};
 use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -23,6 +23,7 @@ use crate::autooptimizer::mutator::{MutationDiff, Mutator};
 use crate::autooptimizer::mutator_ladder::{record_outcome, record_proposal};
 use crate::autooptimizer::parent_policy::{select_parents, ParentPolicy};
 use crate::autooptimizer::progress::CycleProgressEvent;
+use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRow};
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
@@ -47,6 +48,10 @@ pub struct CycleConfig {
     pub explicit_parent_hashes: Vec<ContentHash>,
     /// F24: the metric this cycle optimizes (gate objective). Defaults to Sharpe.
     pub objective: Objective,
+    /// Regime windows for the regime-matrix feature (Phase 2).
+    /// When empty the orchestrator uses the single day+baseline path unchanged.
+    /// Populated from `AutoOptimizerConfig.regime_set`.
+    pub regime_set: Vec<RegimeWindow>,
 }
 
 pub struct CycleResult {
@@ -75,6 +80,9 @@ struct MutationOutcome {
     /// the historic-run detail can show per-candidate backtest results.
     child_day: MetricsSummary,
     child_untouched: MetricsSummary,
+    /// Phase 2: per-regime evaluation rows. Empty when `regime_set` is empty
+    /// (legacy / single-window path).
+    regime_rows: Vec<RegimeResultRow>,
 }
 
 pub async fn run_cycle(
@@ -353,6 +361,16 @@ where
         .run(parent_strategy, &cycle_config.baseline_scenario)
         .await?;
 
+    // Phase 2: pre-compute parent metrics once per regime window so every child
+    // mutation in this loop can reuse them. Empty when regime_set is empty.
+    let mut parent_regime_metrics: HashMap<String, (MetricsSummary, MetricsSummary)> = HashMap::new();
+    for rw in &cycle_config.regime_set {
+        let (regime_day_scen, regime_baseline_scen) = build_regime_scenario_pair(cycle_config, rw)?;
+        let pd = paper_tester.run(parent_strategy, &regime_day_scen).await?;
+        let pu = paper_tester.run(parent_strategy, &regime_baseline_scen).await?;
+        parent_regime_metrics.insert(rw.label.clone(), (pd, pu));
+    }
+
     // P3: recall prior optimizer outcomes on similar strategies (once per
     // parent) to advise the experiment writer. Best-effort and eval-temporal-
     // safe — forward the scenario start so Patterns trained inside the window
@@ -528,6 +546,7 @@ where
             &parent_day,
             &parent_untouched,
             min_improvement,
+            &parent_regime_metrics,
         )
         .await?;
         progress(CycleProgressEvent::MutationGated {
@@ -643,8 +662,87 @@ async fn gate_and_classify(
     parent_day: &MetricsSummary,
     parent_untouched: &MetricsSummary,
     min_improvement: f64,
+    // Per-regime parent metrics (label → (day, untouched)), pre-computed by
+    // `process_parent_mutations` so each parent is evaluated only once per
+    // regime window across all its mutations.
+    parent_regime_metrics: &HashMap<String, (MetricsSummary, MetricsSummary)>,
 ) -> Result<MutationOutcome> {
     let child = diff.apply_to(parent_strategy);
+    let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
+
+    // ── Phase 2: regime-matrix path ──────────────────────────────────────────
+    if !cycle_config.regime_set.is_empty() {
+        // Build (day, baseline) scenario pairs for every regime window.
+        let mut regime_inputs: Vec<RegimeEvalInput> = Vec::with_capacity(cycle_config.regime_set.len());
+        for rw in &cycle_config.regime_set {
+            let (regime_day_scen, regime_baseline_scen) =
+                build_regime_scenario_pair(cycle_config, rw)?;
+            let child_day_r = paper_tester.run(&child, &regime_day_scen).await?;
+            let child_untouched_r = paper_tester.run(&child, &regime_baseline_scen).await?;
+            let (parent_day_r, parent_untouched_r) = parent_regime_metrics
+                .get(&rw.label)
+                .map(|(d, u)| (d.clone(), u.clone()))
+                .ok_or_else(|| anyhow::anyhow!("missing parent regime metrics for label '{}'", rw.label))?;
+            regime_inputs.push(RegimeEvalInput {
+                label: rw.label.clone(),
+                side: rw.side.clone(),
+                child_day: child_day_r,
+                child_untouched: child_untouched_r,
+                parent_day: parent_day_r,
+                parent_untouched: parent_untouched_r,
+            });
+        }
+
+        let (regime_status, regime_rows) =
+            classify_from_regime_outcomes(&regime_inputs, min_improvement, cycle_config.objective);
+
+        // For regime path: use the first regime's day metrics as the primary
+        // child_day/child_untouched for the node-metrics side table (so the
+        // existing `lineage_node_metrics` row is populated consistently).
+        // Fall back to running the main day/baseline scenarios if the regime set
+        // happens to be configured without any entries (shouldn't happen here).
+        let (child_day, child_untouched) = if let Some(first) = regime_inputs.first() {
+            (first.child_day.clone(), first.child_untouched.clone())
+        } else {
+            (
+                paper_tester.run(&child, &cycle_config.day_scenario).await?,
+                paper_tester.run(&child, &cycle_config.baseline_scenario).await?,
+            )
+        };
+
+        // Aggregate delta_sharpe as mean of per-regime deltas.
+        let delta_sharpe = if regime_rows.is_empty() {
+            child_day.sharpe - parent_day.sharpe
+        } else {
+            regime_rows.iter().map(|r| r.delta_sharpe).sum::<f64>() / regime_rows.len() as f64
+        };
+
+        // Use the aggregate status directly — no inversion-pair check on the
+        // regime path (the multi-window anti-overfit rule replaces that guard).
+        let verdict = match regime_status {
+            LineageStatus::Active => GateVerdict::Pass,
+            LineageStatus::Quarantined => GateVerdict::Fail {
+                reason: "regime-matrix: passes some but not bull+bear".to_string(),
+            },
+            LineageStatus::Rejected => GateVerdict::Fail {
+                reason: "regime-matrix: fails all regimes".to_string(),
+            },
+        };
+
+        return Ok(MutationOutcome {
+            child,
+            diff,
+            child_hash,
+            verdict,
+            status: regime_status,
+            delta_sharpe,
+            child_day,
+            child_untouched,
+            regime_rows,
+        });
+    }
+
+    // ── Legacy / empty-regime-set path (UNCHANGED) ───────────────────────────
     let child_day = paper_tester.run(&child, &cycle_config.day_scenario).await?;
     let child_untouched = paper_tester.run(&child, &cycle_config.baseline_scenario).await?;
     let raw_verdict = gate_check(
@@ -655,7 +753,6 @@ async fn gate_and_classify(
         min_improvement,
         cycle_config.objective,
     );
-    let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
     let (verdict, status) = if matches!(raw_verdict, GateVerdict::Pass) {
@@ -690,7 +787,67 @@ async fn gate_and_classify(
         delta_sharpe,
         child_day,
         child_untouched,
+        regime_rows: vec![],
     })
+}
+
+/// Build a (day, baseline) `Scenario` pair for a regime window, cloned and
+/// date-patched from the cycle's base `day_scenario`.
+fn build_regime_scenario_pair(
+    cycle_config: &CycleConfig,
+    rw: &RegimeWindow,
+) -> Result<(Scenario, Scenario)> {
+    use chrono::{NaiveDate, TimeZone, Utc};
+    use crate::eval::scenario::{BarCachePolicy, RefreshPolicy, TimeWindow};
+
+    let parse_date = |s: &str| -> Result<chrono::DateTime<Utc>> {
+        let nd: NaiveDate = s.parse().map_err(|e| anyhow::anyhow!("parse date '{}': {}", s, e))?;
+        Ok(Utc.from_utc_datetime(&nd.and_hms_opt(0, 0, 0).expect("midnight")))
+    };
+
+    let day_start = parse_date(&rw.day.start)?;
+    let day_end = parse_date(&rw.day.end)?;
+    if day_start >= day_end {
+        anyhow::bail!("regime '{}' day window is empty or inverted", rw.label);
+    }
+
+    let base_start = parse_date(&rw.baseline.start)?;
+    let base_end = parse_date(&rw.baseline.end)?;
+    if base_start >= base_end {
+        anyhow::bail!("regime '{}' baseline window is empty or inverted", rw.label);
+    }
+
+    // Day scenario: clone the cycle's base day_scenario, patch window + cache key.
+    let mut day_scen = cycle_config.day_scenario.clone();
+    day_scen.id = Ulid::new().to_string();
+    day_scen.time_window = TimeWindow { start: day_start, end: day_end };
+    day_scen.bar_cache_policy = BarCachePolicy {
+        cache_key: format!(
+            "regime-{}-day-{}-{}",
+            rw.label,
+            rw.day.start.replace('-', ""),
+            rw.day.end.replace('-', ""),
+        ),
+        refresh_policy: RefreshPolicy::NeverRefresh,
+        data_fetched_at: None,
+    };
+
+    // Baseline scenario: clone the day scenario above, patch window + cache key.
+    let mut base_scen = day_scen.clone();
+    base_scen.id = Ulid::new().to_string();
+    base_scen.time_window = TimeWindow { start: base_start, end: base_end };
+    base_scen.bar_cache_policy = BarCachePolicy {
+        cache_key: format!(
+            "regime-{}-base-{}-{}",
+            rw.label,
+            rw.baseline.start.replace('-', ""),
+            rw.baseline.end.replace('-', ""),
+        ),
+        refresh_policy: RefreshPolicy::NeverRefresh,
+        data_fetched_at: None,
+    };
+
+    Ok((day_scen, base_scen))
 }
 
 async fn build_and_insert_node(
@@ -763,6 +920,24 @@ async fn build_and_insert_node(
     )
     .await;
 
+    // Phase 2: persist per-regime results when the regime-matrix path was used.
+    if !outcome.regime_rows.is_empty() {
+        let created_at = Utc::now().to_rfc3339();
+        if let Err(e) = insert_regime_results(
+            pool,
+            &outcome.child_hash.to_hex(),
+            &outcome.regime_rows,
+            &created_at,
+        )
+        .await
+        {
+            tracing::warn!(
+                child_hash = %outcome.child_hash.to_hex(),
+                "failed to persist regime results: {e}",
+            );
+        }
+    }
+
     Ok(node)
 }
 
@@ -832,6 +1007,63 @@ fn gate_check(
     })
 }
 
+// ── Phase 2: regime-matrix pure helper ───────────────────────────────────────
+
+/// Inputs to the per-regime evaluation aggregation.
+///
+/// All fields are the already-computed metric snapshots for one regime window;
+/// the helper never performs I/O.
+pub struct RegimeEvalInput {
+    pub label: String,
+    pub side: RegimeSide,
+    pub child_day: MetricsSummary,
+    pub child_untouched: MetricsSummary,
+    pub parent_day: MetricsSummary,
+    pub parent_untouched: MetricsSummary,
+}
+
+/// Pure, side-effect-free aggregation of per-regime gate results.
+///
+/// For each input it calls `gate::evaluate` with `min_improvement`, computes
+/// `delta_sharpe`, builds a [`RegimeResultRow`], then hands the
+/// `(RegimeSide, GateVerdict)` pairs to [`aggregate_regime_verdicts`] to
+/// derive the overall [`LineageStatus`].
+///
+/// Returns `(status, rows)`.  The caller runs the backtests to supply the
+/// `RegimeEvalInput`s; this function is deterministic given those inputs.
+pub fn classify_from_regime_outcomes(
+    regimes: &[RegimeEvalInput],
+    min_improvement: f64,
+    objective: Objective,
+) -> (LineageStatus, Vec<RegimeResultRow>) {
+    let mut side_verdict_pairs: Vec<(RegimeSide, GateVerdict)> = Vec::with_capacity(regimes.len());
+    let mut rows: Vec<RegimeResultRow> = Vec::with_capacity(regimes.len());
+
+    for r in regimes {
+        let verdict = evaluate(&GateInput {
+            parent_day_metrics: r.parent_day.clone(),
+            child_day_metrics: r.child_day.clone(),
+            parent_untouched_metrics: r.parent_untouched.clone(),
+            child_untouched_metrics: r.child_untouched.clone(),
+            min_improvement,
+            objective,
+        });
+        let delta_sharpe = r.child_day.sharpe - r.parent_day.sharpe;
+        rows.push(RegimeResultRow {
+            regime_label: r.label.clone(),
+            side: r.side.clone(),
+            metrics_day: r.child_day.clone(),
+            metrics_untouched: r.child_untouched.clone(),
+            delta_sharpe,
+            verdict: verdict.as_str(),
+        });
+        side_verdict_pairs.push((r.side.clone(), verdict));
+    }
+
+    let status = aggregate_regime_verdicts(&side_verdict_pairs);
+    (status, rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -860,5 +1092,65 @@ mod tests {
         let kept = vec![active_node()];
         assert!(honesty_check_warranted(&kept, &[]), "a kept candidate warrants the check");
         assert!(honesty_check_warranted(&[], &kept), "a rejected candidate warrants the check");
+    }
+
+    /// Bull passes, BearOrShock fails → aggregate is Quarantined (Suspect).
+    /// Two rows come back with the expected labels and sides.
+    #[test]
+    fn classify_bull_pass_bear_fail_yields_quarantined() {
+        let make_metrics = |sharpe: f64| MetricsSummary {
+            sharpe,
+            total_return_pct: 0.0,
+            max_drawdown_pct: 5.0,
+            win_rate: 0.5,
+            n_trades: 10,
+            n_decisions: 20,
+            inference_cost_quote_total: None,
+            net_return_pct: None,
+            baselines: None,
+        };
+
+        // Bull: child sharpe 1.2 vs parent 1.0 → Δ = 0.2 > 0.1 → Pass
+        // BearOrShock: child sharpe 0.3 vs parent 0.5 → Δ = -0.2 < 0.1 → Fail
+        let regimes = vec![
+            RegimeEvalInput {
+                label: "bull_2024".to_string(),
+                side: RegimeSide::Bull,
+                parent_day: make_metrics(1.0),
+                parent_untouched: make_metrics(1.0),
+                child_day: make_metrics(1.2),
+                child_untouched: make_metrics(1.2),
+            },
+            RegimeEvalInput {
+                label: "bear_2022".to_string(),
+                side: RegimeSide::BearOrShock,
+                parent_day: make_metrics(0.5),
+                parent_untouched: make_metrics(0.5),
+                child_day: make_metrics(0.3),
+                child_untouched: make_metrics(0.3),
+            },
+        ];
+
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, Objective::Sharpe);
+
+        assert_eq!(status, LineageStatus::Quarantined, "expected Quarantined (Suspect)");
+        assert_eq!(rows.len(), 2, "expected exactly 2 regime rows");
+
+        // Rows come back in input order.
+        let bull_row = rows.iter().find(|r| r.regime_label == "bull_2024").expect("bull row missing");
+        let bear_row = rows.iter().find(|r| r.regime_label == "bear_2022").expect("bear row missing");
+
+        assert!(matches!(bull_row.side, RegimeSide::Bull));
+        assert_eq!(bull_row.verdict, "passed");
+        assert!((bull_row.delta_sharpe - 0.2).abs() < 1e-9, "bull Δsharpe");
+
+        assert!(matches!(bear_row.side, RegimeSide::BearOrShock));
+        // GateVerdict::Fail.as_str() → "rejected:<reason>"
+        assert!(
+            bear_row.verdict.starts_with("rejected:"),
+            "bear verdict should be rejected, got: {}",
+            bear_row.verdict
+        );
+        assert!((bear_row.delta_sharpe - (-0.2)).abs() < 1e-9, "bear Δsharpe");
     }
 }

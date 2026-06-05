@@ -686,7 +686,7 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
         let parent_short = parent.get(..10).unwrap_or(&parent);
         let status = match n.status {
             LineageStatus::Active => "kept",
-            LineageStatus::Quarantined => "dropped", // Phase 2: revisit Quarantined mapping
+            LineageStatus::Quarantined => "suspect",
             LineageStatus::Rejected => "dropped",
         };
         let day_sharpe = cn
@@ -940,7 +940,7 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
         "status:       {}",
         match node.status {
             LineageStatus::Active => "active",
-            LineageStatus::Quarantined => "rejected", // Phase 2: revisit Quarantined mapping
+            LineageStatus::Quarantined => "suspect",
             LineageStatus::Rejected => "rejected",
         }
     );
@@ -983,7 +983,7 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
             Ok(Some(anc)) => {
                 let s = match anc.status {
                     LineageStatus::Active => "active",
-                    LineageStatus::Quarantined => "rejected", // Phase 2: revisit Quarantined mapping
+                    LineageStatus::Quarantined => "suspect",
                     LineageStatus::Rejected => "rejected",
                 };
                 println!("  depth={} {} ({})", depth + 1, anc.bundle_hash, s);
@@ -1391,6 +1391,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         parent_strategies,
         explicit_parent_hashes,
         objective: cfg.objective,
+        regime_set: cfg.regime_set.clone(),
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
