@@ -692,12 +692,24 @@ impl Mutator {
             kinds
         };
         let param_keys = tunable_param_keys(base);
+        // Filter paths: enumerate once per propose call (same filter for all attempts).
+        // Only computed when "filter" is in the applicable kinds to avoid walking
+        // a filter that won't be offered.
+        let filter_paths: Vec<(String, serde_json::Value)> = if kinds.iter().any(|k| k == "filter") {
+            base.filter
+                .as_ref()
+                .map(filter_tunable_paths)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
 
         for attempt in 0..max_attempts {
             let user_text = build_user_payload(
                 &program_md,
                 &kinds,
                 &param_keys,
+                &filter_paths,
                 last_errors.as_deref(),
                 exploration_seed,
                 memory_context,
@@ -850,6 +862,7 @@ fn build_user_payload(
     program_md: &str,
     allowed_kinds: &[String],
     param_keys: &[String],
+    filter_paths: &[(String, serde_json::Value)],
     previous_errors: Option<&[ValidationError]>,
     exploration_seed: u64,
     memory_context: Option<&str>,
@@ -868,6 +881,22 @@ fn build_user_payload(
                 .collect::<Vec<_>>()
                 .join("\n")
         )
+    };
+    // Filter paths section: only included when "filter" is in allowed kinds and
+    // the strategy has a filter (non-empty paths list). Guides the experiment
+    // writer to propose valid dotted paths from the live AST.
+    let filter_section = if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+        format!(
+            "\n\nTunable filter paths (a `filter` experiment's `path` MUST be exactly one of these; \
+             `before` must match the current value shown):\n{}",
+            filter_paths
+                .iter()
+                .map(|(p, v)| format!("  - {p}: {v}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    } else {
+        String::new()
     };
     let errors_section = match previous_errors {
         None => String::new(),
@@ -930,7 +959,7 @@ fn build_user_payload(
     };
 
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{filter_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -1154,8 +1183,9 @@ mod tests {
     fn build_user_payload_includes_memory_section_when_present() {
         let kinds = vec!["param".to_string()];
         let keys = vec!["risk.max_leverage".to_string()];
+        let filter_paths: Vec<(String, serde_json::Value)> = vec![];
         let ctx = "param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)";
-        let with = build_user_payload("prog", &kinds, &keys, None, 7, Some(ctx), 0);
+        let with = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some(ctx), 0);
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
             "memory section header missing: {with}"
@@ -1168,7 +1198,7 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, None, 7, None, 0);
+        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0);
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1178,10 +1208,42 @@ mod tests {
             "F32 exploration section must remain when no memory: {without}"
         );
 
-        let empty = build_user_payload("prog", &kinds, &keys, None, 7, Some("   "), 0);
+        let empty = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some("   "), 0);
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
+        );
+    }
+
+    #[test]
+    fn build_user_payload_includes_filter_paths_when_filter_kind_allowed() {
+        let kinds = vec!["filter".to_string(), "param".to_string()];
+        let keys = vec!["risk.max_leverage".to_string()];
+        let filter_paths = vec![
+            ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
+            ("cooldown_bars".to_string(), serde_json::json!(3u32)),
+        ];
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, None, 0);
+        assert!(
+            payload.contains("Tunable filter paths"),
+            "filter section header must be present: {payload}"
+        );
+        assert!(
+            payload.contains("conditions.0.rhs.numeric"),
+            "filter path must be listed: {payload}"
+        );
+        assert!(
+            payload.contains("cooldown_bars"),
+            "cooldown_bars path must be listed: {payload}"
+        );
+
+        // When filter is NOT in allowed kinds, section must be absent.
+        let kinds_no_filter = vec!["param".to_string()];
+        let no_filter_payload =
+            build_user_payload("prog", &kinds_no_filter, &keys, &filter_paths, None, 5, None, 0);
+        assert!(
+            !no_filter_payload.contains("Tunable filter paths"),
+            "filter section must be absent when filter not in allowed kinds: {no_filter_payload}"
         );
     }
 

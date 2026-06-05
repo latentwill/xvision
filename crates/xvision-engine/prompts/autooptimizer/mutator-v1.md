@@ -15,7 +15,7 @@ markdown, prose, or extra keys outside the JSON object.
 
 ```json
 {
-  "kind": "prose" | "param" | "tool",
+  "kind": "prose" | "param" | "tool" | "filter",
   "prose": [
     {
       "agent_role": "<role string from the strategy's agents list>",
@@ -34,13 +34,20 @@ markdown, prose, or extra keys outside the JSON object.
     "added": ["<tool_name>"],
     "removed": ["<tool_name>"]
   },
+  "filter": [
+    {
+      "path": "<one of the tunable filter paths — see the list in the user message>",
+      "before": <current value — must match exactly>,
+      "after": <proposed new value>
+    }
+  ],
   "rationale": "<1-2 sentence plain-English explanation of why this experiment may improve performance>"
 }
 ```
 
 Rules:
 - `kind` determines which array is populated. The other arrays must be empty
-  (prose=[], params=[], tools={added:[],removed:[]}).
+  (prose=[], params=[], tools={added:[],removed:[]}, filter=[]).
 - For `prose` experiments: `after` is the **complete replacement prompt** for
   that agent role — not a diff or excerpt, but the full revised system prompt
   text. `before` may be empty (the current override is unknown from the program
@@ -58,7 +65,14 @@ Rules:
 - For `tool` experiments: tool names may only contain letters, digits, and
   underscores (max 64 chars). You cannot remove a tool that isn't present; you
   cannot add a tool that is already present.
-- Only ONE change per experiment. Do not combine prose + param changes.
+- For `filter` experiments: `path` must be exactly one of the tunable filter
+  paths listed in the user message (enumerated from the strategy's live filter
+  AST). `before` must match the current value shown. `after` must be a number;
+  `null` is only valid for `max_wakeups_per_day`. Make only one change per
+  experiment (one path) and prefer incremental adjustments (clear direction +
+  magnitude) over large jumps.
+- Only ONE change per experiment. Do not combine `filter` with `prose`, `param`,
+  or `tool` changes.
 
 ## Prose experiment example
 
@@ -86,6 +100,35 @@ Note: `after` is the **complete** replacement for that role's prompt — the
 Optimizer (autooptimizer subsystem) writes it directly into the strategy's
 per-agent override so it takes effect at backtest time without changing the
 shared agent library.
+
+## Filter experiment example
+
+When the strategy has a filter and `"filter"` is in the allowed kinds, you may
+propose a threshold adjustment. Use exactly a path from the enumerated list in
+the user message; `before` must match the current value:
+
+```json
+{
+  "kind": "filter",
+  "prose": [],
+  "params": [],
+  "tools": { "added": [], "removed": [] },
+  "filter": [
+    {
+      "path": "conditions.0.rhs.numeric",
+      "before": 25,
+      "after": 28
+    }
+  ],
+  "rationale": "Raising the ADX threshold from 25 to 28 should require stronger trend confirmation before entry, reducing false signals in choppy markets."
+}
+```
+
+Notes:
+- `path` must come from the **Tunable filter paths** list in the user message.
+- Make incremental adjustments — a clear direction and magnitude, not a large jump.
+- One `filter` entry per experiment (the system validates this).
+- `before` must match the current value shown next to the path.
 
 ---
 
