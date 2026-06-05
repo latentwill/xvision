@@ -874,7 +874,15 @@ fn build_user_payload(
     avoid_count: usize,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
-    let keys_section = if param_keys.is_empty() {
+    let param_allowed = allowed_kinds.iter().any(|k| k == "param");
+    // Codex P2: only show param key list when `param` is actually allowed. A
+    // filter-only config that still shows risk.* keys steers the model to propose
+    // a param mutation that the cycle loop accepts (validate_mutation_diff does not
+    // enforce the allowed-kinds list). Gate the section and the F32 focus directive
+    // together so the prompt never references a disallowed mutation axis.
+    let keys_section = if !param_allowed {
+        String::new()
+    } else if param_keys.is_empty() {
         "\n\nThis strategy exposes no tunable parameter keys; do not propose a `param` experiment."
             .to_string()
     } else {
@@ -923,16 +931,26 @@ fn build_user_payload(
     // materially different prompt ⇒ a different candidate, even from a fully
     // deterministic model. (Pairs with the hard `already_tried` reject in
     // `propose`, which guarantees a previously-seen candidate is never re-emitted.)
-    let exploration_section = if param_keys.is_empty() {
+    // Build a focus key from the ALLOWED axes only. For param-allowed configs,
+    // rotate across risk.* keys. For filter-only configs, rotate across filter
+    // paths. Falls back to a generic directive when no focusable axis is present.
+    let focusable_keys: Vec<String> = if param_allowed && !param_keys.is_empty() {
+        param_keys.to_vec()
+    } else if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+        filter_paths.iter().map(|(p, _)| p.clone()).collect()
+    } else {
+        vec![]
+    };
+    let exploration_section = if focusable_keys.is_empty() {
         format!(
             "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
              the single most obvious one, so repeated runs explore rather than re-propose one tweak."
         )
     } else {
-        let focus = &param_keys[(exploration_seed as usize) % param_keys.len()];
+        let focus = &focusable_keys[(exploration_seed as usize) % focusable_keys.len()];
         format!(
-            "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
-             parameter `{focus}` — propose a meaningful change to its value (a clear direction and \
+            "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on \
+             `{focus}` — propose a meaningful change to its value (a clear direction and \
              magnitude). This focus is chosen to make successive runs on this strategy explore \
              different levers rather than re-proposing one fixed tweak. If `{focus}` genuinely \
              cannot be improved, you may target another listed key, but do not default to the most \
@@ -1249,6 +1267,40 @@ mod tests {
         assert!(
             !no_filter_payload.contains("Tunable filter paths"),
             "filter section must be absent when filter not in allowed kinds: {no_filter_payload}"
+        );
+    }
+
+    #[test]
+    fn build_user_payload_hides_param_keys_when_param_not_allowed() {
+        // codex P2: a filter-only config must NOT show param keys or focus the
+        // exploration directive on a risk.* parameter — that steers the model to
+        // propose a param mutation it would then return as the diff.
+        let kinds = vec!["filter".to_string()];
+        let keys = vec!["risk.max_leverage".to_string(), "risk.stop_loss_atr_multiple".to_string()];
+        let filter_paths = vec![
+            ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
+            ("cooldown_bars".to_string(), serde_json::json!(3u32)),
+        ];
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0);
+
+        // Param key list and risk.* references must be absent.
+        assert!(
+            !payload.contains("risk.max_leverage"),
+            "param key must not appear in filter-only payload: {payload}"
+        );
+        assert!(
+            !payload.contains("Tunable parameter keys"),
+            "param keys section header must not appear: {payload}"
+        );
+        // Exploration directive must focus on a FILTER path, not a param key.
+        assert!(
+            !payload.contains("risk.stop_loss_atr_multiple"),
+            "exploration focus must not name a risk.* param in filter-only mode: {payload}"
+        );
+        // Filter section must still appear.
+        assert!(
+            payload.contains("Tunable filter paths"),
+            "filter section must still be present: {payload}"
         );
     }
 
