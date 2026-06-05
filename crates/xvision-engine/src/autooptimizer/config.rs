@@ -43,6 +43,11 @@ pub struct AutoOptimizerConfig {
     /// via autooptimizer.toml or the CLI `--objective` flag.
     #[serde(default)]
     pub objective: crate::autooptimizer::gate::Objective,
+
+    /// Optional regime windows for the regime-matrix optimizer feature.
+    /// Defaults to empty (back-compat: existing configs without this key are unchanged).
+    #[serde(default)]
+    pub regime_set: Vec<RegimeWindow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +74,35 @@ fn default_allowed_mutation_kinds() -> Vec<String> {
     // files that pin the `allowed_mutation_kinds` list keep their pin; only
     // configs that rely on the #[serde(default)] path pick up "filter" here.
     vec!["prose".into(), "param".into(), "tool".into(), "filter".into()]
+}
+
+/// Date range expressed as ISO-8601 strings (YYYY-MM-DD).
+/// Used inside `RegimeWindow` so that regime windows do not depend on
+/// the `NaiveDate`-backed `DayWindow` / `BaselineUntouchedWindow` types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioWindow {
+    pub start: String,
+    pub end: String,
+}
+
+/// Which directional regime a `RegimeWindow` represents.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RegimeSide {
+    Bull,
+    BearOrShock,
+    Chop,
+}
+
+/// One labeled regime window used by the Optimizer regime-matrix feature.
+/// `day` is the training / candidate-evaluation range; `baseline` is the
+/// held-out comparison range for that regime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegimeWindow {
+    pub label: String,
+    pub side: RegimeSide,
+    pub day: ScenarioWindow,
+    pub baseline: ScenarioWindow,
 }
 
 impl Default for AutoOptimizerConfig {
@@ -103,6 +137,7 @@ impl Default for AutoOptimizerConfig {
             dspy_pattern_cohort_threshold: default_dspy_pattern_cohort_threshold(),
             tournament_enabled: false,
             objective: crate::autooptimizer::gate::Objective::default(),
+            regime_set: vec![],
         }
     }
 }
@@ -205,5 +240,45 @@ mod tests {
             config.allowed_mutation_kinds.contains(&"filter".to_string()),
             "AutoOptimizerConfig::default must include \"filter\" in allowed_mutation_kinds"
         );
+    }
+
+    #[test]
+    fn regime_set_defaults_empty_and_parses_toml() {
+        // AutoOptimizerConfig has required fields (min_improvement, day_window,
+        // baseline_untouched_window, mutator) with no serde defaults, so
+        // toml::from_str("") would fail. Use Default::default() to verify
+        // regime_set starts empty, then parse a full-config TOML with one entry.
+        let cfg = AutoOptimizerConfig::default();
+        assert!(cfg.regime_set.is_empty(), "regime_set must default empty (back-compat)");
+
+        let cfg2: AutoOptimizerConfig = toml::from_str(r#"
+            min_improvement = 0.05
+
+            [day_window]
+            start = "2025-01-01"
+            end   = "2025-04-01"
+
+            [baseline_untouched_window]
+            start = "2025-04-01"
+            end   = "2025-05-01"
+
+            [mutator]
+            provider   = "test"
+            model      = "test-model"
+            max_retries = 2
+
+            [[regime_set]]
+            label    = "bull"
+            side     = "bull"
+            [regime_set.day]
+            start = "2024-01-01"
+            end   = "2024-03-01"
+            [regime_set.baseline]
+            start = "2024-03-01"
+            end   = "2024-04-01"
+        "#).unwrap();
+        assert_eq!(cfg2.regime_set.len(), 1);
+        assert_eq!(cfg2.regime_set[0].label, "bull");
+        assert!(matches!(cfg2.regime_set[0].side, RegimeSide::Bull));
     }
 }
