@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::autooptimizer::mutator::{filter_tunable_paths, FilterEdit, MutationDiff, ParamChange, ProseEdit};
+use crate::autooptimizer::mutator::{
+    filter_tunable_paths, set_filter_value, FilterEdit, MutationDiff, ParamChange, ProseEdit,
+};
 use crate::strategies::{agent_ref::canonical_role, Strategy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +197,8 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
     let tunable: std::collections::HashMap<String, serde_json::Value> =
         filter_tunable_paths(filter).into_iter().collect();
 
+    let errors_at_entry = errors.len();
+
     for (i, edit) in edits.iter().enumerate() {
         // Path must be one of the enumerated tunable paths.
         let Some(current) = tunable.get(&edit.path) else {
@@ -265,6 +269,28 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
                     edit.path, edit.before, current,
                 ),
                 format!("filter[{i}].before"),
+            ));
+        }
+    }
+
+    // Whole-filter validation (codex P2): even when every edit is individually
+    // well-formed, the RESULT may violate filter invariants the per-path checks
+    // don't see — indicator-specific bounds (RSI/ADX 0..=100), `between` ranges
+    // with lo >= hi, `max_wakeups_per_day` outside 1..=1440, etc. Apply the edits
+    // to a clone and run the filter crate's own validator so an invalid candidate
+    // is rejected HERE (clean retry) instead of blowing up at backtest time. Only
+    // run when the per-edit checks were clean, so the message isn't noise on top
+    // of an already-reported bad edit.
+    if errors.len() == errors_at_entry {
+        let mut candidate = filter.clone();
+        for edit in edits {
+            set_filter_value(&mut candidate, &edit.path, &edit.after);
+        }
+        if let Err(e) = xvision_filters::validate(&candidate) {
+            errors.push(ValidationError::with_path(
+                "invalid_filter_result",
+                format!("Applying the filter edit(s) produces an invalid filter: {e}"),
+                "filter",
             ));
         }
     }
@@ -523,6 +549,25 @@ mod tests {
         assert!(
             validate_mutation_diff(&diff, &base).is_ok(),
             "null max_wakeups_per_day must be accepted"
+        );
+    }
+
+    #[test]
+    fn filter_edit_result_validation_rejects_out_of_range_wakeups() {
+        // codex P2: each edit is individually well-formed (numeric, correct
+        // baseline) but the RESULTING filter violates a filter invariant
+        // (max_wakeups_per_day must be in [1, 1440]). The whole-filter validation
+        // must reject it here rather than letting it fail at backtest time.
+        let base = fixture_filter_strategy(); // max_wakeups_per_day is None (null)
+        let diff = filter_diff(vec![FilterEdit {
+            path: "max_wakeups_per_day".to_string(),
+            before: serde_json::Value::Null,
+            after: serde_json::json!(5000), // out of [1, 1440]
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "invalid_filter_result"),
+            "out-of-range result must produce invalid_filter_result: {errs:?}"
         );
     }
 
