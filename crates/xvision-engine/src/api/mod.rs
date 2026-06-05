@@ -689,6 +689,8 @@ pub(crate) async fn resolve_embedder_choice_from_env(
         openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
         config_embedder: Some(memory_cfg.embedder.as_config_string()),
         config_embedder_model: memory_cfg.embedder_model.clone(),
+        config_embedder_base_url: memory_cfg.embedder_base_url.clone(),
+        memory_embedder_base_url: std::env::var("XVN_MEMORY_EMBEDDER_BASE_URL").ok(),
         resolved_provider_keys,
     };
 

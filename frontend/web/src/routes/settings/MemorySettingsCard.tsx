@@ -16,6 +16,7 @@ const BUILTIN_EMBEDDER_OPTIONS: { value: string; label: string }[] = [
   { value: "off", label: "Off" },
   { value: "local", label: "Local (offline, lexical)" },
   { value: "auto", label: "Auto (best available)" },
+  { value: "custom", label: "Custom endpoint (OpenAI-compatible)" },
 ];
 
 // Sentinel option that reveals the free-text custom-model input.
@@ -115,6 +116,32 @@ export function MemorySettingsCard() {
   // The model picker is hidden for the "off" source (no embeddings at all).
   const showModelPicker = (settings?.embedder ?? "off") !== "off";
 
+  // Custom-endpoint base URL: shown only when the source is "custom". Bound to
+  // a local draft so the operator can type without a request per keystroke;
+  // persisted on blur / Enter.
+  const isCustomSource = (settings?.embedder ?? "off") === "custom";
+  const persistedBaseUrl = settings?.embedder_base_url ?? "";
+  const [baseUrlDraft, setBaseUrlDraft] = useState("");
+  // Sync the draft from the persisted value when settings load/change.
+  useEffect(() => {
+    setBaseUrlDraft(persistedBaseUrl);
+  }, [persistedBaseUrl]);
+  // Soft, non-blocking hint when the URL doesn't include the `/v1` suffix.
+  const trimmedBaseUrl = baseUrlDraft.trim();
+  const missingV1 =
+    trimmedBaseUrl.length > 0 &&
+    !trimmedBaseUrl.replace(/\/+$/, "").endsWith("/v1");
+
+  function submitBaseUrl(value: string) {
+    mutation.mutate({
+      embedder: "custom",
+      embedder_base_url: value.trim(),
+      chat_enabled: null,
+      optimizer_enabled: null,
+      embedder_model: null,
+    });
+  }
+
   // The <select> value: the curated value, the custom sentinel, or empty.
   const modelSelectValue = customMode
     ? CUSTOM_MODEL_SENTINEL
@@ -128,6 +155,7 @@ export function MemorySettingsCard() {
       chat_enabled: null,
       optimizer_enabled: null,
       embedder_model: null,
+      embedder_base_url: null,
     });
   }
 
@@ -137,6 +165,7 @@ export function MemorySettingsCard() {
       chat_enabled: null,
       optimizer_enabled: null,
       embedder_model: value,
+      embedder_base_url: null,
     });
   }
 
@@ -157,6 +186,7 @@ export function MemorySettingsCard() {
       chat_enabled: enabled,
       optimizer_enabled: null,
       embedder_model: null,
+      embedder_base_url: null,
     });
   }
 
@@ -166,6 +196,7 @@ export function MemorySettingsCard() {
       chat_enabled: null,
       optimizer_enabled: enabled,
       embedder_model: null,
+      embedder_base_url: null,
     });
   }
 
@@ -219,6 +250,48 @@ export function MemorySettingsCard() {
           ))}
         </select>
       </div>
+
+      {/* Custom endpoint base URL — only for the "custom" source. */}
+      {isCustomSource ? (
+        <div className="mt-4 space-y-1.5">
+          <label
+            htmlFor="memory-embedder-base-url"
+            className="block text-[13px] font-medium text-text-2"
+          >
+            Custom endpoint base URL
+          </label>
+          <input
+            id="memory-embedder-base-url"
+            aria-label="Custom endpoint base URL"
+            type="text"
+            inputMode="url"
+            placeholder="http://localhost:11434/v1"
+            className="w-full max-w-sm rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text disabled:opacity-60"
+            value={baseUrlDraft}
+            disabled={busy}
+            onChange={(e) => setBaseUrlDraft(e.target.value)}
+            onBlur={() => submitBaseUrl(baseUrlDraft)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submitBaseUrl(baseUrlDraft);
+              }
+            }}
+          />
+          {missingV1 ? (
+            <small className="block text-[11px] leading-snug text-amber-600 dark:text-amber-400">
+              Most OpenAI-compatible servers expect the path to end in{" "}
+              <code>/v1</code> (e.g. <code>http://localhost:11434/v1</code>).
+            </small>
+          ) : null}
+          <small className="block text-[11px] leading-snug text-text-3">
+            Point at any OpenAI-compatible /v1 endpoint — Ollama, llama.cpp, LM
+            Studio, vLLM. Include <code>/v1</code> (e.g.{" "}
+            <code>http://localhost:11434/v1</code>). No-auth only; for
+            authenticated endpoints add a provider in the Providers tab.
+          </small>
+        </div>
+      ) : null}
 
       {/* Embedding model — only relevant when a real embedder is in use. */}
       {showModelPicker ? (

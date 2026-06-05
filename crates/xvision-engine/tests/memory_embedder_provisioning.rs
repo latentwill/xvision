@@ -46,14 +46,8 @@ fn env_with_keys(keys: &[(&str, &str)]) -> EmbedderEnv {
         resolved.insert(name.to_string(), key.to_string());
     }
     EmbedderEnv {
-        memory_embedder: None,
-        memory_embedder_provider: None,
-        memory_embedder_model: None,
-        config_embedder_model: None,
-        openai_api_key: None,
-        openai_base_url: None,
-        config_embedder: None,
         resolved_provider_keys: resolved,
+        ..Default::default()
     }
 }
 

@@ -34,6 +34,7 @@ function memoryReport(overrides: Partial<MemoryReport> = {}): MemoryReport {
     chat_enabled: true,
     optimizer_enabled: false,
     embedder_model: null,
+    embedder_base_url: null,
     persisted: true,
     ...overrides,
   };
@@ -122,6 +123,7 @@ describe("MemorySettingsCard", () => {
         chat_enabled: null,
         optimizer_enabled: null,
         embedder_model: null,
+        embedder_base_url: null,
       });
     });
   });
@@ -140,6 +142,7 @@ describe("MemorySettingsCard", () => {
         chat_enabled: false,
         optimizer_enabled: null,
         embedder_model: null,
+        embedder_base_url: null,
       });
     });
   });
@@ -184,6 +187,72 @@ describe("MemorySettingsCard", () => {
         chat_enabled: null,
         optimizer_enabled: null,
         embedder_model: "nomic-embed-text",
+        embedder_base_url: null,
+      });
+    });
+  });
+
+  it("offers a Custom endpoint option in the embedder source select", async () => {
+    const { findByLabelText } = renderCard();
+    const select = (await findByLabelText(
+      "Embedder source",
+    )) as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toContain("custom");
+  });
+
+  it("hides the custom base-URL input for non-custom sources", async () => {
+    const { findByLabelText, queryByLabelText } = renderCard();
+    await findByLabelText("Embedder source");
+    // Source is "auto" in the mocked report → no custom base-URL input.
+    expect(queryByLabelText("Custom endpoint base URL")).toBeNull();
+  });
+
+  it("reveals the custom base-URL input when the source is custom", async () => {
+    vi.mocked(settingsApi.getMemorySettings).mockResolvedValue(
+      memoryReport({ embedder: "custom", embedder_base_url: null }),
+    );
+    const { findByLabelText } = renderCard();
+    const input = (await findByLabelText(
+      "Custom endpoint base URL",
+    )) as HTMLInputElement;
+    expect(input).toBeInTheDocument();
+  });
+
+  it("selecting Custom endpoint sends embedder=custom", async () => {
+    const { findByLabelText } = renderCard();
+    const select = await findByLabelText("Embedder source");
+    fireEvent.change(select, { target: { value: "custom" } });
+    await waitFor(() => {
+      expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
+        embedder: "custom",
+        chat_enabled: null,
+        optimizer_enabled: null,
+        embedder_model: null,
+        embedder_base_url: null,
+      });
+    });
+  });
+
+  it("typing a base URL sends embedder + embedder_base_url", async () => {
+    vi.mocked(settingsApi.getMemorySettings).mockResolvedValue(
+      memoryReport({ embedder: "custom", embedder_base_url: null }),
+    );
+    const { findByLabelText } = renderCard();
+    const input = (await findByLabelText(
+      "Custom endpoint base URL",
+    )) as HTMLInputElement;
+    fireEvent.change(input, {
+      target: { value: "http://localhost:11434/v1" },
+    });
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
+        embedder: "custom",
+        embedder_base_url: "http://localhost:11434/v1",
+        chat_enabled: null,
+        optimizer_enabled: null,
+        embedder_model: null,
       });
     });
   });
@@ -205,6 +274,7 @@ describe("MemorySettingsCard", () => {
         chat_enabled: null,
         optimizer_enabled: null,
         embedder_model: "my-local-embed",
+        embedder_base_url: null,
       });
     });
   });

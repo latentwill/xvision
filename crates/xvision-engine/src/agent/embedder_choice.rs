@@ -83,6 +83,16 @@ pub struct EmbedderEnv {
     /// <provider-name>`. `None` is treated as the default `"auto"`. Env
     /// overrides above (steps 1–3) win over this; see the module docs.
     pub config_embedder: Option<String>,
+    /// The persisted custom-endpoint base URL from
+    /// `$XVN_HOME/config/memory.toml` (`MemoryConfig.embedder_base_url`).
+    /// Only consulted when `config_embedder == "custom"`: a non-empty value
+    /// builds a no-auth `OpenAiCompat` against this base URL; empty/`None`
+    /// degrades to `Local` with a warn.
+    pub config_embedder_base_url: Option<String>,
+    /// `XVN_MEMORY_EMBEDDER_BASE_URL` — optional env override that forces a
+    /// custom no-auth (or `OPENAI_API_KEY`-keyed) OpenAI-compatible endpoint,
+    /// high in the precedence. Empty/unset → ignored.
+    pub memory_embedder_base_url: Option<String>,
     /// Provider name → resolved API key. Populated by the caller from
     /// `resolve_provider_key_value` (env var first, then stored secret)
     /// so this pure function never performs I/O. A provider missing from
@@ -207,6 +217,20 @@ pub fn resolve_embedder_choice(env: &EmbedderEnv, providers: &[EffectiveProvider
         }
     }
 
+    // 1b. Explicit env custom endpoint override: force a no-auth (or
+    //     OPENAI_API_KEY-keyed) OpenAI-compatible endpoint at this base URL.
+    //     Used verbatim (trimmed); ops can force a custom embeddings host
+    //     without touching providers or the settings card.
+    if let Some(base_url) = non_empty(&env.memory_embedder_base_url) {
+        return EmbedderChoice::OpenAiCompat {
+            base_url: base_url.to_string(),
+            api_key: non_empty(&env.openai_api_key)
+                .unwrap_or("")
+                .to_string(),
+            model,
+        };
+    }
+
     // 2. Explicit env provider opt-in. The named provider wins even when it
     //    is not api.openai.com — the operator asserts it serves /embeddings.
     //    Unresolvable → fall through to the auto path (NOT None), so memory
@@ -238,6 +262,23 @@ pub fn resolve_embedder_choice(env: &EmbedderEnv, providers: &[EffectiveProvider
         return EmbedderChoice::None;
     }
     if config.eq_ignore_ascii_case("local") {
+        return EmbedderChoice::Local;
+    }
+    if config.eq_ignore_ascii_case("custom") {
+        // No-auth custom OpenAI-compatible endpoint typed in the card. Use the
+        // base URL verbatim (trimmed), with an empty api_key. A missing/blank
+        // base URL degrades to Local (best-effort; never crash).
+        if let Some(base_url) = non_empty(&env.config_embedder_base_url) {
+            return EmbedderChoice::OpenAiCompat {
+                base_url: base_url.to_string(),
+                api_key: String::new(),
+                model,
+            };
+        }
+        tracing::warn!(
+            "memory: custom embedder selected but no base_url set; \
+             falling back to the offline LocalEmbedder"
+        );
         return EmbedderChoice::Local;
     }
     if !config.eq_ignore_ascii_case("auto") {
@@ -465,6 +506,71 @@ mod tests {
         };
         let providers = vec![ep("myproxy", "https://proxy.internal/v1", false)];
         assert_eq!(resolve_embedder_choice(&env, &providers), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn config_custom_with_base_url_yields_openai_compat_no_auth() {
+        // The custom-endpoint path: config == "custom" + a typed base_url →
+        // OpenAiCompat with the base_url verbatim, an EMPTY api_key (no-auth),
+        // and the config model. No provider registration involved.
+        let env = EmbedderEnv {
+            config_embedder: Some("custom".into()),
+            config_embedder_base_url: Some("http://localhost:11434/v1".into()),
+            config_embedder_model: Some("nomic-embed-text".into()),
+            ..Default::default()
+        };
+        match resolve_embedder_choice(&env, &[]) {
+            EmbedderChoice::OpenAiCompat {
+                base_url,
+                api_key,
+                model,
+            } => {
+                assert_eq!(base_url, "http://localhost:11434/v1");
+                assert_eq!(api_key, "");
+                assert_eq!(model, "nomic-embed-text");
+            }
+            other => panic!("expected OpenAiCompat for custom endpoint, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_custom_without_base_url_falls_back_to_local() {
+        // custom selected but no base_url → Local (best-effort; never crash).
+        let env = EmbedderEnv {
+            config_embedder: Some("custom".into()),
+            config_embedder_base_url: None,
+            ..Default::default()
+        };
+        assert_eq!(resolve_embedder_choice(&env, &[]), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn config_custom_blank_base_url_falls_back_to_local() {
+        // Whitespace-only base_url is treated as unset → Local.
+        let env = EmbedderEnv {
+            config_embedder: Some("custom".into()),
+            config_embedder_base_url: Some("   ".into()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_embedder_choice(&env, &[]), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn env_model_overrides_config_model_on_custom_path() {
+        // XVN_MEMORY_EMBEDDER_MODEL still wins for the custom endpoint.
+        let env = EmbedderEnv {
+            config_embedder: Some("custom".into()),
+            config_embedder_base_url: Some("http://localhost:11434/v1".into()),
+            config_embedder_model: Some("nomic-embed-text".into()),
+            memory_embedder_model: Some("qwen3-embedding".into()),
+            ..Default::default()
+        };
+        match resolve_embedder_choice(&env, &[]) {
+            EmbedderChoice::OpenAiCompat { model, .. } => {
+                assert_eq!(model, "qwen3-embedding");
+            }
+            other => panic!("expected OpenAiCompat, got {other:?}"),
+        }
     }
 
     #[test]

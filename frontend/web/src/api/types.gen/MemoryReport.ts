@@ -12,6 +12,12 @@ export type MemoryReport = { embedder: string, chat_enabled: boolean, optimizer_
  */
 embedder_model: string | null, 
 /**
+ * Base URL for the `"custom"` embedder source (no-auth OpenAI-compatible
+ * `/v1` endpoint), or `null` when none is set. The card renders this in
+ * the custom base-URL input, shown only when the source is `custom`.
+ */
+embedder_base_url: string | null, 
+/**
  * True when the persisted config file exists. False → defaults are in
  * force; the UI renders "Default" vs "Custom".
  */
