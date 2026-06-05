@@ -239,13 +239,12 @@ impl MutationDiff {
     ///   - `params` otherwise: dot-path keys into `mechanical_params` (nested
     ///     objects are created as needed).
     ///   - `tools`: add/remove against `manifest.required_tools`.
-    ///
-    /// Prose edits are intentionally **not** applied here: a `Strategy`
-    /// references library agents by `AgentRef`, so an agent-prompt edit has no
-    /// home in the strategy artifact's content hash. A prose-only diff is
-    /// therefore an identity (no-op) at the strategy level — [`Mutator::propose`]
-    /// detects that and retries for a real change rather than emitting a
-    /// guaranteed-zero candidate.
+    ///   - `prose`: each `ProseEdit` sets the matching `AgentRef.prompt_override`
+    ///     on the strategy (matched by `canonical_role`). This lands in the
+    ///     `Strategy` content hash — so the override is part of proper lineage —
+    ///     without touching the shared `Agent` library record. An edit naming a
+    ///     role no agent plays is a no-op (the validator rejects those upstream;
+    ///     apply stays total).
     pub fn apply_to(&self, base: &Strategy) -> Strategy {
         let mut s = base.clone();
         // Route risk-targeted params through a single JSON round-trip of the
@@ -274,6 +273,17 @@ impl MutationDiff {
         }
         for removed in &self.tools.removed {
             s.manifest.required_tools.retain(|t| t != removed);
+        }
+        // Prose edits land on the trader AgentRef's prompt_override (Phase 0
+        // substrate). Matching by canonical role keeps lineage stable: the
+        // override changes the Strategy content hash WITHOUT touching the shared
+        // Agent library record. An edit naming a role no agent plays is a no-op
+        // (the validator rejects those upstream; apply stays total).
+        for edit in &self.prose {
+            let target = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
+            if let Some(a) = s.agents.iter_mut().find(|a| a.canonical_role() == target) {
+                a.prompt_override = Some(edit.after.clone());
+            }
         }
         s
     }
@@ -829,6 +839,43 @@ mod tests {
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
         );
+    }
+
+    #[test]
+    fn apply_to_writes_prose_into_trader_prompt_override() {
+        let base = fixture_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Prose,
+            prose: vec![ProseEdit {
+                agent_role: "trader".into(),
+                before: String::new(),
+                after: "Trade only with-trend; size down in chop.".into(),
+            }],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            rationale: "test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let trader = child.agents.iter().find(|a| a.canonical_role() == "trader").unwrap();
+        assert_eq!(
+            trader.prompt_override.as_deref(),
+            Some("Trade only with-trend; size down in chop.")
+        );
+        // And it is a REAL change (distinct content hash), not an identity no-op.
+        assert!(!is_identity_diff(&diff, &base), "prose change must alter the strategy");
+    }
+
+    #[test]
+    fn apply_to_prose_for_unknown_role_is_noop() {
+        // A prose edit naming a role no strategy agent plays leaves the strategy
+        // unchanged (validator rejects it upstream; apply stays total/safe).
+        let base = fixture_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Prose,
+            prose: vec![ProseEdit { agent_role: "nonexistent".into(), before: String::new(), after: "x".into() }],
+            params: vec![], tools: ToolDiff { added: vec![], removed: vec![] }, rationale: "t".into(),
+        };
+        assert!(is_identity_diff(&diff, &base), "unknown-role prose must be a no-op");
     }
 
     #[test]
