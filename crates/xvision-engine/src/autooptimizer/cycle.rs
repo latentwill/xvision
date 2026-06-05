@@ -57,6 +57,10 @@ pub struct CycleConfig {
 pub struct CycleResult {
     pub cycle_id: String,
     pub active_nodes: Vec<LineageNode>,
+    /// Nodes that passed on some regimes but not all (Quarantined / "Suspect").
+    /// These are distinct from `rejected_nodes` — they partially improved the
+    /// strategy and deserve their own tier in summaries and CLI output.
+    pub suspect_nodes: Vec<LineageNode>,
     pub rejected_nodes: Vec<LineageNode>,
     pub honesty_check: HonestyCheckResult,
     pub diversity_score: f64,
@@ -145,6 +149,7 @@ pub async fn run_cycle(
     });
 
     let mut active_nodes: Vec<LineageNode> = Vec::new();
+    let mut suspect_nodes: Vec<LineageNode> = Vec::new();
     let mut rejected_nodes: Vec<LineageNode> = Vec::new();
     let mut findings_by_node: HashMap<ContentHash, Vec<Finding>> = HashMap::new();
     let mut no_candidate_count: usize = 0;
@@ -165,7 +170,7 @@ pub async fn run_cycle(
                 cycle_id: cycle_id.clone(),
                 parent_hash: ph,
             });
-            let (active, rejected, nc) = process_parent_mutations(
+            let (active, suspect, rejected, nc) = process_parent_mutations(
                 pool,
                 strategy_blob_store,
                 parent_node,
@@ -186,6 +191,7 @@ pub async fn run_cycle(
             )
             .await?;
             active_nodes.extend(active);
+            suspect_nodes.extend(suspect);
             rejected_nodes.extend(rejected);
             no_candidate_count += nc;
         }
@@ -196,7 +202,7 @@ pub async fn run_cycle(
     // is pure waste — there is no candidate whose gating to sanity-check. Skip it
     // and record a skipped result, mirroring the existing "no canary parent"
     // skipped representation (sabotage_variant "none" + a skipped message).
-    let honesty_check = if honesty_check_warranted(&active_nodes, &rejected_nodes) {
+    let honesty_check = if honesty_check_warranted(&active_nodes, &suspect_nodes, &rejected_nodes) {
         run_cycle_canary(
             &parents,
             cycle_config,
@@ -234,6 +240,7 @@ pub async fn run_cycle(
     Ok(CycleResult {
         cycle_id,
         active_nodes,
+        suspect_nodes,
         rejected_nodes,
         honesty_check,
         diversity_score,
@@ -247,8 +254,8 @@ pub async fn run_cycle(
 /// backtested — there is no gating to sanity-check, and running the canary evals
 /// is pure waste (run-7 finding). Returns `true` iff at least one candidate was
 /// gated (kept or rejected) this cycle.
-fn honesty_check_warranted(active: &[LineageNode], rejected: &[LineageNode]) -> bool {
-    !active.is_empty() || !rejected.is_empty()
+fn honesty_check_warranted(active: &[LineageNode], suspect: &[LineageNode], rejected: &[LineageNode]) -> bool {
+    !active.is_empty() || !suspect.is_empty() || !rejected.is_empty()
 }
 
 async fn run_cycle_canary<F>(
@@ -343,7 +350,7 @@ async fn process_parent_mutations<F>(
     dspy_ctx: Option<&DspyContext>,
     memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
-) -> Result<(Vec<LineageNode>, Vec<LineageNode>, usize)>
+) -> Result<(Vec<LineageNode>, Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
     F: Fn(CycleProgressEvent),
 {
@@ -352,6 +359,7 @@ where
         "mutations_per_parent exceeds bound"
     );
     let mut active: Vec<LineageNode> = Vec::new();
+    let mut suspect: Vec<LineageNode> = Vec::new();
     let mut rejected: Vec<LineageNode> = Vec::new();
     let mut no_candidate_count: usize = 0;
 
@@ -566,10 +574,16 @@ where
             &parent_regime_metrics,
         )
         .await?;
+        let outcome_str = match &outcome.status {
+            LineageStatus::Active => "kept",
+            LineageStatus::Quarantined => "suspect",
+            LineageStatus::Rejected => "dropped",
+        };
         progress(CycleProgressEvent::MutationGated {
             cycle_id: cycle_id.to_string(),
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
+            outcome: outcome_str.to_string(),
         });
         // P3 write-back: record EVERY gated candidate's outcome (both Active and
         // Rejected) as an Observation in the mutations namespace, so a later
@@ -577,10 +591,10 @@ where
         // past Nx degraded holdout") into Patterns the experiment writer recalls
         // across runs. Best-effort and eval-temporal-safe; never fail the cycle.
         if let Some(mem) = memory {
-            let status_label = if outcome.status == LineageStatus::Active {
-                "active"
-            } else {
-                "rejected"
+            let status_label = match outcome.status {
+                LineageStatus::Active => "active",
+                LineageStatus::Quarantined => "suspect",
+                LineageStatus::Rejected => "rejected",
             };
             let obs = crate::autooptimizer::mutator::describe_mutation_outcome(
                 &outcome.diff,
@@ -614,61 +628,67 @@ where
             &cycle_config.prompt_version,
         )
         .await?;
-        if outcome.status == LineageStatus::Active {
-            record_outcome(pool, &outcome.child_hash, outcome.delta_sharpe).await?;
-            // P2: pass the recorder + eval scenario start so judge recall is
-            // temporally safe (Patterns trained inside the scenario can't leak).
-            let findings = run_judge(
-                judge,
-                parent_strategy,
-                &outcome.child,
-                &outcome.diff,
-                "",
-                memory,
-                Some(cycle_config.day_scenario.time_window.start),
-            )
-            .await?;
-            for f in &findings {
-                progress(CycleProgressEvent::JudgeFinding {
-                    cycle_id: cycle_id.to_string(),
-                    child_hash: outcome.child_hash.to_hex(),
-                    severity: format!("{:?}", f.severity),
-                    code: f.code.clone(),
-                });
-            }
-            // P2 write-back: record each real finding as an Observation in the
-            // judge namespace so a later distillation pass can promote recurring
-            // ones to Patterns. Best-effort — never fail the cycle on a memory
-            // error; skip the synthetic parse-error finding.
-            if let Some(mem) = memory {
+        match outcome.status {
+            LineageStatus::Active => {
+                record_outcome(pool, &outcome.child_hash, outcome.delta_sharpe).await?;
+                // P2: pass the recorder + eval scenario start so judge recall is
+                // temporally safe (Patterns trained inside the scenario can't leak).
+                let findings = run_judge(
+                    judge,
+                    parent_strategy,
+                    &outcome.child,
+                    &outcome.diff,
+                    "",
+                    memory,
+                    Some(cycle_config.day_scenario.time_window.start),
+                )
+                .await?;
                 for f in &findings {
-                    if f.code == "parse_error" {
-                        continue;
-                    }
-                    if let Err(e) = mem
-                        .record_observation_in_namespace(
-                            crate::autooptimizer::judge::JUDGE_MEMORY_NS,
-                            &format!("[{}] {}", f.code, f.summary),
-                            cycle_id.to_string(),
-                            "autooptimizer".to_string(),
-                            0,
-                            cycle_config.day_scenario.time_window.start,
-                            cycle_config.day_scenario.time_window.end,
-                        )
-                        .await
-                    {
-                        tracing::warn!("judge finding write-back failed (best-effort, ignoring): {e}");
+                    progress(CycleProgressEvent::JudgeFinding {
+                        cycle_id: cycle_id.to_string(),
+                        child_hash: outcome.child_hash.to_hex(),
+                        severity: format!("{:?}", f.severity),
+                        code: f.code.clone(),
+                    });
+                }
+                // P2 write-back: record each real finding as an Observation in the
+                // judge namespace so a later distillation pass can promote recurring
+                // ones to Patterns. Best-effort — never fail the cycle on a memory
+                // error; skip the synthetic parse-error finding.
+                if let Some(mem) = memory {
+                    for f in &findings {
+                        if f.code == "parse_error" {
+                            continue;
+                        }
+                        if let Err(e) = mem
+                            .record_observation_in_namespace(
+                                crate::autooptimizer::judge::JUDGE_MEMORY_NS,
+                                &format!("[{}] {}", f.code, f.summary),
+                                cycle_id.to_string(),
+                                "autooptimizer".to_string(),
+                                0,
+                                cycle_config.day_scenario.time_window.start,
+                                cycle_config.day_scenario.time_window.end,
+                            )
+                            .await
+                        {
+                            tracing::warn!("judge finding write-back failed (best-effort, ignoring): {e}");
+                        }
                     }
                 }
+                handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await?;
+                findings_by_node.insert(outcome.child_hash, findings);
+                active.push(node);
             }
-            handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await?;
-            findings_by_node.insert(outcome.child_hash, findings);
-            active.push(node);
-        } else {
-            rejected.push(node);
+            LineageStatus::Quarantined => {
+                suspect.push(node);
+            }
+            LineageStatus::Rejected => {
+                rejected.push(node);
+            }
         }
     }
-    Ok((active, rejected, no_candidate_count))
+    Ok((active, suspect, rejected, no_candidate_count))
 }
 
 async fn gate_and_classify(
@@ -1142,14 +1162,15 @@ mod tests {
     #[test]
     fn honesty_check_skipped_when_no_candidate_gated() {
         // run-7: no gated candidate (both empty) => not warranted (skip the canary).
-        assert!(!honesty_check_warranted(&[], &[]));
+        assert!(!honesty_check_warranted(&[], &[], &[]));
     }
 
     #[test]
     fn honesty_check_runs_when_a_candidate_was_gated() {
         let kept = vec![active_node()];
-        assert!(honesty_check_warranted(&kept, &[]), "a kept candidate warrants the check");
-        assert!(honesty_check_warranted(&[], &kept), "a rejected candidate warrants the check");
+        assert!(honesty_check_warranted(&kept, &[], &[]), "a kept candidate warrants the check");
+        assert!(honesty_check_warranted(&[], &kept, &[]), "a suspect candidate warrants the check");
+        assert!(honesty_check_warranted(&[], &[], &kept), "a rejected candidate warrants the check");
     }
 
     /// Fix 1: the collision-guard predicate must return true for both Rejected

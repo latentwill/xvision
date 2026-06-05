@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use super::lineage::{row_to_node, LineageNode, SELECT_COLS_PREFIX};
+use super::regime_results::load_regime_results;
+use crate::autooptimizer::config::RegimeSide;
 use crate::eval::run::MetricsSummary;
 
 /// One completed (or in-progress) optimizer cycle, aggregated from the lineage
@@ -29,7 +31,9 @@ pub struct CycleRunSummary {
     pub node_count: i64,
     /// Nodes that passed the gate (kept).
     pub active_count: i64,
-    /// Nodes that failed the gate (dropped).
+    /// Quarantined (Suspect) nodes — partial-pass across regimes.
+    pub suspect_count: i64,
+    /// Nodes that failed the gate entirely (dropped). Does NOT include suspect nodes.
     pub rejected_count: i64,
     /// RFC-3339 timestamp of the earliest node in the cycle.
     pub first_created_at: String,
@@ -82,6 +86,21 @@ pub async fn get_cycle_cost(pool: &SqlitePool, cycle_id: &str) -> CycleCost {
     }
 }
 
+/// Serializable per-regime evaluation result for a lineage node. Derived from
+/// `autooptimizer_regime_results` via `load_regime_results`. Exposed on
+/// `CycleNodeDetail.regime_results` so the historic-run panel and CLI can show
+/// per-regime performance for each candidate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegimeResultOut {
+    pub regime_label: String,
+    pub side: RegimeSide,
+    pub delta_sharpe: f64,
+    /// Gate verdict for this regime: `"pass"` or `"fail"`.
+    pub verdict: String,
+    pub metrics_day: MetricsSummary,
+    pub metrics_untouched: MetricsSummary,
+}
+
 /// Mutator provenance for a candidate (from `mutator_attribution`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeProvenance {
@@ -92,8 +111,10 @@ pub struct NodeProvenance {
 }
 
 /// One lineage node enriched with the per-candidate detail a historic-run view
-/// needs: backtest metrics on both windows and mutator provenance (F13). The
-/// candidate strategy itself is fetched via `GET /api/autooptimizer/blob/:hash`
+/// needs: backtest metrics on both windows, mutator provenance (F13), and
+/// per-regime evaluation results (Task 6).
+///
+/// The candidate strategy itself is fetched via `GET /api/autooptimizer/blob/:hash`
 /// keyed on the node's `bundle_hash` (its parent via `parent_hash`), which is
 /// how the run-detail surfaces the candidate diff.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +124,9 @@ pub struct CycleNodeDetail {
     pub metrics_day: Option<MetricsSummary>,
     pub metrics_untouched: Option<MetricsSummary>,
     pub provenance: Option<NodeProvenance>,
+    /// Per-regime evaluation results. Empty for single-window (non-regime-matrix)
+    /// cycles or nodes that predate Phase 2 instrumentation.
+    pub regime_results: Vec<RegimeResultOut>,
 }
 
 /// The per-cycle honesty-check (canary) outcome (from `cycle_honesty_checks`).
@@ -145,6 +169,7 @@ pub async fn list_cycle_runs(pool: &SqlitePool, limit: i64, offset: i64) -> Resu
          SELECT cn.cycle_id AS cycle_id, \
                 COUNT(*) AS node_count, \
                 SUM(CASE WHEN ln.status = 'active' THEN 1 ELSE 0 END) AS active_count, \
+                SUM(CASE WHEN ln.status = 'quarantined' THEN 1 ELSE 0 END) AS suspect_count, \
                 SUM(CASE WHEN ln.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count, \
                 MIN(ln.created_at) AS first_created_at, \
                 MAX(ln.created_at) AS last_created_at, \
@@ -246,13 +271,22 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
         .iter()
         .filter(|n| matches!(n.status, super::lineage::LineageStatus::Active))
         .count() as i64;
+    let suspect_count = nodes
+        .iter()
+        .filter(|n| matches!(n.status, super::lineage::LineageStatus::Quarantined))
+        .count() as i64;
+    let rejected_count = nodes
+        .iter()
+        .filter(|n| matches!(n.status, super::lineage::LineageStatus::Rejected))
+        .count() as i64;
     let node_count = nodes.len() as i64;
     let (cost_usd, input_tokens, output_tokens, unpriced_calls) = load_cycle_cost(pool, cycle_id).await;
     let summary = CycleRunSummary {
         cycle_id: cycle_id.to_string(),
         node_count,
         active_count,
-        rejected_count: node_count - active_count,
+        suspect_count,
+        rejected_count,
         first_created_at: nodes
             .first()
             .map(|n| n.created_at.to_rfc3339())
@@ -268,17 +302,32 @@ pub async fn get_cycle_run(pool: &SqlitePool, cycle_id: &str) -> Result<Option<C
     };
 
     // Enrich each node with its persisted metrics + mutator provenance
-    // (best-effort: a node predating the F13 side tables simply has `None`).
+    // (best-effort: a node predating the F13 side tables simply has `None`),
+    // and per-regime evaluation results (Task 6 — resolves the unused
+    // `load_regime_results` review note).
     let mut detailed = Vec::with_capacity(nodes.len());
     for node in nodes {
         let hash = node.bundle_hash.to_hex();
         let (metrics_day, metrics_untouched) = load_node_metrics(pool, &hash).await;
         let provenance = load_node_provenance(pool, &hash).await;
+        let regime_rows = load_regime_results(pool, &hash).await.unwrap_or_default();
+        let regime_results = regime_rows
+            .into_iter()
+            .map(|r| RegimeResultOut {
+                regime_label: r.regime_label,
+                side: r.side,
+                delta_sharpe: r.delta_sharpe,
+                verdict: r.verdict,
+                metrics_day: r.metrics_day,
+                metrics_untouched: r.metrics_untouched,
+            })
+            .collect();
         detailed.push(CycleNodeDetail {
             node,
             metrics_day,
             metrics_untouched,
             provenance,
+            regime_results,
         });
     }
 
@@ -360,6 +409,7 @@ fn row_to_cycle_summary(row: sqlx::sqlite::SqliteRow) -> Result<CycleRunSummary>
         cycle_id: row.try_get("cycle_id").context("cycle_id")?,
         node_count: row.try_get("node_count").context("node_count")?,
         active_count: row.try_get("active_count").context("active_count")?,
+        suspect_count: row.try_get("suspect_count").context("suspect_count")?,
         rejected_count: row.try_get("rejected_count").context("rejected_count")?,
         first_created_at: row.try_get("first_created_at").context("first_created_at")?,
         last_created_at: row.try_get("last_created_at").context("last_created_at")?,
@@ -369,4 +419,113 @@ fn row_to_cycle_summary(row: sqlx::sqlite::SqliteRow) -> Result<CycleRunSummary>
         output_tokens: row.try_get("output_tokens").ok(),
         unpriced_calls: row.try_get("unpriced_calls").ok(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::autooptimizer::config::RegimeSide;
+    use crate::autooptimizer::content_hash::ContentHash;
+    use crate::autooptimizer::lineage::ensure_lineage_schema;
+    use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRow};
+    use crate::eval::run::MetricsSummary;
+
+    /// Seed a cycle with 1 active + 1 quarantined (suspect) + 1 rejected node,
+    /// plus regime rows for the suspect node.  Assert that:
+    /// - `list_cycle_runs` returns `suspect_count == 1`, `rejected_count == 1`,
+    ///   `active_count == 1` (quarantined is no longer folded into rejected_count).
+    /// - `get_cycle_run` returns the same counts and the suspect node carries
+    ///   its `regime_results` via round-trip through the DB.
+    #[tokio::test]
+    async fn suspect_count_and_regime_results_round_trip() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory pool");
+
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
+
+        let cycle_id = "cycle-test-001";
+        let ts = "2026-01-01T00:00:00Z";
+
+        // Use real ContentHash hex strings so row_to_node can parse them.
+        let hash_active = ContentHash::of_bytes(b"active").to_hex();
+        let hash_quarantined = ContentHash::of_bytes(b"quarantined").to_hex();
+        let hash_rejected = ContentHash::of_bytes(b"rejected").to_hex();
+
+        // Insert 3 lineage nodes for the cycle.
+        for (hash, status) in [
+            (hash_active.as_str(), "active"),
+            (hash_quarantined.as_str(), "quarantined"),
+            (hash_rejected.as_str(), "rejected"),
+        ] {
+            sqlx::query(
+                "INSERT INTO lineage_nodes \
+                 (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
+                 VALUES (?, NULL, 'pass', ?, ?, ?)",
+            )
+            .bind(hash)
+            .bind(status)
+            .bind(cycle_id)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .expect("insert lineage_node");
+        }
+
+        // Insert a regime result row for the suspect (quarantined) node.
+        insert_regime_results(
+            &pool,
+            &hash_quarantined,
+            &[RegimeResultRow {
+                regime_label: "bull_2024".to_string(),
+                side: RegimeSide::Bull,
+                metrics_day: MetricsSummary { sharpe: 1.2, total_return_pct: 10.0, ..Default::default() },
+                metrics_untouched: MetricsSummary { sharpe: 0.5, total_return_pct: 3.0, ..Default::default() },
+                delta_sharpe: 0.7,
+                verdict: "pass".to_string(),
+            }],
+            ts,
+        )
+        .await
+        .expect("insert regime_results");
+
+        // --- list_cycle_runs ---
+        let summaries = list_cycle_runs(&pool, 10, 0)
+            .await
+            .expect("list_cycle_runs");
+        assert_eq!(summaries.len(), 1, "expected one cycle summary");
+        let s = &summaries[0];
+        assert_eq!(s.cycle_id, cycle_id);
+        assert_eq!(s.node_count, 3);
+        assert_eq!(s.active_count, 1, "active_count");
+        assert_eq!(s.suspect_count, 1, "suspect_count must be 1 (quarantined != rejected)");
+        assert_eq!(s.rejected_count, 1, "rejected_count must be 1 (not folded with suspect)");
+
+        // --- get_cycle_run ---
+        let detail = get_cycle_run(&pool, cycle_id)
+            .await
+            .expect("get_cycle_run")
+            .expect("cycle should exist");
+        assert_eq!(detail.summary.suspect_count, 1);
+        assert_eq!(detail.summary.rejected_count, 1);
+        assert_eq!(detail.summary.active_count, 1);
+
+        // The suspect node must carry its regime_results.
+        let suspect_node = detail
+            .nodes
+            .iter()
+            .find(|n| n.node.bundle_hash.to_hex() == hash_quarantined)
+            .expect("suspect node in detail");
+        assert_eq!(suspect_node.regime_results.len(), 1, "suspect node regime_results round-trip");
+        assert_eq!(suspect_node.regime_results[0].regime_label, "bull_2024");
+        assert_eq!(suspect_node.regime_results[0].verdict, "pass");
+
+        // Active and rejected nodes have empty regime_results (none were inserted).
+        let active_node = detail
+            .nodes
+            .iter()
+            .find(|n| n.node.bundle_hash.to_hex() == hash_active)
+            .expect("active node in detail");
+        assert!(active_node.regime_results.is_empty());
+    }
 }
