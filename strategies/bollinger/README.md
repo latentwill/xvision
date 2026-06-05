@@ -143,6 +143,8 @@ The symmetric matrix is the canvas; the asymmetric rules are how you trade it.
 - [`bb_squeeze_breakout`](bb_squeeze_breakout.md) — B0 × any %B; first directional break out of squeeze.
 - [`bb_squeeze_failure_fade`](bb_squeeze_failure_fade.md) — squeeze breaks then fails → fade the false break.
 - [`bb_meanrev_zscore`](bb_meanrev_zscore.md) — B1/B2 × S0/S1 or S5/S6; canonical band-touch fade.
+- [`bb_donchian_range_fade`](bb_donchian_range_fade.md) — BB touch fade with Donchian mid-range filter; compact multi-asset crypto setup.
+- [`bb_squeeze_breakout_sol_avax`](bb_squeeze_breakout_sol_avax.md) — aggressive SOL/AVAX squeeze breakout with ATR trail and drawdown cap.
 - [`bb_band_walk_follow`](bb_band_walk_follow.md) — B3 × S5/S6 (or S0/S1); ride the band in trend.
 - [`bb_climax_fade`](bb_climax_fade.md) — B4 × S0/S1 or S5/S6; capitulation/euphoria fade.
 - [`bb_asymmetric_breakouts`](bb_asymmetric_breakouts.md) — symmetry-breaking variant (upper-rule ≠ lower-rule + volume).
