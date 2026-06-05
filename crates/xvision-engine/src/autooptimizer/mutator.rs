@@ -339,6 +339,20 @@ pub fn filter_tunable_paths(filter: &Filter) -> Vec<(String, serde_json::Value)>
     paths
 }
 
+/// Coerce a JSON number to u32, accepting both integer and float representations
+/// (e.g. `4` or `4.0`). Returns None for non-numeric or negative/overflow values.
+fn value_as_u32(value: &serde_json::Value) -> Option<u32> {
+    if let Some(n) = value.as_u64() {
+        return u32::try_from(n).ok();
+    }
+    if let Some(f) = value.as_f64() {
+        if f >= 0.0 && f.fract() == 0.0 && f <= u32::MAX as f64 {
+            return Some(f as u32);
+        }
+    }
+    None
+}
+
 /// Set the value at `path` (a dotted path produced by `filter_tunable_paths`)
 /// in `filter`. Returns `true` if the path resolved and the value was written,
 /// `false` if the path is unknown (no panic, no partial write).
@@ -347,8 +361,9 @@ pub fn filter_tunable_paths(filter: &Filter) -> Vec<(String, serde_json::Value)>
 /// function emits must resolve here, and nothing else must.
 pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Value) -> bool {
     if path == "cooldown_bars" {
-        if let Some(n) = value.as_u64() {
-            filter.cooldown_bars = n as u32;
+        // Accept both integer and float JSON numbers (LLM may emit 4.0).
+        if let Some(n) = value_as_u32(value) {
+            filter.cooldown_bars = n;
             return true;
         }
         return false;
@@ -358,8 +373,8 @@ pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Val
             filter.max_wakeups_per_day = None;
             return true;
         }
-        if let Some(n) = value.as_u64() {
-            filter.max_wakeups_per_day = Some(n as u32);
+        if let Some(n) = value_as_u32(value) {
+            filter.max_wakeups_per_day = Some(n);
             return true;
         }
         return false;
@@ -431,57 +446,57 @@ pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Val
                 return false;
             }
             "op.above_for" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::AboveFor(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::AboveFor(n);
                     return true;
                 }
                 return false;
             }
             "op.below_for" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::BelowFor(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::BelowFor(n);
                     return true;
                 }
                 return false;
             }
             "op.crossed_above" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::CrossedAbove(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::CrossedAbove(n);
                     return true;
                 }
                 return false;
             }
             "op.crossed_below" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::CrossedBelow(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::CrossedBelow(n);
                     return true;
                 }
                 return false;
             }
             "op.slope_gt" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::SlopeGt(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::SlopeGt(n);
                     return true;
                 }
                 return false;
             }
             "op.slope_lt" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::SlopeLt(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::SlopeLt(n);
                     return true;
                 }
                 return false;
             }
             "op.zscore_gt" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::ZscoreGt(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::ZscoreGt(n);
                     return true;
                 }
                 return false;
             }
             "op.zscore_lt" => {
-                if let Some(n) = value.as_u64() {
-                    cond.op = Operator::ZscoreLt(n as u32);
+                if let Some(n) = value_as_u32(value) {
+                    cond.op = Operator::ZscoreLt(n);
                     return true;
                 }
                 return false;
@@ -597,6 +612,17 @@ impl MutationDiff {
             let target = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
             if let Some(a) = s.agents.iter_mut().find(|a| a.canonical_role() == target) {
                 a.prompt_override = Some(edit.after.clone());
+            }
+        }
+        // Filter edits resolve path → AST node and write `after`. An unresolved
+        // path or a wrong-type value is a silent no-op (validator rejects those
+        // upstream; apply stays total). The filter field is cloned before mutation
+        // so a partial-failure edit doesn't leave the filter half-changed.
+        if let Some(ref mut f) = s.filter {
+            for edit in &self.filter {
+                // Ignore the return value; validator already ensured the path
+                // resolves and the value has the right type.
+                set_filter_value(f, &edit.path, &edit.after);
             }
         }
         s
@@ -1289,6 +1315,101 @@ mod tests {
         assert_eq!(restored.filter[0].path, "conditions.0.rhs.numeric");
         assert_eq!(restored.filter[0].before, serde_json::json!(25.0));
         assert_eq!(restored.filter[0].after, serde_json::json!(28.0));
+    }
+
+    #[test]
+    fn apply_to_filter_edit_changes_rhs_threshold() {
+        let base = fixture_filter_strategy();
+        // Initial rhs is 25.0 from fixture; change it to 28.0
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(28.0),
+            }],
+            rationale: "increase ADX threshold".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter.conditions.conditions().first().expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!((v - 28.0).abs() < 1e-9, "rhs should be 28.0, got {v}");
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+        assert!(
+            !is_identity_diff(&diff, &base),
+            "filter change must not be identity"
+        );
+    }
+
+    #[test]
+    fn apply_to_filter_edit_unknown_path_is_noop() {
+        let base = fixture_filter_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![FilterEdit {
+                path: "conditions.99.rhs.numeric".to_string(), // invalid index
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(50.0),
+            }],
+            rationale: "invalid path".into(),
+        };
+        // Should be identity since path doesn't resolve
+        assert!(
+            is_identity_diff(&diff, &base),
+            "unknown path filter edit must be a no-op"
+        );
+    }
+
+    #[test]
+    fn filter_tunable_paths_symmetry_property() {
+        // PROPERTY TEST: for every (path, cur) from filter_tunable_paths,
+        // set_filter_value returns true and a re-walk shows the new value at path.
+        let base = fixture_filter_strategy();
+        let filter_orig = base.filter.as_ref().expect("fixture has filter");
+        let paths = filter_tunable_paths(filter_orig);
+        assert!(!paths.is_empty(), "fixture filter should have tunable paths");
+        for (path, cur) in &paths {
+            let new_val: serde_json::Value = if cur.is_null() {
+                serde_json::json!(5u32) // set max_wakeups_per_day to some value
+            } else if let Some(n) = cur.as_f64() {
+                serde_json::json!(n + 1.0) // increment by 1
+            } else {
+                continue; // skip non-numeric (shouldn't happen)
+            };
+            let mut filter_copy = filter_orig.clone();
+            let applied = set_filter_value(&mut filter_copy, path, &new_val);
+            assert!(applied, "set_filter_value must return true for path '{path}'");
+            // Re-walk to verify the new value
+            let new_paths: std::collections::HashMap<String, serde_json::Value> =
+                filter_tunable_paths(&filter_copy).into_iter().collect();
+            assert!(
+                new_paths.contains_key(path.as_str()),
+                "path '{path}' must still be present after set"
+            );
+            let found = &new_paths[path.as_str()];
+            // For null→u32 case (max_wakeups_per_day), new_val is 5
+            if cur.is_null() {
+                assert_eq!(found, &serde_json::json!(5u32), "path '{path}' should show new value");
+            } else {
+                // Numeric comparison allowing f64 rounding
+                let expected = new_val.as_f64().unwrap();
+                let actual = found.as_f64().unwrap_or(f64::NAN);
+                assert!(
+                    (actual - expected).abs() < 1e-6,
+                    "path '{path}' expected {expected}, got {actual}"
+                );
+            }
+        }
     }
 
     #[test]

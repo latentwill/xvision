@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::autooptimizer::mutator::{MutationDiff, ParamChange, ProseEdit};
+use crate::autooptimizer::mutator::{filter_tunable_paths, FilterEdit, MutationDiff, ParamChange, ProseEdit};
 use crate::strategies::{agent_ref::canonical_role, Strategy};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +40,7 @@ pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<()
     validate_prose_edits(&diff.prose, base, &mut errors);
     validate_param_changes(&diff.params, base, &mut errors);
     validate_tools(&diff.tools.removed, &diff.tools.added, base, &mut errors);
+    validate_filter_edits(&diff.filter, base, &mut errors);
     if errors.is_empty() {
         Ok(())
     } else {
@@ -176,6 +177,58 @@ fn validate_param_after_value(
     }
 }
 
+fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec<ValidationError>) {
+    if edits.is_empty() {
+        return;
+    }
+    // Require that the strategy has a filter to edit.
+    let Some(filter) = base.filter.as_ref() else {
+        errors.push(ValidationError::new(
+            "no_filter",
+            "Strategy has no filter; `filter` experiments require `strategy.filter` to be present.",
+        ));
+        return;
+    };
+
+    // Build the set of valid paths from the live AST.
+    let tunable: HashSet<String> = filter_tunable_paths(filter)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+
+    for (i, edit) in edits.iter().enumerate() {
+        // Path must be one of the enumerated tunable paths.
+        if !tunable.contains(&edit.path) {
+            errors.push(ValidationError::with_path(
+                "unknown_filter_path",
+                format!(
+                    "Filter path '{}' is not a tunable path on this strategy's filter. \
+                     Use the paths listed in the user message.",
+                    edit.path
+                ),
+                format!("filter[{i}].path"),
+            ));
+            continue;
+        }
+        // `after` must be a number (or null for max_wakeups_per_day).
+        let is_nullable = edit.path == "max_wakeups_per_day";
+        if edit.after.is_null() && is_nullable {
+            // null is valid for max_wakeups_per_day
+        } else if !edit.after.is_number() {
+            errors.push(ValidationError::with_path(
+                "invalid_filter_value",
+                format!(
+                    "Filter path '{}' requires a numeric value{}; got {:?}.",
+                    edit.path,
+                    if is_nullable { " or null" } else { "" },
+                    edit.after,
+                ),
+                format!("filter[{i}].after"),
+            ));
+        }
+    }
+}
+
 fn is_valid_tool_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 64 && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
@@ -215,7 +268,7 @@ fn validate_tools(removed: &[String], added: &[String], base: &Strategy, errors:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::autooptimizer::mutator::{MutationKind, ToolDiff};
+    use crate::autooptimizer::mutator::{FilterEdit, MutationKind, ToolDiff};
 
     fn fixture_strategy() -> Strategy {
         let v = serde_json::json!({
@@ -257,6 +310,128 @@ mod tests {
             filter: vec![],
             rationale: "test".into(),
         }
+    }
+
+    fn fixture_filter_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000F",
+                "display_name": "Filter Validator Test Strategy",
+                "plain_summary": "",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000F", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {},
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000V",
+                "strategy_id": "01HZTEST00000000000000000F",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                    ]
+                },
+                "cooldown_bars": 3
+            }
+        });
+        serde_json::from_value(v).expect("fixture filter strategy must deserialise")
+    }
+
+    fn filter_diff(edits: Vec<FilterEdit>) -> MutationDiff {
+        MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: edits,
+            rationale: "test filter mutation".into(),
+        }
+    }
+
+    #[test]
+    fn filter_edit_valid_path_and_numeric_value_accepted() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25.0),
+            after: serde_json::json!(28.0),
+        }]);
+        assert!(validate_mutation_diff(&diff, &base).is_ok(), "valid filter edit must be accepted");
+    }
+
+    #[test]
+    fn filter_edit_unknown_path_rejected() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.99.rhs.numeric".to_string(), // invalid index
+            before: serde_json::json!(25.0),
+            after: serde_json::json!(28.0),
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "unknown_filter_path"),
+            "unknown path must produce unknown_filter_path error: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_wrong_type_rejected() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25.0),
+            after: serde_json::json!("not-a-number"), // wrong type
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "invalid_filter_value"),
+            "non-numeric after must produce invalid_filter_value error: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_no_filter_in_strategy_rejected() {
+        let base = fixture_strategy(); // no filter
+        let diff = filter_diff(vec![FilterEdit {
+            path: "conditions.0.rhs.numeric".to_string(),
+            before: serde_json::json!(25.0),
+            after: serde_json::json!(28.0),
+        }]);
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "no_filter"),
+            "no filter must produce no_filter error: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_edit_max_wakeups_null_accepted() {
+        let base = fixture_filter_strategy();
+        let diff = filter_diff(vec![FilterEdit {
+            path: "max_wakeups_per_day".to_string(),
+            before: serde_json::Value::Null,
+            after: serde_json::Value::Null, // null → null is valid (keeps it None)
+        }]);
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "null max_wakeups_per_day must be accepted"
+        );
     }
 
     #[test]

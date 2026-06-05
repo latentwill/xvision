@@ -3,6 +3,58 @@ use xvision_engine::autooptimizer::mutator::{FilterEdit, MutationDiff, MutationK
 use xvision_engine::autooptimizer::validator::validate_mutation_diff;
 use xvision_engine::strategies::Strategy;
 
+fn make_filter_strategy() -> Strategy {
+    let v = json!({
+        "manifest": {
+            "id": "01HZTEST3",
+            "display_name": "Filter Strategy",
+            "plain_summary": "",
+            "creator": "@test",
+            "template": "custom",
+            "regime_fit": [],
+            "asset_universe": ["BTC/USD"],
+            "decision_cadence_minutes": 60,
+            "required_tools": [],
+            "risk_preset_or_config": "balanced"
+        },
+        "agents": [{"agent_id": "01HZAGENT3", "role": "trader"}],
+        "risk": {
+            "risk_pct_per_trade": 0.015,
+            "max_concurrent_positions": 2,
+            "max_leverage": 3.0,
+            "stop_loss_atr_multiple": 2.0,
+            "daily_loss_kill_pct": 0.05
+        },
+        "mechanical_params": {},
+        "activation_mode": "filter_gated",
+        "filter": {
+            "id": "01HZFILTERTEST3",
+            "strategy_id": "01HZTEST3",
+            "display_name": "ADX Filter",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "1h",
+            "conditions": {
+                "all": [
+                    { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                ]
+            },
+            "cooldown_bars": 3
+        }
+    });
+    serde_json::from_value(v).expect("filter fixture strategy deserializes")
+}
+
+fn make_filter_diff(edits: Vec<FilterEdit>) -> MutationDiff {
+    MutationDiff {
+        kind: MutationKind::Filter,
+        prose: vec![],
+        params: vec![],
+        tools: ToolDiff { added: vec![], removed: vec![] },
+        filter: edits,
+        rationale: "test filter edit".into(),
+    }
+}
+
 fn make_strategy() -> Strategy {
     let v = json!({
         "manifest": {
@@ -311,4 +363,66 @@ fn mechanical_params_not_object_reports_unknown_param() {
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     assert!(codes(&errs).contains(&"unknown_param"), "{errs:?}");
+}
+
+// ── Filter validation tests (Task 8) ─────────────────────────────────────────
+
+#[test]
+fn filter_edit_valid_path_and_number_accepted() {
+    let base = make_filter_strategy();
+    let diff = make_filter_diff(vec![FilterEdit {
+        path: "conditions.0.rhs.numeric".to_string(),
+        before: json!(25.0),
+        after: json!(28.0),
+    }]);
+    assert!(
+        validate_mutation_diff(&diff, &base).is_ok(),
+        "valid filter edit must be accepted"
+    );
+}
+
+#[test]
+fn filter_edit_no_filter_in_strategy_reports_no_filter() {
+    // Strategy without a filter → "no_filter" code
+    let base = make_strategy();
+    let diff = make_filter_diff(vec![FilterEdit {
+        path: "conditions.0.rhs.numeric".to_string(),
+        before: json!(25.0),
+        after: json!(28.0),
+    }]);
+    let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+    assert!(
+        codes(&errs).contains(&"no_filter"),
+        "no filter in strategy must produce no_filter: {errs:?}"
+    );
+}
+
+#[test]
+fn filter_edit_unknown_path_reports_unknown_filter_path() {
+    let base = make_filter_strategy();
+    let diff = make_filter_diff(vec![FilterEdit {
+        path: "conditions.99.rhs.numeric".to_string(), // out-of-range index
+        before: json!(25.0),
+        after: json!(28.0),
+    }]);
+    let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+    assert!(
+        codes(&errs).contains(&"unknown_filter_path"),
+        "unknown path must produce unknown_filter_path: {errs:?}"
+    );
+}
+
+#[test]
+fn filter_edit_wrong_type_reports_invalid_filter_value() {
+    let base = make_filter_strategy();
+    let diff = make_filter_diff(vec![FilterEdit {
+        path: "conditions.0.rhs.numeric".to_string(),
+        before: json!(25.0),
+        after: json!("not-a-number"), // wrong type
+    }]);
+    let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+    assert!(
+        codes(&errs).contains(&"invalid_filter_value"),
+        "non-numeric after must produce invalid_filter_value: {errs:?}"
+    );
 }
