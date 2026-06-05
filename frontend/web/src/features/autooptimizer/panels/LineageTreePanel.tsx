@@ -20,10 +20,18 @@ function buildTree(nodes: LineageNode[]): TreeNode[] {
   for (const n of nodes) {
     const treeNode = byHash.get(n.bundle_hash)!;
     const parentHash = n.parent_hash ?? null;
-    if (parentHash && byHash.has(parentHash)) {
+    // Treat self-parent as a root to avoid a node becoming its own child.
+    if (parentHash && parentHash !== n.bundle_hash && byHash.has(parentHash)) {
       byHash.get(parentHash)!.children.push(treeNode);
     } else {
       roots.push(treeNode);
+    }
+  }
+  // Fallback: if every node points at another node (pure cycle), roots would be
+  // empty and nothing would render.  Promote all nodes as flat roots instead.
+  if (roots.length === 0 && nodes.length > 0) {
+    for (const n of nodes) {
+      roots.push({ node: n, children: [] });
     }
   }
   return roots;
@@ -31,8 +39,26 @@ function buildTree(nodes: LineageNode[]): TreeNode[] {
 
 // ─── Recursive row renderer ────────────────────────────────────────────────────
 
-function TreeRow({ treeNode, depth }: { treeNode: TreeNode; depth: number }) {
+const MAX_TREE_DEPTH = 50;
+
+function TreeRow({
+  treeNode,
+  depth,
+  visited,
+}: {
+  treeNode: TreeNode;
+  depth: number;
+  visited: Set<string>;
+}) {
   const { node } = treeNode;
+  // Guard: never render a node we've already rendered in this branch, and cap
+  // depth to prevent any residual cycle from causing an infinite loop.
+  if (visited.has(node.bundle_hash) || depth > MAX_TREE_DEPTH) {
+    return null;
+  }
+  const nextVisited = new Set(visited);
+  nextVisited.add(node.bundle_hash);
+
   return (
     <>
       <li
@@ -55,7 +81,12 @@ function TreeRow({ treeNode, depth }: { treeNode: TreeNode; depth: number }) {
         </span>
       </li>
       {treeNode.children.map((child) => (
-        <TreeRow key={child.node.bundle_hash} treeNode={child} depth={depth + 1} />
+        <TreeRow
+          key={child.node.bundle_hash}
+          treeNode={child}
+          depth={depth + 1}
+          visited={nextVisited}
+        />
       ))}
     </>
   );
@@ -83,7 +114,7 @@ export function LineageTreePanel({ cycleId }: { cycleId: string }) {
       ) : (
         <ul className="mt-1 divide-y divide-border-soft">
           {buildTree(nodes).map((root) => (
-            <TreeRow key={root.node.bundle_hash} treeNode={root} depth={0} />
+            <TreeRow key={root.node.bundle_hash} treeNode={root} depth={0} visited={new Set()} />
           ))}
         </ul>
       )}

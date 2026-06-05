@@ -19,4 +19,26 @@ describe("LineageTreePanel", () => {
     const childLink = await screen.findByRole("link", { name: /child0001/ });
     expect(childLink).toHaveAttribute("href", "/optimizer/experiment/child0001");
   });
+
+  it("handles a self-parent node without infinite recursion", async () => {
+    vi.spyOn(client, "apiFetch").mockResolvedValue([
+      { bundle_hash: "selfref01", parent_hash: "selfref01", gate_verdict: "Pass", status: "active", cycle_id: "cyc-1", created_at: "2026-06-01T00:00:00Z" },
+    ]);
+    renderWithProviders(<LineageTreePanel cycleId="cyc-1" />);
+    const links = await screen.findAllByRole("link", { name: /selfref01/ });
+    expect(links).toHaveLength(1);
+  });
+
+  it("renders nodes even when parent_hash forms a cycle", async () => {
+    vi.spyOn(client, "apiFetch").mockResolvedValue([
+      { bundle_hash: "aaaa1111", parent_hash: "bbbb2222", gate_verdict: "Pass", status: "active", cycle_id: "cyc-1", created_at: "2026-06-01T00:00:00Z" },
+      { bundle_hash: "bbbb2222", parent_hash: "aaaa1111", gate_verdict: "Fail", status: "rejected", cycle_id: "cyc-1", created_at: "2026-06-01T00:01:00Z" },
+    ]);
+    renderWithProviders(<LineageTreePanel cycleId="cyc-1" />);
+    expect(await screen.findByRole("link", { name: /aaaa1111/ })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /bbbb2222/ })).toBeInTheDocument();
+    // Each node must appear exactly once
+    expect(screen.getAllByRole("link", { name: /aaaa1111/ })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: /bbbb2222/ })).toHaveLength(1);
+  });
 });
