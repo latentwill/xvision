@@ -65,6 +65,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   vi.mocked(apiFetch).mockImplementation((path: string) => {
     if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
+    if (path === "/api/autooptimizer/cycles") return Promise.resolve([]);
     if (path === "/api/autooptimizer/run-cycle") {
       return Promise.resolve({
         started: true,
@@ -177,8 +178,10 @@ describe("LiveCycleView", () => {
         method: "POST",
         body: JSON.stringify({
           strategy_id: "strategy-1",
-          mutator_model: "claude-haiku-4-5-20251001",
-          judge_model: "claude-sonnet-4-6",
+          mutator_provider: null,
+          mutator_model: null,
+          judge_provider: null,
+          judge_model: null,
         }),
       }),
     );
