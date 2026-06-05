@@ -801,7 +801,7 @@ mod tests {
         let kinds = vec!["param".to_string()];
         let keys = vec!["risk.max_leverage".to_string()];
         let ctx = "param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)";
-        let with = build_user_payload("prog", &kinds, &keys, None, 7, Some(ctx));
+        let with = build_user_payload("prog", &kinds, &keys, None, 7, Some(ctx), 0);
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
             "memory section header missing: {with}"
@@ -814,7 +814,7 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, None, 7, None);
+        let without = build_user_payload("prog", &kinds, &keys, None, 7, None, 0);
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -824,7 +824,7 @@ mod tests {
             "F32 exploration section must remain when no memory: {without}"
         );
 
-        let empty = build_user_payload("prog", &kinds, &keys, None, 7, Some("   "));
+        let empty = build_user_payload("prog", &kinds, &keys, None, 7, Some("   "), 0);
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
