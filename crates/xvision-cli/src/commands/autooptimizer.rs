@@ -1416,6 +1416,26 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
              appear as a completed run in `xvn optimizer ls`."
         );
     }
+    // DSPy in-loop bridge: when `dspy_enabled = true`, open the memory store
+    // and construct a `DspyContext` with a `LiveDspyBridge` so the flywheel
+    // can call the LLM to distill judge findings into an improved instruction
+    // prefix on subsequent cycles.  Keyed separately from the mutator-memory
+    // recorder (`opt_mem`) so the two write paths don't interfere.
+    let dspy_ctx = if cfg.dspy_enabled {
+        let store = memory::open_default_store()
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store for dspy: {e}")))?;
+        Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
+            store,
+            bridge: std::sync::Arc::new(xvision_engine::autooptimizer::dspy_bridge::LiveDspyBridge {
+                dispatch: std::sync::Arc::clone(&metered_dispatch),
+                model: cfg.mutator.model.clone(),
+            }),
+            namespace: "autooptimizer:dspy".to_string(),
+        })
+    } else {
+        None
+    };
     let result = run_cycle(
         &pool,
         &strategy_blob_store,
@@ -1430,7 +1450,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 println!("{}", line);
             }
         },
-        None,
+        dspy_ctx.as_ref(),
         opt_mem.as_deref(),
         Some(cycle_lock_id.clone()),
         None,
