@@ -5,11 +5,13 @@
 //! degradation contract on `MemoryRecorder`. The resolution order under
 //! test is the one locked in the Phase 0 plan:
 //!
-//!   1. `XVN_MEMORY_EMBEDDER=local`            → `Local`
+//!   1. `XVN_MEMORY_EMBEDDER=local` → `Local`; `=off` → `None`
 //!   2. `XVN_MEMORY_EMBEDDER_PROVIDER=<name>`  → that provider's url/key
 //!   3. `OPENAI_API_KEY`                        → OpenAI env path
-//!   4. auto-detect a real `api.openai.com` provider with a key
-//!   5. otherwise                               → `None`
+//!   4. config_embedder (memory.toml): off/local/<provider>
+//!   5. auto / default: a real `api.openai.com` provider with a key, ELSE
+//!      the offline `Local` embedder (amended 2026-06-05 — memory works out
+//!      of the box; only explicit `off` yields `None`).
 
 use std::collections::HashMap;
 
@@ -49,6 +51,7 @@ fn env_with_keys(keys: &[(&str, &str)]) -> EmbedderEnv {
         memory_embedder_model: None,
         openai_api_key: None,
         openai_base_url: None,
+        config_embedder: None,
         resolved_provider_keys: resolved,
     }
 }
@@ -79,14 +82,16 @@ fn auto_detects_real_openai_provider_with_key() {
 fn does_not_auto_detect_non_openai_provider() {
     // A deepseek provider (NOT api.openai.com) must NOT be auto-picked —
     // it may lack an /embeddings endpoint. Without an explicit
-    // XVN_MEMORY_EMBEDDER_PROVIDER opt-in this resolves to None.
+    // XVN_MEMORY_EMBEDDER_PROVIDER opt-in the auto path skips it and falls
+    // back to the offline Local embedder (NOT the deepseek provider, and
+    // NOT None — memory still works out of the box).
     let env = env_with_keys(&[("deepseek", "sk-deepseek")]);
     let providers = vec![provider("deepseek", "https://api.deepseek.com/v1", true)];
 
     let choice = resolve_embedder_choice(&env, &providers);
     assert!(
-        matches!(choice, EmbedderChoice::None),
-        "non-openai provider must not be auto-selected, got {choice:?}"
+        matches!(choice, EmbedderChoice::Local),
+        "non-openai provider must not be auto-selected; auto falls back to Local, got {choice:?}"
     );
 }
 
@@ -150,12 +155,38 @@ fn openai_api_key_env_path() {
 }
 
 #[test]
-fn no_providers_no_key_no_local_is_none() {
+fn no_providers_no_key_defaults_to_local() {
+    // Amended (Cortex deployment): with nothing configured the default
+    // `auto` falls back to the offline Local embedder, NOT None, so memory
+    // works out of the box. Explicit `off` is the only path to None (see
+    // `config_off_yields_none` / `env_off_yields_none`).
     let env = env_with_keys(&[]);
     let choice = resolve_embedder_choice(&env, &[]);
     assert!(
+        matches!(choice, EmbedderChoice::Local),
+        "expected Local fallback, got {choice:?}"
+    );
+}
+
+#[test]
+fn config_off_yields_none() {
+    let mut env = env_with_keys(&[]);
+    env.config_embedder = Some("off".to_string());
+    let choice = resolve_embedder_choice(&env, &[]);
+    assert!(
         matches!(choice, EmbedderChoice::None),
-        "expected None, got {choice:?}"
+        "config off must disable the embedder, got {choice:?}"
+    );
+}
+
+#[test]
+fn env_off_yields_none() {
+    let mut env = env_with_keys(&[]);
+    env.memory_embedder = Some("off".to_string());
+    let choice = resolve_embedder_choice(&env, &[]);
+    assert!(
+        matches!(choice, EmbedderChoice::None),
+        "env XVN_MEMORY_EMBEDDER=off must disable the embedder, got {choice:?}"
     );
 }
 
@@ -177,14 +208,15 @@ fn local_flag_selects_local() {
 #[test]
 fn provider_without_resolvable_key_is_skipped() {
     // has_key=false (or key not in the resolved map) means the provider
-    // can't be used — falls through to None.
+    // can't be used — the auto path skips it and falls back to the offline
+    // Local embedder (NOT None).
     let env = env_with_keys(&[]);
     let providers = vec![provider("openai", "https://api.openai.com/v1", false)];
 
     let choice = resolve_embedder_choice(&env, &providers);
     assert!(
-        matches!(choice, EmbedderChoice::None),
-        "provider with no key must not be selected, got {choice:?}"
+        matches!(choice, EmbedderChoice::Local),
+        "provider with no key must not be selected; auto falls back to Local, got {choice:?}"
     );
 }
 

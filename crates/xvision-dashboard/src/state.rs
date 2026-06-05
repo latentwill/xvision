@@ -52,12 +52,23 @@ struct CachedRunDetail {
 pub struct AppState {
     pub pool: SqlitePool,
     pub xvn_home: PathBuf,
-    /// Cortex-memory recorder for the chat rail (P4). `Some` only when
-    /// `XVN_CHAT_MEMORY` is set (`1`/`true`) at server start AND the
-    /// bootstrap `ApiContext` has a provisioned recorder. Default OFF: env
-    /// unset → `None` → zero recall/write, chat behaves exactly as today.
-    /// Behind an `Arc` so `AppState` stays cheaply `Clone`.
-    pub chat_memory: Option<Arc<xvision_engine::agent::memory_recorder::MemoryRecorder>>,
+    /// Cortex-memory recorder, shared across the surfaces that use memory
+    /// (chat rail, optimizer cycles). Populated from the bootstrap
+    /// `ApiContext`'s provisioned recorder whenever one is available — the
+    /// recorder being present is harmless; per-surface USAGE is gated by
+    /// [`AppState::chat_memory_enabled`] / [`AppState::optimizer_memory_enabled`]
+    /// (config-backed, default ON; env overrides win). `None` only when the
+    /// bootstrap context could not provision a recorder. Behind an `Arc` so
+    /// `AppState` stays cheaply `Clone`.
+    pub memory_recorder: Option<Arc<xvision_engine::agent::memory_recorder::MemoryRecorder>>,
+    /// Startup snapshot of the persisted memory enablement config
+    /// (`$XVN_HOME/config/memory.toml`). Read once at server start so the
+    /// chat/cycle hot paths never do per-request file I/O. Changing the
+    /// config via the settings card takes effect on the next restart
+    /// (matches the `obs_config` snapshot pattern). The accessors fold in
+    /// the env overrides (`XVN_CHAT_MEMORY` / `XVN_OPTIMIZER_MEMORY`) which
+    /// always win.
+    memory_config: xvision_engine::api::settings::memory::MemoryConfig,
     /// Singleton live-stream event bus. Constructed once at server start and
     /// shared across all HTTP requests via `api_context()`.
     pub event_bus: Arc<RunEventBus>,
@@ -162,21 +173,21 @@ impl AppState {
         .with_context(|| format!("open ApiContext at {}", xvn_home.display()))?;
         let pool = bootstrap_ctx.db.clone();
 
-        // P4 chat-rail memory: capture the bootstrap context's provider-aware
-        // recorder ONLY when the operator opted in via XVN_CHAT_MEMORY. Default
-        // OFF — env unset → None → no recall/write-back. When set but no
-        // embedder is provisioned, `memory_recorder` may still be Some with no
-        // embedder; recall then returns NoEmbedder and write-back no-ops, which
-        // is the intended best-effort degrade.
-        let chat_memory = if std::env::var("XVN_CHAT_MEMORY")
-            .ok()
-            .filter(|v| v == "1" || v == "true")
-            .is_some()
-        {
-            bootstrap_ctx.memory_recorder.clone()
-        } else {
-            None
-        };
+        // Cortex memory: always capture the bootstrap context's
+        // provider-aware recorder. Memory now defaults ON for chat +
+        // optimizer (the embedder resolves to the offline Local fallback
+        // when no real provider is configured, so it works out of the box).
+        // Whether a given surface actually records/recalls is decided per
+        // request by `chat_memory_enabled` / `optimizer_memory_enabled`
+        // (config-backed, env-override). Holding the recorder here is
+        // harmless when a surface is disabled.
+        let memory_recorder = bootstrap_ctx.memory_recorder.clone();
+
+        // Startup snapshot of the persisted memory enablement config.
+        // Missing/invalid file → defaults (Auto embedder + both surfaces ON).
+        let memory_config = xvision_engine::api::settings::memory::load_from_file(
+            &xvn_home.join("config").join("memory.toml"),
+        );
 
         // Hydrate the process env with persisted provider API keys so backend
         // constructors that call std::env::var(api_key_env) see the keys the
@@ -243,7 +254,8 @@ impl AppState {
         Ok(Self {
             pool,
             xvn_home,
-            chat_memory,
+            memory_recorder,
+            memory_config,
             event_bus: Arc::new(RunEventBus::new()),
             obs_event_bus,
             obs_broadcast,
@@ -263,6 +275,32 @@ impl AppState {
     /// Shared safety manager reference for route handlers.
     pub fn safety_manager(&self) -> &SafetyManager {
         &self.safety_manager
+    }
+
+    /// Read the `XVN_CHAT_MEMORY` / `XVN_OPTIMIZER_MEMORY` env override.
+    /// `1`/`true` → `Some(true)`, `0`/`false` → `Some(false)`, anything
+    /// else (incl. unset) → `None` so the config value applies.
+    fn env_memory_override(var: &str) -> Option<bool> {
+        match std::env::var(var).ok().as_deref() {
+            Some("1") | Some("true") => Some(true),
+            Some("0") | Some("false") => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Whether the chat rail should record/recall. Env `XVN_CHAT_MEMORY`
+    /// wins when set; otherwise the config snapshot (`chat_enabled`,
+    /// default ON). Cheap — no per-request file I/O.
+    pub fn chat_memory_enabled(&self) -> bool {
+        Self::env_memory_override("XVN_CHAT_MEMORY").unwrap_or(self.memory_config.chat_enabled)
+    }
+
+    /// Whether the optimizer should record/recall. Env
+    /// `XVN_OPTIMIZER_MEMORY` wins when set; otherwise the config snapshot
+    /// (`optimizer_enabled`, default ON). Cheap — no per-request file I/O.
+    pub fn optimizer_memory_enabled(&self) -> bool {
+        Self::env_memory_override("XVN_OPTIMIZER_MEMORY")
+            .unwrap_or(self.memory_config.optimizer_enabled)
     }
 
     /// Build an `ApiContext` for one HTTP request. The dashboard always

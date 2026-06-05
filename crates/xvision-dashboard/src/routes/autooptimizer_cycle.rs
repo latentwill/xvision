@@ -231,6 +231,16 @@ pub async fn start_cycle(
     // `POST /cycles/:id/cancel` can stop it. Deregistered when the cycle ends.
     let cancel_flag = state.autooptimizer_register_cancel(&cycle_id);
     let state_for_dereg = state.clone();
+    // Cortex memory: capture the recorder Arc (gated, config-backed default
+    // ON; env override wins) before the spawn so the cycle can recall/record
+    // distilled findings. `None` when disabled — the cycle then behaves as
+    // before. Cloned into an owned binding so `.as_deref()` borrows from a
+    // value that outlives the `run_cycle` call inside the task.
+    let cycle_memory = if state.optimizer_memory_enabled() {
+        state.memory_recorder.clone()
+    } else {
+        None
+    };
     tokio::spawn(async move {
         // The production paper tester: real cached-backtest Executor, metered at
         // the dispatch boundary, with the shared per-cycle meter feeding both the
@@ -283,8 +293,8 @@ pub async fn start_cycle(
                 let _ = tx.send(ev);
             },
             None,
-            // P2: cortex-memory in dashboard cycles lands when AppState carries a recorder (P4); CLI is the P2 enablement path (XVN_OPTIMIZER_MEMORY=1).
-            None,
+            // Cortex memory: optimizer recall/record (default ON, config-backed).
+            cycle_memory.as_deref(),
             Some(cycle_id.clone()),
             Some(cancel_flag),
         )

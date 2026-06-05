@@ -6,23 +6,36 @@
 //! relevant env vars + the operator's configured providers + their
 //! resolved API keys.
 //!
-//! Resolution order (locked, Phase 0 Cortex deployment plan):
+//! Resolution order (Cortex deployment; amended 2026-06-05 so memory works
+//! out of the box without an external provider — the final fallback is now
+//! the offline `Local` embedder, NOT `None`. A real provider is still
+//! PREFERRED automatically: semantic > lexical):
 //!
-//!   1. `XVN_MEMORY_EMBEDDER=local` → [`EmbedderChoice::Local`]
-//!      (deterministic, offline, low-quality dev/offline fallback).
+//! Env overrides win, then the persisted config, then `auto` → Local.
+//!
+//!   1. `XVN_MEMORY_EMBEDDER=local` → [`EmbedderChoice::Local`];
+//!      `XVN_MEMORY_EMBEDDER=off` → [`EmbedderChoice::None`] (ops force-off).
 //!   2. `XVN_MEMORY_EMBEDDER_PROVIDER=<name>` → resolve that provider's
 //!      `base_url` + key and build an OpenAI-compatible `/embeddings`
 //!      embedder, even when the provider is NOT api.openai.com (explicit
-//!      operator opt-in).
+//!      operator opt-in). Unresolvable → fall through to the auto path
+//!      (NOT `None`).
 //!   3. `OPENAI_API_KEY` set → the historical OpenAI env path, base URL
 //!      from `OPENAI_BASE_URL` (default `https://api.openai.com/v1`).
-//!   4. Auto-detect: scan the providers for an enabled provider with a
+//!   4. `config_embedder` (from `$XVN_HOME/config/memory.toml` via the
+//!      settings card): `"off"` → `None`; `"local"` → `Local`; a provider
+//!      name (not `"auto"`) → that provider (resolve; if unresolvable →
+//!      `Local` with a warn, NOT `None`).
+//!   5. `"auto"` / unset (DEFAULT): auto-detect an enabled provider with a
 //!      resolvable key whose `base_url` points at the REAL api.openai.com
-//!      (guaranteed to serve `/embeddings`). Be conservative — never
-//!      auto-pick deepseek/other providers that may lack an embeddings
-//!      endpoint; those require the explicit opt-in (step 2).
-//!   5. Otherwise [`EmbedderChoice::None`] — recall/record no-op. Never
-//!      crashes startup.
+//!      (guaranteed to serve `/embeddings`; conservative — never auto-pick
+//!      deepseek/other providers that may lack an embeddings endpoint).
+//!      ELSE → [`EmbedderChoice::Local`] (the new offline final fallback).
+//!
+//! Net effect: with nothing configured, default = `Auto` = `Local`, so
+//! memory works offline; a real OpenAI key/provider is preferred
+//! automatically; explicit `off` (env or config) is the only way to get
+//! `None`.
 //!
 //! In every `OpenAiCompat` branch the model is `XVN_MEMORY_EMBEDDER_MODEL`
 //! when set, otherwise [`DEFAULT_EMBEDDER_MODEL`].
@@ -60,6 +73,11 @@ pub struct EmbedderEnv {
     pub openai_api_key: Option<String>,
     /// `OPENAI_BASE_URL`.
     pub openai_base_url: Option<String>,
+    /// The persisted memory-settings embedder string from
+    /// `$XVN_HOME/config/memory.toml` — one of `"off" | "local" | "auto" |
+    /// <provider-name>`. `None` is treated as the default `"auto"`. Env
+    /// overrides above (steps 1–3) win over this; see the module docs.
+    pub config_embedder: Option<String>,
     /// Provider name → resolved API key. Populated by the caller from
     /// `resolve_provider_key_value` (env var first, then stored secret)
     /// so this pure function never performs I/O. A provider missing from
@@ -104,36 +122,73 @@ fn is_real_openai(base_url: &str) -> bool {
     base_url.contains("api.openai.com")
 }
 
+/// Try to build an `OpenAiCompat` choice from a named provider with a
+/// resolvable key. Returns `None` when the provider isn't found or has no
+/// usable key (so the caller can decide the fallback).
+fn provider_choice(
+    env: &EmbedderEnv,
+    providers: &[EffectiveProvider],
+    name: &str,
+    model: &str,
+) -> Option<EmbedderChoice> {
+    let p = providers.iter().find(|p| p.provider == name)?;
+    let key = resolved_key(env, name)?;
+    Some(EmbedderChoice::OpenAiCompat {
+        base_url: p.base_url.clone(),
+        api_key: key.to_string(),
+        model: model.to_string(),
+    })
+}
+
+/// Conservative auto-detect: only a real api.openai.com provider with a
+/// resolvable key. `None` when none match.
+fn auto_openai_choice(
+    env: &EmbedderEnv,
+    providers: &[EffectiveProvider],
+    model: &str,
+) -> Option<EmbedderChoice> {
+    for p in providers {
+        if p.enabled && is_real_openai(&p.base_url) {
+            if let Some(key) = resolved_key(env, &p.provider) {
+                return Some(EmbedderChoice::OpenAiCompat {
+                    base_url: p.base_url.clone(),
+                    api_key: key.to_string(),
+                    model: model.to_string(),
+                });
+            }
+        }
+    }
+    None
+}
+
 /// Resolve which embedder the engine should provision. Pure — see the
-/// module docs for the locked resolution order.
+/// module docs for the resolution order. The `auto`/default tail now falls
+/// back to [`EmbedderChoice::Local`] (offline, lexical) rather than `None`
+/// so memory works out of the box; only an explicit `off` (env or config)
+/// yields `None`.
 pub fn resolve_embedder_choice(env: &EmbedderEnv, providers: &[EffectiveProvider]) -> EmbedderChoice {
     let model = non_empty(&env.memory_embedder_model)
         .unwrap_or(DEFAULT_EMBEDDER_MODEL)
         .to_string();
 
-    // 1. Explicit local override.
+    // 1. Explicit env override: local forces offline; off forces no-op.
     if let Some(v) = non_empty(&env.memory_embedder) {
         if v.eq_ignore_ascii_case("local") {
             return EmbedderChoice::Local;
         }
+        if v.eq_ignore_ascii_case("off") {
+            return EmbedderChoice::None;
+        }
     }
 
-    // 2. Explicit provider opt-in. The named provider wins even when it is
-    //    not api.openai.com — the operator asserts it serves /embeddings.
+    // 2. Explicit env provider opt-in. The named provider wins even when it
+    //    is not api.openai.com — the operator asserts it serves /embeddings.
+    //    Unresolvable → fall through to the auto path (NOT None), so memory
+    //    still works via OPENAI_API_KEY / auto-detect / Local fallback.
     if let Some(name) = non_empty(&env.memory_embedder_provider) {
-        if let Some(p) = providers.iter().find(|p| p.provider == name) {
-            if let Some(key) = resolved_key(env, name) {
-                return EmbedderChoice::OpenAiCompat {
-                    base_url: p.base_url.clone(),
-                    api_key: key.to_string(),
-                    model,
-                };
-            }
+        if let Some(choice) = provider_choice(env, providers, name, &model) {
+            return choice;
         }
-        // Named-but-unresolvable provider: fall through. The caller logs
-        // that the requested embedder provider had no usable key, then we
-        // try the remaining steps so memory still works if OPENAI_API_KEY
-        // or an auto-detectable provider is present.
     }
 
     // 3. OPENAI_API_KEY env path (historical behavior).
@@ -148,22 +203,37 @@ pub fn resolve_embedder_choice(env: &EmbedderEnv, providers: &[EffectiveProvider
         };
     }
 
-    // 4. Conservative auto-detect: only a real api.openai.com provider
-    //    with a resolvable key.
-    for p in providers {
-        if p.enabled && is_real_openai(&p.base_url) {
-            if let Some(key) = resolved_key(env, &p.provider) {
-                return EmbedderChoice::OpenAiCompat {
-                    base_url: p.base_url.clone(),
-                    api_key: key.to_string(),
-                    model,
-                };
-            }
+    // 4. Config-backed embedder (from memory.toml). `None`/unset ≡ "auto".
+    //    `off` → None; `local` → Local; a provider name (not "auto") →
+    //    that provider; unresolvable provider name → Local (with a warn),
+    //    NOT None — memory still works offline.
+    let config = non_empty(&env.config_embedder).unwrap_or("auto");
+    if config.eq_ignore_ascii_case("off") {
+        return EmbedderChoice::None;
+    }
+    if config.eq_ignore_ascii_case("local") {
+        return EmbedderChoice::Local;
+    }
+    if !config.eq_ignore_ascii_case("auto") {
+        // Named provider from the settings card.
+        if let Some(choice) = provider_choice(env, providers, config, &model) {
+            return choice;
         }
+        tracing::warn!(
+            provider = %config,
+            "memory: configured embedder provider has no usable key; \
+             falling back to the offline LocalEmbedder (lexical quality)"
+        );
+        return EmbedderChoice::Local;
     }
 
-    // 5. Nothing configured — recall/record no-op.
-    EmbedderChoice::None
+    // 5. Auto (the default): prefer a real api.openai.com provider with a
+    //    key; ELSE fall back to the offline Local embedder so memory works
+    //    out of the box.
+    if let Some(choice) = auto_openai_choice(env, providers, &model) {
+        return choice;
+    }
+    EmbedderChoice::Local
 }
 
 impl EmbedderChoice {
@@ -222,10 +292,91 @@ mod tests {
     }
 
     #[test]
-    fn empty_resolved_key_is_not_usable() {
+    fn empty_resolved_key_falls_back_to_local() {
+        // Under the default `auto`, an openai provider with no usable key
+        // no longer yields None — it falls back to the offline Local
+        // embedder so memory still works.
         let mut env = EmbedderEnv::default();
         env.resolved_provider_keys.insert("openai".into(), "  ".into());
         let providers = vec![ep("openai", "https://api.openai.com/v1", true)];
-        assert_eq!(resolve_embedder_choice(&env, &providers), EmbedderChoice::None);
+        assert_eq!(resolve_embedder_choice(&env, &providers), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn config_auto_no_providers_falls_back_to_local() {
+        // The headline change: nothing configured (default = auto) and no
+        // providers/keys → Local, not None. Memory works out of the box.
+        let env = EmbedderEnv::default();
+        assert_eq!(resolve_embedder_choice(&env, &[]), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn config_off_yields_none() {
+        let env = EmbedderEnv {
+            config_embedder: Some("off".into()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_embedder_choice(&env, &[]), EmbedderChoice::None);
+    }
+
+    #[test]
+    fn env_off_overrides_config_auto() {
+        // Ops force-off via env wins over config auto.
+        let env = EmbedderEnv {
+            memory_embedder: Some("off".into()),
+            config_embedder: Some("auto".into()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_embedder_choice(&env, &[]), EmbedderChoice::None);
+    }
+
+    #[test]
+    fn config_local_yields_local() {
+        let env = EmbedderEnv {
+            config_embedder: Some("local".into()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_embedder_choice(&env, &[]), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn resolvable_openai_provider_beats_local_under_auto() {
+        // A real openai provider with a key is PREFERRED over the Local
+        // fallback when the config is auto (semantic > lexical).
+        let mut env = EmbedderEnv::default();
+        env.resolved_provider_keys.insert("openai".into(), "sk-live".into());
+        let providers = vec![ep("openai", "https://api.openai.com/v1", true)];
+        match resolve_embedder_choice(&env, &providers) {
+            EmbedderChoice::OpenAiCompat { api_key, .. } => assert_eq!(api_key, "sk-live"),
+            other => panic!("expected OpenAiCompat, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_naming_unresolvable_provider_falls_back_to_local() {
+        // Config names a provider that has no usable key → Local, NOT None.
+        let env = EmbedderEnv {
+            config_embedder: Some("myproxy".into()),
+            ..Default::default()
+        };
+        let providers = vec![ep("myproxy", "https://proxy.internal/v1", false)];
+        assert_eq!(resolve_embedder_choice(&env, &providers), EmbedderChoice::Local);
+    }
+
+    #[test]
+    fn config_naming_resolvable_provider_uses_it() {
+        let mut env = EmbedderEnv {
+            config_embedder: Some("myproxy".into()),
+            ..Default::default()
+        };
+        env.resolved_provider_keys.insert("myproxy".into(), "sk-proxy".into());
+        let providers = vec![ep("myproxy", "https://proxy.internal/v1", true)];
+        match resolve_embedder_choice(&env, &providers) {
+            EmbedderChoice::OpenAiCompat { base_url, api_key, .. } => {
+                assert_eq!(base_url, "https://proxy.internal/v1");
+                assert_eq!(api_key, "sk-proxy");
+            }
+            other => panic!("expected OpenAiCompat, got {other:?}"),
+        }
     }
 }

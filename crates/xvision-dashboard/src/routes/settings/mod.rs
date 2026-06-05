@@ -9,5 +9,6 @@ pub mod brokers;
 pub mod daemon;
 pub mod danger;
 pub mod identity;
+pub mod memory;
 pub mod observability;
 pub mod providers;

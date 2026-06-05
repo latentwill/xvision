@@ -1280,16 +1280,24 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // model_calls under a run id that doesn't equal the paper-test eval run id,
     // so the join matched nothing. Metering at the dispatch boundary needs no
     // observability linkage and can't be missed.
-    // P2 (cortex-memory): the optimizer Judge can recall prior distilled
-    // findings and write new ones back. Default OFF — enabled only when
-    // `XVN_OPTIMIZER_MEMORY` is truthy. We capture the recorder from the
-    // `ApiContext` before it is moved into the paper tester. The mock path
-    // never opens a context, so memory stays off there.
+    // Cortex memory: the optimizer Judge can recall prior distilled
+    // findings and write new ones back. Default ON (config-backed) — the
+    // env `XVN_OPTIMIZER_MEMORY` override wins when set (`1`/`true` → on,
+    // `0`/`false` → off); otherwise the persisted `memory.toml`
+    // `optimizer_enabled` (default true) applies. We capture the recorder
+    // from the `ApiContext` before it is moved into the paper tester. The
+    // mock path never opens a context, so memory stays off there.
     let mut opt_mem: Option<Arc<xvision_engine::agent::memory_recorder::MemoryRecorder>> = None;
-    let optimizer_memory_enabled = std::env::var("XVN_OPTIMIZER_MEMORY")
-        .ok()
-        .filter(|v| v == "1" || v == "true")
-        .is_some();
+    let optimizer_memory_enabled = match std::env::var("XVN_OPTIMIZER_MEMORY").ok().as_deref() {
+        Some("1") | Some("true") => true,
+        Some("0") | Some("false") => false,
+        _ => {
+            xvision_engine::api::settings::memory::load_from_file(
+                &xvn_home.join("config").join("memory.toml"),
+            )
+            .optimizer_enabled
+        }
+    };
     let paper_tester: Box<dyn xvision_engine::autooptimizer::eval_adapter::PaperTestRunner> = if args.mock {
         Box::new(StubPaperTester {
             metrics: MetricsSummary {

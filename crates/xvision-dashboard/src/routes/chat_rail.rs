@@ -357,9 +357,15 @@ pub async fn chat(
     let message = body.message;
     let profile = body.profile;
     let cli_runner = state.cli_runner();
-    // P4 cortex-memory: clone the recorder handle before spawn so the loop can
-    // attach it without moving the whole `AppState` into the task.
-    let chat_memory = state.chat_memory.clone();
+    // Cortex memory: clone the recorder handle before spawn so the loop can
+    // attach it without moving the whole `AppState` into the task. Gated by
+    // `chat_memory_enabled` (config-backed, default ON; env override wins) —
+    // when disabled the loop gets `None` and chat behaves exactly as before.
+    let chat_memory = if state.chat_memory_enabled() {
+        state.memory_recorder.clone()
+    } else {
+        None
+    };
 
     // Phase 1.2: in addition to the legacy WizardEvent SSE, project every
     // WizardEvent into a UnifiedEvent, persist it to the session_events log,

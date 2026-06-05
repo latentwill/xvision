@@ -625,8 +625,10 @@ async fn build_default_embedder(
     match resolve_embedder_choice_from_env(xvn_home).await {
         EmbedderChoice::Local => {
             tracing::warn!(
-                "memory: using the offline LocalEmbedder (XVN_MEMORY_EMBEDDER=local); \
-                 recall quality is DEGRADED — this is a dev/offline fallback, not for production"
+                "memory: using the offline LocalEmbedder (default offline fallback when no \
+                 real provider/key is configured, or via XVN_MEMORY_EMBEDDER=local / \
+                 memory.toml embedder=local); recall quality is lexical/DEGRADED — \
+                 configure an OpenAI provider or key for semantic recall"
             );
             Some(Arc::new(crate::agent::local_embedder::LocalEmbedder::new()))
         }
@@ -672,12 +674,20 @@ pub(crate) async fn resolve_embedder_choice_from_env(
             .await
             .unwrap_or_default();
 
+    // Cortex deployment: fold in the persisted memory-settings embedder
+    // choice (off/local/auto/<provider>) so the default `auto` falls back to
+    // the offline Local embedder and the React settings card can steer the
+    // source. Best-effort — a missing/invalid file yields the default Auto.
+    let memory_config_path = xvn_home.join("config").join("memory.toml");
+    let memory_cfg = settings::memory::load_from_file(&memory_config_path);
+
     let env = EmbedderEnv {
         memory_embedder: std::env::var("XVN_MEMORY_EMBEDDER").ok(),
         memory_embedder_provider: std::env::var("XVN_MEMORY_EMBEDDER_PROVIDER").ok(),
         memory_embedder_model: std::env::var("XVN_MEMORY_EMBEDDER_MODEL").ok(),
         openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
         openai_base_url: std::env::var("OPENAI_BASE_URL").ok(),
+        config_embedder: Some(memory_cfg.embedder.as_config_string()),
         resolved_provider_keys,
     };
 
