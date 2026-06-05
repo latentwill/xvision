@@ -21,6 +21,7 @@ pub struct LineageNode {
 #[serde(rename_all = "snake_case")]
 pub enum LineageStatus {
     Active,
+    Quarantined,
     Rejected,
 }
 
@@ -28,6 +29,7 @@ impl LineageStatus {
     fn as_str(&self) -> &'static str {
         match self {
             Self::Active => "active",
+            Self::Quarantined => "quarantined",
             Self::Rejected => "rejected",
         }
     }
@@ -35,6 +37,7 @@ impl LineageStatus {
     fn from_str(s: &str) -> Result<Self> {
         match s {
             "active" => Ok(Self::Active),
+            "quarantined" => Ok(Self::Quarantined),
             "rejected" => Ok(Self::Rejected),
             _ => bail!("unknown LineageStatus: {s}"),
         }
@@ -343,4 +346,30 @@ pub(crate) fn row_to_node(row: SqliteRow) -> Result<LineageNode> {
             .with_timezone(&Utc),
         diversity_score,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LineageStatus;
+
+    #[test]
+    fn quarantined_round_trips_via_wire_string() {
+        assert_eq!(LineageStatus::Quarantined.as_str(), "quarantined");
+        assert_eq!(
+            LineageStatus::from_str("quarantined").unwrap(),
+            LineageStatus::Quarantined
+        );
+    }
+
+    #[test]
+    fn legacy_active_rejected_still_parse() {
+        assert_eq!(
+            LineageStatus::from_str("active").unwrap(),
+            LineageStatus::Active
+        );
+        assert_eq!(
+            LineageStatus::from_str("rejected").unwrap(),
+            LineageStatus::Rejected
+        );
+    }
 }
