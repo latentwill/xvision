@@ -23,8 +23,12 @@ pub struct RegimeResultRow {
 
 /// Insert (or replace) a slice of [`RegimeResultRow`]s for a given
 /// `bundle_hash`.  Safe to call more than once — uses `INSERT OR REPLACE`.
+///
+/// Accepts any sqlx executor so it can be called inside a transaction:
+/// pass `pool` for a standalone call, or `&mut *tx` to participate in an
+/// existing transaction.
 pub async fn insert_regime_results(
-    pool: &SqlitePool,
+    executor: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     bundle_hash: &str,
     rows: &[RegimeResultRow],
     created_at: &str,
@@ -50,10 +54,24 @@ pub async fn insert_regime_results(
         .bind(r.delta_sharpe)
         .bind(&r.verdict)
         .bind(created_at)
-        .execute(pool)
+        .execute(&mut **executor)
         .await
         .with_context(|| format!("insert regime_result {} {}", bundle_hash, r.regime_label))?;
     }
+    Ok(())
+}
+
+/// Convenience wrapper: begin a transaction on `pool`, insert all regime rows,
+/// then commit.  Used by callers that are not already in a transaction.
+pub async fn insert_regime_results_standalone(
+    pool: &SqlitePool,
+    bundle_hash: &str,
+    rows: &[RegimeResultRow],
+    created_at: &str,
+) -> Result<()> {
+    let mut tx = pool.begin().await.context("begin regime_results tx")?;
+    insert_regime_results(&mut tx, bundle_hash, rows, created_at).await?;
+    tx.commit().await.context("commit regime_results tx")?;
     Ok(())
 }
 
@@ -162,7 +180,7 @@ mod tests {
             },
         ];
 
-        insert_regime_results(&pool, "hash-abc", &rows, "2026-01-01T00:00:00Z")
+        insert_regime_results_standalone(&pool, "hash-abc", &rows, "2026-01-01T00:00:00Z")
             .await
             .expect("insert_regime_results");
 

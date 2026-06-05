@@ -26,7 +26,7 @@ pub enum LineageStatus {
 }
 
 impl LineageStatus {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Active => "active",
             Self::Quarantined => "quarantined",

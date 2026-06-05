@@ -559,8 +559,8 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
         Ok(cycles) if !cycles.is_empty() => {
             println!("\nMutation cycles (`xvn optimizer run-cycle`):");
             println!(
-                "  {:<28}  {:>5}  {:>5}  {:>5}  {:>9}  {:>10}  {}",
-                "Cycle", "Nodes", "Kept", "Drop", "Cost", "Tokens", "Last"
+                "  {:<28}  {:>5}  {:>5}  {:>7}  {:>5}  {:>9}  {:>10}  {}",
+                "Cycle", "Nodes", "Kept", "Suspect", "Drop", "Cost", "Tokens", "Last"
             );
             for c in cycles {
                 let last = c.last_created_at.get(..19).unwrap_or(&c.last_created_at);
@@ -573,8 +573,8 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
                     _ => "—".to_string(),
                 };
                 println!(
-                    "  {:<28}  {:>5}  {:>5}  {:>5}  {:>9}  {:>10}  {}",
-                    c.cycle_id, c.node_count, c.active_count, c.rejected_count, cost, tokens, last
+                    "  {:<28}  {:>5}  {:>5}  {:>7}  {:>5}  {:>9}  {:>10}  {}",
+                    c.cycle_id, c.node_count, c.active_count, c.suspect_count, c.rejected_count, cost, tokens, last
                 );
             }
             println!(
@@ -641,8 +641,8 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
     let s = &detail.summary;
     println!("optimizer cycle: {}", s.cycle_id);
     println!(
-        "candidates: {} ({} kept, {} dropped)",
-        s.node_count, s.active_count, s.rejected_count
+        "candidates: {} ({} kept · {} suspect · {} dropped)",
+        s.node_count, s.active_count, s.suspect_count, s.rejected_count
     );
     println!("first node: {}", s.first_created_at);
     println!("last node:  {}", s.last_created_at);

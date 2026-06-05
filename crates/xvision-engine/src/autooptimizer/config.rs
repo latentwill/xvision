@@ -266,6 +266,9 @@ impl AutoOptimizerConfig {
                 }
             }
         }
+        // Fix 3: validate regime_set so duplicate/overlapping windows are caught
+        // at config-load time, before any cycle is launched.
+        validate_regime_set(&self.regime_set)?;
         Ok(())
     }
 }

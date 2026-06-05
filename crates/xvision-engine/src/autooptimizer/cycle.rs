@@ -574,7 +574,12 @@ where
             &parent_regime_metrics,
         )
         .await?;
-        let outcome_str = match &outcome.status {
+        // Fix 1+2: build_and_insert_node now atomically writes node + regime rows
+        // and returns the *resolved* status (which may be Active when the
+        // collision-guard preserves an existing active node).  Emit the SSE event
+        // and route the result bucket from the resolved status, not outcome.status.
+        let (node, resolved_status) = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
+        let outcome_str = match &resolved_status {
             LineageStatus::Active => "kept",
             LineageStatus::Quarantined => "suspect",
             LineageStatus::Rejected => "dropped",
@@ -591,7 +596,7 @@ where
         // past Nx degraded holdout") into Patterns the experiment writer recalls
         // across runs. Best-effort and eval-temporal-safe; never fail the cycle.
         if let Some(mem) = memory {
-            let status_label = match outcome.status {
+            let status_label = match resolved_status {
                 LineageStatus::Active => "active",
                 LineageStatus::Quarantined => "suspect",
                 LineageStatus::Rejected => "rejected",
@@ -616,7 +621,6 @@ where
                 tracing::warn!("mutator outcome write-back failed (best-effort, ignoring): {e}");
             }
         }
-        let node = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
         // F32: remember this candidate so later mutations this cycle (and the
         // mutator's own retries) won't re-derive it.
         avoid.insert(outcome.child_hash);
@@ -628,7 +632,7 @@ where
             &cycle_config.prompt_version,
         )
         .await?;
-        match outcome.status {
+        match resolved_status {
             LineageStatus::Active => {
                 record_outcome(pool, &outcome.child_hash, outcome.delta_sharpe).await?;
                 // P2: pass the recorder + eval scenario start so judge recall is
@@ -928,13 +932,25 @@ fn should_preserve_active_collision(new_status: &LineageStatus) -> bool {
     matches!(new_status, LineageStatus::Rejected | LineageStatus::Quarantined)
 }
 
+/// Build and atomically persist a lineage node together with its per-regime
+/// audit rows (if any).  Returns the node that was actually written to the DB
+/// and its **resolved** [`LineageStatus`] — which may differ from
+/// `outcome.status` when the collision-guard preserves an existing Active node.
+///
+/// Fix 1 (MAJOR): node insert and regime-results insert are wrapped in a single
+/// SQLite transaction so a regime-insert failure cannot leave a node without its
+/// audit rows.
+///
+/// Fix 2 (MAJOR): the resolved status is returned so callers can route the SSE
+/// event and result buckets from what the DB actually persisted, not from the
+/// pre-persistence derived status.
 async fn build_and_insert_node(
     pool: &SqlitePool,
     strategy_blob_store: &BlobStore,
     outcome: &MutationOutcome,
     parent_node: &LineageNode,
     cycle_id: &str,
-) -> Result<LineageNode> {
+) -> Result<(LineageNode, LineageStatus)> {
     let store = LineageStore::new(pool.clone());
     // F33: record this cycle's evaluation edge to the candidate up-front (before
     // the F12 active-node guard below can early-return), so a cycle that
@@ -956,6 +972,7 @@ async fn build_and_insert_node(
     // node (a re-derivation of a known-good strategy), replacing it would downgrade
     // the active node and poison future re-runs/parent selection. Keep the active
     // node and return it untouched rather than overwriting it with a worse outcome.
+    // Return the *Active* status so downstream SSE/buckets reflect what the DB holds.
     if should_preserve_active_collision(&outcome.status) {
         if let Some(existing) = store.get(&outcome.child_hash).await? {
             if existing.status == LineageStatus::Active {
@@ -965,7 +982,8 @@ async fn build_and_insert_node(
                     new_status = ?outcome.status,
                     "candidate collides with an existing active node — keeping the active node",
                 );
-                return Ok(existing);
+                let resolved_status = existing.status.clone();
+                return Ok((existing, resolved_status));
             }
         }
     }
@@ -978,7 +996,33 @@ async fn build_and_insert_node(
         created_at: Utc::now(),
         diversity_score: None,
     };
-    store.insert(&node).await?;
+
+    // Fix 1: wrap node insert + regime rows in a single transaction so a
+    // failure in regime-results insert cannot leave a node without its audit rows.
+    if !outcome.regime_rows.is_empty() {
+        let created_at = Utc::now().to_rfc3339();
+        let mut tx = pool.begin().await.context("begin node+regime tx")?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO lineage_nodes \
+             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(node.bundle_hash.to_hex())
+        .bind(node.parent_hash.as_ref().map(|h| h.to_hex()))
+        .bind(node.gate_verdict.as_str())
+        .bind(node.status.as_str())
+        .bind(&node.cycle_id)
+        .bind(node.created_at.to_rfc3339())
+        .execute(&mut *tx)
+        .await
+        .context("insert lineage_node (tx)")?;
+        insert_regime_results(&mut tx, &outcome.child_hash.to_hex(), &outcome.regime_rows, &created_at)
+            .await
+            .with_context(|| format!("failed to persist regime results for {}", outcome.child_hash.to_hex()))?;
+        tx.commit().await.context("commit node+regime tx")?;
+    } else {
+        store.insert(&node).await?;
+    }
 
     // F13: persist the candidate strategy blob so `GET /api/autooptimizer/blob/
     // :hash` resolves the child (the cycle previously wrote only the parent
@@ -999,24 +1043,8 @@ async fn build_and_insert_node(
     )
     .await;
 
-    // Phase 2: persist per-regime results when the regime-matrix path was used.
-    // Unlike `persist_node_metrics` (auxiliary display data), the regime rows are
-    // the audit trail that proves why a kept/suspect node was classified as it was.
-    // A silent failure here would leave nodes with no per-regime record, making
-    // operator review impossible. Propagate so the caller surfaces the error.
-    if !outcome.regime_rows.is_empty() {
-        let created_at = Utc::now().to_rfc3339();
-        insert_regime_results(
-            pool,
-            &outcome.child_hash.to_hex(),
-            &outcome.regime_rows,
-            &created_at,
-        )
-        .await
-        .with_context(|| format!("failed to persist regime results for {}", outcome.child_hash.to_hex()))?;
-    }
-
-    Ok(node)
+    let resolved_status = node.status.clone();
+    Ok((node, resolved_status))
 }
 
 /// F13: store the candidate's day + held-out `MetricsSummary` in the

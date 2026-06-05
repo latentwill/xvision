@@ -427,7 +427,7 @@ mod tests {
     use crate::autooptimizer::config::RegimeSide;
     use crate::autooptimizer::content_hash::ContentHash;
     use crate::autooptimizer::lineage::ensure_lineage_schema;
-    use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRow};
+    use crate::autooptimizer::regime_results::{insert_regime_results_standalone, RegimeResultRow};
     use crate::eval::run::MetricsSummary;
 
     /// Seed a cycle with 1 active + 1 quarantined (suspect) + 1 rejected node,
@@ -473,7 +473,7 @@ mod tests {
         }
 
         // Insert a regime result row for the suspect (quarantined) node.
-        insert_regime_results(
+        insert_regime_results_standalone(
             &pool,
             &hash_quarantined,
             &[RegimeResultRow {
