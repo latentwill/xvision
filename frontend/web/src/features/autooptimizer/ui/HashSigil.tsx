@@ -13,8 +13,8 @@ function hashToInt(hash: string): number {
   return h >>> 0;
 }
 
-// Gold-family hues so the sigil sits in the optimizer palette.
-const HUES = [42, 38, 46, 30, 50];
+// Signal theme accent vars — auto-adapt between light/dark.
+const ACCENTS = ["var(--gold)", "var(--info)", "var(--violet)"];
 
 export function HashSigil({
   hash,
@@ -24,8 +24,7 @@ export function HashSigil({
   size?: number;
 }) {
   const seed = hashToInt(hash || "•");
-  const hue = HUES[seed % HUES.length];
-  const fg = `hsl(${hue} 80% 58%)`;
+  const fg = ACCENTS[seed % ACCENTS.length];
   const cells = 5;
   const unit = size / cells;
   const rects: ReactNode[] = [];
