@@ -708,6 +708,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn memory_mode_round_trips() {
+        // P1 (cortex-memory deployment): guards migration 029 + the
+        // insert/load paths (store.rs `.bind(slot.memory_mode.as_str())`
+        // on write, `MemoryMode::parse_or_off` on read). A slot saved
+        // with a non-Off mode must reload byte-stable, otherwise the
+        // dashboard control would silently fail to enable memory.
+        let store = AgentStore::new(fresh_pool().await);
+        let mut slot = sample_slot();
+        slot.memory_mode = xvision_memory::types::MemoryMode::AgentScoped;
+        let id = store
+            .create(NewAgent {
+                name: "recall-trader".to_string(),
+                description: "Trades with recall.".to_string(),
+                tags: vec![],
+                slots: vec![slot],
+                scope_strategy_id: None,
+            })
+            .await
+            .unwrap();
+
+        let loaded = store.get(&id).await.unwrap().expect("exists");
+        assert_eq!(
+            loaded.slots[0].memory_mode,
+            xvision_memory::types::MemoryMode::AgentScoped,
+            "memory_mode must survive the DB round-trip",
+        );
+    }
+
+    #[tokio::test]
     async fn list_excludes_archived_by_default() {
         let store = AgentStore::new(fresh_pool().await);
         let a = store

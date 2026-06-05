@@ -480,6 +480,111 @@ secrets inline. The setup script writes `$REPO_ROOT/.env.local`
 
 ---
 
+## Enable Cortex memory on an agent (verify end-to-end)
+
+Cortex memory (the in-process `xvision-memory` layer) lets a memory-enabled
+agent recall its salient prior decisions before acting and write new ones
+back. It is **default-off** on every surface and requires an embedder.
+
+**1. Provision an embedder.** Set one of (see `docker/README.md` for the
+full resolution order):
+
+```bash
+# Reuse a registered OpenAI-compatible provider's key (no hard OpenAI dep):
+export XVN_MEMORY_EMBEDDER_PROVIDER=openai      # a provider with an /embeddings endpoint
+# …or fall back to the plain OpenAI env path:
+export OPENAI_API_KEY=sk-...                     # optional: OPENAI_BASE_URL for a proxy
+# …or, for an offline/dev box with no embedding API (low recall quality):
+export XVN_MEMORY_EMBEDDER=local
+```
+
+**1b. Local embeddings via Ollama (no API key, pick your model).** Run
+embeddings on a local Ollama server and choose the model from the dashboard
+— no OpenAI dependency. Ollama exposes an OpenAI-compatible
+`/v1/embeddings` endpoint, so the existing embedder transport just works:
+
+```bash
+ollama pull nomic-embed-text        # or qwen3-embedding, mxbai-embed-large, bge-m3, …
+```
+
+Then in **Settings → Providers**, add an **Ollama** provider with base_url
+`http://localhost:11434/v1`. The trailing **`/v1` is required** — the
+embedder POSTs `{base_url}/embeddings`, so the URL must resolve to
+`http://localhost:11434/v1/embeddings`. (Ollama is a no-auth kind; leave the
+API key blank.)
+
+Finally, in **Settings → General → Memory**:
+- **Embedder source** = your Ollama provider.
+- **Embedding model** = `nomic-embed-text` (or `qwen3-embedding`, etc.) — or
+  pick **Custom…** to type any model name your server serves.
+
+**1c. One-step local embeddings (Custom endpoint — no provider needed).** The
+fastest path: skip provider registration entirely and point memory straight at
+a local OpenAI-compatible server from the Memory card.
+
+```bash
+ollama pull nomic-embed-text        # or qwen3-embedding
+```
+
+Then in **Settings → General → Memory**:
+- **Embedder source** = **Custom endpoint (OpenAI-compatible)**.
+- **Custom endpoint base URL** = `http://localhost:11434/v1` (include the
+  trailing **`/v1`** — the embedder POSTs `{base_url}/embeddings`).
+- **Embedding model** = `nomic-embed-text` (or `qwen3-embedding`).
+
+The custom endpoint is **no-auth only** — no API key is stored (the base URL
+lives in `memory.toml`, which is not a secrets file). Works for Ollama,
+llama.cpp, LM Studio, and vLLM. **For an authenticated endpoint, register it as
+a provider in the Providers tab instead** (paths 1b above). To force a custom
+endpoint from the environment, set `XVN_MEMORY_EMBEDDER_BASE_URL=http://host/v1`
+(wins over the card; honors `OPENAI_API_KEY` if set).
+
+The embedding dimension differs per model (nomic = 768, openai-3-small =
+1536); the store records each observation's real vector length, so this is
+handled automatically. The resolved embedder id is **model-aware**
+(`openaicompat:nomic-embed-text`), so switching models keeps the vector
+spaces separate — but recall only matches within the same id. **Don't switch
+embedders mid-corpus**; if you do, `xvn memory forget --namespace <ns>` the
+affected namespaces and re-embed.
+
+The env override `XVN_MEMORY_EMBEDDER_MODEL` still wins over the dashboard
+pick, for operators who script it.
+
+**2. Confirm the substrate is healthy.**
+
+```bash
+xvn memory status        # store path + writable?, embedder present + id, grace days, namespaces
+xvn doctor --json | jq .memory
+```
+
+`embedder_present: true` is required for recall to do anything. With no
+embedder the agent path still runs — recall just no-ops (you'll see
+`memory_disabled_no_embedder` in traces).
+
+**3. Enable memory on a slot.** In the dashboard, open the agent, and on a
+slot set **Memory** to `Global` (shared across agents) or `Agent-scoped`
+(this agent only). Save. (CLI/API equivalent: persist the slot with
+`memory_mode = "global" | "agent_scoped"`.)
+
+**4. Verify recall across runs.** Run two eval cycles over the same agent:
+
+```bash
+xvn memory status        # observation count for the slot's namespace should grow after run 1
+# run a second eval; in the trace dock (or obs stream) the second run shows a
+# `memory_recall` event with k>0 hits, and the trader prompt carries a
+# <prior_observations> block.
+```
+
+Backtest temporal-safety holds automatically: recall in an eval/backtest
+context excludes future-dated Patterns (the scenario-start filter), so a
+replay can never leak knowledge from after its window.
+
+**Disable / clean up.** Set the slot's Memory back to `Off`, or clear a
+namespace with `xvn memory forget --namespace <ns>` (soft-delete; restore
+within the grace window via `xvn memory undo-forget`).
+
+---
+
 ## Scale tiers
 
 xvision's design assumes a single operator at v1. Several architectural

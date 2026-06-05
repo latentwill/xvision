@@ -51,6 +51,8 @@ pub struct MemoryCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum Op {
+    /// Report memory health: store path + writability, embedder presence/source, grace window, and per-namespace live-observation counts.
+    Status(StatusArgs),
     /// List memory items (default kind = pattern).
     Ls(LsArgs),
     /// List namespaces that currently contain memory rows.
@@ -116,6 +118,18 @@ pub struct LsArgs {
 #[derive(Args, Debug)]
 pub struct NamespacesArgs {
     /// Emit pretty-printed JSON instead of a human-readable table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct StatusArgs {
+    /// Override the xvn home directory (default: $XVN_HOME or ~/.xvn).
+    /// Used to resolve the configured providers when reporting the
+    /// embedder source.
+    #[arg(long)]
+    pub xvn_home: Option<std::path::PathBuf>,
+    /// Emit pretty-printed JSON instead of a human-readable summary.
     #[arg(long)]
     pub json: bool,
 }
@@ -219,6 +233,7 @@ pub struct UndoForgetArgs {
 
 pub async fn run(cmd: MemoryCmd) -> CliResult<()> {
     match cmd.op {
+        Op::Status(args) => run_status(args).await,
         Op::Ls(args) => run_ls(args).await,
         Op::Namespaces(args) => run_namespaces(args).await,
         Op::Show(args) => run_show(args).await,
@@ -244,6 +259,43 @@ pub async fn run(cmd: MemoryCmd) -> CliResult<()> {
         Op::Forget(args) => run_forget(args).await,
         Op::UndoForget(args) => run_undo_forget(args).await,
     }
+}
+
+async fn run_status(args: StatusArgs) -> CliResult<()> {
+    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("resolve xvn home: {e}")))?;
+    let store = memory_api::open_default_store()
+        .await
+        .map_err(|e| api_to_cli("memory status", e))?;
+    let status = memory_api::status(&store, &xvn_home)
+        .await
+        .map_err(|e| api_to_cli("memory status", e))?;
+
+    if args.json {
+        crate::io::print_json(&status)?;
+    } else {
+        println!("store_path        {}", status.store_path);
+        println!("writable          {}", status.writable);
+        println!("embedder_present  {}", status.embedder_present);
+        println!(
+            "embedder_id       {}",
+            status.embedder_id.as_deref().unwrap_or("-")
+        );
+        println!(
+            "embedder_source   {}",
+            status.embedder_source.as_deref().unwrap_or("-")
+        );
+        println!("grace_days        {}", status.grace_days);
+        if status.namespaces.is_empty() {
+            println!("namespaces        (none)");
+        } else {
+            println!("namespaces");
+            for ns in &status.namespaces {
+                println!("  {:<24}  {} live obs", ns.namespace, ns.live_observations);
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn run_namespaces(args: NamespacesArgs) -> CliResult<()> {

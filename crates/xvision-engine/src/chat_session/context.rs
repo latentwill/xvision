@@ -109,6 +109,41 @@ impl ContextScope {
         }
     }
 
+    /// Cortex-memory namespace for chat-rail recall/write-back.
+    ///
+    /// The namespace is derived from the **scope**, not the session id, on
+    /// purpose: a scope (a strategy draft, an eval run, the workspace) long
+    /// outlives any single chat session, so binding memory to the scope lets
+    /// salient facts survive session deletion / a fresh session opened on the
+    /// same page. A session-keyed namespace would orphan every prior
+    /// observation the moment the operator started a new conversation.
+    ///
+    /// Every namespace is prefixed `chat:` so it can never collide with the
+    /// agent slot namespaces (`global`, `agent:{id}`) or the autooptimizer
+    /// subsurface namespaces (`autooptimizer:judge`, `autooptimizer:mutations`)
+    /// that share the same `MemoryStore`.
+    pub fn memory_namespace(&self) -> String {
+        match self {
+            ContextScope::Workspace => "chat:workspace".into(),
+            ContextScope::Route { route } => format!("chat:route:{route}"),
+            ContextScope::Run { run_id } => format!("chat:run:{run_id}"),
+            ContextScope::Strategy { draft_id } => format!("chat:strategy:{draft_id}"),
+            ContextScope::Deployment { deployment_id } => {
+                format!("chat:deployment:{deployment_id}")
+            }
+            ContextScope::Compare { run_ids } => {
+                format!("chat:compare:{}", run_ids.join(","))
+            }
+            ContextScope::JournalFilter { kinds } => {
+                format!("chat:journal:{}", kinds.join(","))
+            }
+            ContextScope::Selection { items } => {
+                format!("chat:selection:{}", items.join(","))
+            }
+            ContextScope::Seed { seed_id } => format!("chat:seed:{seed_id}"),
+        }
+    }
+
     /// Composer placeholder text matching the active scope.
     pub fn placeholder(&self) -> &'static str {
         match self {
@@ -177,6 +212,44 @@ mod tests {
         let workspace = ContextScope::Workspace.placeholder();
         let run = ContextScope::Run { run_id: "x".into() }.placeholder();
         assert_ne!(workspace, run);
+    }
+
+    #[test]
+    fn memory_namespace_is_scope_based_and_chat_prefixed() {
+        assert_eq!(ContextScope::Workspace.memory_namespace(), "chat:workspace");
+        assert_eq!(
+            ContextScope::Strategy {
+                draft_id: "s1".into()
+            }
+            .memory_namespace(),
+            "chat:strategy:s1"
+        );
+        assert_eq!(
+            ContextScope::Run {
+                run_id: "01HABC".into()
+            }
+            .memory_namespace(),
+            "chat:run:01HABC"
+        );
+        // Every variant must carry the `chat:` prefix so it can't collide
+        // with agent (`global` / `agent:*`) or autooptimizer namespaces.
+        for s in [
+            ContextScope::Workspace,
+            ContextScope::Route { route: "/x".into() },
+            ContextScope::Deployment {
+                deployment_id: "d1".into(),
+            },
+            ContextScope::Compare {
+                run_ids: vec!["a".into(), "b".into()],
+            },
+            ContextScope::Seed { seed_id: "z".into() },
+        ] {
+            assert!(
+                s.memory_namespace().starts_with("chat:"),
+                "namespace must be chat-prefixed: {}",
+                s.memory_namespace()
+            );
+        }
     }
 
     #[test]

@@ -15,6 +15,8 @@ import type {
   BrokersReport,
   Catalog,
   FactoryResetReport,
+  MemoryReport,
+  MemoryStatus,
   ObservabilityReport,
   ProviderModelsReport,
   ProviderRow,
@@ -23,6 +25,7 @@ import type {
   ResetWorkspaceReport,
   RetentionModeDto,
   TestConnectionReport,
+  UpdateMemoryRequest,
   UpdateProviderRequest,
 } from "./types.gen";
 
@@ -50,6 +53,8 @@ export const settingsKeys = {
   daemon: () => [...settingsKeys.all, "daemon"] as const,
   identity: () => [...settingsKeys.all, "identity"] as const,
   observability: () => [...settingsKeys.all, "observability"] as const,
+  memory: () => [...settingsKeys.all, "memory"] as const,
+  memoryStatus: () => [...settingsKeys.all, "memory", "status"] as const,
   providers: () => [...settingsKeys.all, "providers"] as const,
   providerModels: (name: string) =>
     [...settingsKeys.all, "providers", name, "models"] as const,
@@ -87,6 +92,48 @@ export function setObservabilityMode(
       });
       throw err;
     });
+}
+
+// ─── Memory (Cortex embedder + chat/optimizer toggles + status) ───────────
+
+export function getMemorySettings(): Promise<MemoryReport> {
+  return apiFetch<MemoryReport>("/api/settings/memory");
+}
+
+export function updateMemorySettings(
+  req: UpdateMemoryRequest,
+): Promise<MemoryReport> {
+  const trace = createTrace("settings", {
+    embedder: req.embedder,
+    chat_enabled: req.chat_enabled,
+    optimizer_enabled: req.optimizer_enabled,
+  });
+  const started = performance.now();
+  trace.info("settings.memory.set");
+  return apiFetch<MemoryReport>("/api/settings/memory", {
+    method: "PUT",
+    body: JSON.stringify(req),
+  })
+    .then((report) => {
+      trace.info("settings.memory.set.ok", {
+        embedder: report.embedder,
+        chat_enabled: report.chat_enabled,
+        optimizer_enabled: report.optimizer_enabled,
+        duration_ms: durationSince(started),
+      });
+      return report;
+    })
+    .catch((err) => {
+      trace.error("settings.memory.set.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function getMemoryStatus(): Promise<MemoryStatus> {
+  return apiFetch<MemoryStatus>("/api/settings/memory/status");
 }
 
 export function getBrokers(): Promise<BrokersReport> {
