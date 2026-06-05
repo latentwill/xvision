@@ -50,24 +50,30 @@ pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<()
 fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<ValidationError>) {
     let known_roles: HashSet<String> = base.agents.iter().map(|a| a.role.clone()).collect();
     for (i, edit) in prose.iter().enumerate() {
+        // The `agent_role` must match an agent in the strategy so apply_to has
+        // a real home (the AgentRef's prompt_override). An unknown role means
+        // the edit is a structural no-op and the writer is targeting a ghost slot.
         if !known_roles.contains(&canonical_role(&edit.agent_role)) {
             errors.push(ValidationError::with_path(
-                "unknown_agent_role",
+                "unknown_role",
                 format!(
-                    "Experiment writer referenced unknown agent role '{}'.",
-                    edit.agent_role
+                    "Experiment writer referenced unknown agent role '{}'. \
+                     Valid roles: [{}].",
+                    edit.agent_role,
+                    known_roles.iter().cloned().collect::<Vec<_>>().join(", ")
                 ),
                 format!("prose[{i}].agent_role"),
             ));
         }
-        // Strategy stores only AgentRef (agent_id + role), not inline prose.
-        // Without the Agent store, the only enforceable baseline check is
-        // that the caller supplied a non-empty `before` value.
-        if edit.before.is_empty() {
+        // `after` is the COMPLETE replacement prompt; it must not be blank.
+        // An empty `after` would erase the agent's prompt entirely, which is
+        // never a coherent experiment.
+        if edit.after.trim().is_empty() {
             errors.push(ValidationError::with_path(
-                "stale_prose_baseline",
-                "Experiment writer must supply the current prompt text in 'before'.",
-                format!("prose[{i}].before"),
+                "empty_prose",
+                "Prose experiment 'after' must not be empty or whitespace; \
+                 supply the complete replacement prompt text.",
+                format!("prose[{i}].after"),
             ));
         }
     }
@@ -203,5 +209,75 @@ fn validate_tools(removed: &[String], added: &[String], base: &Strategy, errors:
                 "tools.added",
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::autooptimizer::mutator::{MutationKind, ToolDiff};
+
+    fn fixture_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000B",
+                "display_name": "Validator Test Strategy",
+                "plain_summary": "Minimal strategy for validator tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000B", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {}
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialise")
+    }
+
+    fn prose_diff(agent_role: &str, after: &str) -> MutationDiff {
+        MutationDiff {
+            kind: MutationKind::Prose,
+            prose: vec![ProseEdit {
+                agent_role: agent_role.into(),
+                before: String::new(),
+                after: after.into(),
+            }],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            rationale: "test".into(),
+        }
+    }
+
+    #[test]
+    fn prose_edit_requires_nonempty_after_and_known_role() {
+        let base = fixture_strategy();
+        // empty after -> error
+        let empty = prose_diff("trader", "");
+        assert!(
+            validate_mutation_diff(&empty, &base).is_err(),
+            "empty after must be rejected"
+        );
+        // unknown role -> error
+        let unknown = prose_diff("ghost", "do X");
+        assert!(
+            validate_mutation_diff(&unknown, &base).is_err(),
+            "unknown role must be rejected"
+        );
+        // good -> ok
+        let ok = prose_diff("trader", "Trade with-trend only.");
+        assert!(
+            validate_mutation_diff(&ok, &base).is_ok(),
+            "valid prose diff must be accepted"
+        );
     }
 }

@@ -16,6 +16,46 @@ const MAX_PROSE: usize = 64;
 const MAX_PARAMS: usize = 64;
 const MAX_TOOLS: usize = 64;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::autooptimizer::mutator::MutationKind;
+
+    fn make_prose_diff() -> MutationDiff {
+        MutationDiff {
+            kind: MutationKind::Prose,
+            prose: vec![ProseEdit {
+                agent_role: "trader".into(),
+                before: "old prompt text".into(),
+                after: "new prompt text".into(),
+            }],
+            params: vec![],
+            tools: ToolDiff { added: vec![], removed: vec![] },
+            rationale: "test inversion".into(),
+        }
+    }
+
+    #[test]
+    fn invert_prose_swaps_before_and_after() {
+        let d = make_prose_diff();
+        let inv = invert_mutation(&d);
+        assert_eq!(inv.prose[0].before, "new prompt text");
+        assert_eq!(inv.prose[0].after, "old prompt text");
+        assert_eq!(inv.prose[0].agent_role, "trader");
+    }
+
+    #[test]
+    fn invert_invert_prose_roundtrips() {
+        // invert(invert(d)) == d — prose inversion is symmetric.
+        let d = make_prose_diff();
+        let double_inv = invert_mutation(&invert_mutation(&d));
+        assert_eq!(double_inv.prose[0].before, d.prose[0].before);
+        assert_eq!(double_inv.prose[0].after, d.prose[0].after);
+        assert_eq!(double_inv.prose[0].agent_role, d.prose[0].agent_role);
+        assert_eq!(double_inv.rationale, d.rationale);
+    }
+}
+
 /// Returns the inverse of `diff`: prose before↔after, params before↔after,
 /// tools added↔removed. `is_empty()` is preserved by construction.
 pub fn invert_mutation(diff: &MutationDiff) -> MutationDiff {

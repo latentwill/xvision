@@ -41,9 +41,11 @@ markdown, prose, or extra keys outside the JSON object.
 Rules:
 - `kind` determines which array is populated. The other arrays must be empty
   (prose=[], params=[], tools={added:[],removed:[]}).
-- For `prose` experiments: `before` must be the actual current prompt text, not
-  a placeholder. `agent_role` must exactly match a role in the strategy's agents
-  list (case-insensitive).
+- For `prose` experiments: `after` is the **complete replacement prompt** for
+  that agent role — not a diff or excerpt, but the full revised system prompt
+  text. `before` may be empty (the current override is unknown from the program
+  view). `agent_role` must exactly match a role in the strategy's agents list
+  (case-insensitive). `after` must not be empty or whitespace.
 - For `param` experiments: `key` must be exactly one of the tunable parameter
   keys listed in the user message. These include `mechanical_params` keys AND
   risk-config knobs addressed as `risk.<field>` (e.g. `risk.stop_loss_atr_multiple`,
@@ -57,6 +59,33 @@ Rules:
   underscores (max 64 chars). You cannot remove a tool that isn't present; you
   cannot add a tool that is already present.
 - Only ONE change per experiment. Do not combine prose + param changes.
+
+## Prose experiment example
+
+When the strategy has an agent and `"prose"` is in the allowed kinds, you may
+propose a trader-prompt rewrite. Supply the complete revised prompt in `after`
+(not just the changed section):
+
+```json
+{
+  "kind": "prose",
+  "prose": [
+    {
+      "agent_role": "trader",
+      "before": "",
+      "after": "You are a disciplined momentum trader. Enter only when the trend is confirmed by both price action and volume. Size down in choppy or sideways conditions. Exit promptly when the signal reverses."
+    }
+  ],
+  "params": [],
+  "tools": { "added": [], "removed": [] },
+  "rationale": "Tighter entry discipline should reduce false signals in range-bound markets."
+}
+```
+
+Note: `after` is the **complete** replacement for that role's prompt — the
+Optimizer (autooptimizer subsystem) writes it directly into the strategy's
+per-agent override so it takes effect at backtest time without changing the
+shared agent library.
 
 ---
 
