@@ -94,7 +94,10 @@ Regions (all full-width, single column; ✅ = wired to existing data, ⏳ = ligh
 - **Active lineages grid** — one card per recent lineage/cycle: sigil, name, status, parent
   Sharpe, micro-stats (experiments / kept / model). ✅
 - **Experiment-writers panel** (Ladder + Provenance merged) — scoreboard ranked by accept-rate /
-  avg ΔSharpe; each writer row expands to its recent experiments. ✅ from `/ladder` + `/lineage`.
+  avg ΔSharpe; each writer row expands inline. ✅ from `/ladder`. **Phase 1 ships the expansion
+  showing the writer's real `/ladder` stats; expanding to that writer's actual recent *experiments*
+  needs real attribution (`mutator_attribution` → `/lineage`) and is deferred to Phase 2 — see the
+  §11 deferred-items register.**
 - **Recent cycles table** — id, lineage·parent, experiments, gate ✓, kept, top ΔSharpe, tokens·$,
   when; rows link to the Cycle screen. ✅
 
