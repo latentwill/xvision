@@ -338,6 +338,7 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/settings/identity", get(settings::identity::get))
         .route("/api/settings/observability", get(settings::observability::get))
         .route("/api/settings/memory", get(settings::memory::get))
+        .route("/api/settings/memory/status", get(settings::memory::status))
         .route("/api/settings/providers", get(settings::providers::list))
         .route("/api/settings/providers/:name", get(settings::providers::show))
         .route(
