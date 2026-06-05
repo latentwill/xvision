@@ -236,3 +236,38 @@ implementation plan**; this spec is the north-star plus Phase-1 detail.
   scope here).
 - Whether `agent_runs` linkage is per-experiment or per-eval-run granularity (Phase 3).
 - Attester agent model/config and receipt schema (Phase 4).
+
+## 11. Phase 1 reconciliation (amended 2026-06-05, post-build + Codex review)
+
+Phase 1 shipped on branch `feat/optimizer-ui-redesign-p1`. A cross-model (Codex) review surfaced
+that a few items §4 marked `✅`-live were thinner than the spec implied. This section reconciles the
+spec with what actually shipped, and moves the residue to the owning later phase (deferred-items
+register — never cut silently, per project convention).
+
+### Delivered in Phase 1 (on real data)
+
+- 3-screen IA (`/optimizer` → cycle → experiment), breadcrumbs (with `aria-current`), legacy
+  `/autooptimizer[/diff/:hash]` redirects that **preserve the hash** to the experiment screen.
+- Themed primitives on the **Signal theme** (no literal colors): `HashSigil` (accent vars
+  `--gold`/`--info`/`--violet`, not amber), `GateBadge` (Kept/Suspect/Dropped), `ExperimentPill`,
+  `ProgressDial` (with `role="progressbar"`), `Breadcrumb`, `EmptyPanel`.
+- Optimizer Home: embedded live cycle + **Experiment-writers panel** (merged Ladder+Provenance;
+  rows expand to the writer's **real** `/ladder` stats) + Recent-cycles table (deep-links).
+- Cycle screen: hero with a **kept-rate `ProgressDial`** (active/node_count), experiments table,
+  and an inline **lineage tree** (cycle-safe against self-parent / cyclic `parent_hash`).
+- Experiment screen: hero + inline **parent diff** (`/blob/:hash`).
+- `⏳` panels (eval matrix, gate buckets, per-regime cards, flight recorder, attesters, evening
+  summary) render as honest `EmptyPanel` stubs labeled with their owning phase.
+
+### Deferred-items register (moved out of Phase 1)
+
+| Item | Was marked | Now owned by | Why |
+|---|---|---|---|
+| Per-writer **real experiment attribution** in the writers panel (list a writer's actual experiments, not stats) | §4.1 `✅` | **Phase 2** | `/lineage` carries no `provider`/`model`; `mutator_attribution` exists but is only joined into `/cycles/:id` today. Needs a backend join (`mutator_attribution` → `/lineage`) to avoid fabricated association. Phase-1 shows the writer's real `/ladder` stats instead. |
+| **Experiment-kind pill** + why/what-changed summary in the cycle experiments table | §4.2 `✅ core` | **Phase 2** | The backend emits no structured experiment "kind"; deriving it requires per-node blob diffing (N fetches) or a backend field. `ExperimentPill` primitive is built and tested, ready to wire when the data lands. |
+| **Top-Δ-Sharpe** column (Home recent-cycles + cycle hero) | §4.1/§4.2 | **Phase 2** | Δ-Sharpe-vs-parent is a regime-matrix output; not available pre-Phase-2. |
+| Richer cycle/experiment **hero metrics** (regimes-kept, sign-offs, per-regime equity) | §4.2/§4.3 | **Phases 2/4** | Depend on regime results (P2) and attesters (P4). |
+| Parent-diff **Copy diff / Full manifest** actions + collapsed-unchanged sections | §4.3 | **Phase 2** | Polish; current panel shows changed fields only. Also: cap rows for very large blobs. |
+
+`ExperimentPill` is intentionally retained as a tested Phase-2 building block (its data source
+arrives with the regime matrix); it is not dead code to be removed.
