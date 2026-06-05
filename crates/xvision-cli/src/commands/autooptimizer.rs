@@ -839,12 +839,24 @@ async fn fetch_lineage_rows(
 ) -> CliResult<Vec<LineageRow>> {
     const SEL: &str =
         "SELECT bundle_hash, parent_hash, status, cycle_id, created_at, gate_verdict FROM lineage_nodes";
+    // F33: resolve a cycle's experiments the SAME way `get_cycle_run` (the
+    // dashboard / `optimizer cycle show`) does — the per-cycle evaluation edges
+    // UNION the legacy `cycle_id` column — so the CLI `lineage ls --cycle` can't
+    // contradict the dashboard (previously a candidate a cycle evaluated but
+    // whose content-addressed row is owned by another cycle showed in the
+    // dashboard yet "(no experiments)" here).
+    const CYCLE_PRED: &str = "bundle_hash IN ( \
+        SELECT bundle_hash FROM cycle_node_evaluations WHERE cycle_id = ? \
+        UNION \
+        SELECT bundle_hash FROM lineage_nodes WHERE cycle_id = ? )";
+    ensure_lineage_schema(pool).await.ok();
     let lim = limit as i64;
     let raw = if status == "all" {
         if let Some(c) = cycle {
             sqlx::query(&format!(
-                "{SEL} WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?"
+                "{SEL} WHERE {CYCLE_PRED} ORDER BY created_at DESC LIMIT ?"
             ))
+            .bind(c)
             .bind(c)
             .bind(lim)
             .fetch_all(pool)
@@ -857,8 +869,9 @@ async fn fetch_lineage_rows(
         }
     } else if let Some(c) = cycle {
         sqlx::query(&format!(
-            "{SEL} WHERE cycle_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"
+            "{SEL} WHERE {CYCLE_PRED} AND status = ? ORDER BY created_at DESC LIMIT ?"
         ))
+        .bind(c)
         .bind(c)
         .bind(status)
         .bind(lim)
@@ -2020,7 +2033,11 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg, None, exploration_seed).await
+    // `mutate-once` is a single-shot experiment with no lineage-history context
+    // here; the run-cycle path supplies the F32 avoid-set.
+    mutator
+        .propose(base, cfg, None, exploration_seed, &std::collections::HashSet::new())
+        .await
 }
 
 fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {
