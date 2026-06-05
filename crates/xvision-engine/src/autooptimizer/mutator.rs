@@ -200,19 +200,27 @@ pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
 /// The mutation kinds that are *structurally applicable* to `base`, intersected
 /// with the operator-allowed kinds (F21). `param` is applicable whenever the
 /// strategy exposes a tunable key (always, since every strategy has a `risk`
-/// config). `tool` stays as allowed. `prose` is excluded: a `Strategy`
-/// references library agents by `AgentRef`, so a prompt edit cannot change the
-/// strategy artifact — proposing it only ever yields a no-op (identity) the
-/// gate must reject. Excluding it steers the experiment writer to a lever that
-/// can actually move the strategy instead of burning the retry budget.
+/// config). `tool` stays as allowed. `prose` is applicable when the strategy
+/// has at least one `AgentRef` to carry a `prompt_override` (Phase 0 substrate):
+/// a prose edit sets `AgentRef.prompt_override` and changes the strategy content
+/// hash, so it is a real change — not a no-op — on any agent strategy. For
+/// agentless/pre-refactor strategies there is still no home, so prose is
+/// excluded there. `filter` is inert until Phase 2 adds `MutationKind::Filter`;
+/// the arm is included now to avoid a second edit in Phase 2.
 pub fn applicable_mutation_kinds(base: &Strategy, allowed: &[String]) -> Vec<String> {
     let has_params = !tunable_param_keys(base).is_empty();
+    // Prose is applicable iff the strategy has at least one agent to carry a
+    // `prompt_override` (Phase 0). For agentless/pre-refactor strategies there
+    // is still no home, so prose stays excluded there.
+    let has_prompt_home = !base.agents.is_empty();
+    let has_filter = base.filter.is_some(); // Phase 2
     allowed
         .iter()
         .filter(|k| match k.as_str() {
             "param" => has_params,
             "tool" => true,
-            "prose" => false,
+            "prose" => has_prompt_home,
+            "filter" => has_filter,
             _ => false,
         })
         .cloned()
@@ -758,18 +766,21 @@ mod tests {
     }
 
     #[test]
-    fn applicable_kinds_drop_prose_and_keep_param() {
-        let base = fixture_strategy();
+    fn applicable_kinds_allow_prose_when_strategy_has_an_agent() {
+        let base = fixture_strategy(); // has a trader AgentRef
         let allowed = vec!["prose".into(), "param".into(), "tool".into()];
         let kinds = applicable_mutation_kinds(&base, &allowed);
-        assert!(
-            kinds.contains(&"param".to_string()),
-            "param is always applicable (risk exists)"
-        );
-        assert!(
-            !kinds.contains(&"prose".to_string()),
-            "prose is a structural no-op, excluded"
-        );
+        assert!(kinds.contains(&"prose".to_string()), "prose now has a home (AgentRef override)");
+        assert!(kinds.contains(&"param".to_string()), "param always applicable (risk exists)");
+    }
+
+    #[test]
+    fn applicable_kinds_drop_prose_when_strategy_has_no_agents() {
+        let mut base = fixture_strategy();
+        base.agents.clear();
+        let allowed = vec!["prose".into(), "param".into()];
+        let kinds = applicable_mutation_kinds(&base, &allowed);
+        assert!(!kinds.contains(&"prose".to_string()), "no agent => no prompt home => prose excluded");
     }
 
     #[test]
