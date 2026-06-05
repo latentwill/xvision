@@ -1012,7 +1012,17 @@ pub async fn resolve_agent_slots_for_strategy(
             .slots
             .first()
             .ok_or_else(|| anyhow::anyhow!("agent {} has no executable slots", agent.agent_id))?;
-        out.push(resolve_agent_slot(&agent_ref.role, slot, &agent.agent_id));
+        let mut resolved = resolve_agent_slot(&agent_ref.role, slot, &agent.agent_id);
+        // Per-AgentRef overrides win over the shared library slot. Honor both
+        // here so prompt/model mutations live in the Strategy artifact (content
+        // hash + lineage) without touching the shared Agent record.
+        if let Some(p) = agent_ref.prompt_override.as_ref() {
+            resolved.system_prompt = p.clone();
+        }
+        if let Some(m) = agent_ref.model_override.as_ref() {
+            resolved.slot.model = Some(m.clone());
+        }
+        out.push(resolved);
     }
     Ok(out)
 }
