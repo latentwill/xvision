@@ -1,73 +1,90 @@
 //! F32: the experiment writer (mutator) must EXPLORE — successive cycles on the
-//! same parent must be able to produce *diverse* candidates, not the one fixed
-//! tweak forever. Before this fix, `propose` sent `temperature: None` with a
-//! fixed prompt, so the same parent always yielded the identical candidate and
-//! the optimizer could never search or converge.
+//! same parent must not re-derive the one fixed tweak forever, or the optimizer
+//! can never search or converge.
 //!
-//! The fix threads a per-cycle exploration seed into the prompt (and temperature).
-//! This test proves the seed reaches the model and changes the proposal: a
-//! seed-sensitive dispatch reads the injected exploration variant from the prompt
-//! and proposes a seed-dependent value, and N distinct cycle ids yield ≥2 distinct
-//! candidates.
+//! The earlier fix only passed a cosmetic "variant N" nonce + a non-zero
+//! temperature, which a real model ignores — it collapses the constrained
+//! experiment space to the single most obvious tweak every cycle, so repeat
+//! cycles produced the byte-identical candidate. These tests cover the two
+//! model-INDEPENDENT mechanisms that actually fix it:
+//!
+//!   1. a hard `avoid`-set: the mutator refuses to re-emit any candidate this
+//!      parent already produced (regardless of what the model returns), so the
+//!      optimizer can never re-evaluate a known candidate; and
+//!   2. a SUBSTANTIVE per-seed exploration directive that NAMES a focus parameter
+//!      — so different cycles get a materially different prompt, not a nonce the
+//!      model can ignore.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::json;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmResponse, StopReason};
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
+use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::exploration_seed_for;
-use xvision_engine::autooptimizer::mutator::Mutator;
+use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
 use xvision_engine::strategies::Strategy;
 
-/// A dispatch that reads the per-cycle exploration variant the mutator injects
-/// into the prompt and proposes a param value derived from it. If the seed never
-/// reached the prompt (the pre-F32 bug), every call would see variant 0 and emit
-/// the identical candidate.
-struct SeedSensitiveDispatch;
-
-fn parse_variant(prompt: &str) -> u64 {
-    // The mutator injects: "Exploration directive (variant <N>): ..."
-    let Some(idx) = prompt.find("variant ") else {
-        return 0;
-    };
-    let rest = &prompt[idx + "variant ".len()..];
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    digits.parse().unwrap_or(0)
+fn prompt_of(req: &LlmRequest) -> String {
+    req.messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|b| match b {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-#[async_trait]
-impl LlmDispatch for SeedSensitiveDispatch {
-    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
-        let prompt: String = req
-            .messages
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .filter_map(|b| match b {
-                ContentBlock::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let seed = parse_variant(&prompt);
-        // Map the seed to one of several distinct ema_fast values, so different
-        // cycles produce different candidates.
-        let after = 13 + (seed % 37);
-        let body = json!({
-            "kind": "param",
-            "prose": [],
-            "params": [{"key": "ema_fast", "before": 12, "after": after}],
-            "tools": {"added": [], "removed": []},
-            "rationale": format!("seed-driven variant {seed}")
-        })
-        .to_string();
-        Ok(LlmResponse {
-            content: vec![ContentBlock::Text { text: body }],
-            stop_reason: StopReason::EndTurn,
-            input_tokens: 1,
-            output_tokens: 1,
-        })
+fn param_diff_response(key: &str, before: i64, after: i64) -> LlmResponse {
+    let body = json!({
+        "kind": "param",
+        "prose": [],
+        "params": [{"key": key, "before": before, "after": after}],
+        "tools": {"added": [], "removed": []},
+        "rationale": "test"
+    })
+    .to_string();
+    LlmResponse {
+        content: vec![ContentBlock::Text { text: body }],
+        stop_reason: StopReason::EndTurn,
+        input_tokens: 1,
+        output_tokens: 1,
     }
+}
+
+/// Always proposes the SAME candidate — simulates a real model that collapses
+/// the constrained space to one fixed tweak no matter the seed/temperature.
+struct FixedDispatch;
+#[async_trait]
+impl LlmDispatch for FixedDispatch {
+    async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        Ok(param_diff_response("ema_fast", 12, 20))
+    }
+}
+
+/// Records every prompt it sees, then returns a fixed valid (non-identity) diff.
+struct PromptCapturingDispatch {
+    prompts: Arc<Mutex<Vec<String>>>,
+}
+#[async_trait]
+impl LlmDispatch for PromptCapturingDispatch {
+    async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        self.prompts.lock().unwrap().push(prompt_of(&req));
+        Ok(param_diff_response("atr_period", 14, 20))
+    }
+}
+
+/// Pull the focus key out of a "FOCUS this experiment on the parameter `<key>`"
+/// directive, if present.
+fn focus_key(prompt: &str) -> Option<String> {
+    let marker = "FOCUS this experiment on the parameter `";
+    let start = prompt.find(marker)? + marker.len();
+    let rest = &prompt[start..];
+    let end = rest.find('`')?;
+    Some(rest[..end].to_string())
 }
 
 fn make_strategy() -> Strategy {
@@ -97,6 +114,10 @@ fn make_strategy() -> Strategy {
     serde_json::from_value(v).expect("fixture strategy deserializes")
 }
 
+fn candidate_hash(base: &Strategy, diff: &MutationDiff) -> ContentHash {
+    ContentHash::of_json(&serde_json::to_value(diff.apply_to(base)).unwrap())
+}
+
 #[test]
 fn exploration_seed_varies_per_cycle_id() {
     let a = exploration_seed_for("01CYCLEAAAAAAAAAAAAAAAAAAA", 0);
@@ -106,40 +127,79 @@ fn exploration_seed_varies_per_cycle_id() {
     assert_ne!(a, c, "distinct mutation indices must yield distinct seeds");
 }
 
+/// The load-bearing, model-independent guarantee: even a model that ALWAYS
+/// returns the same candidate cannot make the optimizer re-evaluate it. Once that
+/// candidate is in the parent's history (`avoid`), `propose` rejects every
+/// repeat and fails rather than handing back the known candidate to be
+/// re-backtested — so repeat cycles can't loop on the same loser.
 #[tokio::test]
-async fn successive_cycles_on_same_parent_produce_diverse_candidates() {
+async fn mutator_refuses_to_re_emit_an_already_tried_candidate() {
     let base = make_strategy();
     let cfg = AutoOptimizerConfig::default();
     let mutator = Mutator {
         provider: "test".into(),
         model: "test-model".into(),
-        dispatch: Arc::new(SeedSensitiveDispatch) as Arc<dyn LlmDispatch + Send + Sync>,
-        max_retries: 2,
+        dispatch: Arc::new(FixedDispatch) as Arc<dyn LlmDispatch + Send + Sync>,
+        max_retries: 3,
     };
 
-    // Five different cycle ids → five exploration seeds → propose candidates.
-    let cycle_ids = [
-        "01CYCLE0000000000000000001",
-        "01CYCLE0000000000000000002",
-        "01CYCLE0000000000000000003",
-        "01CYCLE0000000000000000004",
-        "01CYCLE0000000000000000005",
-    ];
-    let mut candidate_jsons = std::collections::HashSet::new();
-    for cid in cycle_ids {
-        let seed = exploration_seed_for(cid, 0);
-        let diff = mutator
-            .propose(&base, &cfg, None, seed, None)
-            .await
-            .expect("propose should succeed");
-        let candidate = diff.apply_to(&base);
-        let json = serde_json::to_string(&candidate).unwrap();
-        candidate_jsons.insert(json);
-    }
+    // First cycle (empty history): the fixed candidate is accepted.
+    let first = mutator
+        .propose(&base, &cfg, None, 1, None, &Default::default())
+        .await
+        .expect("first proposal succeeds");
+    let tried = candidate_hash(&base, &first);
 
+    // Second cycle, same parent, that candidate now in history → must NOT be
+    // re-emitted; with a model that only ever returns it, propose fails.
+    let avoid: std::collections::HashSet<ContentHash> = [tried].into_iter().collect();
+    let second = mutator.propose(&base, &cfg, None, 2, None, &avoid).await;
     assert!(
-        candidate_jsons.len() >= 2,
-        "F32: successive cycles on the same parent must produce >=2 distinct candidates, got {}",
-        candidate_jsons.len()
+        second.is_err(),
+        "F32: a candidate already evaluated on this parent must never be re-emitted; \
+         got a repeat instead of a refusal"
+    );
+}
+
+/// The seed must change the prompt SUBSTANTIVELY (name a different focus
+/// parameter), not just a cosmetic nonce — that's what lets a real model diverge.
+#[tokio::test]
+async fn seed_directed_focus_targets_different_params() {
+    let base = make_strategy();
+    let cfg = AutoOptimizerConfig::default();
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let mutator = Mutator {
+        provider: "test".into(),
+        model: "test-model".into(),
+        dispatch: Arc::new(PromptCapturingDispatch {
+            prompts: Arc::clone(&prompts),
+        }) as Arc<dyn LlmDispatch + Send + Sync>,
+        max_retries: 0,
+    };
+
+    // Two seeds chosen to land on different tunable keys (ema_fast vs atr_period
+    // are the first two mechanical keys; risk.* follow). Different seed ⇒
+    // different focus directive ⇒ materially different prompt.
+    mutator
+        .propose(&base, &cfg, None, 0, None, &Default::default())
+        .await
+        .unwrap();
+    mutator
+        .propose(&base, &cfg, None, 1, None, &Default::default())
+        .await
+        .unwrap();
+
+    let captured = prompts.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    let f0 = focus_key(&captured[0]).expect("seed 0 prompt names a focus parameter");
+    let f1 = focus_key(&captured[1]).expect("seed 1 prompt names a focus parameter");
+    assert_ne!(
+        f0, f1,
+        "F32: different seeds must focus DIFFERENT parameters (materially different prompt, \
+         not a cosmetic nonce); both focused `{f0}`"
+    );
+    assert_ne!(
+        captured[0], captured[1],
+        "F32: different seeds must yield materially different prompts"
     );
 }

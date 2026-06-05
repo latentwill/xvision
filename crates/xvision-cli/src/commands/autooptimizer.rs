@@ -839,12 +839,24 @@ async fn fetch_lineage_rows(
 ) -> CliResult<Vec<LineageRow>> {
     const SEL: &str =
         "SELECT bundle_hash, parent_hash, status, cycle_id, created_at, gate_verdict FROM lineage_nodes";
+    // F33: resolve a cycle's experiments the SAME way `get_cycle_run` (the
+    // dashboard / `optimizer cycle show`) does — the per-cycle evaluation edges
+    // UNION the legacy `cycle_id` column — so the CLI `lineage ls --cycle` can't
+    // contradict the dashboard (previously a candidate a cycle evaluated but
+    // whose content-addressed row is owned by another cycle showed in the
+    // dashboard yet "(no experiments)" here).
+    const CYCLE_PRED: &str = "bundle_hash IN ( \
+        SELECT bundle_hash FROM cycle_node_evaluations WHERE cycle_id = ? \
+        UNION \
+        SELECT bundle_hash FROM lineage_nodes WHERE cycle_id = ? )";
+    ensure_lineage_schema(pool).await.ok();
     let lim = limit as i64;
     let raw = if status == "all" {
         if let Some(c) = cycle {
             sqlx::query(&format!(
-                "{SEL} WHERE cycle_id = ? ORDER BY created_at DESC LIMIT ?"
+                "{SEL} WHERE {CYCLE_PRED} ORDER BY created_at DESC LIMIT ?"
             ))
+            .bind(c)
             .bind(c)
             .bind(lim)
             .fetch_all(pool)
@@ -857,8 +869,9 @@ async fn fetch_lineage_rows(
         }
     } else if let Some(c) = cycle {
         sqlx::query(&format!(
-            "{SEL} WHERE cycle_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?"
+            "{SEL} WHERE {CYCLE_PRED} AND status = ? ORDER BY created_at DESC LIMIT ?"
         ))
+        .bind(c)
         .bind(c)
         .bind(status)
         .bind(lim)
@@ -1042,8 +1055,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
 
     // F32: derive the exploration seed from this mutate-once cycle id so the
     // experiment writer samples diversely (shared helper with the cycle path).
-    let exploration_seed =
-        xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
+    let exploration_seed = xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
     let diff = propose(&parent, &cfg, &dispatch, exploration_seed)
         .await
         .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
@@ -1185,10 +1197,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // `xvn.db`; running both at once starved each other (a CLI cycle was
     // timeout-killed at 9.7 min while a dashboard cycle ran). Refuse to start if
     // another cycle already holds the lock, with a clear message.
-    let cycle_lock_id = args
-        .session_id
-        .clone()
-        .unwrap_or_else(|| Ulid::new().to_string());
+    let cycle_lock_id = args.session_id.clone().unwrap_or_else(|| Ulid::new().to_string());
     let lock_holder = format!(
         "cli:{}",
         std::env::var("USER")
@@ -2042,7 +2051,18 @@ async fn propose(
         dispatch: Arc::clone(dispatch),
         max_retries: 2,
     };
-    mutator.propose(base, cfg, None, exploration_seed, None).await
+    // `mutate-once` is a single-shot experiment with no lineage-history context
+    // here; the run-cycle path supplies the F32 avoid-set.
+    mutator
+        .propose(
+            base,
+            cfg,
+            None,
+            exploration_seed,
+            None,
+            &std::collections::HashSet::new(),
+        )
+        .await
 }
 
 fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {

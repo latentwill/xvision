@@ -73,6 +73,26 @@ if [[ ! -f "$WRITABLE_CONFIG_PATH" && -f "$CONFIG_DIR/default.toml" ]]; then
   cp "$CONFIG_DIR/default.toml" "$WRITABLE_CONFIG_PATH"
   echo "[entrypoint] seeded $WRITABLE_CONFIG_PATH from $CONFIG_DIR/default.toml" >&2
 fi
+# Self-heal a config that exists but isn't writable by the runtime user. Volumes
+# seeded by an older root-running image left $WRITABLE_CONFIG_PATH owned by root,
+# so the non-root `xvision` runtime could read it (Settings → Providers listed)
+# but every provider add/edit failed with EACCES on write — surfaced as an opaque
+# 500 "internal error". Rewrite the file in place AS the runtime user, preserving
+# its content (the operator's providers/default-LLM), so ownership follows the
+# process. Best-effort: it works whenever the parent dir is writable; if even the
+# dir is unwritable we warn loudly rather than boot into a silently-broken
+# provider surface.
+if [[ -f "$WRITABLE_CONFIG_PATH" && ! -w "$WRITABLE_CONFIG_PATH" ]]; then
+  heal_tmp="$WRITABLE_CONFIG_DIR/.default.toml.heal.$$"
+  if cp "$WRITABLE_CONFIG_PATH" "$heal_tmp" 2>/dev/null \
+     && rm -f "$WRITABLE_CONFIG_PATH" 2>/dev/null \
+     && mv "$heal_tmp" "$WRITABLE_CONFIG_PATH" 2>/dev/null; then
+    echo "[entrypoint] healed unwritable config ownership at $WRITABLE_CONFIG_PATH (rewrote in place as $(id -un))" >&2
+  else
+    rm -f "$heal_tmp" 2>/dev/null || true
+    echo "[entrypoint] WARNING: $WRITABLE_CONFIG_PATH is not writable by $(id -un) (uid $(id -u)) and could not be healed (parent dir not writable). Provider add/edit from Settings will fail with a 500 until you: chown -R $(id -u):$(id -g) $WRITABLE_CONFIG_DIR on the host volume." >&2
+  fi
+fi
 export XVN_CONFIG_PATH="$WRITABLE_CONFIG_PATH"
 
 if [[ "${XVN_AUTOMIGRATE:-0}" == "1" ]]; then

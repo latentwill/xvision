@@ -44,7 +44,13 @@ pub fn describe_mutation_outcome(diff: &MutationDiff, delta_sharpe: f64, status_
                 } else {
                     String::new()
                 };
-                format!("param {} {}→{}{}", p.key, compact_json(&p.before), compact_json(&p.after), extra)
+                format!(
+                    "param {} {}→{}{}",
+                    p.key,
+                    compact_json(&p.before),
+                    compact_json(&p.after),
+                    extra
+                )
             } else {
                 "param (none)".to_string()
             }
@@ -59,14 +65,17 @@ pub fn describe_mutation_outcome(diff: &MutationDiff, delta_sharpe: f64, status_
             if !removed.is_empty() {
                 parts.push(format!("-{removed}"));
             }
-            format!("tool {}", if parts.is_empty() { "(none)".to_string() } else { parts.join(" ") })
+            format!(
+                "tool {}",
+                if parts.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    parts.join(" ")
+                }
+            )
         }
         MutationKind::Prose => {
-            let role = diff
-                .prose
-                .first()
-                .map(|p| p.agent_role.as_str())
-                .unwrap_or("?");
+            let role = diff.prose.first().map(|p| p.agent_role.as_str()).unwrap_or("?");
             format!("prose {role}")
         }
     };
@@ -312,6 +321,7 @@ impl Mutator {
         dsr_prefix: Option<&str>,
         exploration_seed: u64,
         memory_context: Option<&str>,
+        avoid: &std::collections::HashSet<ContentHash>,
     ) -> anyhow::Result<MutationDiff> {
         let program_md = program_view::to_markdown(base);
         let mut last_errors: Option<Vec<ValidationError>> = None;
@@ -341,6 +351,7 @@ impl Mutator {
                 last_errors.as_deref(),
                 exploration_seed,
                 memory_context,
+                avoid.len(),
             );
             let req = LlmRequest {
                 model: self.model.clone(),
@@ -391,6 +402,26 @@ impl Mutator {
                             path: None,
                         }]);
                     }
+                    Ok(()) if candidate_already_tried(&diff, base, avoid) => {
+                        // F32: the proposed candidate is byte-identical to one this
+                        // parent ALREADY produced in an earlier experiment/cycle.
+                        // Re-emitting it re-spends a backtest on a known result and
+                        // is exactly the fixed point that made repeat cycles never
+                        // explore (the real model collapses to the single "most
+                        // obvious" tweak regardless of temperature). Reject and
+                        // retry, steering the writer to genuinely new territory —
+                        // a hard, model-independent guarantee that the optimizer
+                        // never re-evaluates a candidate it has already seen.
+                        last_errors = Some(vec![ValidationError {
+                            code: "already_tried".into(),
+                            message: "this exact candidate was already evaluated on this parent in a \
+                                      prior experiment; propose a DIFFERENT change — a different \
+                                      parameter key, or a clearly different direction/magnitude for \
+                                      the same key"
+                                .into(),
+                            path: None,
+                        }]);
+                    }
                     Ok(()) => return Ok(diff),
                     Err(errors) => {
                         last_errors = Some(errors);
@@ -405,6 +436,25 @@ impl Mutator {
             .unwrap_or_else(|| "unknown error".into());
 
         anyhow::bail!("mutator failed after {} attempt(s): {}", max_attempts, error_text)
+    }
+}
+
+/// True when applying `diff` to `base` yields a candidate whose content hash is
+/// already in `avoid` — i.e. this parent already produced this exact candidate in
+/// an earlier experiment/cycle. F32: re-emitting it would re-spend a backtest on a
+/// known result; rejecting it is the hard, model-independent guarantee that
+/// successive cycles can't re-derive the same losing candidate forever.
+fn candidate_already_tried(
+    diff: &MutationDiff,
+    base: &Strategy,
+    avoid: &std::collections::HashSet<ContentHash>,
+) -> bool {
+    if avoid.is_empty() {
+        return false;
+    }
+    match serde_json::to_value(diff.apply_to(base)) {
+        Ok(c) => avoid.contains(&ContentHash::of_json(&c)),
+        Err(_) => false,
     }
 }
 
@@ -453,6 +503,7 @@ fn build_user_payload(
     previous_errors: Option<&[ValidationError]>,
     exploration_seed: u64,
     memory_context: Option<&str>,
+    avoid_count: usize,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
     let keys_section = if param_keys.is_empty() {
@@ -478,17 +529,43 @@ fn build_user_payload(
         }
     };
 
-    // F32: a per-cycle exploration directive. The variant id varies per cycle
-    // (and per mutation), steering the writer to a DIFFERENT starting point each
-    // run instead of re-proposing the single most obvious tweak forever. Combined
-    // with the non-zero temperature, this makes successive cycles diverge so the
-    // optimizer can actually search the space.
-    let exploration_section = format!(
-        "\n\nExploration directive (variant {exploration_seed}): do NOT default to the single \
-         most obvious change. Use this variant id as a hint to pick a different parameter and/or a \
-         different direction/magnitude than you would by default, so that repeated runs on this \
-         same strategy explore the space rather than re-proposing one fixed tweak."
-    );
+    // F32: a SUBSTANTIVE per-cycle exploration directive. The previous version
+    // only passed a cosmetic "variant N" nonce + a non-zero temperature, which a
+    // real model (e.g. gemini-flash-lite) ignores — it collapses the constrained
+    // experiment space to the single most obvious tweak every cycle, so repeat
+    // cycles re-derived the byte-identical candidate and never explored. Instead,
+    // use the exploration seed to NAME a concrete focus parameter the writer must
+    // experiment on. Different cycles ⇒ different seed ⇒ different focus key ⇒ a
+    // materially different prompt ⇒ a different candidate, even from a fully
+    // deterministic model. (Pairs with the hard `already_tried` reject in
+    // `propose`, which guarantees a previously-seen candidate is never re-emitted.)
+    let exploration_section = if param_keys.is_empty() {
+        format!(
+            "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
+             the single most obvious one, so repeated runs explore rather than re-propose one tweak."
+        )
+    } else {
+        let focus = &param_keys[(exploration_seed as usize) % param_keys.len()];
+        format!(
+            "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
+             parameter `{focus}` — propose a meaningful change to its value (a clear direction and \
+             magnitude). This focus is chosen to make successive runs on this strategy explore \
+             different levers rather than re-proposing one fixed tweak. If `{focus}` genuinely \
+             cannot be improved, you may target another listed key, but do not default to the most \
+             obvious change."
+        )
+    };
+    // F32: when this parent has already produced candidates in prior experiments,
+    // tell the writer so it aims for genuinely new territory (the `already_tried`
+    // gate will reject any duplicate and force a retry regardless).
+    let no_repeat_section = if avoid_count == 0 {
+        String::new()
+    } else {
+        format!(
+            "\n\nThis parent has already been experimented on {avoid_count} time(s); your proposal \
+             MUST differ from every prior candidate. An exact repeat will be rejected."
+        )
+    };
 
     // P3: advisory cross-run/cross-framework memory. When recall surfaced prior
     // optimizer outcomes on similar strategies, prepend them before the final
@@ -503,7 +580,7 @@ fn build_user_payload(
     };
 
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 

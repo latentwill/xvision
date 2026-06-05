@@ -943,6 +943,33 @@ async fn show_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiResul
     Ok(row_from_entry(entry, &cfg, &secrets))
 }
 
+/// Write a settings file (provider config or secrets), mapping the
+/// operator-fixable IO failures to a client-visible, actionable error instead of
+/// an opaque 500 "internal error".
+///
+/// QA 2026-06-05: a config volume seeded by an older root-running image left
+/// `default.toml` owned by root, so the non-root `xvision` runtime could read it
+/// (Settings → Providers listed fine) but every provider add/edit failed with
+/// `EACCES` on write — surfaced to the operator as a generic "internal error"
+/// they couldn't diagnose. A permission/read-only failure is operator-fixable
+/// (chown the volume / mount rw), so return a `Validation` error carrying the
+/// actual cause and the fix, rather than masking it.
+fn map_settings_write_err(path: &Path, e: &std::io::Error) -> ApiError {
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => ApiError::Validation(format!(
+            "could not save: `{}` is not writable ({e}). Its volume is likely owned by a \
+             different user than the running process — `chown` it to the runtime user on the \
+             host and retry.",
+            path.display()
+        )),
+        _ => ApiError::Internal(format!("write {}: {e}", path.display())),
+    }
+}
+
+fn write_settings_file(path: &Path, content: &str) -> ApiResult<()> {
+    std::fs::write(path, content).map_err(|e| map_settings_write_err(path, &e))
+}
+
 async fn add_inner(config_path: &Path, xvn_home: &Path, req: AddProviderRequest) -> ApiResult<ProviderRow> {
     let AddProviderRequest {
         name,
@@ -1054,8 +1081,7 @@ async fn add_inner(config_path: &Path, xvn_home: &Path, req: AddProviderRequest)
         row.insert("api_key_env", value(e));
         providers.push(row);
 
-        std::fs::write(&path, doc.to_string())
-            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+        write_settings_file(&path, &doc.to_string())?;
         Ok(())
     })
     .await
@@ -1182,8 +1208,7 @@ async fn update_inner(
                 default_model.as_deref(),
             )?;
         }
-        std::fs::write(&path, doc.to_string())
-            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+        write_settings_file(&path, &doc.to_string())?;
         Ok(())
     })
     .await
@@ -1244,8 +1269,7 @@ async fn remove_inner(config_path: &Path, xvn_home: &Path, name: &str) -> ApiRes
         if was_default {
             clear_default_llm(&mut doc);
         }
-        std::fs::write(&path, doc.to_string())
-            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+        write_settings_file(&path, &doc.to_string())?;
         Ok(())
     })
     .await
@@ -1317,8 +1341,7 @@ async fn set_enabled_models_inner(
                 "provider `{target}` not found in TOML (race / synthetic row)"
             )));
         }
-        std::fs::write(&path, doc.to_string())
-            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+        write_settings_file(&path, &doc.to_string())?;
         Ok(())
     })
     .await
@@ -1359,8 +1382,7 @@ async fn set_default_inner(config_path: &Path, name: &str, model: Option<&str>) 
             .parse()
             .map_err(|e| ApiError::Internal(format!("parse {}: {e}", path.display())))?;
         write_default_llm(&mut doc, new_kind, &new_base, &new_env, model_owned.as_deref())?;
-        std::fs::write(&path, doc.to_string())
-            .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+        write_settings_file(&path, &doc.to_string())?;
         Ok(())
     })
     .await
@@ -1636,7 +1658,7 @@ async fn save_providers_secrets(xvn_home: &Path, file: &ProvidersSecretsFile) ->
         .map_err(|e| ApiError::Internal(format!("serialize providers secrets: {e}")))?;
     tokio::fs::write(&path, serialized)
         .await
-        .map_err(|e| ApiError::Internal(format!("write {}: {e}", path.display())))?;
+        .map_err(|e| map_settings_write_err(&path, &e))?;
     set_owner_only(&path)?;
     Ok(())
 }
@@ -1811,6 +1833,63 @@ probes = "data/probes"
 sqlite_url = "sqlite://x.db"
 "#;
 
+    // Mirrors the live xvn default.toml that reproduces the UI 500: a
+    // [default_llm] referencing a provider absent from [[providers]], two
+    // openai-compat providers (one with a `~`-prefixed enabled model).
+    const DEPLOYED_LIKE_CONFIG: &str = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[default_llm]
+provider          = "anthropic"
+base_url          = "https://api.anthropic.com"
+model             = "claude-haiku-4-5"
+api_key_env       = "ANTHROPIC_API_KEY"
+temperature       = 0.0
+reasoning_effort  = "low"
+max_tokens        = 1024
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = true
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 10000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://data/decisions.db"
+
+[data.alpaca]
+rate_limit_rpm = 200
+
+[[providers]]
+name = "openrouter"
+kind = "openai-compat"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "XVN_PROVIDER_OPENROUTER_KEY"
+enabled_models = ["google/gemini-3.1-flash-lite", "deepseek/deepseek-v4-flash", "~openai/gpt-mini-latest"]
+
+[[providers]]
+name = "deepseek"
+kind = "openai-compat"
+base_url = "https://api.deepseek.com"
+api_key_env = "XVN_PROVIDER_DEEPSEEK_KEY"
+enabled_models = ["deepseek-v4-pro", "deepseek-v4-flash"]
+"#;
+
     async fn ctx_in(dir: &TempDir) -> ApiContext {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         // Mirror engine api migrations so audit.record works in tests.
@@ -1872,6 +1951,120 @@ sqlite_url = "sqlite://x.db"
         assert_eq!(row.kind, "openai-compat");
         let report = list(&ctx, &path).await.unwrap();
         assert_eq!(report.providers.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn add_ollama_with_empty_key_succeeds() {
+        // Repro for the UI "internal: internal error" on adding Ollama: the
+        // form posts kind="ollama", base_url="http://localhost:11434", and an
+        // EMPTY api_key + EMPTY api_key_env (Ollama needs no auth). This must
+        // succeed, not 500.
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let res = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "ollama".into(),
+                kind: "ollama".into(),
+                base_url: "http://localhost:11434".into(),
+                api_key_env: "".into(),
+                api_key: Some("".into()),
+            },
+        )
+        .await;
+        let row = res.expect("ollama add must succeed");
+        assert_eq!(row.name, "ollama");
+        assert_eq!(row.kind, "ollama");
+    }
+
+    #[tokio::test]
+    async fn add_ollama_against_deployed_like_state() {
+        // Faithful repro of the live xvn config that 500s on "add Ollama":
+        // [default_llm] points at a provider NOT in [[providers]], two
+        // openai-compat providers, and an orphaned/invalid-named secrets file
+        // (Gemini / "Gemini Custom" left behind by an older buggy add path).
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("default.toml");
+        std::fs::write(&path, DEPLOYED_LIKE_CONFIG).unwrap();
+        std::fs::create_dir_all(dir.path().join("secrets")).unwrap();
+        std::fs::write(
+            dir.path().join("secrets").join("providers.toml"),
+            r#"
+[provider.Gemini]
+env_var = "GEMINI_API_KEY"
+api_key = "x"
+
+[provider."Gemini Custom"]
+env_var = "XVN_PROVIDER_GEMINI_CUSTOM_KEY"
+api_key = "x"
+
+[provider.deepseek]
+env_var = "XVN_PROVIDER_DEEPSEEK_KEY"
+api_key = "x"
+
+[provider.openrouter]
+env_var = "XVN_PROVIDER_OPENROUTER_KEY"
+api_key = "x"
+"#,
+        )
+        .unwrap();
+        let ctx = ctx_in(&dir).await;
+        let res = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "ollama".into(),
+                kind: "ollama".into(),
+                base_url: "http://localhost:11434".into(),
+                api_key_env: "".into(),
+                api_key: Some("".into()),
+            },
+        )
+        .await;
+        let row = res.expect("ollama add must succeed against deployed-like state");
+        assert_eq!(row.name, "ollama");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn add_on_unwritable_config_returns_actionable_error_not_internal() {
+        // QA 2026-06-05 root cause: a root-owned (unwritable) default.toml made
+        // the non-root runtime user fail every provider edit with EACCES, masked
+        // as a generic 500 "internal error". A non-writable config must now yield
+        // an actionable Validation error naming the file + fix — never Internal.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        // Read-only: owner can still READ (list works) but WRITE hits EACCES,
+        // exactly like the root-owned file under a non-root runtime user.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let ctx = ctx_in(&dir).await;
+        let err = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "ollama".into(),
+                kind: "ollama".into(),
+                base_url: "http://localhost:11434".into(),
+                api_key_env: "".into(),
+                api_key: Some("".into()),
+            },
+        )
+        .await
+        .unwrap_err();
+        match err {
+            ApiError::Validation(msg) => {
+                assert!(
+                    msg.contains("not writable") && msg.contains("chown"),
+                    "actionable message expected, got: {msg}"
+                );
+            }
+            other => panic!("expected actionable Validation error, got {other:?}"),
+        }
+        // Restore perms so TempDir cleanup can remove the file.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     #[tokio::test]
