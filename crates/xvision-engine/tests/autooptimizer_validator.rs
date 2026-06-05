@@ -96,24 +96,28 @@ fn unknown_agent_role() {
         vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
-    assert!(codes(&errs).contains(&"unknown_agent_role"), "{errs:?}");
+    assert!(codes(&errs).contains(&"unknown_role"), "{errs:?}");
 }
 
 #[test]
-fn stale_prose_baseline_empty_before() {
+fn empty_prose_after_rejected() {
+    // Phase 1: the prose `after` is the COMPLETE replacement prompt, so a blank
+    // `after` would erase the agent's prompt — rejected as `empty_prose`. An
+    // empty `before` is now legal (the writer often can't see the shared-library
+    // prompt to echo it; `apply_to` only consumes `after`).
     let base = make_strategy();
     let diff = make_diff(
         vec![ProseEdit {
             agent_role: "trader".into(),
             before: "".into(),
-            after: "new prompt".into(),
+            after: "   ".into(),
         }],
         vec![],
         vec![],
         vec![],
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
-    assert!(codes(&errs).contains(&"stale_prose_baseline"), "{errs:?}");
+    assert!(codes(&errs).contains(&"empty_prose"), "{errs:?}");
 }
 
 #[test]
@@ -224,8 +228,8 @@ fn errors_aggregate_no_short_circuit() {
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     let c = codes(&errs);
     assert!(
-        c.contains(&"unknown_agent_role"),
-        "missing unknown_agent_role in {errs:?}"
+        c.contains(&"unknown_role"),
+        "missing unknown_role in {errs:?}"
     );
     assert!(
         c.contains(&"tool_not_present"),
