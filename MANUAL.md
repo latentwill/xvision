@@ -518,6 +518,27 @@ Finally, in **Settings → General → Memory**:
 - **Embedding model** = `nomic-embed-text` (or `qwen3-embedding`, etc.) — or
   pick **Custom…** to type any model name your server serves.
 
+**1c. One-step local embeddings (Custom endpoint — no provider needed).** The
+fastest path: skip provider registration entirely and point memory straight at
+a local OpenAI-compatible server from the Memory card.
+
+```bash
+ollama pull nomic-embed-text        # or qwen3-embedding
+```
+
+Then in **Settings → General → Memory**:
+- **Embedder source** = **Custom endpoint (OpenAI-compatible)**.
+- **Custom endpoint base URL** = `http://localhost:11434/v1` (include the
+  trailing **`/v1`** — the embedder POSTs `{base_url}/embeddings`).
+- **Embedding model** = `nomic-embed-text` (or `qwen3-embedding`).
+
+The custom endpoint is **no-auth only** — no API key is stored (the base URL
+lives in `memory.toml`, which is not a secrets file). Works for Ollama,
+llama.cpp, LM Studio, and vLLM. **For an authenticated endpoint, register it as
+a provider in the Providers tab instead** (paths 1b above). To force a custom
+endpoint from the environment, set `XVN_MEMORY_EMBEDDER_BASE_URL=http://host/v1`
+(wins over the card; honors `OPENAI_API_KEY` if set).
+
 The embedding dimension differs per model (nomic = 768, openai-3-small =
 1536); the store records each observation's real vector length, so this is
 handled automatically. The resolved embedder id is **model-aware**

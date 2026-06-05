@@ -14,4 +14,11 @@ embedder: string | null, chat_enabled: boolean | null, optimizer_enabled: boolea
  * the resolver default (stored as `None`); `None` here leaves the
  * persisted value untouched (partial update).
  */
-embedder_model: string | null, };
+embedder_model: string | null, 
+/**
+ * New base URL for the `"custom"` embedder source. An empty/whitespace
+ * string clears it (stored as `None`); `None` here leaves the persisted
+ * value untouched (partial update). Used verbatim (trimmed) — never
+ * rewritten, so the operator-typed `/v1` survives.
+ */
+embedder_base_url: string | null, };

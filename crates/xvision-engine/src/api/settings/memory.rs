@@ -39,15 +39,21 @@ use crate::api::{
 ///   - `"local"`   → force the offline deterministic `LocalEmbedder`.
 ///   - `"auto"`    → (DEFAULT) prefer a real OpenAI provider/key when
 ///                   available, else fall back to `Local`.
+///   - `"custom"`  → a no-auth OpenAI-compatible `/v1` endpoint typed
+///                   directly in the card (base URL in `embedder_base_url`),
+///                   for local servers (Ollama, llama.cpp, LM Studio, vLLM).
 ///   - `<name>`    → a named provider to use as the embeddings backend.
 ///
-/// `off` / `local` / `auto` are reserved words; anything else is a provider
-/// name.
+/// `off` / `local` / `auto` / `custom` are reserved words; anything else is
+/// a provider name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MemoryEmbedderSource {
     Off,
     Local,
     Auto,
+    /// No-auth custom OpenAI-compatible endpoint (base URL in
+    /// `MemoryConfig.embedder_base_url`).
+    Custom,
     Provider(String),
 }
 
@@ -66,6 +72,7 @@ impl MemoryEmbedderSource {
             MemoryEmbedderSource::Off => "off".to_string(),
             MemoryEmbedderSource::Local => "local".to_string(),
             MemoryEmbedderSource::Auto => "auto".to_string(),
+            MemoryEmbedderSource::Custom => "custom".to_string(),
             MemoryEmbedderSource::Provider(name) => name.clone(),
         }
     }
@@ -84,6 +91,8 @@ impl MemoryEmbedderSource {
             MemoryEmbedderSource::Local
         } else if t.eq_ignore_ascii_case("auto") {
             MemoryEmbedderSource::Auto
+        } else if t.eq_ignore_ascii_case("custom") {
+            MemoryEmbedderSource::Custom
         } else {
             MemoryEmbedderSource::Provider(t.to_string())
         }
@@ -133,6 +142,14 @@ pub struct MemoryConfig {
     /// concept). The env override `XVN_MEMORY_EMBEDDER_MODEL` still wins.
     #[serde(default)]
     pub embedder_model: Option<String>,
+    /// Base URL for the `"custom"` embedder source — a no-auth
+    /// OpenAI-compatible `/v1` endpoint typed directly in the card (e.g.
+    /// `http://localhost:11434/v1` for Ollama). `None` when the source isn't
+    /// `custom`. NO API key is stored here: `memory.toml` is not a 0600
+    /// secrets file, so the custom path is no-auth only. Authenticated
+    /// endpoints use a registered provider (Providers tab) instead.
+    #[serde(default)]
+    pub embedder_base_url: Option<String>,
 }
 
 impl Default for MemoryConfig {
@@ -142,6 +159,7 @@ impl Default for MemoryConfig {
             chat_enabled: true,
             optimizer_enabled: true,
             embedder_model: None,
+            embedder_base_url: None,
         }
     }
 }
@@ -204,6 +222,10 @@ pub struct MemoryReport {
     /// resolver default applies). The card renders this as the embedding-
     /// model picker value; empty/clear sends `""` which stores `None`.
     pub embedder_model: Option<String>,
+    /// Base URL for the `"custom"` embedder source (no-auth OpenAI-compatible
+    /// `/v1` endpoint), or `null` when none is set. The card renders this in
+    /// the custom base-URL input, shown only when the source is `custom`.
+    pub embedder_base_url: Option<String>,
     /// True when the persisted config file exists. False → defaults are in
     /// force; the UI renders "Default" vs "Custom".
     pub persisted: bool,
@@ -230,6 +252,12 @@ pub struct UpdateMemoryRequest {
     /// persisted value untouched (partial update).
     #[serde(default)]
     pub embedder_model: Option<String>,
+    /// New base URL for the `"custom"` embedder source. An empty/whitespace
+    /// string clears it (stored as `None`); `None` here leaves the persisted
+    /// value untouched (partial update). Used verbatim (trimmed) — never
+    /// rewritten, so the operator-typed `/v1` survives.
+    #[serde(default)]
+    pub embedder_base_url: Option<String>,
 }
 
 fn config_path(ctx: &ApiContext) -> PathBuf {
@@ -242,6 +270,7 @@ fn report_from_cfg(cfg: &MemoryConfig, persisted: bool) -> MemoryReport {
         chat_enabled: cfg.chat_enabled,
         optimizer_enabled: cfg.optimizer_enabled,
         embedder_model: cfg.embedder_model.clone(),
+        embedder_base_url: cfg.embedder_base_url.clone(),
         persisted,
     }
 }
@@ -289,6 +318,12 @@ pub async fn set(ctx: &ApiContext, req: UpdateMemoryRequest) -> ApiResult<Memory
         // Trim; empty ≡ "clear back to the resolver default" → None.
         let t = m.trim();
         cfg.embedder_model = if t.is_empty() { None } else { Some(t.to_string()) };
+    }
+    if let Some(b) = req.embedder_base_url.as_deref() {
+        // Trim; empty ≡ "clear" → None. Used verbatim otherwise — we do NOT
+        // rewrite the operator-typed URL (their `/v1` survives).
+        let t = b.trim();
+        cfg.embedder_base_url = if t.is_empty() { None } else { Some(t.to_string()) };
     }
 
     MemoryConfig::write_to_file(&path, &cfg)
@@ -340,6 +375,15 @@ mod tests {
             MemoryEmbedderSource::Provider("myproxy".into()).as_config_string(),
             "myproxy"
         );
+    }
+
+    #[test]
+    fn custom_is_a_reserved_keyword_not_a_provider() {
+        // `custom` is the custom-endpoint keyword — it must parse to its own
+        // variant, NOT be mistaken for a provider name.
+        assert_eq!(MemoryEmbedderSource::parse("custom"), MemoryEmbedderSource::Custom);
+        assert_eq!(MemoryEmbedderSource::parse("CUSTOM"), MemoryEmbedderSource::Custom);
+        assert_eq!(MemoryEmbedderSource::Custom.as_config_string(), "custom");
     }
 
     #[test]
@@ -396,6 +440,7 @@ mod tests {
                 chat_enabled: Some(false),
                 optimizer_enabled: Some(true),
                 embedder_model: None,
+                embedder_base_url: None,
             },
         )
         .await
@@ -423,6 +468,7 @@ mod tests {
                 chat_enabled: Some(false),
                 optimizer_enabled: Some(true),
                 embedder_model: None,
+                embedder_base_url: None,
             },
         )
         .await
@@ -436,6 +482,7 @@ mod tests {
                 chat_enabled: None,
                 optimizer_enabled: Some(false),
                 embedder_model: None,
+                embedder_base_url: None,
             },
         )
         .await
@@ -506,6 +553,93 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(report.embedder_model, None);
+    }
+
+    #[tokio::test]
+    async fn embedder_base_url_round_trips() {
+        let (ctx, _tmp) = test_ctx().await;
+        // Default: no base url set.
+        let report = get(&ctx).await.unwrap();
+        assert_eq!(report.embedder_base_url, None);
+
+        // Set a custom endpoint.
+        let report = set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder: Some("custom".into()),
+                embedder_base_url: Some("http://localhost:11434/v1".into()),
+                embedder_model: Some("nomic-embed-text".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.embedder, "custom");
+        assert_eq!(
+            report.embedder_base_url.as_deref(),
+            Some("http://localhost:11434/v1")
+        );
+
+        let after = get(&ctx).await.unwrap();
+        assert_eq!(after.embedder, "custom");
+        assert_eq!(
+            after.embedder_base_url.as_deref(),
+            Some("http://localhost:11434/v1")
+        );
+        assert_eq!(after.embedder_model.as_deref(), Some("nomic-embed-text"));
+    }
+
+    #[tokio::test]
+    async fn empty_embedder_base_url_clears_to_none() {
+        let (ctx, _tmp) = test_ctx().await;
+        set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder_base_url: Some("http://localhost:11434/v1".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // Clear via empty/whitespace.
+        let report = set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder_base_url: Some("   ".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.embedder_base_url, None);
+    }
+
+    #[tokio::test]
+    async fn embedder_base_url_partial_update_preserved() {
+        let (ctx, _tmp) = test_ctx().await;
+        set(
+            &ctx,
+            UpdateMemoryRequest {
+                embedder_base_url: Some("http://localhost:11434/v1".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        // Update an unrelated field; base_url must survive.
+        let report = set(
+            &ctx,
+            UpdateMemoryRequest {
+                chat_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            report.embedder_base_url.as_deref(),
+            Some("http://localhost:11434/v1")
+        );
     }
 
     #[tokio::test]

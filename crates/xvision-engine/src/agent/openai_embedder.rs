@@ -65,6 +65,26 @@ impl OpenAiEmbedder {
     }
 }
 
+impl OpenAiEmbedder {
+    /// Build the `POST {base_url}/embeddings` request for `text`. The
+    /// `Authorization: Bearer` header is attached ONLY when `api_key` is
+    /// non-empty — a no-auth local server (Ollama, llama.cpp) must not
+    /// receive a bogus empty bearer. Pulled out of `embed` so the header
+    /// policy is unit-testable without real HTTP.
+    fn build_embeddings_request(&self, text: &str) -> reqwest::RequestBuilder {
+        let url = format!("{}/embeddings", self.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": &self.model,
+            "input": text,
+        });
+        let mut req = self.client.post(url).json(&body);
+        if !self.api_key.is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        req
+    }
+}
+
 #[derive(Deserialize)]
 struct EmbeddingsResponse {
     data: Vec<EmbeddingEntry>,
@@ -78,16 +98,8 @@ struct EmbeddingEntry {
 #[async_trait]
 impl Embedder for OpenAiEmbedder {
     async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
-        let url = format!("{}/embeddings", self.base_url.trim_end_matches('/'));
-        let body = serde_json::json!({
-            "model": &self.model,
-            "input": text,
-        });
         let resp: EmbeddingsResponse = self
-            .client
-            .post(url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
+            .build_embeddings_request(text)
             .send()
             .await?
             .error_for_status()?
@@ -136,5 +148,31 @@ mod tests {
         let e2 = OpenAiEmbedder::new("http://localhost:11434/v1", "")
             .with_model("qwen3-embedding");
         assert_eq!(e2.id(), "openaicompat:qwen3-embedding");
+    }
+
+    #[test]
+    fn omits_auth_header_when_key_empty() {
+        // A no-auth local server (Ollama) must NOT receive an Authorization
+        // header — an empty bearer can confuse some servers. Construct the
+        // request and assert the header is absent.
+        let e = OpenAiEmbedder::new("http://localhost:11434/v1", "")
+            .with_model("nomic-embed-text");
+        let req = e.build_embeddings_request("hello").build().unwrap();
+        assert!(
+            req.headers().get(reqwest::header::AUTHORIZATION).is_none(),
+            "no-auth (empty key) endpoint must not send an Authorization header"
+        );
+    }
+
+    #[test]
+    fn attaches_auth_header_when_key_present() {
+        let e = OpenAiEmbedder::new("https://api.openai.com/v1", "sk-live")
+            .with_model("text-embedding-3-small");
+        let req = e.build_embeddings_request("hello").build().unwrap();
+        let auth = req
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .expect("authenticated endpoint must send an Authorization header");
+        assert_eq!(auth, "Bearer sk-live");
     }
 }
