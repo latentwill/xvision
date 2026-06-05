@@ -174,6 +174,24 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await
     .context("create cycle_node_evaluations")?;
+    // Phase 2 regime-matrix (migration 055): per-regime evaluation results.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS autooptimizer_regime_results (
+            bundle_hash            TEXT NOT NULL,
+            regime_label           TEXT NOT NULL,
+            side                   TEXT NOT NULL,
+            metrics_day_json       TEXT NOT NULL,
+            metrics_untouched_json TEXT NOT NULL,
+            delta_sharpe           REAL NOT NULL,
+            verdict                TEXT NOT NULL,
+            created_at             TEXT NOT NULL,
+            PRIMARY KEY (bundle_hash, regime_label),
+            FOREIGN KEY (bundle_hash) REFERENCES lineage_nodes(bundle_hash)
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create autooptimizer_regime_results")?;
     for (sql, label) in [
         (
             "CREATE INDEX IF NOT EXISTS idx_lineage_parent ON lineage_nodes(parent_hash)",
@@ -190,6 +208,10 @@ pub async fn ensure_lineage_schema(pool: &SqlitePool) -> Result<()> {
         (
             "CREATE INDEX IF NOT EXISTS idx_attr_provider_model ON mutator_attribution(provider, model)",
             "idx_attr_provider_model",
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_regime_results_label ON autooptimizer_regime_results(regime_label)",
+            "idx_regime_results_label",
         ),
     ] {
         sqlx::query(sql).execute(pool).await.context(label)?;

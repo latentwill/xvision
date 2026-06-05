@@ -103,6 +103,16 @@ const MIGRATION_053_PATTERN_OPTIMIZATIONS: &str =
     include_str!("../../migrations/053_pattern_optimizations.sql");
 const MIGRATION_054_AGENT_SLOT_OPTIMIZATION_GATES: &str =
     include_str!("../../migrations/054_agent_slot_optimization_gates.sql");
+/// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
+/// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
+/// provisioned at runtime via
+/// [`crate::autooptimizer::lineage::ensure_lineage_schema`] (called from
+/// `migrate_autooptimizer_lineage`). The `include_str!` constant below is kept
+/// for consistency with the surrounding migration constants and so the file is
+/// compiled into the binary as a reference artifact.
+#[allow(dead_code)]
+const MIGRATION_055_REGIME_RESULTS: &str =
+    include_str!("../../migrations/055_autooptimizer_regime_results.sql");
 /// Stage 1 (Cline runtime unification, operational-visibility contract
 /// item 3): adds `trajectory_mode` (+ sibling Stage 2-3 columns) to
 /// `agent_runs`. Applied via `migrate_run_trajectory_mode` because the
