@@ -653,7 +653,7 @@ export function LiveCycleView({ onTabChange, embedded = false }: { onTabChange?:
         <span
           className={[
             "inline-block w-2 h-2 rounded-full",
-            connected ? "bg-green-500" : "bg-text-3",
+            connected ? "bg-gold" : "bg-text-3",
           ].join(" ")}
           aria-label={connected ? "Connected" : "Disconnected"}
         />

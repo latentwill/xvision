@@ -14,7 +14,7 @@ export function Breadcrumb({ items }: { items: Crumb[] }) {
                 {c.label}
               </Link>
             ) : (
-              <span className={last ? "text-text" : "uppercase tracking-wide"}>{c.label}</span>
+              <span aria-current={last ? "page" : undefined} className={last ? "text-text" : "uppercase tracking-wide"}>{c.label}</span>
             )}
             {!last ? <span aria-hidden className="text-text-4">›</span> : null}
           </span>

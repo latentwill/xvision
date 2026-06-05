@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, type ReactNode } from "react";
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { noteSuccessfulPageLoad } from "@/lib/chunk-reload";
@@ -80,6 +80,11 @@ function RouteLoaded() {
     noteSuccessfulPageLoad();
   }, []);
   return null;
+}
+
+function LegacyDiffRedirect() {
+  const { hash } = useParams<{ hash: string }>();
+  return <Navigate to={`/optimizer/experiment/${hash ?? ""}`} replace />;
 }
 
 function page(element: ReactNode) {
@@ -207,7 +212,7 @@ export const router = createBrowserRouter([
       },
       // Legacy deep-links (bookmarks, old SSE/diff URLs) → new optimizer surface.
       { path: "autooptimizer", element: <Navigate to="/optimizer" replace /> },
-      { path: "autooptimizer/diff/:hash", element: <Navigate to="/optimizer" replace /> },
+      { path: "autooptimizer/diff/:hash", element: <LegacyDiffRedirect /> },
       { path: "docs", element: page(<DocsRoute />) },
       {
         path: "settings",
