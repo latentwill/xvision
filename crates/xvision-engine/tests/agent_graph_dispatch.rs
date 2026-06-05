@@ -133,17 +133,23 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
             agent_id: "01HZF".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-        },
+        prompt_override: None,
+        model_override: None,
+},
         AgentRef {
             agent_id: "01HZC".into(),
             role: "critic".into(),
             activates: Some(Capability::Critic),
-        },
+        prompt_override: None,
+        model_override: None,
+},
         AgentRef {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        },
+        prompt_override: None,
+        model_override: None,
+},
     ];
     let strategy = fixture_strategy(agents);
     let slots = vec![resolved("regime_filter"), resolved("critic"), resolved("trader")];

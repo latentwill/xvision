@@ -86,7 +86,9 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
             agent_id: "01HZAGENT".into(),
             role: "trader".into(),
             activates: None,
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
@@ -127,7 +129,9 @@ async fn validate_draft_passes_with_bound_agent_ref() {
         agent_id: "01HZAGENTSMOKE".into(),
         role: "trader".into(),
         activates: None,
-    });
+    prompt_override: None,
+    model_override: None,
+});
     store.save(&strategy).await.expect("save strategy");
 
     let strategy = store.load(&created.id).await.expect("reload");

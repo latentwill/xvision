@@ -201,7 +201,9 @@ fn create_agent_strategy(home: &std::path::Path, id: &str, name: &str, agent_id:
         agent_id: agent_id.into(),
         role: "trader".into(),
         activates: Some(Capability::Trader),
-    }];
+    prompt_override: None,
+    model_override: None,
+}];
     strategy.regime_slot = None;
     strategy.trader_slot = None;
     let rt = tokio::runtime::Builder::new_current_thread()

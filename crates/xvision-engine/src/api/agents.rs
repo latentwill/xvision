@@ -621,6 +621,8 @@ mod tests {
                 agent_id: agent_id.to_string(),
                 role: "trader".into(),
                 activates: None,
+                prompt_override: None,
+                model_override: None,
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,

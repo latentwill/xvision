@@ -1006,6 +1006,8 @@ async fn clone_strategy_full_inner(
             agent_id: new_agent.agent_id,
             role: agent_ref.role.clone(),
             activates: agent_ref.activates.clone(),
+            prompt_override: agent_ref.prompt_override.clone(),
+            model_override: agent_ref.model_override.clone(),
         });
     }
 

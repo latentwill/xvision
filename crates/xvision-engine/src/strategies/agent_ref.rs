@@ -69,6 +69,23 @@ pub struct AgentRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-export", ts(optional))]
     pub activates: Option<Capability>,
+    /// Optional per-strategy override of the referenced agent's trader-slot
+    /// system prompt. `None` (the default) = use the shared agent library
+    /// prompt verbatim. `Some(p)` makes THIS strategy run with prompt `p`
+    /// without mutating the shared `Agent` record — so the override lands in
+    /// the `Strategy` content hash (proper lineage) and never leaks into other
+    /// strategies that reference the same agent. This is the "home" that makes
+    /// `prose` optimizer mutations reachable (run-7 finding; F25 design pass).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub prompt_override: Option<String>,
+    /// Optional per-strategy override of the referenced agent's trader-slot
+    /// `(provider/)model`. Same rationale as `prompt_override`. Reserved for the
+    /// deferred F25 model-swap mutation axis; honored at resolution today so the
+    /// axis is a pure mutator/validator add later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub model_override: Option<String>,
 }
 
 impl AgentRef {
@@ -254,11 +271,53 @@ mod tests {
     }
 
     #[test]
+    fn agent_ref_overrides_default_to_none_and_omit_from_wire() {
+        // A ref with no overrides must serialize WITHOUT the override keys, so
+        // existing strategy JSON and content hashes are byte-stable.
+        let r = AgentRef {
+            agent_id: "01HZAGENT".into(),
+            role: "trader".into(),
+            activates: None,
+            prompt_override: None,
+            model_override: None,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(!s.contains("prompt_override"), "absent override must be omitted: {s}");
+        assert!(!s.contains("model_override"), "absent override must be omitted: {s}");
+    }
+
+    #[test]
+    fn agent_ref_overrides_round_trip_when_present() {
+        let r = AgentRef {
+            agent_id: "01HZAGENT".into(),
+            role: "trader".into(),
+            activates: None,
+            prompt_override: Some("You are a disciplined momentum trader...".into()),
+            model_override: Some("openrouter/google/gemini-3.1-flash-lite".into()),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        let back: AgentRef = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn agent_ref_legacy_json_without_overrides_parses() {
+        // Strategies written before this field exists must still load.
+        let r: AgentRef = serde_json::from_value(json!({
+            "agent_id": "01HZAGENT", "role": "trader"
+        })).unwrap();
+        assert_eq!(r.prompt_override, None);
+        assert_eq!(r.model_override, None);
+    }
+
+    #[test]
     fn agent_ref_round_trips() {
         let r = AgentRef {
             agent_id: "01HZAGENT".into(),
             role: "trader".into(),
             activates: None,
+            prompt_override: None,
+            model_override: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         let back: AgentRef = serde_json::from_str(&s).unwrap();
@@ -331,6 +390,8 @@ mod tests {
             agent_id: "01HZAGENT".into(),
             role: " Trader ".into(),
             activates: None,
+            prompt_override: None,
+            model_override: None,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(

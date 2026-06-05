@@ -180,6 +180,8 @@ fn agent_ref_activates_round_trip_and_legacy_default() {
         agent_id: "01HZAGENT".into(),
         role: "trader".into(),
         activates: None,
+        prompt_override: None,
+        model_override: None,
     };
     let s = serde_json::to_string(&r).unwrap();
     assert!(
@@ -202,6 +204,8 @@ fn agent_ref_activates_round_trip_and_legacy_default() {
         agent_id: "01HZAGENT2".into(),
         role: "scout".into(),
         activates: Some(Capability::Filter),
+        prompt_override: None,
+        model_override: None,
     };
     let s2 = serde_json::to_string(&r2).unwrap();
     assert!(

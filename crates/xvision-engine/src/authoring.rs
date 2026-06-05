@@ -413,6 +413,8 @@ pub async fn add_agent_ref(store: &dyn StrategyStore, req: AddAgentRefRequest) -
         agent_id: req.agent_id,
         role,
         activates: req.activates,
+        prompt_override: None,
+        model_override: None,
     });
     if strategy.pipeline.kind == PipelineKind::Single && strategy.agents.len() > 1 {
         strategy.pipeline.kind = PipelineKind::Sequential;
@@ -1083,11 +1085,15 @@ mod tests {
                 agent_id: "01HZSCOUT".into(),
                 role: "Scout".into(),
                 activates: None,
+                prompt_override: None,
+                model_override: None,
             },
             AgentRef {
                 agent_id: "01HZTRADER".into(),
                 role: "Trader".into(),
                 activates: None,
+                prompt_override: None,
+                model_override: None,
             },
         ];
         strategy.pipeline = PipelineDef {
@@ -1269,6 +1275,8 @@ mod tests {
             agent_id: "01HZAGENT_TRADER".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
+            prompt_override: None,
+            model_override: None,
         });
         store.save(&strategy).await.unwrap();
 
@@ -1315,6 +1323,8 @@ mod tests {
             agent_id: "01HZAGENT_TRADER".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
+            prompt_override: None,
+            model_override: None,
         });
         strategy.acknowledge_no_filter = true;
         store.save(&strategy).await.unwrap();

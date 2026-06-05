@@ -50,6 +50,8 @@ fn template_to_strategy(t: &AgentTemplate) -> Strategy {
             // dispatcher's "first capability in BTreeSet order" fallback
             // and makes the binding visible in the on-disk JSON.
             activates: slot.capabilities.iter().next().copied(),
+            prompt_override: None,
+            model_override: None,
         })
         .collect();
 

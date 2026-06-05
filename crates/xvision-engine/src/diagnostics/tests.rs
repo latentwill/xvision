@@ -100,6 +100,8 @@ fn aref(agent_id: &str, role: &str, activates: Option<Capability>) -> AgentRef {
         agent_id: agent_id.into(),
         role: role.into(),
         activates,
+        prompt_override: None,
+        model_override: None,
     }
 }
 

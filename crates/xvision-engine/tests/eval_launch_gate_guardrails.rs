@@ -248,7 +248,9 @@ async fn launch_refused_for_missing_required_capability() {
             role: "trader".into(),
             // Activate a capability with no live runtime handler.
             activates: Some(xvision_engine::agents::Capability::Router),
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         vec![],
     )
     .await;
@@ -301,7 +303,9 @@ async fn launch_refused_missing_prompt() {
             agent_id,
             role: "trader".into(),
             activates: None,
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         // Grant ohlcv so missing_tool does not pre-empt the prompt blocker.
         vec!["ohlcv".into()],
     )
@@ -349,7 +353,9 @@ async fn launch_does_not_treat_builtin_trader_tool_as_missing() {
             agent_id,
             role: "trader".into(),
             activates: None,
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         vec![], // no explicit ohlcv grant; built-in registry supplies it
     )
     .await;
@@ -398,7 +404,9 @@ async fn launch_refused_provider_unavailable() {
             agent_id,
             role: "trader".into(),
             activates: None,
-        }],
+        prompt_override: None,
+        model_override: None,
+}],
         vec!["ohlcv".into()],
     )
     .await;
