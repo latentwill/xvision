@@ -6,6 +6,8 @@ import { EmptyPanel } from "../ui/EmptyPanel";
 import { ProgressDial } from "../ui/ProgressDial";
 import { CycleExperimentsTable } from "../panels/CycleExperimentsTable";
 import { LineageTreePanel } from "../panels/LineageTreePanel";
+import { GateBuckets } from "../panels/GateBuckets";
+import { EvalMatrix } from "../panels/EvalMatrix";
 
 function stat(label: string, value: string, tone = "text-text") {
   return (
@@ -50,8 +52,17 @@ export function CycleDetail() {
           </section>
         )}
 
-        <EmptyPanel title="Anti-overfit gate" phase={2} hint="Kept / Suspect / Dropped buckets appear once experiments are gated across the regime set." />
-        <EmptyPanel title="Eval matrix" phase={2} hint="Experiments × regimes heat-map of Δ-Sharpe — lights up when the regime matrix runs." />
+        {cycle ? (
+          <>
+            <GateBuckets kept={cycle.active_count} suspect={cycle.suspect_count ?? 0} dropped={cycle.rejected_count} />
+            <EvalMatrix nodes={cycle.nodes ?? []} />
+          </>
+        ) : (
+          <>
+            <EmptyPanel title="Anti-overfit gate" phase={2} hint="Kept / Suspect / Dropped buckets appear once experiments are gated across the regime set." />
+            <EmptyPanel title="Eval matrix" phase={2} hint="Experiments × regimes heat-map of Δ-Sharpe — lights up when the regime matrix runs." />
+          </>
+        )}
 
         <CycleExperimentsTable cycleId={cycleId} />
 
