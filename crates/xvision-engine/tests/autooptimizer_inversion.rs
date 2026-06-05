@@ -57,6 +57,7 @@ fn fixture_diff() -> MutationDiff {
             added: vec!["volume_profile".into()],
             removed: vec!["atr".into()],
         },
+        filter: Vec::new(),
         rationale: "increase aggression".into(),
     }
 }

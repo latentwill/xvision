@@ -7,7 +7,7 @@
 use anyhow::Result;
 
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
-use crate::autooptimizer::mutator::{MutationDiff, ParamChange, ProseEdit, ToolDiff};
+use crate::autooptimizer::mutator::{FilterEdit, MutationDiff, ParamChange, ProseEdit, ToolDiff};
 use crate::eval::{MetricsSummary, Scenario};
 use crate::strategies::Strategy;
 
@@ -15,6 +15,7 @@ const EPSILON: f64 = 0.05;
 const MAX_PROSE: usize = 64;
 const MAX_PARAMS: usize = 64;
 const MAX_TOOLS: usize = 64;
+const MAX_FILTER: usize = 64;
 
 #[cfg(test)]
 mod tests {
@@ -31,6 +32,7 @@ mod tests {
             }],
             params: vec![],
             tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![],
             rationale: "test inversion".into(),
         }
     }
@@ -88,6 +90,7 @@ mod tests {
             }],
             params: vec![],
             tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![],
             rationale: "t".into(),
         };
         normalize_prose_baseline(&mut forward, &parent);
@@ -150,6 +153,7 @@ pub fn invert_mutation(diff: &MutationDiff) -> MutationDiff {
         diff.tools.removed.len() <= MAX_TOOLS,
         "tools.removed exceeds bound"
     );
+    assert!(diff.filter.len() <= MAX_FILTER, "filter count exceeds bound");
 
     let prose = diff
         .prose
@@ -171,6 +175,17 @@ pub fn invert_mutation(diff: &MutationDiff) -> MutationDiff {
         })
         .collect();
 
+    // Filter edits are inverted by swapping before↔after, just like params.
+    let filter = diff
+        .filter
+        .iter()
+        .map(|fe| FilterEdit {
+            path: fe.path.clone(),
+            before: fe.after.clone(),
+            after: fe.before.clone(),
+        })
+        .collect();
+
     MutationDiff {
         kind: diff.kind.clone(),
         prose,
@@ -179,6 +194,7 @@ pub fn invert_mutation(diff: &MutationDiff) -> MutationDiff {
             added: diff.tools.removed.clone(),
             removed: diff.tools.added.clone(),
         },
+        filter,
         rationale: diff.rationale.clone(),
     }
 }

@@ -254,6 +254,7 @@ mod tests {
             }],
             params: vec![],
             tools: ToolDiff { added: vec![], removed: vec![] },
+            filter: vec![],
             rationale: "test".into(),
         }
     }

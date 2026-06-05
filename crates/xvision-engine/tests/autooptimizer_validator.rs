@@ -1,5 +1,5 @@
 use serde_json::json;
-use xvision_engine::autooptimizer::mutator::{MutationDiff, MutationKind, ParamChange, ProseEdit, ToolDiff};
+use xvision_engine::autooptimizer::mutator::{FilterEdit, MutationDiff, MutationKind, ParamChange, ProseEdit, ToolDiff};
 use xvision_engine::autooptimizer::validator::validate_mutation_diff;
 use xvision_engine::strategies::Strategy;
 
@@ -45,6 +45,7 @@ fn make_diff(
         prose,
         params,
         tools: ToolDiff { added, removed },
+        filter: Vec::new(),
         rationale: "test".into(),
     }
 }
