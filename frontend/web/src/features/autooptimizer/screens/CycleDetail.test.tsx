@@ -31,5 +31,8 @@ describe("CycleDetail", () => {
     expect(screen.getByText("Experiments this cycle")).toBeInTheDocument();
     expect(screen.getByText("Eval matrix")).toBeInTheDocument();         // EmptyPanel
     expect(screen.getByText("Anti-overfit gate")).toBeInTheDocument();   // EmptyPanel
+    // ProgressDial: kept rate = active_count/node_count = 1/3 ≈ 33%
+    expect(await screen.findByText("33%")).toBeInTheDocument();
+    expect(screen.getByText("KEPT")).toBeInTheDocument();
   });
 });

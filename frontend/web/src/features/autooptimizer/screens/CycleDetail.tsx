@@ -3,6 +3,7 @@ import { Topbar } from "@/components/shell/Topbar";
 import { useCycleRun } from "../api";
 import { Breadcrumb } from "../ui/Breadcrumb";
 import { EmptyPanel } from "../ui/EmptyPanel";
+import { ProgressDial } from "../ui/ProgressDial";
 import { CycleExperimentsTable } from "../panels/CycleExperimentsTable";
 import { LineageTreePanel } from "../panels/LineageTreePanel";
 
@@ -33,11 +34,18 @@ export function CycleDetail() {
           <section className="rounded-md border border-border bg-surface-card p-5">
             <span className="text-[8.5px] uppercase tracking-widest text-text-3">Cycle</span>
             <h1 className="m-0 mb-3 font-mono text-[22px] tracking-tight">{cycle.cycle_id}</h1>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              {stat("Experiments", String(cycle.node_count))}
-              {stat("Kept", String(cycle.active_count), "text-gold")}
-              {stat("Dropped", String(cycle.rejected_count), "text-text-2")}
-              {stat("$ spend", cycle.cost_usd == null ? "—" : `$${cycle.cost_usd.toFixed(2)}`)}
+            <div className="flex flex-wrap items-center gap-6">
+              <ProgressDial
+                value={cycle.node_count > 0 ? cycle.active_count / cycle.node_count : 0}
+                label="KEPT"
+                size={64}
+              />
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                {stat("Experiments", String(cycle.node_count))}
+                {stat("Kept", String(cycle.active_count), "text-gold")}
+                {stat("Dropped", String(cycle.rejected_count), "text-text-2")}
+                {stat("$ spend", cycle.cost_usd == null ? "—" : `$${cycle.cost_usd.toFixed(2)}`)}
+              </div>
             </div>
           </section>
         )}
