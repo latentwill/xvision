@@ -363,11 +363,17 @@ export function useBlob<T = StrategyBlob>(hash: string | null | undefined) {
 /** Derive per-regime results for an experiment from the parent cycle's node list.
  *  Avoids a new backend endpoint by piggy-backing on the existing useCycleRun query.
  *  Returns an empty array when cycleId is absent or the matching node has no results. */
-export function useExperimentRegimeResults(hash: string, cycleId: string | undefined): RegimeResult[] {
-  const { data: cycle } = useCycleRun(cycleId);
-  if (!cycle || !hash) return [];
+// Fix 7: return isLoading so callers can suppress the brief empty-state flash
+// while the cycle query is still in-flight.
+export function useExperimentRegimeResults(
+  hash: string,
+  cycleId: string | undefined,
+): { results: RegimeResult[]; isLoading: boolean } {
+  const { data: cycle, isLoading } = useCycleRun(cycleId);
+  if (!cycle || !hash)
+    return { results: [], isLoading: isLoading || !hash || !cycleId };
   const node = cycle.nodes?.find((n) => n.bundle_hash === hash);
-  return node?.regime_results ?? [];
+  return { results: node?.regime_results ?? [], isLoading: false };
 }
 
 // ─── Operator label helpers ───────────────────────────────────────────────────

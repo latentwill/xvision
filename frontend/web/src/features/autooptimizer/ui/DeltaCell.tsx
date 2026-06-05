@@ -1,12 +1,25 @@
 type DeltaState = "done" | "running" | "queued" | "failed";
 
-/** Map |Δ| intensity (0–1) to a Tailwind bg opacity bucket for gold or danger. */
-function tintClass(positive: boolean, intensity: number): string {
-  // Three buckets: low (<0.33), mid (<0.67), high (≥0.67)
-  const tone = positive ? "gold" : "danger";
-  if (intensity < 0.33) return `bg-${tone}/[0.08]`;
-  if (intensity < 0.67) return `bg-${tone}/[0.16]`;
-  return `bg-${tone}/[0.26]`;
+// Fix 5: static Tailwind class map — dynamic `bg-${tone}/[0.xx]` strings are
+// not picked up by the JIT scanner, so the opacity classes disappear from the
+// production CSS bundle.  All class strings here are literals so the scanner
+// can find them.
+const TINT: Record<"gold" | "danger", Record<"low" | "mid" | "high", string>> =
+  {
+    gold: {
+      low: "bg-gold/[0.08]",
+      mid: "bg-gold/[0.16]",
+      high: "bg-gold/[0.26]",
+    },
+    danger: {
+      low: "bg-danger/[0.08]",
+      mid: "bg-danger/[0.16]",
+      high: "bg-danger/[0.26]",
+    },
+  };
+
+function bucket(abs: number): "low" | "mid" | "high" {
+  return abs >= 0.67 ? "high" : abs >= 0.33 ? "mid" : "low";
 }
 
 export function DeltaCell({
@@ -18,7 +31,10 @@ export function DeltaCell({
   delta?: number;
   sharpe?: number;
 }) {
-  if (state !== "done" || delta == null) {
+  // Non-done states, null/undefined delta, or non-finite delta all render as
+  // a neutral placeholder.  `delta === 0` is a valid result and falls through
+  // to the tinted done-cell below.
+  if (state !== "done" || delta == null || !Number.isFinite(delta)) {
     const label =
       state === "running" ? "run…" : state === "failed" ? "retry" : "queued";
     const tone = state === "failed" ? "text-danger" : "text-text-3";
@@ -32,11 +48,12 @@ export function DeltaCell({
   }
 
   const positive = delta >= 0;
-  // |Δ| of 0.5 or more maps to full tint intensity (1.0)
+  const tone = positive ? "gold" : "danger" as const;
+  // |Δ| of 0.5 or more maps to full tint intensity
   const intensity = Math.min(1, Math.abs(delta) / 0.5);
   const borderClass = positive ? "border-gold/40" : "border-danger/40";
   const textClass = positive ? "text-gold" : "text-danger";
-  const bg = tintClass(positive, intensity);
+  const bg = TINT[tone][bucket(intensity)];
 
   return (
     <div

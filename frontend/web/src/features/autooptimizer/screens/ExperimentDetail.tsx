@@ -11,7 +11,10 @@ import { RegimeCards } from "../panels/RegimeCards";
 export function ExperimentDetail() {
   const { hash = "" } = useParams<{ hash: string }>();
   const { data: node, isLoading, isError } = useLineageNode(hash);
-  const regimeResults = useExperimentRegimeResults(hash, node?.cycle_id ?? undefined);
+  // Fix 7: destructure isLoading from the hook so we can suppress the brief
+  // empty-state flash while the cycle query is still in-flight.
+  const { results: regimeResults, isLoading: regimeLoading } =
+    useExperimentRegimeResults(hash, node?.cycle_id ?? undefined);
 
   return (
     <>
@@ -47,7 +50,7 @@ export function ExperimentDetail() {
 
             <ParentDiffPanel childHash={node.bundle_hash} parentHash={node.parent_hash} />
 
-            <RegimeCards results={regimeResults} />
+            <RegimeCards results={regimeResults} isLoading={regimeLoading} />
             <EmptyPanel title="Flight recorder" phase={3} hint="The structured trace (intern → trader → risk → execution) for this experiment, once trace linkage ships." />
             <EmptyPanel title="Sign-off receipts" phase={4} hint="Attester endorsements and the sign-off decision, once attesters ship." />
           </>

@@ -19,4 +19,12 @@ describe("DeltaCell", () => {
     render(<DeltaCell state="queued" />);
     expect(screen.getByText(/queued|—/i)).toBeInTheDocument();
   });
+  it("does not render NaN for a non-finite delta in a done cell", () => {
+    render(<DeltaCell state="done" delta={NaN} />);
+    expect(screen.queryByText(/NaN/)).toBeNull();
+  });
+  it("renders zero delta as +0.00 with gold tint", () => {
+    render(<DeltaCell state="done" delta={0} />);
+    expect(screen.getByText("+0.00")).toBeInTheDocument();
+  });
 });

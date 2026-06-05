@@ -5,6 +5,15 @@ function formatDelta(v: number): string {
   return `${sign}${v.toFixed(2)}`;
 }
 
+// Fix 6: null-safe formatter — returns "—" for null/undefined/non-finite values.
+function fmt(
+  n: number | undefined | null,
+  decimals: number,
+  suffix = "",
+): string {
+  return n != null && Number.isFinite(n) ? n.toFixed(decimals) + suffix : "—";
+}
+
 function MicroMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col">
@@ -17,9 +26,17 @@ function MicroMetric({ label, value }: { label: string; value: string }) {
 function RegimeCard({ result }: { result: RegimeResult }) {
   const { regime_label, side, delta_sharpe, metrics_day } = result;
   const deltaClass = delta_sharpe >= 0 ? "text-gold" : "text-danger";
-  const winRatePct = `${Math.round(metrics_day.win_rate * 100)}%`;
-  const retVal = `${metrics_day.total_return_pct.toFixed(1)}%`;
-  const ddVal = `${metrics_day.max_drawdown_pct.toFixed(1)}%`;
+
+  // Fix 6: guard each metric against null/undefined/NaN before formatting.
+  const winRatePct = fmt(
+    metrics_day.win_rate != null ? metrics_day.win_rate * 100 : null,
+    0,
+    "%",
+  );
+  const retVal = fmt(metrics_day.total_return_pct, 1, "%");
+  const ddVal = fmt(metrics_day.max_drawdown_pct, 1, "%");
+  const tradesVal =
+    metrics_day.n_trades != null ? String(metrics_day.n_trades) : "—";
 
   return (
     <div className="rounded-md border border-border bg-surface-card p-4">
@@ -43,13 +60,19 @@ function RegimeCard({ result }: { result: RegimeResult }) {
         <MicroMetric label="ret" value={retVal} />
         <MicroMetric label="dd" value={ddVal} />
         <MicroMetric label="winrt" value={winRatePct} />
-        <MicroMetric label="trades" value={String(metrics_day.n_trades)} />
+        <MicroMetric label="trades" value={tradesVal} />
       </div>
     </div>
   );
 }
 
-export function RegimeCards({ results }: { results: RegimeResult[] }) {
+export function RegimeCards({
+  results,
+  isLoading,
+}: {
+  results: RegimeResult[];
+  isLoading?: boolean;
+}) {
   return (
     <section>
       <h2 className="m-0 mb-0.5 text-[15px] font-semibold tracking-tight">Per-regime evaluation</h2>
@@ -57,7 +80,9 @@ export function RegimeCards({ results }: { results: RegimeResult[] }) {
         Δ-Sharpe, return, drawdown, win-rate and trades per regime.
       </p>
 
-      {results.length === 0 ? (
+      {isLoading ? (
+        <p className="text-[12px] text-text-3">Loading regime data…</p>
+      ) : results.length === 0 ? (
         <p className="text-[12px] text-text-3">
           Lights up when the optimizer runs across a configured regime set.
         </p>
