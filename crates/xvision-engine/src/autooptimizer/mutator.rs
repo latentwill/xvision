@@ -205,22 +205,23 @@ pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
 /// a prose edit sets `AgentRef.prompt_override` and changes the strategy content
 /// hash, so it is a real change — not a no-op — on any agent strategy. For
 /// agentless/pre-refactor strategies there is still no home, so prose is
-/// excluded there. `filter` is inert until Phase 2 adds `MutationKind::Filter`;
-/// the arm is included now to avoid a second edit in Phase 2.
+/// excluded there. `filter` is NOT yet applicable: Phase 2 adds
+/// `MutationKind::Filter` + its apply/validate support, and only then is the
+/// `"filter"` arm wired in. Advertising it before the enum can deserialize it
+/// would steer the experiment writer to an unsupported kind with no `param`
+/// fallback (codex P2, run-7).
 pub fn applicable_mutation_kinds(base: &Strategy, allowed: &[String]) -> Vec<String> {
     let has_params = !tunable_param_keys(base).is_empty();
     // Prose is applicable iff the strategy has at least one agent to carry a
     // `prompt_override` (Phase 0). For agentless/pre-refactor strategies there
     // is still no home, so prose stays excluded there.
     let has_prompt_home = !base.agents.is_empty();
-    let has_filter = base.filter.is_some(); // Phase 2
     allowed
         .iter()
         .filter(|k| match k.as_str() {
             "param" => has_params,
             "tool" => true,
             "prose" => has_prompt_home,
-            "filter" => has_filter,
             _ => false,
         })
         .cloned()
