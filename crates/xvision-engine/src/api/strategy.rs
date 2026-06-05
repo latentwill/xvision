@@ -1007,7 +1007,16 @@ async fn clone_strategy_full_inner(
             role: agent_ref.role.clone(),
             activates: agent_ref.activates.clone(),
             prompt_override: agent_ref.prompt_override.clone(),
-            model_override: agent_ref.model_override.clone(),
+            // When cloning with a provider/model override, the new model is
+            // baked into the cloned agent's slots above. A carried-over
+            // `model_override` would shadow that at resolution and silently
+            // resolve to the OLD model, defeating clone-with-new-model. Clear
+            // it in that case; otherwise carry the source override forward.
+            model_override: if override_pair.is_some() {
+                None
+            } else {
+                agent_ref.model_override.clone()
+            },
         });
     }
 

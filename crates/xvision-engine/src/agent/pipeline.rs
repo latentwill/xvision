@@ -977,6 +977,30 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
     }
 }
 
+/// Merge per-`AgentRef` overrides onto a freshly-resolved slot.
+///
+/// This is the SINGLE source of truth for honoring `prompt_override` /
+/// `model_override`, called by BOTH resolvers (`resolve_agent_slots_for_strategy`
+/// here and `api::eval::resolve_agent_slots`). Centralizing it is load-bearing:
+/// the override MUST take effect on the eval/backtest path, because the optimizer
+/// gates candidates by backtest — if eval ignored the override, a prompt/model
+/// mutation would change the strategy's content hash yet run the shared agent's
+/// prompt at eval time, so every candidate would score identically to its parent
+/// (ΔSharpe = 0) and the gate would reject it. That is exactly the run-7 failure
+/// these axes exist to fix.
+///
+/// An empty-string override is treated as "no override" so a stray `Some("")`
+/// can never blank a working prompt (the mutator validator also rejects empty
+/// prose edits upstream).
+pub fn apply_agent_ref_overrides(resolved: &mut ResolvedAgentSlot, agent_ref: &crate::strategies::AgentRef) {
+    if let Some(p) = agent_ref.prompt_override.as_deref().filter(|s| !s.is_empty()) {
+        resolved.system_prompt = p.to_string();
+    }
+    if let Some(m) = agent_ref.model_override.as_deref().filter(|s| !s.is_empty()) {
+        resolved.slot.model = Some(m.to_string());
+    }
+}
+
 /// Resolve every `AgentRef` on a strategy into the executor-ready
 /// `Vec<ResolvedAgentSlot>`, loading each agent's slot from the agent
 /// library by `agent_id`.
@@ -1013,15 +1037,9 @@ pub async fn resolve_agent_slots_for_strategy(
             .first()
             .ok_or_else(|| anyhow::anyhow!("agent {} has no executable slots", agent.agent_id))?;
         let mut resolved = resolve_agent_slot(&agent_ref.role, slot, &agent.agent_id);
-        // Per-AgentRef overrides win over the shared library slot. Honor both
-        // here so prompt/model mutations live in the Strategy artifact (content
-        // hash + lineage) without touching the shared Agent record.
-        if let Some(p) = agent_ref.prompt_override.as_ref() {
-            resolved.system_prompt = p.clone();
-        }
-        if let Some(m) = agent_ref.model_override.as_ref() {
-            resolved.slot.model = Some(m.clone());
-        }
+        // Per-AgentRef overrides win over the shared library slot (centralized so
+        // this resolver and the API eval resolver stay identical).
+        apply_agent_ref_overrides(&mut resolved, agent_ref);
         out.push(resolved);
     }
     Ok(out)

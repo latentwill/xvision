@@ -1280,6 +1280,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_treats_empty_string_overrides_as_no_override() {
+        // An empty-string override must NOT blank a working prompt/model — it is
+        // treated as "no override" so a stray Some("") can't wipe runtime config
+        // (the mutator validator also rejects empty prose edits upstream).
+        let pool = fresh_pool().await;
+        let store = AgentStore::new(pool.clone());
+        let agent_id = store
+            .create(NewAgent {
+                name: "trader-empty-ovr".to_string(),
+                description: String::new(),
+                tags: vec![],
+                slots: vec![sample_slot()],
+                scope_strategy_id: None,
+            })
+            .await
+            .unwrap();
+
+        let raw = strategy_json_with_agents(serde_json::json!([
+            { "agent_id": agent_id, "role": "trader" }
+        ]));
+
+        // Baseline: resolve with NO overrides to capture the shared-library values.
+        let baseline_strategy: crate::strategies::Strategy = serde_json::from_value(raw.clone()).unwrap();
+        let baseline = crate::agent::pipeline::resolve_agent_slots_for_strategy(&pool, &baseline_strategy)
+            .await
+            .unwrap();
+        let base_prompt = baseline[0].system_prompt.clone();
+        let base_model = baseline[0].slot.model.clone();
+
+        // Now resolve with empty-string overrides — must equal the baseline.
+        let mut strategy: crate::strategies::Strategy = serde_json::from_value(raw).unwrap();
+        strategy.agents[0].prompt_override = Some(String::new());
+        strategy.agents[0].model_override = Some(String::new());
+        let slots = crate::agent::pipeline::resolve_agent_slots_for_strategy(&pool, &strategy)
+            .await
+            .unwrap();
+
+        assert_eq!(slots[0].system_prompt, base_prompt, "empty prompt_override must not blank the prompt");
+        assert_eq!(slots[0].slot.model, base_model, "empty model_override must not blank the model");
+    }
+
+    #[tokio::test]
     async fn resolve_agent_slots_for_strategy_empty_for_no_agents() {
         let pool = fresh_pool().await;
         let raw = strategy_json_with_agents(serde_json::json!([]));
