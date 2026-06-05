@@ -65,6 +65,9 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   vi.mocked(apiFetch).mockImplementation((path: string) => {
     if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
+    // Stub the historic-cycles list so `RecentCyclesSectionFull` gets an array
+    // (the catch-all `{}` made `cycleRuns.map` throw — a pre-existing test gap).
+    if (path === "/api/autooptimizer/cycles") return Promise.resolve([]);
     if (path === "/api/autooptimizer/run-cycle") {
       return Promise.resolve({
         started: true,
@@ -164,6 +167,45 @@ describe("LiveCycleView", () => {
     expect(screen.getByText("cycle-2")).toBeInTheDocument();
   });
 
+  it("streams live cost/tokens for the running cycle (F35.3)", async () => {
+    vi.mocked(apiFetch).mockImplementation((path: string) => {
+      if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
+      if (path === "/api/autooptimizer/cycles") return Promise.resolve([]);
+      if (path === "/api/autooptimizer/cycles/cycle-live/cost") {
+        return Promise.resolve({
+          cycle_id: "cycle-live",
+          cost_usd: 0.1234,
+          input_tokens: 1_935_625,
+          output_tokens: 18_859,
+          unpriced_calls: 0,
+          recorded: true,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    renderLiveCycleView();
+
+    // Before a cycle starts, no live-spend strip.
+    expect(screen.queryByText(/Live spend/i)).not.toBeInTheDocument();
+
+    MockEventSource.instances[0].emit(
+      "cycle_started",
+      JSON.stringify({
+        kind: "cycle_started",
+        display_label: "Cycle started",
+        data: { cycle_id: "cycle-live" },
+      }),
+    );
+
+    // The ticker polls /cost for the running cycle and renders the spend.
+    expect(await screen.findByText(/Live spend/i)).toBeInTheDocument();
+    expect(await screen.findByText("$0.1234")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith("/api/autooptimizer/cycles/cycle-live/cost"),
+    );
+  });
+
   it("launches an optimizer run through the dashboard API", async () => {
     const user = userEvent.setup();
     renderLiveCycleView();
@@ -172,15 +214,18 @@ describe("LiveCycleView", () => {
     await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
     await user.click(screen.getByRole("button", { name: "Run optimizer" }));
 
-    await waitFor(() =>
-      expect(apiFetch).toHaveBeenCalledWith("/api/autooptimizer/run-cycle", {
-        method: "POST",
-        body: JSON.stringify({
-          strategy_id: "strategy-1",
-          mutator_model: "claude-haiku-4-5-20251001",
-          judge_model: "claude-sonnet-4-6",
-        }),
-      }),
-    );
+    // Assert the POST happened against the right path with the selected
+    // strategy. Avoid pinning every optional field (F28 added budget/window,
+    // future flags will add more) — strategy_id + method are the stable
+    // contract; an exact-body match silently rots on each new launch option.
+    await waitFor(() => {
+      const call = vi
+        .mocked(apiFetch)
+        .mock.calls.find(([path]) => path === "/api/autooptimizer/run-cycle");
+      expect(call, "run-cycle POST was issued").toBeTruthy();
+      const init = call![1] as { method?: string; body?: string };
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body ?? "{}")).toMatchObject({ strategy_id: "strategy-1" });
+    });
   });
 });

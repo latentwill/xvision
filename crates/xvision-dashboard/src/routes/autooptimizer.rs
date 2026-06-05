@@ -32,7 +32,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use xvision_engine::autooptimizer::{
-    cycle_runs::{get_cycle_run, list_cycle_runs, CycleRunDetail, CycleRunSummary},
+    cycle_runs::{get_cycle_cost, get_cycle_run, list_cycle_runs, CycleCost, CycleRunDetail, CycleRunSummary},
     judge::Finding,
     lineage::{LineageNode, LineageStatus, LineageStore},
     mutator_ladder::{compute_ladder, MutatorScore},
@@ -244,6 +244,84 @@ pub async fn get_cycle(
             "optimizer cycle '{cycle_id}' not found"
         ))),
     }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/autooptimizer/cycles/:cycle_id/cost
+//
+// F35.3: live per-cycle cost/tokens for the Live tab. Reads `cycle_cost`
+// directly (the background ticker persists it every ~10s), so it returns
+// climbing spend *during* a run — and, crucially, before the first lineage
+// node commits (the runaway-token case the operator hit). Unlike
+// `GET /cycles/:id` this never 404s on a known-but-node-less cycle; an unknown
+// id simply returns `recorded: false` with null totals.
+// ---------------------------------------------------------------------------
+
+pub async fn get_cycle_cost_handler(
+    Path(cycle_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<CycleCost>, DashboardError> {
+    // `cycle_cost` is created lazily by the lineage store; absent table → no spend
+    // recorded yet, which is a valid "not recorded" answer, not an error.
+    if !table_exists(&state.pool, "cycle_cost").await? {
+        return Ok(Json(CycleCost {
+            cycle_id,
+            cost_usd: None,
+            input_tokens: None,
+            output_tokens: None,
+            unpriced_calls: None,
+            recorded: false,
+        }));
+    }
+    Ok(Json(get_cycle_cost(&state.pool, &cycle_id).await))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/autooptimizer/lineage/:hash/retire
+//
+// F29: retire a cycle-produced candidate by moving its lineage node to
+// `Rejected` (the operator-surface "Rejected" status). Brings the CLI
+// `xvn optimizer retire` affordance to the dashboard genealogy. Idempotent:
+// retiring an already-rejected node succeeds. 404 when no node has that hash.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct RetireResponse {
+    pub bundle_hash: String,
+    pub status: String,
+    pub message: String,
+}
+
+pub async fn retire_lineage_node(
+    Path(hash): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<RetireResponse>, DashboardError> {
+    if !table_exists(&state.pool, "lineage_nodes").await? {
+        return Err(DashboardError::NotFound(format!(
+            "lineage node '{hash}' not found"
+        )));
+    }
+    let content_hash = xvision_engine::autooptimizer::ContentHash::from_hex(&hash).map_err(|e| {
+        DashboardError::Validation {
+            field: "hash".into(),
+            msg: format!("invalid content hash: {e}"),
+        }
+    })?;
+    let store = LineageStore::new(state.pool.clone());
+    let updated = store
+        .set_status(&content_hash, LineageStatus::Rejected)
+        .await
+        .map_err(DashboardError::Internal)?;
+    if !updated {
+        return Err(DashboardError::NotFound(format!(
+            "lineage node '{hash}' not found"
+        )));
+    }
+    Ok(Json(RetireResponse {
+        bundle_hash: hash,
+        status: "rejected".into(),
+        message: "Experiment retired (moved to Rejected).".into(),
+    }))
 }
 
 // ---------------------------------------------------------------------------

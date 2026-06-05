@@ -144,3 +144,61 @@ async fn active_leaves_excludes_all_rejected_nodes() {
     let leaves = store.active_leaves().await.unwrap();
     assert!(leaves.is_empty(), "all-rejected store must have no active leaves");
 }
+
+// F29: retire a cycle-produced candidate (move its lineage node to Rejected).
+
+#[tokio::test]
+async fn set_status_retires_an_active_node() {
+    let store = fresh_store().await;
+    let node = make_node(b"retire-me", None, LineageStatus::Active, "c4");
+    store.insert(&node).await.unwrap();
+
+    let updated = store
+        .set_status(&node.bundle_hash, LineageStatus::Rejected)
+        .await
+        .unwrap();
+    assert!(updated, "retiring an existing node reports a row was updated");
+
+    let back = store.get(&node.bundle_hash).await.unwrap().unwrap();
+    assert_eq!(
+        back.status,
+        LineageStatus::Rejected,
+        "node status must persist as Rejected after retire"
+    );
+    // The retired node must drop out of the active-leaves view.
+    assert!(
+        store.active_leaves().await.unwrap().is_empty(),
+        "a retired node is no longer an active leaf"
+    );
+}
+
+#[tokio::test]
+async fn set_status_is_idempotent_on_already_rejected() {
+    let store = fresh_store().await;
+    let node = make_node(b"already-rejected", None, LineageStatus::Rejected, "c5");
+    store.insert(&node).await.unwrap();
+
+    // Retiring an already-rejected node still reports the row exists (true) and
+    // leaves it Rejected.
+    let updated = store
+        .set_status(&node.bundle_hash, LineageStatus::Rejected)
+        .await
+        .unwrap();
+    assert!(updated, "the row exists, so the update reports true");
+    let back = store.get(&node.bundle_hash).await.unwrap().unwrap();
+    assert_eq!(back.status, LineageStatus::Rejected);
+}
+
+#[tokio::test]
+async fn set_status_returns_false_for_absent_hash() {
+    let store = fresh_store().await;
+    let absent = ContentHash::of_bytes(b"never-inserted-retire");
+    let updated = store
+        .set_status(&absent, LineageStatus::Rejected)
+        .await
+        .unwrap();
+    assert!(
+        !updated,
+        "retiring a non-existent node reports no row was updated (→ 404 at the route)"
+    );
+}

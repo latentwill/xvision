@@ -13,7 +13,7 @@
 //   Mutator        → "Experiment writer"
 //   gate_verdict   displayed as "Accepted" / "Rejected" / "Suspect"
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
 
 // ─── Wire shapes ──────────────────────────────────────────────────────────────
@@ -134,6 +134,40 @@ export async function listCycleRuns(): Promise<CycleRunSummary[]> {
   return apiFetch<CycleRunSummary[]>("/api/autooptimizer/cycles");
 }
 
+/** F35.3: live per-cycle cost/tokens, read straight from `cycle_cost`. Unlike a
+ *  cycle's detail this is populated by the background ticker every ~10s while the
+ *  cycle runs — and before the first candidate commits — so the Live tab can show
+ *  climbing spend. `recorded` is false until the first persist / for unknown ids. */
+export type CycleCost = {
+  cycle_id: string;
+  cost_usd?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  unpriced_calls?: number | null;
+  recorded: boolean;
+};
+
+export async function getCycleCost(cycleId: string): Promise<CycleCost> {
+  return apiFetch<CycleCost>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/cost`,
+  );
+}
+
+/** F29: retire a cycle-produced candidate (move its lineage node to Rejected) —
+ *  dashboard parity for `xvn optimizer retire`. */
+export type RetireResponse = {
+  bundle_hash: string;
+  status: string;
+  message: string;
+};
+
+export async function retireLineageNode(hash: string): Promise<RetireResponse> {
+  return apiFetch<RetireResponse>(
+    `/api/autooptimizer/lineage/${encodeURIComponent(hash)}/retire`,
+    { method: "POST" },
+  );
+}
+
 export async function getLineageNode(hash: string): Promise<LineageNode> {
   return apiFetch<LineageNode>(`/api/autooptimizer/lineage/${encodeURIComponent(hash)}`);
 }
@@ -175,6 +209,8 @@ export const autooptimizerKeys = {
   lineageNode: (hash: string) => [...autooptimizerKeys.all, "lineage", hash] as const,
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   cycles: () => [...autooptimizerKeys.all, "cycles"] as const,
+  cycleCost: (cycleId: string | null | undefined) =>
+    [...autooptimizerKeys.all, "cycle-cost", cycleId ?? ""] as const,
   diversity: (q?: DiversityQuery) =>
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
   blob: (hash: string | null | undefined) =>
@@ -197,6 +233,30 @@ export function useCycleRuns() {
     queryKey: autooptimizerKeys.cycles(),
     queryFn: listCycleRuns,
     staleTime: 30_000,
+  });
+}
+
+/** F35.3: poll the running cycle's live cost/tokens. Pass the active cycle id
+ *  (derived from the SSE `cycle_started` event); polling stops once `enabled` is
+ *  false (cycle finished/cancelled). 5s cadence matches the backend's ~10s ticker
+ *  closely enough for a live ticker without hammering the DB. */
+export function useCycleCost(
+  cycleId: string | null | undefined,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: autooptimizerKeys.cycleCost(cycleId),
+    queryFn: () => getCycleCost(cycleId!),
+    enabled: !!cycleId && enabled,
+    refetchInterval: enabled ? 5_000 : false,
+    staleTime: 0,
+  });
+}
+
+/** F29: retire a lineage node (move it to Rejected). */
+export function useRetireLineageNode() {
+  return useMutation({
+    mutationFn: (hash: string) => retireLineageNode(hash),
   });
 }
 

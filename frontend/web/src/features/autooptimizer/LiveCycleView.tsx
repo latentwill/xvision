@@ -12,6 +12,7 @@ import {
   cancelRunCycle,
   useLineageNodes,
   useCycleRuns,
+  useCycleCost,
   type CycleRunSummary,
   autooptimizerKeys,
 } from "./api";
@@ -326,6 +327,11 @@ function LaunchStrip() {
       >
         {isRunning ? "Starting…" : "Run optimizer"}
       </button>
+      {/* F29: a run performs one propose → gate → commit against the chosen
+          parent — the dashboard equivalent of `xvn optimizer mutate-once`. */}
+      <span className="text-[11.5px] text-text-3">
+        Runs one gated experiment on the parent (≡ <code>mutate-once</code>).
+      </span>
       {launchError !== null && (
         <span className="text-[13px] text-danger">{launchError}</span>
       )}
@@ -660,6 +666,59 @@ function RecentCyclesSectionFull({
   );
 }
 
+// ─── Live cost ticker (F35.3) ───────────────────────────────────────────────
+
+/** Live cost/tokens strip for the running cycle. Polls `/cycles/:id/cost` (the
+ *  background ticker persists it every ~10s) so spend streams during the run —
+ *  including before the first candidate commits, the runaway-token case. Inline
+ *  full-width strip (no right-side box) per the dashboard layout rule. */
+function LiveCostTicker({
+  activeCycleId,
+  isRunning,
+}: {
+  activeCycleId: string | null;
+  isRunning: boolean;
+}) {
+  const { data: cost } = useCycleCost(activeCycleId, isRunning);
+  if (!isRunning || !activeCycleId) return null;
+
+  const totalTokens =
+    cost?.input_tokens != null || cost?.output_tokens != null
+      ? (cost?.input_tokens ?? 0) + (cost?.output_tokens ?? 0)
+      : null;
+  const costLabel = cost?.cost_usd != null ? `$${cost.cost_usd.toFixed(4)}` : "$0.0000";
+  const tokensLabel = totalTokens != null ? formatTokens(totalTokens) : "—";
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-md border border-border bg-surface-card px-4 py-2 text-[13px]">
+      <span className="font-mono text-[11.5px] uppercase tracking-wide text-text-3">
+        Live spend
+      </span>
+      <span className="text-text-2">
+        Cost{" "}
+        <span
+          className="font-mono text-text"
+          title={cost?.unpriced_calls ? `${cost.unpriced_calls} call(s) unpriced` : undefined}
+        >
+          {costLabel}
+          {cost?.unpriced_calls ? "+" : ""}
+        </span>
+      </span>
+      <span className="text-text-2">
+        Tokens <span className="font-mono text-text">{tokensLabel}</span>
+      </span>
+      {cost?.input_tokens != null && (
+        <span className="font-mono text-[11.5px] text-text-3">
+          {formatTokens(cost.input_tokens)} in · {formatTokens(cost.output_tokens ?? 0)} out
+        </span>
+      )}
+      {!cost?.recorded && (
+        <span className="font-mono text-[11.5px] text-text-3">accruing…</span>
+      )}
+    </div>
+  );
+}
+
 // ─── Root export ──────────────────────────────────────────────────────────────
 
 export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => void } = {}) {
@@ -723,6 +782,7 @@ export function LiveCycleView({ onTabChange }: { onTabChange?: (tab: string) => 
           {connected ? "Live" : "Waiting for connection…"}
         </span>
       </div>
+      <LiveCostTicker activeCycleId={activeCycleId} isRunning={isRunning} />
       <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_260px] gap-6">
         <CycleLeftCard />
         <EventLogCard events={events} bottomRef={bottomRef} />
