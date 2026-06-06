@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::Deserialize;
+use xvision_agent_client::{SideEffectLevel, ToolDescriptor};
 
 use crate::tools::{Tool, ToolName};
 
@@ -25,6 +26,41 @@ impl Tool for IndicatorPanelTool {
 
     fn description(&self) -> &'static str {
         "Computed indicator panel (RSI, MACD, BB, ATR, MA, EMA)"
+    }
+
+    fn descriptor(&self) -> ToolDescriptor {
+        ToolDescriptor {
+            name: self.name().as_str().to_string(),
+            version: "1.0.0".to_string(),
+            description: self.description().to_string(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "asset": {
+                        "type": "string",
+                        "description": "Asset symbol, e.g. BTC/USD"
+                    },
+                    "fixture": {
+                        "type": "string",
+                        "description": "Fixture name for backtest data"
+                    },
+                    "lookback_bars": {
+                        "type": "integer",
+                        "default": 200,
+                        "description": "Number of bars to compute indicators over (default 200)"
+                    }
+                },
+                "required": ["asset", "fixture"]
+            }),
+            output_schema: serde_json::json!({
+                "type": "object",
+                "description": "Latest indicator values keyed by indicator name",
+                "additionalProperties": { "type": "number" }
+            }),
+            timeout_ms: 10_000,
+            side_effect_level: SideEffectLevel::ReadOnly,
+            requires_approval: false,
+        }
     }
 
     async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
