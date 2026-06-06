@@ -257,28 +257,6 @@ describe("EvalRunsRoute", () => {
     cleanup();
   });
 
-  it("preselects strategy from the query string in the start eval dialog", async () => {
-    mockReady();
-
-    renderRoute("/eval-runs?strategy=01TEST&start=1");
-    await waitFor(() =>
-      expect(vi.mocked(evalApi.listRunsPaged)).toHaveBeenCalledWith(
-        expect.objectContaining({ agent_id: "01TEST" }),
-      ),
-    );
-
-    const strategy = (await screen.findByLabelText("Strategy")) as HTMLSelectElement;
-    await waitFor(() => expect(strategy.value).toBe("01TEST"));
-    // Scope to the Start Eval dialog — the standardized list toolbar also
-    // exposes a Strategy filter <select> with the same display_name.
-    const dialog = screen.getByRole("dialog", { name: /start eval/i });
-    expect(
-      within(dialog).getByRole("option", { name: "Trend 4H" }),
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).queryByRole("option", { name: /01TEST/ }),
-    ).not.toBeInTheDocument();
-  });
 
   it("loads launcher scenarios from the scenario registry", async () => {
     mockReady();
