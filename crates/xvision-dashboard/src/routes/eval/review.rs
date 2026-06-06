@@ -346,6 +346,7 @@ fn inferred_kind_for_provider_name(name: &str) -> Option<ProviderKind> {
     match name {
         "anthropic" => Some(ProviderKind::Anthropic),
         "openai" | "openai-compat" | "openrouter" => Some(ProviderKind::OpenaiCompat),
+        "vllm" => Some(ProviderKind::Vllm),
         "local-candle" => Some(ProviderKind::LocalCandle),
         _ => None,
     }
@@ -364,7 +365,7 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
     };
     let no_auth_review = matches!(
         entry.kind,
-        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
     );
     if api_key.is_empty() && !no_auth_review {
         return Err(ApiError::Validation(format!(
@@ -374,8 +375,7 @@ fn dispatch_from_provider(entry: &ProviderEntry) -> Result<Arc<dyn LlmDispatch>,
     }
     Ok(match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
-        ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
             Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
         }
         ProviderKind::LocalCandle => Arc::new(MockDispatch::echo(

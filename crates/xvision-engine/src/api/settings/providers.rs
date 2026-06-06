@@ -69,7 +69,7 @@ pub struct InvalidProviderRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRow {
     pub name: String,
-    /// Stable string form — `"anthropic" | "openai-compat" | "local-candle"`.
+    /// Stable string form — `"anthropic" | "openai-compat" | "local-candle" | "ollama" | "llama-cpp" | "vllm"`.
     pub kind: String,
     pub base_url: String,
     /// Env var holding the API key. Empty string for no-auth endpoints.
@@ -109,7 +109,7 @@ pub struct ProviderRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EffectiveProvider {
     pub provider: String,
-    /// Stable string form — `"anthropic" | "openai-compat" | "local-candle"`.
+    /// Stable string form — `"anthropic" | "openai-compat" | "local-candle" | "ollama" | "llama-cpp" | "vllm"`.
     pub kind: String,
     pub base_url: String,
     /// Env var holding the API key. Empty string for no-auth endpoints.
@@ -669,7 +669,7 @@ async fn fetch_models_inner(config_path: &Path, name: &str) -> ApiResult<Provide
     };
     let no_auth_kind = matches!(
         entry.kind,
-        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
     );
     if api_key.is_empty() && !no_auth_kind {
         return Err(ApiError::Validation(format!(
@@ -695,7 +695,9 @@ async fn fetch_models_inner(config_path: &Path, name: &str) -> ApiResult<Provide
 
     let models = match kind {
         ProviderKind::Anthropic => fetch_anthropic_models(&client, &api_key).await?,
-        ProviderKind::OpenaiCompat => fetch_openai_compat_models(&client, &base_url, &api_key).await?,
+        ProviderKind::OpenaiCompat | ProviderKind::Vllm => {
+            fetch_openai_compat_models(&client, &base_url, &api_key).await?
+        }
         ProviderKind::Ollama => fetch_ollama_provider_models(&client, &base_url, &api_key).await?,
         ProviderKind::LlamaCpp => fetch_openai_compat_models(&client, &base_url, &api_key).await?,
         ProviderKind::LocalCandle => {
@@ -1003,7 +1005,7 @@ async fn add_inner(config_path: &Path, xvn_home: &Path, req: AddProviderRequest)
     let trimmed_key = api_key.as_deref().map(str::trim).unwrap_or("");
     let needs_api_key = !matches!(
         parsed_kind,
-        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
     );
     if trimmed_key.is_empty() && needs_api_key {
         // Compute the env var we'd use for this provider so the env
@@ -1144,7 +1146,7 @@ async fn update_inner(
     let trimmed_env = req.api_key_env.trim().to_string();
     let requires_env = !matches!(
         parsed_kind,
-        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
     );
     if trimmed_env.is_empty() && requires_env {
         return Err(ApiError::Validation(
@@ -1428,7 +1430,10 @@ fn entry_has_key(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -> bool 
         return true;
     }
     // Ollama and LlamaCpp treat an empty api_key_env as no-auth (optional key).
-    let optional_auth = matches!(entry.kind, ProviderKind::Ollama | ProviderKind::LlamaCpp);
+    let optional_auth = matches!(
+        entry.kind,
+        ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
+    );
     if entry.api_key_env.is_empty() {
         return optional_auth;
     }
@@ -1593,7 +1598,9 @@ fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
         ProviderKind::OpenaiCompat => {
             format!("XVN_PROVIDER_{}_KEY", name.to_ascii_uppercase().replace('-', "_"))
         }
-        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp => String::new(),
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
+            String::new()
+        }
     }
 }
 
@@ -1617,6 +1624,7 @@ fn sensible_default_model(kind: ProviderKind, name: &str) -> Option<&'static str
             "nous-research" => Some("Hermes-4-405B"),
             _ => None,
         },
+        ProviderKind::Vllm => None,
         ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp => None,
     }
 }
@@ -1627,6 +1635,7 @@ fn default_base_url_for(kind: ProviderKind, _name: &str) -> &'static str {
         ProviderKind::OpenaiCompat => "https://api.openai.com/v1",
         ProviderKind::Ollama => "http://localhost:11434",
         ProviderKind::LlamaCpp => "http://localhost:8080",
+        ProviderKind::Vllm => "http://localhost:8000/v1",
         ProviderKind::LocalCandle => "",
     }
 }
@@ -1761,6 +1770,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::LocalCandle => "local-candle",
         ProviderKind::Ollama => "ollama",
         ProviderKind::LlamaCpp => "llama-cpp",
+        ProviderKind::Vllm => "vllm",
     }
 }
 
@@ -1771,8 +1781,9 @@ fn parse_kind(s: &str) -> ApiResult<ProviderKind> {
         "local-candle" => Ok(ProviderKind::LocalCandle),
         "ollama" => Ok(ProviderKind::Ollama),
         "llama-cpp" => Ok(ProviderKind::LlamaCpp),
+        "vllm" => Ok(ProviderKind::Vllm),
         other => Err(ApiError::Validation(format!(
-            "invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle | ollama | llama-cpp"
+            "invalid kind `{other}`; must be one of: anthropic | openai-compat | local-candle | ollama | llama-cpp | vllm"
         ))),
     }
 }
@@ -1977,6 +1988,31 @@ enabled_models = ["deepseek-v4-pro", "deepseek-v4-flash"]
         let row = res.expect("ollama add must succeed");
         assert_eq!(row.name, "ollama");
         assert_eq!(row.kind, "ollama");
+    }
+
+    #[tokio::test]
+    async fn add_vllm_with_empty_key_succeeds_and_defaults_to_localhost() {
+        let dir = TempDir::new().unwrap();
+        let path = write_min_config(&dir);
+        let ctx = ctx_in(&dir).await;
+        let row = add(
+            &ctx,
+            &path,
+            AddProviderRequest {
+                name: "vllm".into(),
+                kind: "vllm".into(),
+                base_url: "".into(),
+                api_key_env: "".into(),
+                api_key: None,
+            },
+        )
+        .await
+        .expect("vLLM add must support no-auth local servers");
+        assert_eq!(row.name, "vllm");
+        assert_eq!(row.kind, "vllm");
+        assert_eq!(row.base_url, "http://localhost:8000/v1");
+        assert_eq!(row.api_key_env, "");
+        assert!(!row.api_key_set);
     }
 
     #[tokio::test]

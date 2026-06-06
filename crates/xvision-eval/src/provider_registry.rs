@@ -57,12 +57,10 @@ impl ProviderRegistry {
                 &resolved.model,
                 &row.api_key_env,
             )?),
-            ProviderKind::OpenaiCompat => Arc::new(OpenAICompatIntern::from_env(
-                row.base_url.clone(),
-                &resolved.model,
-                &row.api_key_env,
-            )?),
-            ProviderKind::Ollama | ProviderKind::LlamaCpp => Arc::new(OpenAICompatIntern::from_env(
+            ProviderKind::OpenaiCompat
+            | ProviderKind::Ollama
+            | ProviderKind::LlamaCpp
+            | ProviderKind::Vllm => Arc::new(OpenAICompatIntern::from_env(
                 row.base_url.clone(),
                 &resolved.model,
                 &row.api_key_env,
@@ -96,12 +94,10 @@ impl ProviderRegistry {
         }
         let row = self.find_provider(&resolved.provider, "trader")?;
         let backend: Arc<dyn TraderBackend> = match row.kind {
-            ProviderKind::OpenaiCompat => Arc::new(OpenAiCompatBackend::from_env(
-                row.base_url.clone(),
-                &resolved.model,
-                &row.api_key_env,
-            )?),
-            ProviderKind::Ollama | ProviderKind::LlamaCpp => Arc::new(OpenAiCompatBackend::from_env(
+            ProviderKind::OpenaiCompat
+            | ProviderKind::Ollama
+            | ProviderKind::LlamaCpp
+            | ProviderKind::Vllm => Arc::new(OpenAiCompatBackend::from_env(
                 row.base_url.clone(),
                 &resolved.model,
                 &row.api_key_env,

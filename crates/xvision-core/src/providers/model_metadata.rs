@@ -127,6 +127,7 @@ const KNOWN_PROVIDER_PREFIXES: &[&str] = &[
     "xai",
     "local-candle",
     "ollama",
+    "vllm",
 ];
 
 /// Look up metadata for a model id, falling back to
