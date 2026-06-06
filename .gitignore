@@ -142,3 +142,7 @@ tools/agent-conductor/dist/
 # BEADS execution state (working files for context recovery)
 .beads/context/
 .beads/plans/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
