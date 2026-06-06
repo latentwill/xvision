@@ -8,6 +8,7 @@
 // styling.
 
 import type { ProviderRow } from "@/api/types.gen";
+import { isProviderConfigured } from "@/lib/providers";
 
 export type ProviderModelOption = { provider: string; model: string };
 
@@ -43,7 +44,7 @@ export function ModelPicker({
   /** Override the "— pick a model —" placeholder. */
   placeholder?: string;
 }) {
-  const configuredProviders = rows.filter((r) => r.api_key_set && !r.synthetic);
+  const configuredProviders = rows.filter(isProviderConfigured);
   const all = configuredProviders
     .flatMap((r) =>
       r.enabled_models.map((m) => ({ provider: r.name, model: m })),
