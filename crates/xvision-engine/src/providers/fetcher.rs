@@ -17,7 +17,7 @@
 //!   This is the fetcher that actually solves the homework problem.
 //!
 //! - `OpenAiCompatFetcher`  — generic `{base_url}/v1/models`. Used for
-//!   plain OpenAI, DeepSeek, Groq, Together, Mistral. These all return
+//!   plain OpenAI, DeepSeek, Groq, Together, Mistral, vLLM. These all return
 //!   `{ object: "list", data: [{ id, object, created, owned_by }] }` —
 //!   ids only, no ceilings.
 //!
@@ -89,6 +89,11 @@ pub fn fetcher_for(provider: &ProviderEntry, api_key: String) -> Result<Box<dyn 
                 )))
             }
         }
+        ProviderKind::Vllm => Ok(Box::new(OpenAiCompatFetcher::new(
+            provider.name.clone(),
+            provider.base_url.clone(),
+            api_key,
+        ))),
         ProviderKind::Ollama => Ok(Box::new(OllamaFetcher::new(
             provider.name.clone(),
             provider.base_url.clone(),
@@ -842,6 +847,8 @@ mod tests {
         assert_eq!(f.source_url(), "https://api.groq.com/openai/v1/models");
         let f2 = OpenAiCompatFetcher::new("d".into(), "https://api.deepseek.com".into(), String::new());
         assert_eq!(f2.source_url(), "https://api.deepseek.com/v1/models");
+        let f3 = OpenAiCompatFetcher::new("vllm".into(), "http://localhost:8000/v1".into(), String::new());
+        assert_eq!(f3.source_url(), "http://localhost:8000/v1/models");
     }
 
     #[test]
@@ -903,6 +910,16 @@ mod tests {
         };
         let f = fetcher_for(&groq, String::new()).unwrap();
         assert!(f.source_url().contains("api.groq.com/openai/v1/models"));
+
+        let vllm = ProviderEntry {
+            name: "vllm".into(),
+            kind: ProviderKind::Vllm,
+            base_url: "http://localhost:8000/v1".into(),
+            api_key_env: String::new(),
+            enabled_models: Vec::new(),
+        };
+        let f = fetcher_for(&vllm, String::new()).unwrap();
+        assert_eq!(f.source_url(), "http://localhost:8000/v1/models");
 
         let local = ProviderEntry {
             name: "candle".into(),

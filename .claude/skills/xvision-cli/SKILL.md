@@ -35,14 +35,16 @@ switch to `xvision-dev`.
 - `scenario` — author scenarios. Includes `select` (read-only comparable set query), `inspect --card` (plain-text card), `classify` (auto-derive regime labels from bars), `set-regime` (operator-authored labels).
 - `eval` — `run`, `list`, `show`, `results`, `watch`, `compare` (with `--markdown` table), `batch` (multi-scenario), `attest`, `export` (canonical `EvalRunExport` JSON, q15 §3), `review`, `validate`. `xvn eval run --auto-fire-review --max-review-annotations 8` opts the run into completion-time review annotations; `xvn eval show` prints the stored auto-review state.
 - `experiment` — ledger that groups a research question + strategy + scenarios. `experiment run` orchestrates pick → batch → bind → `result_json` in one shot; pair with `--wait --compare --markdown` for a publishable summary.
-- `ab-compare` — N-arm backtest harness; emits `BacktestResult` JSON. Cycles come from `--cycles <json>`; bars come from `--bars <json>` or the SQLite cache via `--from / --to / --granularity`.
+- `ab-compare` — low-level N-arm **baseline-algorithm** backtest primitive; emits one `BacktestResult` JSON. Cycles come from `--cycles <json>` (raw `MarketSnapshot`s); bars come from `--bars <json>` or the SQLite cache via `--from / --to / --granularity`. **Not** a Strategy/Scenario runner and **not** how you compare eval runs — see the disambiguation section below. To compare completed eval runs use `xvn eval compare`.
 - `metrics` / `gate` — pre-committed metrics + anti-overfit verdict (treatment vs baseline).
 - `dashboard serve` — axum server with the SPA baked in via `rust-embed`. Default bind `0.0.0.0:8788`.
 - `provider` — manage registered LLM providers in `$XVN_HOME/config/default.toml`. `refresh-models` hits `/v1/models`; `models` reads the cached catalog (no network).
 - `agent get <id>` — fetch one agent record from the workspace agent library (shape matches the `agents[]` slot in `EvalRunExport`).
 - `agent inspect <id> --diagnostics` — per-capability readiness for one agent (prompt / model / tools / runtime / optimizable). State-only; exits 0 for a resolved agent.
 - `strategy diagnostics <id>` — whole-strategy launch readiness; exits **14** (`OptValidation`) when not launchable, listing each unmet required capability with a typed reason.
-- `optimize` — offline DSPy prompt/demo optimizer: `run / inspect / export-demos / import-demos / accept-as-child-agent / revert-accepted / explain-missing-data`. Deterministic, no-network by default; distinct exit codes 10–15 per failure class.
+- `optimizer` — **operator "Optimizer"** (codename autooptimizer): offline memory-Observation → candidate-Pattern distillation + strategy-mutation flywheel; `run / run-cycle / mutate-once / gate / activate / retire / lineage / inspect / ls / demo`. Offline-only, never on the eval/live path. **Distinct from `optimize`** (see disambiguation below). Operate it via the `xvision/autooptimizer-ops` skill.
+- `flywheel` — observability over memory + Optimizer activity (velocity / health cards).
+- `optimize` — offline **DSPy** prompt/demo optimizer for one agent slot: `run / inspect / export-demos / import-demos / accept-as-child-agent / revert-accepted / explain-missing-data`. Deterministic, no-network by default; distinct exit codes 10–15 per failure class. Not the same verb as `optimizer`.
 - `obs retention` / `obs janitor` — agent-run retention policy + TTL/max-bytes sweep.
 - `run inspect <run_id>` — materialize `xvn_run.json` + `xvn_report.md` for a finished agent run from the SQLite ledger.
 - `intern` / `trader` / `risk` — preview prompts or run one pipeline stage in isolation.
@@ -186,6 +188,41 @@ Use `experiment` when the operator's question is the unit of work
 ("does this strategy survive across these regimes?"); use a bare `eval batch`
 when you just need N runs and don't need the ledger row.
 
+## Disambiguation: verbs agents routinely confuse
+
+Two name collisions cause most wrong-tool picks. Match the **intent**, not the
+verb's spelling.
+
+### "compare" — `eval compare` vs `ab-compare`
+
+| You want to… | Use | Not |
+|---|---|---|
+| Compare 2+ **completed eval runs** (by `run_id`) — metrics, equity, findings | `xvn eval compare <run_a> <run_b> [--markdown --sort sharpe]` | ~~`ab-compare`~~ |
+| Compare every run in a finished batch | `xvn eval compare --batch <batch_id> --markdown` | — |
+| Run N **baseline algorithms** over raw cycles+bars (no Strategy, no Scenario, no run record) | `xvn ab-compare --cycles … --arms "trader_arm,buy_and_hold,…"` | ~~`eval compare`~~ |
+
+`ab-compare` reads like "A/B compare two runs" — **it is not.** It is a
+low-level backtest primitive: it takes raw `MarketSnapshot` cycles + bars, runs
+the built-in baseline arms (`trader_arm`, `buy_and_hold`, `always_long`,
+`always_short`, `rsi_mean_reversion`, `ma_crossover:fast=…:slow=…`,
+`macd_momentum`, `random_direction:seed=…`), and emits one `BacktestResult`
+JSON. It never touches a `Strategy`/`Scenario`, takes no `run_id`, and produces
+no eval-run row — so you **cannot** point it at two completed runs. To A/B two
+real strategies: launch two eval runs (`eval run` ×2, or `eval batch`) and then
+`eval compare` their ids — or use `experiment run` to do pick → batch → compare
+in one call.
+
+### "optimize" — `xvn optimizer` vs `xvn optimize`
+
+| Verb | What it is | Operates on | Skill |
+|---|---|---|---|
+| `xvn optimizer` | **Operator "Optimizer"** (codename autooptimizer): offline flywheel that distills memory Observations into candidate Patterns and mutates strategies, then `gate` → `activate`/`retire` with lineage | Patterns / strategies across the flywheel | `xvision/autooptimizer-ops`; health via `xvision/flywheel-ops` |
+| `xvn optimize` | **Offline DSPy tuner** for one agent slot (`trader`/`filter`): optimizes prompt + demonstrations, accept winner as a child agent | one agent's prompt + demos | this skill, §"Offline DSPy optimizer" |
+
+Both are **offline-only** and never run on the live or eval path. They are not
+interchangeable: `optimizer` (autooptimizer) works across the
+Pattern/strategy flywheel; `optimize` (DSPy) tunes a single agent slot.
+
 ## Inline deterministic Filter DSL
 
 For pure indicator gates, prefer `xvn strategy set-filter <strategy_id>
@@ -225,7 +262,10 @@ Compare surfaces:
 - CLI and JSON keep ids as the addressing primitive, but labels prefer
   `strategy_name` from the strategy manifest when available.
 
-## Offline optimizer (`xvn optimize`)
+## Offline DSPy optimizer (`xvn optimize`)
+
+> Not to be confused with `xvn optimizer` (the autooptimizer flywheel — see the
+> disambiguation section above and the `xvision/autooptimizer-ops` skill).
 
 Tune an agent slot's prompt + demonstrations **offline**, then accept the
 winner as a child agent. Authoring/research only — never on the eval or live
@@ -365,5 +405,6 @@ Engineering-side deployment + crate-level architecture moved to the
 
 *Skills owner: whichever track ships a new `xvn` verb, Filter DSL
 surface, or operator-visible strategy/eval workflow is responsible for
-updating this file in the same PR. Last refresh: 2026-06-01 (agent-safe
-eval launch path, execution-mode labels, no-agent mechanical distinction).*
+updating this file in the same PR. Last refresh: 2026-06-06 (verb
+disambiguation: `eval compare` vs `ab-compare`, `optimizer` vs `optimize`;
+added `optimizer`/`flywheel` to the CLI quick map).*

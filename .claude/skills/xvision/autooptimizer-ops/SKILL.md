@@ -82,14 +82,14 @@ Observation's bar timestamp, not the current date. Using wall clock time
 introduces look-ahead contamination.
 
 **Finding written after scores visible**: The blind finding must be composed
-before the numeric gate scores are read. Running `xvn autoresearch run` and
+before the numeric gate scores are read. Running `xvn optimizer run` and
 then writing the finding retrospectively breaks the audit trail.
 
 **Hard delete without janitor path**: Retiring is soft-delete. Hard delete
 requires the explicit memory janitor confirmation flow — skipping it destroys
 lineage evidence.
 
-**Wrong skill for inventory inspection**: `xvn autoresearch inspect` shows one
+**Wrong skill for inventory inspection**: `xvn optimizer inspect` shows one
 run. Use `xvision-memory-ops` to list all Patterns or Observations across an
 agent.
 
