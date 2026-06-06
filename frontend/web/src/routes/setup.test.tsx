@@ -15,9 +15,13 @@ vi.mock("@/api/settings", () => ({
     providers: [
       {
         name: "openrouter",
-        enabled_models: ["anthropic/claude-sonnet-4"],
+        kind: "anthropic-compat",
+        base_url: "https://openrouter.ai/api/v1",
+        api_key_env: "OPENROUTER_API_KEY",
         api_key_set: true,
         synthetic: false,
+        is_default: true,
+        enabled_models: ["anthropic/claude-sonnet-4"],
       },
     ],
   }),
@@ -54,9 +58,13 @@ describe("SetupRoute", () => {
       providers: [
         {
           name: "openrouter",
-          enabled_models: ["anthropic/claude-sonnet-4"],
+          kind: "anthropic-compat",
+          base_url: "https://openrouter.ai/api/v1",
+          api_key_env: "OPENROUTER_API_KEY",
           api_key_set: true,
           synthetic: false,
+          is_default: true,
+          enabled_models: ["anthropic/claude-sonnet-4"],
         },
       ],
     } as never);
