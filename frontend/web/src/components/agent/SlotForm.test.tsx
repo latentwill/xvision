@@ -5,7 +5,7 @@
 // (`fnd_sig-feat-ui-flow-0e07bcd326-2bbe_8ce24d101a`).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SlotForm } from "./SlotForm";

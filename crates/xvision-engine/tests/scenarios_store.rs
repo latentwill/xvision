@@ -177,6 +177,44 @@ async fn list_scenarios_filters_by_source_and_tags() {
 }
 
 #[tokio::test]
+async fn list_scenarios_can_exclude_optimizer_tagged_rows() {
+    let ctx = test_ctx().await;
+    let mut regular = make_test_scenario("sc_regular");
+    regular.tags = vec!["operator".into()];
+    let mut optimizer = make_test_scenario("sc_optimizer");
+    optimizer.source = ScenarioSource::Generated;
+    optimizer.tags = vec!["source:autooptimizer".into()];
+    store::insert_scenario(&ctx, &regular).await.unwrap();
+    store::insert_scenario(&ctx, &optimizer).await.unwrap();
+
+    let visible = store::list_scenarios(
+        &ctx,
+        &store::ListScenariosFilter {
+            exclude_tags: vec!["source:autooptimizer".into()],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let ids: Vec<&str> = visible.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"sc_regular"));
+    assert!(!ids.contains(&"sc_optimizer"));
+
+    let optimizer_folder = store::list_scenarios(
+        &ctx,
+        &store::ListScenariosFilter {
+            source: Some(ScenarioSource::Generated),
+            tags: vec!["source:autooptimizer".into()],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(optimizer_folder.len(), 1);
+    assert_eq!(optimizer_folder[0].id, "sc_optimizer");
+}
+
+#[tokio::test]
 async fn list_scenarios_hides_archived_by_default() {
     let ctx = test_ctx().await;
     let s = make_test_scenario("sc_arch_list");

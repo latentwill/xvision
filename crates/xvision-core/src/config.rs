@@ -74,6 +74,7 @@ pub enum ProviderKind {
     LocalCandle,
     Ollama,
     LlamaCpp,
+    Vllm,
 }
 
 impl From<InternProvider> for ProviderKind {
@@ -1600,7 +1601,7 @@ sqlite_url = "sqlite://x.db"
     #[test]
     fn provider_kind_round_trips_via_serde() {
         use ProviderKind::*;
-        for k in [Anthropic, OpenaiCompat, LocalCandle, Ollama, LlamaCpp] {
+        for k in [Anthropic, OpenaiCompat, LocalCandle, Ollama, LlamaCpp, Vllm] {
             let s = toml::to_string(&ProviderEntry {
                 name: "p".into(),
                 kind: k,
@@ -1618,6 +1619,8 @@ sqlite_url = "sqlite://x.db"
     fn provider_kind_serializes_to_kebab_case() {
         let v = toml::Value::try_from(ProviderKind::OpenaiCompat).unwrap();
         assert_eq!(v.as_str(), Some("openai-compat"));
+        let v = toml::Value::try_from(ProviderKind::Vllm).unwrap();
+        assert_eq!(v.as_str(), Some("vllm"));
     }
 
     const BAD_STEP_HORIZON: &str = r#"

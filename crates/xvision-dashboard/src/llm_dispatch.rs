@@ -68,7 +68,12 @@ pub async fn resolve(
         })?
     };
 
-    if api_key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+    if api_key.is_empty()
+        && !matches!(
+            entry.kind,
+            ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
+        )
+    {
         return Err(DashboardError::Validation {
             field: "provider".into(),
             msg: format!(
@@ -99,8 +104,7 @@ pub async fn resolve(
 
     let dispatch: Arc<dyn LlmDispatch> = match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
-        ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
             Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
         }
         ProviderKind::LocalCandle => {

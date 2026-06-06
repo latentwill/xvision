@@ -2067,8 +2067,7 @@ async fn dispatch_from_provider_entry(
             }
             Arc::new(AnthropicDispatch::new(api_key))
         }
-        ProviderKind::OpenaiCompat => Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key)),
-        ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
             Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
         }
         ProviderKind::LocalCandle => Arc::new(AutoOptimizerLocalDispatch),

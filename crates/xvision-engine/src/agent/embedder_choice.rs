@@ -140,17 +140,17 @@ fn is_real_openai(base_url: &str) -> bool {
 /// Kinds (the `EffectiveProvider::kind` string) that treat an empty API key
 /// as no-auth — a local embeddings server that needs no credential. Mirrors
 /// the `optional_auth` / `no_auth_kind` notion in
-/// `api::settings::providers` (Ollama / llama.cpp / local-candle). A
+/// `api::settings::providers` (Ollama / llama.cpp / vLLM / local-candle). A
 /// selected provider of one of these kinds resolves to `OpenAiCompat` with
 /// an empty `api_key` rather than falling through to `Local`.
 fn is_no_auth_kind(kind: &str) -> bool {
-    matches!(kind, "ollama" | "llama-cpp" | "local-candle")
+    matches!(kind, "ollama" | "llama-cpp" | "vllm" | "local-candle")
 }
 
 /// Try to build an `OpenAiCompat` choice from a named provider. Returns
 /// `None` when the provider isn't found, or when it genuinely needs a key
 /// (auth-bearing kind) and none is resolvable — so the caller can decide
-/// the fallback. A no-auth kind (Ollama / llama.cpp / local-candle)
+/// the fallback. A no-auth kind (Ollama / llama.cpp / vLLM / local-candle)
 /// resolves even with no key, using whatever key is present (possibly
 /// empty).
 fn provider_choice(

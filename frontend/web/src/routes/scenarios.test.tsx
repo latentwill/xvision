@@ -170,6 +170,48 @@ describe("ScenariosRoute", () => {
     });
   });
 
+  it("excludes optimizer scenarios by default and shows them from the Optimizer source folder", async () => {
+    renderRoute();
+
+    await waitFor(() => {
+      const calls = vi.mocked(scenariosApi.listScenariosPaged).mock.calls;
+      expect(
+        calls.some(([f]) =>
+          (f as { exclude_tags?: string[] }).exclude_tags?.includes(
+            "source:autooptimizer",
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    await waitFor(() =>
+      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
+    );
+    const sourceSelect = screen
+      .getAllByRole("combobox")
+      .find((select) =>
+        Array.from((select as HTMLSelectElement).options).some(
+          (option) => option.value === "optimizer",
+        ),
+      ) as HTMLSelectElement | undefined;
+    if (!sourceSelect) throw new Error("Optimizer source filter not found");
+    fireEvent.change(sourceSelect, { target: { value: "optimizer" } });
+
+    await waitFor(() => {
+      const calls = vi.mocked(scenariosApi.listScenariosPaged).mock.calls;
+      expect(
+        calls.some(([f]) => {
+          const filter = f as { source?: string | null; tags?: string[]; exclude_tags?: string[] };
+          return (
+            filter.source === "Generated" &&
+            filter.tags?.includes("source:autooptimizer") &&
+            (filter.exclude_tags?.length ?? 0) === 0
+          );
+        }),
+      ).toBe(true);
+    });
+  });
+
   it("hydrates the search box from the ?q= URL param", async () => {
     vi.mocked(scenariosApi.listScenariosPaged).mockResolvedValue({
       items: [scenario({ display_name: "BTC 4h sample" })],

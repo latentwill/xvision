@@ -82,6 +82,8 @@ pub struct CreateScenarioRequest {
 pub struct ListScenariosFilter {
     pub source: Option<ScenarioSource>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub exclude_tags: Vec<String>,
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
     /// Optional page-size cap. The dashboard list endpoint sets both
@@ -196,6 +198,7 @@ pub async fn list(ctx: &ApiContext, filter: ListScenariosFilter) -> ApiResult<Ve
     let store_filter = scenario_store::ListScenariosFilter {
         source: filter.source,
         tags: filter.tags,
+        exclude_tags: filter.exclude_tags,
         include_archived: filter.include_archived,
         parent_scenario_id: filter.parent_scenario_id,
         limit: filter.limit,
@@ -211,6 +214,7 @@ pub async fn list_paged(ctx: &ApiContext, filter: ListScenariosFilter) -> ApiRes
     let store_filter = scenario_store::ListScenariosFilter {
         source: filter.source,
         tags: filter.tags,
+        exclude_tags: filter.exclude_tags,
         include_archived: filter.include_archived,
         parent_scenario_id: filter.parent_scenario_id,
         limit: filter.limit,

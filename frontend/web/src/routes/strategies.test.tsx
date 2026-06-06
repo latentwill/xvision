@@ -31,6 +31,7 @@ vi.mock("@/api/strategies", async () => {
   return {
     ...actual,
     createStrategy: vi.fn(),
+    cloneStrategy: vi.fn(),
     listStrategies: vi.fn(),
     listStrategiesPaged: vi.fn(),
   };
@@ -122,6 +123,88 @@ describe("StrategiesRoute", () => {
     expect(
       screen.getAllByLabelText("Open inspector for Trend 4H").length,
     ).toBeGreaterThan(0);
+  });
+
+  it("does not render the template filter or template column", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01TEST",
+          display_name: "Trend 4H",
+          template: "trend_follower",
+          decision_cadence_minutes: 240,
+          model: "claude-sonnet",
+        },
+      ],
+      total: 1,
+    });
+
+    renderRoute();
+
+    expect((await screen.findAllByText("Trend 4H")).length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText(/Template/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Template" })).not.toBeInTheDocument();
+  });
+
+  it("hides legacy xvision example strategies that have no attached agent", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "example-agentless-template",
+          display_name: "Example template without agent",
+          template: "example",
+          decision_cadence_minutes: 60,
+          agent_count: 0,
+        },
+        {
+          agent_id: "01LIVE",
+          display_name: "Operator strategy",
+          template: "custom",
+          decision_cadence_minutes: 60,
+          agent_count: 1,
+        },
+      ],
+      total: 2,
+    });
+
+    renderRoute();
+
+    expect(await screen.findByText("Operator strategy")).toBeInTheDocument();
+    expect(screen.queryByText("Example template without agent")).not.toBeInTheDocument();
+  });
+
+  it("clones a strategy from the list action", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01SOURCE",
+          display_name: "Trend 4H",
+          template: "trend_follower",
+          decision_cadence_minutes: 240,
+          model: "claude-sonnet",
+        },
+      ],
+      total: 1,
+    });
+    vi.mocked(strategiesApi.cloneStrategy).mockResolvedValue({
+      manifest: {
+        id: "01CLONE",
+        display_name: "Trend 4H (clone)",
+      },
+    } as strategiesApi.Strategy);
+
+    renderRoute();
+
+    const clone = await screen.findByRole("button", {
+      name: /Clone strategy Trend 4H/i,
+    });
+    fireEvent.click(clone);
+
+    await waitFor(() =>
+      expect(strategiesApi.cloneStrategy).toHaveBeenCalledWith("01SOURCE", {
+        display_name: "Trend 4H (clone)",
+      }),
+    );
   });
 
   it("does not render NaN for invalid cadence values", async () => {

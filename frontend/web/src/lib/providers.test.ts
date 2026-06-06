@@ -40,4 +40,16 @@ describe("isProviderConfigured", () => {
   it("treats a whitespace-only api_key_env as no-auth (returns true when api_key_set is false)", () => {
     expect(isProviderConfigured(row({ api_key_env: "   ", api_key_set: false }))).toBe(true);
   });
+
+  it("treats known local provider kinds as no-auth even if api_key_env is present", () => {
+    expect(
+      isProviderConfigured(
+        row({
+          kind: "ollama",
+          api_key_env: "OLLAMA_API_KEY",
+          api_key_set: false,
+        }),
+      ),
+    ).toBe(true);
+  });
 });
