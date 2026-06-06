@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -472,6 +473,46 @@ describe("MemoryPage — Observations sub-tab", () => {
   });
 });
 
+
+describe("MemoryPage — Pattern lifecycle controls", () => {
+  it("calls createPattern when the Add Pattern form is submitted with a training-window date", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /Add Pattern/i }));
+
+    await screen.findByRole("heading", { name: /Add Pattern/i });
+    await user.type(screen.getByRole("textbox", { name: /text/i }), "Buy the dip on Mondays.");
+    fireEvent.change(
+      screen.getByTitle(/The latest date your training data covers/i),
+      { target: { value: "2026-01-01" } },
+    );
+    await user.click(screen.getByRole("button", { name: /^Add Pattern$/ }));
+
+    await waitFor(() =>
+      expect(memoryApi.createPattern).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Buy the dip on Mondays." }),
+      ),
+    );
+  });
+
+  it("calls forgetMemory when the forget confirmation is submitted", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Forget all global memory/i }),
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: /Confirm forget/i }),
+    );
+
+    await waitFor(() =>
+      expect(memoryApi.forgetMemory).toHaveBeenCalledWith({ namespace: "global" }),
+    );
+  });
+});
 
 describe("MemoryPage — deep-link highlight", () => {
   it("highlights the pattern row matching ?pattern=<id>", async () => {

@@ -728,7 +728,7 @@ function StartEvalPanel({
   const selectedStrategyFirstAsset = selectedStrategyAssets[0];
   const effectiveLiveAsset = selectedStrategyFirstAsset ?? liveAsset;
   const reviewProviderRows = (providers.data?.providers ?? []).filter(
-    (row) => row.enabled_models.length > 0,
+    (row) => row.enabled_models.length > 0 && isProviderConfigured(row),
   );
   const activeReviewProvider =
     reviewProviderRows.find((row) => row.name === reviewProvider) ??

@@ -34,6 +34,9 @@ function row(
     kind,
     base_url: kind === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com",
     api_key_env: `${name.toUpperCase()}_API_KEY`,
+    api_key_set: true,
+    synthetic: false,
+    is_default: false,
     enabled_models: enabled,
   } as ProviderRow;
 }

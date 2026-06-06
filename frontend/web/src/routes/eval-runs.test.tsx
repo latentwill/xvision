@@ -699,6 +699,90 @@ describe("EvalRunsRoute", () => {
     });
   });
 
+  it("allows eval launch when the strategy uses a no-auth provider (Ollama/local)", async () => {
+    mockReady({
+      providers: [
+        provider({
+          name: "ollama",
+          base_url: "http://localhost:11434/v1",
+          api_key_env: "",
+          api_key_set: false,
+          enabled_models: ["llama3.2"],
+        }),
+      ],
+    });
+    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
+      {
+        agent_id: "01TEST",
+        display_name: "Ollama Strategy",
+        template: "custom",
+        decision_cadence_minutes: 240,
+        providers: ["ollama"],
+        models: ["llama3.2"],
+      },
+    ]);
+    vi.mocked(evalApi.startRun).mockResolvedValue({
+      summary: {
+        id: "01RUN",
+        agent_id: "01TEST",
+        scenario_id: "user-scenario-4h",
+        mode: "backtest",
+        status: "queued",
+        started_at: null,
+        completed_at: null,
+        sharpe: null,
+        max_drawdown_pct: null,
+        total_return_pct: null,
+        error: null,
+      },
+      decisions: [],
+      metrics: null,
+    } as never);
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    fireEvent.change(screen.getByLabelText("Scenario"), {
+      target: { value: "user-scenario-4h" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+
+    await waitFor(() => expect(evalApi.startRun).toHaveBeenCalled());
+    expect(screen.queryByText(/Add a provider\/API key/)).not.toBeInTheDocument();
+  });
+
+  it("excludes unconfigured providers from the reviewer dropdown", async () => {
+    mockReady({
+      providers: [
+        provider({
+          name: "openai",
+          enabled_models: ["gpt-4.1-mini"],
+          api_key_set: true,
+        }),
+        provider({
+          name: "unkeyed",
+          enabled_models: ["some-model"],
+          api_key_env: "UNKEYED_API_KEY",
+          api_key_set: false,
+        }),
+      ],
+    });
+
+    renderRoute("/eval-runs?strategy=01TEST&start=1");
+
+    await screen.findByRole("option", { name: /User 4H/ });
+    fireEvent.click(screen.getByLabelText("auto-run review annotations on completion"));
+
+    await waitFor(() => {
+      const reviewProviderSelect = screen.getByLabelText("Review provider");
+      const options = Array.from(reviewProviderSelect.querySelectorAll("option")).map(
+        (o) => o.value,
+      );
+      expect(options).toContain("openai");
+      expect(options).not.toContain("unkeyed");
+    });
+  });
+
   it("blocks eval launch when the selected strategy uses an unconfigured provider", async () => {
     mockReady({
       providers: [

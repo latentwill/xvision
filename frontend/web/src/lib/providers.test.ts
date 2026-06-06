@@ -36,4 +36,8 @@ describe("isProviderConfigured", () => {
   it("returns false for synthetic no-auth providers", () => {
     expect(isProviderConfigured(row({ synthetic: true, api_key_env: "", api_key_set: false }))).toBe(false);
   });
+
+  it("treats a whitespace-only api_key_env as no-auth (returns true when api_key_set is false)", () => {
+    expect(isProviderConfigured(row({ api_key_env: "   ", api_key_set: false }))).toBe(true);
+  });
 });
