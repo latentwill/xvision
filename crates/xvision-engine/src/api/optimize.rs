@@ -1157,6 +1157,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             noop_skip: None,
+            allowed_tools: vec![],
             capabilities: default_capabilities(),
             delta_briefing: None,
         }

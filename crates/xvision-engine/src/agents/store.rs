@@ -425,7 +425,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities, allowed_tools_json \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -485,12 +485,19 @@ impl AgentStore {
                     .unwrap_or_else(|_| default_capabilities()),
                 _ => default_capabilities(),
             };
+            // Migration 055: allowed_tools_json. Pre-055 rows return the
+            // column default '[]' so the read path is always safe. An empty
+            // array signals "fall back to strategy.required_tools" at dispatch.
+            let allowed_tools_json: String = row.try_get("allowed_tools_json").unwrap_or_else(|_| "[]".to_string());
+            let allowed_tools: Vec<String> =
+                serde_json::from_str(&allowed_tools_json).unwrap_or_default();
             out.push(AgentSlot {
                 name: row.try_get("name")?,
                 provider: row.try_get("provider")?,
                 model: row.try_get("model")?,
                 system_prompt: row.try_get("system_prompt")?,
                 skill_ids,
+                allowed_tools,
                 max_tokens,
                 max_wall_ms,
                 temperature: None,
@@ -536,10 +543,11 @@ async fn insert_slot(
     // been updated still reads back as `{Trader}`. We always emit the
     // explicit value here so the row is byte-stable across writes.
     let capabilities_json = serde_json::to_string(&slot.capabilities).context("serialize capabilities")?;
+    let allowed_tools_json = serde_json::to_string(&slot.allowed_tools).context("serialize allowed_tools")?;
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities, allowed_tools_json) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
     .bind(idx)
@@ -573,6 +581,9 @@ async fn insert_slot(
     // path; we still bind the explicit serialized set here so reads
     // return whatever the operator persisted.
     .bind(capabilities_json)
+    // Migration 055: tool names this slot is allowed to call. Empty
+    // array means "fall back to strategy.required_tools" at dispatch.
+    .bind(allowed_tools_json)
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -651,6 +662,11 @@ mod tests {
         // on every save; the read path projects `0` back to `None`.
         let migration_047 = include_str!("../../migrations/047_agent_slot_max_wall_ms.sql");
         sqlx::query(migration_047).execute(&pool).await.unwrap();
+        // 055 adds agent_slots.allowed_tools_json (tool-based capability
+        // model). DEFAULT '[]' preserves pre-055 behavior; insert_slot
+        // always writes the explicit value; read path falls back to empty.
+        let migration_055 = include_str!("../../migrations/055_agent_slot_allowed_tools.sql");
+        sqlx::query(migration_055).execute(&pool).await.unwrap();
         pool
     }
 
@@ -670,6 +686,7 @@ mod tests {
             model: "claude-sonnet-4-6".to_string(),
             system_prompt,
             skill_ids: vec![],
+            allowed_tools: vec![],
             max_tokens: Some(4096),
             max_wall_ms: None,
             temperature: None,
@@ -678,6 +695,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::default(),
             noop_skip: None,
+            allowed_tools: vec![],
             capabilities: default_capabilities(),
             delta_briefing: None,
         }

@@ -92,6 +92,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                allowed_tools: vec![],
                 capabilities: BTreeSet::from([Capability::Trader]),
                 delta_briefing: None,
             }],
@@ -125,6 +126,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     // executor consumes — semantically an Intern, not a Trader.
                     // Not in the Phase E spec table (the table doesn't include
                     // this template); using {Intern} matches news-reader-plus-trader.
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Intern]),
                     delta_briefing: None,
                 },
@@ -146,6 +148,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -176,6 +179,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -199,6 +203,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     // Phase E spec table: risk_check → {Critic}. Observes the
                     // upstream trader's decision and emits an approve/modify/veto
                     // critique — not a new trader.
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Critic]),
                     delta_briefing: None,
                 },
@@ -220,6 +225,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -255,6 +261,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                allowed_tools: vec![],
                 capabilities: BTreeSet::from([Capability::Trader]),
                 delta_briefing: None,
             }],
@@ -288,6 +295,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
+                allowed_tools: vec![],
                 capabilities: BTreeSet::from([Capability::Trader]),
                 delta_briefing: None,
             }],
@@ -324,6 +332,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     // Phase E spec table: router → {Router}. Phase B shipped
                     // Router fully (operator Q2 resolution), so this maps to
                     // the real Router handler — not a Trader fallback.
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Router]),
                     delta_briefing: None,
                 },
@@ -346,6 +355,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -369,6 +379,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -391,6 +402,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -427,6 +439,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Filter]),
                     delta_briefing: None,
                 },
@@ -452,6 +465,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -489,6 +503,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     // Phase E spec table: news_reader → {Intern}. Produces a
                     // structured briefing-extension digest the Trader reads via
                     // accumulated upstream inputs. Slot name "news" preserved.
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Intern]),
                     delta_briefing: None,
                 },
@@ -514,6 +529,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -549,6 +565,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     bar_history_limit: None,
                     memory_mode: xvision_memory::types::MemoryMode::default(),
                     noop_skip: None,
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Trader]),
                     delta_briefing: None,
                 },
@@ -579,6 +596,7 @@ pub fn builtin_templates() -> Vec<AgentTemplate> {
                     // Critic-observation (spec Decision 4) — the slot observes
                     // the paper-trader's proposal and emits confirm/downgrade/veto.
                     // v2 may promote to a veto-capable Critic.
+                    allowed_tools: vec![],
                     capabilities: BTreeSet::from([Capability::Critic]),
                     delta_briefing: None,
                 },

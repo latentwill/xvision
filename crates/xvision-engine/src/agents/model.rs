@@ -207,6 +207,18 @@ pub struct AgentSlot {
     /// registry landing without a schema migration. Not related to the
     /// Plan 2b `xvn skill` surface that was removed in ADR 0012.
     pub skill_ids: Vec<String>,
+    /// Tool names from the tool registry that this slot is allowed to call
+    /// (e.g. `["ohlcv", "submit_decision"]`). An agent with
+    /// `submit_decision` can make trading decisions; one without it only
+    /// gathers context. An agent with `submit_risk_verdict` acts as a risk
+    /// gate. Empty means "inherit from strategy.required_tools" for
+    /// backward compatibility with pre-055 records.
+    ///
+    /// Persisted as `allowed_tools_json` (migration 055). `#[serde(default)]`
+    /// so clients and legacy JSON that omit the field keep today's
+    /// fallback-to-required_tools behavior.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
     /// Optional operator override for the per-request token budget.
     /// `None` means "auto from the selected model" — the dispatcher
     /// resolves it via `agents::model_metadata::resolve_max_tokens`.

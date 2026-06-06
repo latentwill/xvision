@@ -929,7 +929,10 @@ pub fn agent_slot_to_llm_slot(role: &str, slot: &AgentSlot) -> LLMSlot {
         } else {
             format!("{}.{}", slot.provider, slot.model)
         },
-        allowed_tools: Vec::new(),
+        // Migration 055: use the slot's explicit tool list when set; fall
+        // back to Vec::new() so the indicator-tool-wiring fallback in the
+        // pipeline still fills from strategy.required_tools for pre-055 rows.
+        allowed_tools: slot.allowed_tools.clone(),
         provider: if slot.provider.trim().is_empty() {
             None
         } else {
