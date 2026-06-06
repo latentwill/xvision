@@ -51,6 +51,7 @@ import {
 } from "@/api/strategies";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { drawdownToneClass } from "@/lib/metric-tone";
+import { isProviderConfigured } from "@/lib/providers";
 import {
   displayScenarioName,
   displayStrategyName,
@@ -1149,10 +1150,7 @@ function evalPreflightError({
   }
 
   const rows = providers.data?.providers ?? [];
-  const hasCredentialedProvider = rows.some((row) => {
-    const noAuthProvider = row.api_key_env.trim().length === 0;
-    return row.api_key_set || noAuthProvider;
-  });
+  const hasCredentialedProvider = rows.some(isProviderConfigured);
   if (!hasCredentialedProvider) {
     return "Add a provider/API key in Settings -> Providers before running eval.";
   }
@@ -1172,8 +1170,7 @@ function evalPreflightError({
       if (!row) {
         return `provider '${pair.provider}' is not configured. Pick a configured provider/model for the strategy agent before running eval.`;
       }
-      const noAuthProvider = row.api_key_env.trim().length === 0;
-      if (!row.api_key_set && !noAuthProvider) {
+      if (!isProviderConfigured(row)) {
         return `provider '${pair.provider}' has no API key set. Add it in Settings -> Providers before running eval.`;
       }
       if (!row.enabled_models.includes(pair.model)) {
