@@ -2217,6 +2217,23 @@ async fn spawn_cline_ctx(
         }
     };
 
+    // Register all tool descriptors with the sidecar so the model sees full
+    // schemas for every tool in its allowed_tools list. This must happen
+    // before any start_run call — agentd holds the registry globally per
+    // process and all runs share it. Without this call the registry is empty
+    // and the model cannot call any tool (including submit_decision).
+    let all_descriptors = tools.all_descriptors();
+    let descriptor_count = all_descriptors.len();
+    client
+        .register_tools(all_descriptors)
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to register tools with agentd: {e}")))?;
+    tracing::debug!(
+        target: "xvision_engine::agent::execute_cline",
+        descriptor_count,
+        "tool descriptors registered with agentd"
+    );
+
     // Couple the dispatcher's `StartRunParams.slot_role` to the recording's
     // key slot_role (footgun c): the dispatcher stamps `recording_slot_role`
     // on frames, and `read_frames` filters on it.
