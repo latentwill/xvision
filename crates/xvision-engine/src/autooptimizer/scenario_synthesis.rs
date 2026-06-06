@@ -10,6 +10,8 @@ use crate::eval::scenario::{
 };
 use crate::safety::VenueLabel;
 
+pub const OPTIMIZER_SCENARIO_TAG: &str = "source:autooptimizer";
+
 /// F10 (2026-06-04): the single builder for an autooptimizer "day window"
 /// scenario. Both entry points that synthesize an optimizer scenario — the CLI
 /// `xvn optimizer run-cycle` and the dashboard `POST /api/autooptimizer/run-cycle`
@@ -30,7 +32,7 @@ pub fn synthesize_optimizer_day_scenario(day_window: &DayWindow, created_by: &st
         source: ScenarioSource::Generated,
         display_name: "Optimizer cycle day window".into(),
         description: format!("Synthesized day window {} – {}", day_window.start, day_window.end),
-        tags: vec![],
+        tags: vec![OPTIMIZER_SCENARIO_TAG.into()],
         notes: None,
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
@@ -117,6 +119,7 @@ pub fn synthesize_baseline_untouched_scenario(
         day_scenario.display_name
     );
     synthesized.notes = None;
+    push_optimizer_scenario_tag(&mut synthesized.tags);
     synthesized.time_window = TimeWindow {
         start: win_start,
         end: win_end,
@@ -133,4 +136,10 @@ pub fn synthesize_baseline_untouched_scenario(
     synthesized.archived_at = None;
 
     Ok(synthesized)
+}
+
+fn push_optimizer_scenario_tag(tags: &mut Vec<String>) {
+    if !tags.iter().any(|t| t == OPTIMIZER_SCENARIO_TAG) {
+        tags.push(OPTIMIZER_SCENARIO_TAG.into());
+    }
 }

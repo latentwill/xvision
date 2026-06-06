@@ -44,6 +44,7 @@ function buildScenariosListUrl(filter?: ListScenariosFilter): string {
   if (filter?.offset !== undefined && filter.offset !== null)
     params.set("offset", String(filter.offset));
   filter?.tags?.forEach((t) => params.append("tags", t));
+  filter?.exclude_tags?.forEach((t) => params.append("exclude_tags", t));
   const qs = params.toString();
   return qs ? `/api/scenarios?${qs}` : "/api/scenarios";
 }
