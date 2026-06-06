@@ -29,10 +29,14 @@ describe("CycleDetail", () => {
       expect(screen.getAllByRole("heading", { level: 1 }).some((h) => h.textContent === "cyc-1")).toBe(true)
     );
     expect(screen.getByText("Experiments this cycle")).toBeInTheDocument();
-    expect(screen.getByText("Eval matrix")).toBeInTheDocument();         // EmptyPanel
-    expect(screen.getByText("Anti-overfit gate")).toBeInTheDocument();   // EmptyPanel
+    expect(screen.getByText("Eval matrix")).toBeInTheDocument();         // EvalMatrix h2
+    expect(screen.getByText("Anti-overfit gate")).toBeInTheDocument();   // GateBuckets h2
     // ProgressDial: kept rate = active_count/node_count = 1/3 ≈ 33%
     expect(await screen.findByText("33%")).toBeInTheDocument();
     expect(screen.getByText("KEPT")).toBeInTheDocument();
+    // GateBuckets bucket labels (multiple "Kept"/"Dropped" instances across hero stats + GateBuckets)
+    expect(screen.getAllByText("Kept").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Suspect").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Dropped").length).toBeGreaterThan(0);
   });
 });

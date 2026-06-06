@@ -559,8 +559,8 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
         Ok(cycles) if !cycles.is_empty() => {
             println!("\nMutation cycles (`xvn optimizer run-cycle`):");
             println!(
-                "  {:<28}  {:>5}  {:>5}  {:>5}  {:>9}  {:>10}  {}",
-                "Cycle", "Nodes", "Kept", "Drop", "Cost", "Tokens", "Last"
+                "  {:<28}  {:>5}  {:>5}  {:>7}  {:>5}  {:>9}  {:>10}  {}",
+                "Cycle", "Nodes", "Kept", "Suspect", "Drop", "Cost", "Tokens", "Last"
             );
             for c in cycles {
                 let last = c.last_created_at.get(..19).unwrap_or(&c.last_created_at);
@@ -573,8 +573,8 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
                     _ => "—".to_string(),
                 };
                 println!(
-                    "  {:<28}  {:>5}  {:>5}  {:>5}  {:>9}  {:>10}  {}",
-                    c.cycle_id, c.node_count, c.active_count, c.rejected_count, cost, tokens, last
+                    "  {:<28}  {:>5}  {:>5}  {:>7}  {:>5}  {:>9}  {:>10}  {}",
+                    c.cycle_id, c.node_count, c.active_count, c.suspect_count, c.rejected_count, cost, tokens, last
                 );
             }
             println!(
@@ -641,8 +641,8 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
     let s = &detail.summary;
     println!("optimizer cycle: {}", s.cycle_id);
     println!(
-        "candidates: {} ({} kept, {} dropped)",
-        s.node_count, s.active_count, s.rejected_count
+        "candidates: {} ({} kept · {} suspect · {} dropped)",
+        s.node_count, s.active_count, s.suspect_count, s.rejected_count
     );
     println!("first node: {}", s.first_created_at);
     println!("last node:  {}", s.last_created_at);
@@ -686,6 +686,7 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
         let parent_short = parent.get(..10).unwrap_or(&parent);
         let status = match n.status {
             LineageStatus::Active => "kept",
+            LineageStatus::Quarantined => "suspect",
             LineageStatus::Rejected => "dropped",
         };
         let day_sharpe = cn
@@ -894,14 +895,20 @@ async fn fetch_lineage_rows(
 }
 
 async fn lineage_ls(args: LineageLsArgs) -> CliResult<()> {
-    if !matches!(args.status.as_str(), "all" | "active" | "rejected") {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "--status must be 'active', 'rejected', or 'all'"
-        )));
-    }
+    // Accept operator alias "suspect" (maps to DB wire value "quarantined").
+    // Also accept "quarantined" for power users who know the wire value.
+    let db_status = match args.status.as_str() {
+        "suspect" | "quarantined" => "quarantined",
+        other if matches!(other, "all" | "active" | "rejected") => other,
+        _ => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--status must be 'active', 'rejected', 'suspect', or 'all'"
+            )));
+        }
+    };
     let db_path = resolve_lineage_db(args.db)?;
     let pool = open_lineage_db(&db_path).await?;
-    let rows = fetch_lineage_rows(&pool, args.cycle.as_deref(), &args.status, args.limit).await?;
+    let rows = fetch_lineage_rows(&pool, args.cycle.as_deref(), db_status, args.limit).await?;
     if rows.is_empty() {
         println!("(no experiments)");
         return Ok(());
@@ -915,9 +922,14 @@ async fn lineage_ls(args: LineageLsArgs) -> CliResult<()> {
         let parent = row.parent_hash.as_deref().and_then(|h| h.get(..8)).unwrap_or("—");
         let cycle = row.cycle_id.as_deref().unwrap_or("—");
         let created = row.created_at.get(..10).unwrap_or(&row.created_at);
+        // Map DB wire status to operator display label.
+        let display_status = match row.status.as_str() {
+            "quarantined" => "suspect",
+            other => other,
+        };
         println!(
             "{:<10}  {:<10}  {:<10}  {:<24}  {:<10}  {}",
-            exp, row.status, parent, cycle, created, row.gate_verdict
+            exp, display_status, parent, cycle, created, row.gate_verdict
         );
     }
     Ok(())
@@ -939,6 +951,7 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
         "status:       {}",
         match node.status {
             LineageStatus::Active => "active",
+            LineageStatus::Quarantined => "suspect",
             LineageStatus::Rejected => "rejected",
         }
     );
@@ -981,6 +994,7 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
             Ok(Some(anc)) => {
                 let s = match anc.status {
                     LineageStatus::Active => "active",
+                    LineageStatus::Quarantined => "suspect",
                     LineageStatus::Rejected => "rejected",
                 };
                 println!("  depth={} {} ({})", depth + 1, anc.bundle_hash, s);
@@ -1078,12 +1092,14 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
         LineageStatus::Rejected
     };
 
+    let outcome_str = if passed { "kept" } else { "dropped" };
     ipc_send_event(
         &mut ipc_stream,
         CycleProgressEvent::MutationGated {
             cycle_id: cycle_id.clone(),
             child_hash: child_hash.to_hex(),
             passed,
+            outcome: outcome_str.to_string(),
         },
     )
     .await;
@@ -1388,6 +1404,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         parent_strategies,
         explicit_parent_hashes,
         objective: cfg.objective,
+        regime_set: cfg.regime_set.clone(),
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -1470,7 +1487,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // F14: distinguish a cycle that gated a real candidate from one that
     // produced nothing. A no-candidate cycle still exits 0 with a cycle_id, so
     // without this line it looks identical to a successful optimization.
-    let candidates = result.active_nodes.len() + result.rejected_nodes.len();
+    let candidates = result.active_nodes.len() + result.suspect_nodes.len() + result.rejected_nodes.len();
     if candidates == 0 {
         eprintln!(
             "no candidate produced: the experiment writer did not yield a usable experiment this \
@@ -1480,9 +1497,10 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         );
     } else {
         eprintln!(
-            "candidates: {candidates} gated ({} kept, {} dropped); {} attempt(s) produced no \
-             usable experiment",
+            "candidates: {candidates} gated ({} kept, {} suspect, {} dropped); {} attempt(s) \
+             produced no usable experiment",
             result.active_nodes.len(),
+            result.suspect_nodes.len(),
             result.rejected_nodes.len(),
             result.no_candidate_count
         );

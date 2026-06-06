@@ -125,11 +125,41 @@ export async function listLineageNodes(q?: LineageQuery): Promise<LineageNode[]>
   );
 }
 
+/** Per-regime performance metrics (mirrors MetricsSummary serialized fields). */
+export type RegimeMetrics = {
+  total_return_pct: number;
+  sharpe: number;
+  max_drawdown_pct: number;
+  win_rate: number;
+  n_trades: number;
+};
+
+/** One per-regime evaluation result for a lineage node (from autooptimizer_regime_results). */
+export type RegimeResult = {
+  regime_label: string;
+  /** Serialized as snake_case: "bull" | "bear_or_shock" | "chop" */
+  side: "bull" | "bear_or_shock" | "chop";
+  delta_sharpe: number;
+  verdict: string;
+  metrics_day: RegimeMetrics;
+  metrics_untouched: RegimeMetrics;
+};
+
+/** Lineage node enriched with per-regime results (Phase 2 regime matrix). */
+export type CycleNodeDetail = LineageNode & {
+  metrics_day?: RegimeMetrics | null;
+  metrics_untouched?: RegimeMetrics | null;
+  /** Per-regime evaluation results; empty for single-window cycles or pre-Phase-2 nodes. */
+  regime_results: RegimeResult[];
+};
+
 /** One historic optimizer cycle (grouped from lineage) with F23 tokens + cost. */
 export type CycleRunSummary = {
   cycle_id: string;
   node_count: number;
   active_count: number;
+  /** Quarantined (Suspect) nodes — partial-pass across regimes. */
+  suspect_count?: number;
   rejected_count: number;
   first_created_at: string;
   last_created_at: string;
@@ -141,7 +171,7 @@ export type CycleRunSummary = {
 
 /** Full detail for one cycle: summary fields + its lineage nodes + honesty check. */
 export type CycleRunDetail = CycleRunSummary & {
-  nodes: LineageNode[];
+  nodes: CycleNodeDetail[];
   honesty_check?: {
     passed: boolean;
     sabotage_variant: string;
@@ -328,6 +358,22 @@ export function useBlob<T = StrategyBlob>(hash: string | null | undefined) {
     enabled: !!hash,
     staleTime: 60_000,
   });
+}
+
+/** Derive per-regime results for an experiment from the parent cycle's node list.
+ *  Avoids a new backend endpoint by piggy-backing on the existing useCycleRun query.
+ *  Returns an empty array when cycleId is absent or the matching node has no results. */
+// Fix 7: return isLoading so callers can suppress the brief empty-state flash
+// while the cycle query is still in-flight.
+export function useExperimentRegimeResults(
+  hash: string,
+  cycleId: string | undefined,
+): { results: RegimeResult[]; isLoading: boolean } {
+  const { data: cycle, isLoading } = useCycleRun(cycleId);
+  if (!cycle || !hash)
+    return { results: [], isLoading: isLoading || !hash || !cycleId };
+  const node = cycle.nodes?.find((n) => n.bundle_hash === hash);
+  return { results: node?.regime_results ?? [], isLoading: false };
 }
 
 // ─── Operator label helpers ───────────────────────────────────────────────────

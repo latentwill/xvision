@@ -65,10 +65,21 @@ pub enum CycleProgressEvent {
         reason: String,
     },
     /// Fired after the numeric gate evaluates a child mutation.
+    ///
+    /// `passed` is kept for backward compatibility with existing consumers
+    /// (true = Active, false = Quarantined or Rejected). The additive `outcome`
+    /// field carries the precise 3-way result: `"kept"`, `"suspect"`, or
+    /// `"dropped"`. New consumers should read `outcome`; legacy consumers that
+    /// only read `passed` will see `false` for both Suspect and Rejected as before.
     MutationGated {
         cycle_id: String,
         child_hash: String,
+        /// Legacy two-way result. `true` = Active (kept). `false` = Quarantined
+        /// (suspect) or Rejected (dropped). Kept for back-compat.
         passed: bool,
+        /// Three-way result: `"kept"` | `"suspect"` | `"dropped"`.
+        #[serde(default)]
+        outcome: String,
     },
     /// Fired after the honesty check runs. Operator label: "Honesty check run".
     /// F9: carries the sabotage variant + a human-readable message so the CLI
@@ -93,6 +104,9 @@ pub enum CycleProgressEvent {
     CycleFinished {
         cycle_id: String,
         active_count: usize,
+        /// Quarantined (Suspect) nodes — partial-pass across regimes.
+        #[serde(default)]
+        suspect_count: usize,
         rejected_count: usize,
     },
 }

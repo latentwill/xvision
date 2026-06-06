@@ -44,6 +44,7 @@ pub mod parent_policy;
 pub mod preflight;
 pub mod program_view;
 pub mod progress;
+pub mod regime_results;
 pub mod run_lock;
 pub mod scenario_synthesis;
 pub mod tournament;

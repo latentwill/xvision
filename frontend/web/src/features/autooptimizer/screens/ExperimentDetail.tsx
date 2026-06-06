@@ -1,15 +1,20 @@
 import { useParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
-import { useLineageNode, formatGateVerdict } from "../api";
+import { useLineageNode, useExperimentRegimeResults, formatGateVerdict } from "../api";
 import { Breadcrumb } from "../ui/Breadcrumb";
 import { HashSigil } from "../ui/HashSigil";
 import { GateBadge } from "../ui/GateBadge";
 import { EmptyPanel } from "../ui/EmptyPanel";
 import { ParentDiffPanel } from "../panels/ParentDiffPanel";
+import { RegimeCards } from "../panels/RegimeCards";
 
 export function ExperimentDetail() {
   const { hash = "" } = useParams<{ hash: string }>();
   const { data: node, isLoading, isError } = useLineageNode(hash);
+  // Fix 7: destructure isLoading from the hook so we can suppress the brief
+  // empty-state flash while the cycle query is still in-flight.
+  const { results: regimeResults, isLoading: regimeLoading } =
+    useExperimentRegimeResults(hash, node?.cycle_id ?? undefined);
 
   return (
     <>
@@ -45,7 +50,7 @@ export function ExperimentDetail() {
 
             <ParentDiffPanel childHash={node.bundle_hash} parentHash={node.parent_hash} />
 
-            <EmptyPanel title="Per-regime evaluation" phase={2} hint="Lights up when the regime matrix runs — Δ-Sharpe, return, drawdown, win-rate and an equity curve per regime." />
+            <RegimeCards results={regimeResults} isLoading={regimeLoading} />
             <EmptyPanel title="Flight recorder" phase={3} hint="The structured trace (intern → trader → risk → execution) for this experiment, once trace linkage ships." />
             <EmptyPanel title="Sign-off receipts" phase={4} hint="Attester endorsements and the sign-off decision, once attesters ship." />
           </>

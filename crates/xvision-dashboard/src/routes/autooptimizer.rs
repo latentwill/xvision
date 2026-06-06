@@ -8,7 +8,7 @@
 //!
 //! ## Endpoint inventory
 //!
-//! - `GET /api/autooptimizer/lineage[?status=active|rejected&cycle_id=&limit=&offset=]`
+//! - `GET /api/autooptimizer/lineage[?status=active|rejected|quarantined&cycle_id=&limit=&offset=]`
 //! - `GET /api/autooptimizer/lineage/:hash`
 //! - `GET /api/autooptimizer/ladder[?since=<rfc3339>]`
 //! - `GET /api/autooptimizer/diversity[?cycle_id=&limit=]`
@@ -47,7 +47,7 @@ use crate::state::AppState;
 
 #[derive(Deserialize, Default)]
 pub struct LineageListQuery {
-    /// Filter by operator-surface status: "active" or "rejected".
+    /// Filter by lineage status: "active", "rejected", or "quarantined" (suspect).
     pub status: Option<String>,
     pub cycle_id: Option<String>,
     #[serde(default = "default_limit")]
@@ -516,6 +516,7 @@ fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, Dash
     let gate_verdict = GateVerdict::from_str(&gate_str).map_err(|e| DashboardError::Internal(e))?;
     let status = match status_str.as_str() {
         "active" => LineageStatus::Active,
+        "quarantined" => LineageStatus::Quarantined,
         "rejected" => LineageStatus::Rejected,
         other => {
             return Err(DashboardError::Internal(anyhow::anyhow!(
@@ -536,4 +537,48 @@ fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, Dash
         created_at,
         diversity_score,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xvision_engine::autooptimizer::{content_hash::ContentHash, lineage::ensure_lineage_schema};
+
+    /// Verify that `row_to_lineage_node` accepts a persisted "quarantined" status
+    /// (Fix 1: previously the match had no quarantined arm and returned Internal
+    /// 500 for any quarantined node, breaking the lineage list endpoint).
+    #[tokio::test]
+    async fn quarantined_row_parsed_without_error() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory pool");
+        ensure_lineage_schema(&pool)
+            .await
+            .expect("ensure_lineage_schema");
+
+        let hash = ContentHash::of_bytes(b"quarantined-test").to_hex();
+
+        sqlx::query(
+            "INSERT INTO lineage_nodes \
+             (bundle_hash, parent_hash, gate_verdict, status, cycle_id, created_at) \
+             VALUES (?, NULL, 'pass', 'quarantined', 'cycle-q-001', '2026-01-01T00:00:00Z')",
+        )
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .expect("insert quarantined node");
+
+        let rows = sqlx::query(
+            "SELECT bundle_hash, parent_hash, gate_verdict, status, cycle_id, \
+             created_at, diversity_score FROM lineage_nodes WHERE status = 'quarantined'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("fetch quarantined rows");
+
+        assert_eq!(rows.len(), 1);
+        let node = row_to_lineage_node(rows.into_iter().next().unwrap())
+            .expect("row_to_lineage_node must not error on quarantined status");
+        assert_eq!(node.status, LineageStatus::Quarantined);
+    }
 }

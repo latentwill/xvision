@@ -481,6 +481,7 @@ fn build_cycle_config(
         parent_strategies,
         explicit_parent_hashes,
         objective: cfg.objective,
+        regime_set: cfg.regime_set.clone(),
     }
 }
 

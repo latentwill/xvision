@@ -24,6 +24,7 @@ pub fn display_label(event: &CycleProgressEvent) -> &'static str {
         ParentSelected { .. } => "Parent selected",
         MutationProposed { .. } => "Experiment proposed",
         NoCandidate { .. } => "No experiment produced",
+        MutationGated { outcome, .. } if outcome == "suspect" => "Experiment suspect",
         MutationGated { passed: true, .. } => "Experiment kept",
         MutationGated { passed: false, .. } => "Experiment dropped",
         HonestyCheckRun { .. } => "Honesty check result",
@@ -43,6 +44,7 @@ pub fn event_kind(event: &CycleProgressEvent) -> &'static str {
         ParentSelected { .. } => "parent_selected",
         MutationProposed { .. } => "mutation_proposed",
         NoCandidate { .. } => "no_candidate",
+        MutationGated { outcome, .. } if outcome == "suspect" => "mutation_gated_suspect",
         MutationGated { passed: true, .. } => "mutation_gated_passed",
         MutationGated { passed: false, .. } => "mutation_gated_dropped",
         HonestyCheckRun { .. } => "honesty_check_run",
@@ -78,6 +80,15 @@ mod tests {
             cycle_id: "c1".into(),
             child_hash: "def".into(),
             passed: true,
+            outcome: "kept".into(),
+        }
+    }
+    fn mutation_gated_suspect() -> CycleProgressEvent {
+        CycleProgressEvent::MutationGated {
+            cycle_id: "c1".into(),
+            child_hash: "def".into(),
+            passed: false,
+            outcome: "suspect".into(),
         }
     }
     fn mutation_gated_dropped() -> CycleProgressEvent {
@@ -85,6 +96,7 @@ mod tests {
             cycle_id: "c1".into(),
             child_hash: "def".into(),
             passed: false,
+            outcome: "dropped".into(),
         }
     }
     fn honesty_check_run() -> CycleProgressEvent {
@@ -114,6 +126,7 @@ mod tests {
         CycleProgressEvent::CycleFinished {
             cycle_id: "c1".into(),
             active_count: 1,
+            suspect_count: 1,
             rejected_count: 1,
         }
     }
@@ -123,6 +136,7 @@ mod tests {
         assert_eq!(display_label(&parent_selected()), "Parent selected");
         assert_eq!(display_label(&mutation_proposed()), "Experiment proposed");
         assert_eq!(display_label(&mutation_gated_passed()), "Experiment kept");
+        assert_eq!(display_label(&mutation_gated_suspect()), "Experiment suspect");
         assert_eq!(display_label(&mutation_gated_dropped()), "Experiment dropped");
         assert_eq!(display_label(&honesty_check_run()), "Honesty check result");
         assert_eq!(display_label(&judge_finding()), "Reviewer finished notes");
@@ -136,6 +150,7 @@ mod tests {
         assert_eq!(event_kind(&parent_selected()), "parent_selected");
         assert_eq!(event_kind(&mutation_proposed()), "mutation_proposed");
         assert_eq!(event_kind(&mutation_gated_passed()), "mutation_gated_passed");
+        assert_eq!(event_kind(&mutation_gated_suspect()), "mutation_gated_suspect");
         assert_eq!(event_kind(&mutation_gated_dropped()), "mutation_gated_dropped");
         assert_eq!(event_kind(&honesty_check_run()), "honesty_check_run");
         assert_eq!(event_kind(&judge_finding()), "judge_finding");

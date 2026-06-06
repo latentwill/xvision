@@ -350,6 +350,7 @@ async fn run_cycle_smoke() {
         parent_strategies,
         explicit_parent_hashes: Vec::new(),
         objective: Default::default(),
+        regime_set: vec![],
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -512,6 +513,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         parent_strategies,
         explicit_parent_hashes: Vec::new(),
         objective: Default::default(),
+        regime_set: vec![],
     };
 
     let result = run_cycle(
