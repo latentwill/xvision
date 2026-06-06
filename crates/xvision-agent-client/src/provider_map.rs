@@ -93,7 +93,7 @@ pub fn map_provider(entry: &ProviderEntry, model_id: &str) -> Result<ClineProvid
             "ollama".to_string(),
             Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
         ),
-        ProviderKind::LlamaCpp => (
+        ProviderKind::LlamaCpp | ProviderKind::Vllm => (
             CLINE_PROVIDER_LITELLM.to_string(),
             Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
         ),

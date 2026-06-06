@@ -43,7 +43,7 @@ fn normalise_provider(provider: &str) -> ProviderFamily {
     match provider.trim().to_lowercase().as_str() {
         "anthropic" => ProviderFamily::Anthropic,
         "openai" | "openai-compat" | "openrouter" | "deepseek" | "groq" | "together" | "mistral" | "xai"
-        | "x-ai" | "fireworks" | "perplexity" => ProviderFamily::OpenAiCompat,
+        | "x-ai" | "fireworks" | "perplexity" | "vllm" => ProviderFamily::OpenAiCompat,
         _ => ProviderFamily::Unknown,
     }
 }
@@ -65,7 +65,7 @@ fn normalise_provider(provider: &str) -> ProviderFamily {
 ///      already falls back to the per-model auto value).
 ///    - OpenAI-compat family (`openai`, `openai-compat`, `openrouter`,
 ///      `deepseek`, `groq`, `together`, `mistral`, `xai`, `fireworks`,
-///      `perplexity`) → `OPENAI_COMPAT_DEFAULT_MAX_TOKENS` (16k).
+///      `perplexity`, `vllm`) → `OPENAI_COMPAT_DEFAULT_MAX_TOKENS` (16k).
 ///    - Unknown provider → `CONSERVATIVE_DEFAULT_MAX_TOKENS` (8k).
 ///
 /// Always returns a positive `u32`. Callers use the returned value when

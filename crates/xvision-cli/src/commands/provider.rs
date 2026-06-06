@@ -82,7 +82,7 @@ enum ProviderAction {
     Add {
         #[arg(long)]
         name: String,
-        /// `anthropic` | `openai-compat` | `local-candle` | `ollama` | `llama-cpp`.
+        /// `anthropic` | `openai-compat` | `local-candle` | `ollama` | `llama-cpp` | `vllm`.
         #[arg(long)]
         kind: String,
         #[arg(long)]
@@ -669,6 +669,10 @@ api_key_env = "K"
         assert_eq!(
             provider_catalog_probe_url("llama-cpp", "http://localhost:8080"),
             "http://localhost:8080/v1/models"
+        );
+        assert_eq!(
+            provider_catalog_probe_url("vllm", "http://localhost:8000/v1"),
+            "http://localhost:8000/v1/models"
         );
     }
 

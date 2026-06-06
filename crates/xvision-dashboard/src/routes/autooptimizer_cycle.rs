@@ -421,7 +421,7 @@ async fn build_autooptimizer_dispatch(
     };
     Ok(match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp => {
+        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
             Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
         }
         ProviderKind::LocalCandle => {

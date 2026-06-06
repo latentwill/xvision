@@ -37,7 +37,7 @@ import { logInfo, safeUrlHost } from "@/lib/logger";
 type KindOption = {
   value: string;
   label: string;
-  wireKind: "anthropic" | "openai-compat" | "ollama" | "llama-cpp";
+  wireKind: "anthropic" | "openai-compat" | "ollama" | "llama-cpp" | "vllm";
   defaultName: string;
   defaultBaseUrl: string;
   isCustom: boolean;
@@ -122,6 +122,15 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
     isCustom: false,
     keyHelp: "Optional — leave blank for local Ollama.",
   },
+  {
+    value: "vllm",
+    label: "vLLM (local)",
+    wireKind: "vllm",
+    defaultName: "vllm",
+    defaultBaseUrl: "http://localhost:8000/v1",
+    isCustom: false,
+    keyHelp: "Optional — leave blank for local vLLM.",
+  },
   // llama.cpp provider preset temporarily disabled — Ollama is the supported
   // local backend for now. Backend `ProviderKind::LlamaCpp` support remains, so
   // re-enabling is just restoring this block.
@@ -146,7 +155,7 @@ const KIND_OPTIONS: ReadonlyArray<KindOption> = [
 ];
 
 function keyRequired(meta: KindOption, baseUrl: string): boolean {
-  if (meta.value === "ollama" || meta.value === "llama-cpp") return false;
+  if (meta.value === "ollama" || meta.value === "llama-cpp" || meta.value === "vllm") return false;
   if (meta.value === "custom" && /localhost|127\.0\.0\.1/.test(baseUrl)) {
     return false;
   }
@@ -170,6 +179,7 @@ const PROVIDER_KIND_FILTER: FilterDef = {
     { value: "anthropic", label: "Anthropic" },
     { value: "openai-compat", label: "OpenAI-compat" },
     { value: "ollama", label: "Ollama" },
+    { value: "vllm", label: "vLLM" },
     // llama.cpp filter disabled (see KIND_OPTIONS note above).
     // { value: "llama-cpp", label: "llama.cpp" },
   ],
@@ -625,6 +635,7 @@ function EditProviderForm({
             <option value="openai-compat">openai-compat</option>
             <option value="local-candle">local-candle</option>
             <option value="ollama">ollama</option>
+            <option value="vllm">vllm</option>
             {/* llama-cpp disabled (see KIND_OPTIONS note); backend still supports it. */}
             {/* <option value="llama-cpp">llama-cpp</option> */}
           </select>

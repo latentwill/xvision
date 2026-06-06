@@ -1920,7 +1920,7 @@ async fn dispatch_from_provider(xvn_home: &Path, entry: &ProviderEntry) -> ApiRe
     };
     let no_auth_eval = matches!(
         entry.kind,
-        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
     );
     if api_key.is_empty() && !no_auth_eval {
         return Err(ApiError::Validation(format!(
@@ -1930,14 +1930,12 @@ async fn dispatch_from_provider(xvn_home: &Path, entry: &ProviderEntry) -> ApiRe
     }
     match entry.kind {
         ProviderKind::Anthropic => Ok(Arc::new(AnthropicDispatch::new(api_key))),
-        ProviderKind::OpenaiCompat => Ok(Arc::new(OpenaiCompatDispatch::new(
-            entry.base_url.clone(),
-            api_key,
-        ))),
-        ProviderKind::Ollama | ProviderKind::LlamaCpp => Ok(Arc::new(OpenaiCompatDispatch::new(
-            entry.base_url.clone(),
-            api_key,
-        ))),
+        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
+            Ok(Arc::new(OpenaiCompatDispatch::new(
+                entry.base_url.clone(),
+                api_key,
+            )))
+        }
         ProviderKind::LocalCandle => Ok(Arc::new(MockDispatch::echo(
             r#"{"action":"hold","conviction":0.0,"justification":"local-candle deterministic hold"}"#,
         ))),
@@ -1962,7 +1960,12 @@ async fn resolve_provider_api_key(xvn_home: &Path, entry: &ProviderEntry) -> Api
                 entry.name, entry.api_key_env, entry.api_key_env
             ))
         })?;
-    if key.is_empty() && entry.kind != ProviderKind::LocalCandle {
+    if key.is_empty()
+        && !matches!(
+            entry.kind,
+            ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm
+        )
+    {
         return Err(ApiError::Validation(format!(
             "provider `{}` has no API key set. Paste one in Settings → Providers.",
             entry.name

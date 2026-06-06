@@ -169,7 +169,7 @@ describe("SettingsProvidersRoute", () => {
     expect(ids.slice(2)).toEqual(["gpt-3.5-turbo", "gpt-4o", "o1-preview"]);
   });
 
-  it("offers Gemini and Nous Research presets and validates custom names inline", async () => {
+  it("offers Gemini, Nous Research, and vLLM presets and validates custom names inline", async () => {
     renderRoute();
     await screen.findByText("openai");
 
@@ -183,11 +183,24 @@ describe("SettingsProvidersRoute", () => {
     expect(
       screen.getByRole("option", { name: "Nous Research" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "vLLM (local)" }),
+    ).toBeInTheDocument();
+
+    const form = screen.getByText("New provider").closest("form") as HTMLElement;
+    fireEvent.change(within(form).getByRole("combobox"), {
+      target: { value: "vllm" },
+    });
+    expect(screen.queryByPlaceholderText("e.g. ollama")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("https://api.example.com/v1")).toHaveValue(
+      "http://localhost:8000/v1",
+    );
+    expect(screen.getByPlaceholderText("paste key here")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save provider" })).toBeEnabled();
 
     // Switch to Custom (the only path where the user types a name) and supply a
     // valid base URL + key so the ONLY blocker is the name itself. Scope to the
     // form's Provider select (the list toolbar also renders comboboxes).
-    const form = screen.getByText("New provider").closest("form") as HTMLElement;
     fireEvent.change(within(form).getByRole("combobox"), {
       target: { value: "custom" },
     });

@@ -50,7 +50,7 @@ const OPENROUTER_FINDINGS_MODEL: &str = "anthropic/claude-haiku-4.5";
 pub fn findings_model_for_provider(entry: &ProviderEntry) -> String {
     match entry.kind {
         ProviderKind::Anthropic => DEFAULT_FINDINGS_MODEL.to_string(),
-        ProviderKind::OpenaiCompat => {
+        ProviderKind::OpenaiCompat | ProviderKind::Vllm => {
             if entry.base_url.contains("openrouter.ai") {
                 OPENROUTER_FINDINGS_MODEL.to_string()
             } else {
