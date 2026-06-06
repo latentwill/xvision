@@ -76,6 +76,18 @@ fn cline_openai_compat_provider_id(base_url: &str) -> &'static str {
     }
 }
 
+fn local_openai_base_url(base_url: &str) -> Option<String> {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.ends_with("/v1") {
+        Some(trimmed.to_string())
+    } else {
+        Some(format!("{trimmed}/v1"))
+    }
+}
+
 /// Map an xvision provider + model onto a Cline gateway selection.
 ///
 /// Returns [`ProviderMapError::Unsupported`] (a hard abort, never a silent
@@ -85,15 +97,21 @@ fn cline_openai_compat_provider_id(base_url: &str) -> &'static str {
 pub fn map_provider(entry: &ProviderEntry, model_id: &str) -> Result<ClineProvider, ProviderMapError> {
     let (provider_id, base_url) = match entry.kind {
         ProviderKind::Anthropic => (CLINE_PROVIDER_ANTHROPIC.to_string(), None),
-        ProviderKind::OpenaiCompat => (
-            cline_openai_compat_provider_id(&entry.base_url).to_string(),
-            Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
+        ProviderKind::OpenaiCompat => {
+            let provider_id = cline_openai_compat_provider_id(&entry.base_url);
+            let base_url = if matches!(provider_id, "ollama" | "lmstudio") {
+                local_openai_base_url(&entry.base_url)
+            } else {
+                Some(entry.base_url.clone()).filter(|s| !s.is_empty())
+            };
+            (provider_id.to_string(), base_url)
+        }
+        ProviderKind::Ollama => ("ollama".to_string(), local_openai_base_url(&entry.base_url)),
+        ProviderKind::LlamaCpp => (
+            CLINE_PROVIDER_LITELLM.to_string(),
+            local_openai_base_url(&entry.base_url),
         ),
-        ProviderKind::Ollama => (
-            "ollama".to_string(),
-            Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
-        ),
-        ProviderKind::LlamaCpp | ProviderKind::Vllm => (
+        ProviderKind::Vllm => (
             CLINE_PROVIDER_LITELLM.to_string(),
             Some(entry.base_url.clone()).filter(|s| !s.is_empty()),
         ),
@@ -161,6 +179,105 @@ mod tests {
         let m = map_provider(&entry(ProviderKind::OpenaiCompat, ""), "x").unwrap();
         assert_eq!(m.provider_id, CLINE_PROVIDER_LITELLM);
         assert_eq!(m.base_url, None);
+    }
+
+    #[test]
+    fn openai_compat_ollama_native_root_maps_to_cline_openai_root() {
+        let m = map_provider(
+            &entry(ProviderKind::OpenaiCompat, "http://localhost:11434"),
+            "lfm2.5:8b",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, "ollama");
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn ollama_native_root_maps_to_cline_openai_root() {
+        let m = map_provider(
+            &entry(ProviderKind::Ollama, "http://localhost:11434"),
+            "lfm2.5:8b",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, "ollama");
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn ollama_openai_root_is_not_double_v1_appended() {
+        let m = map_provider(
+            &entry(ProviderKind::Ollama, "http://localhost:11434/v1"),
+            "lfm2.5:8b",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, "ollama");
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn llama_cpp_native_root_maps_to_cline_openai_root() {
+        let m = map_provider(
+            &entry(ProviderKind::LlamaCpp, "http://localhost:8080"),
+            "qwen2.5-coder",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, CLINE_PROVIDER_LITELLM);
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:8080/v1"));
+    }
+
+    #[test]
+    fn llama_cpp_openai_root_is_not_double_v1_appended() {
+        let m = map_provider(
+            &entry(ProviderKind::LlamaCpp, "http://localhost:8080/v1"),
+            "qwen2.5-coder",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, CLINE_PROVIDER_LITELLM);
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:8080/v1"));
+    }
+
+    #[test]
+    fn lmstudio_native_root_maps_to_cline_openai_root() {
+        let m = map_provider(
+            &entry(ProviderKind::OpenaiCompat, "http://localhost:1234"),
+            "qwen2.5-coder",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, "lmstudio");
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:1234/v1"));
+    }
+
+    #[test]
+    fn lmstudio_openai_root_is_not_double_v1_appended() {
+        let m = map_provider(
+            &entry(ProviderKind::OpenaiCompat, "http://localhost:1234/v1"),
+            "qwen2.5-coder",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, "lmstudio");
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:1234/v1"));
+    }
+
+    #[test]
+    fn vllm_keeps_openai_root_on_litellm_carrier() {
+        let m = map_provider(
+            &entry(ProviderKind::Vllm, "http://localhost:8000/v1"),
+            "Qwen/Qwen3-8B",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, CLINE_PROVIDER_LITELLM);
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:8000/v1"));
+    }
+
+    #[test]
+    fn vllm_bare_base_url_is_left_as_configured() {
+        let m = map_provider(
+            &entry(ProviderKind::Vllm, "http://localhost:8000"),
+            "Qwen/Qwen3-8B",
+        )
+        .unwrap();
+        assert_eq!(m.provider_id, CLINE_PROVIDER_LITELLM);
+        assert_eq!(m.base_url.as_deref(), Some("http://localhost:8000"));
     }
 
     #[test]
