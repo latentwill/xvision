@@ -1,0 +1,31 @@
+{
+  "metaswarm_version": "0.11.0",
+  "distribution": "plugin",
+  "installed_at": "2026-06-06T07:07:49Z",
+  "updated_at": "2026-06-06T07:07:49Z",
+  "detection": {
+    "language": "Rust",
+    "framework": "React",
+    "test_runner": "cargo test; vitest",
+    "linter": "clippy",
+    "formatter": "rustfmt",
+    "package_manager": "pnpm",
+    "type_checker": "cargo check; tsc",
+    "ci": "GitHub Actions",
+    "git_hooks": "custom .githooks"
+  },
+  "choices": {
+    "coverage_threshold": 100,
+    "external_tools": false,
+    "visual_review": false,
+    "ci_pipeline": false,
+    "git_hooks": false
+  },
+  "commands": {
+    "test": "env CARGO_TARGET_DIR=$HOME/.cargo-target/xvision scripts/cargo test --workspace",
+    "coverage": "env CARGO_TARGET_DIR=$HOME/.cargo-target/xvision scripts/cargo tarpaulin --fail-under 100",
+    "lint": "env CARGO_TARGET_DIR=$HOME/.cargo-target/xvision scripts/cargo clippy --workspace --all-targets",
+    "typecheck": "env CARGO_TARGET_DIR=$HOME/.cargo-target/xvision scripts/cargo check --workspace",
+    "format_check": "scripts/cargo fmt --all -- --check"
+  }
+}
