@@ -17,6 +17,17 @@ vi.mock("uplot", () => ({
   },
 }));
 
+// Mock useWallet — tests run in jsdom without MetaMask; default to connected
+// so the Buy button renders as "Buy" (not "Connect wallet to buy").
+vi.mock("@/features/marketplace/lib/wallet", () => ({
+  useWallet: () => ({
+    address: "0xtest",
+    connecting: false,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }),
+}));
+
 // Mock ResizeObserver — jsdom doesn't provide it, but HeroGradientEquity uses it
 class ResizeObserverStub {
   observe() {}
