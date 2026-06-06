@@ -10,7 +10,7 @@ xvn <COMMAND>
 
 | Verb | Purpose |
 |---|---|
-| `ab-compare` | Run an N-arm backtest A/B comparison; emits `BacktestResult` JSON |
+| `ab-compare` | Low-level N-arm **baseline-algorithm** backtest over raw cycles+bars; emits `BacktestResult` JSON. NOT for comparing eval runs — that's `eval compare` |
 | `metrics` | Pre-committed metrics (treatment vs baseline), JSON to stdout |
 | `gate` | Anti-overfit gate verdict for treatment vs baseline |
 | `report` | Headline Markdown report for a backtest run |
@@ -23,6 +23,9 @@ xvn <COMMAND>
 | `scenario` | Scenario authoring (`create`, `ls`, `show`, `clone`, `validate`, `archive`, `rm`, `tree`, `inspect`, `select`, `classify`, `set-regime`) |
 | `eval` | Eval runs (`run`, `list`, `show`, `results`, `watch`, `scenarios`, `compare`, `validate`, `attest`, `export`, `review`, `batch`) |
 | `experiment` | Experiment ledger (`new`/`create`, `ls`, `show`/`get`, `update`, `run`) |
+| `optimizer` | Operator "Optimizer" / autooptimizer flywheel: distill Observations → candidate Patterns, mutate strategies, `gate`/`activate`/`retire` (`run`, `run-cycle`, `mutate-once`, `ls`, `inspect`, `gate`, `activate`, `retire`, `lineage`, `demo`). NOT `optimize` |
+| `flywheel` | Observability over memory + Optimizer activity (velocity / health) |
+| `optimize` | Offline **DSPy** prompt/demo tuner for one agent slot (`run`, `inspect`, `export-demos`, `import-demos`, `accept-as-child-agent`, `revert-accepted`, `explain-missing-data`). NOT `optimizer` |
 | `agent` | Inspect agent records from the workspace agent library (`get`/`show`) |
 | `provider` | LLM providers (`list`, `show`, `check`, `add`, `remove`, `refresh-models`, `models`) |
 | `store` | SQLite flight-recorder (migrate / stats) on `$XVN_HOME/xvn.db` |
@@ -40,6 +43,12 @@ xvn <COMMAND>
 | `close-position` | Close any open position in `--asset` at the given venue |
 
 ## A/B compare — the headline call
+
+> **Not for comparing eval runs.** `ab-compare` is a low-level baseline-algorithm
+> backtest: it takes raw `MarketSnapshot` cycles + bars and runs the built-in
+> arms below. It does not accept a `Strategy`, a `Scenario`, or a `run_id`, and
+> it writes no eval-run row. To compare 2+ **completed eval runs**, use
+> `xvn eval compare <run_a> <run_b>` (or `--batch <batch_id>`).
 
 ```bash
 # Required: cycles drive Trader / baseline tick-by-tick. Bars come from
