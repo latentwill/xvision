@@ -134,9 +134,10 @@
 //  R54. GET  /api/flywheel/velocity
 //  R55. GET  /api/flywheel/lineage
 //  R56. GET  /api/autooptimizer
-//  R57. GET  /api/autooptimizer/:id
-//  R58. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
-//  R59. GET  /api/autooptimizer/blob/:hash
+//  R57. GET  /api/autooptimizer/run-defaults
+//  R58. GET  /api/autooptimizer/:id
+//  R59. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
+//  R60. GET  /api/autooptimizer/blob/:hash
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -282,6 +283,10 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/lineage",
             get(autooptimizer_route::list_lineage),
+        )
+        .route(
+            "/api/autooptimizer/run-defaults",
+            get(autooptimizer_cycle::run_defaults),
         )
         .route(
             "/api/autooptimizer/lineage/:hash",

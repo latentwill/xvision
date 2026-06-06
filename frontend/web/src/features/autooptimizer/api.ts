@@ -91,6 +91,15 @@ export type StartRunCycleResponse = {
   message: string;
 };
 
+export type OptimizerRunDefaults = {
+  mutator_provider: string;
+  mutator_model: string;
+  judge_provider: string;
+  judge_model: string;
+  config_path: string;
+  config_exists: boolean;
+};
+
 export type StrategyBlob = Record<string, unknown>;
 
 // ─── Query params ─────────────────────────────────────────────────────────────
@@ -244,6 +253,10 @@ export async function startRunCycle(
   });
 }
 
+export async function getRunDefaults(): Promise<OptimizerRunDefaults> {
+  return apiFetch<OptimizerRunDefaults>("/api/autooptimizer/run-defaults");
+}
+
 export async function getBlob<T = StrategyBlob>(hash: string): Promise<T> {
   return apiFetch<T>(`/api/autooptimizer/blob/${encodeURIComponent(hash)}`);
 }
@@ -266,6 +279,7 @@ export const autooptimizerKeys = {
   ladder: () => [...autooptimizerKeys.all, "ladder"] as const,
   cycles: () => [...autooptimizerKeys.all, "cycles"] as const,
   cycle: (id: string) => [...autooptimizerKeys.cycles(), id] as const,
+  runDefaults: () => [...autooptimizerKeys.all, "run-defaults"] as const,
   cycleCost: (cycleId: string | null | undefined) =>
     [...autooptimizerKeys.all, "cycle-cost", cycleId ?? ""] as const,
   diversity: (q?: DiversityQuery) =>
