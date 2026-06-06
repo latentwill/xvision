@@ -734,9 +734,9 @@ function StartEvalPanel({
     reviewProviderRows.find((row) => row.name === reviewProvider) ??
     reviewProviderRows[0];
   const activeReviewModel =
-    reviewModel ||
-    activeReviewProvider?.enabled_models[0] ||
-    "";
+    (reviewModel && activeReviewProvider?.enabled_models.includes(reviewModel))
+      ? reviewModel
+      : (activeReviewProvider?.enabled_models[0] ?? "");
   const displayedError =
     preflightError ?? (start.isError ? errorDetail(start.error) : null);
   const setupAction = preflightSetupAction(displayedError);
@@ -1155,7 +1155,9 @@ function evalPreflightError({
     return "Add a provider/API key in Settings -> Providers before running eval.";
   }
 
-  const hasEnabledModel = rows.some((row) => row.enabled_models.length > 0);
+  const hasEnabledModel = rows.some(
+    (row) => isProviderConfigured(row) && row.enabled_models.length > 0,
+  );
   if (!hasEnabledModel) {
     return "Enable a provider model in Settings -> Providers before running eval.";
   }
