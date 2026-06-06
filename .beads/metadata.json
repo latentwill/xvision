@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "xvision",
+  "project_id": "5d8fe45a-e691-4f43-b688-869ad2e31280"
+}
