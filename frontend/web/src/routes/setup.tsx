@@ -15,6 +15,7 @@ import {
 } from "@/api/chat_rail";
 import { ApiError } from "@/api/client";
 import { listProviders, settingsKeys } from "@/api/settings";
+import { isProviderConfigured } from "@/lib/providers";
 
 // One bubble in the chat thread. Assistant bubbles accumulate text from
 // `WizardEvent::Token` events; tool round-trips render inline as chips
@@ -57,7 +58,7 @@ export function SetupRoute() {
   } | null>(() => {
     const rows = providers.data?.providers ?? [];
     const row = rows.find(
-      (r) => r.api_key_set && !r.synthetic && r.enabled_models.length > 0,
+      (r) => isProviderConfigured(r) && r.enabled_models.length > 0,
     );
     if (!row) return null;
     const model = row.enabled_models[0];

@@ -42,7 +42,8 @@ const CURVE: EquityCurve = {
 describe("EquityPanel", () => {
   it("renders the card header with base amount", () => {
     render(<EquityPanel curve={CURVE} />);
-    expect(screen.getByText(/equity curve/i)).toBeInTheDocument();
+    // Header label was changed from "equity curve" to "Return %" (drift)
+    expect(screen.getByText(/return %/i)).toBeInTheDocument();
     expect(screen.getByText(/base \$1,000/i)).toBeInTheDocument();
   });
 

@@ -64,6 +64,7 @@ import {
   streamChat,
 } from "@/api/chat_rail";
 import { listProviders, settingsKeys } from "@/api/settings";
+import { isProviderConfigured } from "@/lib/providers";
 import type { ProviderRow } from "@/api/types.gen";
 import {
   useSessionEvents,
@@ -231,7 +232,7 @@ export function ChatRail({
     if (!data) return;
     const rows = data.providers ?? [];
     const candidates = rows.filter(
-      (p) => p.api_key_set && !p.synthetic && p.enabled_models.length > 0,
+      (p) => isProviderConfigured(p) && p.enabled_models.length > 0,
     );
 
     // (1) current selection still valid → no-op.

@@ -733,6 +733,37 @@ describe("ChatRail", () => {
   });
 
   /**
+   * Regression — no-auth providers (e.g. Ollama, where api_key_env=""
+   * and api_key_set=false) must appear in the model picker. Pre-fix,
+   * the candidates filter required api_key_set=true, which silently
+   * excluded every local endpoint that needs no key.
+   */
+  it("includes a no-auth Ollama provider in the model picker", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "ollama",
+          kind: "openai-compat",
+          base_url: "http://localhost:11434/v1",
+          api_key_env: "",
+          api_key_set: false,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["llama3"],
+        },
+      ],
+      default_model: null,
+    });
+
+    renderRail();
+
+    await waitFor(() => {
+      const select = screen.getByRole("combobox", { name: /model/i });
+      expect(select.querySelector('option[value="ollama::llama3"]')).not.toBeNull();
+    });
+  });
+
+  /**
    * Regression — mergeUnifiedRows must NOT use `users.length` as the
    * unanchored-user fallback (wrong unit — user count vs assistant
    * count). The new fallback is `projectedAssistantCount`, which
