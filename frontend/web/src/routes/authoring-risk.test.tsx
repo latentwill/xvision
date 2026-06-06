@@ -136,7 +136,8 @@ describe("AuthoringRoute risk editor", () => {
     renderRoute();
 
     expect(await screen.findByLabelText("Display name")).toHaveValue("Trend 4H");
-    expect(screen.getByLabelText("Assets")).toHaveValue("BTC/USD");
+    // Assets field is a chip editor (not an <input>); verify the chip is rendered
+    expect(screen.getByText("BTC/USD")).toBeInTheDocument();
     expect(screen.getByLabelText("Time frame")).toHaveValue("240");
     expect(screen.getByLabelText(/Strategy ID 01TEST/)).toHaveValue("01TEST");
     expect(screen.getByText("No saved filter")).toBeInTheDocument();
