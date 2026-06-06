@@ -43,7 +43,9 @@ export function ModelPicker({
   /** Override the "— pick a model —" placeholder. */
   placeholder?: string;
 }) {
-  const configuredProviders = rows.filter((r) => r.api_key_set && !r.synthetic);
+  const configuredProviders = rows.filter(
+    (r) => (r.api_key_set || isNoAuthProvider(r)) && !r.synthetic,
+  );
   const all = configuredProviders
     .flatMap((r) =>
       r.enabled_models.map((m) => ({ provider: r.name, model: m })),
@@ -105,6 +107,13 @@ export function ModelPicker({
             </optgroup>
           ))}
     </select>
+  );
+}
+
+function isNoAuthProvider(row: ProviderRow): boolean {
+  return (
+    row.api_key_env.trim() === "" ||
+    ["ollama", "llama-cpp", "vllm", "local-candle"].includes(row.kind)
   );
 }
 

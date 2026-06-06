@@ -157,6 +157,7 @@ pub async fn get_scenario(ctx: &ApiContext, id: &str) -> ApiResult<Option<Scenar
 pub struct ListScenariosFilter {
     pub source: Option<ScenarioSource>,
     pub tags: Vec<String>,
+    pub exclude_tags: Vec<String>,
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
     /// Optional pagination window applied AFTER the in-memory filter
@@ -206,6 +207,11 @@ pub async fn list_scenarios(ctx: &ApiContext, filter: &ListScenariosFilter) -> A
             }
         }
         if !filter.tags.is_empty() && !filter.tags.iter().all(|t| s.tags.contains(t)) {
+            continue;
+        }
+        if !filter.exclude_tags.is_empty()
+            && filter.exclude_tags.iter().any(|t| s.tags.contains(t))
+        {
             continue;
         }
         if !filter.include_archived && s.archived_at.is_some() {

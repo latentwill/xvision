@@ -2306,6 +2306,7 @@ impl WizardLoop {
             ListScenariosFilter {
                 source: None,
                 tags: vec![],
+                exclude_tags: vec![],
                 include_archived: false,
                 parent_scenario_id: None,
                 limit: None,

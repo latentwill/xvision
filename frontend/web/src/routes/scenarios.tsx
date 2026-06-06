@@ -37,6 +37,8 @@ const SOURCE_TONE: Record<ScenarioSource, "default" | "gold" | "info" | "warn"> 
   Frozen: "info",
 };
 
+const OPTIMIZER_SCENARIO_TAG = "source:autooptimizer";
+
 // The source filter lives in URL state via `useListUrlState`, so we
 // hold it as a lowercase token in the FilterDef options.
 const SOURCE_FILTER: FilterDef = {
@@ -48,6 +50,7 @@ const SOURCE_FILTER: FilterDef = {
     { value: "user", label: "User" },
     { value: "clone", label: "Clone" },
     { value: "generated", label: "Generated" },
+    { value: "optimizer", label: "Optimizer" },
     { value: "frozen", label: "Frozen" },
   ],
 };
@@ -103,8 +106,13 @@ export function ScenariosRoute() {
 
   const filter: ListScenariosFilter = useMemo(
     () => ({
-      source: sourceTokenToFilter(sourceToken),
-      tags: [],
+      source:
+        sourceToken === "optimizer"
+          ? "Generated"
+          : sourceTokenToFilter(sourceToken),
+      tags: sourceToken === "optimizer" ? [OPTIMIZER_SCENARIO_TAG] : [],
+      exclude_tags:
+        sourceToken === "optimizer" ? [] : [OPTIMIZER_SCENARIO_TAG],
       include_archived: archivedToken === "include",
       parent_scenario_id: null,
       limit: pager.limit,

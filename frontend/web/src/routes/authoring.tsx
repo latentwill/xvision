@@ -86,8 +86,9 @@ function InspectorPage({ id }: { id: string }) {
       />
 
       <InspectorActions strategyId={id} strategy={strategyQ.data ?? null} />
+      <BackLinkBar />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-5">
+      <div className="space-y-5">
         <div className="space-y-5">
           {strategyQ.isPending ? (
             <Card>
@@ -105,10 +106,6 @@ function InspectorPage({ id }: { id: string }) {
           ) : null}
           <PerformanceHistoryCard strategyId={id} />
         </div>
-
-        <aside className="space-y-5">
-          <BackLinkCard />
-        </aside>
       </div>
     </>
   );
@@ -1672,15 +1669,13 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
   };
 }
 
-function BackLinkCard() {
+function BackLinkBar() {
   return (
-    <Card>
-      <div className="px-5 py-4 text-[13px] text-text-2">
-        <Link to="/strategies" className="text-text hover:underline">
-          ← Back to strategies
-        </Link>
-      </div>
-    </Card>
+    <div className="mb-5 text-[13px] text-text-2">
+      <Link to="/strategies" className="text-text hover:underline">
+        ← Back to strategies
+      </Link>
+    </div>
   );
 }
 

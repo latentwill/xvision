@@ -32,13 +32,16 @@ const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
 
 /// Query params for `GET /api/scenarios`. Mirrors `ListScenariosFilter` but
-/// uses a flat, query-string-friendly shape. `tags` is repeated: `?tags=a&tags=b`.
+/// uses a flat, query-string-friendly shape. `tags` and `exclude_tags` are
+/// repeated: `?tags=a&exclude_tags=b`.
 /// `#[serde(default)]` ensures missing fields use their defaults rather than 400ing.
 #[derive(Debug, Default, Deserialize)]
 pub struct ListParams {
     pub source: Option<ScenarioSource>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub exclude_tags: Vec<String>,
     #[serde(default)]
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
@@ -75,6 +78,7 @@ pub async fn list(
     let filter = ListScenariosFilter {
         source: params.source,
         tags: params.tags,
+        exclude_tags: params.exclude_tags,
         include_archived: params.include_archived,
         parent_scenario_id: params.parent_scenario_id,
         limit: Some(limit),

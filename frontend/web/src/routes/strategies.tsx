@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
@@ -20,10 +20,12 @@ import { MListRow } from "@/components/lists/MListRow";
 import { ApiError } from "@/api/client";
 import {
   createStrategy,
+  cloneStrategy,
   listStrategiesPaged,
   strategyKeys,
   type CreateStrategyOut,
   type StrategiesPage,
+  type Strategy,
   type StrategyListItem,
 } from "@/api/strategies";
 import { formatCadence } from "@/lib/format";
@@ -188,6 +190,15 @@ function StrategiesListView() {
       navigate(`/strategies/${encodeURIComponent(out.id)}`);
     },
   });
+  const clone = useMutation<Strategy, unknown, StrategyListItem>({
+    mutationFn: (row) =>
+      cloneStrategy(row.agent_id, {
+        display_name: `${displayName(row)} (clone)`,
+      }),
+    onSuccess: (strategy) => {
+      navigate(`/strategies/${encodeURIComponent(strategy.manifest.id)}`);
+    },
+  });
   // QA-round-7 backend-pagination follow-up (#386 gap): page-size +
   // page-nav drive `limit`/`offset` in the TanStack query key so page
   // changes refetch the next slice instead of slicing one big
@@ -207,35 +218,18 @@ function StrategiesListView() {
     }
   }, [q.data?.total, totalFromServer]);
 
-  const items = q.data?.items ?? [];
+  const items = (q.data?.items ?? []).filter(
+    (row) => !isLegacyAgentlessExample(row),
+  );
   const total = q.data?.total ?? 0;
-
-  // Template filter is derived from the observed templates on the
-  // current page. Stable order: template names sorted alphabetically.
-  const templateFilter: FilterDef = useMemo(() => {
-    const seen = new Set<string>();
-    const options: { value: string; label: string }[] = [
-      { value: "all", label: "All templates" },
-    ];
-    items.forEach((row) => {
-      const t = row.template?.trim();
-      if (t && !seen.has(t)) seen.add(t);
-    });
-    Array.from(seen)
-      .sort((a, b) => a.localeCompare(b))
-      .forEach((t) => options.push({ value: t, label: t }));
-    return { id: "template", label: "Template", options };
-  }, [items]);
 
   const list = useListState<StrategyListItem>({
     rows: items,
-    filters: [SHAPE_FILTER, templateFilter],
+    filters: [SHAPE_FILTER],
     sortOptions: SORT_OPTIONS,
     filterFn: (row, query, values) => {
       const shape = values.shape ?? "all";
       if (shape !== "all" && shapeOf(row) !== shape) return false;
-      const template = values.template ?? "all";
-      if (template !== "all" && row.template !== template) return false;
       const needle = query.trim().toLowerCase();
       if (needle.length === 0) return true;
       const name = (row.display_name || "").toLowerCase();
@@ -275,7 +269,6 @@ function StrategiesListView() {
   // gracefully shows `—` rather than crashing the row.
   const desktopColumns = [
     { key: "name", label: "Name" },
-    { key: "template", label: "Template" },
     { key: "shape", label: "Shape" },
     { key: "tags", label: "Tags" },
     { key: "cadence", label: "Time frame" },
@@ -335,7 +328,16 @@ function StrategiesListView() {
             onClick={() => create.mutate()}
           />
         }
-        renderRow={(row) => <DesktopRow key={row.agent_id} row={row} />}
+        renderRow={(row) => (
+          <DesktopRow
+            key={row.agent_id}
+            row={row}
+            clonePending={
+              clone.isPending && clone.variables?.agent_id === row.agent_id
+            }
+            onClone={() => clone.mutate(row)}
+          />
+        )}
         renderMobileRow={(row) => (
           <MListRow
             key={row.agent_id}
@@ -345,7 +347,7 @@ function StrategiesListView() {
             title={row.display_name || "Untitled strategy"}
             badge={decisionMode(row).label}
             badgeColor={decisionMode(row).badgeColor}
-            subtitle={`${row.template} · ${formatCadence(row.decision_cadence_minutes)}`}
+            subtitle={formatCadence(row.decision_cadence_minutes)}
             meta={modelSummary(row)}
             rightTop={
               rowMeta(row)
@@ -406,7 +408,15 @@ function subtitleFor(
   return `${visibleRows} of ${totalRows} strategies`;
 }
 
-function DesktopRow({ row }: { row: StrategyListItem }) {
+function DesktopRow({
+  row,
+  onClone,
+  clonePending,
+}: {
+  row: StrategyListItem;
+  onClone: () => void;
+  clonePending: boolean;
+}) {
   const shape = shapeOf(row);
   const mode = decisionMode(row);
   return (
@@ -422,7 +432,6 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
           {row.display_name || "Untitled strategy"}
         </Link>
       </td>
-      <td className="px-3 py-3 text-text-2">{row.template}</td>
       <td className="px-3 py-3">
         <Pill tone={mode.pillTone}>{mode.label}</Pill>
         {filterLabel(row) ? (
@@ -452,6 +461,15 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
         {fmtCreatedFromUlid(row.agent_id)}
       </td>
       <td className="px-5 py-3 text-right text-text-3">
+        <button
+          type="button"
+          onClick={onClone}
+          disabled={clonePending}
+          className="mr-3 text-text-3 hover:text-text disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label={`Clone strategy ${displayName(row)}`}
+        >
+          {clonePending ? "Cloning..." : "Clone"}
+        </button>
         <Link
           to={`/strategies/${encodeURIComponent(row.agent_id)}`}
           className="text-text-3 hover:text-text"
@@ -462,6 +480,10 @@ function DesktopRow({ row }: { row: StrategyListItem }) {
       </td>
     </tr>
   );
+}
+
+function isLegacyAgentlessExample(row: StrategyListItem): boolean {
+  return row.agent_id.startsWith("example-") && agentCount(row) === 0;
 }
 
 /// Decode a ULID into its embedded millisecond Unix timestamp.

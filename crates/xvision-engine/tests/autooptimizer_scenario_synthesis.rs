@@ -7,6 +7,8 @@ use xvision_engine::eval::scenario::{
 };
 use xvision_engine::safety::VenueLabel;
 
+const OPTIMIZER_SCENARIO_TAG: &str = "source:autooptimizer";
+
 fn d(y: i32, m: u32, day: u32) -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(y, m, day).unwrap()
 }
@@ -90,6 +92,7 @@ fn valid_non_overlapping_window_produces_correct_scenario() {
     assert_eq!(result.time_window.start, dt(2024, 7, 1));
     assert_eq!(result.time_window.end, dt(2024, 10, 1));
     assert!(matches!(result.source, ScenarioSource::Generated));
+    assert!(result.tags.iter().any(|t| t == OPTIMIZER_SCENARIO_TAG));
     assert_eq!(result.bar_cache_policy.data_fetched_at, None);
     assert!(matches!(
         result.bar_cache_policy.refresh_policy,
@@ -110,7 +113,8 @@ fn preserves_data_source_venue_and_feed() {
     assert_eq!(result.venue, day.venue);
     assert_eq!(result.asset_class, day.asset_class);
     assert_eq!(result.granularity, day.granularity);
-    assert_eq!(result.tags, day.tags);
+    assert!(result.tags.iter().any(|t| t == "regime:trending_bull"));
+    assert!(result.tags.iter().any(|t| t == OPTIMIZER_SCENARIO_TAG));
     assert_eq!(result.regime_label, None);
     assert_eq!(result.volatility_label, None);
     assert_eq!(result.trend_direction, None);
