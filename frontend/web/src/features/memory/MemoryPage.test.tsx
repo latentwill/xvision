@@ -490,7 +490,10 @@ describe("MemoryPage — Pattern lifecycle controls", () => {
 
     await waitFor(() =>
       expect(memoryApi.createPattern).toHaveBeenCalledWith(
-        expect.objectContaining({ text: "Buy the dip on Mondays." }),
+        expect.objectContaining({
+          text: "Buy the dip on Mondays.",
+          training_window_end: "2026-01-01T23:59:59Z",
+        }),
       ),
     );
   });

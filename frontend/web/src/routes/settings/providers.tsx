@@ -410,7 +410,7 @@ function ProviderRowView({
   // set, or the provider is a no-auth kind (Ollama, llama.cpp, no-auth custom
   // localhost) where `api_key_env` is empty. Gating purely on `api_key_set`
   // hid every action for Ollama, which has no key by design.
-  const canProbe = row.api_key_set || !row.api_key_env;
+  const canProbe = row.api_key_set || !row.api_key_env.trim();
   return (
     <>
       <tr className="border-t border-border-soft align-middle">
