@@ -1043,6 +1043,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     ipc_send_event(
         &mut ipc_stream,
         CycleProgressEvent::CycleStarted {
+            session_id: String::new(),
             cycle_id: cycle_id.clone(),
             parent_count: 1,
         },
@@ -1051,6 +1052,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     ipc_send_event(
         &mut ipc_stream,
         CycleProgressEvent::ParentSelected {
+            session_id: String::new(),
             cycle_id: cycle_id.clone(),
             parent_hash: parent_hash.to_hex(),
         },
@@ -1061,6 +1063,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     ipc_send_event(
         &mut ipc_stream,
         CycleProgressEvent::MutationProposed {
+            session_id: String::new(),
             cycle_id: cycle_id.clone(),
             parent_hash: parent_hash.to_hex(),
         },
@@ -1096,6 +1099,7 @@ async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     ipc_send_event(
         &mut ipc_stream,
         CycleProgressEvent::MutationGated {
+            session_id: String::new(),
             cycle_id: cycle_id.clone(),
             child_hash: child_hash.to_hex(),
             passed,
@@ -1573,6 +1577,10 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
         CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
         CycleProgressEvent::CycleFinished { .. } => "Optimizer run finished",
+        CycleProgressEvent::PhaseStarted { .. } => "Phase started",
+        CycleProgressEvent::PhaseFinished { .. } => "Phase finished",
+        CycleProgressEvent::SessionStateChanged { .. } => "Run state changed",
+        CycleProgressEvent::FlywheelCompiled { .. } => "Findings compiled into prompt pattern",
     }
 }
 
@@ -1586,6 +1594,10 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
         CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
         CycleProgressEvent::CycleFinished { .. } => "cycle_finished",
+        CycleProgressEvent::PhaseStarted { .. } => "phase_started",
+        CycleProgressEvent::PhaseFinished { .. } => "phase_finished",
+        CycleProgressEvent::SessionStateChanged { .. } => "session_state_changed",
+        CycleProgressEvent::FlywheelCompiled { .. } => "flywheel_compiled",
     }
 }
 
