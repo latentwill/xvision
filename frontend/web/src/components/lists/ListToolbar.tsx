@@ -1,7 +1,7 @@
-import { forwardRef, useEffect, useId, useState } from "react";
-import type { CSSProperties } from "react";
+import { forwardRef, useEffect, useState } from "react";
 
 import { Icon, type IconName } from "@/components/primitives/Icon";
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 
 import { ListActiveChips } from "./ListActiveChips";
 import {
@@ -55,7 +55,7 @@ export const ListToolbar = forwardRef<HTMLInputElement, ListToolbarProps>(
           {filters.length > 0 && (
             <div className="flex items-center flex-wrap gap-1.5">
               {filters.map((f) => (
-                <ListSelect
+                <SignalSelectMenu
                   key={f.def.id}
                   label={f.def.label}
                   value={f.value}
@@ -69,7 +69,7 @@ export const ListToolbar = forwardRef<HTMLInputElement, ListToolbarProps>(
             </div>
           )}
           {showSort && sort && (
-            <ListSelect
+            <SignalSelectMenu
               label="Sort"
               icon="sliders"
               value={sort.value || sort.options[0]?.value || ""}
@@ -165,70 +165,3 @@ const ListSearch = forwardRef<HTMLInputElement, ListSearchProps>(
     );
   },
 );
-
-type ListSelectProps = {
-  label: string;
-  value: string;
-  options: { value: string; label: string }[];
-  onChange: (v: string) => void;
-  icon?: IconName;
-  active?: boolean;
-  compact?: boolean;
-  minWidth?: number;
-};
-
-function ListSelect({
-  label,
-  value,
-  options,
-  onChange,
-  icon,
-  active = false,
-  compact = false,
-  minWidth,
-}: ListSelectProps) {
-  const id = useId();
-  const selected = options.find((o) => o.value === value) ?? options[0];
-
-  const labelStyle: CSSProperties | undefined = minWidth
-    ? { minWidth }
-    : undefined;
-
-  return (
-    <label
-      htmlFor={id}
-      data-active={active || undefined}
-      style={labelStyle}
-      className="relative inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text-2 text-[12.5px] cursor-pointer transition-colors whitespace-nowrap hover:border-text-3 data-[active]:border-gold/45 data-[active]:bg-gold/10"
-    >
-      {icon && (
-        <Icon
-          name={icon}
-          size={12}
-          className={active ? "text-gold" : "text-text-3"}
-        />
-      )}
-      {!compact && (
-        <span className="text-text-3 text-[11.5px] tracking-wide">{label}</span>
-      )}
-      <span
-        className={`font-medium text-[12.5px] ${active ? "text-gold" : "text-text"}`}
-      >
-        {selected?.label}
-      </span>
-      <Icon name="chevR" size={11} className="text-text-3" />
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="absolute inset-0 opacity-0 cursor-pointer font-sans"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}

@@ -3,11 +3,13 @@
 //   - Settings → Providers Default-LLM card (filtered to one provider)
 //   - Strategy inspector slot editors (all providers, grouped)
 //
-// The component is just the <select> element — wrappers, labels, and
-// surrounding layout live at call sites so each context gets its own
-// styling.
+// Two variants:
+//   ModelPicker — legacy native <select> for tight inline use
+//   ModelPickerDropdown — Signal-styled floating dropdown with filter + context window
 
 import type { ProviderRow } from "@/api/types.gen";
+import { SignalModelPickerMenu } from "@/components/primitives/SignalMenu";
+import type { ModelOption } from "@/components/primitives/SignalMenu";
 
 export type ProviderModelOption = { provider: string; model: string };
 
@@ -107,6 +109,83 @@ export function ModelPicker({
             </optgroup>
           ))}
     </select>
+  );
+}
+
+// ─── ModelPickerDropdown ──────────────────────────────────────────────────────
+// Signal-styled rich model picker. Replaces native <select> where space allows.
+
+const CONTEXT_WINDOWS: Record<string, string> = {
+  "claude-opus-4-8": "200K",
+  "claude-opus-4-5": "200K",
+  "claude-opus-4-1": "200K",
+  "claude-sonnet-4-6": "200K",
+  "claude-sonnet-4-5": "200K",
+  "claude-haiku-4-5": "200K",
+  "claude-haiku-4-5-20251001": "200K",
+  "claude-3-5-sonnet-20241022": "200K",
+  "claude-3-5-haiku-20241022": "200K",
+  "claude-3-opus-20240229": "200K",
+  "gpt-4o": "128K",
+  "gpt-4o-mini": "128K",
+  "gpt-4-turbo": "128K",
+  "gpt-5": "256K",
+  "gpt-5-mini": "128K",
+  "gpt-4.1": "1M",
+  "gpt-4.1-mini": "1M",
+  "gpt-4.1-nano": "1M",
+};
+
+const LOCAL_KINDS = new Set(["ollama", "llama-cpp", "vllm", "local-candle"]);
+
+function contextWindowLabel(row: ProviderRow, model: string): string | undefined {
+  if (CONTEXT_WINDOWS[model]) return CONTEXT_WINDOWS[model];
+  if (LOCAL_KINDS.has(row.kind)) return row.kind;
+  return undefined;
+}
+
+export function ModelPickerDropdown({
+  rows,
+  loading,
+  provider,
+  model,
+  onChange,
+  filterProvider,
+  align,
+  placeholder,
+}: {
+  rows: ProviderRow[];
+  loading: boolean;
+  provider: string | null;
+  model: string;
+  onChange: (provider: string | null, model: string) => void;
+  filterProvider?: string;
+  align?: "left" | "right";
+  placeholder?: string;
+}) {
+  const configuredProviders = rows.filter(
+    (r) => (r.api_key_set || isNoAuthProvider(r)) && !r.synthetic,
+  );
+  const options: ModelOption[] = configuredProviders
+    .filter((r) => !filterProvider || r.name === filterProvider)
+    .flatMap((r) =>
+      r.enabled_models.map((m) => ({
+        provider: r.name,
+        model: m,
+        contextWindow: contextWindowLabel(r, m),
+      })),
+    );
+
+  return (
+    <SignalModelPickerMenu
+      options={options}
+      provider={provider}
+      model={model}
+      onChange={onChange}
+      loading={loading}
+      align={align}
+      placeholder={placeholder}
+    />
   );
 }
 
