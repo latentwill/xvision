@@ -5,6 +5,12 @@ import { renderWithProviders } from "../test-utils";
 import { OptimizerHome } from "./OptimizerHome";
 import * as apiModule from "../api";
 
+// ─── ScheduleStrip module mock — keep OptimizerHome tests focused ─────────────
+// ScheduleStrip has its own test file; here we just confirm it renders dynamically.
+vi.mock("../ui/ScheduleStrip", () => ({
+  ScheduleStrip: () => <div data-testid="schedule-strip-mock">schedule-strip</div>,
+}));
+
 // Mock uPlot — charts render inside OptimizerHome after P3 additions
 vi.mock("uplot", () => ({
   default: class {
@@ -257,5 +263,35 @@ describe("OptimizerHome — outcome mix toggle (P3-W3)", () => {
     expect(document.querySelector("[data-chart='outcome-stacked']")).toBeInTheDocument();
     await user.click(btn);
     expect(document.querySelector("[data-chart='outcome-stacked']")).toBeNull();
+  });
+});
+
+describe("OptimizerHome — ScheduleStrip integration (P5-W3)", () => {
+  function setupIdleMocks() {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
+      active_session: null,
+      last_event_seq: 0,
+    });
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+  }
+
+  it("renders ScheduleStrip (not hardcoded 'No scheduled run' string)", async () => {
+    setupIdleMocks();
+    renderWithProviders(<OptimizerHome />);
+    // The mock schedule-strip placeholder should be present
+    expect(await screen.findByTestId("schedule-strip-mock")).toBeInTheDocument();
+  });
+
+  it("does NOT contain a hardcoded 'No scheduled run' string in the DOM from OptimizerHome itself", async () => {
+    setupIdleMocks();
+    renderWithProviders(<OptimizerHome />);
+    await screen.findByTestId("schedule-strip-mock");
+    // The literal hardcoded string must NOT appear outside the ScheduleStrip component
+    // (the mock replaces ScheduleStrip, so anything with this text would be hardcoded)
+    expect(screen.queryByText("No scheduled run · Set one")).toBeNull();
   });
 });

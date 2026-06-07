@@ -280,6 +280,12 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/flywheel/velocity", get(flywheel::velocity))
         .route("/api/flywheel/lineage", get(flywheel::lineage))
         .route("/api/autooptimizer", get(flywheel::autooptimizer_list))
+        // P5-W2: schedule CRUD (GET is read-only, lives here).
+        // IMPORTANT: registered BEFORE /api/autooptimizer/:id catch-all.
+        .route(
+            "/api/autooptimizer/schedule",
+            get(autooptimizer_cycle::get_schedule),
+        )
         // P1-W4: session management endpoints.
         // IMPORTANT: static segments registered BEFORE /api/autooptimizer/:id.
         .route(
@@ -503,6 +509,16 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/memory/:id/demote", post(memory_route::demote_pattern))
         .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── Flywheel / offline self-improvement ─────────────────────────
+        // P5-W2: schedule CRUD mutating routes.
+        // Registered before /api/autooptimizer/:id catch-all.
+        .route(
+            "/api/autooptimizer/schedule",
+            post(autooptimizer_cycle::upsert_schedule),
+        )
+        .route(
+            "/api/autooptimizer/schedule/:id",
+            delete(autooptimizer_cycle::delete_schedule),
+        )
         // P1-W4: POST /sessions creates a new optimizer session (409 if active).
         .route(
             "/api/autooptimizer/sessions",
@@ -753,6 +769,31 @@ pub async fn serve(
     // it terminates with the process. See
     // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
     let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
+
+    // P5-W2: spawn the 60-second schedule ticker. It checks
+    // `autooptimizer_schedules` once per minute and fires `create_session`
+    // when a schedule's `time_local` (±30 s window) matches the current
+    // local time and no session is active, or logs `schedule_skipped` when
+    // a session is already running. The JoinHandle is intentionally dropped —
+    // the ticker lives for the full process lifetime.
+    {
+        let ticker_pool = state.pool.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(e) =
+                    xvision_engine::autooptimizer::scheduler::tick_schedules(&ticker_pool).await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        "autooptimizer schedule ticker error",
+                    );
+                }
+            }
+        });
+    }
 
     // AR-3: start the autooptimizer IPC Unix socket listener when the
     // operator passes `--autooptimizer-ipc-socket`. Optimizer-cycle CLI
