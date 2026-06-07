@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Xvision DSPy Color Field — AGENT / FILTER / RISK</title>
+  <title>Xvision DSPy Color Field — 2x2 Variations</title>
   <style>
     :root { color-scheme: dark; }
     html, body {
@@ -11,751 +11,396 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #050505;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 50% 48%, rgba(255,255,255,0.08), transparent 58%),
+        linear-gradient(135deg, #050509 0%, #070612 38%, #040404 100%);
     }
-    #wrap {
-      position: fixed;
-      inset: 0;
+    body {
       display: grid;
       place-items: center;
-      background:
-        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.06), transparent 60%),
-        linear-gradient(135deg, #040404 0%, #0a0712 35%, #0d0917 65%, #030303 100%);
     }
     canvas {
+      width: min(96vmin, 1180px);
+      height: min(96vmin, 1180px);
       display: block;
-      width: min(94vmin, 1040px);
-      height: min(94vmin, 1040px);
+      box-shadow: 0 30px 90px rgba(0,0,0,0.72);
+      border: 1px solid rgba(255,255,255,0.08);
       background: #050505;
-      box-shadow: 0 22px 70px rgba(0,0,0,0.8);
-      border: 1px solid rgba(255,255,255,0.10);
-    }
-    #ui {
-      position: fixed;
-      left: 16px;
-      bottom: 16px;
-      width: min(500px, calc(100vw - 32px));
-      display: grid;
-      gap: 10px;
-      padding: 12px;
-      background: rgba(0,0,0,0.82);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 14px;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 10px 38px rgba(0,0,0,0.5);
-    }
-    .row {
-      display: grid;
-      grid-template-columns: 92px 1fr;
-      gap: 10px;
-      align-items: start;
-    }
-    .label {
-      padding-top: 10px;
-      font-size: 11px;
-      font-weight: 800;
-      letter-spacing: 0.18em;
-      color: rgba(255,255,255,0.72);
-    }
-    input, textarea {
-      width: 100%;
-      box-sizing: border-box;
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(255,255,255,0.05);
-      color: #fff;
-      font: inherit;
-      font-size: 13px;
-      padding: 10px 12px;
-      outline: none;
-    }
-    textarea { min-height: 78px; resize: vertical; line-height: 1.35; }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    button {
-      padding: 9px 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.16);
-      background: #fff;
-      color: #000;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 700;
-    }
-    button.secondary { background: rgba(255,255,255,0.08); color: #fff; }
-    .hint {
-      color: rgba(255,255,255,0.62);
-      font-size: 12px;
-      line-height: 1.35;
-    }
-    .hint code {
-      background: rgba(255,255,255,0.08);
-      border-radius: 6px;
-      padding: 1px 5px;
     }
   </style>
 </head>
 <body>
-  <div id="wrap"><canvas id="c"></canvas></div>
+  <canvas id="c"></canvas>
+  <script>
+    (() => {
+      const canvas = document.getElementById('c');
+      const ctx = canvas.getContext('2d');
+      const SIZE = 1200;
+      canvas.width = SIZE;
+      canvas.height = SIZE;
 
-  <div id="ui">
-    <div class="row">
-      <div class="label">AGENT</div>
-      <textarea id="agent" spellcheck="false">atlas, vector, hush</textarea>
-    </div>
-    <div class="row">
-      <div class="label">DSPY</div>
-      <textarea id="dspy" spellcheck="false">metric_name=delta_sharpe, optimizer_name=gepa, optimizer_version=0.9.1, rng_seed=4721, signature_hash=9f2a8c2f, score=0.84, gain=0.13, cost=0.42, latency=1.7, steps=24, tokens=1870, trial=0.91, delta=0.18</textarea>
-    </div>
-    <div class="row">
-      <div class="label">FILTER</div>
-      <input id="filter" value="threshold-01" spellcheck="false" />
-    </div>
-    <div class="row">
-      <div class="label">RISK</div>
-      <input id="risk" value="volatile-07" spellcheck="false" />
-    </div>
-    <div class="actions">
-      <button id="rerender">Rerender</button>
-      <button id="randomize" class="secondary">Randomize</button>
-      <span class="hint">Color field. DSPy metrics drive palette, density, orbit, and fragmentation.</span>
-    </div>
-  </div>
+      const metrics = {
+        metric_name: 'delta_sharpe',
+        optimizer_name: 'gepa',
+        optimizer_version: '0.9.1',
+        rng_seed: 4721,
+        signature_hash: '9f2a8c2f',
+        live_start: -1.42,
+        live_end: -17.25,
+        live_delta: -15.83,
+        live_min: -34.57,
+        live_max: -1.21,
+        live_mean: -17.12,
+        live_stdev: 7.49,
+        paper_start: 1.06,
+        paper_end: -6.6,
+        paper_delta: -7.66,
+        paper_min: -25.41,
+        paper_max: 8.38,
+        paper_mean: -7.41,
+        paper_stdev: 8.57,
+        dd_min: -34.57,
+        dd_mean: -17.12,
+        spread_end: -10.65,
+        paper_pos: 122,
+        paper_neg: 358,
+        paper_sign_changes: 15,
+        live_sign_changes: 0,
+        live_step_vol: 1.121,
+        paper_step_vol: 1.126,
+        score: 0.84,
+        gain: 0.13,
+        cost: 0.42,
+        latency: 1.7,
+        steps: 24,
+        tokens: 1870,
+        trial: 0.91,
+        delta: 0.18,
+      };
 
-<script>
-(() => {
-  const SIZE = 1000;
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const agentInput = document.getElementById('agent');
-  const dspyInput = document.getElementById('dspy');
-  const filterInput = document.getElementById('filter');
-  const riskInput = document.getElementById('risk');
-  const rerenderBtn = document.getElementById('rerender');
-  const randomizeBtn = document.getElementById('randomize');
-  canvas.width = SIZE;
-  canvas.height = SIZE;
+      const samples = {
+        live: [-1.42,-7.86,-8.58,-12.82,-14.31,-9.74,-8.43,-7.98,-14.39,-14.01,-15.61,-18.14,-25.05,-31.32,-26.64,-27.88,-26.19,-31.04,-18.86,-19.85,-14.84,-12.83,-20.44,-17.25],
+        paper: [1.06,-5.42,-0.98,-0.65,5.17,8.17,0.21,3.23,0.33,-7.92,-13.05,-12.65,-18.01,-24.61,-17.54,-18.52,-13.6,-9.77,-14.42,-4.75,-9.02,-8.07,-9.03,-6.6],
+        dd: [-1.42,-7.86,-8.58,-12.82,-14.31,-9.74,-8.43,-7.98,-14.39,-14.01,-15.61,-18.14,-25.05,-31.32,-26.64,-27.88,-26.19,-31.04,-18.86,-19.85,-14.84,-12.83,-20.44,-17.25],
+      };
 
-  function hashString(str) {
-    let h = 2166136261 >>> 0;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return h >>> 0;
-  }
-  function mulberry32(seed) {
-    return function() {
-      let t = seed += 0x6D2B79F5;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  function rngFrom(...parts) { return mulberry32(hashString(parts.join('::'))); }
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const rr = (rng, a, b) => a + (b - a) * rng();
-  const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
-  const parseSeeds = text => text.split(/[\n,;|]+/).map(s => s.trim()).filter(Boolean);
-  const parseNumbers = text => (text.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number).filter(Number.isFinite);
-  const parseKV = text => {
-    const out = {};
-    for (const part of text.split(/[\n,]+/)) {
-      const m = part.match(/\s*([^=:\s]+)\s*[:=]\s*(.+?)\s*$/);
-      if (m) out[m[1].trim()] = m[2].trim();
-    }
-    return out;
-  };
+      function hashString(str) {
+        let h = 2166136261 >>> 0;
+        for (let i = 0; i < str.length; i++) {
+          h ^= str.charCodeAt(i);
+          h = Math.imul(h, 16777619);
+        }
+        return h >>> 0;
+      }
+      function mulberry32(seed) {
+        return function() {
+          let t = seed += 0x6D2B79F5;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+      const rr = (rng, a, b) => a + (b - a) * rng();
+      const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
+      const map = (v, inMin, inMax, outMin, outMax) => outMin + ((v - inMin) / (inMax - inMin)) * (outMax - outMin);
 
-  function normalizeNumbers(nums) {
-    if (!nums.length) return [0.5];
-    let min = Infinity, max = -Infinity;
-    for (const n of nums) { if (n < min) min = n; if (n > max) max = n; }
-    const span = max - min || 1;
-    return nums.map(n => (n - min) / span);
-  }
+      const profile = (() => {
+        const liveMag = Math.abs(metrics.live_delta);
+        const paperMag = Math.abs(metrics.paper_delta);
+        const ddMag = Math.abs(metrics.dd_min);
+        const spreadMag = Math.abs(metrics.spread_end);
+        const liveNorm = clamp(liveMag / 40, 0, 1);
+        const paperNorm = clamp(paperMag / 40, 0, 1);
+        const ddNorm = clamp(ddMag / 40, 0, 1);
+        const spreadNorm = clamp(spreadMag / 20, 0, 1);
+        const signNorm = clamp(metrics.paper_sign_changes / 20, 0, 1);
+        const liveVolNorm = clamp(metrics.live_step_vol / 2, 0, 1);
+        const paperVolNorm = clamp(metrics.paper_step_vol / 2, 0, 1);
+        return {
+          liveNorm, paperNorm, ddNorm, spreadNorm, signNorm, liveVolNorm, paperVolNorm,
+          density: clamp(0.18 + metrics.score * 0.34 + metrics.gain * 0.22 + metrics.trial * 0.16, 0.08, 0.96),
+          fracture: clamp(metrics.cost * 0.4 + metrics.latency / 260 + metrics.delta * 0.28, 0.05, 0.98),
+          contrast: clamp(0.22 + metrics.score * 0.42 + metrics.delta * 0.2, 0.1, 0.98),
+          rhythm: clamp(0.12 + (metrics.steps / 120) + (metrics.live_step_vol + metrics.paper_step_vol) * 0.3, 0.08, 1.2),
+        };
+      })();
 
-  function buildProfile(nums) {
-    const n = nums.length ? nums.slice() : [0.5];
-    const norm = normalizeNumbers(n);
-    const avg = n.reduce((a, b) => a + b, 0) / n.length;
-    const variance = n.reduce((a, b) => a + (b - avg) ** 2, 0) / n.length;
-    const spread = Math.sqrt(variance);
-    const score = clamp(norm[0] ?? 0.5, 0, 1);
-    const gain = clamp(norm[1] ?? score * 0.7, 0, 1);
-    const cost = clamp(norm[2] ?? (1 - score) * 0.6 + 0.2, 0, 1);
-    const latency = 10 + ((n[3] ?? avg * 10) * 170);
-    const steps = Math.max(1, Math.round((n[4] ?? n.length) * 12));
-    const tokens = Math.max(120, Math.round((n[5] ?? avg * 1000) * 1200));
-    const trial = clamp(norm[6] ?? 0.5, 0, 1);
-    const delta = clamp(norm[7] ?? spread, 0, 1);
-    const density = clamp(0.18 + score * 0.34 + gain * 0.22 + trial * 0.16, 0.08, 0.96);
-    const fracture = clamp(cost * 0.4 + latency / 260 + delta * 0.28, 0.05, 0.98);
-    const contrast = clamp(0.22 + score * 0.42 + delta * 0.2, 0.1, 0.98);
-    const rhythm = clamp(0.12 + (steps / 120) + spread * 0.6, 0.08, 1.2);
-    return { avg, spread, score, gain, cost, latency, steps, tokens, trial, delta, density, fracture, contrast, rhythm };
-  }
+      function hsl(h, s, l, a = 1) { return `hsla(${h}, ${s}%, ${l}%, ${a})`; }
+      function paletteForSeed(seed, shift = 0) {
+        const base = (hashString(seed) + shift) % 360;
+        const sat = 72 + Math.round(profile.contrast * 20);
+        const lum = 50;
+        return [
+          hsl((base + 0) % 360, sat, lum),
+          hsl((base + 34) % 360, sat, lum + 7),
+          hsl((base + 68) % 360, sat, lum - 4),
+          hsl((base + 118) % 360, sat, lum + 5),
+          hsl((base + 168) % 360, sat, lum - 5),
+          hsl((base + 214) % 360, sat, lum + 2),
+          hsl((base + 260) % 360, sat, lum - 2),
+        ];
+      }
 
-  function hueFromSeed(seed, offset = 0) {
-    return (hashString(seed) % 360 + offset) % 360;
-  }
+      const masterSeed = `${metrics.optimizer_name}|${metrics.metric_name}|${metrics.rng_seed}|${metrics.signature_hash}`;
+      const panelSeeds = [
+        `${masterSeed}|q1`,
+        `${masterSeed}|q2`,
+        `${masterSeed}|q3`,
+        `${masterSeed}|q4`,
+      ];
 
-  function paletteFrom(snapshot, profile) {
-    const base = hueFromSeed(snapshot.optimizer_name || snapshot.metric_name || 'dspy', (snapshot.rng_seed || 0) % 37);
-    const sat = 72 + Math.round(profile.contrast * 22);
-    const lum = 50;
-    return [
-      `hsl(${(base + 0) % 360} ${sat}% ${lum}%)`,
-      `hsl(${(base + 34) % 360} ${sat}% ${lum + 8}%)`,
-      `hsl(${(base + 68) % 360} ${sat}% ${lum - 3}%)`,
-      `hsl(${(base + 118) % 360} ${sat}% ${lum + 5}%)`,
-      `hsl(${(base + 168) % 360} ${sat}% ${lum - 5}%)`,
-      `hsl(${(base + 214) % 360} ${sat}% ${lum + 2}%)`,
-      `hsl(${(base + 260) % 360} ${sat}% ${lum - 2}%)`,
-    ];
-  }
+      function clear() {
+        const bg = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+        bg.addColorStop(0, '#050509');
+        bg.addColorStop(0.52, '#070611');
+        bg.addColorStop(1, '#030304');
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, SIZE, SIZE);
+        ctx.fillStyle = 'rgba(255,255,255,0.04)';
+        ctx.fillRect(0, 0, SIZE, SIZE);
+      }
 
-  function hslWithAlpha(hsl, alpha) {
-    const m = String(hsl).match(/hsl\((\d+)\s+(\d+)%\s+(\d+)%\)/);
-    if (!m) return hsl;
-    return `hsla(${m[1]}, ${m[2]}%, ${m[3]}%, ${alpha})`;
-  }
+      function panelRect(i) {
+        const half = SIZE / 2;
+        return {
+          x: (i % 2) * half,
+          y: Math.floor(i / 2) * half,
+          w: half,
+          h: half,
+        };
+      }
 
-  function addNoise(rng, count, aMin, aMax) {
-    for (let i = 0; i < count; i++) {
-      const x = rng() * SIZE;
-      const y = rng() * SIZE;
-      const s = rr(rng, 1, 2.4);
-      ctx.fillStyle = `rgba(255,255,255,${rr(rng, aMin, aMax)})`;
-      ctx.fillRect(x, y, s, s);
-    }
-  }
-
-  function drawBackground(rng, palette, profile) {
-    const g = ctx.createLinearGradient(0, 0, SIZE, SIZE);
-    g.addColorStop(0, '#06050a');
-    g.addColorStop(0.4, '#09060f');
-    g.addColorStop(1, '#030304');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, SIZE, SIZE);
-
-    // colorful nebulas
-    const nebulaCount = 10;
-    for (let i = 0; i < nebulaCount; i++) {
-      const x = rr(rng, -120, SIZE + 120);
-      const y = rr(rng, -120, SIZE + 120);
-      const r = rr(rng, 150, 380) * (0.7 + profile.density * 0.7);
-      const c1 = pick(rng, palette);
-      const c2 = pick(rng, palette);
-      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, hslWithAlpha(c1, 0.8));
-      grad.addColorStop(0.35, hslWithAlpha(c2, 0.53));
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // subtle grid / axis aura
-    ctx.save();
-    ctx.globalAlpha = 0.35;
-    for (let i = 0; i < 18; i++) {
-      const x = 60 + i * 52 + rr(rng, -6, 6);
-      ctx.fillStyle = `rgba(255,255,255,${0.04 + (i / 18) * 0.06})`;
-      ctx.fillRect(x, 100, 1, 800);
-      const y = 110 + i * 42 + rr(rng, -6, 6);
-      ctx.fillRect(100, y, 800, 1);
-    }
-    ctx.restore();
-
-    addNoise(rng, 4200, 0.012, 0.05);
-  }
-
-  function drawLabelFrame() {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(24, 24, SIZE - 48, SIZE - 48);
-    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(36, 36, SIZE - 72, SIZE - 72);
-    ctx.restore();
-  }
-
-  function drawHeaders(agentSeeds, snapshot, filterSeed, riskSeed, profile) {
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.94)';
-    ctx.textBaseline = 'top';
-    ctx.font = '800 36px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText('AGENT', 54, 50);
-    ctx.textAlign = 'center';
-    ctx.fillText('DSPY', SIZE / 2, 50);
-    ctx.save();
-    ctx.translate(948, 54);
-    ctx.rotate(Math.PI / 2);
-    ctx.textAlign = 'left';
-    ctx.fillText('RISK', 0, 0);
-    ctx.restore();
-
-    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.74)';
-    ctx.textAlign = 'left';
-    ctx.fillText(`agent seeds: ${agentSeeds.join(' · ') || '(none)'}`, 58, 96);
-    ctx.fillText(`filter seed: ${filterSeed}`, 58, 918);
-    ctx.textAlign = 'right';
-    ctx.fillText(`metric ${snapshot.metric_name || '-'} · optimizer ${snapshot.optimizer_name || '-'}`, 944, 96);
-    ctx.fillText(`sig ${String(snapshot.signature_hash || '-').slice(0, 12)} · rng ${snapshot.rng_seed ?? '-'}`, 944, 918);
-    ctx.fillText(`score ${profile.score.toFixed(2)} · gain ${profile.gain.toFixed(2)} · cost ${profile.cost.toFixed(2)} · latency ${profile.latency.toFixed(1)}ms`, 944, 940);
-    ctx.restore();
-  }
-
-  function drawPolyline(points, strokeStyle, lineWidth = 2, alpha = 1, closed = false) {
-    if (!points.length) return;
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = lineWidth;
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(points[0][0], points[0][1]);
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
-    if (closed) ctx.closePath();
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawBlob(rng, x, y, r, col, profile) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(rr(rng, -1, 1));
-    const pts = [];
-    const count = 18 + Math.round(profile.density * 18);
-    for (let i = 0; i < count; i++) {
-      const a = (Math.PI * 2 * i) / count;
-      const rr0 = r * rr(rng, 0.72, 1.24) * (0.85 + profile.fracture * 0.35);
-      pts.push([Math.cos(a) * rr0, Math.sin(a) * rr0]);
-    }
-    ctx.fillStyle = col;
-    ctx.globalAlpha = 0.22 + profile.contrast * 0.26;
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawRays(rng, palette, profile, centerX, centerY) {
-    const rayCount = 18 + Math.round(profile.density * 18);
-    for (let i = 0; i < rayCount; i++) {
-      const a = (Math.PI * 2 * i) / rayCount + rr(rng, -0.12, 0.12);
-      const len = rr(rng, 120, 360) * (0.7 + profile.rhythm * 0.5);
-      const w = rr(rng, 4, 16);
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate(a);
-      const grad = ctx.createLinearGradient(0, 0, len, 0);
-      const c1 = pick(rng, palette);
-      const c2 = pick(rng, palette);
-      grad.addColorStop(0, hslWithAlpha(c1, 0));
-      grad.addColorStop(0.15, hslWithAlpha(c1, 0.66));
-      grad.addColorStop(0.7, hslWithAlpha(c2, 0.4));
-      grad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = grad;
-      ctx.globalAlpha = 0.55;
-      ctx.fillRect(0, -w / 2, len, w);
-      ctx.restore();
-    }
-  }
-
-  function drawCluster(rng, palette, profile, x, y, label, seedText) {
-    const size = rr(rng, 130, 280) * (0.75 + profile.density * 0.5);
-    const rings = 4 + Math.round(profile.contrast * 8);
-    const fragments = 10 + Math.round(profile.fracture * 14);
-    const base = pick(rng, palette);
-
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(rr(rng, -0.8, 0.8));
-
-    // colored stacked gradients.
-    for (let i = 0; i < rings; i++) {
-      const t = i / Math.max(1, rings - 1);
-      const rad = size * (0.22 + t * 0.45);
-      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rad);
-      g.addColorStop(0, hslWithAlpha(base, 0.45 + t * 0.25));
-      g.addColorStop(0.45, hslWithAlpha(pick(rng, palette), 0.28 + t * 0.22));
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.globalAlpha = 0.58;
-      ctx.beginPath();
-      ctx.arc(0, 0, rad, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // cross-shaped nucleus.
-    ctx.save();
-    ctx.rotate(rr(rng, -0.4, 0.4));
-    ctx.fillStyle = pick(rng, palette);
-    ctx.globalAlpha = 0.55;
-    ctx.fillRect(-size * 0.44, -size * 0.06, size * 0.88, size * 0.12);
-    ctx.fillRect(-size * 0.06, -size * 0.44, size * 0.12, size * 0.88);
-    ctx.restore();
-
-    // shards and random shapes.
-    for (let i = 0; i < fragments; i++) {
-      const a = (Math.PI * 2 * i) / fragments + rr(rng, -0.35, 0.35);
-      const r = rr(rng, size * 0.12, size * 0.48);
-      const px = Math.cos(a) * r;
-      const py = Math.sin(a) * r;
-      const kind = i % 5;
-      const col = pick(rng, palette);
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(rr(rng, -1.8, 1.8));
-      if (kind === 0) {
-        ctx.fillStyle = col;
-        ctx.globalAlpha = 0.7;
+      function clipPanel(p) {
+        ctx.save();
         ctx.beginPath();
-        ctx.moveTo(-10, -16);
-        ctx.lineTo(18, -3);
-        ctx.lineTo(-8, 12);
-        ctx.closePath();
-        ctx.fill();
-      } else if (kind === 1) {
-        ctx.fillStyle = col;
-        ctx.globalAlpha = 0.58;
-        ctx.fillRect(-14, -6, 28, 12);
-      } else if (kind === 2) {
-        ctx.strokeStyle = col;
-        ctx.globalAlpha = 0.68;
-        ctx.lineWidth = 3;
+        ctx.rect(p.x, p.y, p.w, p.h);
+        ctx.clip();
+      }
+
+      function panelBackdrop(p, palette, rng, variant) {
+        const grad = ctx.createLinearGradient(p.x, p.y, p.x + p.w, p.y + p.h);
+        grad.addColorStop(0, palette[variant % palette.length]);
+        grad.addColorStop(0.45, palette[(variant + 2) % palette.length]);
+        grad.addColorStop(1, palette[(variant + 4) % palette.length]);
+        ctx.fillStyle = grad;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+
+        const glow = ctx.createRadialGradient(
+          p.x + p.w * rr(rng, 0.2, 0.8),
+          p.y + p.h * rr(rng, 0.2, 0.8),
+          0,
+          p.x + p.w * rr(rng, 0.2, 0.8),
+          p.y + p.h * rr(rng, 0.2, 0.8),
+          p.w * rr(rng, 0.55, 0.9)
+        );
+        glow.addColorStop(0, hsl((hashString(panelSeeds[variant]) + 200) % 360, 88, 62, 0.52));
+        glow.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+      }
+
+      function drawPanelFrame(p) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(245,240,228,0.94)';
+        ctx.lineWidth = 8;
+        ctx.strokeRect(p.x + 8, p.y + 8, p.w - 16, p.h - 16);
+        ctx.strokeStyle = 'rgba(10,10,10,0.52)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(p.x + 18, p.y + 18, p.w - 36, p.h - 36);
+        ctx.restore();
+      }
+
+      function draw1(p, rng, palette) {
+        // layered circles and rect blocks
+        const cx = p.x + p.w * 0.5;
+        const cy = p.y + p.h * 0.5;
+        for (let i = 0; i < 9; i++) {
+          const r = rr(rng, 28, 150) * (0.5 + profile.density * 0.9);
+          const ox = rr(rng, -120, 120) * (0.4 + profile.fracture * 0.6);
+          const oy = rr(rng, -120, 120) * (0.4 + profile.fracture * 0.6);
+          ctx.fillStyle = palette[i % palette.length];
+          ctx.globalAlpha = 0.8 - i * 0.05;
+          ctx.beginPath();
+          ctx.arc(cx + ox, cy + oy, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        for (let i = 0; i < 7; i++) {
+          const w = rr(rng, 20, 160);
+          const h = rr(rng, 20, 160);
+          const x = p.x + rr(rng, 24, p.w - 24 - w);
+          const y = p.y + rr(rng, 24, p.h - 24 - h);
+          ctx.fillStyle = palette[(i + 3) % palette.length];
+          ctx.fillRect(x, y, w, h);
+        }
+        // small discs
+        for (let i = 0; i < 34; i++) {
+          ctx.fillStyle = palette[(i + 1) % palette.length];
+          ctx.globalAlpha = 0.3 + rng() * 0.55;
+          ctx.beginPath();
+          ctx.arc(rr(rng, p.x + 36, p.x + p.w - 36), rr(rng, p.y + 36, p.y + p.h - 36), rr(rng, 2, 11), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+
+      function draw2(p, rng, palette) {
+        // stepped rectangles and solid bands
+        const bandCount = 10;
+        const bandH = p.h / bandCount;
+        for (let i = 0; i < bandCount; i++) {
+          const y = p.y + i * bandH;
+          const inset = rr(rng, 0, p.w * 0.28) * (i / bandCount) * (0.5 + profile.paperNorm);
+          ctx.fillStyle = palette[(i + 2) % palette.length];
+          ctx.globalAlpha = 0.72;
+          ctx.fillRect(p.x + inset, y, p.w - inset * 0.75, bandH + 1);
+        }
+        ctx.globalAlpha = 1;
+        for (let i = 0; i < 8; i++) {
+          const w = rr(rng, 26, 150);
+          const h = rr(rng, 20, 100);
+          const x = p.x + rr(rng, 20, p.w - 20 - w);
+          const y = p.y + rr(rng, 18, p.h - 18 - h);
+          ctx.fillStyle = palette[(i + 4) % palette.length];
+          ctx.fillRect(x, y, w, h);
+        }
+        // central cross blocks
+        ctx.fillStyle = palette[0];
+        ctx.fillRect(p.x + p.w * 0.12, p.y + p.h * 0.42, p.w * 0.76, p.h * 0.12);
+        ctx.fillStyle = palette[5];
+        ctx.fillRect(p.x + p.w * 0.38, p.y + p.h * 0.1, p.w * 0.12, p.h * 0.78);
+      }
+
+      function draw3(p, rng, palette) {
+        // concentric circles and capsules
+        const cx = p.x + p.w * 0.5;
+        const cy = p.y + p.h * 0.5;
+        const maxR = Math.min(p.w, p.h) * 0.42;
+        for (let i = 0; i < 8; i++) {
+          const r = maxR * (1 - i / 8) * (0.7 + profile.liveVolNorm * 0.3);
+          ctx.strokeStyle = palette[i % palette.length];
+          ctx.lineWidth = 16 - i;
+          ctx.globalAlpha = 0.88 - i * 0.08;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+        for (let i = 0; i < 12; i++) {
+          const angle = (i / 12) * Math.PI * 2 + profile.spreadNorm * 0.4;
+          const rx = Math.cos(angle) * rr(rng, 40, maxR * 0.85);
+          const ry = Math.sin(angle) * rr(rng, 40, maxR * 0.85);
+          const w = rr(rng, 26, 74);
+          const h = rr(rng, 50, 130);
+          ctx.save();
+          ctx.translate(cx + rx, cy + ry);
+          ctx.rotate(angle + Math.PI / 2);
+          ctx.fillStyle = palette[(i + 1) % palette.length];
+          ctx.fillRect(-w / 2, -h / 2, w, h);
+          ctx.restore();
+        }
+        // orbit beads
+        for (let i = 0; i < 28; i++) {
+          const a = (i / 28) * Math.PI * 2;
+          const r = maxR * 0.92;
+          ctx.fillStyle = palette[i % palette.length];
+          ctx.beginPath();
+          ctx.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, rr(rng, 3, 10), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function draw4(p, rng, palette) {
+        // faceted diamonds and large soft geometry
+        for (let i = 0; i < 7; i++) {
+          const cx = p.x + rr(rng, 80, p.w - 80);
+          const cy = p.y + rr(rng, 80, p.h - 80);
+          const rx = rr(rng, 38, 170);
+          const ry = rr(rng, 26, 150);
+          ctx.fillStyle = palette[(i + 2) % palette.length];
+          ctx.globalAlpha = 0.88;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - ry);
+          ctx.lineTo(cx + rx, cy);
+          ctx.lineTo(cx, cy + ry);
+          ctx.lineTo(cx - rx, cy);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        const disks = 10;
+        for (let i = 0; i < disks; i++) {
+          const r = rr(rng, 20, 108) * (0.7 + profile.ddNorm * 0.5);
+          ctx.fillStyle = palette[i % palette.length];
+          ctx.beginPath();
+          ctx.arc(rr(rng, p.x + 40, p.x + p.w - 40), rr(rng, p.y + 40, p.y + p.h - 40), r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // axis-like blocks, but still purely geometric
+        ctx.fillStyle = palette[1];
+        ctx.fillRect(p.x + p.w * 0.1, p.y + p.h * 0.76, p.w * 0.8, p.h * 0.08);
+        ctx.fillStyle = palette[4];
+        ctx.fillRect(p.x + p.w * 0.72, p.y + p.h * 0.12, p.w * 0.08, p.h * 0.68);
+      }
+
+      function drawPanel(p, idx) {
+        const seed = panelSeeds[idx];
+        const rng = mulberry32(hashString(seed));
+        const palette = paletteForSeed(seed, idx * 29);
+        clipPanel(p);
+        panelBackdrop(p, palette, rng, idx);
+
+        if (idx === 0) draw1(p, rng, palette);
+        if (idx === 1) draw2(p, rng, palette);
+        if (idx === 2) draw3(p, rng, palette);
+        if (idx === 3) draw4(p, rng, palette);
+
+        // very light particulate grain, no lines or text
+        ctx.globalAlpha = 0.16;
+        for (let i = 0; i < 1200; i++) {
+          const x = rr(rng, p.x, p.x + p.w);
+          const y = rr(rng, p.y, p.y + p.h);
+          const s = rr(rng, 0.6, 1.8);
+          ctx.fillStyle = 'rgba(255,255,255,0.28)';
+          ctx.fillRect(x, y, s, s);
+        }
+        ctx.globalAlpha = 1;
+
+        // soft vignette inside panel
+        const vignette = ctx.createRadialGradient(p.x + p.w / 2, p.y + p.h / 2, p.w * 0.1, p.x + p.w / 2, p.y + p.h / 2, p.w * 0.62);
+        vignette.addColorStop(0, 'rgba(0,0,0,0)');
+        vignette.addColorStop(1, 'rgba(0,0,0,0.28)');
+        ctx.fillStyle = vignette;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+
+        ctx.restore();
+        drawPanelFrame(p);
+      }
+
+      function drawDivider() {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(248,243,232,0.62)';
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(0, 0, rr(rng, 10, 28), rr(rng, 0, Math.PI), rr(rng, Math.PI, Math.PI * 2));
+        ctx.moveTo(SIZE / 2, 24);
+        ctx.lineTo(SIZE / 2, SIZE - 24);
         ctx.stroke();
-      } else if (kind === 3) {
-        ctx.fillStyle = col;
-        ctx.globalAlpha = 0.62;
         ctx.beginPath();
-        ctx.arc(0, 0, rr(rng, 6, 18), 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.fillStyle = col;
-        ctx.globalAlpha = 0.55;
-        ctx.fillRect(-6, -22, 12, 44);
-        ctx.fillRect(-22, -6, 44, 12);
+        ctx.moveTo(24, SIZE / 2);
+        ctx.lineTo(SIZE - 24, SIZE / 2);
+        ctx.stroke();
+        ctx.restore();
       }
-      ctx.restore();
-    }
 
-    // metric-driven orbit loops.
-    ctx.save();
-    ctx.rotate(rr(rng, -0.3, 0.3));
-    for (let i = 0; i < 8; i++) {
-      const t = i / 7;
-      const rad = size * (0.28 + t * 0.5);
-      ctx.strokeStyle = pick(rng, palette);
-      ctx.globalAlpha = 0.08 + t * 0.14;
-      ctx.lineWidth = 1.2 + t * 0.6;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, rad * (0.9 + profile.fracture * 0.4), rad * (0.42 + profile.density * 0.35), rr(rng, -0.5, 0.5), 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // label tag.
-    ctx.fillStyle = 'rgba(255,255,255,0.88)';
-    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText(seedText, 0, size * 0.58);
-    ctx.restore();
-
-    // outline shell, clipped edge.
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(rr(rng, -0.18, 0.18));
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(-size / 2, -size / 2, size, size);
-    ctx.restore();
-  }
-
-  function drawDSPyBand(rng, palette, profile, snapshot, dspyNums) {
-    const bandX = 84;
-    const bandY = 344;
-    const bandW = SIZE - 168;
-    const bandH = 282;
-    const count = Math.max(7, dspyNums.length);
-    const slotW = bandW / count;
-
-    ctx.save();
-    const g = ctx.createLinearGradient(bandX, bandY, bandX + bandW, bandY + bandH);
-    g.addColorStop(0, 'rgba(255,255,255,0.03)');
-    g.addColorStop(0.5, 'rgba(255,255,255,0.09)');
-    g.addColorStop(1, 'rgba(255,255,255,0.03)');
-    ctx.fillStyle = g;
-    ctx.fillRect(bandX, bandY, bandW, bandH);
-    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-    ctx.strokeRect(bandX, bandY, bandW, bandH);
-
-    ctx.fillStyle = 'rgba(255,255,255,0.94)';
-    ctx.font = '800 18px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText('DSPY OPTIMIZATION FIELD', bandX + 16, bandY + 12);
-    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.72)';
-    ctx.fillText(`${snapshot.metric_name || 'metric'} · ${snapshot.optimizer_name || 'optimizer'} · rng ${snapshot.rng_seed ?? '-'}`, bandX + 16, bandY + 35);
-
-    // Strong colorful bars.
-    const norm = normalizeNumbers(dspyNums);
-    for (let i = 0; i < count; i++) {
-      const v = norm[i % norm.length];
-      const raw = dspyNums[i % dspyNums.length];
-      const x = bandX + i * slotW + slotW * 0.14;
-      const w = slotW * 0.68;
-      const h = 50 + v * 178 * (0.72 + profile.contrast * 0.45);
-      const y = bandY + bandH - 28 - h;
-      const c1 = pick(rng, palette);
-      const c2 = pick(rng, palette);
-      const grad = ctx.createLinearGradient(x, y, x + w, y + h);
-      grad.addColorStop(0, c1);
-      grad.addColorStop(0.5, c2);
-      grad.addColorStop(1, c1);
-      ctx.globalAlpha = 0.74;
-      ctx.fillStyle = grad;
-      ctx.fillRect(x, y, w, h);
-      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-      ctx.strokeRect(x, y, w, h);
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(x + 2, y + 2, Math.max(4, w * 0.12), Math.max(12, h * 0.2));
-      ctx.fillStyle = 'rgba(255,255,255,0.82)';
-      ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(Number.isFinite(raw) ? raw.toFixed(raw < 10 ? 2 : 1) : String(raw), x + w / 2, y - 4);
-    }
-
-    // colorful topological ribbons behind the bars.
-    for (let i = 0; i < 7; i++) {
-      const yy = bandY + 60 + i * 24;
-      const ribbon = [];
-      const segs = 10 + Math.round(profile.rhythm * 4);
-      for (let s = 0; s <= segs; s++) {
-        const t = s / segs;
-        ribbon.push([
-          bandX + 20 + t * (bandW - 40),
-          yy + Math.sin(t * Math.PI * 2 + i) * (8 + profile.fracture * 22) + rr(rng, -4, 4)
-        ]);
+      function render() {
+        clear();
+        drawDivider();
+        for (let i = 0; i < 4; i++) drawPanel(panelRect(i), i);
       }
-      drawPolyline(ribbon, `${pick(rng, palette)}`, 2, 0.28, false);
-    }
 
-    // seed chips / numerals.
-    ctx.fillStyle = 'rgba(255,255,255,0.78)';
-    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`field ${snapshot.signature_hash ? snapshot.signature_hash.slice(0, 12) : '-'}`, bandX + 16, bandY + bandH - 10);
-    ctx.restore();
-  }
-
-  function drawFilterGate(rng, palette, filterSeed, profile) {
-    const x = 86, y = 118, w = 828, h = 84;
-    ctx.save();
-    const g = ctx.createLinearGradient(x, y, x + w, y + h);
-    g.addColorStop(0, 'rgba(255,255,255,0.02)');
-    g.addColorStop(0.5, 'rgba(255,255,255,0.06)');
-    g.addColorStop(1, 'rgba(255,255,255,0.02)');
-    ctx.fillStyle = g;
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-    ctx.strokeRect(x, y, w, h);
-    ctx.fillStyle = 'rgba(255,255,255,0.94)';
-    ctx.font = '800 34px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText('FILTER', x + 16, y + 14);
-    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.fillStyle = 'rgba(255,255,255,0.68)';
-    ctx.fillText(filterSeed, x + 16, y + 48);
-
-    const swatches = 9;
-    for (let i = 0; i < swatches; i++) {
-      const bw = rr(rng, 12, 32);
-      const bx = x + 330 + i * 34 + rr(rng, -6, 6);
-      const by = y + rr(rng, 18, 34);
-      const grad = ctx.createLinearGradient(bx, by, bx + bw, by + 28);
-      grad.addColorStop(0, pick(rng, palette));
-      grad.addColorStop(1, pick(rng, palette));
-      ctx.fillStyle = grad;
-      ctx.globalAlpha = 0.88;
-      ctx.fillRect(bx, by, bw, rr(rng, 18, 32));
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-      ctx.strokeRect(bx, by, bw, rr(rng, 18, 32));
-    }
-
-    // gate aperture / threshold.
-    ctx.save();
-    ctx.translate(x + 610, y + 42);
-    ctx.rotate(rr(rng, -0.16, 0.16));
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(-150, -24, 300, 48);
-    ctx.globalCompositeOperation = 'destination-out';
-    for (let i = 0; i < 7; i++) {
-      ctx.fillRect(-128 + i * 35, -18, 20, 36);
-    }
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.strokeRect(-150, -24, 300, 48);
-    ctx.restore();
-    ctx.restore();
-  }
-
-  function drawRiskDamage(rng, palette, riskSeed, profile) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    const count = 9 + Math.round(profile.fracture * 15);
-    for (let i = 0; i < count; i++) {
-      const x1 = rr(rng, 40, SIZE - 40);
-      const y1 = rr(rng, 40, SIZE - 40);
-      const x2 = x1 + rr(rng, -260, 260) * (0.22 + profile.fracture * 0.95);
-      const y2 = y1 + rr(rng, -260, 260) * (0.22 + profile.fracture * 0.95);
-      const steps = 7 + Math.round(profile.fracture * 8);
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      for (let s = 1; s <= steps; s++) {
-        const t = s / steps;
-        const x = x1 + (x2 - x1) * t + rr(rng, -18, 18) * profile.fracture;
-        const y = y1 + (y2 - y1) * t + rr(rng, -18, 18) * profile.fracture;
-        ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = pick(rng, palette);
-      ctx.lineWidth = rr(rng, 1.1, 3.4);
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.globalAlpha = 0.22 + profile.fracture * 0.28;
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawCaption(agentSeeds, snapshot, profile, dspyNums) {
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.88)';
-    ctx.font = '700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText(`agent ${agentSeeds.length || 1}x · dspy nums ${dspyNums.length} · density ${profile.density.toFixed(2)} · fracture ${profile.fracture.toFixed(2)} · rhythm ${profile.rhythm.toFixed(2)}`, SIZE / 2, SIZE - 54);
-    ctx.fillText(`optimizer ${snapshot.optimizer_name || '-'} · metric ${snapshot.metric_name || '-'} · seed ${snapshot.rng_seed ?? '-'}`, SIZE / 2, SIZE - 34);
-    ctx.restore();
-  }
-
-  function render() {
-    const agentSeeds = parseSeeds(agentInput.value);
-    const filterSeed = filterInput.value.trim() || 'filter';
-    const riskSeed = riskInput.value.trim() || 'risk';
-    const dspyText = dspyInput.value;
-    const kv = parseKV(dspyText);
-    const dspyNums = parseNumbers(dspyText);
-    const profile = buildProfile(dspyNums);
-    const snapshot = {
-      metric_name: kv.metric_name || 'metric',
-      optimizer_name: kv.optimizer_name || 'optimizer',
-      optimizer_version: kv.optimizer_version || 'v0',
-      rng_seed: Number.isFinite(Number(kv.rng_seed)) ? Number(kv.rng_seed) : hashString(dspyText) % 100000,
-      signature_hash: kv.signature_hash || dspyText.slice(0, 12),
-    };
-    const palette = paletteFrom(snapshot, profile);
-    const baseRng = rngFrom('base', agentSeeds.join('|'), filterSeed, riskSeed, dspyText);
-    const masterRng = rngFrom('master', agentSeeds.join('|'), filterSeed, riskSeed, dspyText);
-    const agentRng = rngFrom('agent', agentSeeds.join('|'));
-    const riskRng = rngFrom('risk', riskSeed, String(profile.fracture), String(profile.delta));
-
-    ctx.clearRect(0, 0, SIZE, SIZE);
-    drawBackground(baseRng, palette, profile);
-    drawFilterGate(riskRng, palette, filterSeed, profile);
-    drawDSPyBand(baseRng, palette, profile, snapshot, dspyNums);
-
-    // clusters are positioned from DSPy metrics + agent seeds.
-    const seeds = agentSeeds.length ? agentSeeds : ['agent-default'];
-    const count = Math.max(seeds.length, 4 + Math.round(profile.density * 4));
-    for (let i = 0; i < count; i++) {
-      const seed = seeds[i % seeds.length];
-      const rng = rngFrom('cluster', seed, String(i), dspyText, filterSeed, riskSeed);
-      const cx = rr(rng, 140, SIZE - 140);
-      const cy = rr(rng, 180, SIZE - 180);
-      drawCluster(rng, palette, profile, cx, cy, `cluster-${i + 1}`, seed);
-    }
-
-    // central energy field.
-    const centerRng = rngFrom('center', dspyText, filterSeed, riskSeed);
-    drawRays(centerRng, palette, profile, SIZE / 2, SIZE / 2);
-    for (let i = 0; i < 8; i++) {
-      const x = rr(centerRng, 120, SIZE - 120);
-      const y = rr(centerRng, 160, SIZE - 160);
-      const r = rr(centerRng, 34, 110) * (0.7 + profile.fracture * 0.6);
-      drawBlob(centerRng, x, y, r, pick(centerRng, palette), profile);
-    }
-
-    drawRiskDamage(riskRng, palette, riskSeed, profile);
-
-    // color confetti / motion trail.
-    ctx.save();
-    for (let i = 0; i < 140; i++) {
-      const t = i / 139;
-      const x = 64 + t * 872 + rr(masterRng, -26, 26);
-      const y = 500 + Math.sin(t * Math.PI * 2 + masterRng() * 2) * (120 + profile.fracture * 150) + rr(masterRng, -14, 14);
-      const s = rr(masterRng, 2, 8);
-      ctx.fillStyle = pick(masterRng, palette);
-      ctx.globalAlpha = 0.08 + t * 0.22;
-      ctx.fillRect(x, y, s, s);
-    }
-    ctx.restore();
-
-    drawLabelFrame();
-    drawHeaders(agentSeeds, snapshot, filterSeed, riskSeed, profile);
-    drawCaption(agentSeeds, snapshot, profile, dspyNums);
-
-    ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    ctx.fillRect(0, 0, SIZE, SIZE);
-    ctx.restore();
-  }
-
-  function randomize() {
-    const token = () => Math.random().toString(36).slice(2, 8);
-    const n = 1 + Math.floor(Math.random() * 4);
-    agentInput.value = Array.from({ length: n }, () => token()).join(', ');
-    dspyInput.value = `metric_name=${pick(Math.random, ['delta_sharpe', 'grader_score', 'return_pct', 'win_rate'])}, optimizer_name=${pick(Math.random, ['gepa', 'miprov2', 'copro'])}, optimizer_version=0.9.${Math.floor(Math.random() * 5)}, rng_seed=${Math.floor(Math.random() * 9999)}, signature_hash=${token()}${token()}, score=${(Math.random() * 1.2).toFixed(2)}, gain=${(Math.random() * 1.2).toFixed(2)}, cost=${(Math.random() * 1.2).toFixed(2)}, latency=${(Math.random() * 3.5).toFixed(1)}, steps=${Math.floor(Math.random() * 40 + 8)}, tokens=${Math.floor(Math.random() * 2200 + 400)}, trial=${(Math.random()).toFixed(2)}, delta=${(Math.random() * 1.1).toFixed(2)}`;
-    filterInput.value = `filter-${token()}`;
-    riskInput.value = `risk-${token()}`;
-    render();
-  }
-
-  const params = new URLSearchParams(location.search);
-  if (params.get('agent')) agentInput.value = params.get('agent');
-  if (params.get('seed')) agentInput.value = params.get('seed');
-  if (params.get('hash')) agentInput.value = params.get('hash');
-  if (params.get('dspy')) dspyInput.value = params.get('dspy');
-  if (params.get('filter')) filterInput.value = params.get('filter');
-  if (params.get('risk')) riskInput.value = params.get('risk');
-
-  rerenderBtn.addEventListener('click', render);
-  randomizeBtn.addEventListener('click', randomize);
-  [agentInput, dspyInput, filterInput, riskInput].forEach(el => el.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && (el === agentInput ? (e.metaKey || e.ctrlKey) : true)) render();
-  }));
-
-  render();
-})();
-</script>
+      render();
+    })();
+  </script>
 </body>
 </html>
