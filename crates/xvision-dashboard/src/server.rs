@@ -139,6 +139,8 @@
 //  R58. GET  /api/autooptimizer/:id
 //  R59. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
 //  R60. GET  /api/autooptimizer/blob/:hash
+//  R61. GET  /api/autooptimizer/flywheel
+//  R62. GET  /api/autooptimizer/stats    (P3-W1 per-cycle aggregates)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -348,6 +350,17 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cost",
             get(autooptimizer_route::get_cycle_cost_handler),
+        )
+        // P3-W1: per-cycle aggregate statistics (kept/suspect/dropped/cost/cum_cost).
+        // Registered before the /:id catch-all.
+        .route(
+            "/api/autooptimizer/stats",
+            get(autooptimizer_route::get_stats),
+        )
+        // P3-W2: DSPy flywheel state endpoint. Registered before the /:id catch-all.
+        .route(
+            "/api/autooptimizer/flywheel",
+            get(autooptimizer_route::get_flywheel),
         )
         // Flywheel memory-distillation detail — catch-all after static AR-3 routes.
         .route("/api/autooptimizer/:id", get(flywheel::autooptimizer_get))
