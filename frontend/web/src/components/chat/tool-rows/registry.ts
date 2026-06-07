@@ -14,7 +14,6 @@
 //   completeness test loudly.
 
 import {
-  AbCompareRow,
   AgentSlotDiffRow,
   CheckpointRestoreRow,
   EvalRunRow,
@@ -96,13 +95,6 @@ export const TOOL_ROW_REGISTRY: Record<string, ToolRowEntry> = {
     render: AgentSlotDiffRow,
     sideEffect: "external_write",
     label: "Validate draft",
-  },
-
-  // ── A/B compare result ──
-  ab_compare: {
-    render: AbCompareRow,
-    sideEffect: "external_write",
-    label: "A/B compare",
   },
 
   // ── Backtest / eval run status ──
@@ -263,7 +255,6 @@ export const KNOWN_TOOLS: readonly string[] = [
   "run_eval",
   "fetch_bars",
   // Net-new authoring / progress verbs surfaced in this phase
-  "ab_compare",
   "run_optimizer",
   "restore_checkpoint",
   "edit_focus_chain",

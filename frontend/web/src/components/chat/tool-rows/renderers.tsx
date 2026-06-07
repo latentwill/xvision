@@ -96,24 +96,6 @@ export function AgentSlotDiffRow({ row, onApprove }: ToolRowProps) {
   );
 }
 
-// ── A/B compare result ───────────────────────────────────────────────────
-
-export function AbCompareRow({ row, onApprove }: ToolRowProps) {
-  return (
-    <RowShell
-      row={row}
-      onApprove={onApprove}
-      title="A/B compare"
-      subtitle={spanLabel(row.spanId)}
-    >
-      <div className="text-text-2">
-        {row.status === "finished" ? "Comparison result" : "Comparing arms…"}
-      </div>
-      <OutputBlock text={row.output} />
-    </RowShell>
-  );
-}
-
 // ── Backtest / eval run status ───────────────────────────────────────────
 
 export function EvalRunRow({ row, onApprove }: ToolRowProps) {

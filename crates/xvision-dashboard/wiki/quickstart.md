@@ -23,7 +23,7 @@ Welcome to xvision — a multistrategy trading-agent backtest harness.
 xvision is the eval harness, not the strategy itself. Use it to:
 
 - Iterate on strategies in a deterministic backtest harness.
-- Compare arms side-by-side (`xvn ab-compare`).
+- Compare eval runs side-by-side (`xvn eval compare`).
 - Inspect every agent decision in the trace dock — prompt, response,
   tool calls, model cost, span timings.
 

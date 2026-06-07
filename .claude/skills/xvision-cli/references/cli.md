@@ -10,7 +10,6 @@ xvn <COMMAND>
 
 | Verb | Purpose |
 |---|---|
-| `ab-compare` | Low-level N-arm **baseline-algorithm** backtest over raw cycles+bars; emits `BacktestResult` JSON. NOT for comparing eval runs — that's `eval compare` |
 | `metrics` | Pre-committed metrics (treatment vs baseline), JSON to stdout |
 | `gate` | Anti-overfit gate verdict for treatment vs baseline |
 | `report` | Headline Markdown report for a backtest run |
@@ -41,32 +40,6 @@ xvn <COMMAND>
 | `portfolio` | Read live portfolio state from a venue |
 | `fire-trade` | Manual single-trade smoke test against a live venue |
 | `close-position` | Close any open position in `--asset` at the given venue |
-
-## A/B compare — the headline call
-
-> **Not for comparing eval runs.** `ab-compare` is a low-level baseline-algorithm
-> backtest: it takes raw `MarketSnapshot` cycles + bars and runs the built-in
-> arms below. It does not accept a `Strategy`, a `Scenario`, or a `run_id`, and
-> it writes no eval-run row. To compare 2+ **completed eval runs**, use
-> `xvn eval compare <run_a> <run_b>` (or `--batch <batch_id>`).
-
-```bash
-# Required: cycles drive Trader / baseline tick-by-tick. Bars come from
-# either a JSON file (--bars) or the SQLite cache (--from / --to / --granularity).
-xvn ab-compare \
-  --cycles path/to/cycles.json \
-  --from 2025-01-01 --to 2025-04-01 --granularity 1h \
-  --arms "trader_arm,buy_and_hold,rsi_mean_reversion" \
-  --asset BTC \
-  --output runs/headline-2026-05-20.json
-```
-
-Pre-rename heads-up: this used to be `--setups`; it's `--cycles` now.
-
-Heads include: `trader_arm`, `buy_and_hold`, `always_long`, `always_short`,
-`random_direction:seed=<u64>`, `rsi_mean_reversion`,
-`ma_crossover:fast=<usize>:slow=<usize>`, `macd_momentum`. Empty `--arms`
-selects `default_arms()` (trader_arm + buy_and_hold).
 
 ## Strategy authoring
 

@@ -11,7 +11,6 @@ export {
   resolveToolRow,
 } from "./registry";
 export {
-  AbCompareRow,
   AgentSlotDiffRow,
   CheckpointRestoreRow,
   EvalRunRow,

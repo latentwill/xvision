@@ -57,17 +57,17 @@ The hackathon sprint queue. Branch: `hackathon/turing`. Submission deadline:
 - **Why pulled forward:** ADR 0008 originally gated this on Phase 11.5 forward Orderly run. The pivot makes ERC-8004 a week-1 dependency. Mainnet still gated on Phase 9 eval clearing per ADR 0008.
 - **Blocking:** YES for SLF3, SLF4, SLF5.
 
-### SLF3. Mint per-strategy NFT on `ab_compare` startup
+### SLF3. Mint per-strategy NFT on eval run startup
 
 - **Trigger:** SLF2 done.
-- **Scope:** extend `xvision-eval::ab_compare` to call `IdentityClient::register` for each Strategy in the active set on run start, persisting `(strategy_name, agent_id, agent_uri)` mapping. `agent_uri` points to a stable manifest (code commit + Strategy adapter type + risk preset). Idempotent — re-runs reuse the existing `agent_id` if the manifest hash matches.
+- **Scope:** extend the eval run harness to call `IdentityClient::register` for each Strategy in the active set on run start, persisting `(strategy_name, agent_id, agent_uri)` mapping. `agent_uri` points to a stable manifest (code commit + Strategy adapter type + risk preset). Idempotent — re-runs reuse the existing `agent_id` if the manifest hash matches. Note: `ab_compare`/`xvn ab-compare` was removed 2026-06-07; mint wiring should go through the eval run harness instead.
 - **Decision:** TraderArm gets one NFT (vectors-on/off/random/orth no longer apply post-ADR-0011). The leaderboard view treats it as a single unit alongside other Strategy implementations.
 - **Blocking:** YES for SLF4.
 
 ### SLF4. Per-cycle Reputation Registry write path
 
 - **Trigger:** SLF3 done.
-- **Scope:** at end of each `ab_compare` cycle, sign + post a performance receipt to the Reputation Registry per strategy: `(value=cycle_pnl_bps, valueDecimals=4, tag1="cycle", tag2=cycle_id, endpoint=https://...full_metrics, feedbackHash=keccak(metrics_blob))`. `xvision-identity::ReputationClient::give_feedback` already wired in ADR 0008 stub.
+- **Scope:** at end of each eval run cycle, sign + post a performance receipt to the Reputation Registry per strategy: `(value=cycle_pnl_bps, valueDecimals=4, tag1="cycle", tag2=cycle_id, endpoint=https://...full_metrics, feedbackHash=keccak(metrics_blob))`. `xvision-identity::ReputationClient::give_feedback` already wired in ADR 0008 stub. Note: `ab_compare`/`xvn ab-compare` was removed 2026-06-07; write path should route through the eval run harness.
 - **Riskiest seam.** Engine writes → Mantle Sepolia → dashboard reads back. Get end-to-end smoke green before scaling beyond one strategy / one cycle.
 - **Blocking:** YES for SLF10 dashboard.
 
@@ -105,7 +105,7 @@ The hackathon sprint queue. Branch: `hackathon/turing`. Submission deadline:
 ### SLF9. Evening Karpathy loop — wrapper around `xvision-intern`
 
 - **Trigger:** SLF3, SLF4 done.
-- **Scope:** new module `xvision-eval::loom::evening_cycle`. Per strategy: read day's trade ledger + `program.md`, ask intern for one mutation, paper-test new variant against held-out window via `ab_compare`, accept (mint new NFT via SLF3, post Validation receipt via SLF5, fork lineage via SLF8) or reject (log to mutation registry as proposed-but-pruned). Bound mutations per night per strategy by `[loom] mutations_per_night = N` in config.
+- **Scope:** new module `xvision-eval::loom::evening_cycle`. Per strategy: read day's trade ledger + `program.md`, ask intern for one mutation, paper-test new variant against held-out window via the eval run harness, accept (mint new NFT via SLF3, post Validation receipt via SLF5, fork lineage via SLF8) or reject (log to mutation registry as proposed-but-pruned). Bound mutations per night per strategy by `[loom] mutations_per_night = N` in config. Note: `ab_compare`/`xvn ab-compare` was removed 2026-06-07; held-out paper-test should use the eval batch path.
 - **Decision:** start with constrained mutation surface — knob-level (size, stops, indicator parameters) + indicator selection — for safety + repeatability. Open up to free-form `program.md` editing in v2 once basic loop is stable.
 - **Blocking:** YES for "self-improvement" claim in demo.
 
@@ -279,9 +279,9 @@ Infrastructure used by both tracks. Lives on `main`.
 ### F33 [Shared]. Chart rework — replace lightweight-charts with new charting library
 
 - **Context:** lightweight-charts (TradingView) is being removed. A chart rework is planned. This item tracks the replacement.
-- **Trigger:** chart rework library/approach decided. Gated on AB-compare surface (see `team/intake/2026-05-19-compare-ab-evaluations.md` — reserved until after charting rework).
+- **Trigger:** chart rework library/approach decided.
 - **Scope:** replace the existing `lightweight-charts@4.x` usage across six surfaces (run detail, compare, scenario detail, strategy detail, live cockpit, wizard preview) with the chosen charting library. Preserve: multi-pane stack (price + indicators + equity + drawdown + volume), localStorage layer prefs, SSE-streamed live cockpit, kitchen-sink server-computed indicator set. Update the [TradingView charts design spec](docs/superpowers/specs/2026-05-11-tradingview-charts-design.md) to reflect new library once chosen.
-- **Blocking:** YES — AB-compare surface is gated on this landing. Bars-in-cache requirement from F30 M1 carries forward.
+- **Blocking:** YES — Bars-in-cache requirement from F30 M1 carries forward.
 
 ### F34 [SLF]. ERC-8004 reputation leaderboards — gamification surface
 
