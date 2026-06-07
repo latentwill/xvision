@@ -19,7 +19,7 @@
 mod common;
 
 use common::open_api_context;
-use xvision_engine::agents::{default_capabilities, AgentSlot, InputsPolicy};
+use xvision_engine::agents::{AgentSlot, InputsPolicy};
 use xvision_engine::api::agents::{self as agents_api, CreateAgentRequest};
 use xvision_engine::api::strategy::{self as api_strategy, CloneStrategyFullReq};
 use xvision_engine::api::{ApiContext, ApiError};
@@ -115,7 +115,7 @@ async fn seed_trader_agent(ctx: &ApiContext, provider: &str, model: &str) -> Str
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
-                capabilities: default_capabilities(),
+                allowed_tools: Vec::new(),
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -151,9 +151,9 @@ fn seed_strategy(id: &str, agent_id: &str) -> Strategy {
             agent_id: agent_id.into(),
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,

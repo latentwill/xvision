@@ -12,13 +12,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Topbar } from "@/components/shell/Topbar";
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
-import { CapabilityBadges } from "@/components/diagnostics/CapabilityBadges";
+import { ToolBadges } from "@/components/agent/ToolBadges";
 import {
   agentKeys,
   listAgentsPaged,
   type Agent,
   type AgentStatus,
-  type Capability,
 } from "@/api/agents";
 import { ApiError } from "@/api/client";
 import {
@@ -150,7 +149,7 @@ export function AgentsRoute() {
   const desktopColumns = [
     { key: "name", label: "Name" },
     { key: "status", label: "Status" },
-    { key: "capabilities", label: "Capabilities" },
+    { key: "tools", label: "Tools" },
     { key: "slots", label: "Slots" },
     { key: "skills", label: "Skills" },
     { key: "created", label: "Created" },
@@ -297,7 +296,7 @@ function DesktopRow({
         <StatusPill status={status} />
       </td>
       <td className="px-5 py-3">
-        <CapabilityBadges capabilities={agentCapabilities(row)} />
+        <ToolBadges tools={agentTools(row)} />
       </td>
       <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
         {row.slots.length === 1
@@ -348,17 +347,12 @@ function badgeColorFor(
   }
 }
 
-// Collect the distinct capabilities an agent declares across its slots.
-// The slot `capabilities` field is optional on the wire — `undefined`
-// collapses to `["trader"]` (the engine's `default_capabilities`), so a
-// pre-033 single-trader agent still shows a Trader badge.
-function agentCapabilities(agent: Agent): Capability[] {
-  const seen = new Set<Capability>();
+function agentTools(agent: Agent): string[] {
+  const seen = new Set<string>();
   for (const slot of agent.slots) {
-    const caps = slot.capabilities ?? (["trader"] as Capability[]);
-    for (const c of caps) seen.add(c);
+    for (const tool of slot.allowed_tools ?? []) seen.add(tool);
   }
-  return [...seen];
+  return [...seen].sort();
 }
 
 // Default status when no separately-computed status is provided. In v1

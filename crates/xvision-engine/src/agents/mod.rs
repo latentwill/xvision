@@ -19,7 +19,7 @@ pub mod validator;
 mod max_tokens_resolution;
 
 pub use capability::Capability;
-pub use model::{default_capabilities, Agent, AgentSlot, InputsPolicy};
+pub use model::{Agent, AgentSlot, InputsPolicy};
 // Canonical per-model metadata table lives in `xvision-core::providers`
 // so non-engine crates (CLI, dashboard) can resolve auto-tokens without
 // linking the engine. The engine re-exports the names it consumes.

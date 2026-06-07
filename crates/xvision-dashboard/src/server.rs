@@ -169,7 +169,7 @@ use crate::routes::{
     health::health,
     memory as memory_route, optimizations as optimizations_route, safety as safety_route, scenarios,
     search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, wizard,
+    strategies_folder as strategies_folder_route, tools as tools_route, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -198,6 +198,7 @@ fn readonly_router(state: AppState) -> Router {
         )
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
+        .route("/api/tools", get(tools_route::list))
         .route("/api/strategies", get(strategies::list))
         .route("/api/templates", get(strategies::list_templates))
         .route("/api/strategy/:id", get(strategies::get))

@@ -268,7 +268,6 @@ fn trader_agent_slot() -> ResolvedAgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         agent_id: "test-trader-agent".into(),
-        capabilities: BTreeSet::new(),
         noop_skip: false,
     }
 }

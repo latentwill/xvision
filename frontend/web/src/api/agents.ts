@@ -43,19 +43,8 @@ export type AgentSlot = {
   /// `xvision-memory`. Optional on the wire — the server's
   /// `#[serde(default)]` collapses missing values to `"off"`.
   memory_mode?: MemoryMode;
-  /// Phase A capability schema (migration 033). Closed set of the
-  /// capability classes this slot can play in a strategy pipeline.
-  /// `undefined` collapses to `{"trader"}` server-side via
-  /// `default_capabilities`. Sent explicitly by the inline Filter
-  /// composer as `["filter"]` so the Phase B dispatcher picks the
-  /// Filter handler at run time.
-  capabilities?: Capability[];
+  allowed_tools: string[];
 };
-
-/// Mirror of the engine's `Capability` enum. See
-/// `frontend/web/src/api/types.gen/Capability.ts` for the canonical
-/// generated form.
-export type Capability = "trader" | "filter" | "critic" | "intern" | "router";
 
 export type Agent = {
   agent_id: string;

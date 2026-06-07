@@ -60,6 +60,18 @@ impl Tool for MockIndicatorPanel {
     fn description(&self) -> &'static str {
         "mock indicator panel (test fixture)"
     }
+    fn descriptor(&self) -> xvision_agent_client::protocol::ToolDescriptor {
+        xvision_agent_client::protocol::ToolDescriptor {
+            name: self.name().as_str().to_string(),
+            version: "1".to_string(),
+            description: self.description().to_string(),
+            input_schema: json!({ "type": "object" }),
+            output_schema: json!({ "type": "object" }),
+            timeout_ms: 1_000,
+            side_effect_level: xvision_agent_client::protocol::SideEffectLevel::ReadOnly,
+            requires_approval: false,
+        }
+    }
     async fn invoke(&self, input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         self.invocations.lock().unwrap().push(input);
         Ok(json!({
@@ -175,9 +187,9 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
             agent_id: "test-agent".into(),
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
@@ -215,7 +227,6 @@ async fn agent_loop_dispatch_advertises_indicator_panel_tool_when_strategy_requi
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
-        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     };
 
@@ -283,7 +294,6 @@ async fn agent_loop_routes_tool_use_to_indicator_panel_and_feeds_result_back() {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
-        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     };
     let dispatch = Arc::new(ToolUseThenEndTurn::new());
@@ -373,7 +383,6 @@ async fn agent_loop_rejects_unadvertised_indicator_panel_tool_use() {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
-        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     };
     let dispatch = Arc::new(ToolUseThenEndTurn::new());
@@ -461,7 +470,6 @@ async fn indicator_panel_invocation_emits_validate_spans_for_trace_dock() {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "test-agent".into(),
-        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     };
 

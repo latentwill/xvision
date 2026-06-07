@@ -23,7 +23,7 @@
 
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_data::fixtures::ensure_test_fixture;
-use xvision_engine::agents::{default_capabilities, AgentSlot, AgentStore, InputsPolicy, NewAgent};
+use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
 use xvision_engine::api::eval::{self, ListRunsRequest, RetryReason};
 use xvision_engine::api::{Actor, ApiContext, ApiError};
 use xvision_engine::eval::{Run, RunMode, RunStatus, RunStore};
@@ -186,7 +186,7 @@ sqlite_url = "sqlite://x.db"
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                capabilities: default_capabilities(),
+                allowed_tools: Vec::new(),
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -218,9 +218,9 @@ sqlite_url = "sqlite://x.db"
             agent_id,
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,

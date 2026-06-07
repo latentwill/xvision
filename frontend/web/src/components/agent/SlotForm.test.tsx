@@ -48,6 +48,7 @@ function makeSlot(overrides: Partial<AgentSlot> = {}): AgentSlot {
     model: "claude-sonnet-4-6",
     system_prompt: "you are a trader",
     skill_ids: [],
+    allowed_tools: [],
     max_tokens: null,
     ...overrides,
   };

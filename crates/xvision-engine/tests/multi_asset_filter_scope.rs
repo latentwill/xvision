@@ -232,23 +232,23 @@ fn two_filter_multi_asset_strategy() -> Strategy {
                 agent_id: "regime-filter-agent".into(),
                 role: "regime".into(),
                 activates: Some(Capability::Filter),
-            prompt_override: None,
-            model_override: None,
-},
+                prompt_override: None,
+                model_override: None,
+            },
             AgentRef {
                 agent_id: "vol-filter-agent".into(),
                 role: "vol".into(),
                 activates: Some(Capability::Filter),
-            prompt_override: None,
-            model_override: None,
-},
+                prompt_override: None,
+                model_override: None,
+            },
             AgentRef {
                 agent_id: "trader-agent".into(),
                 role: "trader".into(),
                 activates: Some(Capability::Trader),
-            prompt_override: None,
-            model_override: None,
-},
+                prompt_override: None,
+                model_override: None,
+            },
         ],
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
@@ -272,7 +272,6 @@ fn resolved_slots() -> Vec<xvision_engine::agent::pipeline::ResolvedAgentSlot> {
     use xvision_engine::agent::pipeline::ResolvedAgentSlot;
     use xvision_engine::strategies::slot::LLMSlot;
     fn slot(role: &str, cap: Capability) -> ResolvedAgentSlot {
-        use std::collections::BTreeSet;
         ResolvedAgentSlot {
             role: role.into(),
             slot: LLMSlot {
@@ -296,11 +295,6 @@ fn resolved_slots() -> Vec<xvision_engine::agent::pipeline::ResolvedAgentSlot> {
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
             noop_skip: false,
-            capabilities: {
-                let mut s = BTreeSet::new();
-                s.insert(cap);
-                s
-            },
         }
     }
     vec![

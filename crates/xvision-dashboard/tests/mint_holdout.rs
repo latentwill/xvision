@@ -17,7 +17,7 @@ use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 use xvision_engine::agents::model::InputsPolicy;
 use xvision_engine::agents::store::{AgentStore, NewAgent};
-use xvision_engine::agents::{default_capabilities, AgentSlot};
+use xvision_engine::agents::AgentSlot;
 use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -56,7 +56,7 @@ fn slot(name: &str) -> AgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
-        capabilities: default_capabilities(),
+        allowed_tools: Vec::new(),
         delta_briefing: None,
     }
 }
@@ -99,9 +99,9 @@ fn sample_strategy(id: &str, agent_id: &str) -> Strategy {
             agent_id: agent_id.to_string(),
             role: "trader".to_string(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
