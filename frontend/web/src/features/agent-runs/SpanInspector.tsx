@@ -92,6 +92,12 @@ function durationMs(span: RunSpan): number | null {
   return new Date(span.finished_at).getTime() - new Date(span.started_at).getTime();
 }
 
+function formatDuration(ms: number): string {
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
+  return `${ms}ms`;
+}
+
 /**
  * Reason text for the prompt / response placeholder when no
  * `payload_ref` is available on the span. Returns retention-mode-aware
@@ -649,7 +655,7 @@ export function SpanInspector({
             <div className="text-[9px] font-mono tracking-[0.18em] text-text-3 mb-1">FIELDS</div>
             <Row k="span.id" v={span.span_id} />
             <Row k="kind" v={span.kind} />
-            <Row k="duration" v={ms != null ? `${ms}ms` : "—"} />
+            <Row k="duration" v={ms != null ? formatDuration(ms) : "—"} />
             <Row k="start" v={span.started_at} />
             {span.provider ? <Row k="provider" v={span.provider} /> : null}
             {span.model ? <Row k="model" v={span.model} tone="gold" /> : null}

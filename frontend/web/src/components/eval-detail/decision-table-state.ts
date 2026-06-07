@@ -5,10 +5,10 @@
 import type { TimelineDecision } from "./decision-view";
 
 // Mutually-exclusive action filter (radio semantics). Mirrors README §7's pill
-// row All/Buy/Sell/Hold/Filtered. CLOSE (cover) rows are exit/sell-side, so the
+// row All/Buy/Sell/Short/Hold. CLOSE (cover) rows are exit/sell-side, so the
 // SELL filter matches both SELL and CLOSE — otherwise short-cover steps would
 // be unreachable by any action filter.
-export type ActionFilter = "all" | "BUY" | "SELL" | "HOLD" | "FILTERED";
+export type ActionFilter = "all" | "BUY" | "SELL" | "SHORT" | "HOLD";
 
 export type SortKey = "time-asc" | "time-desc" | "conv-desc" | "pnl-desc";
 
@@ -16,8 +16,8 @@ export function matchesActionFilter(d: TimelineDecision, filter: ActionFilter): 
   switch (filter) {
     case "all":
       return true;
-    case "FILTERED":
-      return d.phase === "filtered";
+    case "SHORT":
+      return d.phase !== "filtered" && d.action === "SHORT";
     case "BUY":
       return d.phase !== "filtered" && d.action === "BUY";
     case "SELL":
@@ -61,7 +61,7 @@ export function actionCounts(rows: TimelineDecision[]): CountMap {
     all: rows.length,
     BUY: rows.filter((d) => matchesActionFilter(d, "BUY")).length,
     SELL: rows.filter((d) => matchesActionFilter(d, "SELL")).length,
+    SHORT: rows.filter((d) => matchesActionFilter(d, "SHORT")).length,
     HOLD: rows.filter((d) => matchesActionFilter(d, "HOLD")).length,
-    FILTERED: rows.filter((d) => d.phase === "filtered").length,
   };
 }
