@@ -1,9 +1,34 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach, beforeAll, afterAll } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../test-utils";
 import { ExperimentWritersPanel } from "./ExperimentWritersPanel";
 import * as client from "@/api/client";
+
+// Mock uPlot — WriterLadderChart uses uPlot; jsdom has no canvas
+vi.mock("uplot", () => ({
+  default: class {
+    constructor() {}
+    setSize() {}
+    destroy() {}
+  },
+}));
+
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+beforeAll(() => {
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    writable: true,
+    configurable: true,
+    value: ResizeObserverStub,
+  });
+});
+afterAll(() => {
+  delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -15,7 +40,8 @@ describe("ExperimentWritersPanel", () => {
     ]);
     renderWithProviders(<ExperimentWritersPanel />);
     expect(await screen.findByText("Experiment writers")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("claude-haiku-4-5")).toBeInTheDocument());
+    // Model name appears in both the table row and the WriterLadderChart legend
+    await waitFor(() => expect(screen.getAllByText("claude-haiku-4-5").length).toBeGreaterThan(0));
     expect(screen.getByText("60%")).toBeInTheDocument(); // accept rate
   });
 

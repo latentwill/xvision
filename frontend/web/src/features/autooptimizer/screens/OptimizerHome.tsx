@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Pill } from "@/components/primitives/Pill";
@@ -5,7 +6,10 @@ import { LiveCycleView } from "../LiveCycleView";
 import { RecentCyclesTable } from "../panels/RecentCyclesTable";
 import { ExperimentWritersPanel } from "../panels/ExperimentWritersPanel";
 import { PhaseStepper } from "../ui/PhaseStepper";
-import { useOptimizerStatus, useSessionList, type SessionListItem } from "../api";
+import { FlywheelStrip } from "../ui/FlywheelStrip";
+import { ImprovementChart } from "../ui/ImprovementChart";
+import { OutcomeStackedChart } from "../ui/OutcomeStackedChart";
+import { useOptimizerStatus, useOptimizerStats, useSessionList, type SessionListItem } from "../api";
 
 // ─── State pill helper ────────────────────────────────────────────────────────
 
@@ -194,6 +198,34 @@ function RecentSessionsList() {
   );
 }
 
+// ─── Improvement + outcome charts (P3-W3) ────────────────────────────────────
+
+function ImprovementChartsSection() {
+  const [showOutcome, setShowOutcome] = useState(false);
+  const { data: statsRows } = useOptimizerStats();
+  const rows = statsRows ?? [];
+
+  return (
+    <div className="rounded-md border border-border bg-surface-card px-5 py-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[13px] font-semibold tracking-tight text-text">Improvement over time</h2>
+          <p className="text-[11px] text-text-3 mt-0.5">Best Δ untouched-period score per cycle</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowOutcome((v) => !v)}
+          className="rounded border border-border px-2.5 py-1 text-[11px] text-text-2 hover:bg-surface-elev/40 transition-colors"
+        >
+          {showOutcome ? "Hide outcome mix" : "Show outcome mix"}
+        </button>
+      </div>
+      <ImprovementChart rows={rows} />
+      {showOutcome && <OutcomeStackedChart rows={rows} />}
+    </div>
+  );
+}
+
 // ─── Page root ────────────────────────────────────────────────────────────────
 
 export function OptimizerHome() {
@@ -203,6 +235,12 @@ export function OptimizerHome() {
       <div className="space-y-5">
         {/* Server-driven status hero (P1) */}
         <StatusHero />
+
+        {/* Improvement chart + outcome mix toggle (P3-W3) */}
+        <ImprovementChartsSection />
+
+        {/* DSPy flywheel progress strip (P3-W4) — hidden when dspy_enabled=false */}
+        <FlywheelStrip />
 
         {/* In-flight cycle + live event feed (existing dashboard body). */}
         <LiveCycleView embedded />

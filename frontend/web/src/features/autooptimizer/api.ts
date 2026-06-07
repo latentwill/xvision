@@ -390,6 +390,81 @@ export function useExperimentRegimeResults(
   return { results: node?.regime_results ?? [], isLoading: false };
 }
 
+// ─── Flywheel types (P3-W4) ───────────────────────────────────────────────────
+
+/** Metrics from the most recent DSPy prompt-compile gate evaluation. */
+export interface LastPromptCompile {
+  dev_metric: string | null;
+  parent_dev_score: number | null;
+  child_dev_score: number | null;
+  delta_dev: number | null;
+  parent_holdout_score: number | null;
+  child_holdout_score: number | null;
+  delta_holdout: number | null;
+  gate_verdict: string | null;
+  gated_at: string | null;
+}
+
+/** Response from GET /api/autooptimizer/flywheel */
+export interface FlywheelResponse {
+  enabled: boolean;
+  cohort_count?: number;
+  threshold?: number;
+  compiled_pattern_count?: number;
+  latest_optimization_run_id?: string;
+  last_prompt_compile?: LastPromptCompile | null;
+}
+
+export function useFlywheel() {
+  return useQuery({
+    queryKey: ["optimizer/flywheel"],
+    queryFn: () =>
+      fetch("/api/autooptimizer/flywheel").then((r) => r.json()) as Promise<FlywheelResponse>,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+// ─── Stats rows (P3-W3 charts) ────────────────────────────────────────────────
+
+/** One row from GET /api/autooptimizer/stats — per-cycle aggregates for charts. */
+export interface StatsRow {
+  cycle_id: string;
+  session_id: string;
+  ts: string;
+  kept: number;
+  suspect: number;
+  dropped: number;
+  best_delta_holdout: number | null;
+  cost_usd: number;
+  cum_cost_usd: number;
+}
+
+export type StatsQuery = {
+  strategy_id?: string;
+  session_id?: string;
+  since?: string;
+};
+
+export function useOptimizerStats(params?: StatsQuery) {
+  return useQuery({
+    queryKey: ["optimizer/stats", params ?? {}] as const,
+    queryFn: () => {
+      const q = new URLSearchParams(
+        Object.fromEntries(
+          Object.entries(params ?? {}).filter(([, v]) => v != null),
+        ) as Record<string, string>,
+      );
+      const qs = q.toString();
+      return fetch(`/api/autooptimizer/stats${qs ? `?${qs}` : ""}`).then(
+        (r) => r.json(),
+      ) as Promise<StatsRow[]>;
+    },
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 // ─── Session-level status types (P1 hero / status polling) ───────────────────
 
 /** Summary of one optimizer session for the status hero and recent-runs list. */
