@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Art Blocks-Style Seed Generator</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #f5eddc;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #wrap {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+    }
+    canvas {
+      display: block;
+      width: min(92vmin, 980px);
+      height: min(92vmin, 980px);
+      box-shadow: 0 18px 40px rgba(0,0,0,0.12);
+      background: #f5eddc;
+    }
+    #ui {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid rgba(0,0,0,0.14);
+      background: rgba(255,255,255,0.76);
+      backdrop-filter: blur(4px);
+      border-radius: 12px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+    }
+    #seed {
+      width: 260px;
+      padding: 8px 10px;
+      border: 1px solid rgba(0,0,0,0.18);
+      border-radius: 10px;
+      font-size: 14px;
+      background: #fff;
+    }
+    button {
+      padding: 8px 12px;
+      border: 1px solid rgba(0,0,0,0.18);
+      border-radius: 10px;
+      background: #111;
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button.secondary {
+      background: #fff;
+      color: #111;
+    }
+    .hint {
+      font-size: 12px;
+      color: #444;
+      margin-left: 4px;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap"><canvas id="c"></canvas></div>
+  <div id="ui">
+    <input id="seed" value="art-blocks-001" />
+    <button id="rerender">Rerender</button>
+    <button id="randomize" class="secondary">Randomize</button>
+    <span class="hint">Try ?seed=... in the URL</span>
+  </div>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const seedInput = document.getElementById('seed');
+  const rerenderBtn = document.getElementById('rerender');
+  const randomizeBtn = document.getElementById('randomize');
+
+  const SIZE = 1000;
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+
+  const colors = {
+    paper: '#f5eddc',
+    ink: '#111111',
+    pink: '#d83d9c',
+    magenta: '#ab1e7c',
+    cyan: '#4ed0e5',
+    teal: '#218f97',
+    blue: '#2f52d8',
+    orange: '#ef8a2c',
+    gray: '#737373',
+    white: 'rgba(255,255,255,0.36)'
+  };
+
+  function mulberry32(seed) {
+    return function() {
+      let t = seed += 0x6D2B79F5;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+
+  let rand = mulberry32(1337);
+  const R = () => rand();
+  const RR = (a, b) => a + (b - a) * R();
+  const pick = arr => arr[Math.floor(R() * arr.length)];
+
+  function resizeCanvas() {
+    const box = Math.min(window.innerWidth * 0.92, window.innerHeight * 0.92, 980);
+    canvas.style.width = `${box}px`;
+    canvas.style.height = `${box}px`;
+  }
+
+  function paperNoise(amount = 2400) {
+    for (let i = 0; i < amount; i++) {
+      const x = R() * SIZE;
+      const y = R() * SIZE;
+      const a = RR(0.015, 0.06);
+      ctx.fillStyle = `rgba(0,0,0,${a})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+
+  function regMarks(x, y, s) {
+    ctx.strokeStyle = 'rgba(17,17,17,0.42)';
+    ctx.lineWidth = 1.2;
+    const m = 18;
+    const l = 16;
+    const pts = [
+      [x + m, y + m, 1, 1],
+      [x + s - m, y + m, -1, 1],
+      [x + m, y + s - m, 1, -1],
+      [x + s - m, y + s - m, -1, -1],
+    ];
+    for (const [px, py, dx, dy] of pts) {
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + dx * l, py);
+      ctx.moveTo(px, py);
+      ctx.lineTo(px, py + dy * l);
+      ctx.stroke();
+    }
+  }
+
+  function swatches(x, y, vertical = true) {
+    const cols = [colors.pink, colors.cyan, colors.blue, colors.orange, colors.ink];
+    for (let i = 0; i < cols.length; i++) {
+      ctx.fillStyle = cols[i];
+      if (vertical) ctx.fillRect(x, y + i * 17, 11, 13);
+      else ctx.fillRect(x + i * 17, y, 13, 11);
+    }
+  }
+
+  function panelBg(x, y, s) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = colors.paper;
+    ctx.fillRect(0, 0, s, s);
+    for (let i = 0; i < 700; i++) {
+      ctx.fillStyle = `rgba(0,0,0,${RR(0.01, 0.04)})`;
+      ctx.fillRect(R() * s, R() * s, 1, 1);
+    }
+    ctx.restore();
+  }
+
+  function drawContourSquare(cx, cy, size, count, angle, strokeCol) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.strokeStyle = strokeCol;
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < count; i++) {
+      const t = i / Math.max(1, count - 1);
+      const s = size * (1 - t * 0.82);
+      const x = -s / 2 + Math.sin(i * 0.4) * 2;
+      const y = -s / 2 + Math.cos(i * 0.35) * 2;
+      ctx.strokeRect(x, y, s, s * RR(0.85, 1.02));
+    }
+    ctx.restore();
+  }
+
+  function drawX(cx, cy, size) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    const w = size * 0.18;
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = colors.ink;
+    ctx.fillRect(-size * 0.47, -w / 2, size * 0.94, w);
+    ctx.fillRect(-w / 2, -size * 0.47, w, size * 0.94);
+
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = colors.cyan;
+    ctx.fillRect(-size * 0.47, -w / 2 - 7, size * 0.94, 7);
+    ctx.fillRect(-w / 2 - 7, -size * 0.47, 7, size * 0.94);
+
+    ctx.fillStyle = colors.pink;
+    ctx.fillRect(-size * 0.47, w / 2, size * 0.94, 7);
+    ctx.fillRect(w / 2, -size * 0.47, 7, size * 0.94);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  function drawFacets(cx, cy, size) {
+    const pts = [];
+    for (let i = 0; i < 36; i++) {
+      const a = (Math.PI * 2 * i) / 36;
+      const r = size * RR(0.35, 0.5) * (0.75 + 0.25 * Math.sin(i * 0.9));
+      pts.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r]);
+    }
+    ctx.save();
+    ctx.fillStyle = colors.paper;
+    ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
+    for (let i = 0; i < 180; i++) {
+      const a = pick(pts), b = pick(pts), c = pick(pts);
+      ctx.fillStyle = pick([
+        'rgba(217,60,159,0.52)',
+        'rgba(78,208,229,0.52)',
+        'rgba(47,82,216,0.48)',
+        'rgba(239,138,44,0.46)',
+        'rgba(17,17,17,0.38)'
+      ]);
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.lineTo(c[0], c[1]);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawPanels() {
+    const pad = 26;
+    const gap = 18;
+    const s = (SIZE - pad * 2 - gap * 3) / 4;
+    const types = ['squares', 'x', 'facets', 'contour', 'rings', 'blocks', 'spiral'];
+    for (let row = 0; row < 4; row++) {
+      for (let col = 0; col < 4; col++) {
+        const x = pad + col * (s + gap);
+        const y = pad + row * (s + gap);
+        const type = types[(Math.floor(R() * types.length) + row + col) % types.length];
+        panelBg(x, y, s);
+        regMarks(x, y, s);
+        if (R() < 0.6) {
+          if (R() < 0.5) swatches(x + s - 28, y + 28, true);
+          else swatches(x + 28, y + s - 26, false);
+        }
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.beginPath();
+        ctx.rect(0, 0, s, s);
+        ctx.clip();
+
+        if (type === 'squares') {
+          const cx = s / 2 + RR(-8, 8);
+          const cy = s / 2 + RR(-8, 8);
+          for (let i = 0; i < 18; i++) {
+            const tt = i / 17;
+            const ss = s * (0.9 - tt * 0.72);
+            ctx.save();
+            ctx.translate(cx + RR(-8, 8), cy + RR(-8, 8));
+            ctx.rotate(tt * 0.25 + RR(-0.1, 0.1));
+            ctx.globalAlpha = 0.24 + tt * 0.18;
+            ctx.fillStyle = pick([colors.pink, colors.cyan, colors.blue, colors.orange, colors.magenta, colors.ink]);
+            ctx.fillRect(-ss / 2, -ss / 2, ss, ss * RR(0.62, 0.98));
+            if (i % 3 === 0) {
+              ctx.fillStyle = pick([colors.ink, colors.cyan, colors.pink]);
+              ctx.fillRect(-ss * 0.44, -6, ss * 0.88, 12);
+            }
+            ctx.restore();
+          }
+        } else if (type === 'x') {
+          drawX(x + s / 2, y + s / 2, s * 0.68);
+          ctx.save();
+          ctx.translate(x + s / 2, y + s / 2);
+          ctx.rotate(RR(-0.3, 0.3));
+          ctx.fillStyle = 'rgba(255,255,255,0.18)';
+          for (let i = 0; i < 8; i++) {
+            ctx.fillRect(-s * 0.38 + i * (s * 0.095), -s * 0.03, s * 0.07, s * 0.06);
+          }
+          ctx.restore();
+        } else if (type === 'facets') {
+          drawFacets(x + s / 2, y + s / 2, s * 0.9);
+        } else if (type === 'contour') {
+          drawContourSquare(x + s / 2, y + s / 2, s * 0.86, 18, RR(-0.14, 0.14), 'rgba(17,17,17,0.65)');
+          ctx.globalAlpha = 0.42;
+          ctx.strokeStyle = colors.pink;
+          ctx.lineWidth = 1.1;
+          for (let i = 0; i < 9; i++) {
+            ctx.beginPath();
+            const off = i * 10;
+            ctx.rect(x + 26 + off * 0.28, y + 24 + off * 0.22, s - 52 - off * 0.6, s - 56 - off * 0.58);
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        } else if (type === 'rings') {
+          const cx = x + s / 2;
+          const cy = y + s / 2;
+          for (let i = 0; i < 15; i++) {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(i * 0.09);
+            ctx.fillStyle = pick([colors.ink, colors.blue, colors.pink, colors.cyan, colors.orange]);
+            ctx.globalAlpha = 0.20 + i * 0.03;
+            ctx.fillRect(-s * 0.36 + i * 4, -s * 0.03, s * 0.72 - i * 8, s * 0.08);
+            ctx.restore();
+          }
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.globalAlpha = 0.32;
+          ctx.strokeStyle = colors.ink;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, s * 0.28, s * 0.18, 0.2, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        } else if (type === 'blocks') {
+          const n = 6 + Math.floor(R() * 8);
+          for (let i = 0; i < n; i++) {
+            const w = RR(s * 0.08, s * 0.24);
+            const h = RR(s * 0.08, s * 0.22);
+            const px = RR(20, s - 20 - w);
+            const py = RR(20, s - 20 - h);
+            ctx.fillStyle = pick([colors.pink, colors.cyan, colors.blue, colors.orange, colors.ink]);
+            ctx.globalAlpha = RR(0.4, 0.8);
+            ctx.fillRect(px, py, w, h);
+            if (i % 2 === 0) {
+              ctx.globalAlpha = 0.28;
+              ctx.fillStyle = colors.white;
+              ctx.fillRect(px + 4, py + 4, w * 0.7, h * 0.2);
+            }
+          }
+          ctx.globalAlpha = 1;
+        } else if (type === 'spiral') {
+          ctx.save();
+          ctx.translate(x + s / 2, y + s / 2);
+          ctx.strokeStyle = colors.ink;
+          ctx.lineWidth = 1.1;
+          let r = s * 0.4;
+          for (let i = 0; i < 42; i++) {
+            ctx.beginPath();
+            ctx.strokeStyle = pick([colors.ink, colors.pink, colors.cyan, colors.blue, colors.orange]);
+            ctx.globalAlpha = 0.16 + i * 0.012;
+            ctx.rect(-r / 2, -r / 2, r, r);
+            ctx.stroke();
+            r *= 0.94;
+            ctx.rotate(0.05);
+          }
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+
+        ctx.restore();
+      }
+    }
+  }
+
+  function render() {
+    const seedValue = seedInput.value.trim();
+    rand = mulberry32(hashString(seedValue));
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    ctx.fillStyle = colors.paper;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    paperNoise();
+    drawPanels();
+  }
+
+  function randomize() {
+    const n = Math.floor(Math.random() * 1e9).toString(36);
+    seedInput.value = `seed-${n}`;
+    render();
+  }
+
+  const params = new URLSearchParams(location.search);
+  const seedFromUrl = params.get('seed') || params.get('hash');
+  if (seedFromUrl) seedInput.value = seedFromUrl;
+
+  rerenderBtn.addEventListener('click', render);
+  randomizeBtn.addEventListener('click', randomize);
+  seedInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') render();
+  });
+  window.addEventListener('resize', resizeCanvas);
+
+  resizeCanvas();
+  render();
+})();
+</script>
+</body>
+</html>

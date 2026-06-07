@@ -3132,14 +3132,26 @@ async fn build_backtest_executor(
         for asset in &active {
             match load_bars_for_scenario(ctx, scenario, *asset).await {
                 Ok(bars) => {
-                    asset_bars.insert(*asset, market_bars_to_ohlcv(bars));
+                    if bars.is_empty() {
+                        first_err.get_or_insert_with(|| {
+                            format!(
+                                "{}: no bars loaded for scenario window",
+                                asset.as_alpaca_pair()
+                            )
+                        });
+                    } else {
+                        asset_bars.insert(*asset, market_bars_to_ohlcv(bars));
+                    }
                 }
                 Err(e) => {
                     first_err.get_or_insert_with(|| format!("{}: {e}", asset.as_alpaca_pair()));
                 }
             }
         }
-        if first_err.is_none() && !asset_bars.is_empty() {
+        if let Some(err) = first_err {
+            return Err(missing_bars_validation(scenario, Some(err)));
+        }
+        if !asset_bars.is_empty() {
             // Warmup is a hard preflight error when DB-resolved: an
             // operator who set `warmup_bars > 0` expects real
             // pre-window context, not silent emptiness.
@@ -3177,14 +3189,10 @@ async fn build_backtest_executor(
             }
             return Ok(Box::new(bt));
         }
-        if scenario.warmup_bars > 0 || !legacy_fixture_exists(scenario) {
-            return Err(missing_bars_validation(scenario, first_err));
-        }
-        tracing::warn!(
-            scenario_id = %scenario.id,
-            error = ?first_err,
-            "load_bars failed; falling back to fixture loader without warmup context",
-        );
+        return Err(missing_bars_validation(
+            scenario,
+            Some("no bars loaded for any active asset".to_string()),
+        ));
     } else if !legacy_fixture_exists(scenario) {
         return Err(missing_bars_validation(scenario, None));
     }

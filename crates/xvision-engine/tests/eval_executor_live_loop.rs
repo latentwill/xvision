@@ -98,11 +98,35 @@ impl LivePollFetcher for EmptyFetcher {
 /// Build a [`LiveStream`] for `asset` that emits the given websocket bars
 /// then closes (no warmup, poll returns `Empty`).
 fn live_stream_for(asset: &str, bars: Vec<MarketBar>) -> LiveStream {
+    live_stream_with_warmup_for(asset, Vec::new(), bars)
+}
+
+/// Build a [`LiveStream`] with historical warmup bars and websocket live
+/// bars. Warmup must seed history only; it must not produce decisions.
+fn live_stream_with_warmup_for(
+    asset: &str,
+    warmup: Vec<MarketBar>,
+    bars: Vec<MarketBar>,
+) -> LiveStream {
     let ws_items: Vec<LiveBarItem> = bars.into_iter().map(LiveBarItem::Bar).collect();
     let ws = client().subscription_from_stream(BarGranularity::Minute1, stream::iter(ws_items));
     let poll = AlpacaLivePoll::new(Arc::new(EmptyFetcher), asset.into(), BarGranularity::Minute1)
         .with_poll_interval(Duration::ZERO);
-    LiveStream::new_for_test(Vec::new(), ws, poll)
+    LiveStream::new_for_test(
+        warmup
+            .into_iter()
+            .map(|b| xvision_core::market::Ohlcv {
+                timestamp: b.timestamp,
+                open: b.open,
+                high: b.high,
+                low: b.low,
+                close: b.close,
+                volume: b.volume,
+            })
+            .collect(),
+        ws,
+        poll,
+    )
 }
 
 /// Single-asset (BTC) [`MultiLiveStream`] — a 1-element fanout, which the
@@ -419,6 +443,54 @@ async fn one_live_bar_drives_exactly_one_decision_through_the_broker() {
         "fill price must be the broker's reported price, not a simulated bar fill",
     );
     assert!(metrics.n_trades >= 1, "the filled order counts as a trade");
+}
+
+#[tokio::test]
+async fn live_warmup_seeds_history_without_trading_historical_bars() {
+    let (store, strategy, mut scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    scenario.warmup_bars = 2;
+    let broker = RecordingBroker::new(50_123.0);
+    let stream = MultiLiveStream::new(vec![(
+        AssetSymbol::Btc,
+        live_stream_with_warmup_for(
+            "BTC/USD",
+            vec![market_bar_at(60, 49_800.0), market_bar_at(120, 49_900.0)],
+            vec![market_bar_at(180, 50_000.0)],
+        ),
+    )]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(180)),
+        None,
+    )
+    .expect("live executor builds");
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    assert_eq!(
+        metrics.n_decisions, 1,
+        "warmup bars must not be tradable decisions"
+    );
+    assert_eq!(store.read_decisions(&run.id).await.unwrap().len(), 1);
+    assert_eq!(
+        broker.submitted().len(),
+        1,
+        "only the live bar reaches the broker"
+    );
 }
 
 #[tokio::test]
