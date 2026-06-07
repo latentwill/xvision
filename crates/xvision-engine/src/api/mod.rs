@@ -123,6 +123,13 @@ const MIGRATION_057_AUTOOPTIMIZER_SESSIONS: &str =
 /// that a single `sqlx::query` cannot batch.
 const MIGRATION_058_AUTOOPTIMIZER_EVIDENCE: &str =
     include_str!("../../migrations/058_autooptimizer_evidence.sql");
+/// Migration 059: `autooptimizer_schedules` table.
+/// Persists per-strategy recurring optimizer schedule entries (enabled flag,
+/// local time, strategy reference, config blob, last/next run timestamps).
+/// Applied via `migrate_autooptimizer_schedules` (guarded on the table's
+/// existence) so re-opening an already-initialized DB is a no-op.
+const MIGRATION_059_AUTOOPTIMIZER_SCHEDULES: &str =
+    include_str!("../../migrations/059_autooptimizer_schedules.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -407,6 +414,7 @@ impl ApiContext {
         migrate_agent_slot_allowed_tools(&pool).await?;
         migrate_autooptimizer_sessions(&pool).await?;
         migrate_autooptimizer_evidence(&pool).await?;
+        migrate_autooptimizer_schedules(&pool).await?;
         // P1-W2: crash recovery — mark any in-flight sessions as failed.
         crate::autooptimizer::session::mark_interrupted_sessions(&pool)
             .await
@@ -1729,6 +1737,18 @@ async fn migrate_autooptimizer_evidence(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+/// Apply migration 059: `autooptimizer_schedules` table.
+/// Single `CREATE TABLE IF NOT EXISTS` statement; guarded on the table's
+/// existence so re-opening an already-initialized DB is a no-op.
+async fn migrate_autooptimizer_schedules(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "autooptimizer_schedules").await? {
+        sqlx::query(MIGRATION_059_AUTOOPTIMIZER_SCHEDULES)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
 /// Stage 1 (Cline runtime unification, operational-visibility contract
 /// item 3). Adds `trajectory_mode` (+ Stage 2-3 sibling columns) to
 /// `agent_runs`. Idempotent: guarded on `trajectory_mode` existing so
@@ -2516,5 +2536,88 @@ mod migration_registry_tests {
         .await
         .unwrap();
         assert_eq!(count.0, 1, "upsert must not duplicate the row");
+    }
+
+    /// P5-W1: migration 059 (`autooptimizer_schedules`) is applied by the
+    /// hand-maintained `ApiContext::open` registry via
+    /// `migrate_autooptimizer_schedules`. Without the wiring the table never
+    /// exists at runtime and any scheduler read/write would fail with "no such
+    /// table". This proves the helper creates the table on a fresh DB, that all
+    /// required columns are present, and that re-running is a no-op
+    /// (idempotency requirement).
+    #[tokio::test]
+    async fn migrate_autooptimizer_schedules_creates_table_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(
+            !table_exists(&pool, "autooptimizer_schedules").await.unwrap(),
+            "table must not exist before migration"
+        );
+
+        // First run: creates the table.
+        migrate_autooptimizer_schedules(&pool).await.unwrap();
+
+        assert!(
+            table_exists(&pool, "autooptimizer_schedules").await.unwrap(),
+            "autooptimizer_schedules missing after first migrate"
+        );
+
+        // Verify all columns exist.
+        for col in [
+            "id",
+            "enabled",
+            "time_local",
+            "strategy_id",
+            "config_json",
+            "last_run_at",
+            "next_run_at",
+        ] {
+            assert!(
+                table_has_column(&pool, "autooptimizer_schedules", col)
+                    .await
+                    .unwrap(),
+                "column {col} missing on autooptimizer_schedules"
+            );
+        }
+
+        // Verify defaults: insert a minimal row and check enabled=1 default.
+        sqlx::query(
+            "INSERT INTO autooptimizer_schedules (time_local, strategy_id, config_json) \
+             VALUES ('09:00', 'strat-abc', '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (enabled, last_run, next_run): (i64, Option<String>, Option<String>) =
+            sqlx::query_as(
+                "SELECT enabled, last_run_at, next_run_at \
+                 FROM autooptimizer_schedules \
+                 WHERE strategy_id = 'strat-abc'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(enabled, 1, "enabled should default to 1");
+        assert!(last_run.is_none(), "last_run_at should be NULL by default");
+        assert!(next_run.is_none(), "next_run_at should be NULL by default");
+
+        // Verify AUTOINCREMENT: a second insert gets a strictly larger id.
+        sqlx::query(
+            "INSERT INTO autooptimizer_schedules (time_local, strategy_id, config_json) \
+             VALUES ('10:00', 'strat-def', '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ids: Vec<(i64,)> = sqlx::query_as("SELECT id FROM autooptimizer_schedules ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids[1].0 > ids[0].0, "id must be monotonically increasing (AUTOINCREMENT)");
+
+        // Second migration run is a no-op — must not error.
+        migrate_autooptimizer_schedules(&pool).await.unwrap();
     }
 }
