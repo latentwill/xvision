@@ -114,6 +114,15 @@ const MIGRATION_056_AGENT_SLOT_ALLOWED_TOOLS: &str =
 /// that a single `sqlx::query` cannot batch.
 const MIGRATION_057_AUTOOPTIMIZER_SESSIONS: &str =
     include_str!("../../migrations/057_autooptimizer_sessions.sql");
+/// Migration 058: `autooptimizer_findings` + `autooptimizer_gate_records` tables.
+/// Stores per-bundle-hash optimizer evaluation findings (severity/code/summary)
+/// and gate-record verdicts (day/holdout score pairs, epsilon, drawdown ratio).
+/// Applied via `migrate_autooptimizer_evidence` (guarded on the
+/// `autooptimizer_findings` table existing) using `split_sql_statements`
+/// because the file contains multiple CREATE TABLE + CREATE INDEX statements
+/// that a single `sqlx::query` cannot batch.
+const MIGRATION_058_AUTOOPTIMIZER_EVIDENCE: &str =
+    include_str!("../../migrations/058_autooptimizer_evidence.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -397,6 +406,7 @@ impl ApiContext {
         migrate_pattern_optimizations(&pool).await?;
         migrate_agent_slot_allowed_tools(&pool).await?;
         migrate_autooptimizer_sessions(&pool).await?;
+        migrate_autooptimizer_evidence(&pool).await?;
         // P1-W2: crash recovery — mark any in-flight sessions as failed.
         crate::autooptimizer::session::mark_interrupted_sessions(&pool)
             .await
@@ -1705,6 +1715,20 @@ async fn migrate_autooptimizer_sessions(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+/// Apply migration 058: `autooptimizer_findings` + `autooptimizer_gate_records`
+/// tables. The migration file contains multiple CREATE TABLE + CREATE INDEX
+/// statements that a single `sqlx::query` cannot batch, so we use
+/// `split_sql_statements` and run each on its own. Idempotent — guarded on the
+/// `autooptimizer_findings` table not existing so a re-open is a no-op.
+async fn migrate_autooptimizer_evidence(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "autooptimizer_findings").await? {
+        for stmt in split_sql_statements(MIGRATION_058_AUTOOPTIMIZER_EVIDENCE) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    Ok(())
+}
+
 /// Stage 1 (Cline runtime unification, operational-visibility contract
 /// item 3). Adds `trajectory_mode` (+ Stage 2-3 sibling columns) to
 /// `agent_runs`. Idempotent: guarded on `trajectory_mode` existing so
@@ -2375,5 +2399,122 @@ mod migration_registry_tests {
             .await;
             assert!(res.is_ok(), "valid mode '{mode}' should be accepted: {:?}", res.err());
         }
+    }
+
+    /// P2-W1: migration 058 (`autooptimizer_findings` + `autooptimizer_gate_records`)
+    /// is applied by the hand-maintained `ApiContext::open` registry via
+    /// `migrate_autooptimizer_evidence`. Without the wiring the tables never exist at
+    /// runtime and any optimizer evidence store open would fail with "no such table".
+    /// This proves the helper creates both tables on a fresh DB, that all columns exist,
+    /// and that re-running is a no-op (idempotency requirement).
+    #[tokio::test]
+    async fn migrate_autooptimizer_evidence_creates_tables_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(!table_exists(&pool, "autooptimizer_findings").await.unwrap());
+        assert!(!table_exists(&pool, "autooptimizer_gate_records").await.unwrap());
+
+        // First run: creates both tables.
+        migrate_autooptimizer_evidence(&pool).await.unwrap();
+
+        assert!(
+            table_exists(&pool, "autooptimizer_findings").await.unwrap(),
+            "autooptimizer_findings missing after first migrate"
+        );
+        assert!(
+            table_exists(&pool, "autooptimizer_gate_records").await.unwrap(),
+            "autooptimizer_gate_records missing after first migrate"
+        );
+
+        // Verify autooptimizer_findings columns.
+        for col in ["id", "bundle_hash", "severity", "code", "summary", "detail", "model", "created_at"] {
+            assert!(
+                table_has_column(&pool, "autooptimizer_findings", col).await.unwrap(),
+                "column {col} missing on autooptimizer_findings"
+            );
+        }
+
+        // Verify autooptimizer_gate_records columns.
+        for col in [
+            "bundle_hash",
+            "parent_day_score",
+            "child_day_score",
+            "parent_holdout_score",
+            "child_holdout_score",
+            "gate_epsilon",
+            "delta_day",
+            "delta_holdout",
+            "drawdown_ratio",
+            "verdict",
+            "reason",
+            "rationale",
+            "created_at",
+        ] {
+            assert!(
+                table_has_column(&pool, "autooptimizer_gate_records", col).await.unwrap(),
+                "column {col} missing on autooptimizer_gate_records"
+            );
+        }
+
+        // Second run is a no-op (guarded on table existence) — must not error.
+        migrate_autooptimizer_evidence(&pool).await.unwrap();
+    }
+
+    /// P2-W1: `autooptimizer_gate_records` uses `bundle_hash` as PRIMARY KEY so
+    /// inserting the same hash twice must update (upsert) the row, not error or
+    /// silently duplicate. Verify via INSERT OR REPLACE that the updated values
+    /// are visible after the second write.
+    #[tokio::test]
+    async fn gate_record_upsert() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        migrate_autooptimizer_evidence(&pool).await.unwrap();
+
+        // Initial insert.
+        sqlx::query(
+            "INSERT INTO autooptimizer_gate_records \
+             (bundle_hash, parent_day_score, child_day_score, verdict, created_at) \
+             VALUES ('hash-abc', 0.5, 0.6, 'approved', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (verdict, child_score): (String, f64) = sqlx::query_as(
+            "SELECT verdict, child_day_score FROM autooptimizer_gate_records \
+             WHERE bundle_hash = 'hash-abc'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(verdict, "approved");
+        assert!((child_score - 0.6).abs() < 1e-9, "initial child_day_score");
+
+        // Upsert (same bundle_hash, updated values).
+        sqlx::query(
+            "INSERT OR REPLACE INTO autooptimizer_gate_records \
+             (bundle_hash, parent_day_score, child_day_score, verdict, created_at) \
+             VALUES ('hash-abc', 0.5, 0.75, 'vetoed', '2026-01-02T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (verdict2, child_score2): (String, f64) = sqlx::query_as(
+            "SELECT verdict, child_day_score FROM autooptimizer_gate_records \
+             WHERE bundle_hash = 'hash-abc'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(verdict2, "vetoed", "verdict must be updated after upsert");
+        assert!((child_score2 - 0.75).abs() < 1e-9, "child_day_score must be updated after upsert");
+
+        // Only one row — no duplication.
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM autooptimizer_gate_records WHERE bundle_hash = 'hash-abc'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 1, "upsert must not duplicate the row");
     }
 }
