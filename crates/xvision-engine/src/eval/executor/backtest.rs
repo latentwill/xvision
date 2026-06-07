@@ -769,6 +769,10 @@ impl Executor {
             xvision_core::trading::AssetSymbol,
             crate::eval::executor::sltp::PositionRiskState,
         > = BTreeMap::new();
+        // Run-local episodic memory store — accumulates structured decision
+        // observations across bars for within-run recall. Scoped to this run;
+        // dropped when the run completes. Not persisted to SQLite (R3).
+        let mut episodic_store = crate::agent::episodic::EpisodicStore::new(500);
         let bar_secs = scenario.granularity.seconds();
         let mut decision_idx = 0u32;
         // Phase C — per-eval-run signal cache owned by the executor.
@@ -1066,6 +1070,26 @@ impl Executor {
                     .map(|b| b.timestamp)
                     .unwrap_or(bar.timestamp);
                 let source_window_end = bar.timestamp;
+                let seed_pos_size = book.position(asset_sym);
+                let seed_entry = book.entry_price(asset_sym);
+                let seed_mark = bar.close;
+                let seed_upnl_pct = if seed_pos_size.abs() < f64::EPSILON || seed_entry <= 0.0 {
+                    0.0
+                } else if seed_pos_size > f64::EPSILON {
+                    (seed_mark - seed_entry) / seed_entry * 100.0
+                } else {
+                    (seed_entry - seed_mark) / seed_entry * 100.0
+                };
+                let (seed_sl_price, seed_tp_price, seed_bars_held) =
+                    if let Some(sltp) = sltp_state.get(&asset_sym) {
+                        (
+                            sltp.get_effective_sl_price(),
+                            sltp.get_effective_tp_price(),
+                            sltp.bars_held,
+                        )
+                    } else {
+                        (0.0, 0.0, 0)
+                    };
                 let seed = build_decision_seed(DecisionSeedInput {
                     decision_idx,
                     asset: &asset,
@@ -1073,11 +1097,16 @@ impl Executor {
                     bar,
                     next_bar_open,
                     reference_price_source: "eval_bar.close",
-                    position_size: book.position(asset_sym),
+                    position_size: seed_pos_size,
                     equity,
-                    mark_price: bar.close,
+                    mark_price: seed_mark,
                     history_slice,
                     inputs_policy,
+                    entry_price: if seed_pos_size.abs() > f64::EPSILON { seed_entry } else { 0.0 },
+                    unrealized_pnl_pct: seed_upnl_pct,
+                    bars_held: seed_bars_held,
+                    stop_loss_price: seed_sl_price,
+                    take_profit_price: seed_tp_price,
                 });
                 // When the DSL filter fired this bar, inject its trigger context
                 // (indicator snapshot + fire.reason/priority/tags) into the seed
@@ -1087,6 +1116,29 @@ impl Executor {
                 if let Some(ctx) = &filter_trigger_context {
                     if let Some(obj) = seed.as_object_mut() {
                         obj.insert("filter_context".to_string(), ctx.clone());
+                    }
+                }
+                // U6: inject top-5 episodic recall observations when the store
+                // has relevant history. Query vector is derived from the
+                // filter_trigger_context indicators; falls back to zero-vector
+                // when no filter context is present (acknowledged risk R9).
+                {
+                    let query_vec = filter_trigger_context
+                        .as_ref()
+                        .and_then(|ctx| {
+                            let snap = crate::agent::episodic::IndicatorSnapshot {
+                                rsi: ctx.get("rsi_14").and_then(|v| v.as_f64()),
+                                macd_hist: ctx.get("macd_hist").and_then(|v| v.as_f64()),
+                                ema_cross: ctx.get("ema_cross").and_then(|v| v.as_f64()),
+                                volume_zscore: ctx.get("volume_zscore").and_then(|v| v.as_f64()),
+                            };
+                            Some(snap.feature_vector())
+                        })
+                        .unwrap_or([0.0_f64; 4]);
+                    if let Some(episodes_json) = episodic_store.to_seed_json(query_vec, 5) {
+                        if let Some(obj) = seed.as_object_mut() {
+                            obj.insert("prior_episodes".to_string(), episodes_json);
+                        }
                     }
                 }
 
@@ -2308,6 +2360,44 @@ impl Executor {
                 )
                 .await;
 
+                // U5: write structured episodic observation for state-changing
+                // decisions. Flat and hold produce no signal worth recalling.
+                if parsed.action != "flat" && parsed.action != "hold" {
+                    let indicators = filter_trigger_context
+                        .as_ref()
+                        .map(|ctx| crate::agent::episodic::IndicatorSnapshot {
+                            rsi: ctx.get("rsi_14").and_then(|v| v.as_f64()),
+                            macd_hist: ctx.get("macd_hist").and_then(|v| v.as_f64()),
+                            ema_cross: ctx.get("ema_cross").and_then(|v| v.as_f64()),
+                            volume_zscore: ctx.get("volume_zscore").and_then(|v| v.as_f64()),
+                        })
+                        .unwrap_or_default();
+                    let ep_entry_price = if book.position(asset_sym).abs() > f64::EPSILON {
+                        Some(book.entry_price(asset_sym))
+                    } else {
+                        fill.fill_price
+                    };
+                    let exit_reason: Option<String> = if parsed.action == "flat"
+                        || parsed.action == "short_close"
+                        || parsed.action == "long_close"
+                    {
+                        Some(parsed.action.clone())
+                    } else {
+                        None
+                    };
+                    let obs = crate::agent::episodic::EpisodicObservation::new(
+                        bar.timestamp.to_rfc3339(),
+                        decision_idx,
+                        &parsed.action,
+                        parsed.conviction,
+                        ep_entry_price,
+                        exit_reason,
+                        &parsed.justification,
+                        indicators,
+                    );
+                    episodic_store.push(obs);
+                }
+
                 // Emit a marker event derived from this decision. Mirrors the
                 // action → marker-variant mapping in `chart::split_markers`.
                 // Only emit for actions where fill data is present (same guard
@@ -3132,6 +3222,12 @@ impl Executor {
             mark_price: bar.close,
             history_slice: &history_slice,
             inputs_policy,
+            // Live path: SLTP state not threaded into this context; use defaults.
+            entry_price: 0.0,
+            unrealized_pnl_pct: 0.0,
+            bars_held: 0,
+            stop_loss_price: 0.0,
+            take_profit_price: 0.0,
         });
 
         let outs = run_pipeline(PipelineInputs {
@@ -4261,6 +4357,16 @@ pub struct DecisionSeedInput<'a> {
     pub mark_price: f64,
     pub history_slice: &'a [&'a Ohlcv],
     pub inputs_policy: InputsPolicy,
+    /// Entry price of the current open position; `0.0` when flat.
+    pub entry_price: f64,
+    /// Unrealised PnL as a percentage of entry; `0.0` when flat.
+    pub unrealized_pnl_pct: f64,
+    /// Number of bars the current position has been held; `0` when flat.
+    pub bars_held: u32,
+    /// Effective stop-loss price from the SLTP state; `0.0` when none active.
+    pub stop_loss_price: f64,
+    /// Effective take-profit price from the SLTP state; `0.0` when none active.
+    pub take_profit_price: f64,
 }
 
 /// Build the trader seed JSON for one decision cycle. F-6: `Causal`
@@ -4287,6 +4393,11 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "position_size": input.position_size,
                 "equity": input.equity,
                 "mark_price": input.mark_price,
+                "entry_price": input.entry_price,
+                "unrealized_pnl_pct": input.unrealized_pnl_pct,
+                "bars_held": input.bars_held,
+                "stop_loss_price": input.stop_loss_price,
+                "take_profit_price": input.take_profit_price,
             },
         }),
         InputsPolicy::Causal => serde_json::json!({
@@ -4304,6 +4415,11 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "position_size": input.position_size,
                 "equity": input.equity,
                 "mark_price": input.mark_price,
+                "entry_price": input.entry_price,
+                "unrealized_pnl_pct": input.unrealized_pnl_pct,
+                "bars_held": input.bars_held,
+                "stop_loss_price": input.stop_loss_price,
+                "take_profit_price": input.take_profit_price,
             },
         }),
     }

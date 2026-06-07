@@ -668,11 +668,64 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                             output_tokens: total_output_tokens,
                         });
                     };
+                    // U7: Replace raw LLM text with a structured EpisodicObservation
+                    // for cortex-mem writes so offline Pattern distillation operates
+                    // on typed data rather than free-form blobs.
+                    //
+                    // * Flat/hold decisions are skipped — no episodic signal.
+                    // * Non-JSON responses (intern/risk slots) fall back to raw text.
+                    // * IndicatorSnapshot is unavailable here; executor-level U5
+                    //   writes carry the full indicator context.
+                    let memory_text: String = {
+                        let parsed_v =
+                            serde_json::from_str::<serde_json::Value>(&assistant_text).ok();
+                        let action = parsed_v
+                            .as_ref()
+                            .and_then(|v| v.get("action"))
+                            .and_then(|a| a.as_str());
+                        match action {
+                            Some("flat") | Some("hold") => {
+                                // Skip cortex-mem write for non-state-changing decisions.
+                                return Ok(LlmResponse {
+                                    content: resp.content,
+                                    stop_reason: resp.stop_reason,
+                                    input_tokens: total_input_tokens,
+                                    output_tokens: total_output_tokens,
+                                });
+                            }
+                            Some(act) => {
+                                let conviction = parsed_v
+                                    .as_ref()
+                                    .and_then(|v| v.get("conviction"))
+                                    .and_then(|c| c.as_f64())
+                                    .unwrap_or(0.5);
+                                let just = parsed_v
+                                    .as_ref()
+                                    .and_then(|v| v.get("justification"))
+                                    .and_then(|j| j.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let obs = crate::agent::episodic::EpisodicObservation::new(
+                                    "",
+                                    input.cycle_idx as u32,
+                                    act.to_string(),
+                                    conviction,
+                                    None::<f64>,
+                                    None::<String>,
+                                    just,
+                                    crate::agent::episodic::IndicatorSnapshot::default(),
+                                );
+                                serde_json::to_string(&obs)
+                                    .unwrap_or_else(|_| assistant_text.clone())
+                            }
+                            None => assistant_text.clone(),
+                        }
+                    };
                     match recorder
                         .record(
                             input.memory_mode,
                             &input.agent_id,
-                            &assistant_text,
+                            &memory_text,
                             input.run_id.clone(),
                             input.scenario_id.clone(),
                             input.cycle_idx,
@@ -683,7 +736,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                     {
                         Ok(Some(id)) => {
                             if let Some(obs) = input.obs.as_ref() {
-                                obs.emit_memory_write(input.cycle_idx, ns.as_str(), &id, &assistant_text)
+                                obs.emit_memory_write(input.cycle_idx, ns.as_str(), &id, &memory_text)
                                     .await;
                             }
                             tracing::info!(
