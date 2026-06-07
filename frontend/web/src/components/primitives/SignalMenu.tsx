@@ -8,8 +8,8 @@
 // relative to their trigger's getBoundingClientRect(). They close on
 // click-outside and Escape.
 
+import { createPortal } from "react-dom";
 import {
-  createPortal,
   useCallback,
   useEffect,
   useRef,
@@ -106,7 +106,7 @@ export function useSignalMenu(align: "left" | "right" = "left") {
 
 interface MenuShellProps {
   open: boolean;
-  menuRef: RefObject<HTMLDivElement | null>;
+  menuRef: RefObject<HTMLDivElement>;
   pos: CSSProperties;
   children: ReactNode;
   minWidth?: number;
