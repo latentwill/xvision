@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
+import { ActiveTasksStrip } from "@/components/home/ActiveTasksStrip";
 import { evalKeys, listRuns } from "@/api/eval";
 import { chartKeys, getRunChart } from "@/api/chart";
 import { strategyKeys, listStrategies } from "@/api/strategies";
@@ -71,7 +72,7 @@ export function HomeRoute() {
 
       <div className="space-y-5">
         <SafetyPauseBanner />
-        <ActiveTasksStripStub />
+        <ActiveTasksStrip />
         <LiveStrategiesSectionStub />
         <CriticalFindingsRowStub />
         <StrategyOutcomesListStub />
@@ -81,11 +82,7 @@ export function HomeRoute() {
   );
 }
 
-// ─── section stubs (W3–W7 will replace these) ─────────────────────────────
-
-function ActiveTasksStripStub() {
-  return <div data-testid="active-tasks-strip" />;
-}
+// ─── section stubs (W4–W7 will replace these) ─────────────────────────────
 
 function LiveStrategiesSectionStub() {
   return <div data-testid="live-strategies-section" />;
