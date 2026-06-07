@@ -224,6 +224,7 @@ function LaunchStrip({
   cyclesCompleted,
   cumulativeSpent,
   onStop,
+  externalError,
 }: {
   modelSelection: OptimizerModelSelection;
   onLaunch: (config: LaunchConfig) => void;
@@ -232,6 +233,7 @@ function LaunchStrip({
   cyclesCompleted: number;
   cumulativeSpent: number;
   onStop: () => void;
+  externalError: string | null;
 }) {
   const [strategyId, setStrategyId] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -405,8 +407,8 @@ function LaunchStrip({
       <span className="text-[11.5px] text-text-3">
         Runs continuously until stopped, max cycles, or total budget reached.
       </span>
-      {launchError !== null && (
-        <span className="text-[13px] text-danger">{launchError}</span>
+      {(launchError ?? externalError) !== null && (
+        <span className="text-[13px] text-danger">{launchError ?? externalError}</span>
       )}
     </div>
   );
@@ -542,6 +544,7 @@ function CycleLeftCard({
   cumulativeSpent,
   onLaunch,
   onStop,
+  loopError,
 }: {
   isRunning: boolean;
   loopActive: boolean;
@@ -549,6 +552,7 @@ function CycleLeftCard({
   cumulativeSpent: number;
   onLaunch: (config: LaunchConfig) => void;
   onStop: () => void;
+  loopError: string | null;
 }) {
   const [selection, setSelection] = useState<OptimizerModelSelection>({
     mutatorProvider: getStoredMutatorProvider(),
@@ -573,6 +577,7 @@ function CycleLeftCard({
         cyclesCompleted={cyclesCompleted}
         cumulativeSpent={cumulativeSpent}
         onStop={onStop}
+        externalError={loopError}
       />
       <ModelSelectRow selection={selection} onSelectionChange={setSelection} />
     </div>
@@ -919,6 +924,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
   const [loopActive, setLoopActive] = useState(false);
   const [cyclesCompleted, setCyclesCompleted] = useState(0);
   const [cumulativeSpent, setCumulativeSpent] = useState(0);
+  const [loopError, setLoopError] = useState<string | null>(null);
   const lastProcessedRowId = useRef<number>(-1);
 
   const stopLoop = useCallback(() => {
@@ -929,6 +935,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
 
   const handleLaunch = useCallback(async (config: LaunchConfig) => {
     stopRequestedRef.current = false;
+    setLoopError(null);
     loopConfigRef.current = config;
     setCyclesCompleted(0);
     setCumulativeSpent(0);
@@ -948,9 +955,11 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
         baseline_end: config.baseline_end,
       });
       await queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
-    } catch {
+    } catch (err) {
       loopConfigRef.current = null;
       setLoopActive(false);
+      const msg = err instanceof Error ? err.message : "Failed to start optimizer cycle";
+      setLoopError(msg);
     }
   }, [queryClient]);
 
@@ -1004,9 +1013,11 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
         baseline_end: l.baseline_end,
       }).then(() => {
         void queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
-      }).catch(() => {
+      }).catch((err: unknown) => {
         loopConfigRef.current = null;
         setLoopActive(false);
+        const msg = err instanceof Error ? err.message : "Optimizer cycle failed";
+        setLoopError(msg);
       });
     };
 
@@ -1083,6 +1094,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
           cumulativeSpent={cumulativeSpent}
           onLaunch={(config) => { void handleLaunch(config); }}
           onStop={stopLoop}
+          loopError={loopError}
         />
         <EventLogCard events={events} bottomRef={bottomRef} />
         <KeptNextCard nodes={lineageNodes} />
