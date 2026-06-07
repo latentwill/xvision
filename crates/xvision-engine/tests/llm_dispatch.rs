@@ -204,6 +204,24 @@ mod openai_retry {
         assert!(resp.text().contains("hold"));
     }
 
+    /// Gemini's OpenAI-compatible endpoint includes a non-`/v1` versioned root:
+    /// `/v1beta/openai`. Normalization must preserve that root instead of
+    /// appending `/v1`, or dispatch goes to `/v1beta/openai/v1/chat/completions`.
+    #[tokio::test]
+    async fn non_v1_openai_compat_root_is_preserved() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1beta/openai/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(ok_completion_body()))
+            .mount(&server)
+            .await;
+
+        let dispatch =
+            OpenaiCompatDispatch::new(format!("{}/v1beta/openai", server.uri()), "test-key".into());
+        let resp = dispatch.complete(req_for("gemini-2.5-flash")).await.unwrap();
+        assert!(resp.text().contains("hold"));
+    }
+
     /// Once the `MissingChoicesArray` retry budget is exhausted (3
     /// attempts total = 1 initial + 2 retries), the typed
     /// `OpenAiCompatError::MissingChoicesArray` surfaces with the
