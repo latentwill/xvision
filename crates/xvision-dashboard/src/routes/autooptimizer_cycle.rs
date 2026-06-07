@@ -874,3 +874,258 @@ mod tests {
         assert_eq!(cycle.judge_model, "qwen2.5-coder:7b");
     }
 }
+
+// =============================================================================
+// P5-W2: Schedule CRUD — GET/POST /api/autooptimizer/schedule,
+//         DELETE /api/autooptimizer/schedule/:id
+// =============================================================================
+
+use xvision_engine::autooptimizer::scheduler::OptimizerSchedule;
+
+/// Request body for POST /api/autooptimizer/schedule.
+#[derive(serde::Deserialize)]
+pub struct UpsertScheduleBody {
+    pub enabled: Option<bool>,
+    /// "HH:MM" — local-time-of-day when the optimizer should fire.
+    pub time_local: String,
+    pub strategy_id: String,
+    /// JSON config forwarded to `create_session` as `config_json`.
+    pub config_json: Option<String>,
+}
+
+/// GET /api/autooptimizer/schedule — return the first schedule row or `null`.
+pub async fn get_schedule(
+    State(state): State<AppState>,
+) -> Result<Json<Option<OptimizerSchedule>>, DashboardError> {
+    let row = sqlx::query_as::<_, OptimizerSchedule>(
+        "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
+         FROM autooptimizer_schedules LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+    Ok(Json(row))
+}
+
+/// POST /api/autooptimizer/schedule — upsert by strategy_id (one per strategy, v1 limit).
+/// Returns the upserted schedule.
+pub async fn upsert_schedule(
+    State(state): State<AppState>,
+    Json(body): Json<UpsertScheduleBody>,
+) -> Result<Json<OptimizerSchedule>, DashboardError> {
+    let enabled = body.enabled.unwrap_or(true);
+    let config_json = body.config_json.unwrap_or_else(|| "{}".to_string());
+
+    // Validate time_local format "HH:MM".
+    let parts: Vec<&str> = body.time_local.split(':').collect();
+    if parts.len() != 2
+        || parts[0].parse::<u32>().map(|h| h > 23).unwrap_or(true)
+        || parts[1].parse::<u32>().map(|m| m > 59).unwrap_or(true)
+    {
+        return Err(DashboardError::Validation {
+            field: "time_local".into(),
+            msg: "time_local must be in HH:MM format (00:00–23:59)".into(),
+        });
+    }
+
+    // Upsert: if a schedule for this strategy_id exists, update it; otherwise insert.
+    sqlx::query(
+        "INSERT INTO autooptimizer_schedules \
+         (enabled, time_local, strategy_id, config_json) \
+         VALUES (?, ?, ?, ?) \
+         ON CONFLICT(strategy_id) DO UPDATE SET \
+           enabled = excluded.enabled, \
+           time_local = excluded.time_local, \
+           config_json = excluded.config_json",
+    )
+    .bind(enabled as i64)
+    .bind(&body.time_local)
+    .bind(&body.strategy_id)
+    .bind(&config_json)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+
+    // Fetch the upserted row.
+    let row = sqlx::query_as::<_, OptimizerSchedule>(
+        "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
+         FROM autooptimizer_schedules WHERE strategy_id = ?",
+    )
+    .bind(&body.strategy_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+
+    Ok(Json(row))
+}
+
+/// DELETE /api/autooptimizer/schedule/:id — delete by id.
+pub async fn delete_schedule(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, DashboardError> {
+    let result = sqlx::query("DELETE FROM autooptimizer_schedules WHERE id = ?")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+
+    if result.rows_affected() == 0 {
+        return Err(DashboardError::NotFound(format!(
+            "no schedule with id {id}"
+        )));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn open_pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        // Migration 059
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS autooptimizer_schedules (
+              id           INTEGER PRIMARY KEY AUTOINCREMENT,
+              enabled      INTEGER NOT NULL DEFAULT 1,
+              time_local   TEXT NOT NULL,
+              strategy_id  TEXT NOT NULL UNIQUE,
+              config_json  TEXT NOT NULL,
+              last_run_at  TEXT,
+              next_run_at  TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        pool
+    }
+
+    // ── test_get_schedule_empty ──────────────────────────────────────────────
+
+    /// GET schedule when no rows exist → returns null (None).
+    #[tokio::test]
+    async fn test_get_schedule_empty() {
+        let pool = open_pool().await;
+
+        let row: Option<OptimizerSchedule> = sqlx::query_as(
+            "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
+             FROM autooptimizer_schedules LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+
+        assert!(row.is_none(), "expected null response when no schedules exist");
+    }
+
+    // ── test_post_schedule_upserts ───────────────────────────────────────────
+
+    /// POST then POST again with the same strategy_id → only one row (upserted).
+    #[tokio::test]
+    async fn test_post_schedule_upserts() {
+        let pool = open_pool().await;
+
+        // First insert.
+        sqlx::query(
+            "INSERT INTO autooptimizer_schedules \
+             (enabled, time_local, strategy_id, config_json) VALUES (1, '09:00', 'strat-1', '{}')\
+             ON CONFLICT(strategy_id) DO UPDATE SET \
+               enabled = excluded.enabled, time_local = excluded.time_local, config_json = excluded.config_json",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Second insert (same strategy_id, different time).
+        sqlx::query(
+            "INSERT INTO autooptimizer_schedules \
+             (enabled, time_local, strategy_id, config_json) VALUES (1, '14:30', 'strat-1', '{}')\
+             ON CONFLICT(strategy_id) DO UPDATE SET \
+               enabled = excluded.enabled, time_local = excluded.time_local, config_json = excluded.config_json",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_schedules")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(count, 1, "upsert should keep exactly one row per strategy_id");
+
+        // Verify the time was updated to the second value.
+        let time: String =
+            sqlx::query_scalar("SELECT time_local FROM autooptimizer_schedules WHERE strategy_id = 'strat-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(time, "14:30", "upsert should update time_local to latest value");
+    }
+
+    // ── test_delete_schedule ─────────────────────────────────────────────────
+
+    /// POST then DELETE → row removed.
+    #[tokio::test]
+    async fn test_delete_schedule() {
+        let pool = open_pool().await;
+
+        // Insert a row.
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO autooptimizer_schedules \
+             (enabled, time_local, strategy_id, config_json) VALUES (1, '08:00', 'strat-del', '{}') \
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Confirm it exists.
+        let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_schedules")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_before, 1);
+
+        // Delete it.
+        let result = sqlx::query("DELETE FROM autooptimizer_schedules WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(result.rows_affected(), 1, "expected one row deleted");
+
+        let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_schedules")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_after, 0, "schedule should be gone after delete");
+    }
+
+    // ── test_delete_nonexistent ──────────────────────────────────────────────
+
+    /// DELETE on nonexistent id → rows_affected == 0 (maps to 404 in handler).
+    #[tokio::test]
+    async fn test_delete_nonexistent_schedule() {
+        let pool = open_pool().await;
+
+        let result = sqlx::query("DELETE FROM autooptimizer_schedules WHERE id = ?")
+            .bind(9999_i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows_affected(),
+            0,
+            "deleting nonexistent schedule should affect 0 rows"
+        );
+    }
+}

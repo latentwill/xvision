@@ -23,6 +23,7 @@
 
 pub mod blob_store;
 pub mod canary;
+pub mod scheduler;
 pub mod config;
 pub mod content_hash;
 pub mod cycle;
