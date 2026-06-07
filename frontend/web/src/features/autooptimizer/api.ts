@@ -437,6 +437,52 @@ export function useExperimentRegimeResults(
   return { results: node?.regime_results ?? [], isLoading: false };
 }
 
+// ─── Schedule types (P5-W3) ───────────────────────────────────────────────────
+
+/** A scheduled optimizer run record from GET /api/autooptimizer/schedule. */
+export interface Schedule {
+  id: number;
+  enabled: boolean;
+  /** Local time in HH:MM format, e.g. "21:00" */
+  time_local: string;
+  strategy_id: string;
+  last_run_at: string | null;
+  next_run_at: string | null;
+}
+
+/** Request body for POST /api/autooptimizer/schedule (upsert). */
+export type UpsertScheduleRequest = {
+  enabled: boolean;
+  time_local: string;
+  strategy_id: string;
+};
+
+export async function getSchedule(): Promise<Schedule | null> {
+  return apiFetch<Schedule | null>("/api/autooptimizer/schedule").catch(() => null);
+}
+
+export async function upsertSchedule(body: UpsertScheduleRequest): Promise<Schedule> {
+  return apiFetch<Schedule>("/api/autooptimizer/schedule", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function useSchedule() {
+  return useQuery({
+    queryKey: ["optimizer/schedule"],
+    queryFn: getSchedule,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+export function useUpsertSchedule() {
+  return useMutation({
+    mutationFn: (req: UpsertScheduleRequest) => upsertSchedule(req),
+  });
+}
+
 // ─── Flywheel types (P3-W4) ───────────────────────────────────────────────────
 
 /** Metrics from the most recent DSPy prompt-compile gate evaluation. */

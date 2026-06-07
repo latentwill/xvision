@@ -7,6 +7,7 @@ import { RecentCyclesTable } from "../panels/RecentCyclesTable";
 import { ExperimentWritersPanel } from "../panels/ExperimentWritersPanel";
 import { PhaseStepper } from "../ui/PhaseStepper";
 import { FlywheelStrip } from "../ui/FlywheelStrip";
+import { ScheduleStrip } from "../ui/ScheduleStrip";
 import { ImprovementChart } from "../ui/ImprovementChart";
 import { OutcomeStackedChart } from "../ui/OutcomeStackedChart";
 import { ModePicker, type RunMode } from "../ui/ModePicker";
@@ -298,6 +299,9 @@ export function OptimizerHome() {
 
         {/* Configure strip — shown when idle (P4) */}
         <ConfigureSection />
+
+        {/* Scheduled run config strip (P5-W3) */}
+        <ScheduleStrip />
 
         {/* Improvement chart + outcome mix toggle (P3-W3) */}
         <ImprovementChartsSection />
