@@ -490,7 +490,7 @@ pub async fn resume_cycle(
     }
 }
 
-fn load_optimizer_config() -> Result<AutoOptimizerConfig, DashboardError> {
+pub(super) fn load_optimizer_config() -> Result<AutoOptimizerConfig, DashboardError> {
     load_optimizer_config_with_path().map(|(cfg, _, _)| cfg)
 }
 
@@ -506,7 +506,7 @@ fn load_optimizer_config_with_path() -> Result<(AutoOptimizerConfig, std::path::
     Ok((cfg, path, exists))
 }
 
-async fn build_autooptimizer_dispatch(
+pub(super) async fn build_autooptimizer_dispatch(
     provider: &str,
     xvn_home: &std::path::Path,
 ) -> Result<Arc<dyn LlmDispatch + Send + Sync>, DashboardError> {
@@ -558,7 +558,7 @@ async fn build_autooptimizer_dispatch(
     })
 }
 
-fn build_mutator_and_judge(
+pub(super) fn build_mutator_and_judge(
     cfg: &AutoOptimizerConfig,
     mutator_provider: String,
     mutator_model: String,
@@ -581,7 +581,7 @@ fn build_mutator_and_judge(
     (mutator, judge)
 }
 
-fn build_cycle_config(
+pub(super) fn build_cycle_config(
     cfg: &AutoOptimizerConfig,
     judge: &Judge,
     day_scenario: Scenario,
@@ -610,7 +610,7 @@ fn build_cycle_config(
     }
 }
 
-async fn load_strategy_parent(
+pub(super) async fn load_strategy_parent(
     strategy_id: &str,
     xvn_home: &std::path::Path,
     lineage: &LineageStore,
@@ -672,7 +672,7 @@ async fn load_strategy_parent(
     Ok((bundle_hash, strategy))
 }
 
-fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
+pub(super) fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
     // F10: delegate to the single shared optimizer scenario builder so the
     // dashboard and CLI never drift on venue/fee/fill settings.
     Ok(synthesize_optimizer_day_scenario(
@@ -685,7 +685,7 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
 /// price each LLM completion. Best-effort: an absent/unreadable catalog yields no
 /// pricing (calls are counted as "unpriced", never silently $0) — the same
 /// "unknown ≠ zero" stance the CLI uses.
-async fn load_metering_catalogs(
+pub(super) async fn load_metering_catalogs(
     xvn_home: &std::path::Path,
     provider: &str,
 ) -> Vec<Arc<xvision_core::providers::Catalog>> {

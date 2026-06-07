@@ -82,4 +82,8 @@ pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, Mutato
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
 pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
 pub use scenario_synthesis::synthesize_baseline_untouched_scenario;
+pub use session::{
+    create_session, get_active_session, increment_cycle_completed, loosening_floor_reached,
+    mark_interrupted_sessions, run_session, CycleRunOutcome, OptimizerSession,
+};
 pub use validator::{validate_mutation_diff, ValidationError};
