@@ -31,7 +31,7 @@ function renderPanel(runId = "run_test_1") {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ReviewPanel runId={runId} runIsCompleted />
+      <ReviewPanel runId={runId} runCanReview />
     </QueryClientProvider>,
   );
 }
