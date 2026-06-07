@@ -26,6 +26,7 @@ pub mod canary;
 pub mod config;
 pub mod content_hash;
 pub mod cycle;
+pub mod evidence;
 pub mod cycle_loosen;
 pub mod cycle_runs;
 pub mod diversity;
@@ -53,6 +54,10 @@ pub mod tournament;
 pub mod validator;
 
 pub use blob_store::BlobStore;
+pub use evidence::{
+    ensure_evidence_schema, load_findings, load_gate_record, persist_finding, persist_gate_record,
+    FindingRow, GateRecord, GateRecordRow,
+};
 pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult, SabotageVariant};
 pub use config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};

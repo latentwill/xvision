@@ -17,6 +17,7 @@ use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
 use crate::autooptimizer::gate::{aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective};
+use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
 use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -88,6 +89,23 @@ struct MutationOutcome {
     /// Phase 2: per-regime evaluation rows. Empty when `regime_set` is empty
     /// (legacy / single-window path).
     regime_rows: Vec<RegimeResultRow>,
+    /// Gate record scores — the oriented objective values for parent+child on
+    /// both windows, plus the epsilon threshold and drawdown ratio.  `None` for
+    /// regime-matrix paths where no single day/holdout pair is definitive.
+    gate_scores: Option<GateScores>,
+}
+
+/// Numeric gate inputs captured at gate-verdict time so they can be persisted
+/// to `autooptimizer_gate_records` by `process_parent_mutations`.
+struct GateScores {
+    pub parent_day_score: f64,
+    pub child_day_score: f64,
+    pub parent_holdout_score: f64,
+    pub child_holdout_score: f64,
+    pub gate_epsilon: f64,
+    pub delta_day: f64,
+    pub delta_holdout: f64,
+    pub drawdown_ratio: Option<f64>,
 }
 
 pub async fn run_cycle(
@@ -673,6 +691,40 @@ where
             passed: matches!(outcome.verdict, GateVerdict::Pass),
             outcome: outcome_str.to_string(),
         });
+        // P2-W2: persist gate record to autooptimizer_gate_records. Best-effort —
+        // a DB error must never abort the cycle.
+        if let Some(gs) = &outcome.gate_scores {
+            let verdict_str = outcome.verdict.as_str();
+            let reason_str = match &outcome.verdict {
+                GateVerdict::Fail { reason } => Some(reason.as_str()),
+                GateVerdict::Pass => None,
+            };
+            if let Err(e) = persist_gate_record(
+                pool,
+                GateRecord {
+                    bundle_hash: &outcome.child_hash.to_hex(),
+                    parent_day_score: Some(gs.parent_day_score),
+                    child_day_score: Some(gs.child_day_score),
+                    parent_holdout_score: Some(gs.parent_holdout_score),
+                    child_holdout_score: Some(gs.child_holdout_score),
+                    gate_epsilon: Some(gs.gate_epsilon),
+                    delta_day: Some(gs.delta_day),
+                    delta_holdout: Some(gs.delta_holdout),
+                    drawdown_ratio: gs.drawdown_ratio,
+                    verdict: &verdict_str,
+                    reason: reason_str,
+                    rationale: Some(outcome.diff.rationale.as_str()),
+                },
+            )
+            .await
+            {
+                tracing::warn!(
+                    cycle_id,
+                    child_hash = %outcome.child_hash.to_hex(),
+                    "failed to persist gate record (best-effort, ignoring): {e}"
+                );
+            }
+        }
         // P3 write-back: record EVERY gated candidate's outcome (both Active and
         // Rejected) as an Observation in the mutations namespace, so a later
         // distillation pass can promote recurring lessons (e.g. "raising leverage
@@ -753,6 +805,23 @@ where
                         severity: format!("{:?}", f.severity),
                         code: f.code.clone(),
                     });
+                    // P2-W2: persist each finding to autooptimizer_findings so the
+                    // GET /findings/:hash endpoint can return real data. Best-effort.
+                    let judge_model = format!("{}/{}", judge.provider, judge.model);
+                    if let Err(e) = persist_finding(
+                        pool,
+                        &outcome.child_hash.to_hex(),
+                        f,
+                        Some(judge_model.as_str()),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            cycle_id,
+                            child_hash = %outcome.child_hash.to_hex(),
+                            "failed to persist judge finding (best-effort, ignoring): {e}"
+                        );
+                    }
                 }
                 // P2 write-back: record each real finding as an Observation in the
                 // judge namespace so a later distillation pass can promote recurring
@@ -973,6 +1042,8 @@ where
             child_day,
             child_untouched,
             regime_rows,
+            // Regime-matrix path: no single day/holdout pair is the gate gate.
+            gate_scores: None,
         });
     }
 
@@ -1059,6 +1130,38 @@ where
         (raw_verdict, LineageStatus::Rejected)
     };
 
+    // Capture numeric gate scores for persistence to autooptimizer_gate_records.
+    let obj = cycle_config.objective;
+    let parent_day_score = obj.oriented_value(parent_day);
+    let child_day_score = obj.oriented_value(&child_day);
+    let parent_holdout_score = obj.oriented_value(parent_untouched);
+    let child_holdout_score = obj.oriented_value(&child_untouched);
+    let drawdown_ratio = {
+        let parent_worst = parent_day
+            .max_drawdown_pct
+            .abs()
+            .max(parent_untouched.max_drawdown_pct.abs());
+        let child_worst = child_day
+            .max_drawdown_pct
+            .abs()
+            .max(child_untouched.max_drawdown_pct.abs());
+        if parent_worst > 0.0 {
+            Some(child_worst / parent_worst)
+        } else {
+            None
+        }
+    };
+    let gate_scores = Some(GateScores {
+        parent_day_score,
+        child_day_score,
+        parent_holdout_score,
+        child_holdout_score,
+        gate_epsilon: min_improvement,
+        delta_day: child_day_score - parent_day_score,
+        delta_holdout: child_holdout_score - parent_holdout_score,
+        drawdown_ratio,
+    });
+
     Ok(MutationOutcome {
         child,
         diff,
@@ -1069,6 +1172,7 @@ where
         child_day,
         child_untouched,
         regime_rows: vec![],
+        gate_scores,
     })
 }
 

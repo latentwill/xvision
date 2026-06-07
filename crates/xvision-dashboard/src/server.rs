@@ -320,6 +320,13 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/findings/:bundle_hash",
             get(autooptimizer_route::get_findings),
         )
+        // P2-W2: experiment detail — 5-field envelope (lineage_node, rationale,
+        // gate_record, findings, regime_results). Static "experiments" segment
+        // registered before /api/autooptimizer/:id catch-all.
+        .route(
+            "/api/autooptimizer/experiments/:hash/detail",
+            get(autooptimizer_route::get_experiment_detail),
+        )
         .route(
             "/api/autooptimizer/blob/:hash",
             get(autooptimizer_route::get_blob),
