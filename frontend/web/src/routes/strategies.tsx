@@ -465,6 +465,7 @@ function DesktopRow({
       <td className="px-3 py-3 text-right">
         <SignalActionMenu
           align="right"
+          triggerAriaLabel={`Actions for ${displayName(row)}`}
           triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text"
           triggerLabel={<Icon name="moreH" size={15} />}
           groups={[
@@ -486,42 +487,16 @@ function DesktopRow({
                 {
                   icon: "compare",
                   label: "Compare…",
-                  onClick: () => navigate(`/eval/compare?a=${encodeURIComponent(row.agent_id)}`),
-                },
-                {
-                  icon: "pin",
-                  label: "Pin to top",
-                  onClick: () => {},
+                  onClick: () => navigate(`/eval-runs/compare?ids=${encodeURIComponent(row.agent_id)}`),
                 },
               ],
             },
             {
               items: [
-                {
-                  icon: "fileDown",
-                  label: "Export CSV",
-                  onClick: () => {},
-                },
                 {
                   icon: "fileCode",
                   label: "View raw JSON",
                   onClick: () => navigate(`/strategies/${encodeURIComponent(row.agent_id)}?tab=json`),
-                },
-                {
-                  icon: "folderRight",
-                  label: "Move to workspace…",
-                  onClick: () => {},
-                },
-              ],
-            },
-            {
-              items: [
-                {
-                  icon: "trash",
-                  label: "Delete strategy",
-                  shortcut: "⌘⌫",
-                  tone: "danger",
-                  onClick: () => {},
                 },
               ],
             },

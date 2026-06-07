@@ -111,14 +111,15 @@ interface MenuShellProps {
   children: ReactNode;
   minWidth?: number;
   className?: string;
+  role?: "menu" | "listbox";
 }
 
-function MenuShell({ open, menuRef, pos, children, minWidth = 220, className }: MenuShellProps) {
+function MenuShell({ open, menuRef, pos, children, minWidth = 220, className, role = "menu" }: MenuShellProps) {
   if (!open) return null;
   return createPortal(
     <div
       ref={menuRef}
-      role="menu"
+      role={role}
       style={{ ...pos, minWidth }}
       className={[
         "rounded-[6px] border border-border bg-surface-card",
@@ -202,6 +203,7 @@ export interface ActionMenuGroup {
 export interface SignalActionMenuProps {
   groups: ActionMenuGroup[];
   triggerLabel?: ReactNode;
+  triggerAriaLabel?: string;
   align?: "left" | "right";
   triggerClassName?: string;
 }
@@ -209,6 +211,7 @@ export interface SignalActionMenuProps {
 export function SignalActionMenu({
   groups,
   triggerLabel = "⋯",
+  triggerAriaLabel,
   align = "right",
   triggerClassName,
 }: SignalActionMenuProps) {
@@ -221,6 +224,7 @@ export function SignalActionMenu({
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={triggerAriaLabel}
         onClick={toggle}
         className={
           triggerClassName ??
@@ -317,7 +321,7 @@ export function SignalSelectMenu({
         </span>
         <Icon name="chevR" size={11} className="text-text-3" />
       </button>
-      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={200}>
+      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={200} role="listbox">
         {options.map((opt) => {
           const isSelected = opt.value === value;
           return (
@@ -424,7 +428,7 @@ export function SignalCheckboxMenu({
         )}
         <Icon name="chevR" size={11} className="text-text-3" />
       </button>
-      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={200}>
+      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={200} role="listbox">
         {options.map((opt) => {
           const isSelected = selected.includes(opt.value);
           return (
@@ -558,7 +562,7 @@ export function SignalModelPickerMenu({
         </span>
         <Icon name="chevR" size={11} className="text-text-3" />
       </button>
-      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={260}>
+      <MenuShell open={open} menuRef={menuRef as RefObject<HTMLDivElement>} pos={pos} minWidth={260} role="listbox">
         {/* Filter input */}
         <div className="px-2 pt-2 pb-1 border-b border-border">
           <div className="flex items-center gap-2 px-2 h-8 bg-surface-elev border border-border rounded-sm focus-within:border-gold-soft">
