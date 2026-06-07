@@ -65,6 +65,10 @@ pub struct StartCycleBody {
 pub struct StartCycleResponse {
     pub started: bool,
     pub message: String,
+    /// P1-W4: new additive field. Existing callers that only read `started`/`message`
+    /// are unaffected. Set when a session record was created for this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -371,6 +375,7 @@ pub async fn start_cycle(
         Json(StartCycleResponse {
             started: true,
             message: "Optimizer run started. Watch the Live tab for progress.".into(),
+            session_id: None,
         }),
     ))
 }
@@ -391,6 +396,7 @@ pub async fn cancel_cycle(
                 message: format!(
                     "Cancellation requested for cycle {cycle_id}; it will stop before the next candidate."
                 ),
+                session_id: None,
             }),
         ))
     } else {

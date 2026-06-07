@@ -66,7 +66,8 @@
 // 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
-// 53. POST   /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
+// 53. POST   /api/autooptimizer/sessions                autooptimizer_route::start_session  (P1-W4)
+// 53a. POST  /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
 // 53b. POST  /api/autooptimizer/run                    flywheel::autooptimizer_run
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
@@ -275,6 +276,20 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/flywheel/velocity", get(flywheel::velocity))
         .route("/api/flywheel/lineage", get(flywheel::lineage))
         .route("/api/autooptimizer", get(flywheel::autooptimizer_list))
+        // P1-W4: session management endpoints.
+        // IMPORTANT: static segments registered BEFORE /api/autooptimizer/:id.
+        .route(
+            "/api/autooptimizer/status",
+            get(autooptimizer_route::get_status),
+        )
+        .route(
+            "/api/autooptimizer/sessions",
+            get(autooptimizer_route::list_sessions),
+        )
+        .route(
+            "/api/autooptimizer/sessions/:id",
+            get(autooptimizer_route::get_session),
+        )
         // AR-3 backend: lineage graph, mutator ladder, diversity, findings.
         // IMPORTANT: these static-segment routes must be registered BEFORE
         // /api/autooptimizer/:id (the flywheel memory-distillation detail route)
@@ -466,6 +481,11 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/memory/:id/demote", post(memory_route::demote_pattern))
         .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── Flywheel / offline self-improvement ─────────────────────────
+        // P1-W4: POST /sessions creates a new optimizer session (409 if active).
+        .route(
+            "/api/autooptimizer/sessions",
+            post(autooptimizer_route::start_session),
+        )
         .route(
             "/api/autooptimizer/run-cycle",
             post(autooptimizer_cycle::start_cycle),
