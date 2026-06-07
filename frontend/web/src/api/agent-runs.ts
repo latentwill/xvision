@@ -43,6 +43,7 @@ const MOCK_BY_ID: Record<string, AgentRunDetail> = {
 
 export const agentRunKeys = {
   all: ["agent-runs"] as const,
+  list: () => [...agentRunKeys.all, "list"] as const,
   run: (id: string) => [...agentRunKeys.all, "run", id] as const,
 };
 
@@ -439,6 +440,28 @@ export function validateAgentRunDetail(payload: unknown): AgentRunDetail {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Alias so callers can use the more natural name.
+ * @see shouldUseMockAgentRuns
+ */
+export const useMockAgentRuns = shouldUseMockAgentRuns;
+
+/**
+ * List live agent runs.
+ *
+ * Dev/test: returns the mock MOCK_RUN_LIVE fixture so the UI has data to
+ * render immediately.
+ *
+ * Prod stub: returns an empty array until S2-W1 adds the real
+ * GET /api/agent-runs endpoint.
+ */
+export function listAgentRuns(): Promise<AgentRunSummary[]> {
+  if (shouldUseMockAgentRuns()) {
+    return Promise.resolve([MOCK_RUN_LIVE.summary]);
+  }
+  return Promise.resolve([]);
+}
 
 /**
  * Fetch the body bytes for a payload ref owned by `runId`. Server

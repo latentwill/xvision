@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -59,6 +59,15 @@ vi.mock("@/api/agents", () => ({
     list: () => ["agents", "list"],
   },
   listAgents: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("@/api/agent-runs", () => ({
+  agentRunKeys: {
+    all: ["agent-runs"],
+    list: () => ["agent-runs", "list"],
+    run: (id: string) => ["agent-runs", "run", id],
+  },
+  listAgentRuns: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/api/settings", () => ({
@@ -132,6 +141,11 @@ describe("HomeRoute", () => {
   it("renders all section stubs in order", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
+
+    // ActiveTasksStrip returns null while pending — wait for it to resolve
+    await waitFor(() => {
+      expect(document.querySelector('[data-testid="active-tasks-strip"]')).not.toBeNull();
+    });
 
     const activeTasksStrip = document.querySelector('[data-testid="active-tasks-strip"]');
     const liveStrategiesSection = document.querySelector('[data-testid="live-strategies-section"]');
