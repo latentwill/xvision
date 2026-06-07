@@ -4,15 +4,12 @@
 //! manage the SQLite pool; callers construct an `ApiContext` (which owns
 //! the pool + has migrations applied) and pass `ctx.db.clone()` here.
 
-use std::collections::BTreeSet;
-
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
-use crate::agents::capability::Capability;
-use crate::agents::model::{default_capabilities, Agent, AgentSlot, InputsPolicy};
+use crate::agents::model::{Agent, AgentSlot, InputsPolicy};
 use crate::agents::validate::validate_agent_for_save;
 use crate::agents::validator::{validate_prompt_schema_slots, PromptSchemaDriftError};
 
@@ -425,7 +422,7 @@ impl AgentStore {
 
     async fn load_slots(&self, agent_id: &str) -> Result<Vec<AgentSlot>> {
         let rows = sqlx::query(
-            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities \
+            "SELECT name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, allowed_tools_json \
              FROM agent_slots WHERE agent_id = ? ORDER BY slot_index ASC",
         )
         .bind(agent_id)
@@ -472,18 +469,10 @@ impl AgentStore {
             // also fall back to `Off` via `parse_or_off`.
             let memory_mode_s: String = row.try_get("memory_mode").unwrap_or_default();
             let memory_mode = xvision_memory::types::MemoryMode::parse_or_off(&memory_mode_s);
-            // Phase A capability-first schema (migration 033): JSON
-            // array column on `agent_slots.capabilities` with DEFAULT
-            // '["trader"]'. Pre-033 rows that somehow lack the column
-            // (legacy path / mid-migration test pools) fall back to
-            // `{Trader}` via `default_capabilities`. A parse error on
-            // the stored JSON also falls back to the safe default so a
-            // future column-value typo can't crash every read.
-            let capabilities_s: Option<String> = row.try_get("capabilities").ok();
-            let capabilities = match capabilities_s {
-                Some(s) if !s.is_empty() => serde_json::from_str::<BTreeSet<Capability>>(&s)
-                    .unwrap_or_else(|_| default_capabilities()),
-                _ => default_capabilities(),
+            let allowed_tools_s: Option<String> = row.try_get("allowed_tools_json").ok();
+            let allowed_tools = match allowed_tools_s {
+                Some(s) if !s.is_empty() => serde_json::from_str::<Vec<String>>(&s).unwrap_or_default(),
+                _ => Vec::new(),
             };
             out.push(AgentSlot {
                 name: row.try_get("name")?,
@@ -503,7 +492,7 @@ impl AgentStore {
                 // back as `None` (equivalent to `Some(true)` — skip
                 // enabled) until the operator re-saves with an explicit value.
                 noop_skip: None,
-                capabilities,
+                allowed_tools,
                 delta_briefing: None,
             });
         }
@@ -529,16 +518,10 @@ async fn insert_slot(
     let bar_history_limit_db: Option<i64> =
         slot.bar_history_limit
             .and_then(|n| if n == 0 { None } else { Some(n as i64) });
-    // Phase A capability-first schema (migration 033): persist the
-    // closed `BTreeSet<Capability>` as a JSON array on
-    // `agent_slots.capabilities`. The DB column DEFAULT is
-    // `'["trader"]'` so any row inserted via a code path that hasn't
-    // been updated still reads back as `{Trader}`. We always emit the
-    // explicit value here so the row is byte-stable across writes.
-    let capabilities_json = serde_json::to_string(&slot.capabilities).context("serialize capabilities")?;
+    let allowed_tools_json = serde_json::to_string(&slot.allowed_tools).context("serialize allowed_tools")?;
     sqlx::query(
         "INSERT INTO agent_slots \
-         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, capabilities) \
+         (agent_id, slot_index, name, provider, model, system_prompt, skill_ids_json, max_tokens, max_wall_ms, prompt_version, inputs_policy, bar_history_limit, memory_mode, allowed_tools_json) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(agent_id)
@@ -568,11 +551,7 @@ async fn insert_slot(
     // Column DEFAULT is 'off' (migration 029); we still bind the
     // explicit value here so the row is byte-stable across writes.
     .bind(slot.memory_mode.as_str())
-    // Phase A: JSON array column on `agent_slots.capabilities`
-    // (migration 033). DEFAULT `'["trader"]'` covers the back-compat
-    // path; we still bind the explicit serialized set here so reads
-    // return whatever the operator persisted.
-    .bind(capabilities_json)
+    .bind(allowed_tools_json)
     .execute(&mut **tx)
     .await
     .with_context(|| format!("insert slot {} for agent {}", slot.name, agent_id))?;
@@ -651,6 +630,8 @@ mod tests {
         // on every save; the read path projects `0` back to `None`.
         let migration_047 = include_str!("../../migrations/047_agent_slot_max_wall_ms.sql");
         sqlx::query(migration_047).execute(&pool).await.unwrap();
+        let migration_056 = include_str!("../../migrations/056_agent_slot_allowed_tools.sql");
+        sqlx::query(migration_056).execute(&pool).await.unwrap();
         pool
     }
 
@@ -678,7 +659,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::default(),
             noop_skip: None,
-            capabilities: default_capabilities(),
+            allowed_tools: Vec::new(),
             delta_briefing: None,
         }
     }
@@ -1219,7 +1200,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(slots.len(), 1, "the attached trader agent must resolve to exactly one slot");
+        assert_eq!(
+            slots.len(),
+            1,
+            "the attached trader agent must resolve to exactly one slot"
+        );
         assert!(
             slots[0].role.eq_ignore_ascii_case("trader"),
             "resolved slot keeps the trader role"
@@ -1317,8 +1302,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(slots[0].system_prompt, base_prompt, "empty prompt_override must not blank the prompt");
-        assert_eq!(slots[0].slot.model, base_model, "empty model_override must not blank the model");
+        assert_eq!(
+            slots[0].system_prompt, base_prompt,
+            "empty prompt_override must not blank the prompt"
+        );
+        assert_eq!(
+            slots[0].slot.model, base_model,
+            "empty model_override must not blank the model"
+        );
     }
 
     #[tokio::test]

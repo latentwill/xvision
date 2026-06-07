@@ -24,6 +24,7 @@ export type IconName =
   | "plus"
   | "search"
   | "chevR"
+  | "chevDown"
   | "settings"
   | "box"
   | "user"
@@ -33,7 +34,15 @@ export type IconName =
   | "trash"
   | "sun"
   | "moon"
-  | "chartPie";
+  | "chartPie"
+  | "moreH"
+  | "copy"
+  | "pin"
+  | "fileDown"
+  | "fileCode"
+  | "folderRight"
+  | "openExternal"
+  | "compare";
 
 const PATHS: Record<IconName, ReactNode> = {
   home: <path d="M3 9.5L10 4l7 5.5V16a1 1 0 01-1 1h-3v-5H9v5H4a1 1 0 01-1-1V9.5z" />,
@@ -140,6 +149,58 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M10 3a7 7 0 107 7h-7V3z" />
       <path d="M12 3a5 5 0 015 5h-5V3z" />
+    </>
+  ),
+  chevDown: <path d="M5 8l5 5 5-5" />,
+  moreH: (
+    <>
+      <circle cx="5" cy="10" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="10" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="10" r="1.5" fill="currentColor" stroke="none" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="8" y="8" width="9" height="9" rx="1" />
+      <path d="M4 12V4a1 1 0 011-1h8" />
+    </>
+  ),
+  pin: (
+    <>
+      <path d="M10 2l2 4h4l-3 3 1 5-4-2.5L6 14l1-5L4 6h4z" />
+      <path d="M10 14v4" />
+    </>
+  ),
+  fileDown: (
+    <>
+      <path d="M13 2H6a1 1 0 00-1 1v14a1 1 0 001 1h8a1 1 0 001-1V6z" />
+      <polyline points="13 2 13 7 18 7" />
+      <line x1="10" y1="9" x2="10" y2="14" />
+      <polyline points="7 12 10 15 13 12" />
+    </>
+  ),
+  fileCode: (
+    <>
+      <path d="M13 2H6a1 1 0 00-1 1v14a1 1 0 001 1h8a1 1 0 001-1V6z" />
+      <polyline points="13 2 13 7 18 7" />
+      <path d="M8 11l-2 2 2 2M12 11l2 2-2 2" />
+    </>
+  ),
+  folderRight: (
+    <>
+      <path d="M4 4h5l2 2h5a1 1 0 011 1v8a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z" />
+      <path d="M10 10h4M12 8l2 2-2 2" />
+    </>
+  ),
+  openExternal: (
+    <>
+      <path d="M12 4h4v4M9 11l6-6M7 5H5a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1v-2" />
+    </>
+  ),
+  compare: (
+    <>
+      <path d="M4 6h12M4 10h12M4 14h12" />
+      <path d="M8 4v12M12 4v12" />
     </>
   ),
 };

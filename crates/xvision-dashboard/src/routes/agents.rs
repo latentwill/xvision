@@ -251,7 +251,7 @@ pub mod get {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
-                    capabilities: xvision_engine::agents::default_capabilities(),
+                    allowed_tools: Vec::new(),
                     delta_briefing: None,
                 }],
                 scope_strategy_id: None,

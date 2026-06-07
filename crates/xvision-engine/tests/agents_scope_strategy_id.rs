@@ -6,8 +6,7 @@
 
 use sqlx::SqlitePool;
 use xvision_engine::agents::{
-    default_capabilities, AgentSlot, AgentStore, InputsPolicy, ListFilter, NewAgent, ScopeFilter, ScopePatch,
-    UpdateAgent,
+    AgentSlot, AgentStore, InputsPolicy, ListFilter, NewAgent, ScopeFilter, ScopePatch, UpdateAgent,
 };
 
 async fn fresh_pool() -> SqlitePool {
@@ -51,7 +50,7 @@ fn slot() -> AgentSlot {
         bar_history_limit: None,
         memory_mode: Default::default(),
         noop_skip: None,
-        capabilities: default_capabilities(),
+        allowed_tools: Vec::new(),
         delta_briefing: None,
     }
 }

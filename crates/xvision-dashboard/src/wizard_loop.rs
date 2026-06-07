@@ -32,9 +32,7 @@ use crate::cli_jobs::store::CliJobStore;
 use xvision_engine::agent::llm::{
     ContentBlock, LlmDispatch, LlmRequest, LlmResponse, Message, StopReason, ToolDefinition,
 };
-use xvision_engine::agent::memory_recorder::{
-    render_recalled_patterns, MemoryRecorder, RecallResult,
-};
+use xvision_engine::agent::memory_recorder::{render_recalled_patterns, MemoryRecorder, RecallResult};
 use xvision_engine::agents::AgentSlot;
 use xvision_engine::api::agents as api_agents;
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
@@ -58,8 +56,8 @@ use xvision_engine::focus;
 use xvision_engine::strategies::ActivationMode;
 use xvision_engine::strategies_folder;
 use xvision_observability::{
-    Actor as UnifiedActor, CheckpointWrittenEvent, FocusEvent, Redactor, ToolDenied,
-    ToolPolicyChecked, ToolPolicyOutcome, TypedError, UnifiedPayload,
+    Actor as UnifiedActor, CheckpointWrittenEvent, FocusEvent, Redactor, ToolDenied, ToolPolicyChecked,
+    ToolPolicyOutcome, TypedError, UnifiedPayload,
 };
 
 const WIZARD_SYSTEM_PROMPT_BASE: &str = include_str!("../prompts/wizard.md");
@@ -907,10 +905,7 @@ impl WizardLoop {
             return assembled;
         };
         let namespace = self.scope.memory_namespace();
-        match recorder
-            .recall_in_namespace(&namespace, &query, 5, None)
-            .await
-        {
+        match recorder.recall_in_namespace(&namespace, &query, 5, None).await {
             Ok(RecallResult::Hits { matches, .. }) if !matches.is_empty() => {
                 format!("{}\n\n{}", render_recalled_patterns(&matches), assembled)
             }
@@ -2430,7 +2425,7 @@ impl WizardLoop {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
-                    capabilities: xvision_engine::agents::default_capabilities(),
+                    allowed_tools: Vec::new(),
                     delta_briefing: None,
                 }],
                 scope_strategy_id: None,

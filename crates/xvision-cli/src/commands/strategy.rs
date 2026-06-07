@@ -13,9 +13,7 @@ use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, strategy as api_strategy, Actor, ApiContext, ApiError};
-use xvision_engine::diagnostics::{
-    self, assert_launchable, CapabilityStatus, DiagnosticsError, StrategyDiagnostics,
-};
+use xvision_engine::diagnostics::{self, assert_launchable, DiagnosticsError, StrategyDiagnostics};
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
@@ -268,8 +266,8 @@ enum StrategyAction {
     /// `team/contracts/agent-firing-filter-cli-verbs.md`.
     ///
     /// The Filter agent must already exist in the workspace library
-    /// (created via `xvn agent create --capability filter` or the SPA)
-    /// and advertise `Capability::Filter` in `slots[0].capabilities`.
+    /// (created via `xvn agent create --tools indicator_panel` or the SPA)
+    /// and grant `indicator_panel` in `slots[0].allowed_tools`.
     /// `--gates <role>` must match an existing AgentRef on the strategy
     /// — the predicate gates that AgentRef's dispatch.
     ///
@@ -971,7 +969,7 @@ async fn new_atomic(
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
-                capabilities: xvision_engine::agents::default_capabilities(),
+                allowed_tools: Vec::new(),
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -1008,9 +1006,9 @@ async fn new_atomic(
             agent_id: agent_id.clone(),
             role: role.clone(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
@@ -1358,45 +1356,14 @@ fn render_diagnostics_error(e: &DiagnosticsError) -> String {
     e.to_string()
 }
 
-/// Stable lowercase capability key for text output (mirrors the serde
-/// wire form). Kept local so the CLI text surface doesn't depend on the
-/// engine exposing a formatter.
-fn cap_key(c: xvision_engine::agents::Capability) -> &'static str {
-    use xvision_engine::agents::Capability::*;
-    match c {
-        Trader => "trader",
-        Filter => "filter",
-        Critic => "critic",
-        Intern => "intern",
-        Router => "router",
-    }
-}
-
-/// Render a `CapabilityStatus` as a short text token for the summary.
-fn status_token(s: &CapabilityStatus) -> String {
-    match s {
-        CapabilityStatus::Ready => "ready".into(),
-        CapabilityStatus::MissingPrompt => "MISSING_PROMPT".into(),
-        CapabilityStatus::MissingModelBinding => "MISSING_MODEL_BINDING".into(),
-        CapabilityStatus::MissingTool { tool } => format!("MISSING_TOOL({tool})"),
-        CapabilityStatus::Unsupported => "UNSUPPORTED".into(),
-        CapabilityStatus::Optimizable => "optimizable".into(),
-        CapabilityStatus::Optional => "optional".into(),
-    }
-}
-
 /// Plain-text diagnostics report for the non-`--json` path.
 fn print_diagnostics_text(diag: &StrategyDiagnostics) {
     println!("strategy: {}", diag.strategy_id);
     println!("launchable: {}", if diag.launchable { "yes" } else { "NO" });
-    if !diag.required_capabilities.is_empty() {
-        let caps: Vec<&str> = diag.required_capabilities.iter().map(|c| cap_key(*c)).collect();
-        println!("required capabilities: {}", caps.join(", "));
-    }
-    if !diag.optimizable.is_empty() {
-        let caps: Vec<&str> = diag.optimizable.iter().map(|c| cap_key(*c)).collect();
-        println!("optimizable now (dspy signature): {}", caps.join(", "));
-    }
+    println!(
+        "decision path: {}",
+        if diag.has_decision_path { "yes" } else { "NO" }
+    );
     println!();
     for agent in &diag.per_agent {
         let name = agent.agent_name.as_deref().unwrap_or("<unresolved>");
@@ -1404,32 +1371,19 @@ fn print_diagnostics_text(diag: &StrategyDiagnostics) {
         if !agent.agent_resolved {
             println!("    ! agent reference does not resolve to a workspace agent");
         }
-        for cd in &agent.capabilities {
-            let marker = if cd.required { "[required]" } else { "[declared]" };
-            let tools = if cd.required_tools.is_empty() {
-                String::new()
-            } else {
-                format!(" tools={}", cd.required_tools.join(","))
-            };
+        for tool in &agent.tools {
             println!(
-                "    {} {:<8} {}{}",
-                marker,
-                cap_key(cd.capability),
-                status_token(&cd.status),
-                tools,
+                "    tool {:<18} registered={}",
+                tool.name,
+                if tool.registered { "yes" } else { "NO" },
             );
         }
     }
-    if !diag.required_unmet.is_empty() {
+    if !diag.unregistered_tools.is_empty() {
         println!();
-        println!("UNMET REQUIRED CAPABILITIES:");
-        for u in &diag.required_unmet {
-            println!(
-                "  - role '{}' capability '{}': {}",
-                u.role,
-                cap_key(u.capability),
-                status_token(&u.status),
-            );
+        println!("UNREGISTERED TOOLS:");
+        for u in &diag.unregistered_tools {
+            println!("  - role '{}': {}", u.role, u.tool);
         }
     }
 }
@@ -1638,10 +1592,10 @@ async fn add_filter(
     let is_filter_capable = filter_agent
         .slots
         .iter()
-        .any(|s| s.capabilities.contains(&Capability::Filter));
+        .any(|s| s.allowed_tools.iter().any(|tool| tool == "indicator_panel"));
     if !is_filter_capable {
         return Err(CliError::usage(anyhow::anyhow!(
-            "agent `{filter_agent_id}` (\"{}\") is not Filter-capable — its slots do not advertise Capability::Filter. Create the agent with `xvn agent create --capability filter ...`.",
+            "agent `{filter_agent_id}` (\"{}\") cannot run as a filter — grant `indicator_panel` with `xvn agent create --tools indicator_panel ...` or `xvn agent set-tools`.",
             filter_agent.name,
         )));
     }
@@ -1712,9 +1666,9 @@ async fn add_filter(
             agent_id: filter_agent_id.to_string(),
             role: filter_role.clone(),
             activates: Some(Capability::Filter),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
     );
 
     // Append the conditional edge filter→gates.
@@ -2374,9 +2328,9 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
                 agent_id: agent.agent_id,
                 role,
                 activates: None,
-            prompt_override: None,
-            model_override: None,
-});
+                prompt_override: None,
+                model_override: None,
+            });
         }
 
         strategy.agents = agent_refs;
@@ -2438,7 +2392,7 @@ fn slot_to_agent_slot(
         bar_history_limit: None,
         memory_mode: Default::default(),
         noop_skip: None,
-        capabilities: xvision_engine::agents::default_capabilities(),
+        allowed_tools: Vec::new(),
         delta_briefing: None,
     }
 }
@@ -2650,10 +2604,6 @@ async fn resolve_agent_slots_for_cli(
             bar_history_limit: slot.bar_history_limit,
             memory_mode: slot.memory_mode,
             agent_id: agent.agent_id.clone(),
-            // Snapshot the slot's full capabilities set (Phase A) so the
-            // Phase B dispatcher's `resolve_activates` picks the right
-            // primary capability when `AgentRef.activates` is `None`.
-            capabilities: slot.capabilities.clone(),
             noop_skip: slot.noop_skip.unwrap_or(true),
         });
     }

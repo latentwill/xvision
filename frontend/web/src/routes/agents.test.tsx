@@ -52,6 +52,7 @@ function agent(overrides: Partial<Agent> = {}): Agent {
         model: "gpt-4.1-mini",
         system_prompt: "you are a trader",
         skill_ids: [],
+    allowed_tools: [],
         max_tokens: null,
       },
     ],
@@ -215,6 +216,7 @@ describe("AgentsRoute", () => {
               model: "gpt-4.1-mini",
               system_prompt: "",
               skill_ids: [],
+    allowed_tools: [],
               max_tokens: null,
             },
             {
@@ -223,6 +225,7 @@ describe("AgentsRoute", () => {
               model: "gpt-4.1-mini",
               system_prompt: "",
               skill_ids: [],
+    allowed_tools: [],
               max_tokens: null,
             },
           ],

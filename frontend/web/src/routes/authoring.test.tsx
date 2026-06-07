@@ -103,6 +103,7 @@ const baseAgent = {
       model: "deepseek/deepseek-v4-flash",
       system_prompt: "Trade with discipline.",
       skill_ids: [],
+    allowed_tools: [],
       max_tokens: 4096,
     },
   ],
@@ -182,6 +183,8 @@ describe("AuthoringRoute attached-agent row collapse + inline detail", () => {
       name: "Collapse agent",
     });
     expect(collapseBtn).toHaveAttribute("aria-expanded", "true");
+    // Wait for agent pool to settle (bar transitions from agent_id to agent name)
+    await screen.findByText("DeepSeek trader");
     expect(screen.getByText("01DEEPSEEK")).toBeInTheDocument();
 
     fireEvent.click(collapseBtn);

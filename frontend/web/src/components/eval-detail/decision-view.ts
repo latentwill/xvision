@@ -21,7 +21,7 @@
 //   deliberately reasoned out) is ENGAGED.
 //
 // Action mapping reuses the same prior-side logic the legacy table used so the
-// pill verb matches intent: long_open→BUY, short_open→SELL(short entry),
+// pill verb matches intent: long_open→BUY, short_open→SHORT,
 // flat-after-long→SELL, flat-after-short→CLOSE(cover), hold→HOLD.
 
 import type { DecisionRowDto } from "@/api/types.gen";
@@ -80,17 +80,38 @@ function derivePhase(row: DecisionRowDto): Phase {
 
 export function mapAction(action: string, priorSide: PositionSide): ActionPillAction {
   if (action === "long_open") return "BUY";
-  if (action === "short_open") return "SELL";
+  if (action === "short_open") return "SHORT";
   if (action === "flat") {
     if (priorSide === "long") return "SELL";
     if (priorSide === "short") return "CLOSE";
     return "HOLD";
   }
+  // sltp force-close rows: action is the exit reason ("stop_loss", "take_profit", etc.)
+  if (
+    action === "stop_loss" ||
+    action === "take_profit" ||
+    action === "trailing_stop" ||
+    action === "partial_tp1" ||
+    action === "partial_tp2"
+  ) {
+    if (priorSide === "short") return "CLOSE";
+    return "SELL";
+  }
   return "HOLD";
 }
 
+/** Extract the sltp exit reason from a justification string of the form "sltp: <reason>". */
+function extractSltpExitReason(justification: string | null | undefined): string | null {
+  const j = justification?.trim() ?? "";
+  if (j.startsWith("sltp: ")) return j.slice(6);
+  return null;
+}
+
 export function justificationText(row: DecisionRowDto): string {
-  return row.reasoning?.trim() || row.justification?.trim() || "";
+  const j = row.justification?.trim() ?? "";
+  // Don't show raw "sltp: stop_loss" as justification text — it's surfaced via ExitReasonTag
+  if (j.startsWith("sltp: ")) return row.reasoning?.trim() || "";
+  return row.reasoning?.trim() || j || "";
 }
 
 /** "BTC/USD" → "BTC"; bare symbols and the empty string pass through. The full
@@ -201,8 +222,6 @@ export function stepOrdinalsByDecision(rows: TimelineDecision[]): Map<number, nu
   return out;
 }
 
-type DecisionRowDtoExt = DecisionRowDto & { exit_reason?: string | null };
-
 /**
  * Project the real decision rows into the Signal table/timeline view model,
  * computing `phase` and the direction-aware action verb per row.
@@ -210,12 +229,15 @@ type DecisionRowDtoExt = DecisionRowDto & { exit_reason?: string | null };
 export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] {
   const priorSide = derivePriorSideByDecision(rows);
   return rows.map((row) => {
-    const rowExt = row as DecisionRowDtoExt;
     const phase = derivePhase(row);
     if (phase === "filtered") {
       return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset };
     }
-    const action = mapAction(row.action, priorSide.get(row.decision_index) ?? "flat");
+    const priorSideForRow = priorSide.get(row.decision_index) ?? "flat";
+    const action = mapAction(row.action, priorSideForRow);
+    // exit_reason: either a future DTO field or extracted from the "sltp: <reason>" justification prefix
+    const exit_reason =
+      extractSltpExitReason(row.justification);
     return {
       i: row.decision_index,
       t: row.timestamp,
@@ -225,7 +247,7 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
       just: justificationText(row) || undefined,
       pnl: row.pnl_realized,
       asset: row.asset,
-      exit_reason: rowExt.exit_reason ?? null,
+      exit_reason,
     };
   });
 }

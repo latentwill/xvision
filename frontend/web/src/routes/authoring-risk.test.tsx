@@ -344,7 +344,7 @@ describe("AuthoringRoute agent composition", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("attaches an existing agent with the requested role", async () => {
+  it("attaches an existing agent with a role derived from the agent name", async () => {
     vi.mocked(agentApi.listAgents).mockResolvedValue([
       {
         agent_id: "01DEEPSEEK",
@@ -358,6 +358,7 @@ describe("AuthoringRoute agent composition", () => {
             model: "deepseek/deepseek-v4-flash",
             system_prompt: "Trade with discipline.",
             skill_ids: [],
+    allowed_tools: [],
             max_tokens: 4096,
           },
         ],
@@ -397,18 +398,16 @@ describe("AuthoringRoute agent composition", () => {
     });
     vi.mocked(strategyApi.addStrategyAgent).mockResolvedValue({
       strategy_id: "01TEST",
-      agents: [{ agent_id: "01DEEPSEEK", role: "trader" }],
+      agents: [{ agent_id: "01DEEPSEEK", role: "deepseek-trader" }],
       pipeline: { kind: "single" },
     });
 
     renderRoute();
 
+    // Role field removed — just select the agent and click Add
     await screen.findByText("DeepSeek trader · 01DEEPSEEK");
     fireEvent.change(await screen.findByLabelText("Existing agent"), {
       target: { value: "01DEEPSEEK" },
-    });
-    fireEvent.change(screen.getByLabelText("Existing agent role"), {
-      target: { value: "trader" },
     });
     const addButton = screen.getByRole("button", { name: "Add Agent" });
     await waitFor(() => expect(addButton).not.toBeDisabled());
@@ -417,7 +416,7 @@ describe("AuthoringRoute agent composition", () => {
     await waitFor(() => {
       expect(strategyApi.addStrategyAgent).toHaveBeenCalledWith("01TEST", {
         agent_id: "01DEEPSEEK",
-        role: "trader",
+        role: "deepseek-trader",
       });
     });
   });
@@ -436,6 +435,7 @@ describe("AuthoringRoute agent composition", () => {
             model: "deepseek/deepseek-v4-flash",
             system_prompt: "Trade with discipline.",
             skill_ids: [],
+    allowed_tools: [],
             max_tokens: 4096,
           },
         ],
@@ -530,10 +530,11 @@ describe("AuthoringRoute agent composition", () => {
 
     expect(await screen.findByText("Pipeline kind")).toBeInTheDocument();
     expect(screen.getAllByText("sequential").length).toBeGreaterThan(0);
-    expect(screen.getByText("01INTERN")).toBeInTheDocument();
-    expect(screen.getByText("01TRADER")).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
+    // When agents pool is empty, bar falls back to agent_id; detail also shows it
+    expect(screen.getAllByText("01INTERN").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("01TRADER").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2").length).toBeGreaterThan(0);
   });
 
   it("sets the pipeline kind through the strategy pipeline API", async () => {
@@ -663,6 +664,7 @@ describe("AuthoringRoute agent composition", () => {
           model: "deepseek/deepseek-v4-flash",
           system_prompt: "Trade with discipline.",
           skill_ids: [],
+    allowed_tools: [],
           max_tokens: null,
         },
       ],
@@ -685,11 +687,9 @@ describe("AuthoringRoute agent composition", () => {
       await screen.findByRole("button", { name: "Create new" }),
     );
 
+    // Role field removed — just fill name, model, prompt
     fireEvent.change(await screen.findByLabelText("New agent name"), {
       target: { value: "DeepSeek trader" },
-    });
-    fireEvent.change(screen.getByLabelText("New agent role"), {
-      target: { value: "trader" },
     });
     fireEvent.change(screen.getByLabelText("New agent model"), {
       target: { value: "openrouter::deepseek/deepseek-v4-flash" },
@@ -713,15 +713,17 @@ describe("AuthoringRoute agent composition", () => {
             model: "deepseek/deepseek-v4-flash",
             system_prompt: "Trade with discipline.",
             skill_ids: [],
+    allowed_tools: [],
             max_tokens: null,
           },
         ],
       });
     });
+    // Role is auto-derived from agent name: nameToRole("DeepSeek trader") = "deepseek-trader"
     await waitFor(() => {
       expect(strategyApi.addStrategyAgent).toHaveBeenCalledWith("01TEST", {
         agent_id: "01DEEPSEEK",
-        role: "trader",
+        role: "deepseek-trader",
       });
     });
   });

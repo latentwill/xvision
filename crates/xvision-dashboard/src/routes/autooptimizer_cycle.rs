@@ -67,6 +67,29 @@ pub struct StartCycleResponse {
     pub message: String,
 }
 
+#[derive(Serialize)]
+pub struct RunDefaultsResponse {
+    pub mutator_provider: String,
+    pub mutator_model: String,
+    pub judge_provider: String,
+    pub judge_model: String,
+    pub config_path: String,
+    pub config_exists: bool,
+}
+
+pub async fn run_defaults() -> Result<Json<RunDefaultsResponse>, DashboardError> {
+    let (cfg, config_path, config_exists) = load_optimizer_config_with_path()?;
+    Ok(Json(RunDefaultsResponse {
+        mutator_provider: cfg.mutator.provider.clone(),
+        mutator_model: cfg.mutator.model.clone(),
+        // Dashboard run-cycle defaults the reviewer to the writer provider/model.
+        judge_provider: cfg.mutator.provider.clone(),
+        judge_model: cfg.mutator.model.clone(),
+        config_path: config_path.display().to_string(),
+        config_exists,
+    }))
+}
+
 pub async fn start_cycle(
     State(state): State<AppState>,
     Json(body): Json<StartCycleBody>,
@@ -107,7 +130,7 @@ pub async fn start_cycle(
         .unwrap_or_else(|| cfg.mutator.provider.clone());
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let judge_provider = body.judge_provider.unwrap_or_else(|| mutator_provider.clone());
-    let judge_model = body.judge_model.unwrap_or_else(|| cfg.mutator.model.clone());
+    let judge_model = body.judge_model.unwrap_or_else(|| mutator_model.clone());
     let raw_mutator_dispatch = build_autooptimizer_dispatch(&mutator_provider, &state.xvn_home).await?;
     let raw_judge_dispatch = if judge_provider == mutator_provider {
         Arc::clone(&raw_mutator_dispatch)
@@ -281,9 +304,11 @@ pub async fn start_cycle(
         // paper-test cost reaches `budget_cap`, the cycle stops before launching
         // another backtest (no cap → f64::INFINITY). This is the guard against the
         // runaway token spew an unbounded UI cycle could produce.
-        let paper_tester: Box<dyn PaperTestRunner> = Box::new(
-            BudgetCappedPaperTester::new_with_handle(Box::new(cached), budget_cap, Arc::clone(&meter)),
-        );
+        let paper_tester: Box<dyn PaperTestRunner> = Box::new(BudgetCappedPaperTester::new_with_handle(
+            Box::new(cached),
+            budget_cap,
+            Arc::clone(&meter),
+        ));
 
         // F35: incremental cost/token persistence. Every 10s, snapshot the shared
         // meter into `cycle_cost` under the known cycle id so the panel shows
@@ -297,13 +322,8 @@ pub async fn start_cycle(
             loop {
                 interval.tick().await;
                 let totals = *ticker_meter.lock().expect("meter mutex poisoned");
-                let _ = persist_cycle_cost(
-                    &ticker_pool,
-                    &ticker_cycle_id,
-                    &totals,
-                    &Utc::now().to_rfc3339(),
-                )
-                .await;
+                let _ = persist_cycle_cost(&ticker_pool, &ticker_cycle_id, &totals, &Utc::now().to_rfc3339())
+                    .await;
             }
         });
 
@@ -339,9 +359,7 @@ pub async fn start_cycle(
         // Best-effort — a failure here must not mask the completed cycle. Keyed by
         // the upfront `cycle_id` so this lands even if `run_cycle` errored.
         let totals = *meter.lock().expect("meter mutex poisoned");
-        if let Err(e) =
-            persist_cycle_cost(&pool, &cycle_id, &totals, &Utc::now().to_rfc3339()).await
-        {
+        if let Err(e) = persist_cycle_cost(&pool, &cycle_id, &totals, &Utc::now().to_rfc3339()).await {
             tracing::warn!(error = %e, "persist optimizer cycle cost failed");
         }
         if let Err(e) = result {
@@ -383,11 +401,19 @@ pub async fn cancel_cycle(
 }
 
 fn load_optimizer_config() -> Result<AutoOptimizerConfig, DashboardError> {
-    let cfg = match AutoOptimizerConfig::default_path() {
-        Ok(path) if path.exists() => AutoOptimizerConfig::load(&path)?,
-        _ => AutoOptimizerConfig::default(),
+    load_optimizer_config_with_path().map(|(cfg, _, _)| cfg)
+}
+
+fn load_optimizer_config_with_path() -> Result<(AutoOptimizerConfig, std::path::PathBuf, bool), DashboardError>
+{
+    let path = AutoOptimizerConfig::default_path()?;
+    let exists = path.exists();
+    let cfg = if exists {
+        AutoOptimizerConfig::load(&path)?
+    } else {
+        AutoOptimizerConfig::default()
     };
-    Ok(cfg)
+    Ok((cfg, path, exists))
 }
 
 async fn build_autooptimizer_dispatch(
@@ -421,8 +447,17 @@ async fn build_autooptimizer_dispatch(
     };
     Ok(match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
+        ProviderKind::OpenaiCompat | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
             Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
+        }
+        ProviderKind::Ollama => {
+            let base = entry.base_url.trim_end_matches('/');
+            let url = if base.ends_with("/v1") {
+                base.to_string()
+            } else {
+                format!("{base}/v1")
+            };
+            Arc::new(OpenaiCompatDispatch::new(url, api_key))
         }
         ProviderKind::LocalCandle => {
             return Err(DashboardError::Validation {
@@ -472,7 +507,7 @@ fn build_cycle_config(
         },
         mutations_per_parent: 1,
         sabotage_seed: 42,
-        judge_provider: cfg.mutator.provider.clone(),
+        judge_provider: judge.provider.clone(),
         judge_model: judge.model.clone(),
         prompt_version: "v1".into(),
         sustained_no_pass_cycles: 0,
@@ -567,5 +602,38 @@ async fn load_metering_catalogs(
     match xvision_engine::providers::load_cached_catalog(xvn_home, provider).await {
         Ok(Some(cat)) => vec![Arc::new(cat)],
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use xvision_engine::agent::llm::MockDispatch;
+
+    #[test]
+    fn build_cycle_config_uses_resolved_judge_provider() {
+        let cfg = AutoOptimizerConfig::default();
+        let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, "xvn-dashboard-test");
+        let baseline_scenario =
+            synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
+                .expect("baseline scenario");
+        let judge = Judge {
+            dispatch: Arc::new(MockDispatch::echo("ok")) as Arc<dyn LlmDispatch + Send + Sync>,
+            provider: "ollama".into(),
+            model: "qwen2.5-coder:7b".into(),
+        };
+
+        let cycle = build_cycle_config(
+            &cfg,
+            &judge,
+            day_scenario,
+            baseline_scenario,
+            HashMap::new(),
+            Vec::new(),
+        );
+
+        assert_eq!(cycle.judge_provider, "ollama");
+        assert_eq!(cycle.judge_model, "qwen2.5-coder:7b");
     }
 }

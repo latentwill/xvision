@@ -23,6 +23,7 @@ import { fmtStepStamp, type TimelineDecision } from "./decision-view";
 const COLOR_BY_ACTION: Record<string, string> = {
   BUY: "var(--gold)",
   SELL: "var(--danger)",
+  SHORT: "var(--danger)",
   CLOSE: "var(--danger)",
   HOLD: "var(--text-2)",
 };
@@ -245,7 +246,7 @@ export function DecisionTimeline({
                       ? "var(--text-3)"
                       : hover.d.action === "BUY"
                         ? "var(--gold)"
-                        : hover.d.action === "SELL" || hover.d.action === "CLOSE"
+                        : hover.d.action === "SELL" || hover.d.action === "SHORT" || hover.d.action === "CLOSE"
                           ? "var(--danger)"
                           : "var(--text)",
                 }}

@@ -1,20 +1,4 @@
-//! Integration tests for the Phase 4.5 read-only diagnostics surface:
-//!   GET /api/strategy/:id/diagnostics
-//!   GET /api/agents/:id/diagnostics
-//!
-//! These exercise the HTTP shell over the engine `capability_diagnostics`
-//! (strategy-scoped) and the dashboard's agent-level composition over the
-//! engine's public diagnostics helpers. The agent library + strategy
-//! filesystem store are seeded directly; the route layer is under test.
-//!
-//! Coverage:
-//!   * agent diagnostics: a complete trader slot reports `Optimizable`
-//!     (ready + has a dspy optimizer signature) and `agent_ready = true`;
-//!     a prompt-less slot reports `MissingPrompt` and flips `agent_ready`.
-//!   * strategy diagnostics: a strategy whose manifest grants the trader's
-//!     `ohlcv` tool is `launchable`; built-in required tools are also
-//!     launchable without explicit manifest grants.
-//!   * unknown strategy / agent ids 404.
+//! Integration tests for tool-based diagnostics routes.
 
 use axum::http::StatusCode;
 use axum_test::TestServer;
@@ -25,7 +9,7 @@ use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 use xvision_engine::agents::model::InputsPolicy;
 use xvision_engine::agents::store::{AgentStore, NewAgent};
-use xvision_engine::agents::{default_capabilities, AgentSlot};
+use xvision_engine::agents::AgentSlot;
 use xvision_engine::strategies::agent_ref::AgentRef;
 use xvision_engine::strategies::{
     manifest::PublicManifest, risk::RiskPreset, store::FilesystemStore, store::StrategyStore, Strategy,
@@ -43,7 +27,7 @@ async fn boot() -> (TestServer, TempDir, AppState) {
     (server, tmp, state)
 }
 
-fn slot(name: &str, prompt: &str) -> AgentSlot {
+fn slot(name: &str, prompt: &str, tools: Vec<&str>) -> AgentSlot {
     AgentSlot {
         name: name.to_string(),
         provider: "anthropic".to_string(),
@@ -58,26 +42,24 @@ fn slot(name: &str, prompt: &str) -> AgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
-        capabilities: default_capabilities(),
+        allowed_tools: tools.into_iter().map(str::to_string).collect(),
         delta_briefing: None,
     }
 }
 
-/// Seed a single-slot trader agent and return its id.
-async fn seed_agent(state: &AppState, name: &str, prompt: &str) -> String {
+async fn seed_agent(state: &AppState, name: &str, prompt: &str, tools: Vec<&str>) -> String {
     AgentStore::new(state.pool.clone())
         .create(NewAgent {
             name: name.to_string(),
             description: "seeded for diagnostics route test".to_string(),
             tags: vec!["seed".to_string()],
-            slots: vec![slot("trader", prompt)],
+            slots: vec![slot("trader", prompt, tools)],
             scope_strategy_id: None,
         })
         .await
         .unwrap()
 }
 
-/// Seed a strategy referencing `agent_id` as a trader.
 async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, required_tools: Vec<String>) {
     let store = FilesystemStore::new(tmp.path().join("strategies"));
     store
@@ -105,9 +87,9 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
                 agent_id: agent_id.into(),
                 role: "trader".into(),
                 activates: None,
-            prompt_override: None,
-            model_override: None,
-}],
+                prompt_override: None,
+                model_override: None,
+            }],
             pipeline: Default::default(),
             regime_slot: None,
             intern_slot: None,
@@ -124,12 +106,16 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
         .unwrap();
 }
 
-// ── agent-level diagnostics ──────────────────────────────────────────────
-
 #[tokio::test]
-async fn agent_diagnostics_ready_trader_is_optimizable() {
+async fn agent_diagnostics_reports_registered_tools() {
     let (server, _tmp, state) = boot().await;
-    let agent_id = seed_agent(&state, "Ready Trader", TRADER_PROMPT).await;
+    let agent_id = seed_agent(
+        &state,
+        "Ready Trader",
+        TRADER_PROMPT,
+        vec!["ohlcv", "submit_decision"],
+    )
+    .await;
 
     let resp = server.get(&format!("/api/agents/{agent_id}/diagnostics")).await;
     resp.assert_status_ok();
@@ -138,44 +124,24 @@ async fn agent_diagnostics_ready_trader_is_optimizable() {
     assert_eq!(body["agent_id"], agent_id);
     assert_eq!(body["agent_name"], "Ready Trader");
     assert_eq!(body["agent_ready"], true);
+    assert_eq!(body["tool_names"].as_array().unwrap().len(), 2);
 
-    let slots = body["slots"].as_array().expect("slots array");
-    assert_eq!(slots.len(), 1);
-    assert_eq!(slots[0]["slot_name"], "trader");
-    assert_eq!(slots[0]["model_bound"], true);
-    assert_eq!(slots[0]["prompt_present"], true);
-
-    let caps = slots[0]["capabilities"].as_array().expect("capabilities");
-    let trader = caps
+    let tools = body["slots"][0]["tools"].as_array().expect("tools");
+    assert!(tools
         .iter()
-        .find(|c| c["capability"] == "trader")
-        .expect("trader capability line present");
-    // A complete trader slot is Ready AND optimizable → `optimizable` status.
-    assert_eq!(trader["status"]["kind"], "optimizable");
-    assert_eq!(trader["optimizable"], true);
-    assert_eq!(trader["required_tools"][0], "ohlcv");
-
-    // The trader capability is surfaced as optimizable at the agent level.
-    let opt = body["optimizable_capabilities"]
-        .as_array()
-        .expect("optimizable_capabilities");
-    assert!(opt.iter().any(|c| c == "trader"));
+        .any(|tool| tool["name"] == "submit_decision" && tool["registered"] == true));
 }
 
 #[tokio::test]
 async fn agent_diagnostics_missing_prompt_flips_ready() {
     let (server, _tmp, state) = boot().await;
-    // Whitespace-only prompt → MissingPrompt blocker.
-    let agent_id = seed_agent(&state, "Promptless", "   ").await;
+    let agent_id = seed_agent(&state, "Promptless", "   ", vec!["submit_decision"]).await;
 
     let resp = server.get(&format!("/api/agents/{agent_id}/diagnostics")).await;
     resp.assert_status_ok();
     let body: Value = resp.json();
 
     assert_eq!(body["agent_ready"], false);
-    let caps = body["slots"][0]["capabilities"].as_array().unwrap();
-    let trader = caps.iter().find(|c| c["capability"] == "trader").unwrap();
-    assert_eq!(trader["status"]["kind"], "missing_prompt");
     assert_eq!(body["slots"][0]["prompt_present"], false);
 }
 
@@ -188,15 +154,18 @@ async fn agent_diagnostics_unknown_id_404s() {
     assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
 }
 
-// ── strategy-level diagnostics ───────────────────────────────────────────
-
 #[tokio::test]
-async fn strategy_diagnostics_launchable_when_tool_granted() {
+async fn strategy_diagnostics_launchable_when_decision_tool_granted() {
     let (server, tmp, state) = boot().await;
-    let agent_id = seed_agent(&state, "Strat Trader", TRADER_PROMPT).await;
+    let agent_id = seed_agent(
+        &state,
+        "Strat Trader",
+        TRADER_PROMPT,
+        vec!["ohlcv", "submit_decision"],
+    )
+    .await;
     let strategy_id = "01J0DIAGTEST0000000000001A";
-    // Manifest grants the trader's required `ohlcv` tool → launchable.
-    seed_strategy(&tmp, strategy_id, &agent_id, vec!["ohlcv".into()]).await;
+    seed_strategy(&tmp, strategy_id, &agent_id, vec![]).await;
 
     let resp = server
         .get(&format!("/api/strategy/{strategy_id}/diagnostics"))
@@ -206,28 +175,21 @@ async fn strategy_diagnostics_launchable_when_tool_granted() {
 
     assert_eq!(body["strategy_id"], strategy_id);
     assert_eq!(body["launchable"], true);
-    assert_eq!(
-        body["required_unmet"].as_array().unwrap().len(),
-        0,
-        "no unmet requirements when launchable"
-    );
-    // Trader is required and optimizable.
-    let req_caps = body["required_capabilities"].as_array().unwrap();
-    assert!(req_caps.iter().any(|c| c == "trader"));
-    assert!(body["optimizable"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|c| c == "trader"));
+    assert_eq!(body["has_decision_path"], true);
+    assert_eq!(body["unregistered_tools"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
-async fn strategy_diagnostics_allows_builtin_required_tool_without_manifest_grant() {
+async fn strategy_diagnostics_unregistered_tool_blocks_launch() {
     let (server, tmp, state) = boot().await;
-    let agent_id = seed_agent(&state, "Strat Trader", TRADER_PROMPT).await;
+    let agent_id = seed_agent(
+        &state,
+        "Strat Trader",
+        TRADER_PROMPT,
+        vec!["not_registered", "submit_decision"],
+    )
+    .await;
     let strategy_id = "01J0DIAGTEST0000000000002B";
-    // Manifest grants NO tools, but `ohlcv` is a built-in tool and should
-    // not block launchability.
     seed_strategy(&tmp, strategy_id, &agent_id, vec![]).await;
 
     let resp = server
@@ -236,13 +198,8 @@ async fn strategy_diagnostics_allows_builtin_required_tool_without_manifest_gran
     resp.assert_status_ok();
     let body: Value = resp.json();
 
-    assert_eq!(body["launchable"], true);
-    let unmet = body["required_unmet"].as_array().unwrap();
-    assert_eq!(
-        unmet.len(),
-        0,
-        "built-in tools must not create unmet requirements"
-    );
+    assert_eq!(body["launchable"], false);
+    assert_eq!(body["unregistered_tools"][0]["tool"], "not_registered");
 }
 
 #[tokio::test]

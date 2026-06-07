@@ -47,9 +47,8 @@ function buildFetchMock(state: { manifest: ManifestState }) {
       const diagnostics = {
         strategy_id: state.manifest.id,
         per_agent: [],
-        required_capabilities: [],
-        required_unmet: [],
-        optimizable: [],
+        unregistered_tools: [],
+        has_decision_path: true,
         launchable: true,
       };
       return new Response(JSON.stringify(diagnostics), {
