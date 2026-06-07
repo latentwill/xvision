@@ -5,7 +5,7 @@
 // (`fnd_sig-feat-ui-flow-0e07bcd326-2bbe_8ce24d101a`).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SlotForm } from "./SlotForm";
@@ -34,6 +34,9 @@ function row(
     kind,
     base_url: kind === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com",
     api_key_env: `${name.toUpperCase()}_API_KEY`,
+    api_key_set: true,
+    synthetic: false,
+    is_default: false,
     enabled_models: enabled,
   } as ProviderRow;
 }
@@ -45,6 +48,7 @@ function makeSlot(overrides: Partial<AgentSlot> = {}): AgentSlot {
     model: "claude-sonnet-4-6",
     system_prompt: "you are a trader",
     skill_ids: [],
+    allowed_tools: [],
     max_tokens: null,
     ...overrides,
   };
@@ -86,7 +90,7 @@ describe("SlotForm.changeProvider", () => {
         row("anthropic", "anthropic", ["claude-sonnet-4-6"]),
         row("openai", "openai-compat", ["gpt-4.1-mini"]),
       ],
-    
+
         default_model: null,
     });
 
@@ -96,16 +100,11 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    // Wait for the providers query to resolve so the <select> renders.
-    // There are TWO comboboxes (provider + model); the provider one is
-    // the first child of the Field labelled "Provider".
-    // Provider is the first <select> rendered by SlotForm; ModelPicker
-    // may also render a combobox so findByRole would be ambiguous. Wait
-    // for the providers query to settle, then pick index 0.
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const providerSelect = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
+    // Wait for the providers query to resolve so the Provider <select>
+    // renders (rather than the always-present Memory <select>). The
+    // Provider field's <label> wraps the <select>, giving it the
+    // accessible name "Provider".
+    const providerSelect = await screen.findByRole("combobox", { name: /provider/i }) as HTMLSelectElement;
     fireEvent.change(providerSelect, { target: { value: "openai" } });
 
     expect(onChange).toHaveBeenCalled();
@@ -121,7 +120,7 @@ describe("SlotForm.changeProvider", () => {
         row("openai-prod", "openai-compat", ["gpt-4.1-mini"]),
         row("openai-staging", "openai-compat", ["gpt-4.1-mini"]),
       ],
-    
+
         default_model: null,
     });
 
@@ -131,13 +130,11 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    // Provider is the first <select> rendered by SlotForm; ModelPicker
-    // may also render a combobox so findByRole would be ambiguous. Wait
-    // for the providers query to settle, then pick index 0.
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const providerSelect = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
+    // Wait for the providers query to resolve so the Provider <select>
+    // renders (rather than the always-present Memory <select>). The
+    // Provider field's <label> wraps the <select>, giving it the
+    // accessible name "Provider".
+    const providerSelect = await screen.findByRole("combobox", { name: /provider/i }) as HTMLSelectElement;
     fireEvent.change(providerSelect, { target: { value: "openai-staging" } });
 
     expect(onChange).toHaveBeenCalled();
@@ -149,7 +146,7 @@ describe("SlotForm.changeProvider", () => {
   it("renders bar_history_limit input empty when slot value is null", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
-    
+
         default_model: null,
     });
 
@@ -158,17 +155,17 @@ describe("SlotForm.changeProvider", () => {
       onChange: vi.fn(),
     });
 
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    // The component now renders two spinbuttons (bar_history_limit +
+    // max_wall_ms). Disambiguate by the accessible name from the
+    // wrapping <label> ("Bar history limit").
+    const input = await screen.findByRole("spinbutton", { name: /bar history limit/i }) as HTMLInputElement;
     expect(input.value).toBe("");
   });
 
   it("renders bar_history_limit input with the slot's stored value", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
-    
+
         default_model: null,
     });
 
@@ -177,17 +174,17 @@ describe("SlotForm.changeProvider", () => {
       onChange: vi.fn(),
     });
 
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    // The component now renders two spinbuttons (bar_history_limit +
+    // max_wall_ms). Disambiguate by the accessible name from the
+    // wrapping <label> ("Bar history limit").
+    const input = await screen.findByRole("spinbutton", { name: /bar history limit/i }) as HTMLInputElement;
     expect(input.value).toBe("50");
   });
 
   it("persists a valid bar_history_limit through onChange", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
-    
+
         default_model: null,
     });
 
@@ -197,10 +194,10 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    // The component now renders two spinbuttons (bar_history_limit +
+    // max_wall_ms). Disambiguate by the accessible name from the
+    // wrapping <label> ("Bar history limit").
+    const input = await screen.findByRole("spinbutton", { name: /bar history limit/i }) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "120" } });
 
     expect(onChange).toHaveBeenCalled();
@@ -211,7 +208,7 @@ describe("SlotForm.changeProvider", () => {
   it("clears bar_history_limit when input is emptied", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
-    
+
         default_model: null,
     });
 
@@ -221,10 +218,10 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    // The component now renders two spinbuttons (bar_history_limit +
+    // max_wall_ms). Disambiguate by the accessible name from the
+    // wrapping <label> ("Bar history limit").
+    const input = await screen.findByRole("spinbutton", { name: /bar history limit/i }) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "" } });
 
     expect(onChange).toHaveBeenCalled();
@@ -235,7 +232,7 @@ describe("SlotForm.changeProvider", () => {
   it("rejects zero / negative bar_history_limit values (maps to null)", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
-    
+
         default_model: null,
     });
 
@@ -245,10 +242,10 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    // The component now renders two spinbuttons (bar_history_limit +
+    // max_wall_ms). Disambiguate by the accessible name from the
+    // wrapping <label> ("Bar history limit").
+    const input = await screen.findByRole("spinbutton", { name: /bar history limit/i }) as HTMLInputElement;
 
     fireEvent.change(input, { target: { value: "0" } });
     expect(
@@ -264,7 +261,7 @@ describe("SlotForm.changeProvider", () => {
   it("clamps bar_history_limit above the max bound", async () => {
     vi.mocked(settingsApi.listProviders).mockResolvedValue({
       providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
-    
+
         default_model: null,
     });
 
@@ -274,10 +271,10 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
+    // The component now renders two spinbuttons (bar_history_limit +
+    // max_wall_ms). Disambiguate by the accessible name from the
+    // wrapping <label> ("Bar history limit").
+    const input = await screen.findByRole("spinbutton", { name: /bar history limit/i }) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "999999" } });
 
     expect(onChange).toHaveBeenCalled();
@@ -316,7 +313,7 @@ describe("SlotForm.changeProvider", () => {
         row("anthropic", "anthropic", ["claude-sonnet-4-6"]),
         row("openai", "openai-compat", ["gpt-4.1-mini"]),
       ],
-    
+
         default_model: null,
     });
 
@@ -326,13 +323,11 @@ describe("SlotForm.changeProvider", () => {
       onChange,
     });
 
-    // Provider is the first <select> rendered by SlotForm; ModelPicker
-    // may also render a combobox so findByRole would be ambiguous. Wait
-    // for the providers query to settle, then pick index 0.
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const providerSelect = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
+    // Wait for the providers query to resolve so the Provider <select>
+    // renders (rather than the always-present Memory <select>). The
+    // Provider field's <label> wraps the <select>, giving it the
+    // accessible name "Provider".
+    const providerSelect = await screen.findByRole("combobox", { name: /provider/i }) as HTMLSelectElement;
     fireEvent.change(providerSelect, { target: { value: "openai" } });
 
     expect(onChange).toHaveBeenCalled();

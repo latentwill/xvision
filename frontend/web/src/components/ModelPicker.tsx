@@ -8,6 +8,7 @@
 //   ModelPickerDropdown — Signal-styled floating dropdown with filter + context window
 
 import type { ProviderRow } from "@/api/types.gen";
+import { isProviderConfigured } from "@/lib/providers";
 import { SignalModelPickerMenu } from "@/components/primitives/SignalMenu";
 import type { ModelOption } from "@/components/primitives/SignalMenu";
 
@@ -45,9 +46,7 @@ export function ModelPicker({
   /** Override the "— pick a model —" placeholder. */
   placeholder?: string;
 }) {
-  const configuredProviders = rows.filter(
-    (r) => (r.api_key_set || isNoAuthProvider(r)) && !r.synthetic,
-  );
+  const configuredProviders = rows.filter(isProviderConfigured);
   const all = configuredProviders
     .flatMap((r) =>
       r.enabled_models.map((m) => ({ provider: r.name, model: m })),
@@ -136,11 +135,9 @@ const CONTEXT_WINDOWS: Record<string, string> = {
   "gpt-4.1-nano": "1M",
 };
 
-const LOCAL_KINDS = new Set(["ollama", "llama-cpp", "vllm", "local-candle"]);
-
 function contextWindowLabel(row: ProviderRow, model: string): string | undefined {
   if (CONTEXT_WINDOWS[model]) return CONTEXT_WINDOWS[model];
-  if (LOCAL_KINDS.has(row.kind)) return row.kind;
+  if (["ollama", "llama-cpp", "vllm", "local-candle"].includes(row.kind)) return row.kind;
   return undefined;
 }
 
@@ -163,9 +160,7 @@ export function ModelPickerDropdown({
   align?: "left" | "right";
   placeholder?: string;
 }) {
-  const configuredProviders = rows.filter(
-    (r) => (r.api_key_set || isNoAuthProvider(r)) && !r.synthetic,
-  );
+  const configuredProviders = rows.filter(isProviderConfigured);
   const options: ModelOption[] = configuredProviders
     .filter((r) => !filterProvider || r.name === filterProvider)
     .flatMap((r) =>
@@ -186,13 +181,6 @@ export function ModelPickerDropdown({
       align={align}
       placeholder={placeholder}
     />
-  );
-}
-
-function isNoAuthProvider(row: ProviderRow): boolean {
-  return (
-    row.api_key_env.trim() === "" ||
-    ["ollama", "llama-cpp", "vllm", "local-candle"].includes(row.kind)
   );
 }
 

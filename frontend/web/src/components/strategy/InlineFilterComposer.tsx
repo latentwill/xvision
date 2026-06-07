@@ -45,7 +45,7 @@ export type InlineFilterComposerProps = {
   /// All existing Filter-capable agents — workspace + this strategy's
   /// own scoped agents. The strategy editor passes the result of
   /// `listAgents({ scope: <strategy_id> })` filtered to those whose
-  /// slots include `capabilities: ["filter"]`.
+  /// slots include `allowed_tools: ["indicator_panel"]`.
   filterCandidates: Agent[];
   /// Suggested default role for the new Filter ref (eg. "regime_filter").
   defaultRole?: string;
@@ -157,7 +157,7 @@ export function InlineFilterComposer({
               // Inline-authored agents are Filter agents by intent —
               // the Phase B dispatcher reads this when resolving the
               // (Agent, AgentRef.activates="filter") pair at run time.
-              capabilities: ["filter"],
+              allowed_tools: ["indicator_panel"],
             },
           ],
           // Toggle ON (default) → workspace agent (scope undefined).

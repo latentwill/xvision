@@ -78,8 +78,9 @@ const workspaceScope = { scope: "workspace" } as const;
 beforeEach(() => {
   localStorage.clear();
   vi.mocked(chatApi.scopeFromPath).mockReturnValue(workspaceScope);
-  vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
-      default_model: null,
+  vi.mocked(settingsApi.listProviders).mockResolvedValue({
+    providers: [],
+    default_model: null,
   });
   vi.mocked(chatApi.listSessions).mockResolvedValue([
     {
@@ -724,11 +725,93 @@ describe("ChatRail", () => {
     await waitFor(() => {
       expect(seenDispatches.length).toBeGreaterThan(0);
     });
+    expect(
+      await screen.findByText("Workspace default: google / gemini-2.5-flash"),
+    ).toBeInTheDocument();
     // The workspace-default provider (google) wins even though
     // openrouter appears first in the catalog array.
     expect(seenDispatches[0]).toEqual({
       provider: "google",
       model: "gemini-2.5-flash",
+    });
+  });
+
+  /**
+   * Regression — no-auth providers (e.g. Ollama, where api_key_env=""
+   * and api_key_set=false) must appear in the model picker. Pre-fix,
+   * the candidates filter required api_key_set=true, which silently
+   * excluded every local endpoint that needs no key.
+   */
+  it("includes a no-auth Ollama provider in the model picker", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "ollama",
+          kind: "openai-compat",
+          base_url: "http://localhost:11434/v1",
+          api_key_env: "",
+          api_key_set: false,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["llama3"],
+        },
+      ],
+      default_model: null,
+    });
+
+    renderRail();
+
+    await waitFor(() => {
+      const select = screen.getByRole("combobox", { name: /model/i });
+      expect(select.querySelector('option[value="ollama::llama3"]')).not.toBeNull();
+    });
+  });
+
+  it("does not dispatch stale stored chat picker values absent from the picker", async () => {
+    localStorage.setItem("xvn.chat_rail.provider", "openrouter");
+    localStorage.setItem("xvn.chat_rail.model", "stale/model");
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "ollama",
+          kind: "openai-compat",
+          base_url: "http://localhost:11434/v1",
+          api_key_env: "",
+          api_key_set: false,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["qwen2.5-coder:7b"],
+        },
+      ],
+      default_model: null,
+    });
+    const seenDispatches: Array<{ provider?: string; model?: string }> = [];
+    vi.mocked(chatApi.streamChat).mockImplementation(async function* (req) {
+      seenDispatches.push({ provider: req.provider, model: req.model });
+      yield { type: "token", text: "ok" };
+    });
+
+    renderRail();
+
+    expect(
+      await screen.findByText("Selected chat model: ollama / qwen2.5-coder:7b"),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(localStorage.getItem("xvn.chat_rail.provider")).toBe("ollama");
+      expect(localStorage.getItem("xvn.chat_rail.model")).toBe(
+        "qwen2.5-coder:7b",
+      );
+    });
+    const composer = await screen.findByPlaceholderText(
+      /ask anything about your workspace/i,
+    );
+    fireEvent.change(composer, { target: { value: "use visible model" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => {
+      expect(seenDispatches).toEqual([
+        { provider: "ollama", model: "qwen2.5-coder:7b" },
+      ]);
     });
   });
 

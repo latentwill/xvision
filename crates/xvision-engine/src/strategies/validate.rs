@@ -2,7 +2,6 @@ use thiserror::Error;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::agents::Capability;
 use crate::eval::scenario::Scenario;
 use crate::strategies::agent_ref::{canonical_role, EdgePredicate};
 use crate::strategies::{DecisionMode, PipelineKind, Strategy};
@@ -195,17 +194,9 @@ pub fn high_position_size_warning(strategy: &Strategy) -> Option<String> {
 
 /// Phase 2 (firing-filter CLI) — no-Filter soft-warning.
 ///
-/// Returns one warning per `AgentRef` whose `activates` is explicitly
-/// `Trader` or `Critic` and which has no incoming `PipelineEdge` from
-/// an upstream Filter `AgentRef`. The warning is suppressed entirely
-/// when the strategy carries `acknowledge_no_filter = true`.
-///
-/// The check intentionally fires only on agents whose `activates` is
-/// explicitly set — legacy strategies with `activates: None` are
-/// considered "pre-capability-model" and not nagged. Phase E
-/// (`agent-graph-template-capabilities`) flips every starter template
-/// to explicit `activates`, at which point this warning starts firing
-/// in practice for any unfiltered trader.
+/// Returns one warning per decision-like `AgentRef` that has no incoming
+/// `PipelineEdge` from an upstream filter-like role. The warning is
+/// suppressed entirely when the strategy carries `acknowledge_no_filter = true`.
 ///
 /// The text is stable: downstream tooling (SPA validate panel,
 /// scriptable `xvn strategy validate --json`) treats the string
@@ -219,17 +210,13 @@ pub fn no_filter_warnings(strategy: &Strategy) -> Vec<String> {
     let filter_roles: HashSet<String> = strategy
         .agents
         .iter()
-        .filter(|a| matches!(a.activates, Some(Capability::Filter)))
+        .filter(|a| role_is_filter_like(&a.role))
         .map(|a| canonical_role(&a.role))
         .collect();
 
     let mut warnings = Vec::new();
     for agent in &strategy.agents {
-        let acts_as_trader_or_critic = matches!(
-            agent.activates,
-            Some(Capability::Trader) | Some(Capability::Critic)
-        );
-        if !acts_as_trader_or_critic {
+        if !role_is_decision_like(&agent.role) {
             continue;
         }
         let role = canonical_role(&agent.role);
@@ -299,7 +286,7 @@ pub fn predicate_signal_field_warnings(
             .agents
             .iter()
             .take(from_idx + 1)
-            .filter(|a| matches!(a.activates, Some(Capability::Filter)))
+            .filter(|a| role_is_filter_like(&a.role))
             .filter_map(|a| {
                 system_prompts_by_role
                     .get(&canonical_role(&a.role))
@@ -434,11 +421,6 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
                     });
                 }
 
-                // Walk agents[0..=from_idx] looking for a Filter on
-                // `activates`. Phase B heuristic — the slot's full
-                // `capabilities` set isn't accessible from the
-                // strategy alone. Phase C may strengthen this once
-                // Filter signal schemas are typed.
                 if !predicate_has_upstream_filter(b, from_idx, predicate) {
                     return Err(ValidationError::PredicateWithoutUpstreamFilter {
                         from: edge.from_role.clone(),
@@ -452,9 +434,8 @@ fn validate_agent_pipeline(b: &Strategy) -> Result<(), ValidationError> {
 }
 
 /// Returns true when at least one `AgentRef` at index `<= from_idx`
-/// activates `Capability::Filter`. Conservative on `usize::MAX`
-/// (unknown role) — the upstream caller has already rejected the
-/// `UnknownPipelineRole` case so this is defensive.
+/// has a filter-like role. Conservative on `usize::MAX` (unknown role)
+/// because the upstream caller has already rejected that case.
 ///
 /// `_predicate` is reserved for a future enrichment where the validator
 /// inspects the predicate's `signal_field` against the Filter's typed
@@ -467,7 +448,17 @@ fn predicate_has_upstream_filter(strategy: &Strategy, from_idx: usize, _predicat
         .agents
         .iter()
         .take(from_idx + 1)
-        .any(|a| matches!(a.activates, Some(Capability::Filter)))
+        .any(|a| role_is_filter_like(&a.role))
+}
+
+fn role_is_filter_like(role: &str) -> bool {
+    let role = canonical_role(role);
+    role.contains("filter") || role.contains("regime") || role.contains("signal")
+}
+
+fn role_is_decision_like(role: &str) -> bool {
+    let role = canonical_role(role);
+    role.contains("trader") || role.contains("executor") || role.contains("arbiter") || role == "main"
 }
 
 #[cfg(test)]

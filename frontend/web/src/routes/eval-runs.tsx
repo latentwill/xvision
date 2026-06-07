@@ -51,6 +51,7 @@ import {
 } from "@/api/strategies";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { drawdownToneClass } from "@/lib/metric-tone";
+import { isProviderConfigured } from "@/lib/providers";
 import {
   displayScenarioName,
   displayStrategyName,
@@ -727,15 +728,15 @@ function StartEvalPanel({
   const selectedStrategyFirstAsset = selectedStrategyAssets[0];
   const effectiveLiveAsset = selectedStrategyFirstAsset ?? liveAsset;
   const reviewProviderRows = (providers.data?.providers ?? []).filter(
-    (row) => row.enabled_models.length > 0,
+    (row) => row.enabled_models.length > 0 && isProviderConfigured(row),
   );
   const activeReviewProvider =
     reviewProviderRows.find((row) => row.name === reviewProvider) ??
     reviewProviderRows[0];
   const activeReviewModel =
-    reviewModel ||
-    activeReviewProvider?.enabled_models[0] ||
-    "";
+    (reviewModel && activeReviewProvider?.enabled_models.includes(reviewModel))
+      ? reviewModel
+      : (activeReviewProvider?.enabled_models[0] ?? "");
   const displayedError =
     preflightError ?? (start.isError ? errorDetail(start.error) : null);
   const setupAction = preflightSetupAction(displayedError);
@@ -1149,15 +1150,14 @@ function evalPreflightError({
   }
 
   const rows = providers.data?.providers ?? [];
-  const hasCredentialedProvider = rows.some((row) => {
-    const noAuthProvider = row.api_key_env.trim().length === 0;
-    return row.api_key_set || noAuthProvider;
-  });
+  const hasCredentialedProvider = rows.some(isProviderConfigured);
   if (!hasCredentialedProvider) {
     return "Add a provider/API key in Settings -> Providers before running eval.";
   }
 
-  const hasEnabledModel = rows.some((row) => row.enabled_models.length > 0);
+  const hasEnabledModel = rows.some(
+    (row) => isProviderConfigured(row) && row.enabled_models.length > 0,
+  );
   if (!hasEnabledModel) {
     return "Enable a provider model in Settings -> Providers before running eval.";
   }
@@ -1172,8 +1172,7 @@ function evalPreflightError({
       if (!row) {
         return `provider '${pair.provider}' is not configured. Pick a configured provider/model for the strategy agent before running eval.`;
       }
-      const noAuthProvider = row.api_key_env.trim().length === 0;
-      if (!row.api_key_set && !noAuthProvider) {
+      if (!isProviderConfigured(row)) {
         return `provider '${pair.provider}' has no API key set. Add it in Settings -> Providers before running eval.`;
       }
       if (!row.enabled_models.includes(pair.model)) {

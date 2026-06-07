@@ -171,7 +171,7 @@ fn create_agent(home: &std::path::Path, name: &str) -> String {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
-                    capabilities: xvision_engine::agents::default_capabilities(),
+                    allowed_tools: Vec::new(),
                     delta_briefing: None,
                 }],
                 scope_strategy_id: None,
@@ -201,9 +201,9 @@ fn create_agent_strategy(home: &std::path::Path, id: &str, name: &str, agent_id:
         agent_id: agent_id.into(),
         role: "trader".into(),
         activates: Some(Capability::Trader),
-    prompt_override: None,
-    model_override: None,
-}];
+        prompt_override: None,
+        model_override: None,
+    }];
     strategy.regime_slot = None;
     strategy.trader_slot = None;
     let rt = tokio::runtime::Builder::new_current_thread()

@@ -29,7 +29,9 @@ describe("scenarioPreviewToWizardV2", () => {
     expect(result.candles.close).toEqual([1.5]);
     expect(result.candles.volume).toEqual([10]);
 
-    expect(result.equity).toEqual([{ time: 1, value: 1000 }]);
+    // normalizeEquityToReturnPct converts equity_usd to return % relative to
+    // the first point: ((1000 / 1000) - 1) * 100 = 0
+    expect(result.equity).toEqual([{ time: 1, value: 0 }]);
   });
 
   it("maps equity_usd to value", () => {
@@ -40,9 +42,12 @@ describe("scenarioPreviewToWizardV2", () => {
     ];
     const result = scenarioPreviewToWizardV2(p);
 
+    // normalizeEquityToReturnPct: base=500
+    // t=1: ((500/500) - 1) * 100 = 0
+    // t=2: ((750/500) - 1) * 100 = 50
     expect(result.equity).toEqual([
-      { time: 1, value: 500 },
-      { time: 2, value: 750 },
+      { time: 1, value: 0 },
+      { time: 2, value: 50 },
     ]);
   });
 

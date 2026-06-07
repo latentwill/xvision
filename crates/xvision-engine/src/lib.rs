@@ -30,11 +30,10 @@ pub use error::EngineError;
 pub use focus::FocusDoc;
 pub use strategies::Strategy;
 
-// Phase 4.1 capability-completeness diagnostics: typed readiness statuses
-// + launch gate. dspy-free (the optimizable set is a hardcoded mirror).
+// Tool-readiness diagnostics + launch gate.
 pub use diagnostics::{
-    assert_launchable, capability_diagnostics, diagnose, AgentDiagnostics, CapabilityDiagnostic,
-    CapabilityStatus, DiagnosticsError, StrategyDiagnostics, UnmetRequirement,
+    assert_launchable, capability_diagnostics, diagnose, AgentDiagnostics, DiagnosticsError,
+    StrategyDiagnostics, ToolDiagnostic, UnmetTool,
 };
 
 // Phase 4.2 no-short-circuit execution guardrails: pure detectors that map

@@ -1,4 +1,12 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
@@ -8,6 +16,7 @@ import {
   type CycleProgressEvent,
   type LineageNode,
   formatEventLabel,
+  getRunDefaults,
   startRunCycle,
   cancelRunCycle,
   useLineageNodes,
@@ -17,6 +26,10 @@ import {
   autooptimizerKeys,
 } from "./api";
 import {
+  clearStoredJudgeModel,
+  clearStoredJudgeProvider,
+  clearStoredMutatorModel,
+  clearStoredMutatorProvider,
   getStoredJudgeModel,
   getStoredMutatorModel,
   getStoredJudgeProvider,
@@ -28,8 +41,16 @@ import {
 } from "./preferences";
 import { listStrategies, strategyKeys } from "@/api/strategies";
 import { listProviders, settingsKeys } from "@/api/settings";
+import { isProviderConfigured } from "@/lib/providers";
 
 type EventRow = CycleProgressEvent & { _row_id: number };
+
+type OptimizerModelSelection = {
+  mutatorProvider: string | null;
+  mutatorModel: string;
+  judgeProvider: string | null;
+  judgeModel: string;
+};
 
 let nextRowId = 1;
 
@@ -201,7 +222,7 @@ function LivePageHeader({
 
 // ─── Left column ──────────────────────────────────────────────────────────────
 
-function LaunchStrip() {
+function LaunchStrip({ modelSelection }: { modelSelection: OptimizerModelSelection }) {
   const queryClient = useQueryClient();
   const [strategyId, setStrategyId] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -250,10 +271,10 @@ function LaunchStrip() {
     const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
     launchMutation.mutate({
       strategy_id: trimmed,
-      mutator_provider: getStoredMutatorProvider(),
-      mutator_model: getStoredMutatorModel(),
-      judge_provider: getStoredJudgeProvider(),
-      judge_model: getStoredJudgeModel(),
+      mutator_provider: modelSelection.mutatorProvider,
+      mutator_model: modelSelection.mutatorModel || null,
+      judge_provider: modelSelection.judgeProvider,
+      judge_model: modelSelection.judgeModel || null,
       budget_usd: budget,
       day_start: orNull(dayStart),
       day_end: orNull(dayEnd),
@@ -342,45 +363,121 @@ function LaunchStrip() {
   );
 }
 
-function ModelSelectRow() {
+function ModelSelectRow({
+  selection,
+  onSelectionChange,
+}: {
+  selection: OptimizerModelSelection;
+  onSelectionChange: Dispatch<SetStateAction<OptimizerModelSelection>>;
+}) {
   const providers = useQuery({ queryKey: settingsKeys.providers(), queryFn: listProviders });
   const rows = providers.data?.providers ?? [];
-  const [mutatorProvider, setMutatorProvider] = useState<string | null>(() => getStoredMutatorProvider());
-  const [mutatorModel, setMutatorModel] = useState<string>(() => getStoredMutatorModel() ?? "");
-  const [judgeProvider, setJudgeProvider] = useState<string | null>(() => getStoredJudgeProvider());
-  const [judgeModel, setJudgeModel] = useState<string>(() => getStoredJudgeModel() ?? "");
+  const defaults = useQuery({
+    queryKey: autooptimizerKeys.runDefaults(),
+    queryFn: getRunDefaults,
+  });
+  const optionKeys = useMemo(
+    () =>
+      new Set(
+        rows
+          .filter(isProviderConfigured)
+          .flatMap((r) => r.enabled_models.map((m) => `${r.name}::${m}`)),
+      ),
+    [rows],
+  );
+  useEffect(() => {
+    if (providers.isLoading) return;
+    const mutatorKey =
+      selection.mutatorProvider && selection.mutatorModel
+        ? `${selection.mutatorProvider}::${selection.mutatorModel}`
+        : "";
+    const judgeKey =
+      selection.judgeProvider && selection.judgeModel
+        ? `${selection.judgeProvider}::${selection.judgeModel}`
+        : "";
+
+    if (mutatorKey && !optionKeys.has(mutatorKey)) {
+      clearStoredMutatorProvider();
+      clearStoredMutatorModel();
+      onSelectionChange((s) => ({ ...s, mutatorProvider: null, mutatorModel: "" }));
+    }
+    if (judgeKey && !optionKeys.has(judgeKey)) {
+      clearStoredJudgeProvider();
+      clearStoredJudgeModel();
+      onSelectionChange((s) => ({ ...s, judgeProvider: null, judgeModel: "" }));
+    }
+  }, [onSelectionChange, optionKeys, providers.isLoading, selection]);
+
+  const fallbackSource = defaults.data?.config_exists ? "optimizer config" : "built-in fallback";
+  const mutatorFallback = defaults.data
+    ? `${defaults.data.mutator_provider} / ${defaults.data.mutator_model}`
+    : "loading fallback...";
+  const writerOverrideFallback =
+    selection.mutatorProvider && selection.mutatorModel
+      ? `${selection.mutatorProvider} / ${selection.mutatorModel}`
+      : null;
+  const judgeFallback = writerOverrideFallback
+    ? writerOverrideFallback
+    : defaults.data
+      ? `${defaults.data.judge_provider} / ${defaults.data.judge_model}`
+      : "loading fallback...";
+  const judgeFallbackSource = writerOverrideFallback ? "experiment writer" : fallbackSource;
   const sel = "min-h-9 bg-surface-elev border border-border rounded text-text text-[13px] px-2 py-1";
   return (
     <div className="space-y-3 pt-3 border-t border-border">
       <div className="space-y-1.5">
         <span className="text-text-3 text-[12px] block">
-          Experiment writer
+          Experiment writer model override
         </span>
         <ModelPicker
           rows={rows}
           loading={providers.isLoading}
-          provider={mutatorProvider}
-          model={mutatorModel}
-          onChange={(p, m) => { setMutatorProvider(p); setMutatorModel(m); if (p !== null) setStoredMutatorProvider(p); if (m) setStoredMutatorModel(m); }}
+          provider={selection.mutatorProvider}
+          model={selection.mutatorModel}
+          onChange={(p, m) => {
+            onSelectionChange((s) => ({ ...s, mutatorProvider: p, mutatorModel: m }));
+            if (p === null || m === "") {
+              clearStoredMutatorProvider();
+              clearStoredMutatorModel();
+            } else {
+              setStoredMutatorProvider(p);
+              setStoredMutatorModel(m);
+            }
+          }}
           className={`${sel} w-full`}
-          ariaLabel="Experiment writer model"
-          placeholder="Use config default"
+          ariaLabel="Experiment writer model override"
+          placeholder="No override"
         />
+        <p className="text-[11px] text-text-3">
+          No override uses {fallbackSource}: <span className="font-mono">{mutatorFallback}</span>.
+        </p>
       </div>
       <div className="space-y-1.5">
         <span className="text-text-3 text-[12px] block">
-          Reviewer
+          Reviewer model override
         </span>
         <ModelPicker
           rows={rows}
           loading={providers.isLoading}
-          provider={judgeProvider}
-          model={judgeModel}
-          onChange={(p, m) => { setJudgeProvider(p); setJudgeModel(m); if (p !== null) setStoredJudgeProvider(p); if (m) setStoredJudgeModel(m); }}
+          provider={selection.judgeProvider}
+          model={selection.judgeModel}
+          onChange={(p, m) => {
+            onSelectionChange((s) => ({ ...s, judgeProvider: p, judgeModel: m }));
+            if (p === null || m === "") {
+              clearStoredJudgeProvider();
+              clearStoredJudgeModel();
+            } else {
+              setStoredJudgeProvider(p);
+              setStoredJudgeModel(m);
+            }
+          }}
           className={`${sel} w-full`}
-          ariaLabel="Reviewer model"
-          placeholder="Use writer provider/default"
+          ariaLabel="Reviewer model override"
+          placeholder="No override"
         />
+        <p className="text-[11px] text-text-3">
+          No override reviews with {judgeFallbackSource}: <span className="font-mono">{judgeFallback}</span>.
+        </p>
       </div>
       {providers.isError && (
         <p className="text-[12px] text-danger">Could not load provider models.</p>
@@ -390,6 +487,13 @@ function ModelSelectRow() {
 }
 
 function CycleLeftCard() {
+  const [selection, setSelection] = useState<OptimizerModelSelection>({
+    mutatorProvider: getStoredMutatorProvider(),
+    mutatorModel: getStoredMutatorModel() ?? "",
+    judgeProvider: getStoredJudgeProvider(),
+    judgeModel: getStoredJudgeModel() ?? "",
+  });
+
   return (
     <div
       id="optimizer-run-controls"
@@ -399,8 +503,8 @@ function CycleLeftCard() {
         Optimizer Run
       </span>
       <Pill tone="default">No cycle running</Pill>
-      <LaunchStrip />
-      <ModelSelectRow />
+      <LaunchStrip modelSelection={selection} />
+      <ModelSelectRow selection={selection} onSelectionChange={setSelection} />
     </div>
   );
 }

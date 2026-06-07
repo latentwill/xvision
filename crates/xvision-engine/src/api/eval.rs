@@ -1562,15 +1562,13 @@ async fn assert_launchable_with_guardrails(
             _ => Vec::new(),
         };
     let available_providers = available_providers.as_slice();
-    // ── Phase 4.1: capability-completeness launch gate ──────────────────
-    // Compute typed diagnostics and refuse the launch if any REQUIRED
-    // capability is unmet. OPTIONAL capabilities never block.
+    // ── Tool-readiness launch gate ──────────────────────────────────────
     let diag = crate::diagnostics::capability_diagnostics(ctx, strategy_id).await?;
     if let Err(e) = crate::diagnostics::assert_launchable(&diag) {
         tracing::warn!(
             strategy_id,
             error = %e,
-            "eval launch blocked by capability diagnostics (not launchable)",
+            "eval launch blocked by tool diagnostics (not launchable)",
         );
         return Err(ApiError::Validation(format!(
             "strategy `{strategy_id}` is not launchable: {e}",
@@ -1581,10 +1579,9 @@ async fn assert_launchable_with_guardrails(
     // Assemble the set of tools available to the run: built-ins ∪ the
     // strategy manifest's `required_tools` ∪ any per-slot grants. This is
     // the same union `check_missing_tool` expects.
-    let mut available_tools: Vec<String> = ToolRegistry::default_with_builtins()
-        .list()
+    let mut available_tools: Vec<String> = crate::tools::built_in_tool_descriptors()
         .into_iter()
-        .map(|t| t.as_str().to_string())
+        .map(|t| t.name)
         .collect();
     for t in &strategy.manifest.required_tools {
         if !available_tools.contains(t) {
@@ -1616,8 +1613,7 @@ async fn assert_launchable_with_guardrails(
         }
     }
 
-    // Per-slot prompt / provider / tool preflight. The required tool set is
-    // driven by each slot's primary capability (`required_tools_for`).
+    // Per-slot prompt / provider / tool preflight.
     for resolved in agent_slots {
         let role = resolved.role.as_str();
 
@@ -1638,17 +1634,12 @@ async fn assert_launchable_with_guardrails(
             }
         }
 
-        // missing_tool: every tool the slot's primary capability requires
-        // must be granted somewhere. The primary capability is the first
-        // declared one (matching diagnostics' `required_capability`),
-        // falling back to Trader for legacy slots.
-        let primary_cap = resolved
-            .capabilities
-            .iter()
-            .next()
-            .copied()
-            .unwrap_or(crate::agents::Capability::Trader);
-        for tool in crate::diagnostics::required_tools_for(primary_cap) {
+        let effective_tools = if resolved.slot.allowed_tools.is_empty() {
+            strategy.manifest.required_tools.as_slice()
+        } else {
+            resolved.slot.allowed_tools.as_slice()
+        };
+        for tool in effective_tools {
             if let Err(sc) = crate::guardrails::check_missing_tool(role, tool, &available_tools) {
                 return Err(short_circuit_validation(strategy_id, &sc));
             }
@@ -2181,7 +2172,7 @@ async fn spawn_cline_ctx(
 
     let tool_asset_guard = Arc::new(tokio::sync::RwLock::new(None));
     let dispatch: Arc<dyn ToolDispatch> = Arc::new(ToolRegistryDispatch {
-        tools,
+        tools: tools.clone(),
         current_asset: tool_asset_guard.clone(),
     });
     let bus = ctx
@@ -2216,6 +2207,11 @@ async fn spawn_cline_ctx(
             )));
         }
     };
+
+    client
+        .register_tools(crate::tools::built_in_tool_descriptors())
+        .await
+        .map_err(|e| ApiError::Internal(format!("register agentd tools: {e}")))?;
 
     // Couple the dispatcher's `StartRunParams.slot_role` to the recording's
     // key slot_role (footgun c): the dispatcher stamps `recording_slot_role`
@@ -4413,7 +4409,6 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
-            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         }];
 
@@ -4458,7 +4453,6 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
-            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         }];
 
@@ -4494,7 +4488,6 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             agent_id: String::new(),
-            capabilities: std::collections::BTreeSet::new(),
             noop_skip: true,
         }];
 

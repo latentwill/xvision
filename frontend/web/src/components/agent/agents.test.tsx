@@ -54,6 +54,7 @@ const baseAgent = {
       model: "claude-sonnet-4-6",
       system_prompt: "Follow the plan.",
       skill_ids: [],
+    allowed_tools: [],
       max_tokens: null,
     },
   ],

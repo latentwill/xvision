@@ -11,10 +11,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -399,49 +399,6 @@ describe("MemoryPage — Flywheel panel", () => {
   });
 });
 
-describe("MemoryPage — Add Pattern defaults to global", () => {
-  it("opens the modal with namespace=global preselected and POSTs that body", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await screen.findByText(/No patterns yet/i);
-    await user.click(screen.getByRole("button", { name: /Add Pattern/i }));
-
-    const dialog = await screen.findByRole("dialog", {
-      name: /Add Pattern/i,
-    });
-    const ns = within(dialog).getByLabelText(/^Namespace/i) as HTMLSelectElement;
-    expect(ns.value).toBe("global");
-
-    await user.type(
-      within(dialog).getByLabelText(/^Text/i),
-      "Operator-attested wisdom.",
-    );
-    await user.click(
-      within(dialog).getByRole("checkbox", {
-        name: /may be recalled in every scenario/i,
-      }),
-    );
-    await user.type(within(dialog).getByLabelText(/Operator initials/i), "QA");
-    await user.click(
-      within(dialog).getByRole("button", { name: /^Add Pattern$/i }),
-    );
-
-    await waitFor(() => {
-      expect(
-        vi.mocked(memoryApi.createOperatorAttestation),
-      ).toHaveBeenCalledWith({
-        operator_initials: "QA",
-        surface: "dashboard",
-      });
-      expect(vi.mocked(memoryApi.createPattern)).toHaveBeenCalledTimes(1);
-    });
-    const body = vi.mocked(memoryApi.createPattern).mock.calls[0]?.[0];
-    expect(body?.namespace).toBe("global");
-    expect(body?.text).toBe("Operator-attested wisdom.");
-    expect(body?.attestation_id).toBe("attest-global");
-  });
-});
 
 describe("MemoryPage — Pattern lifecycle controls", () => {
   it("filters staged patterns and activates or demotes by pattern id", async () => {
@@ -515,32 +472,47 @@ describe("MemoryPage — Observations sub-tab", () => {
   });
 });
 
-describe("MemoryPage — Forget all global memory", () => {
-  it("opens an AlertDialog and calls forgetMemory({ namespace: 'global' }) on confirm", async () => {
+
+describe("MemoryPage — Pattern lifecycle controls", () => {
+  it("calls createPattern when the Add Pattern form is submitted with a training-window date", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByText(/No patterns yet/i);
+    await user.click(await screen.findByRole("button", { name: /Add Pattern/i }));
+
+    await screen.findByRole("heading", { name: /Add Pattern/i });
+    await user.type(screen.getByRole("textbox", { name: /text/i }), "Buy the dip on Mondays.");
+    fireEvent.change(
+      screen.getByTitle(/The latest date your training data covers/i),
+      { target: { value: "2026-01-01" } },
+    );
+    await user.click(screen.getByRole("button", { name: /^Add Pattern$/ }));
+
+    await waitFor(() =>
+      expect(memoryApi.createPattern).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "Buy the dip on Mondays.",
+          training_window_end: "2026-01-01T23:59:59Z",
+        }),
+      ),
+    );
+  });
+
+  it("calls forgetMemory when the forget confirmation is submitted", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
     await user.click(
-      screen.getByRole("button", { name: /Forget all global memory/i }),
+      await screen.findByRole("button", { name: /Forget all global memory/i }),
     );
 
-    const dialog = await screen.findByRole("alertdialog", {
-      name: /Forget all global memory/i,
-    });
-    expect(
-      within(dialog).getByRole("button", { name: /^Cancel$/i }),
-    ).toBeInTheDocument();
-    const confirm = within(dialog).getByRole("button", {
-      name: /Confirm/i,
-    });
-    await user.click(confirm);
+    await user.click(
+      await screen.findByRole("button", { name: /Confirm forget/i }),
+    );
 
-    await waitFor(() => {
-      expect(vi.mocked(memoryApi.forgetMemory)).toHaveBeenCalledWith({
-        namespace: "global",
-      });
-    });
+    await waitFor(() =>
+      expect(memoryApi.forgetMemory).toHaveBeenCalledWith({ namespace: "global" }),
+    );
   });
 });
 

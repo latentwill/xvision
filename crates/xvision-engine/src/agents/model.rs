@@ -1,21 +1,9 @@
 //! Agent + AgentSlot value types.
 
-use std::collections::BTreeSet;
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::agents::capability::Capability;
 use xvision_core::providers::{lookup_model, ModelMetadata};
-
-/// Back-compat default for the `AgentSlot.capabilities` field
-/// (migration 033). Pre-033 rows and JSON payloads that omit the field
-/// resolve to `{Trader}` — every slot in the pre-capability world was
-/// implicitly a trader, and the dispatcher's pre-Phase-B role-string
-/// path still expects that.
-pub fn default_capabilities() -> BTreeSet<Capability> {
-    BTreeSet::from([Capability::Trader])
-}
 
 /// Generic conservative cap for unknown providers / unannounced models
 /// when `provider_default_max_tokens` can't find a canonical metadata
@@ -332,17 +320,11 @@ pub struct AgentSlot {
     #[serde(default)]
     #[cfg_attr(feature = "ts-export", ts(type = "boolean | null"))]
     pub noop_skip: Option<bool>,
-    /// Closed set of capability classes this slot can play in a strategy
-    /// pipeline (Phase A of the capability-first agent model spec,
-    /// `docs/superpowers/specs/2026-05-22-capability-first-agent-model-and-graph-composition.md`).
-    ///
-    /// Default = `{Trader}` so every pre-033 slot keeps today's
-    /// behavior on the back-compat path. Persisted as a JSON array on
-    /// `agent_slots.capabilities` (migration 033). The Phase B unified
-    /// dispatcher reads this set to decide which capability handler
-    /// runs; Phase A only persists the shape.
-    #[serde(default = "default_capabilities")]
-    pub capabilities: BTreeSet<Capability>,
+    /// Tool names this slot is allowed to invoke. Empty means callers may
+    /// fall back to a strategy-level required tool list for legacy strategy
+    /// slots; persisted as JSON on `agent_slots.allowed_tools_json`.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
     /// Per-slot opt-in for **delta-briefing mode** (F41 token-efficiency
     /// tail). When `Some(true)`, the trader briefing for bar N+1 is
     /// compressed to **only the delta** from bar N's briefing — changed
@@ -467,7 +449,7 @@ impl Agent {
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                capabilities: default_capabilities(),
+                allowed_tools: Vec::new(),
                 delta_briefing: None,
             }],
             archived: false,

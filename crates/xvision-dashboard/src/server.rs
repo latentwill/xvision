@@ -134,9 +134,10 @@
 //  R54. GET  /api/flywheel/velocity
 //  R55. GET  /api/flywheel/lineage
 //  R56. GET  /api/autooptimizer
-//  R57. GET  /api/autooptimizer/:id
-//  R58. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
-//  R59. GET  /api/autooptimizer/blob/:hash
+//  R57. GET  /api/autooptimizer/run-defaults
+//  R58. GET  /api/autooptimizer/:id
+//  R59. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
+//  R60. GET  /api/autooptimizer/blob/:hash
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -169,7 +170,7 @@ use crate::routes::{
     health::health,
     memory as memory_route, optimizations as optimizations_route, safety as safety_route, scenarios,
     search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, wizard,
+    strategies_folder as strategies_folder_route, tools as tools_route, wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -198,6 +199,7 @@ fn readonly_router(state: AppState) -> Router {
         )
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
+        .route("/api/tools", get(tools_route::list))
         .route("/api/strategies", get(strategies::list))
         .route("/api/templates", get(strategies::list_templates))
         .route("/api/strategy/:id", get(strategies::get))
@@ -282,6 +284,10 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/lineage",
             get(autooptimizer_route::list_lineage),
+        )
+        .route(
+            "/api/autooptimizer/run-defaults",
+            get(autooptimizer_cycle::run_defaults),
         )
         .route(
             "/api/autooptimizer/lineage/:hash",

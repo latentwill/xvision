@@ -1,18 +1,20 @@
 // frontend/web/src/features/agent-runs/SpanInspector.tsx
 import { useCallback, useState, type ReactNode } from "react";
 import type {
+  AgentRunDetail,
   AgentRunSummary,
   BrokerCallDetail,
   RetentionMode,
   RunSpan,
 } from "@/api/types-agent-runs";
 import { TrajectoryModePill } from "./TrajectoryModeBadge";
-import { fetchAgentRunBlob } from "@/api/agent-runs";
+import { agentRunKeys, fetchAgentRunBlob } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { spanColor, withAlpha } from "./span-colors";
 import { PullQuote } from "./PullQuote";
 import { formatTraceLabel } from "./trace-labels";
+import { useQueryClient } from "@tanstack/react-query";
 
 type SpanInspectorProps = {
   span: RunSpan;
@@ -92,16 +94,24 @@ function durationMs(span: RunSpan): number | null {
 
 /**
  * Reason text for the prompt / response placeholder when no
- * `payload_ref` is available on the span. Retention-specific copy is
- * intentionally disabled with the retention UI; keep the mode argument
- * for back-compat with existing callers and tests.
+ * `payload_ref` is available on the span. Returns retention-mode-aware
+ * copy so the operator understands why the body is absent.
  */
 export function payloadPlaceholderReason(
-  _retentionMode: RetentionMode | undefined,
+  retentionMode: RetentionMode | undefined,
   kind: "prompt" | "response",
 ): string {
   const noun = kind === "prompt" ? "prompt body" : "completion body";
-  return `${noun} not available for this run`;
+  switch (retentionMode) {
+    case "full_debug":
+      return `${noun} not captured for this run — re-run to capture`;
+    case "redacted":
+      return `redacted retention — ${noun} suppressed`;
+    case "hash_only":
+      return `hash-only retention — ${noun} not stored on disk`;
+    default:
+      return `${noun} not stored on disk`;
+  }
 }
 
 /** Back-compat alias — `promptPlaceholderReason("full_debug")` is the
@@ -257,9 +267,13 @@ export function SpanInspector({
   // doesn't carry it as a prop (parent always sets activeRunId on the
   // trace dock when navigating to the run detail page).
   const activeRunId = useTraceDock((s) => s.activeRunId);
-  // Retention-mode explanation is intentionally disabled for now; keep
-  // the local value undefined so placeholder copy stays neutral.
-  const retentionMode: RetentionMode | undefined = undefined;
+  // Read retention mode from the React Query cache so the placeholder
+  // copy is accurate per-run without an extra network request.
+  const queryClient = useQueryClient();
+  const retentionMode: RetentionMode | undefined = activeRunId
+    ? (queryClient.getQueryData<AgentRunDetail>(agentRunKeys.run(activeRunId))
+        ?.summary?.retention_mode ?? undefined)
+    : undefined;
   // The streaming slice is populated by `agent-runs.ts`'s real SSE
   // branch. Span is considered live-streaming iff the SSE feed has
   // marked it active AND it has not been closed by `span_finished` /

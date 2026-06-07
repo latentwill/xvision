@@ -33,20 +33,8 @@ use support::api_eval_run_context as ctx_with_tables;
 
 const FLASH_SCENARIO_ID: &str = "flash-crash-2024-08";
 
-/// Build an `AgentSlot` with the given knobs. `capabilities` defaults to the
-/// legacy Trader set when empty.
-fn slot(
-    name: &str,
-    provider: &str,
-    model: &str,
-    system_prompt: &str,
-    capabilities: std::collections::BTreeSet<xvision_engine::agents::Capability>,
-) -> AgentSlot {
-    let caps = if capabilities.is_empty() {
-        xvision_engine::agents::default_capabilities()
-    } else {
-        capabilities
-    };
+/// Build an `AgentSlot` with the given knobs.
+fn slot(name: &str, provider: &str, model: &str, system_prompt: &str, allowed_tools: Vec<&str>) -> AgentSlot {
     AgentSlot {
         name: name.into(),
         provider: provider.into(),
@@ -61,7 +49,7 @@ fn slot(
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
-        capabilities: caps,
+        allowed_tools: allowed_tools.into_iter().map(str::to_string).collect(),
         delta_briefing: None,
     }
 }
@@ -231,13 +219,7 @@ async fn launch_refused_for_missing_required_capability() {
     let agent_id = seed_agent(
         &ctx,
         "router-trader",
-        slot(
-            "main",
-            "anthropic",
-            "claude-sonnet-4.6",
-            "Decide.",
-            std::collections::BTreeSet::new(),
-        ),
+        slot("main", "anthropic", "claude-sonnet-4.6", "Decide.", vec![]),
     )
     .await;
     save_strategy(
@@ -248,10 +230,10 @@ async fn launch_refused_for_missing_required_capability() {
             role: "trader".into(),
             // Activate a capability with no live runtime handler.
             activates: Some(xvision_engine::agents::Capability::Router),
-        prompt_override: None,
-        model_override: None,
-}],
-        vec![],
+            prompt_override: None,
+            model_override: None,
+        }],
+        vec!["router".into(), "submit_decision".into()],
     )
     .await;
 
@@ -292,7 +274,7 @@ async fn launch_refused_missing_prompt() {
             "anthropic",
             "claude-sonnet-4.6",
             "   ", // whitespace-only → MissingPrompt
-            std::collections::BTreeSet::new(),
+            vec!["ohlcv", "submit_decision"],
         ),
     )
     .await;
@@ -303,11 +285,10 @@ async fn launch_refused_missing_prompt() {
             agent_id,
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
-        // Grant ohlcv so missing_tool does not pre-empt the prompt blocker.
-        vec!["ohlcv".into()],
+            prompt_override: None,
+            model_override: None,
+        }],
+        vec![],
     )
     .await;
 
@@ -342,7 +323,7 @@ async fn launch_does_not_treat_builtin_trader_tool_as_missing() {
             "anthropic",
             "claude-sonnet-4.6",
             "Decide.",
-            std::collections::BTreeSet::new(),
+            vec!["ohlcv", "submit_decision"],
         ),
     )
     .await;
@@ -353,9 +334,9 @@ async fn launch_does_not_treat_builtin_trader_tool_as_missing() {
             agent_id,
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         vec![], // no explicit ohlcv grant; built-in registry supplies it
     )
     .await;
@@ -393,7 +374,7 @@ async fn launch_refused_provider_unavailable() {
             "ghost-provider", // never appears in provider_names
             "some-model",
             "Decide.",
-            std::collections::BTreeSet::new(),
+            vec!["ohlcv", "submit_decision"],
         ),
     )
     .await;
@@ -404,9 +385,9 @@ async fn launch_refused_provider_unavailable() {
             agent_id,
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         vec!["ohlcv".into()],
     )
     .await;
