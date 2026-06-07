@@ -106,6 +106,14 @@ const MIGRATION_054_AGENT_SLOT_OPTIMIZATION_GATES: &str =
     include_str!("../../migrations/054_agent_slot_optimization_gates.sql");
 const MIGRATION_056_AGENT_SLOT_ALLOWED_TOOLS: &str =
     include_str!("../../migrations/056_agent_slot_allowed_tools.sql");
+/// Migration 057: `autooptimizer_session_state` + `autooptimizer_events` tables.
+/// Tracks per-optimizer-run session lifecycle state and a structured event log.
+/// Applied via `migrate_autooptimizer_sessions` (guarded on the
+/// `autooptimizer_session_state` table existing) using `split_sql_statements`
+/// because the file contains multiple CREATE TABLE + CREATE INDEX statements
+/// that a single `sqlx::query` cannot batch.
+const MIGRATION_057_AUTOOPTIMIZER_SESSIONS: &str =
+    include_str!("../../migrations/057_autooptimizer_sessions.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -388,6 +396,11 @@ impl ApiContext {
         migrate_agent_slot_optimizations(&pool).await?;
         migrate_pattern_optimizations(&pool).await?;
         migrate_agent_slot_allowed_tools(&pool).await?;
+        migrate_autooptimizer_sessions(&pool).await?;
+        // P1-W2: crash recovery — mark any in-flight sessions as failed.
+        crate::autooptimizer::session::mark_interrupted_sessions(&pool)
+            .await
+            .unwrap_or_else(|e| tracing::warn!("session crash recovery: {e}"));
         migrate_trajectory_frames(&pool).await?;
         migrate_chat_session_rail_state(&pool).await?;
         migrate_session_events(&pool).await?;
@@ -1678,6 +1691,20 @@ async fn migrate_agent_slot_allowed_tools(pool: &SqlitePool) -> ApiResult<()> {
     Ok(())
 }
 
+/// Apply migration 057: `autooptimizer_session_state` + `autooptimizer_events`
+/// tables. The migration file contains multiple CREATE TABLE + CREATE INDEX
+/// statements that a single `sqlx::query` cannot batch, so we use
+/// `split_sql_statements` and run each on its own. Idempotent — guarded on the
+/// `autooptimizer_session_state` table not existing so a re-open is a no-op.
+async fn migrate_autooptimizer_sessions(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_exists(pool, "autooptimizer_session_state").await? {
+        for stmt in split_sql_statements(MIGRATION_057_AUTOOPTIMIZER_SESSIONS) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    Ok(())
+}
+
 /// Stage 1 (Cline runtime unification, operational-visibility contract
 /// item 3). Adds `trajectory_mode` (+ Stage 2-3 sibling columns) to
 /// `agent_runs`. Idempotent: guarded on `trajectory_mode` existing so
@@ -2190,5 +2217,163 @@ mod migration_registry_tests {
         assert!(stmts[1].starts_with("CREATE INDEX i"));
         assert!(!stmts[0].contains("--"));
         assert!(!stmts[1].contains("--"));
+    }
+
+    /// P1-W1: migration 057 (`autooptimizer_session_state` +
+    /// `autooptimizer_events`) is applied by the hand-maintained
+    /// `ApiContext::open` registry via `migrate_autooptimizer_sessions`.
+    /// Without the wiring the tables never exist at runtime and any optimizer
+    /// session store open would fail with "no such table". This proves the
+    /// helper creates both tables + all indexes on a fresh DB and that
+    /// re-running is a no-op (idempotency requirement).
+    #[tokio::test]
+    async fn migrate_autooptimizer_sessions_creates_tables_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        assert!(!table_exists(&pool, "autooptimizer_session_state").await.unwrap());
+        assert!(!table_exists(&pool, "autooptimizer_events").await.unwrap());
+
+        // First run: creates both tables.
+        migrate_autooptimizer_sessions(&pool).await.unwrap();
+
+        assert!(
+            table_exists(&pool, "autooptimizer_session_state").await.unwrap(),
+            "autooptimizer_session_state missing after first migrate"
+        );
+        assert!(
+            table_exists(&pool, "autooptimizer_events").await.unwrap(),
+            "autooptimizer_events missing after first migrate"
+        );
+
+        // Verify autooptimizer_session_state columns.
+        for col in [
+            "session_id",
+            "strategy_id",
+            "config_json",
+            "state",
+            "mode",
+            "cycles_planned",
+            "cycles_completed",
+            "kept_count",
+            "suspect_count",
+            "dropped_count",
+            "error",
+            "created_at",
+            "started_at",
+            "finished_at",
+        ] {
+            assert!(
+                table_has_column(&pool, "autooptimizer_session_state", col).await.unwrap(),
+                "column {col} missing on autooptimizer_session_state"
+            );
+        }
+
+        // Verify autooptimizer_events columns + AUTOINCREMENT seq.
+        for col in ["seq", "session_id", "cycle_id", "kind", "payload_json", "ts"] {
+            assert!(
+                table_has_column(&pool, "autooptimizer_events", col).await.unwrap(),
+                "column {col} missing on autooptimizer_events"
+            );
+        }
+
+        // Verify seq AUTOINCREMENT by inserting two rows and checking seq increments.
+        sqlx::query(
+            "INSERT INTO autooptimizer_events (session_id, kind, payload_json, ts) \
+             VALUES ('s1', 'test', '{}', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO autooptimizer_events (session_id, kind, payload_json, ts) \
+             VALUES ('s1', 'test2', '{}', '2026-01-01T00:00:01Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let seqs: Vec<(i64,)> = sqlx::query_as("SELECT seq FROM autooptimizer_events ORDER BY seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(seqs.len(), 2);
+        assert!(seqs[1].0 > seqs[0].0, "seq must be monotonically increasing (AUTOINCREMENT)");
+
+        // Second run is a no-op (guarded on table existence) — must not error.
+        migrate_autooptimizer_sessions(&pool).await.unwrap();
+    }
+
+    /// P1-W1: CHECK constraints on `autooptimizer_session_state` reject invalid
+    /// `state` and `mode` values. An INSERT with an invalid enum value must fail;
+    /// an INSERT with valid values must succeed.
+    #[tokio::test]
+    async fn autooptimizer_session_state_check_constraints_reject_invalid_values() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        migrate_autooptimizer_sessions(&pool).await.unwrap();
+
+        // Valid insert must succeed.
+        let ok = sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sid-ok', 'strat-1', '{}', 'running', 'once', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(ok.is_ok(), "valid INSERT should succeed: {:?}", ok.err());
+
+        // Invalid state must fail CHECK constraint.
+        let bad_state = sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sid-bad-state', 'strat-1', '{}', 'invalid_state', 'once', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            bad_state.is_err(),
+            "INSERT with invalid state should fail CHECK constraint"
+        );
+
+        // Invalid mode must fail CHECK constraint.
+        let bad_mode = sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sid-bad-mode', 'strat-1', '{}', 'queued', 'invalid_mode', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            bad_mode.is_err(),
+            "INSERT with invalid mode should fail CHECK constraint"
+        );
+
+        // All valid state values must be accepted.
+        for (i, state) in ["queued", "running", "paused", "cancelling", "cancelled", "finished", "failed"]
+            .iter()
+            .enumerate()
+        {
+            let res = sqlx::query(
+                "INSERT INTO autooptimizer_session_state \
+                 (session_id, strategy_id, config_json, state, mode, created_at) \
+                 VALUES (?, 'strat-1', '{}', ?, 'once', '2026-01-01T00:00:00Z')",
+            )
+            .bind(format!("sid-state-{i}"))
+            .bind(state)
+            .execute(&pool)
+            .await;
+            assert!(res.is_ok(), "valid state '{state}' should be accepted: {:?}", res.err());
+        }
+
+        // All valid mode values must be accepted.
+        for (i, mode) in ["once", "n_experiments", "until_budget"].iter().enumerate() {
+            let res = sqlx::query(
+                "INSERT INTO autooptimizer_session_state \
+                 (session_id, strategy_id, config_json, state, mode, created_at) \
+                 VALUES (?, 'strat-1', '{}', 'queued', ?, '2026-01-01T00:00:00Z')",
+            )
+            .bind(format!("sid-mode-{i}"))
+            .bind(mode)
+            .execute(&pool)
+            .await;
+            assert!(res.is_ok(), "valid mode '{mode}' should be accepted: {:?}", res.err());
+        }
     }
 }
