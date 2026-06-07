@@ -107,122 +107,63 @@ describe("HomeRoute", () => {
     expect(screen.queryByText("Local health")).toBeNull();
   });
 
-  it("renders the latest-eval sub-line on the Chart snapshot card", async () => {
-    vi.mocked(evalApi.listRuns).mockResolvedValue([
-      {
-        id: "01RUN0001",
-        agent_id: "01STRAT",
-        scenario_id: "user-scenario-4h",
-        mode: "backtest",
-        status: "completed",
-        started_at: "2026-05-13T07:00:00Z",
-        completed_at: "2026-05-13T08:15:00Z",
-        sharpe: 1.2,
-        max_drawdown_pct: 4.5,
-        total_return_pct: 8.1,
-        error: null,
-        actual_input_tokens: 1000,
-        actual_output_tokens: 250,
-      } as never,
-    ]);
-    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
-      {
-        agent_id: "01STRAT",
-        display_name: "Trend 4H",
-        template: "trend_follower",
-        decision_cadence_minutes: 240,
-        providers: ["openai"],
-        models: ["gpt-4.1-mini"],
-      } as never,
-    ]);
-    vi.mocked(scenarioApi.listScenarios).mockResolvedValue([
-      {
-        id: "user-scenario-4h",
-        display_name: "User 4H",
-      } as never,
-    ]);
-
+  // S1-W2: CountCard removed
+  it("does NOT render count-card elements", async () => {
     renderRoute();
-
-    await waitFor(() =>
-      expect(screen.getByText(/Latest eval/)).toBeInTheDocument(),
-    );
-    const sub = screen.getByText(/Latest eval/);
-    expect(sub.textContent).toContain("Trend 4H");
-    expect(sub.textContent).toContain("User 4H");
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(document.querySelector('[data-testid="count-card"]')).toBeNull();
   });
 
-  it("renders recent runs as eval rows with readable names", async () => {
-    vi.mocked(evalApi.listRuns).mockResolvedValue([
-      {
-        id: "01RUN0001",
-        agent_id: "01STRAT",
-        scenario_id: "user-scenario-4h",
-        mode: "backtest",
-        status: "queued",
-        started_at: "2026-05-13T07:00:00Z",
-        completed_at: null,
-        sharpe: null,
-        max_drawdown_pct: null,
-        total_return_pct: null,
-        error: null,
-        actual_input_tokens: null,
-        actual_output_tokens: null,
-      } as never,
-    ]);
-    vi.mocked(strategyApi.listStrategies).mockResolvedValue([
-      {
-        agent_id: "01STRAT",
-        display_name: "Trend 4H",
-        template: "trend_follower",
-        decision_cadence_minutes: 240,
-        providers: ["openai"],
-        models: ["gpt-4.1-mini"],
-      } as never,
-    ]);
-    vi.mocked(scenarioApi.listScenarios).mockResolvedValue([
-      {
-        id: "user-scenario-4h",
-        display_name: "User 4H",
-      } as never,
-    ]);
-
+  // S1-W2: ControlChartCard removed
+  it("does NOT render control-chart-card element", async () => {
     renderRoute();
-
-    expect(await screen.findByText("Eval")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Trend 4H" })).toHaveAttribute(
-      "href",
-      "/eval-runs/01RUN0001",
-    );
-    expect(screen.getByText("User 4H")).toBeInTheDocument();
-    expect(screen.queryByText("01RUN0001")).not.toBeInTheDocument();
-    expect(screen.getByText("queued")).toHaveAttribute("aria-busy", "true");
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(document.querySelector('[data-testid="control-chart-card"]')).toBeNull();
   });
 
-  it("links the chart card's open-eval action to the latest run when one exists", async () => {
-    vi.mocked(evalApi.listRuns).mockResolvedValue([
-      {
-        id: "01RUNXYZ",
-        agent_id: "01STRAT",
-        scenario_id: "user-scenario-4h",
-        mode: "backtest",
-        status: "completed",
-        started_at: "2026-05-13T07:00:00Z",
-        completed_at: null,
-        sharpe: null,
-        max_drawdown_pct: null,
-        total_return_pct: null,
-        error: null,
-        actual_input_tokens: 0,
-        actual_output_tokens: 0,
-      } as never,
-    ]);
-
+  // S1-W2: NagStripStub present
+  it("renders nag-strip stub", async () => {
     renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(document.querySelector('[data-testid="nag-strip"]')).not.toBeNull();
+  });
 
-    await waitFor(() => {
-      const link = screen.getByRole("link", { name: /open eval/ });
-      expect(link).toHaveAttribute("href", "/eval-runs/01RUNXYZ");
-    });
+  // S1-W2: All new section stubs present
+  it("renders all section stubs in order", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const activeTasksStrip = document.querySelector('[data-testid="active-tasks-strip"]');
+    const liveStrategiesSection = document.querySelector('[data-testid="live-strategies-section"]');
+    const criticalFindingsRow = document.querySelector('[data-testid="critical-findings-row"]');
+    const strategyOutcomesList = document.querySelector('[data-testid="strategy-outcomes-list"]');
+    const nagStrip = document.querySelector('[data-testid="nag-strip"]');
+
+    expect(activeTasksStrip).not.toBeNull();
+    expect(liveStrategiesSection).not.toBeNull();
+    expect(criticalFindingsRow).not.toBeNull();
+    expect(strategyOutcomesList).not.toBeNull();
+    expect(nagStrip).not.toBeNull();
+
+    // Verify DOM order
+    const container = activeTasksStrip!.parentElement!;
+    const children = Array.from(container.children);
+    const idxActive = children.indexOf(activeTasksStrip as Element);
+    const idxLive = children.indexOf(liveStrategiesSection as Element);
+    const idxCritical = children.indexOf(criticalFindingsRow as Element);
+    const idxOutcomes = children.indexOf(strategyOutcomesList as Element);
+    const idxNag = children.indexOf(nagStrip as Element);
+
+    expect(idxActive).toBeLessThan(idxLive);
+    expect(idxLive).toBeLessThan(idxCritical);
+    expect(idxCritical).toBeLessThan(idxOutcomes);
+    expect(idxOutcomes).toBeLessThan(idxNag);
+  });
+
+  // S1-W2: Topbar subtitle updated
+  it("shows cockpit subtitle in topbar", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(screen.getByText(/cockpit/)).toBeInTheDocument();
   });
 });
