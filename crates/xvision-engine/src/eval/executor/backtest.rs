@@ -1122,22 +1122,51 @@ impl Executor {
                 // has relevant history. Query vector is derived from the
                 // filter_trigger_context indicators; falls back to zero-vector
                 // when no filter context is present (acknowledged risk R9).
+                // Indicator values may be at the top level or nested under
+                // "context" depending on the filter implementation.
                 {
+                    let get_ind = |ctx: &serde_json::Value, key: &str| -> Option<f64> {
+                        ctx.get(key)
+                            .or_else(|| ctx.get("context").and_then(|c| c.get(key)))
+                            .and_then(|v| v.as_f64())
+                    };
                     let query_vec = filter_trigger_context
                         .as_ref()
-                        .and_then(|ctx| {
+                        .map(|ctx| {
                             let snap = crate::agent::episodic::IndicatorSnapshot {
-                                rsi: ctx.get("rsi_14").and_then(|v| v.as_f64()),
-                                macd_hist: ctx.get("macd_hist").and_then(|v| v.as_f64()),
-                                ema_cross: ctx.get("ema_cross").and_then(|v| v.as_f64()),
-                                volume_zscore: ctx.get("volume_zscore").and_then(|v| v.as_f64()),
+                                rsi: get_ind(ctx, "rsi_14"),
+                                macd_hist: get_ind(ctx, "macd_hist"),
+                                ema_cross: get_ind(ctx, "ema_cross"),
+                                volume_zscore: get_ind(ctx, "volume_zscore"),
                             };
-                            Some(snap.feature_vector())
+                            snap.feature_vector()
                         })
                         .unwrap_or([0.0_f64; 4]);
                     if let Some(episodes_json) = episodic_store.to_seed_json(query_vec, 5) {
+                        // P1: For causal runs, strip temporal identifiers so
+                        // prior_episodes cannot leak bar timestamps or decision
+                        // indices that causal sanitization was designed to hide.
+                        let sanitized = if inputs_policy == InputsPolicy::Causal {
+                            if let serde_json::Value::Array(arr) = episodes_json {
+                                let cleaned: Vec<serde_json::Value> = arr
+                                    .into_iter()
+                                    .map(|mut ep| {
+                                        if let serde_json::Value::Object(ref mut m) = ep {
+                                            m.remove("bar_timestamp");
+                                            m.remove("decision_idx");
+                                        }
+                                        ep
+                                    })
+                                    .collect();
+                                serde_json::Value::Array(cleaned)
+                            } else {
+                                serde_json::Value::Array(vec![])
+                            }
+                        } else {
+                            episodes_json
+                        };
                         if let Some(obj) = seed.as_object_mut() {
-                            obj.insert("prior_episodes".to_string(), episodes_json);
+                            obj.insert("prior_episodes".to_string(), sanitized);
                         }
                     }
                 }
@@ -1220,6 +1249,21 @@ impl Executor {
                                     qty: sltp_position.abs(),
                                     fee: sltp_fee,
                                 });
+                                // U5-SLTP: record deterministic exits so later
+                                // decisions can recall stop-out/TP events.
+                                {
+                                    let sltp_obs = crate::agent::episodic::EpisodicObservation::new(
+                                        bar.timestamp.to_rfc3339(),
+                                        decision_idx,
+                                        reason.to_string(),
+                                        1.0,
+                                        Some(sltp_entry),
+                                        Some(reason.to_string()),
+                                        format!("sltp: {reason}"),
+                                        crate::agent::episodic::IndicatorSnapshot::default(),
+                                    );
+                                    episodic_store.push(sltp_obs);
+                                }
                                 decision_idx += 1;
                                 continue 'asset;
                             }
@@ -1258,6 +1302,20 @@ impl Executor {
                                     RunChartEvent::Decision(LiveDecisionRow::from(&pt1_row)),
                                 )
                                 .await;
+                                // U5-SLTP: record partial TP1 as an episodic event.
+                                {
+                                    let pt1_obs = crate::agent::episodic::EpisodicObservation::new(
+                                        bar.timestamp.to_rfc3339(),
+                                        decision_idx,
+                                        "partial_tp1",
+                                        1.0,
+                                        None::<f64>,
+                                        None::<String>,
+                                        "partial take-profit 1",
+                                        crate::agent::episodic::IndicatorSnapshot::default(),
+                                    );
+                                    episodic_store.push(pt1_obs);
+                                }
                                 decision_idx += 1;
                                 continue 'asset;
                             }
@@ -2365,11 +2423,18 @@ impl Executor {
                 if parsed.action != "flat" && parsed.action != "hold" {
                     let indicators = filter_trigger_context
                         .as_ref()
-                        .map(|ctx| crate::agent::episodic::IndicatorSnapshot {
-                            rsi: ctx.get("rsi_14").and_then(|v| v.as_f64()),
-                            macd_hist: ctx.get("macd_hist").and_then(|v| v.as_f64()),
-                            ema_cross: ctx.get("ema_cross").and_then(|v| v.as_f64()),
-                            volume_zscore: ctx.get("volume_zscore").and_then(|v| v.as_f64()),
+                        .map(|ctx| {
+                            let get_ind = |key: &str| -> Option<f64> {
+                                ctx.get(key)
+                                    .or_else(|| ctx.get("context").and_then(|c| c.get(key)))
+                                    .and_then(|v| v.as_f64())
+                            };
+                            crate::agent::episodic::IndicatorSnapshot {
+                                rsi: get_ind("rsi_14"),
+                                macd_hist: get_ind("macd_hist"),
+                                ema_cross: get_ind("ema_cross"),
+                                volume_zscore: get_ind("volume_zscore"),
+                            }
                         })
                         .unwrap_or_default();
                     let ep_entry_price = if book.position(asset_sym).abs() > f64::EPSILON {
@@ -3210,6 +3275,16 @@ impl Executor {
         // don't have a T+1 bar yet (the broker fills at the live market
         // price; `next_open` is only the reference price for sizing).
         let next_open = bar.close;
+        let live_pos_size = book.position(asset_sym);
+        let live_entry = book.entry_price(asset_sym);
+        let live_mark = bar.close;
+        let live_upnl_pct = if live_pos_size.abs() < f64::EPSILON || live_entry <= 0.0 {
+            0.0
+        } else if live_pos_size > f64::EPSILON {
+            (live_mark - live_entry) / live_entry * 100.0
+        } else {
+            (live_entry - live_mark) / live_entry * 100.0
+        };
         let seed = build_decision_seed(DecisionSeedInput {
             decision_idx,
             asset,
@@ -3217,14 +3292,14 @@ impl Executor {
             bar,
             next_bar_open: next_open,
             reference_price_source: "live_bar.close",
-            position_size: book.position(asset_sym),
+            position_size: live_pos_size,
             equity,
-            mark_price: bar.close,
+            mark_price: live_mark,
             history_slice: &history_slice,
             inputs_policy,
-            // Live path: SLTP state not threaded into this context; use defaults.
-            entry_price: 0.0,
-            unrealized_pnl_pct: 0.0,
+            entry_price: if live_pos_size.abs() > f64::EPSILON { live_entry } else { 0.0 },
+            unrealized_pnl_pct: live_upnl_pct,
+            // SLTP state and bars_held not threaded into the live context.
             bars_held: 0,
             stop_loss_price: 0.0,
             take_profit_price: 0.0,
