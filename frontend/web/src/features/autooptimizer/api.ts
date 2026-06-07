@@ -269,6 +269,53 @@ export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResp
   );
 }
 
+// ─── Session-level control mutations (P4) ────────────────────────────────────
+
+/** Pause a running optimizer session. */
+export async function pauseSession(sessionId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/sessions/${encodeURIComponent(sessionId)}/pause`,
+    { method: "POST" },
+  );
+}
+
+/** Resume a paused optimizer session. */
+export async function resumeSession(sessionId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/sessions/${encodeURIComponent(sessionId)}/resume`,
+    { method: "POST" },
+  );
+}
+
+/** Cancel a running or paused optimizer session. */
+export async function cancelSession(sessionId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+/** useMutation hook: pause session. */
+export function usePauseSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) => pauseSession(sessionId),
+  });
+}
+
+/** useMutation hook: resume session. */
+export function useResumeSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) => resumeSession(sessionId),
+  });
+}
+
+/** useMutation hook: cancel session. */
+export function useCancelSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) => cancelSession(sessionId),
+  });
+}
+
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {

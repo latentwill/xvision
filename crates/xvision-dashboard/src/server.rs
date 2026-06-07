@@ -69,6 +69,8 @@
 // 53. POST   /api/autooptimizer/sessions                autooptimizer_route::start_session  (P1-W4)
 // 53a. POST  /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
 // 53b. POST  /api/autooptimizer/run                    flywheel::autooptimizer_run
+// 53c. POST  /api/autooptimizer/cycles/:id/pause        autooptimizer_cycle::pause_cycle  (P4)
+// 53d. POST  /api/autooptimizer/cycles/:id/resume       autooptimizer_cycle::resume_cycle (P4)
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
 // 56. POST   /api/autooptimizer/:id/gate               flywheel::autooptimizer_gate
@@ -514,6 +516,15 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cancel",
             post(autooptimizer_cycle::cancel_cycle),
+        )
+        // P4: pause / resume an in-flight optimizer cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/pause",
+            post(autooptimizer_cycle::pause_cycle),
+        )
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/resume",
+            post(autooptimizer_cycle::resume_cycle),
         )
         // F29: retire a cycle-produced candidate (move its lineage node to
         // Rejected) — dashboard parity for `xvn optimizer retire`.

@@ -1,7 +1,7 @@
 //! OptimizerSession entity and state-machine helpers.
 //!
 //! State transitions:
-//! ```
+//! ```text
 //! queued -> running
 //! running -> paused, cancelling, finished, failed
 //! paused  -> running, cancelling, failed
@@ -9,6 +9,10 @@
 //! (terminal: cancelled, finished, failed)
 //! any -> failed  (crash recovery)
 //! ```
+
+use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -195,12 +199,133 @@ pub async fn increment_cycle_completed(
 }
 
 // ---------------------------------------------------------------------------
+// Session runner
+// ---------------------------------------------------------------------------
+
+/// Result returned by a single cycle invocation inside the session runner.
+/// The caller (the injected `run_cycle_fn`) is responsible for running one
+/// optimizer cycle and returning this summary.
+#[derive(Debug, Clone)]
+pub struct CycleRunOutcome {
+    /// Gate verdict bucket: "kept", "suspect", or "dropped".
+    pub outcome: String,
+    /// Cumulative cost in USD across all cycles run so far in this session.
+    /// Used to check `until_budget` exit conditions.
+    pub cum_cost_usd: f64,
+    /// Number of consecutive cycles that produced zero active (kept) nodes,
+    /// starting from the beginning of the session.  Used to detect the
+    /// sustained-no-pass floor.
+    pub sustained_no_pass_cycles: u32,
+}
+
+/// Floor detection: returns `true` when the loosening schedule has been
+/// exhausted — i.e. `sustained_no_pass_cycles` has exceeded the length of
+/// `day_n_thresholds` (every step has been taken). When there is no schedule,
+/// the floor is never reached.
+pub fn loosening_floor_reached(thresholds: &[f64], sustained_no_pass_cycles: u32) -> bool {
+    !thresholds.is_empty() && sustained_no_pass_cycles as usize > thresholds.len()
+}
+
+/// Run the session loop.
+///
+/// Drives `run_cycle_fn` in a loop, honouring cancel / pause flags and
+/// the mode-specific exit conditions (once / n_experiments / until_budget /
+/// sustained-no-pass floor).
+///
+/// `run_cycle_fn` is called once per iteration; it must be `Send` because
+/// this function is intended to run inside a `tokio::spawn` task.
+///
+/// # Mode-specific exit conditions
+/// - `once` — stop after 1 cycle.
+/// - `n_experiments` — stop when `cycles_completed >= cycles_planned`.
+/// - `until_budget` — stop when `cum_cost_usd >= budget_cap`.
+/// - (All modes) sustained-no-pass floor — stop when the loosening
+///   schedule has been fully exhausted.
+pub async fn run_session<F, Fut>(
+    pool: &SqlitePool,
+    session_id: &str,
+    mode: &str,
+    cycles_planned: Option<i64>,
+    budget_cap: Option<f64>,
+    loosening_thresholds: Vec<f64>,
+    cancel_flag: Arc<AtomicBool>,
+    pause_flag: Arc<AtomicBool>,
+    run_cycle_fn: F,
+) -> Result<()>
+where
+    F: Fn() -> Fut + Send,
+    Fut: Future<Output = Result<CycleRunOutcome>> + Send,
+{
+    let budget = budget_cap.unwrap_or(f64::INFINITY);
+
+    loop {
+        // 1. Check cancel flag.
+        if cancel_flag.load(Ordering::Relaxed) {
+            transition_state(pool, session_id, "cancelling", None).await?;
+            transition_state(pool, session_id, "cancelled", None).await?;
+            return Ok(());
+        }
+
+        // 2. Check pause flag — wait in a 1s poll until cleared or cancelled.
+        while pause_flag.load(Ordering::Relaxed) {
+            if cancel_flag.load(Ordering::Relaxed) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        // Re-check cancel after waking from pause.
+        if cancel_flag.load(Ordering::Relaxed) {
+            transition_state(pool, session_id, "cancelling", None).await?;
+            transition_state(pool, session_id, "cancelled", None).await?;
+            return Ok(());
+        }
+
+        // 3. Run one cycle.
+        let outcome = run_cycle_fn().await?;
+
+        // 4. Increment counters.
+        increment_cycle_completed(pool, session_id, &outcome.outcome).await?;
+
+        // 5. Fetch updated cycles_completed.
+        let cycles_completed: i64 = sqlx::query_scalar(
+            "SELECT cycles_completed FROM autooptimizer_session_state WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(pool)
+        .await?;
+
+        // 6. Check mode-specific exit conditions.
+        let mode_done = match mode {
+            "once" => true,
+            "n_experiments" => {
+                let planned = cycles_planned.unwrap_or(i64::MAX);
+                cycles_completed >= planned
+            }
+            "until_budget" => outcome.cum_cost_usd >= budget,
+            _ => false,
+        };
+
+        // 7. Check sustained-no-pass floor.
+        let floor_hit = loosening_floor_reached(&loosening_thresholds, outcome.sustained_no_pass_cycles);
+
+        if mode_done || floor_hit {
+            break;
+        }
+    }
+
+    // Transition to finished.
+    transition_state(pool, session_id, "finished", None).await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, AtomicU64};
 
     /// Build a fresh in-memory SQLite pool with migration 057 applied.
     async fn test_pool() -> SqlitePool {
@@ -448,5 +573,364 @@ mod tests {
 
         assert_eq!(row.state, "cancelled");
         assert!(row.finished_at.is_some(), "cancelled must have finished_at");
+    }
+
+    // -----------------------------------------------------------------------
+    // Session runner tests (P4-W2)
+    // -----------------------------------------------------------------------
+
+    /// Helper: make a no-cost CycleRunOutcome with the given outcome bucket.
+    fn make_outcome(outcome: &str) -> CycleRunOutcome {
+        CycleRunOutcome {
+            outcome: outcome.to_string(),
+            cum_cost_usd: 0.0,
+            sustained_no_pass_cycles: 0,
+        }
+    }
+
+    /// Helper: make a CycleRunOutcome with a specific cumulative cost.
+    fn make_outcome_with_cost(outcome: &str, cum_cost_usd: f64) -> CycleRunOutcome {
+        CycleRunOutcome {
+            outcome: outcome.to_string(),
+            cum_cost_usd,
+            sustained_no_pass_cycles: 0,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // test_once_mode_runs_one_cycle
+    // -----------------------------------------------------------------------
+    /// `once` mode: `run_session` with mode="once" must run exactly 1 cycle
+    /// and leave the session in "finished" state.
+    #[tokio::test]
+    async fn test_once_mode_runs_one_cycle() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-once", "{}", "once", None)
+            .await
+            .unwrap();
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&call_count);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+
+        run_session(
+            &pool,
+            &sid,
+            "once",
+            None,
+            None,
+            vec![],
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                let outcome = make_outcome("kept");
+                async move { Ok(outcome) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(call_count.load(Ordering::Relaxed), 1, "once mode must run exactly 1 cycle");
+
+        let row: OptimizerSession = sqlx::query_as(
+            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.state, "finished");
+        assert_eq!(row.cycles_completed, 1);
+        assert_eq!(row.kept_count, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // test_n_experiments_mode
+    // -----------------------------------------------------------------------
+    /// `n_experiments` mode with `cycles_planned=3` must run exactly 3 cycles.
+    #[tokio::test]
+    async fn test_n_experiments_mode() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-n", "{}", "n_experiments", Some(3))
+            .await
+            .unwrap();
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&call_count);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+
+        run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            Some(3),
+            None,
+            vec![],
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                let outcome = make_outcome("dropped");
+                async move { Ok(outcome) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(call_count.load(Ordering::Relaxed), 3, "n_experiments=3 must run exactly 3 cycles");
+
+        let row: OptimizerSession = sqlx::query_as(
+            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.state, "finished");
+        assert_eq!(row.cycles_completed, 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // test_until_budget_stops_when_exceeded
+    // -----------------------------------------------------------------------
+    /// `until_budget` mode: loop stops when `cum_cost_usd >= budget_cap`.
+    /// The cycle function reports increasing cumulative cost.
+    #[tokio::test]
+    async fn test_until_budget_stops_when_exceeded() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-budget", "{}", "until_budget", None)
+            .await
+            .unwrap();
+
+        // Each cycle adds $0.05. Budget cap is $0.12 → should stop after 3rd cycle
+        // (cum = 0.05, 0.10, 0.15 where 0.15 >= 0.12).
+        let call_count = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&call_count);
+        // Use u64 bits to share f64 across the closure (AtomicF64 isn't stable).
+        let cum_bits = Arc::new(AtomicU64::new(0));
+        let cum_shared = Arc::clone(&cum_bits);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+
+        run_session(
+            &pool,
+            &sid,
+            "until_budget",
+            None,
+            Some(0.12),
+            vec![],
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                let cum = n as f64 * 0.05;
+                cum_shared.store(cum.to_bits(), Ordering::Relaxed);
+                let outcome = make_outcome_with_cost("dropped", cum);
+                async move { Ok(outcome) }
+            },
+        )
+        .await
+        .unwrap();
+
+        let calls = call_count.load(Ordering::Relaxed);
+        assert!(calls >= 3, "must run at least 3 cycles before budget exceeded (got {calls})");
+        // Should not have run a 4th cycle since budget was exceeded after cycle 3.
+        assert_eq!(calls, 3, "must stop exactly at cycle 3 when cum_cost >= budget (got {calls})");
+
+        let row: OptimizerSession = sqlx::query_as(
+            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.state, "finished");
+    }
+
+    // -----------------------------------------------------------------------
+    // test_cancel_stops_loop
+    // -----------------------------------------------------------------------
+    /// Setting the cancel flag before the run starts causes the session to
+    /// transition to "cancelled" without running any cycles.
+    #[tokio::test]
+    async fn test_cancel_stops_loop() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-cancel", "{}", "n_experiments", Some(10))
+            .await
+            .unwrap();
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&call_count);
+
+        let cancel = Arc::new(AtomicBool::new(true)); // pre-cancelled
+        let pause = Arc::new(AtomicBool::new(false));
+
+        run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            Some(10),
+            None,
+            vec![],
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                let outcome = make_outcome("kept");
+                async move { Ok(outcome) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(call_count.load(Ordering::Relaxed), 0, "pre-cancelled session must not run any cycles");
+
+        let row: OptimizerSession = sqlx::query_as(
+            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.state, "cancelled");
+    }
+
+    // -----------------------------------------------------------------------
+    // test_pause_resumes_loop
+    // -----------------------------------------------------------------------
+    /// Pause flag causes the loop to wait; clearing it lets the loop continue
+    /// and finish normally (once mode).
+    #[tokio::test]
+    async fn test_pause_resumes_loop() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-pause", "{}", "once", None)
+            .await
+            .unwrap();
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&call_count);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(true)); // start paused
+
+        // Spawn a task that clears the pause flag after a tiny delay.
+        let pause_for_clear = Arc::clone(&pause);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            pause_for_clear.store(false, Ordering::Relaxed);
+        });
+
+        run_session(
+            &pool,
+            &sid,
+            "once",
+            None,
+            None,
+            vec![],
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                let outcome = make_outcome("kept");
+                async move { Ok(outcome) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(call_count.load(Ordering::Relaxed), 1, "pause/resume must still run the 1 cycle");
+
+        let row: OptimizerSession = sqlx::query_as(
+            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.state, "finished");
+    }
+
+    // -----------------------------------------------------------------------
+    // test_no_pass_floor_stops_loop
+    // -----------------------------------------------------------------------
+    /// When the loosening schedule is exhausted (sustained_no_pass_cycles
+    /// exceeds the schedule length), the loop stops and finishes normally.
+    #[tokio::test]
+    async fn test_no_pass_floor_stops_loop() {
+        let pool = test_pool().await;
+        // Use n_experiments=100 so mode alone would never stop it.
+        let sid = create_session(&pool, "strat-floor", "{}", "n_experiments", Some(100))
+            .await
+            .unwrap();
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&call_count);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+
+        // Schedule has 2 steps. Floor is exceeded when sustained_no_pass_cycles > 2.
+        // We return sustained_no_pass_cycles=3 immediately → floor hit on first cycle.
+        run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            Some(100),
+            None,
+            vec![0.05, 0.02], // 2-step loosening schedule
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                // Return floor-exceeded immediately (3 > 2 steps).
+                let outcome = CycleRunOutcome {
+                    outcome: "dropped".to_string(),
+                    cum_cost_usd: 0.0,
+                    sustained_no_pass_cycles: 3,
+                };
+                async move { Ok(outcome) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(call_count.load(Ordering::Relaxed), 1, "floor stop must trigger after first cycle reports floor-exceeded");
+
+        let row: OptimizerSession = sqlx::query_as(
+            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
+        )
+        .bind(&sid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.state, "finished");
+    }
+
+    // -----------------------------------------------------------------------
+    // test_loosening_floor_reached pure helper
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_loosening_floor_reached_empty_schedule() {
+        // No schedule → floor never reached.
+        assert!(!loosening_floor_reached(&[], 0));
+        assert!(!loosening_floor_reached(&[], 100));
+    }
+
+    #[test]
+    fn test_loosening_floor_reached_2_step_schedule() {
+        let thresholds = vec![0.05, 0.02];
+        // Not yet exhausted: 0, 1, 2 steps applied.
+        assert!(!loosening_floor_reached(&thresholds, 0));
+        assert!(!loosening_floor_reached(&thresholds, 1));
+        assert!(!loosening_floor_reached(&thresholds, 2));
+        // Exhausted at 3 (> 2).
+        assert!(loosening_floor_reached(&thresholds, 3));
+        assert!(loosening_floor_reached(&thresholds, 10));
     }
 }

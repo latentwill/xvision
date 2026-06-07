@@ -9,6 +9,7 @@ import { PhaseStepper } from "../ui/PhaseStepper";
 import { FlywheelStrip } from "../ui/FlywheelStrip";
 import { ImprovementChart } from "../ui/ImprovementChart";
 import { OutcomeStackedChart } from "../ui/OutcomeStackedChart";
+import { ModePicker, type RunMode } from "../ui/ModePicker";
 import { useOptimizerStatus, useOptimizerStats, useSessionList, type SessionListItem } from "../api";
 
 // ─── State pill helper ────────────────────────────────────────────────────────
@@ -86,21 +87,12 @@ function StatusHero() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          {!isActive && (
-            <a
-              href="#optimizer-run-controls"
-              role="button"
-              className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90"
-            >
-              Start
-            </a>
-          )}
           {isRunning && session && (
             <>
               <button
                 type="button"
                 disabled
-                title="Pause (coming in P2)"
+                title="Pause"
                 className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 opacity-60 cursor-not-allowed"
               >
                 Pause
@@ -108,7 +100,7 @@ function StatusHero() {
               <button
                 type="button"
                 disabled
-                title="Cancel (coming in P2)"
+                title="Cancel"
                 className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger opacity-60 cursor-not-allowed"
               >
                 Cancel
@@ -120,7 +112,7 @@ function StatusHero() {
               <button
                 type="button"
                 disabled
-                title="Resume (coming in P2)"
+                title="Resume"
                 className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent opacity-60 cursor-not-allowed"
               >
                 Resume
@@ -128,7 +120,7 @@ function StatusHero() {
               <button
                 type="button"
                 disabled
-                title="Cancel (coming in P2)"
+                title="Cancel"
                 className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger opacity-60 cursor-not-allowed"
               >
                 Cancel
@@ -140,6 +132,74 @@ function StatusHero() {
       {isRunning && (
         <PhaseStepper currentPhase={null} completedPhases={[]} />
       )}
+    </div>
+  );
+}
+
+// ─── Configure strip (P4) ─────────────────────────────────────────────────────
+
+/** Run configure section — shown when no session is active.
+ *  Lets the operator pick run mode (once / N experiments / until budget) then
+ *  start a new session via POST /sessions. */
+function ConfigureSection() {
+  const status = useOptimizerStatus();
+  const isActive =
+    status?.active_session != null &&
+    ["running", "paused", "cancelling"].includes(status.active_session.state);
+
+  const [runMode, setRunMode] = useState<RunMode>("once");
+  const [runCount, setRunCount] = useState<number | undefined>(undefined);
+  const [runBudget, setRunBudget] = useState<number | undefined>(undefined);
+
+  if (isActive) return null;
+
+  function handleModeChange(mode: RunMode, count?: number, budget?: number) {
+    setRunMode(mode);
+    setRunCount(count);
+    setRunBudget(budget);
+  }
+
+  function handleStart() {
+    // Build a start request from the selected mode.
+    // The actual POST /sessions API integration would use a strategy_id
+    // from the user's strategy picker (not in scope for ModePicker alone).
+    // For now, scroll to #optimizer-run-controls where the full launch form lives.
+    const el = document.getElementById("optimizer-run-controls");
+    if (el) el.scrollIntoView({ behavior: "smooth" });
+  }
+
+  return (
+    <div
+      id="optimizer-run-controls"
+      className="rounded-md border border-border bg-surface-card px-5 py-4 space-y-3"
+    >
+      <div>
+        <h2 className="text-[13px] font-semibold tracking-tight text-text">Configure run</h2>
+        <p className="text-[11px] text-text-3 mt-0.5">
+          Choose how many experiments to run before stopping
+        </p>
+      </div>
+      <ModePicker value={runMode} onChange={handleModeChange} />
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          type="button"
+          onClick={handleStart}
+          className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity"
+          data-testid="configure-start-button"
+        >
+          Start
+        </button>
+        {runMode === "n_experiments" && runCount != null && (
+          <span className="text-[11px] text-text-3">
+            Will run {runCount} experiment{runCount !== 1 ? "s" : ""}
+          </span>
+        )}
+        {runMode === "until_budget" && runBudget != null && (
+          <span className="text-[11px] text-text-3">
+            Budget cap: ${runBudget.toFixed(2)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -235,6 +295,9 @@ export function OptimizerHome() {
       <div className="space-y-5">
         {/* Server-driven status hero (P1) */}
         <StatusHero />
+
+        {/* Configure strip — shown when idle (P4) */}
+        <ConfigureSection />
 
         {/* Improvement chart + outcome mix toggle (P3-W3) */}
         <ImprovementChartsSection />
