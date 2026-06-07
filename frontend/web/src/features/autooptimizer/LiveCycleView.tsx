@@ -17,10 +17,10 @@ import {
   type LineageNode,
   type StartRunCycleRequest,
   formatEventLabel,
+  getCycleCost,
   getRunDefaults,
   startRunCycle,
   cancelRunCycle,
-  getCycleCost,
   useLineageNodes,
   useCycleRuns,
   useCycleCost,
@@ -218,22 +218,22 @@ type LaunchConfig = StartRunCycleRequest & {
 
 function LaunchStrip({
   modelSelection,
-  onLaunch,
+  onStartLoop,
   isRunning,
   loopActive,
   cyclesCompleted,
   cumulativeSpent,
+  loopError,
   onStop,
-  externalError,
 }: {
   modelSelection: OptimizerModelSelection;
-  onLaunch: (config: LaunchConfig) => void;
+  onStartLoop: (config: LaunchConfig) => void;
   isRunning: boolean;
   loopActive: boolean;
   cyclesCompleted: number;
   cumulativeSpent: number;
+  loopError: string | null;
   onStop: () => void;
-  externalError: string | null;
 }) {
   const [strategyId, setStrategyId] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
@@ -271,7 +271,7 @@ function LaunchStrip({
       totalBudget = n;
     }
     const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
-    onLaunch({
+    onStartLoop({
       strategy_id: trimmed,
       mutator_provider: modelSelection.mutatorProvider,
       mutator_model: modelSelection.mutatorModel || null,
@@ -331,12 +331,12 @@ function LaunchStrip({
         aria-label="Per-cycle budget cap in USD"
         className={`${inp} w-full`}
       />
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col gap-1">
-          <label className="text-[12px] text-text-3">Max cycles</label>
-          <input
-            type="number"
-            min="1"
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-[12px] text-text-3">Max cycles</label>
+            <input
+              type="number"
+              min="1"
             step="1"
             inputMode="numeric"
             value={maxCycles}
@@ -358,11 +358,11 @@ function LaunchStrip({
             onChange={(e) => setTotalBudgetUsd(e.target.value)}
             disabled={isRunning}
             placeholder="∞"
-            aria-label="Total budget cap across all cycles"
-            className={`${inp} w-full`}
-          />
+              aria-label="Total budget cap across all cycles"
+              className={`${inp} w-full`}
+            />
+          </div>
         </div>
-      </div>
       <span className="text-[12px] text-text-3">Evaluation window (optional)</span>
       <div className="grid grid-cols-2 gap-2">
         <input type="date" value={dayStart} onChange={(e) => setDayStart(e.target.value)}
@@ -407,8 +407,8 @@ function LaunchStrip({
       <span className="text-[11.5px] text-text-3">
         Runs continuously until stopped, max cycles, or total budget reached.
       </span>
-      {(launchError ?? externalError) !== null && (
-        <span className="text-[13px] text-danger">{launchError ?? externalError}</span>
+      {(launchError ?? loopError) !== null && (
+        <span className="text-[13px] text-danger">{launchError ?? loopError}</span>
       )}
     </div>
   );
@@ -542,17 +542,17 @@ function CycleLeftCard({
   loopActive,
   cyclesCompleted,
   cumulativeSpent,
-  onLaunch,
-  onStop,
   loopError,
+  onStartLoop,
+  onStop,
 }: {
   isRunning: boolean;
   loopActive: boolean;
   cyclesCompleted: number;
   cumulativeSpent: number;
-  onLaunch: (config: LaunchConfig) => void;
-  onStop: () => void;
   loopError: string | null;
+  onStartLoop: (config: LaunchConfig) => void;
+  onStop: () => void;
 }) {
   const [selection, setSelection] = useState<OptimizerModelSelection>({
     mutatorProvider: getStoredMutatorProvider(),
@@ -571,13 +571,13 @@ function CycleLeftCard({
       </span>
       <LaunchStrip
         modelSelection={selection}
-        onLaunch={onLaunch}
+        onStartLoop={onStartLoop}
         isRunning={isRunning}
         loopActive={loopActive}
         cyclesCompleted={cyclesCompleted}
         cumulativeSpent={cumulativeSpent}
+        loopError={loopError}
         onStop={onStop}
-        externalError={loopError}
       />
       <ModelSelectRow selection={selection} onSelectionChange={setSelection} />
     </div>
@@ -933,7 +933,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
     setLoopActive(false);
   }, []);
 
-  const handleLaunch = useCallback(async (config: LaunchConfig) => {
+  const startLoop = useCallback(async (config: LaunchConfig) => {
     stopRequestedRef.current = false;
     setLoopError(null);
     loopConfigRef.current = config;
@@ -958,8 +958,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
     } catch (err) {
       loopConfigRef.current = null;
       setLoopActive(false);
-      const msg = err instanceof Error ? err.message : "Failed to start optimizer cycle";
-      setLoopError(msg);
+      setLoopError(err instanceof Error ? err.message : "Failed to start optimizer cycle");
     }
   }, [queryClient]);
 
@@ -1016,8 +1015,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
       }).catch((err: unknown) => {
         loopConfigRef.current = null;
         setLoopActive(false);
-        const msg = err instanceof Error ? err.message : "Optimizer cycle failed";
-        setLoopError(msg);
+        setLoopError(err instanceof Error ? err.message : "Optimizer cycle failed");
       });
     };
 
@@ -1092,9 +1090,9 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
           loopActive={loopActive}
           cyclesCompleted={cyclesCompleted}
           cumulativeSpent={cumulativeSpent}
-          onLaunch={(config) => { void handleLaunch(config); }}
-          onStop={stopLoop}
           loopError={loopError}
+          onStartLoop={(config) => { void startLoop(config); }}
+          onStop={stopLoop}
         />
         <EventLogCard events={events} bottomRef={bottomRef} />
         <KeptNextCard nodes={lineageNodes} />
