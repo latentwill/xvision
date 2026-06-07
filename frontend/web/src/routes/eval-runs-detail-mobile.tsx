@@ -954,7 +954,7 @@ function ReviewTab({ summary }: { summary: RunSummary }) {
       <ReviewPanel
         key={summary.id}
         runId={summary.id}
-        runIsCompleted={summary.status === "completed"}
+        runCanReview={isTerminalStatus(summary.status)}
       />
     </div>
   );

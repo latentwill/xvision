@@ -376,7 +376,7 @@ export function EvalRunDetailRoute() {
             <ReviewPanel
               key={detail.summary.id}
               runId={detail.summary.id}
-              runIsCompleted={detail.summary.status === "completed"}
+              runCanReview={isTerminalStatus(detail.summary.status)}
             />
           </div>
         </div>

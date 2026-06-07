@@ -87,7 +87,12 @@ pub async fn run_review(
         .await
         .map_err(|e| ReviewError::Db(e.context(format!("load run {run_id}"))))?;
 
-    if !matches!(run.status, crate::eval::RunStatus::Completed) {
+    if !matches!(
+        run.status,
+        crate::eval::RunStatus::Completed
+            | crate::eval::RunStatus::Failed
+            | crate::eval::RunStatus::Cancelled
+    ) {
         return Err(ReviewError::RunNotCompleted(format!("{:?}", run.status)));
     }
 
