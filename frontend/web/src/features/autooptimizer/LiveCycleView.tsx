@@ -122,19 +122,6 @@ function countActiveLineages(nodes: LineageNode[]): number {
   return seen.size;
 }
 
-function deriveCycleState(
-  events: EventRow[],
-): { isRunning: boolean; activeCycleId: string | null } {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
-    if (et === "cycle_finished") {
-      return { isRunning: false, activeCycleId: null };
-    }
-    if (et === "cycle_started") return { isRunning: true, activeCycleId: events[i].cycle_id ?? null };
-  }
-  return { isRunning: false, activeCycleId: null };
-}
-
 function formatRelativeDate(ts: string): string {
   try {
     const diffDays = Math.floor((Date.now() - new Date(ts).getTime()) / 86_400_000);
@@ -825,12 +812,22 @@ function LiveCostTicker({
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 
-export function LiveCycleView({ onTabChange, embedded = false }: { onTabChange?: (tab: string) => void; embedded?: boolean } = {}) {
+export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home" }: { onTabChange?: (tab: string) => void; embedded?: boolean; activeTab?: string } = {}) {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const { data: lineageNodes = [] } = useLineageNodes();
-  const { isRunning, activeCycleId } = deriveCycleState(events);
+
+  // Derive cycle state from the local SSE event buffer (replaces deleted deriveCycleState).
+  // The source of truth for the full session state is useOptimizerStatus() in OptimizerHome;
+  // this local buffer tracks the latest cycle within LiveCycleView's own event stream.
+  let isRunning = false;
+  let activeCycleId: string | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
+    if (et === "cycle_finished") { isRunning = false; activeCycleId = null; break; }
+    if (et === "cycle_started") { isRunning = true; activeCycleId = events[i].cycle_id ?? null; break; }
+  }
 
   const appendEvent = (event: CycleProgressEvent) => {
     setEvents((prev) => {
@@ -894,7 +891,7 @@ export function LiveCycleView({ onTabChange, embedded = false }: { onTabChange?:
         <EventLogCard events={events} bottomRef={bottomRef} />
         <KeptNextCard nodes={lineageNodes} />
       </div>
-      <ActiveLineagesSectionFull nodes={lineageNodes} />
+      {activeTab === "genealogy" && <ActiveLineagesSectionFull nodes={lineageNodes} />}
       {!embedded && (
         <RecentCyclesSectionFull nodes={lineageNodes} onTabChange={onTabChange} />
       )}

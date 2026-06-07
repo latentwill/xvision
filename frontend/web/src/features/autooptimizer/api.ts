@@ -390,6 +390,66 @@ export function useExperimentRegimeResults(
   return { results: node?.regime_results ?? [], isLoading: false };
 }
 
+// ─── Session-level status types (P1 hero / status polling) ───────────────────
+
+/** Summary of one optimizer session for the status hero and recent-runs list. */
+export interface SessionSummary {
+  session_id: string;
+  strategy_id: string;
+  /** State machine state: "running" | "paused" | "cancelling" | "finished" | "failed" | "idle" */
+  state: string;
+  /** Run mode label: "explore" | "exploit" | etc. */
+  mode: string;
+  cycles_completed: number;
+  kept_count: number;
+  suspect_count: number;
+  dropped_count: number;
+}
+
+/** Response from GET /api/autooptimizer/status */
+export interface StatusResponse {
+  active_session: SessionSummary | null;
+  last_event_seq: number;
+}
+
+/** Row in the recent-sessions list (GET /api/autooptimizer/sessions) */
+export interface SessionListItem {
+  session_id: string;
+  strategy_id: string;
+  state: string;
+  mode: string;
+  cycles_completed: number;
+  kept_count: number;
+  cost_usd?: number;
+  finished_at?: string;
+}
+
+/** Poll the running-session status. Refetch every 5 s while active, 30 s when idle. */
+export function useOptimizerStatus(): StatusResponse | undefined {
+  const { data } = useQuery({
+    queryKey: ["optimizer/status"],
+    queryFn: () =>
+      fetch("/api/autooptimizer/status").then((r) => r.json()) as Promise<StatusResponse>,
+    refetchInterval: (query) => (query.state.data?.active_session ? 5_000 : 30_000),
+    // Fall back gracefully when the backend endpoint doesn't exist yet
+    retry: false,
+  });
+  return data;
+}
+
+/** Fetch the 10 most recent sessions for the recent-runs list. */
+export function useSessionList() {
+  return useQuery({
+    queryKey: ["optimizer/sessions"],
+    queryFn: () =>
+      fetch("/api/autooptimizer/sessions?limit=10").then(
+        (r) => r.json(),
+      ) as Promise<SessionListItem[]>,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 // ─── Operator label helpers ───────────────────────────────────────────────────
 
 /** Map developer status string to operator-facing label (terminology lock). */
