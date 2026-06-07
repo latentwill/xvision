@@ -417,9 +417,10 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           },
         ],
       });
+      const derivedRole = nameToRole(newAgentName);
       await addStrategyAgent(strategy.manifest.id, {
         agent_id: agent.agent_id,
-        role: nameToRole(newAgentName),
+        role: isReservedAgentRole(derivedRole) ? `${derivedRole}-1` : derivedRole,
       });
       return agent;
     },
@@ -621,9 +622,10 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           setNewAgentPrompt={setNewAgentPrompt}
           onAttachExisting={() => {
             const agent = (agentPool.data ?? []).find((a) => a.agent_id === newAgentId);
+            const derivedRole = agent ? nameToRole(agent.name) : "agent";
             addMut.mutate({
               agent_id: newAgentId,
-              role: nameToRole(agent?.name ?? newAgentId),
+              role: isReservedAgentRole(derivedRole) ? `${derivedRole}-1` : derivedRole,
             });
           }}
           attachExistingPending={addMut.isPending}

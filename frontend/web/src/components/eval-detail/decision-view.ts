@@ -87,7 +87,13 @@ export function mapAction(action: string, priorSide: PositionSide): ActionPillAc
     return "HOLD";
   }
   // sltp force-close rows: action is the exit reason ("stop_loss", "take_profit", etc.)
-  if (action === "stop_loss" || action === "take_profit" || action === "trailing_stop") {
+  if (
+    action === "stop_loss" ||
+    action === "take_profit" ||
+    action === "trailing_stop" ||
+    action === "partial_tp1" ||
+    action === "partial_tp2"
+  ) {
     if (priorSide === "short") return "CLOSE";
     return "SELL";
   }
