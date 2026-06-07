@@ -450,6 +450,60 @@ export function useSessionList() {
   });
 }
 
+// ─── Experiment detail types ──────────────────────────────────────────────────
+
+/** Gate evaluation record for a single lineage node. */
+export interface GateRecord {
+  bundle_hash: string;
+  parent_day_score: number | null;
+  child_day_score: number | null;
+  parent_holdout_score: number | null;
+  child_holdout_score: number | null;
+  gate_epsilon: number | null;
+  delta_day: number | null;
+  delta_holdout: number | null;
+  drawdown_ratio: number | null;
+  verdict: string;
+  reason: string | null;
+}
+
+/** A single finding emitted by the judge for an experiment. */
+export interface ExperimentFinding {
+  id: number;
+  bundle_hash: string;
+  severity: "info" | "warn" | "risk";
+  code: string;
+  summary: string;
+  detail: string | null;
+  model: string | null;
+}
+
+/** Full detail response for a single experiment. */
+export interface ExperimentDetailResponse {
+  lineage_node: LineageNode;
+  rationale: string | null;
+  gate_record: GateRecord | null;
+  findings: ExperimentFinding[];
+  regime_results: RegimeResult[];
+}
+
+export async function getExperimentDetail(hash: string): Promise<ExperimentDetailResponse> {
+  return apiFetch<ExperimentDetailResponse>(
+    `/api/autooptimizer/experiments/${encodeURIComponent(hash)}/detail`,
+  );
+}
+
+export function useExperimentDetail(hash: string) {
+  return useQuery({
+    queryKey: ["experiments", hash, "detail"],
+    queryFn: () => getExperimentDetail(hash),
+    enabled: !!hash,
+    staleTime: 60_000,
+    // Fail gracefully — the endpoint may not exist yet in older backend versions.
+    retry: false,
+  });
+}
+
 // ─── Operator label helpers ───────────────────────────────────────────────────
 
 /** Map developer status string to operator-facing label (terminology lock). */
