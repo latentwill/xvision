@@ -3,7 +3,9 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders } from "../test-utils";
 import { RunDetail } from "./RunDetail";
 import * as apiModule from "../api";
-import * as routesModule from "../../../routes";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, resolve } from "path";
 import type { StatsRow } from "../api";
 
 // ─── uPlot stub (charts render in RunDetail after P4 additions) ───────────────
@@ -306,13 +308,8 @@ describe("RunDetail — route preservation", () => {
     // importing the full lazy-loaded route graph in tests.
     //
     // The presence of OptimizerCycle in the lazy imports is our guard:
-    const routesSource = import.meta.glob("../../../routes.tsx", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
-
-    const src = Object.values(routesSource)[0] ?? "";
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(resolve(__dirname, "../../../routes.tsx"), "utf-8");
     // The cycle route must be registered
     expect(src).toMatch(/path:\s*["']cycle\/:cycleId["']/);
   });

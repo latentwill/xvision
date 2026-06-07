@@ -199,13 +199,9 @@ function ExperimentRow({ node }: { node: LineageNode }) {
   );
 }
 
-function SessionExperimentsTable({ sessionId }: { sessionId: string }) {
-  // Lineage nodes filtered by session_id (cycles with this session)
-  // The lineage API accepts cycle_id but not session_id directly;
-  // we load all and note the session context in the section header.
-  // Per task spec: GET /api/autooptimizer/cycles?session_id= or lineage filtered.
-  // Here we use useLineageNodes without cycle filter and rely on the
-  // backend to return lineage for the session (or display all recent).
+function SessionExperimentsTable({ sessionId: _sessionId }: { sessionId: string }) {
+  // Lineage nodes for this session. /lineage doesn't yet filter by session_id;
+  // a future backend change will pass _sessionId as a query param.
   const { data, isLoading, isError } = useLineageNodes();
   const rows: LineageNode[] = data ?? [];
 
