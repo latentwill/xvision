@@ -14,7 +14,6 @@ import type {
   ProviderRow,
   RunSummary,
 } from "@/api/types.gen";
-import type { StrategyListItem } from "@/api/strategies";
 
 // suppress unused-import lint — these are referenced by buildAttention keep-compat
 void isInflightRunStatus;
@@ -47,7 +46,8 @@ export function HomeRoute() {
     queryFn: () => getRunChart(latestRunId),
     enabled: !!latestRunId,
   });
-  const scenarios = useQuery({
+  // scenario query kept for hook-count stability; will be used by W7 NagStrip
+  useQuery({
     queryKey: scenarioKeys.list(),
     queryFn: () => listScenarios(),
   });
