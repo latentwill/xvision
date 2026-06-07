@@ -897,7 +897,17 @@ pub struct OpenaiCompatDispatch {
 }
 
 impl OpenaiCompatDispatch {
+    /// `base_url` is the OpenAI-compat root. A trailing `/v1` is
+    /// optional — if absent it is appended automatically so callers
+    /// that store `http://host:port` (e.g. Ollama registered as
+    /// openai-compat) work without manual `/v1` configuration.
     pub fn new(base_url: String, api_key: String) -> Self {
+        let trimmed = base_url.trim_end_matches('/');
+        let base_url = if trimmed.ends_with("/v1") {
+            trimmed.to_string()
+        } else {
+            format!("{trimmed}/v1")
+        };
         Self {
             base_url,
             api_key,
