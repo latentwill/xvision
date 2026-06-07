@@ -84,7 +84,7 @@ Subtitle shows N paired trades, regime span, vector manifest hash. Color is
 green if CI excludes zero in the right direction, amber if it straddles,
 red if it excludes zero in the wrong direction.
 
-- *Source:* `xvn ab-compare` JSON output → `reports/headline_*/*.json`,
+- *Source:* eval run `ComparisonReport` JSON output → `reports/headline_*/*.json`,
   Δ-Sharpe row.
 - *v1:* yes, this is the demo's first frame.
 - *Open:* what's the rule for picking which manifest hash to render when
@@ -480,7 +480,7 @@ provenance graph).
 
 | Panel(s) | Source |
 |---|---|
-| H1, H2, H3, H4, E1–E4 | `xvn ab-compare` JSON in `reports/headline_*/` |
+| H1, H2, H3, H4, E1–E4 | Eval run `ComparisonReport` JSON in `reports/headline_*/` |
 | A1, O1, O2, O3 | `identity/<arm>.agent.json`, Mantle RPC via `alloy`, Mantle indexer |
 | A2, A3, A4 | `config/*.toml`, runtime config snapshot |
 | T1, T2, T3 | `setups + briefings + decisions + risk_outcomes + executions` join in SQLite |
@@ -508,7 +508,7 @@ deliverables collapse to:
    renders a static version of the v1-priority panels above. This is what
    the headline run actually produces and what reviewers download.
 2. **Live demo HTML page** (stretch) that wraps the JSON output of
-   `xvn ab-compare` and renders it inline using Chart.js + Grid.js — the
+   `xvn eval compare` and renders it inline using Chart.js + Grid.js — the
    same artifact-shape this Cowork environment supports. Reload pulls a
    fresh JSON.
 3. **Deferred:** a long-running web app reading SQLite + streaming

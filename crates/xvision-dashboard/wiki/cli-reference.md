@@ -325,22 +325,6 @@ Read-only operator telemetry for the memory + Optimizer + DSPy-optimizer loop.
 
 ---
 
-### `xvn ab-compare`
-
-N-arm backtest workhorse. Each arm carries a strategy + optional
-`intern=<provider>/<model>` and `trader=<provider>/<model>` overrides; arms
-resolving to the same `(provider, model)` share one HTTP client.
-
-Key flags: `--cycles <path>` (JSON `Vec<MarketSnapshot>`), `--bars <path>` or
-`--from <date> --to <date> [--granularity <g>]` (cache-backed via `bars_cache`),
-`--arms <spec,…>`, `--output <path>`.
-
-The `--cycles` flag controls the per-arm decision input. The flag was renamed
-from `--setups` before the wave A shipment; any scripts using `--setups` must
-be updated.
-
----
-
 ### `xvn provider …`
 
 | Verb | Effect |
@@ -476,7 +460,7 @@ explicitly with the `XVN_HOME` env var or the per-command `--xvn-home` flag.
 |---|---|
 | `$XVN_HOME/strategies/<id>.json` | Serialised `Strategy` objects. |
 | `$XVN_HOME/xvn.db` | SQLite flight recorder: runs, decisions, batches, experiments, reviews, equity, agents. |
-| `$XVN_HOME/bars/<asset>/<granularity>.json` | Bars cache written by `xvn bars fetch` and the `ab-compare` date-range path. |
+| `$XVN_HOME/bars/<asset>/<granularity>.json` | Bars cache written by `xvn bars fetch`. |
 | `$XVN_HOME/config/default.toml` | Runtime config: providers, intern/trader defaults, backtest params. Override path: `XVN_CONFIG_PATH`. |
 | `$XVN_HOME/secrets/providers.toml` | Provider API keys (separate from config; checked by `xvn doctor`). |
 | `$XVN_HOME/secrets/brokers.toml` | Broker credentials (checked by `xvn doctor`). |

@@ -166,7 +166,6 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "--version",
     "-V",
     "help",
-    "ab-compare",
     "agent",
     "bars",
     "doctor",

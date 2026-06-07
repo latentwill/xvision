@@ -39,14 +39,6 @@ describe("tool-row renderers — per-row content", () => {
     expect(screen.getByText("Attach agent")).toBeInTheDocument();
   });
 
-  it("ab_compare renders an A/B compare result row", () => {
-    const row = finishedRow("ab_compare", { output: "arm A wins" });
-    render(<ToolRowView row={row} sideEffect="external_write" />);
-    expect(screen.getByText("A/B compare")).toBeInTheDocument();
-    expect(screen.getByText(/comparison result/i)).toBeInTheDocument();
-    expect(screen.getByText(/arm A wins/)).toBeInTheDocument();
-  });
-
   it("run_eval renders an eval-run status row with exit code", () => {
     const row = finishedRow("run_eval", { exitCode: 0 });
     render(<ToolRowView row={row} sideEffect="external_write" />);
