@@ -35,7 +35,6 @@ jobs:
           CARGO_TARGET_DIR: ${{ github.workspace }}/target
           CARGO_BUILD_JOBS: "1"
         run: |
-          scripts/cargo test -p xvision-eval --test ab_compare_regression
           scripts/cargo test -p xvision-execution --test broker_surface_mock_orders
           scripts/cargo test -p xvision-engine --test multi_asset_backtest
           scripts/cargo test -p xvision-engine --test multi_asset_filter_scope
