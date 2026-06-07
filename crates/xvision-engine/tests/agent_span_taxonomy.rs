@@ -94,6 +94,19 @@ impl Tool for PriceOfThingTool {
         "deterministic price fixture"
     }
 
+    fn descriptor(&self) -> xvision_agent_client::protocol::ToolDescriptor {
+        xvision_agent_client::protocol::ToolDescriptor {
+            name: self.name().as_str().to_string(),
+            version: "1".to_string(),
+            description: self.description().to_string(),
+            input_schema: serde_json::json!({ "type": "object" }),
+            output_schema: serde_json::json!({ "type": "object" }),
+            timeout_ms: 1_000,
+            side_effect_level: xvision_agent_client::protocol::SideEffectLevel::ReadOnly,
+            requires_approval: false,
+        }
+    }
+
     async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         Ok(serde_json::json!({"symbol": "BTC", "price": 50_000.0}))
     }

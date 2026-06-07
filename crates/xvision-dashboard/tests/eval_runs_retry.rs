@@ -25,7 +25,7 @@ async fn boot() -> (TestServer, TempDir) {
 async fn seed_launchable_strategy(tmp: &TempDir, strategy_id: &str) {
     use xvision_engine::agents::model::InputsPolicy;
     use xvision_engine::agents::store::{AgentStore, NewAgent};
-    use xvision_engine::agents::{default_capabilities, AgentSlot};
+    use xvision_engine::agents::AgentSlot;
     use xvision_engine::strategies::manifest::PublicManifest;
     use xvision_engine::strategies::risk::RiskPreset;
     use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
@@ -102,7 +102,7 @@ sqlite_url = "sqlite://x.db"
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                capabilities: default_capabilities(),
+                allowed_tools: Vec::new(),
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -134,9 +134,9 @@ sqlite_url = "sqlite://x.db"
             agent_id,
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,

@@ -5,16 +5,15 @@
 //! don't require the SPA. See contract
 //! `team/contracts/agent-firing-filter-cli-verbs.md`.
 
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
-use xvision_engine::agents::{default_capabilities, AgentSlot, Capability, Severity, ValidationDiagnostic};
+use xvision_engine::agents::{AgentSlot, Severity, ValidationDiagnostic};
 use xvision_engine::api::agents as agents_api;
 use xvision_engine::api::{Actor, ApiContext, ApiError};
-use xvision_engine::diagnostics::{is_optimizable, is_runtime_supported, required_tools_for};
+use xvision_engine::tools::built_in_tool_descriptors;
 
 use crate::exit::{CliError, CliResult, ResultExt, XvnExit};
 use crate::io::{print_json, print_json_compact};
@@ -34,11 +33,11 @@ pub enum Op {
     Get(GetArgs),
     /// Create a new agent record in the workspace agent library.
     ///
-    /// The created agent is a single-slot `Agent` with `slots[0].capabilities`
-    /// set from `--capability`. `--system-prompt` may be a literal string
+    /// The created agent is a single-slot `Agent` with `slots[0].allowed_tools`
+    /// set from `--tools`. `--system-prompt` may be a literal string
     /// or `@<path>` to read the prompt from a file.
     Create(CreateArgs),
-    /// Inspect an agent's capabilities (Phase 4.1). With `--diagnostics`
+    /// Inspect an agent's tools. With `--diagnostics`
     /// (default-on for this verb) prints, per declared capability, whether
     /// the slot has a prompt + model binding, which tools the capability
     /// needs, whether the runtime supports it, and whether it has a dspy
@@ -48,6 +47,8 @@ pub enum Op {
     /// per-slot readiness rather than a launch verdict. Use
     /// `xvn strategy diagnostics <id>` for the graph-level launch gate.
     Inspect(InspectArgs),
+    /// Replace the allowed tool list for one slot.
+    SetTools(SetToolsArgs),
     /// List agents in the workspace library. Default output is a table;
     /// use `--format json` or `--format json-compact` for machine-readable
     /// output. Alias: `list`.
@@ -88,6 +89,24 @@ pub struct InspectArgs {
     /// Override the xvn home directory.
     #[arg(long)]
     pub xvn_home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct SetToolsArgs {
+    /// Agent id (ULID) from the workspace library.
+    pub agent_id: String,
+    /// Slot name to update.
+    #[arg(long)]
+    pub slot: String,
+    /// Comma-separated tool names or repeatable tool grants.
+    #[arg(long = "tools", value_delimiter = ',')]
+    pub tools: Vec<String>,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+    /// Output format for the updated agent.
+    #[arg(long, value_enum, default_value_t = ObjectFormat::Json)]
+    pub format: ObjectFormat,
 }
 
 /// Output format for `xvn agent ls`. Extends `ObjectFormat` by adding a
@@ -131,24 +150,18 @@ pub struct LintArgs {
     pub xvn_home: Option<PathBuf>,
 }
 
-/// Per-capability agent-level diagnostic line. Agent-level only — no
-/// strategy graph, so it reports per-slot readiness rather than a launch
-/// verdict.
+/// Per-tool agent-level diagnostic line.
 #[derive(Debug, Serialize)]
-struct AgentCapabilityLine {
-    capability: String,
-    /// Slot this capability is declared on.
+struct AgentToolLine {
+    tool: String,
+    /// Slot this tool is granted on.
     slot: String,
     /// Whether the slot has a non-empty system_prompt.
     has_prompt: bool,
     /// Whether the slot has a provider+model binding.
     has_model_binding: bool,
-    /// Tools this capability requires at runtime.
-    required_tools: Vec<String>,
-    /// Whether the current runtime has a handler for this capability.
-    runtime_supported: bool,
-    /// Whether this capability has a dspy optimizer signature today.
-    optimizable: bool,
+    registered: bool,
+    description: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -156,33 +169,7 @@ struct AgentInspectOut {
     agent_id: String,
     name: String,
     archived: bool,
-    capabilities: Vec<AgentCapabilityLine>,
-}
-
-/// Wire form of the capability classes. Mirrors
-/// `xvision_engine::agents::Capability` 1:1; kept as a separate clap
-/// enum so the CLI surface owns its own value-help string and we don't
-/// have to derive `ValueEnum` on the engine type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-#[clap(rename_all = "lowercase")]
-pub enum CapabilityArg {
-    Trader,
-    Filter,
-    Critic,
-    Intern,
-    Router,
-}
-
-impl From<CapabilityArg> for Capability {
-    fn from(arg: CapabilityArg) -> Self {
-        match arg {
-            CapabilityArg::Trader => Capability::Trader,
-            CapabilityArg::Filter => Capability::Filter,
-            CapabilityArg::Critic => Capability::Critic,
-            CapabilityArg::Intern => Capability::Intern,
-            CapabilityArg::Router => Capability::Router,
-        }
-    }
+    tools: Vec<AgentToolLine>,
 }
 
 #[derive(Args, Debug)]
@@ -190,9 +177,12 @@ pub struct CreateArgs {
     /// Display name for the agent.
     #[arg(long)]
     pub name: String,
-    /// Capability class the single slot advertises.
-    #[arg(long, value_enum)]
-    pub capability: CapabilityArg,
+    /// Deprecated. Use `--tools` instead.
+    #[arg(long, hide = true)]
+    pub capability: Option<String>,
+    /// Tool names to grant to the slot. Accepts comma-separated values and may be repeated.
+    #[arg(long = "tools", value_delimiter = ',')]
+    pub tools: Vec<String>,
     /// LLM provider id (e.g. `anthropic`, `openrouter`).
     #[arg(long)]
     pub provider: String,
@@ -241,18 +231,9 @@ pub async fn run(cmd: AgentCmd) -> CliResult<()> {
         Op::Get(args) => run_get(args).await,
         Op::Create(args) => run_create(args).await,
         Op::Inspect(args) => run_inspect(args).await,
+        Op::SetTools(args) => run_set_tools(args).await,
         Op::Ls(args) => run_ls(args).await,
         Op::Lint(args) => run_lint(args).await,
-    }
-}
-
-fn cap_key(c: Capability) -> &'static str {
-    match c {
-        Capability::Trader => "trader",
-        Capability::Filter => "filter",
-        Capability::Critic => "critic",
-        Capability::Intern => "intern",
-        Capability::Router => "router",
     }
 }
 
@@ -264,17 +245,20 @@ async fn run_inspect(args: InspectArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("agent inspect", e))?;
 
-    let mut lines: Vec<AgentCapabilityLine> = Vec::new();
+    let registered: std::collections::BTreeMap<_, _> = built_in_tool_descriptors()
+        .into_iter()
+        .map(|d| (d.name, d.description))
+        .collect();
+    let mut lines: Vec<AgentToolLine> = Vec::new();
     for slot in &agent.slots {
-        for cap in &slot.capabilities {
-            lines.push(AgentCapabilityLine {
-                capability: cap_key(*cap).to_string(),
+        for tool in &slot.allowed_tools {
+            lines.push(AgentToolLine {
+                tool: tool.clone(),
                 slot: slot.name.clone(),
                 has_prompt: !slot.system_prompt.trim().is_empty(),
                 has_model_binding: !slot.provider.trim().is_empty() && !slot.model.trim().is_empty(),
-                required_tools: required_tools_for(*cap).iter().map(|s| s.to_string()).collect(),
-                runtime_supported: is_runtime_supported(*cap),
-                optimizable: is_optimizable(*cap),
+                registered: registered.contains_key(tool),
+                description: registered.get(tool).cloned(),
             });
         }
     }
@@ -283,7 +267,7 @@ async fn run_inspect(args: InspectArgs) -> CliResult<()> {
         agent_id: agent.agent_id.clone(),
         name: agent.name.clone(),
         archived: agent.archived,
-        capabilities: lines,
+        tools: lines,
     };
 
     if args.json {
@@ -296,25 +280,14 @@ async fn run_inspect(args: InspectArgs) -> CliResult<()> {
         println!("archived: yes");
     }
     println!();
-    for line in &out.capabilities {
-        let tools = if line.required_tools.is_empty() {
-            String::new()
-        } else {
-            format!(" tools={}", line.required_tools.join(","))
-        };
+    for line in &out.tools {
         println!(
-            "• {:<8} slot={} prompt={} model={} runtime={} optimizable={}{}",
-            line.capability,
+            "• {:<18} slot={} prompt={} model={} registered={}",
+            line.tool,
             line.slot,
             if line.has_prompt { "ok" } else { "MISSING" },
             if line.has_model_binding { "ok" } else { "MISSING" },
-            if line.runtime_supported {
-                "supported"
-            } else {
-                "UNSUPPORTED"
-            },
-            if line.optimizable { "yes" } else { "no" },
-            tools,
+            if line.registered { "yes" } else { "no" },
         );
     }
     Ok(())
@@ -328,6 +301,48 @@ async fn run_get(args: GetArgs) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("agent get", e))?;
     emit_object(&agent, args.format)
+}
+
+async fn run_set_tools(args: SetToolsArgs) -> CliResult<()> {
+    if args.slot.trim().is_empty() {
+        return Err(CliError::usage(anyhow::anyhow!("--slot must be non-empty")));
+    }
+    let mut tools = args.tools.clone();
+    tools.sort();
+    tools.dedup();
+
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+    let agent = agents_api::get(&ctx, &args.agent_id)
+        .await
+        .map_err(|e| api_to_cli("agent set-tools", e))?;
+
+    let mut slots = agent.slots.clone();
+    let Some(slot) = slots.iter_mut().find(|slot| slot.name == args.slot) else {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "agent `{}` has no slot `{}`",
+            args.agent_id,
+            args.slot
+        )));
+    };
+    slot.allowed_tools = tools;
+
+    let updated = agents_api::update(
+        &ctx,
+        &args.agent_id,
+        agents_api::UpdateAgentRequest {
+            name: None,
+            description: None,
+            tags: None,
+            slots: Some(slots),
+            scope_strategy_id: None,
+        },
+    )
+    .await
+    .map_err(|e| api_to_cli("agent set-tools", e))?;
+
+    emit_object(&updated, args.format)
 }
 
 /// Read a `--system-prompt` arg. Values prefixed with `@` are
@@ -362,12 +377,12 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
         )));
     }
 
-    // Capabilities default to {Trader}; explicitly set the requested
-    // capability so the persisted shape matches the operator's intent.
-    let cap: Capability = args.capability.into();
-    let mut capabilities: BTreeSet<Capability> = default_capabilities();
-    capabilities.clear();
-    capabilities.insert(cap);
+    if args.capability.is_some() {
+        return Err(CliError::usage(anyhow::anyhow!("use --tools instead")));
+    }
+    let mut tools = args.tools.clone();
+    tools.sort();
+    tools.dedup();
 
     let prompt_version = AgentSlot::compute_prompt_version(&system_prompt);
     let slot = AgentSlot {
@@ -384,7 +399,7 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
         bar_history_limit: None,
         memory_mode: Default::default(),
         noop_skip: None,
-        capabilities: capabilities.clone(),
+        allowed_tools: tools.clone(),
         delta_briefing: None,
     };
 
@@ -397,7 +412,7 @@ async fn run_create(args: CreateArgs) -> CliResult<()> {
                 name: args.name.clone(),
                 description: args.description.clone(),
                 tags: args.tags.clone(),
-                capability: format!("{cap:?}").to_lowercase(),
+                tools: tools.clone(),
                 provider: slot.provider.clone(),
                 model: slot.model.clone(),
                 system_prompt_preview: prompt_preview,
@@ -455,18 +470,18 @@ async fn run_ls(args: LsArgs) -> CliResult<()> {
         ListFormat::Json => print_json(&agents),
         ListFormat::JsonCompact => print_json_compact(&agents),
         ListFormat::Table => {
-            // Column widths: AGENT_ID (26), NAME (28), CAPABILITIES (24),
+            // Column widths: AGENT_ID (26), NAME (28), TOOLS (24),
             // MODELS (32), ARCHIVED (8), TAGS.
             println!(
                 "{:<26}  {:<28}  {:<24}  {:<32}  {:<8}  {}",
-                "AGENT_ID", "NAME", "CAPABILITIES", "MODELS", "ARCHIVED", "TAGS"
+                "AGENT_ID", "NAME", "TOOLS", "MODELS", "ARCHIVED", "TAGS"
             );
             println!("{}", "-".repeat(140));
             for a in &agents {
-                let caps: String = a
+                let tools: String = a
                     .slots
                     .iter()
-                    .flat_map(|s| s.capabilities.iter().map(|c| format!("{c:?}").to_lowercase()))
+                    .flat_map(|s| s.allowed_tools.iter().cloned())
                     .collect::<Vec<_>>()
                     .join(",");
                 let models: String = a
@@ -480,7 +495,7 @@ async fn run_ls(args: LsArgs) -> CliResult<()> {
                     "{:<26}  {:<28}  {:<24}  {:<32}  {:<8}  {}",
                     &a.agent_id,
                     truncate(&a.name, 28),
-                    truncate(&caps, 24),
+                    truncate(&tools, 24),
                     truncate(&models, 32),
                     if a.archived { "yes" } else { "no" },
                     tags,
@@ -531,7 +546,7 @@ struct DryRunWouldCreate {
     name: String,
     description: String,
     tags: Vec<String>,
-    capability: String,
+    tools: Vec<String>,
     provider: String,
     model: String,
     /// First 120 chars of the system prompt plus an ellipsis when the
@@ -704,7 +719,7 @@ pub mod get {
                         bar_history_limit: None,
                         memory_mode: Default::default(),
                         noop_skip: None,
-                        capabilities: xvision_engine::agents::default_capabilities(),
+                        allowed_tools: Vec::new(),
                         delta_briefing: None,
                     }],
                     scope_strategy_id: None,

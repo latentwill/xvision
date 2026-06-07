@@ -109,6 +109,23 @@ const CONTEXT_MODE_LABEL: Record<RailContextMode, string> = {
   workspace: "Whole workspace",
 };
 
+function describeRailModelSource(
+  rows: ProviderRow[],
+  defaultModel: string | null,
+  provider: string | null,
+  model: string,
+): string {
+  if (!provider || !model) return "No chat model selected.";
+  const row = rows.find((r) => r.name === provider);
+  if (row?.is_default && defaultModel === model) {
+    return `Workspace default: ${provider} / ${model}`;
+  }
+  if (row?.is_default && !defaultModel) {
+    return `Workspace default provider: ${provider} / ${model}`;
+  }
+  return `Selected chat model: ${provider} / ${model}`;
+}
+
 export type ChatRailProps = {
   variant?: "desktop" | "panel";
   className?: string;
@@ -197,6 +214,16 @@ export function ChatRail({
     queryFn: listProviders,
     enabled: variant === "panel" || open,
   });
+  const railModelSourceLabel = useMemo(
+    () =>
+      describeRailModelSource(
+        providers.data?.providers ?? [],
+        providers.data?.default_model ?? null,
+        providerName,
+        modelId,
+      ),
+    [providers.data, providerName, modelId],
+  );
   const sessionsQ = useQuery({
     queryKey: ["chat-rail", "sessions"],
     queryFn: listSessions,
@@ -235,6 +262,8 @@ export function ChatRail({
       (p) => isProviderConfigured(p) && p.enabled_models.length > 0,
     );
 
+    let staleSelection = false;
+
     // (1) current selection still valid → no-op.
     if (providerName && modelId) {
       const cur = candidates.find((c) => c.name === providerName);
@@ -248,6 +277,16 @@ export function ChatRail({
       }
       // Selection is fully stale (provider gone or disabled). Fall
       // through to default-then-first-candidate resolution.
+      staleSelection = true;
+    } else if (providerName || modelId) {
+      staleSelection = true;
+    }
+
+    if (staleSelection) {
+      setProviderName(null);
+      setModelId("");
+      safeStorageRemove(RAIL_PROVIDER_LS);
+      safeStorageRemove(RAIL_MODEL_LS);
     }
 
     // (3) workspace default.
@@ -759,6 +798,7 @@ export function ChatRail({
         loading={providers.isPending}
         provider={providerName}
         model={modelId}
+        modelSourceLabel={railModelSourceLabel}
         mode={mode}
         modePending={modePending}
         modeDisabled={!sessionId || isStreaming}
@@ -847,6 +887,7 @@ function RailModelBar({
   loading,
   provider,
   model,
+  modelSourceLabel,
   mode,
   modePending,
   modeDisabled,
@@ -857,6 +898,7 @@ function RailModelBar({
   loading: boolean;
   provider: string | null;
   model: string;
+  modelSourceLabel: string;
   mode: ChatSessionMode;
   modePending: boolean;
   modeDisabled: boolean;
@@ -879,6 +921,9 @@ function RailModelBar({
           emptyHint="no models picked — visit Settings → Providers"
         />
       </div>
+      <p className="m-0 text-[11px] text-text-3">
+        {modelSourceLabel}
+      </p>
       <div
         role="group"
         aria-label="Chat mode"

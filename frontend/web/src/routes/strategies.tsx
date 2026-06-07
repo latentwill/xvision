@@ -5,6 +5,7 @@ import { Topbar } from "@/components/shell/Topbar";
 import { StrategiesFolderView } from "./strategies-folder";
 import { Pill } from "@/components/primitives/Pill";
 import { Icon } from "@/components/primitives/Icon";
+import { SignalActionMenu } from "@/components/primitives/SignalMenu";
 import {
   ServerPagerStrip,
   useServerPagination,
@@ -419,6 +420,7 @@ function DesktopRow({
 }) {
   const shape = shapeOf(row);
   const mode = decisionMode(row);
+  const navigate = useNavigate();
   return (
     <tr
       key={row.agent_id}
@@ -460,23 +462,46 @@ function DesktopRow({
       >
         {fmtCreatedFromUlid(row.agent_id)}
       </td>
-      <td className="px-5 py-3 text-right text-text-3">
-        <button
-          type="button"
-          onClick={onClone}
-          disabled={clonePending}
-          className="mr-3 text-text-3 hover:text-text disabled:cursor-not-allowed disabled:opacity-60"
-          aria-label={`Clone strategy ${displayName(row)}`}
-        >
-          {clonePending ? "Cloning..." : "Clone"}
-        </button>
-        <Link
-          to={`/strategies/${encodeURIComponent(row.agent_id)}`}
-          className="text-text-3 hover:text-text"
-          aria-label={`Open inspector for ${displayName(row)}`}
-        >
-          Inspector →
-        </Link>
+      <td className="px-3 py-3 text-right">
+        <SignalActionMenu
+          align="right"
+          triggerAriaLabel={`Actions for ${displayName(row)}`}
+          triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text"
+          triggerLabel={<Icon name="moreH" size={15} />}
+          groups={[
+            {
+              items: [
+                {
+                  icon: "openExternal",
+                  label: "Open",
+                  shortcut: "⌘O",
+                  onClick: () => navigate(`/strategies/${encodeURIComponent(row.agent_id)}`),
+                },
+                {
+                  icon: "copy",
+                  label: "Duplicate",
+                  shortcut: "⌘D",
+                  disabled: clonePending,
+                  onClick: onClone,
+                },
+                {
+                  icon: "compare",
+                  label: "Compare…",
+                  onClick: () => navigate(`/eval-runs/compare?ids=${encodeURIComponent(row.agent_id)}`),
+                },
+              ],
+            },
+            {
+              items: [
+                {
+                  icon: "fileCode",
+                  label: "View raw JSON",
+                  onClick: () => navigate(`/strategies/${encodeURIComponent(row.agent_id)}?tab=json`),
+                },
+              ],
+            },
+          ]}
+        />
       </td>
     </tr>
   );

@@ -49,6 +49,19 @@ fn slot() -> LLMSlot {
 /// block-list keys on.
 struct AlwaysFailsTool;
 
+fn failing_tool_descriptor(description: &str) -> xvision_agent_client::protocol::ToolDescriptor {
+    xvision_agent_client::protocol::ToolDescriptor {
+        name: "always_fails".to_string(),
+        version: "1".to_string(),
+        description: description.to_string(),
+        input_schema: serde_json::json!({ "type": "object" }),
+        output_schema: serde_json::json!({ "type": "object" }),
+        timeout_ms: 1_000,
+        side_effect_level: xvision_agent_client::protocol::SideEffectLevel::ReadOnly,
+        requires_approval: false,
+    }
+}
+
 #[async_trait]
 impl Tool for AlwaysFailsTool {
     fn name(&self) -> ToolName {
@@ -56,6 +69,9 @@ impl Tool for AlwaysFailsTool {
     }
     fn description(&self) -> &'static str {
         "test-only tool that always errors with a stable message"
+    }
+    fn descriptor(&self) -> xvision_agent_client::protocol::ToolDescriptor {
+        failing_tool_descriptor(self.description())
     }
     async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         anyhow::bail!("test-deterministic failure")
@@ -73,6 +89,9 @@ impl Tool for CountingAlwaysFailsTool {
     }
     fn description(&self) -> &'static str {
         "test-only tool that always errors and counts invocations"
+    }
+    fn descriptor(&self) -> xvision_agent_client::protocol::ToolDescriptor {
+        failing_tool_descriptor(self.description())
     }
     async fn invoke(&self, _input: serde_json::Value) -> anyhow::Result<serde_json::Value> {
         self.calls.fetch_add(1, Ordering::SeqCst);

@@ -1,17 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use crate::agent::dispatch_capability::{dispatch_capability, resolve_activates, AgentOutput, DispatchInput};
+use crate::agent::dispatch_capability::{dispatch_capability, AgentOutput, DispatchInput};
 use crate::agent::edge_predicate::evaluate_predicate;
 use crate::agent::execute::{execute_slot, SlotInput};
 use crate::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, ResponseSchema, StopReason};
 use crate::agent::observability::ObsEmitter;
-use crate::agents::{default_capabilities, AgentSlot, Capability, InputsPolicy};
+use crate::agents::{AgentSlot, Capability, InputsPolicy};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::slot::LLMSlot;
 use crate::strategies::{PipelineKind, Strategy};
 use crate::tools::ToolRegistry;
-use std::collections::BTreeSet;
 use xvision_core::providers::{lookup_model, Catalog};
 
 #[derive(Debug, Clone)]
@@ -73,18 +72,6 @@ pub struct ResolvedAgentSlot {
     /// no associated agent (legacy regime/intern/trader `LLMSlot` path,
     /// unit tests). With `memory_mode = Off` this field is ignored.
     pub agent_id: String,
-    /// Snapshotted `AgentSlot.capabilities` (Phase A) at
-    /// strategy-resolution time. Read by `resolve_activates` in the
-    /// Phase B dispatcher to pick the slot's primary capability when
-    /// `AgentRef.activates` is `None`. Phase E populates non-Trader
-    /// sets on starter templates; without this field the dispatcher
-    /// would mis-route those slots to the Trader handler.
-    ///
-    /// Empty set falls back to `{Trader}` in `resolve_activates` so
-    /// legacy pre-033 strategies (whose `serde(default)` for
-    /// `AgentSlot.capabilities` is `{Trader}`) keep byte-identical
-    /// behaviour.
-    pub capabilities: BTreeSet<Capability>,
     /// Snapshotted `AgentSlot.noop_skip` at strategy-resolution time.
     /// `true` (the effective default for both `None` and `Some(true)`)
     /// enables the pre-LLM hold-only action gate on trader-role slots;
@@ -436,22 +423,8 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
         // match arm never disagree (QA #5).
         let role_key = canonical_role(&resolved.role);
 
-        // Resolve which capability this `AgentRef` activates. Spec
-        // Decision 1: prefer `AgentRef.activates`; fall back to the
-        // slot's first capability in `BTreeSet` iteration order. Phase E
-        // ships starter templates with non-Trader capabilities (Critic /
-        // Filter / Intern / Router) so the fallback can be load-bearing
-        // — we read the snapshotted `resolved.capabilities` set (Phase A
-        // field, threaded by `resolve_agent_slot`). Empty sets fall back
-        // to `{Trader}` inside `resolve_activates`, which keeps every
-        // legacy pre-033 strategy on its previous dispatch path.
         let activates_field = input.strategy.agents.get(i).and_then(|a| a.activates);
-        let capabilities_for_fallback = if resolved.capabilities.is_empty() {
-            default_capabilities()
-        } else {
-            resolved.capabilities.clone()
-        };
-        let capability = resolve_activates(activates_field, &capabilities_for_fallback);
+        let capability = activates_field.unwrap_or(Capability::Trader);
 
         // Graph pipelines gate an agent on its incoming conditioned
         // edges. A missing or non-matching upstream FilterSignal skips
@@ -903,11 +876,7 @@ fn trader_reachable_after(
         .enumerate()
         .skip(current_index + 1)
         .any(|(_, a)| {
-            // Resolve capability: explicit `activates`, falling back
-            // to the default-capability heuristic. Matches the main
-            // loop's resolution so cache freshness aligns with what
-            // the loop is about to dispatch.
-            let cap = resolve_activates(a.activates, &default_capabilities());
+            let cap = a.activates.unwrap_or(Capability::Trader);
             cap == Capability::Trader
         })
 }
@@ -929,7 +898,7 @@ pub fn agent_slot_to_llm_slot(role: &str, slot: &AgentSlot) -> LLMSlot {
         } else {
             format!("{}.{}", slot.provider, slot.model)
         },
-        allowed_tools: Vec::new(),
+        allowed_tools: slot.allowed_tools.clone(),
         provider: if slot.provider.trim().is_empty() {
             None
         } else {
@@ -964,13 +933,6 @@ pub fn resolve_agent_slot(role: &str, slot: &AgentSlot, agent_id: &str) -> Resol
         bar_history_limit: slot.bar_history_limit,
         memory_mode: slot.memory_mode,
         agent_id: agent_id.to_string(),
-        // Phase A field — snapshot the slot's full capabilities set so
-        // the Phase B dispatcher's `resolve_activates` picks the right
-        // primary capability when `AgentRef.activates` is `None`. Phase E
-        // ships templates with non-Trader sets (Critic / Filter / Intern
-        // / Router); without this snapshot the dispatcher would default
-        // every such slot to Trader.
-        capabilities: slot.capabilities.clone(),
         // `None` and `Some(true)` both enable the skip; `Some(false)`
         // explicitly disables it so the LLM runs even in a corner.
         noop_skip: slot.noop_skip.unwrap_or(true),

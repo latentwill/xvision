@@ -1,6 +1,5 @@
 //! `xvn example seed [--reset]` implementation.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -211,7 +210,7 @@ async fn seed_strategies(
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
-                capabilities: BTreeSet::from([Capability::Trader]),
+                allowed_tools: vec!["ohlcv".into(), "submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: Some(EXAMPLE_STRATEGY_TREND_FOLLOWER_ID.into()),
@@ -248,9 +247,9 @@ async fn seed_strategies(
             agent_id,
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: PipelineDef::single(),
         regime_slot: None,
         intern_slot: None,
@@ -596,9 +595,14 @@ mod tests {
             .iter()
             .find(|a| a.canonical_role() == "trader")
             .expect("seeded strategy must have a trader agent");
-        let ctx = ApiContext::open(dir.path(), Actor::Cli { user: "test-user".into() })
-            .await
-            .expect("open ctx");
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "test-user".into(),
+            },
+        )
+        .await
+        .expect("open ctx");
         let agent = AgentStore::new(ctx.db.clone())
             .get(&agent_ref.agent_id)
             .await
@@ -607,7 +611,7 @@ mod tests {
         let slot = agent
             .slots
             .iter()
-            .find(|s| s.capabilities.contains(&Capability::Trader))
+            .find(|s| s.allowed_tools.iter().any(|tool| tool == "submit_decision"))
             .expect("seeded agent must have a trader slot");
         assert_eq!(
             slot.provider, SEED_DEFAULT_PROVIDER,

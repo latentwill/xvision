@@ -413,6 +413,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
             model: newAgentModel,
             system_prompt: newAgentPrompt.trim(),
             skill_ids: [],
+    allowed_tools: [],
             max_tokens: null,
           },
         ],
@@ -1737,7 +1738,7 @@ function hasAttachedAgents(strategy: Strategy | null): boolean {
 }
 
 function agentSupportsFilter(agent: Agent): boolean {
-  return agent.slots.some((slot) => slot.capabilities?.includes("filter"));
+  return agent.slots.some((slot) => slot.allowed_tools?.includes("indicator_panel"));
 }
 
 function isReservedAgentRole(role: string): boolean {

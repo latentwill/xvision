@@ -319,9 +319,8 @@ pub fn check_provider_available(
 /// Detect a missing prompt: the slot's `system_prompt` is empty or
 /// whitespace-only.
 ///
-/// Wire into: the eval-launch preflight (mirrors
-/// `diagnostics::CapabilityStatus::MissingPrompt`, but as a hard
-/// short-circuit at dispatch time).
+/// Wire into: the eval-launch preflight as a hard short-circuit at
+/// dispatch time.
 pub fn check_prompt_present(role: &str, system_prompt: &str) -> Result<(), ShortCircuit> {
     if system_prompt.trim().is_empty() {
         Err(ShortCircuit::MissingPrompt {

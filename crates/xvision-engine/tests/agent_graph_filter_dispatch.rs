@@ -127,7 +127,6 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
-        capabilities: std::collections::BTreeSet::new(),
     }
 }
 
@@ -138,16 +137,16 @@ async fn filter_signal_flows_into_trader_briefing() {
             agent_id: "01HZF".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
         AgentRef {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
     ];
     let strategy = fixture_strategy(agents);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
@@ -223,16 +222,16 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
             agent_id: "01HZF".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
         AgentRef {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
     ];
     let strategy = fixture_strategy(agents);
     let slots = vec![resolved("regime_filter"), resolved("trader")];
@@ -280,16 +279,16 @@ async fn graph_predicate_true_invokes_trader() {
             agent_id: "01HZF".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
         AgentRef {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
     ];
     let strategy = fixture_strategy_with_pipeline(
         agents,
@@ -344,16 +343,16 @@ async fn graph_predicate_false_skips_trader() {
             agent_id: "01HZF".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
         AgentRef {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
     ];
     let strategy = fixture_strategy_with_pipeline(
         agents,
@@ -432,16 +431,16 @@ async fn filter_provider_error_aborts_pipeline() {
             agent_id: "01HZF".into(),
             role: "regime_filter".into(),
             activates: Some(Capability::Filter),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
         AgentRef {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-},
+            prompt_override: None,
+            model_override: None,
+        },
     ];
     let strategy = fixture_strategy(agents);
     let slots = vec![resolved("regime_filter"), resolved("trader")];

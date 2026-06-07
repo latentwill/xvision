@@ -15,6 +15,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { AgentSlot } from "@/api/agents";
 import { listProviders, settingsKeys } from "@/api/settings";
+import { listTools, toolKeys } from "@/api/tools";
 import { ModelPicker } from "@/components/ModelPicker";
 import { Icon } from "@/components/primitives/Icon";
 
@@ -36,6 +37,10 @@ export function SlotForm({
   const providersQ = useQuery({
     queryKey: settingsKeys.providers(),
     queryFn: listProviders,
+  });
+  const toolsQ = useQuery({
+    queryKey: toolKeys.all,
+    queryFn: listTools,
   });
   const providerRows = providersQ.data?.providers ?? [];
   const providerNames =
@@ -224,6 +229,40 @@ export function SlotForm({
           className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono leading-relaxed focus:outline-none focus:border-gold/40 resize-y"
         />
       </Field>
+
+      <div className="mt-4">
+        <Field label="Tools">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {(toolsQ.data?.items ?? []).map((tool) => {
+              const checked = (slot.allowed_tools ?? []).includes(tool.name);
+              return (
+                <label
+                  key={tool.name}
+                  className="flex items-start gap-2 rounded-sm border border-border bg-surface-card px-3 py-2 text-[12.5px] text-text-2"
+                  title={tool.description}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      const current = slot.allowed_tools ?? [];
+                      const next = e.target.checked
+                        ? [...current, tool.name]
+                        : current.filter((name) => name !== tool.name);
+                      patch("allowed_tools", [...new Set(next)].sort());
+                    }}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block font-mono text-text">{tool.name}</span>
+                    <span className="block text-text-3 leading-snug">{tool.description}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </Field>
+      </div>
 
       {/* F-8 — bar-history rolling window. `null` (empty input) keeps
           today's behavior: the full warmup_bars slice goes to the trader
