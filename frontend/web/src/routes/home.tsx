@@ -11,6 +11,7 @@ import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { LiveStrategiesSection } from "@/components/home/LiveStrategiesSection";
 import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
+import { StrategyOutcomesList } from "@/components/home/StrategyOutcomesList";
 import type {
   BrokerEntry,
   BrokersReport,
@@ -77,18 +78,14 @@ export function HomeRoute() {
         <ActiveTasksStrip />
         <LiveStrategiesSection />
         <CriticalFindingsRow runs={runs.data ?? []} />
-        <StrategyOutcomesListStub />
+        <StrategyOutcomesList strategies={strategies.data ?? []} runs={runs.data ?? []} />
         <NagStripStub />
       </div>
     </>
   );
 }
 
-// ─── section stubs (W6–W7 will replace these) ─────────────────────────────
-
-function StrategyOutcomesListStub() {
-  return <div data-testid="strategy-outcomes-list" />;
-}
+// ─── section stubs (W7 will replace NagStrip) ──────────────────────────────
 
 function NagStripStub() {
   return <div data-testid="nag-strip" />;
