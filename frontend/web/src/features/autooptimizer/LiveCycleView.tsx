@@ -2,6 +2,7 @@ import {
   type Dispatch,
   type RefObject,
   type SetStateAction,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,14 +12,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
-import { ApiError } from "@/api/client";
 import {
   type CycleProgressEvent,
   type LineageNode,
+  type StartRunCycleRequest,
   formatEventLabel,
   getRunDefaults,
   startRunCycle,
   cancelRunCycle,
+  getCycleCost,
   useLineageNodes,
   useCycleRuns,
   useCycleCost,
@@ -209,13 +211,33 @@ function LivePageHeader({
 
 // ─── Left column ──────────────────────────────────────────────────────────────
 
-function LaunchStrip({ modelSelection }: { modelSelection: OptimizerModelSelection }) {
-  const queryClient = useQueryClient();
+type LaunchConfig = StartRunCycleRequest & {
+  maxCycles: number | null;
+  totalBudgetUsd: number | null;
+};
+
+function LaunchStrip({
+  modelSelection,
+  onLaunch,
+  isRunning,
+  loopActive,
+  cyclesCompleted,
+  cumulativeSpent,
+  onStop,
+}: {
+  modelSelection: OptimizerModelSelection;
+  onLaunch: (config: LaunchConfig) => void;
+  isRunning: boolean;
+  loopActive: boolean;
+  cyclesCompleted: number;
+  cumulativeSpent: number;
+  onStop: () => void;
+}) {
   const [strategyId, setStrategyId] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
-  // F28: optional budget cap + evaluation window. Empty = no cap / config default.
   const [budgetUsd, setBudgetUsd] = useState("");
+  const [maxCycles, setMaxCycles] = useState("");
+  const [totalBudgetUsd, setTotalBudgetUsd] = useState("");
   const [dayStart, setDayStart] = useState("");
   const [dayEnd, setDayEnd] = useState("");
   const [baselineStart, setBaselineStart] = useState("");
@@ -224,39 +246,30 @@ function LaunchStrip({ modelSelection }: { modelSelection: OptimizerModelSelecti
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
   });
-  const launchMutation = useMutation({
-    mutationFn: startRunCycle,
-    onSuccess: async (resp) => {
-      setLaunchError(null);
-      setLaunchMessage(resp.message);
-      await queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
-    },
-    onError: (err) => {
-      setLaunchMessage(null);
-      if (err instanceof ApiError) {
-        setLaunchError(err.field ? `${err.field}: ${err.message}` : err.message);
-      } else {
-        setLaunchError(err instanceof Error ? err.message : "Network error");
-      }
-    },
-  });
-  const handleLaunch = async () => {
+  const handleLaunch = () => {
     const trimmed = strategyId.trim();
     if (!trimmed) { setLaunchError("Select a strategy"); return; }
     setLaunchError(null);
-    setLaunchMessage(null);
-    // F28: parse + validate the optional budget cap.
     let budget: number | null = null;
     if (budgetUsd.trim() !== "") {
       const n = Number(budgetUsd);
-      if (!Number.isFinite(n) || n <= 0) {
-        setLaunchError("Budget must be a positive USD amount");
-        return;
-      }
+      if (!Number.isFinite(n) || n <= 0) { setLaunchError("Per-cycle budget must be a positive USD amount"); return; }
       budget = n;
     }
+    let maxC: number | null = null;
+    if (maxCycles.trim() !== "") {
+      const n = parseInt(maxCycles, 10);
+      if (!Number.isFinite(n) || n <= 0) { setLaunchError("Max cycles must be a positive integer"); return; }
+      maxC = n;
+    }
+    let totalBudget: number | null = null;
+    if (totalBudgetUsd.trim() !== "") {
+      const n = Number(totalBudgetUsd);
+      if (!Number.isFinite(n) || n <= 0) { setLaunchError("Total budget must be a positive USD amount"); return; }
+      totalBudget = n;
+    }
     const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
-    launchMutation.mutate({
+    onLaunch({
       strategy_id: trimmed,
       mutator_provider: modelSelection.mutatorProvider,
       mutator_model: modelSelection.mutatorModel || null,
@@ -267,11 +280,13 @@ function LaunchStrip({ modelSelection }: { modelSelection: OptimizerModelSelecti
       day_end: orNull(dayEnd),
       baseline_start: orNull(baselineStart),
       baseline_end: orNull(baselineEnd),
+      maxCycles: maxC,
+      totalBudgetUsd: totalBudget,
     });
   };
-  const isRunning = launchMutation.isPending;
   const inp = "min-h-9 bg-surface-elev border border-border rounded text-text text-[13px] px-2 py-1";
   const noStrategies = !strategiesLoading && (!strategies || strategies.length === 0);
+  const disabled = isRunning || !strategyId.trim() || noStrategies;
   return (
     <div className="flex flex-col gap-2">
       <label htmlFor="optimizer-strategy" className="text-[12px] text-text-3">
@@ -298,10 +313,8 @@ function LaunchStrip({ modelSelection }: { modelSelection: OptimizerModelSelecti
           </>
         )}
       </select>
-      {/* F28: budget cap + evaluation window — bound a UI cycle's cost/length.
-          Empty fields use no cap / the config default window. */}
       <label htmlFor="optimizer-budget" className="text-[12px] text-text-3 mt-1">
-        Budget cap (USD, optional)
+        Per-cycle budget cap (USD, optional)
       </label>
       <input
         id="optimizer-budget"
@@ -313,10 +326,42 @@ function LaunchStrip({ modelSelection }: { modelSelection: OptimizerModelSelecti
         onChange={(e) => setBudgetUsd(e.target.value)}
         disabled={isRunning}
         placeholder="no cap"
-        aria-label="Budget cap in USD"
+        aria-label="Per-cycle budget cap in USD"
         className={`${inp} w-full`}
       />
-      <span className="text-[12px] text-text-3 mt-1">Evaluation window (optional)</span>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1">
+          <label className="text-[12px] text-text-3">Max cycles</label>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            inputMode="numeric"
+            value={maxCycles}
+            onChange={(e) => setMaxCycles(e.target.value)}
+            disabled={isRunning}
+            placeholder="∞"
+            aria-label="Maximum cycle count"
+            className={`${inp} w-full`}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[12px] text-text-3">Total budget (USD)</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            value={totalBudgetUsd}
+            onChange={(e) => setTotalBudgetUsd(e.target.value)}
+            disabled={isRunning}
+            placeholder="∞"
+            aria-label="Total budget cap across all cycles"
+            className={`${inp} w-full`}
+          />
+        </div>
+      </div>
+      <span className="text-[12px] text-text-3">Evaluation window (optional)</span>
       <div className="grid grid-cols-2 gap-2">
         <input type="date" value={dayStart} onChange={(e) => setDayStart(e.target.value)}
           disabled={isRunning} aria-label="Day window start" className={inp} />
@@ -327,24 +372,41 @@ function LaunchStrip({ modelSelection }: { modelSelection: OptimizerModelSelecti
         <input type="date" value={baselineEnd} onChange={(e) => setBaselineEnd(e.target.value)}
           disabled={isRunning} aria-label="Baseline window end" className={inp} />
       </div>
-      <button
-        type="button"
-        onClick={() => { void handleLaunch(); }}
-        disabled={isRunning || !strategyId.trim() || noStrategies}
-        className="w-full rounded bg-accent px-3 py-3 text-[14px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50"
-      >
-        {isRunning ? "Starting…" : "Run optimizer"}
-      </button>
-      {/* F29: a run performs one propose → gate → commit against the chosen
-          parent — the dashboard equivalent of `xvn optimizer mutate-once`. */}
+      {loopActive && (
+        <div className="rounded border border-border bg-surface-elev px-3 py-2 text-[12px] text-text-2 font-mono space-y-0.5">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />
+            <span>Cycle {cyclesCompleted + (isRunning ? 1 : 0)} running</span>
+          </div>
+          {cumulativeSpent > 0 && (
+            <div className="text-text-3">Spent: ${cumulativeSpent.toFixed(4)}</div>
+          )}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={handleLaunch}
+          disabled={disabled}
+          className="flex-1 rounded border border-gold px-3 py-2.5 text-[14px] font-medium text-gold hover:bg-gold/10 disabled:opacity-50 transition-colors"
+        >
+          {isRunning && !loopActive ? "Starting…" : "Run optimizer"}
+        </button>
+        {loopActive && (
+          <button
+            type="button"
+            onClick={onStop}
+            className="rounded border border-danger/40 px-3 py-2.5 text-[13px] text-danger hover:bg-danger/10 transition-colors"
+          >
+            Stop
+          </button>
+        )}
+      </div>
       <span className="text-[11.5px] text-text-3">
-        Runs one gated experiment on the parent (≡ <code>mutate-once</code>).
+        Runs continuously until stopped, max cycles, or total budget reached.
       </span>
       {launchError !== null && (
         <span className="text-[13px] text-danger">{launchError}</span>
-      )}
-      {launchMessage !== null && (
-        <span className="text-[13px] text-gold">{launchMessage}</span>
       )}
     </div>
   );
@@ -473,7 +535,21 @@ function ModelSelectRow({
   );
 }
 
-function CycleLeftCard() {
+function CycleLeftCard({
+  isRunning,
+  loopActive,
+  cyclesCompleted,
+  cumulativeSpent,
+  onLaunch,
+  onStop,
+}: {
+  isRunning: boolean;
+  loopActive: boolean;
+  cyclesCompleted: number;
+  cumulativeSpent: number;
+  onLaunch: (config: LaunchConfig) => void;
+  onStop: () => void;
+}) {
   const [selection, setSelection] = useState<OptimizerModelSelection>({
     mutatorProvider: getStoredMutatorProvider(),
     mutatorModel: getStoredMutatorModel() ?? "",
@@ -484,13 +560,20 @@ function CycleLeftCard() {
   return (
     <div
       id="optimizer-run-controls"
-      className="rounded-md border border-gold/30 bg-gradient-to-b from-gold/5 to-transparent p-5 space-y-4 scroll-mt-24"
+      className="rounded-md border border-border p-5 space-y-4 scroll-mt-24"
     >
-      <span className="uppercase tracking-[0.22em] text-[9.5px] text-gold font-medium block">
+      <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium block">
         Optimizer Run
       </span>
-      <Pill tone="default">No cycle running</Pill>
-      <LaunchStrip modelSelection={selection} />
+      <LaunchStrip
+        modelSelection={selection}
+        onLaunch={onLaunch}
+        isRunning={isRunning}
+        loopActive={loopActive}
+        cyclesCompleted={cyclesCompleted}
+        cumulativeSpent={cumulativeSpent}
+        onStop={onStop}
+      />
       <ModelSelectRow selection={selection} onSelectionChange={setSelection} />
     </div>
   );
@@ -813,6 +896,7 @@ function LiveCostTicker({
 // ─── Root export ──────────────────────────────────────────────────────────────
 
 export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home" }: { onTabChange?: (tab: string) => void; embedded?: boolean; activeTab?: string } = {}) {
+  const queryClient = useQueryClient();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -829,13 +913,115 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
     if (et === "cycle_started") { isRunning = true; activeCycleId = events[i].cycle_id ?? null; break; }
   }
 
-  const appendEvent = (event: CycleProgressEvent) => {
+  // Continuous loop state
+  const loopConfigRef = useRef<LaunchConfig | null>(null);
+  const stopRequestedRef = useRef(false);
+  const [loopActive, setLoopActive] = useState(false);
+  const [cyclesCompleted, setCyclesCompleted] = useState(0);
+  const [cumulativeSpent, setCumulativeSpent] = useState(0);
+  const lastProcessedRowId = useRef<number>(-1);
+
+  const stopLoop = useCallback(() => {
+    stopRequestedRef.current = true;
+    loopConfigRef.current = null;
+    setLoopActive(false);
+  }, []);
+
+  const handleLaunch = useCallback(async (config: LaunchConfig) => {
+    stopRequestedRef.current = false;
+    loopConfigRef.current = config;
+    setCyclesCompleted(0);
+    setCumulativeSpent(0);
+    lastProcessedRowId.current = -1;
+    setLoopActive(true);
+    try {
+      await startRunCycle({
+        strategy_id: config.strategy_id,
+        mutator_provider: config.mutator_provider,
+        mutator_model: config.mutator_model,
+        judge_provider: config.judge_provider,
+        judge_model: config.judge_model,
+        budget_usd: config.budget_usd,
+        day_start: config.day_start,
+        day_end: config.day_end,
+        baseline_start: config.baseline_start,
+        baseline_end: config.baseline_end,
+      });
+      await queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
+    } catch {
+      loopConfigRef.current = null;
+      setLoopActive(false);
+    }
+  }, [queryClient]);
+
+  const appendEvent = useCallback((event: CycleProgressEvent) => {
     setEvents((prev) => {
       const row: EventRow = { ...event, _row_id: nextRowId++ };
       const next = prev.length >= 200 ? prev.slice(1) : prev;
       return [...next, row];
     });
-  };
+  }, []);
+
+  // Auto-relaunch after cycle_finished when loop is active
+  useEffect(() => {
+    if (!loopActive || stopRequestedRef.current) return;
+    const lastFinished = [...events].reverse().find((ev) => {
+      const et = ev.event_type ?? ev.type ?? ev.kind ?? "";
+      return et === "cycle_finished";
+    });
+    if (!lastFinished || lastFinished._row_id <= lastProcessedRowId.current) return;
+    lastProcessedRowId.current = lastFinished._row_id;
+
+    const loop = loopConfigRef.current;
+    if (!loop || stopRequestedRef.current) return;
+
+    const newCyclesCompleted = cyclesCompleted + 1;
+    setCyclesCompleted(newCyclesCompleted);
+
+    const relaunch = (accumulatedSpent: number) => {
+      if (!loopConfigRef.current || stopRequestedRef.current) return;
+      const l = loopConfigRef.current;
+      if (l.maxCycles !== null && newCyclesCompleted >= l.maxCycles) {
+        loopConfigRef.current = null;
+        setLoopActive(false);
+        return;
+      }
+      if (l.totalBudgetUsd !== null && accumulatedSpent >= l.totalBudgetUsd) {
+        loopConfigRef.current = null;
+        setLoopActive(false);
+        return;
+      }
+      void startRunCycle({
+        strategy_id: l.strategy_id,
+        mutator_provider: l.mutator_provider,
+        mutator_model: l.mutator_model,
+        judge_provider: l.judge_provider,
+        judge_model: l.judge_model,
+        budget_usd: l.budget_usd,
+        day_start: l.day_start,
+        day_end: l.day_end,
+        baseline_start: l.baseline_start,
+        baseline_end: l.baseline_end,
+      }).then(() => {
+        void queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
+      }).catch(() => {
+        loopConfigRef.current = null;
+        setLoopActive(false);
+      });
+    };
+
+    if (lastFinished.cycle_id) {
+      getCycleCost(lastFinished.cycle_id).then((cost) => {
+        const spent = cumulativeSpent + (cost.cost_usd ?? 0);
+        setCumulativeSpent(spent);
+        relaunch(spent);
+      }).catch(() => {
+        relaunch(cumulativeSpent);
+      });
+    } else {
+      relaunch(cumulativeSpent);
+    }
+  }, [events, loopActive, cyclesCompleted, cumulativeSpent, queryClient]);
 
   useEffect(() => {
     const source = new EventSource("/api/autooptimizer/events");
@@ -855,7 +1041,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
       source.close();
       setConnected(false);
     };
-  }, []);
+  }, [appendEvent]);
 
   useEffect(() => {
     if (typeof bottomRef.current?.scrollIntoView === "function") {
@@ -876,18 +1062,28 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
       <div className="flex items-center gap-3">
         <span
           className={[
-            "inline-block w-2 h-2 rounded-full",
-            connected ? "bg-gold" : "bg-text-3",
+            "inline-block w-2 h-2 rounded-full transition-all",
+            connected && isRunning ? "bg-gold animate-pulse" : connected ? "bg-gold" : "bg-text-3",
           ].join(" ")}
-          aria-label={connected ? "Connected" : "Disconnected"}
+          aria-label={connected ? (isRunning ? "Running" : "Connected") : "Disconnected"}
         />
         <span className="text-[13px] text-text-2">
-          {connected ? "Live" : "Waiting for connection…"}
+          {isRunning ? "Live · cycle in progress" : connected ? "Live" : "Waiting for connection…"}
         </span>
+        {loopActive && !isRunning && (
+          <span className="text-[12px] text-text-3 font-mono">next cycle queued…</span>
+        )}
       </div>
       <LiveCostTicker activeCycleId={activeCycleId} isRunning={isRunning} />
       <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_260px] gap-6">
-        <CycleLeftCard />
+        <CycleLeftCard
+          isRunning={isRunning}
+          loopActive={loopActive}
+          cyclesCompleted={cyclesCompleted}
+          cumulativeSpent={cumulativeSpent}
+          onLaunch={(config) => { void handleLaunch(config); }}
+          onStop={stopLoop}
+        />
         <EventLogCard events={events} bottomRef={bottomRef} />
         <KeptNextCard nodes={lineageNodes} />
       </div>

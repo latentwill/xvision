@@ -234,10 +234,16 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
       return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset };
     }
     const priorSideForRow = priorSide.get(row.decision_index) ?? "flat";
-    const action = mapAction(row.action, priorSideForRow);
     // exit_reason: either a future DTO field or extracted from the "sltp: <reason>" justification prefix
     const exit_reason =
       extractSltpExitReason(row.justification);
+    let action: ActionPillAction;
+    if (exit_reason) {
+      // Position was force-closed by risk engine; show actual closing action
+      action = priorSideForRow === "short" ? "CLOSE" : "SELL";
+    } else {
+      action = mapAction(row.action, priorSideForRow);
+    }
     return {
       i: row.decision_index,
       t: row.timestamp,
