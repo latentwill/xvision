@@ -128,6 +128,10 @@ pub async fn run_cycle(
     // mutations/backtests (checked between candidates and parents) so an operator
     // can halt a long/expensive run. `None` = never cancelled.
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    // P4: a cooperative pause flag. When set, the cycle suspends at its next safe
+    // checkpoint (between candidates) and polls every 1s until the flag is cleared
+    // (resume) or the cancel flag is set. `None` = never paused.
+    pause: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<CycleResult> {
     let cycle_id = cycle_id_override.unwrap_or_else(|| Ulid::new().to_string());
     let min_improvement =
@@ -184,6 +188,19 @@ pub async fn run_cycle(
         if is_cancelled() {
             break;
         }
+        // P4: pause checkpoint — suspend here between parents if pause is set,
+        // polling every 1s until the flag is cleared (resume) or the cycle is
+        // cancelled. This is the outer per-parent boundary; the inner per-mutation
+        // boundary in `process_parent_mutations` does the same check.
+        while pause.as_ref().is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed)) {
+            if is_cancelled() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if is_cancelled() {
+            break;
+        }
         let ph = parent_node.bundle_hash.to_hex();
         if let Some(parent_strategy) = cycle_config.parent_strategies.get(&ph) {
             progress(CycleProgressEvent::ParentSelected {
@@ -209,6 +226,7 @@ pub async fn run_cycle(
                 dspy_ctx,
                 memory,
                 cancel.as_ref(),
+                pause.as_ref(),
             )
             .await?;
             active_nodes.extend(active);
@@ -388,6 +406,7 @@ async fn process_parent_mutations<F>(
     dspy_ctx: Option<&DspyContext>,
     memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pause: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
     F: Fn(CycleProgressEvent),
@@ -480,6 +499,17 @@ where
 
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            break;
+        }
+        // P4: pause checkpoint — suspend here between mutations if pause flag is
+        // set; poll every 1s until cleared (resume) or cancelled.
+        while pause.is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed)) {
+            if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
             break;
         }
