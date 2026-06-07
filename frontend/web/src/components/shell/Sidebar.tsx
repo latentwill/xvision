@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
 import { BrandMark } from "@/components/primitives/BrandMark";
 import { useTheme } from "@/theme/useTheme";
+import { WalletConnectFooter } from "@/components/shell/WalletConnectFooter";
 
 type Item = { to: string; label: string; icon: IconName };
 
@@ -105,16 +106,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
           </button>
         </div>
 
-        <div className="flex items-center gap-2.5 px-4 py-3.5 border-t border-border-soft">
-          <div className="w-8 h-8 rounded-full bg-surface-panel border border-border flex items-center justify-center text-[11px] font-semibold text-text">
-            AK
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[13px] text-text leading-tight">Alex Kim</div>
-            <div className="text-[11px] text-text-3 leading-tight">alex@xvn.dev</div>
-          </div>
-          <Icon name="chevR" size={14} className="text-text-3" />
-        </div>
+        <WalletConnectFooter />
       </div>
     </aside>
   );
