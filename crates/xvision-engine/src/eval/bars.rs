@@ -44,11 +44,7 @@ pub struct BarCacheArgs {
 }
 
 /// Deterministic cache key for a `(asset_pair, granularity, window,
-/// data_source_tag)` tuple. Lifted here so both the `xvn bars fetch`
-/// CLI command and the cache-backed `xvn ab-compare` path produce the
-/// same blake3 hash for the same inputs — guaranteeing one window is
-/// stored under one key regardless of which entry point warms the
-/// cache. blake3 hex (64 chars).
+/// data_source_tag)` tuple. blake3 hex (64 chars).
 pub fn compute_cache_key(
     asset_pair: &str,
     granularity: BarGranularity,

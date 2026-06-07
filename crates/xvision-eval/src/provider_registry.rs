@@ -38,9 +38,8 @@ impl ProviderRegistry {
 
     /// Resolve an intern slot to a backend `Arc`, filling in the provider
     /// from `default_intern.provider` when the slot's provider segment is
-    /// empty (the shorthand-form marker emitted by `parse_arm_spec`).
-    /// Memoized on `(provider, model)` — two arms requesting the same slot
-    /// share one HTTP client.
+    /// empty. Memoized on `(provider, model)` — two slots requesting the
+    /// same backend share one HTTP client.
     pub fn intern_backend(&self, slot: &SlotRef) -> Result<Arc<dyn InternBackend>> {
         let resolved = self.fill_default_provider(slot, &self.default_intern);
         let key = (resolved.provider.clone(), resolved.model.clone());

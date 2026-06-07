@@ -269,7 +269,7 @@ pub struct RunArgs {
     /// when the run's `agent_runtime` resolves to `cline`; mints a trajectory
     /// recording for the run's primary recorded slot so the run can later be
     /// replayed deterministically. Off by default (no recording — the run is
-    /// byte-identical to a non-recorded run). Mirrors `xvn ab-compare --record`.
+    /// byte-identical to a non-recorded run).
     #[arg(long)]
     pub record_trajectory: bool,
     /// Evaluation profile: smoke (fast/cheap) or deep (thorough).

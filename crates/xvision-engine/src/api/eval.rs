@@ -920,9 +920,7 @@ pub struct ProviderOverride {
 
 /// §2-D — per-run trajectory-recording mode. The operator's chosen driver
 /// for Cline trajectory recording (replaces the §2-B `XVN_TRAJECTORY_RECORD`
-/// env gate). Mirrors the request-field shape the CLI ab-compare path uses
-/// (`xvision_eval::ab_compare::AbTrajectoryMode`): the caller declares intent
-/// on the request, the engine acts on it.
+/// env gate). The caller declares intent on the request; the engine acts on it.
 ///
 /// * `Live` (default) — no recording. Byte-identical to the pre-§2-D /
 ///   pre-§2-B behaviour for backtest + live + non-record Cline runs:
@@ -931,12 +929,9 @@ pub struct ProviderOverride {
 /// * `Record` — mint a trajectory recording for the run's primary recorded
 ///   slot and bind the event sink so frames persist into the store.
 ///
-/// Replay through the engine eval path is intentionally NOT a variant here:
-/// today replay is driven only from the dedicated CLI record/replay entry
-/// point (`xvn ab-compare --replay`, `AbTrajectoryMode::Replay`) and the
-/// per-cycle pipeline dispatch hard-codes `execute_cline::TrajectoryMode::Record`
-/// (live/record). Adding engine-eval replay would require threading a
-/// recording id + store into every slot dispatch — out of scope for §2-D.
+/// Replay through the engine eval path is intentionally NOT a variant here.
+/// Adding engine-eval replay would require threading a recording id + store
+/// into every slot dispatch — out of scope for §2-D.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
