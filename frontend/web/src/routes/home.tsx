@@ -10,6 +10,7 @@ import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { LiveStrategiesSection } from "@/components/home/LiveStrategiesSection";
+import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
 import type {
   BrokerEntry,
   BrokersReport,
@@ -75,7 +76,7 @@ export function HomeRoute() {
         <SafetyPauseBanner />
         <ActiveTasksStrip />
         <LiveStrategiesSection />
-        <CriticalFindingsRowStub />
+        <CriticalFindingsRow runs={runs.data ?? []} />
         <StrategyOutcomesListStub />
         <NagStripStub />
       </div>
@@ -83,11 +84,7 @@ export function HomeRoute() {
   );
 }
 
-// ─── section stubs (W5–W7 will replace these) ─────────────────────────────
-
-function CriticalFindingsRowStub() {
-  return <div data-testid="critical-findings-row" />;
-}
+// ─── section stubs (W6–W7 will replace these) ─────────────────────────────
 
 function StrategyOutcomesListStub() {
   return <div data-testid="strategy-outcomes-list" />;
