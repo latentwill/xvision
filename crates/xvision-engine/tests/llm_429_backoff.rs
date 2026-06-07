@@ -57,7 +57,7 @@ async fn retries_once_on_429_and_succeeds_on_second_attempt() {
     // First request: 429 with reset in ~100ms from now.
     let reset_ms = (chrono::Utc::now().timestamp_millis() + 100).to_string();
     Mock::given(method("POST"))
-        .and(path("/chat/completions"))
+        .and(path("/v1/chat/completions"))
         .respond_with(
             ResponseTemplate::new(429)
                 .append_header("x-ratelimit-reset", reset_ms.as_str())
@@ -70,7 +70,7 @@ async fn retries_once_on_429_and_succeeds_on_second_attempt() {
 
     // Second request: 200 OK with a valid completion.
     Mock::given(method("POST"))
-        .and(path("/chat/completions"))
+        .and(path("/v1/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(hold_response_body()))
         .mount(&server)
         .await;
@@ -103,7 +103,7 @@ async fn persistent_429_fails_after_max_retries() {
     // completes quickly. Jitter adds 0–200ms per attempt, so 3 retries
     // could take up to ~600ms in the worst case.
     Mock::given(method("POST"))
-        .and(path("/chat/completions"))
+        .and(path("/v1/chat/completions"))
         .respond_with(
             ResponseTemplate::new(429)
                 .append_header("x-ratelimit-reset", "0") // reset = epoch 0 → wait = 0 + jitter

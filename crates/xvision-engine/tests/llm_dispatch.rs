@@ -125,7 +125,7 @@ mod openai_retry {
             .as_millis() as u64;
         let reset_str = now_ms.to_string();
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/v1/chat/completions"))
             .respond_with(
                 ResponseTemplate::new(429)
                     .insert_header("x-ratelimit-reset", reset_str.as_str())
@@ -138,7 +138,7 @@ mod openai_retry {
 
         // Second attempt: successful completion.
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/v1/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(ok_completion_body()))
             .mount(&server)
             .await;
@@ -158,7 +158,7 @@ mod openai_retry {
         // audit-log shape that previously fell through to
         // `[unclassified]` and failed the run.
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/v1/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": "chatcmpl-bad",
                 "object": "chat.completion",
@@ -170,7 +170,7 @@ mod openai_retry {
 
         // Second attempt: well-formed completion.
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/v1/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(ok_completion_body()))
             .mount(&server)
             .await;
@@ -187,20 +187,38 @@ mod openai_retry {
         let server = MockServer::start().await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/v1/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_string("{not json"))
             .up_to_n_times(1)
             .mount(&server)
             .await;
 
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/v1/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(ok_completion_body()))
             .mount(&server)
             .await;
 
         let dispatch = OpenaiCompatDispatch::new(server.uri(), "test-key".into());
         let resp = dispatch.complete(req_for("test-model")).await.unwrap();
+        assert!(resp.text().contains("hold"));
+    }
+
+    /// Gemini's OpenAI-compatible endpoint includes a non-`/v1` versioned root:
+    /// `/v1beta/openai`. Normalization must preserve that root instead of
+    /// appending `/v1`, or dispatch goes to `/v1beta/openai/v1/chat/completions`.
+    #[tokio::test]
+    async fn non_v1_openai_compat_root_is_preserved() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1beta/openai/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(ok_completion_body()))
+            .mount(&server)
+            .await;
+
+        let dispatch =
+            OpenaiCompatDispatch::new(format!("{}/v1beta/openai", server.uri()), "test-key".into());
+        let resp = dispatch.complete(req_for("gemini-2.5-flash")).await.unwrap();
         assert!(resp.text().contains("hold"));
     }
 
@@ -212,7 +230,7 @@ mod openai_retry {
     async fn missing_choices_array_bubbles_typed_error_after_retries() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/chat/completions"))
+            .and(path("/v1/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "id": "chatcmpl-bad",
                 "object": "chat.completion"
