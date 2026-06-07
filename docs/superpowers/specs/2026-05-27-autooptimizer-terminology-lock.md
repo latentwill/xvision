@@ -262,6 +262,30 @@ consistent.
   `autooptimizer/` cannot import `marketplace/` stays unchanged).
 - Marketplace plugin terminology (already passed its own rename).
 
+## Optimizer UI Overhaul wave (2026-06-07)
+
+New terms introduced by the Optimizer UI Overhaul P1 feature wave. Codename
+remains `autooptimizer`; nothing here touches the DSPy `optimize`/`Optimizer*`
+namespace.
+
+| dev | ops |
+|---|---|
+| `OptimizerSession` / `autooptimizer_session_state` | Run |
+| `state: paused` / pause flag | Paused / Pause / Resume |
+| `mode: once` | Single experiment |
+| `mode: n_experiments` | N experiments |
+| `mode: until_budget` | Until budget |
+| `PhaseStarted` / `PhaseFinished` events | (phase labels, see rows below) |
+| `writer_proposing` (phase label) | Writer drafting experiment |
+| `eval_day_window` (phase label) | Backtesting today's window |
+| `eval_untouched_window` (phase label) | Backtesting untouched period |
+| `reverse_check` (phase label) | Reverse-mutation check |
+| `gate_evaluating` (phase label) | Applying decision gate |
+| `reviewer_running` (phase label) | Reviewer writing notes |
+| `autooptimizer_schedules` table | Scheduled run |
+| `flywheel_compiled` SSE event | Findings compiled into prompt pattern |
+| `dspy_flywheel` surface (strip) | Prompt tuning |
+
 ## Amendments
 
 ### 2026-05-27 — Memory verb structure

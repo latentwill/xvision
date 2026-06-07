@@ -29,6 +29,7 @@ pub mod cycle;
 pub mod cycle_loosen;
 pub mod cycle_runs;
 pub mod diversity;
+pub mod events_store;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
 pub mod eval_adapter;
@@ -47,6 +48,7 @@ pub mod progress;
 pub mod regime_results;
 pub mod run_lock;
 pub mod scenario_synthesis;
+pub mod session;
 pub mod tournament;
 pub mod validator;
 
@@ -61,6 +63,7 @@ pub use cycle_runs::{
     NodeProvenance,
 };
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
+pub use events_store::{append_event, prune_old_events};
 pub use eval_adapter::{
     BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
 };

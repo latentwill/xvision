@@ -8,6 +8,9 @@
 //!
 //! ## Endpoint inventory
 //!
+//! - `GET /api/autooptimizer/status`
+//! - `GET /api/autooptimizer/sessions[?limit=&offset=]`
+//! - `GET /api/autooptimizer/sessions/:id`
 //! - `GET /api/autooptimizer/lineage[?status=active|rejected|quarantined&cycle_id=&limit=&offset=]`
 //! - `GET /api/autooptimizer/lineage/:hash`
 //! - `GET /api/autooptimizer/ladder[?since=<rfc3339>]`
@@ -36,10 +39,221 @@ use xvision_engine::autooptimizer::{
     judge::Finding,
     lineage::{LineageNode, LineageStatus, LineageStore},
     mutator_ladder::{compute_ladder, MutatorScore},
+    session::{create_session, get_active_session, OptimizerSession},
 };
 
 use crate::error::DashboardError;
 use crate::state::AppState;
+
+// ---------------------------------------------------------------------------
+// Session routes: GET /status, GET /sessions, GET /sessions/:id,
+//                 POST /sessions
+// ---------------------------------------------------------------------------
+
+/// Summary of an active session for the /status response.
+#[derive(Serialize)]
+pub struct SessionSummary {
+    pub session_id: String,
+    pub strategy_id: String,
+    pub state: String,
+    pub mode: String,
+    pub cycles_completed: i64,
+    pub kept_count: i64,
+    pub suspect_count: i64,
+    pub dropped_count: i64,
+    pub cost_usd: Option<f64>,
+}
+
+impl From<OptimizerSession> for SessionSummary {
+    fn from(s: OptimizerSession) -> Self {
+        SessionSummary {
+            session_id: s.session_id,
+            strategy_id: s.strategy_id,
+            state: s.state,
+            mode: s.mode,
+            cycles_completed: s.cycles_completed,
+            kept_count: s.kept_count,
+            suspect_count: s.suspect_count,
+            dropped_count: s.dropped_count,
+            cost_usd: None,
+        }
+    }
+}
+
+/// Response body for `GET /api/autooptimizer/status`.
+#[derive(Serialize)]
+pub struct StatusResponse {
+    pub active_session: Option<SessionSummary>,
+    pub last_event_seq: i64,
+}
+
+/// GET /api/autooptimizer/status
+///
+/// Returns the active session (if any) and the highest persisted SSE event seq.
+pub async fn get_status(
+    State(state): State<AppState>,
+) -> Result<Json<StatusResponse>, DashboardError> {
+    if !table_exists(&state.pool, "autooptimizer_session_state").await? {
+        return Ok(Json(StatusResponse {
+            active_session: None,
+            last_event_seq: 0,
+        }));
+    }
+
+    let active = get_active_session(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(e))?
+        .map(SessionSummary::from);
+
+    let last_event_seq: i64 = if table_exists(&state.pool, "autooptimizer_events").await? {
+        sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM autooptimizer_events")
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| DashboardError::Internal(e.into()))?
+    } else {
+        0
+    };
+
+    Ok(Json(StatusResponse {
+        active_session: active,
+        last_event_seq,
+    }))
+}
+
+/// Request body for `POST /api/autooptimizer/sessions`.
+#[derive(Deserialize)]
+pub struct StartSessionBody {
+    pub strategy_id: String,
+    pub mode: String,
+    pub cycles_planned: Option<i64>,
+    pub budget_usd: Option<f64>,
+    pub config_json: Option<String>,
+}
+
+/// Response body for `POST /api/autooptimizer/sessions`.
+#[derive(Serialize)]
+pub struct StartSessionResponse {
+    pub session_id: String,
+}
+
+/// POST /api/autooptimizer/sessions
+///
+/// Creates a new optimizer session. Returns 409 if a session is already active.
+pub async fn start_session(
+    State(state): State<AppState>,
+    Json(body): Json<StartSessionBody>,
+) -> Result<(StatusCode, Json<StartSessionResponse>), DashboardError> {
+    if !table_exists(&state.pool, "autooptimizer_session_state").await? {
+        // Table not yet created — first call will create it via migration.
+        // Run the migration inline (idempotent).
+        run_session_migration(&state.pool).await?;
+    }
+
+    // Check for active session.
+    let active = get_active_session(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(e))?;
+    if active.is_some() {
+        return Err(DashboardError::Conflict(
+            "session already active".to_string(),
+        ));
+    }
+
+    let config_json = body.config_json.unwrap_or_else(|| "{}".to_string());
+    let session_id = create_session(
+        &state.pool,
+        &body.strategy_id,
+        &config_json,
+        &body.mode,
+        body.cycles_planned,
+    )
+    .await
+    .map_err(|e| DashboardError::Internal(e))?;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(StartSessionResponse { session_id }),
+    ))
+}
+
+/// Query parameters for `GET /api/autooptimizer/sessions`.
+#[derive(Deserialize, Default)]
+pub struct SessionListQuery {
+    #[serde(default = "default_session_limit")]
+    pub limit: i64,
+    #[serde(default)]
+    pub offset: i64,
+}
+
+fn default_session_limit() -> i64 {
+    20
+}
+
+/// GET /api/autooptimizer/sessions
+///
+/// Returns sessions newest-first.
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    Query(q): Query<SessionListQuery>,
+) -> Result<Json<Vec<OptimizerSession>>, DashboardError> {
+    if !table_exists(&state.pool, "autooptimizer_session_state").await? {
+        return Ok(Json(Vec::new()));
+    }
+
+    let rows: Vec<OptimizerSession> = sqlx::query_as(
+        "SELECT * FROM autooptimizer_session_state \
+         ORDER BY created_at DESC \
+         LIMIT ? OFFSET ?",
+    )
+    .bind(q.limit)
+    .bind(q.offset)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))?;
+
+    Ok(Json(rows))
+}
+
+/// GET /api/autooptimizer/sessions/:id
+///
+/// Returns a single session or 404 if not found.
+pub async fn get_session(
+    Path(session_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<OptimizerSession>, DashboardError> {
+    if !table_exists(&state.pool, "autooptimizer_session_state").await? {
+        return Err(DashboardError::NotFound(format!(
+            "session '{session_id}' not found"
+        )));
+    }
+
+    let row: Option<OptimizerSession> = sqlx::query_as(
+        "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
+    )
+    .bind(&session_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))?;
+
+    match row {
+        Some(s) => Ok(Json(s)),
+        None => Err(DashboardError::NotFound(format!(
+            "session '{session_id}' not found"
+        ))),
+    }
+}
+
+/// Idempotently run migration 057 (session + events tables).
+async fn run_session_migration(pool: &sqlx::SqlitePool) -> Result<(), DashboardError> {
+    let sql = include_str!("../../../xvision-engine/migrations/057_autooptimizer_sessions.sql");
+    for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        sqlx::query(stmt)
+            .execute(pool)
+            .await
+            .map_err(|e| DashboardError::Internal(e.into()))?;
+    }
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Query parameter structs

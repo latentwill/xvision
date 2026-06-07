@@ -121,7 +121,7 @@ beforeEach(() => {
   });
 });
 
-function renderLiveCycleView() {
+function renderLiveCycleView(props: { activeTab?: string } = {}) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -130,7 +130,7 @@ function renderLiveCycleView() {
   });
   return render(
     <QueryClientProvider client={client}>
-      <LiveCycleView />
+      <LiveCycleView activeTab={props.activeTab} />
     </QueryClientProvider>,
   );
 }
@@ -317,6 +317,20 @@ describe("LiveCycleView", () => {
         judge_model: "qwen2.5-coder:7b",
       });
     });
+  });
+
+  it("does not render ActiveLineagesSectionFull on the default (home) tab", async () => {
+    renderLiveCycleView();
+    await waitFor(() =>
+      expect(screen.queryByText("Active lineages")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("renders ActiveLineagesSectionFull when the genealogy tab is active", async () => {
+    renderLiveCycleView({ activeTab: "genealogy" });
+    await waitFor(() =>
+      expect(screen.getByText("Active lineages")).toBeInTheDocument(),
+    );
   });
 
   it("does not launch with stale stored optimizer model overrides absent from the picker", async () => {
