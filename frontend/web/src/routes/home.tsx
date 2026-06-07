@@ -12,6 +12,8 @@ import { isInflightRunStatus } from "@/lib/run-status";
 import { LiveStrategiesSection } from "@/components/home/LiveStrategiesSection";
 import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
 import { StrategyOutcomesList } from "@/components/home/StrategyOutcomesList";
+import { NagStrip } from "@/components/home/NagStrip";
+import type { AttentionItem } from "@/components/home/NagStrip";
 import type {
   BrokerEntry,
   BrokersReport,
@@ -56,8 +58,7 @@ export function HomeRoute() {
     queryFn: () => listScenarios(),
   });
 
-  // buildAttention still called; result will be consumed by NagStrip in W4
-  buildAttention({
+  const attentionItems = buildAttention({
     providers: providers.data?.providers,
     brokers: brokers.data,
   });
@@ -79,16 +80,10 @@ export function HomeRoute() {
         <LiveStrategiesSection />
         <CriticalFindingsRow runs={runs.data ?? []} />
         <StrategyOutcomesList strategies={strategies.data ?? []} runs={runs.data ?? []} />
-        <NagStripStub />
+        <NagStrip items={attentionItems} />
       </div>
     </>
   );
-}
-
-// ─── section stubs (W7 will replace NagStrip) ──────────────────────────────
-
-function NagStripStub() {
-  return <div data-testid="nag-strip" />;
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────
@@ -98,13 +93,6 @@ function isChartableRun(run: RunSummary): boolean {
 }
 
 // ─── attention rollup (nag items only — perf-drop/eval-failure moved to other sections) ──
-
-type AttentionItem = {
-  tone: "warn" | "danger" | "info";
-  title: string;
-  detail: string;
-  link?: { to: string; label: string };
-};
 
 function buildAttention(input: {
   providers: ProviderRow[] | undefined;

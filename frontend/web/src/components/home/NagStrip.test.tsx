@@ -1,0 +1,142 @@
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+
+import { NagStrip } from "./NagStrip";
+import type { AttentionItem } from "./NagStrip";
+
+function renderStrip(items: AttentionItem[]) {
+  return render(
+    <MemoryRouter>
+      <NagStrip items={items} />
+    </MemoryRouter>,
+  );
+}
+
+const PROVIDER_ITEM: AttentionItem = {
+  tone: "warn",
+  title: "1 provider missing API key",
+  detail: "OpenAI → OPENAI_API_KEY",
+  link: { to: "/settings/providers", label: "configure" },
+};
+
+const BROKER_ITEM: AttentionItem = {
+  tone: "warn",
+  title: "Alpaca credentials not set",
+  detail: "ALPACA_API_KEY, ALPACA_SECRET_KEY",
+  link: { to: "/settings/brokers", label: "set up" },
+};
+
+afterEach(() => {
+  cleanup();
+});
+
+describe("NagStrip", () => {
+  it("renders missing-provider-key nag item", () => {
+    renderStrip([PROVIDER_ITEM]);
+
+    expect(screen.getByTestId("nag-strip")).toBeInTheDocument();
+    expect(screen.getByText("1 provider missing API key")).toBeInTheDocument();
+    expect(screen.getByText(/OpenAI → OPENAI_API_KEY/)).toBeInTheDocument();
+  });
+
+  it("renders broker-unconfigured nag item", () => {
+    renderStrip([BROKER_ITEM]);
+
+    expect(screen.getByTestId("nag-strip")).toBeInTheDocument();
+    expect(screen.getByText("Alpaca credentials not set")).toBeInTheDocument();
+    expect(screen.getByText(/ALPACA_API_KEY/)).toBeInTheDocument();
+  });
+
+  it("returns null when items array is empty", () => {
+    const { container } = renderStrip([]);
+
+    expect(screen.queryByTestId("nag-strip")).not.toBeInTheDocument();
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("shows first 3 items when more than 3 provided and shows '+ N more' toggle", () => {
+    const items: AttentionItem[] = [
+      { tone: "warn", title: "Nag one", detail: "detail 1" },
+      { tone: "warn", title: "Nag two", detail: "detail 2" },
+      { tone: "warn", title: "Nag three", detail: "detail 3" },
+      { tone: "info", title: "Nag four", detail: "detail 4" },
+      { tone: "danger", title: "Nag five", detail: "detail 5" },
+    ];
+
+    renderStrip(items);
+
+    // First 3 are visible
+    expect(screen.getByText("Nag one")).toBeInTheDocument();
+    expect(screen.getByText("Nag two")).toBeInTheDocument();
+    expect(screen.getByText("Nag three")).toBeInTheDocument();
+
+    // 4th and 5th are NOT visible yet
+    expect(screen.queryByText("Nag four")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nag five")).not.toBeInTheDocument();
+
+    // "+ 2 more" toggle is shown (5 - 3 = 2)
+    expect(screen.getByText(/\+ 2 more/i)).toBeInTheDocument();
+  });
+
+  it("clicking '+ N more' expands to show all items inline (no modal)", async () => {
+    const user = userEvent.setup();
+    const items: AttentionItem[] = [
+      { tone: "warn", title: "Nag one", detail: "detail 1" },
+      { tone: "warn", title: "Nag two", detail: "detail 2" },
+      { tone: "warn", title: "Nag three", detail: "detail 3" },
+      { tone: "info", title: "Nag four", detail: "detail 4" },
+      { tone: "danger", title: "Nag five", detail: "detail 5" },
+    ];
+
+    renderStrip(items);
+
+    // Before expand: only 3 shown
+    expect(screen.queryByText("Nag four")).not.toBeInTheDocument();
+
+    // Click the expand toggle
+    const toggle = screen.getByText(/\+ 2 more/i);
+    await user.click(toggle);
+
+    // After expand: all 5 visible inline — no dialog/modal
+    expect(screen.getByText("Nag one")).toBeInTheDocument();
+    expect(screen.getByText("Nag two")).toBeInTheDocument();
+    expect(screen.getByText("Nag three")).toBeInTheDocument();
+    expect(screen.getByText("Nag four")).toBeInTheDocument();
+    expect(screen.getByText("Nag five")).toBeInTheDocument();
+
+    // No modal or dialog role rendered
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // The toggle text changes to "show less" or disappears
+    expect(screen.queryByText(/\+ 2 more/i)).not.toBeInTheDocument();
+  });
+
+  it("renders tone dot indicators — warn=amber, danger=red, info=blue", () => {
+    const items: AttentionItem[] = [
+      { tone: "warn", title: "Warn item", detail: "warn detail" },
+      { tone: "danger", title: "Danger item", detail: "danger detail" },
+      { tone: "info", title: "Info item", detail: "info detail" },
+    ];
+
+    renderStrip(items);
+
+    // Each item has a data-tone attribute on its dot
+    const warnDots = document.querySelectorAll("[data-tone='warn']");
+    const dangerDots = document.querySelectorAll("[data-tone='danger']");
+    const infoDots = document.querySelectorAll("[data-tone='info']");
+
+    expect(warnDots.length).toBeGreaterThanOrEqual(1);
+    expect(dangerDots.length).toBeGreaterThanOrEqual(1);
+    expect(infoDots.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders link when item has a link property", () => {
+    renderStrip([PROVIDER_ITEM]);
+
+    const link = screen.getByRole("link", { name: /configure/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "/settings/providers");
+  });
+});

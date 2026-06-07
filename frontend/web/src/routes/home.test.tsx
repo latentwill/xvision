@@ -130,21 +130,74 @@ describe("HomeRoute", () => {
     expect(document.querySelector('[data-testid="control-chart-card"]')).toBeNull();
   });
 
-  // S1-W2: NagStripStub present
-  it("renders nag-strip stub", async () => {
+  // S1-W7: NagStrip renders when there are nag items (missing provider key)
+  it("renders nag-strip when a provider has a missing API key", async () => {
+    const { listProviders } = await import("@/api/settings");
+    vi.mocked(listProviders).mockResolvedValueOnce({
+      providers: [
+        {
+          name: "OpenAI",
+          kind: "openai-compat",
+          base_url: "https://api.openai.com/v1",
+          synthetic: false,
+          is_default: false,
+          api_key_env: "OPENAI_API_KEY",
+          api_key_set: false,
+          enabled_models: [],
+        },
+      ],
+      default_model: null,
+    });
+
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
-    expect(document.querySelector('[data-testid="nag-strip"]')).not.toBeNull();
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-testid="nag-strip"]')).not.toBeNull();
+    });
   });
 
-  // S1-W2: All new section stubs present
-  it("renders all section stubs in order", async () => {
+  // S1-W7: NagStrip returns null when config is clean (no nag items)
+  it("does NOT render nag-strip when config is clean", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    await waitFor(() => {
+      // Brokers configured, no missing provider keys → NagStrip returns null
+      expect(document.querySelector('[data-testid="nag-strip"]')).toBeNull();
+    });
+  });
+
+  // S1-W7: Section DOM order — NagStrip renders last when nag items exist
+  it("renders sections in correct order when nag items are present", async () => {
+    const { listProviders } = await import("@/api/settings");
+    vi.mocked(listProviders).mockResolvedValueOnce({
+      providers: [
+        {
+          name: "OpenAI",
+          kind: "openai-compat",
+          base_url: "https://api.openai.com/v1",
+          synthetic: false,
+          is_default: false,
+          api_key_env: "OPENAI_API_KEY",
+          api_key_set: false,
+          enabled_models: [],
+        },
+      ],
+      default_model: null,
+    });
+
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
 
     // ActiveTasksStrip returns null while pending — wait for it to resolve
     await waitFor(() => {
       expect(document.querySelector('[data-testid="active-tasks-strip"]')).not.toBeNull();
+    });
+
+    // NagStrip renders when a provider has a missing key
+    await waitFor(() => {
+      expect(document.querySelector('[data-testid="nag-strip"]')).not.toBeNull();
     });
 
     const activeTasksStrip = document.querySelector('[data-testid="active-tasks-strip"]');
@@ -159,7 +212,7 @@ describe("HomeRoute", () => {
     expect(strategyOutcomesList).not.toBeNull();
     expect(nagStrip).not.toBeNull();
 
-    // Verify DOM order
+    // Verify DOM order: NagStrip is last
     const container = activeTasksStrip!.parentElement!;
     const children = Array.from(container.children);
     const idxActive = children.indexOf(activeTasksStrip as Element);
