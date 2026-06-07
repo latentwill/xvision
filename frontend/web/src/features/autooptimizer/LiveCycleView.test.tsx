@@ -68,6 +68,16 @@ beforeEach(() => {
     // Stub the historic-cycles list so `RecentCyclesSectionFull` gets an array
     // (the catch-all `{}` made `cycleRuns.map` throw — a pre-existing test gap).
     if (path === "/api/autooptimizer/cycles") return Promise.resolve([]);
+    if (path === "/api/autooptimizer/run-defaults") {
+      return Promise.resolve({
+        mutator_provider: "anthropic",
+        mutator_model: "claude-haiku-4-5",
+        judge_provider: "anthropic",
+        judge_model: "claude-haiku-4-5",
+        config_path: "/tmp/xvn/autooptimizer.toml",
+        config_exists: false,
+      });
+    }
     if (path === "/api/autooptimizer/run-cycle") {
       return Promise.resolve({
         started: true,
@@ -171,6 +181,16 @@ describe("LiveCycleView", () => {
     vi.mocked(apiFetch).mockImplementation((path: string) => {
       if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
       if (path === "/api/autooptimizer/cycles") return Promise.resolve([]);
+      if (path === "/api/autooptimizer/run-defaults") {
+        return Promise.resolve({
+          mutator_provider: "anthropic",
+          mutator_model: "claude-haiku-4-5",
+          judge_provider: "anthropic",
+          judge_model: "claude-haiku-4-5",
+          config_path: "/tmp/xvn/autooptimizer.toml",
+          config_exists: false,
+        });
+      }
       if (path === "/api/autooptimizer/cycles/cycle-live/cost") {
         return Promise.resolve({
           cycle_id: "cycle-live",
@@ -226,6 +246,124 @@ describe("LiveCycleView", () => {
       const init = call![1] as { method?: string; body?: string };
       expect(init.method).toBe("POST");
       expect(JSON.parse(init.body ?? "{}")).toMatchObject({ strategy_id: "strategy-1" });
+    });
+  });
+
+  it("lists no-auth provider models in optimizer writer and reviewer pickers", async () => {
+    vi.mocked(listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "ollama",
+          kind: "ollama",
+          base_url: "http://localhost:11434",
+          api_key_env: "",
+          api_key_set: false,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["llama3.2:latest", "qwen2.5-coder:7b"],
+        },
+      ],
+      default_model: null,
+    });
+
+    renderLiveCycleView();
+
+    expect(await screen.findAllByRole("option", { name: "qwen2.5-coder:7b" })).toHaveLength(2);
+    expect(screen.getByText(/No override uses built-in fallback/)).toBeInTheDocument();
+    expect(screen.getByText(/No override reviews with built-in fallback/)).toBeInTheDocument();
+  });
+
+  it("launches with the visible optimizer model overrides", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "ollama",
+          kind: "ollama",
+          base_url: "http://localhost:11434",
+          api_key_env: "",
+          api_key_set: false,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["qwen2.5-coder:7b"],
+        },
+      ],
+      default_model: null,
+    });
+    renderLiveCycleView();
+
+    await screen.findByRole("option", { name: "Trend follower" });
+    await user.selectOptions(
+      screen.getByLabelText("Experiment writer model override"),
+      "ollama::qwen2.5-coder:7b",
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Reviewer model override"),
+      "ollama::qwen2.5-coder:7b",
+    );
+    await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
+    await user.click(screen.getByRole("button", { name: "Run optimizer" }));
+
+    await waitFor(() => {
+      const call = vi
+        .mocked(apiFetch)
+        .mock.calls.find(([path]) => path === "/api/autooptimizer/run-cycle");
+      const init = call?.[1] as { body?: string } | undefined;
+      expect(JSON.parse(init?.body ?? "{}")).toMatchObject({
+        strategy_id: "strategy-1",
+        mutator_provider: "ollama",
+        mutator_model: "qwen2.5-coder:7b",
+        judge_provider: "ollama",
+        judge_model: "qwen2.5-coder:7b",
+      });
+    });
+  });
+
+  it("does not launch with stale stored optimizer model overrides absent from the picker", async () => {
+    localStorage.setItem("autooptimizer_mutator_provider", "openrouter");
+    localStorage.setItem("autooptimizer_mutator_model", "old/model");
+    localStorage.setItem("autooptimizer_judge_provider", "openrouter");
+    localStorage.setItem("autooptimizer_judge_model", "old/judge");
+    const user = userEvent.setup();
+    vi.mocked(listProviders).mockResolvedValue({
+      providers: [
+        {
+          name: "ollama",
+          kind: "ollama",
+          base_url: "http://localhost:11434",
+          api_key_env: "",
+          api_key_set: false,
+          synthetic: false,
+          is_default: false,
+          enabled_models: ["qwen2.5-coder:7b"],
+        },
+      ],
+      default_model: null,
+    });
+    renderLiveCycleView();
+
+    await screen.findByRole("option", { name: "Trend follower" });
+    await waitFor(() => {
+      expect(localStorage.getItem("autooptimizer_mutator_provider")).toBeNull();
+      expect(localStorage.getItem("autooptimizer_mutator_model")).toBeNull();
+      expect(localStorage.getItem("autooptimizer_judge_provider")).toBeNull();
+      expect(localStorage.getItem("autooptimizer_judge_model")).toBeNull();
+    });
+    await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
+    await user.click(screen.getByRole("button", { name: "Run optimizer" }));
+
+    await waitFor(() => {
+      const call = vi
+        .mocked(apiFetch)
+        .mock.calls.find(([path]) => path === "/api/autooptimizer/run-cycle");
+      const init = call?.[1] as { body?: string } | undefined;
+      expect(JSON.parse(init?.body ?? "{}")).toMatchObject({
+        strategy_id: "strategy-1",
+        mutator_provider: null,
+        mutator_model: null,
+        judge_provider: null,
+        judge_model: null,
+      });
     });
   });
 });

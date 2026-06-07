@@ -115,6 +115,26 @@ async fn seed_autooptimizer_run(memory_db: &std::path::Path, id: &str, namespace
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn autooptimizer_run_defaults_expose_config_fallback() {
+    let (server, tmp, _state, _memory_guard, _memory_db) = server_with_memory_db().await;
+    let _home_guard = EnvGuard::set("XVN_HOME", tmp.path());
+
+    let defaults = server.get("/api/autooptimizer/run-defaults").await;
+    defaults.assert_status_ok();
+    let body: serde_json::Value = defaults.json();
+
+    assert_eq!(body["mutator_provider"], "test");
+    assert_eq!(body["mutator_model"], "test-model");
+    assert_eq!(body["judge_provider"], "test");
+    assert_eq!(body["judge_model"], "test-model");
+    assert!(body["config_path"]
+        .as_str()
+        .expect("config path")
+        .ends_with("autooptimizer.toml"));
+    assert_eq!(body["config_exists"], false);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn flywheel_routes_cover_status_autooptimizer_and_memory_demo_optimize() {
     let (server, _tmp, state, _guard, memory_db) = server_with_memory_db().await;
     let mut slot = Agent::single_slot_default("unused", "target", "mock", "mock")
