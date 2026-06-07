@@ -196,6 +196,11 @@ fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
         mark_price: current.close,
         history_slice: &history_refs,
         inputs_policy: policy,
+        entry_price: 0.0,
+        unrealized_pnl_pct: 0.0,
+        bars_held: 0,
+        stop_loss_price: 0.0,
+        take_profit_price: 0.0,
     })
 }
 
