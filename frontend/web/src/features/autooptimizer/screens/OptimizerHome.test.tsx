@@ -26,7 +26,7 @@ describe("OptimizerHome — status hero", () => {
       data: [],
       isLoading: false,
       isError: false,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderWithProviders(<OptimizerHome />);
 
@@ -56,7 +56,7 @@ describe("OptimizerHome — status hero", () => {
       data: [],
       isLoading: false,
       isError: false,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderWithProviders(<OptimizerHome />);
 
@@ -100,7 +100,7 @@ describe("OptimizerHome — status hero", () => {
       ],
       isLoading: false,
       isError: false,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderWithProviders(<OptimizerHome />);
 
