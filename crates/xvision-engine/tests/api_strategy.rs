@@ -100,7 +100,7 @@ async fn create_sample_agent(ctx: &ApiContext, name: &str) -> xvision_engine::ag
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                capabilities: xvision_engine::agents::default_capabilities(),
+                allowed_tools: Vec::new(),
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -180,7 +180,7 @@ async fn delete_sweeps_scoped_agents_but_leaves_workspace_agents() {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
-        capabilities: xvision_engine::agents::default_capabilities(),
+        allowed_tools: Vec::new(),
         delta_briefing: None,
     };
     let workspace_id = agent_store

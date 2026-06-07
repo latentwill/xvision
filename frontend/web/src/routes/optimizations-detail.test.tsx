@@ -83,6 +83,7 @@ function sampleAgent(): Agent {
         model: "claude-sonnet-4-6",
         system_prompt: PARENT_PROMPT,
         skill_ids: [],
+    allowed_tools: [],
         max_tokens: null,
       } as Agent["slots"][number],
     ],

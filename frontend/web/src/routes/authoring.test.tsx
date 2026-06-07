@@ -103,6 +103,7 @@ const baseAgent = {
       model: "deepseek/deepseek-v4-flash",
       system_prompt: "Trade with discipline.",
       skill_ids: [],
+    allowed_tools: [],
       max_tokens: 4096,
     },
   ],

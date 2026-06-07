@@ -19,7 +19,7 @@ use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 use xvision_engine::agents::model::InputsPolicy;
 use xvision_engine::agents::store::{AgentStore, NewAgent, UpdateAgent};
-use xvision_engine::agents::{default_capabilities, AgentSlot};
+use xvision_engine::agents::AgentSlot;
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope, SessionEventLog};
 use xvision_engine::checkpoint::{CheckpointKind, Checkpointer, SnapshotRequest};
 use xvision_engine::strategies::manifest::PublicManifest;
@@ -187,7 +187,7 @@ async fn restore_agent_slots_roundtrips_and_emits_event() {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
-        capabilities: default_capabilities(),
+        allowed_tools: Vec::new(),
         delta_briefing: None,
     };
     let agent_id = agent_store

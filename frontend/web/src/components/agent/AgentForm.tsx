@@ -54,6 +54,7 @@ const BLANK_SLOT: AgentSlot = {
   model: "",
   system_prompt: "",
   skill_ids: [],
+  allowed_tools: [],
   max_tokens: null,
   max_wall_ms: null,
 };

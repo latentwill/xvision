@@ -84,7 +84,7 @@ fn sample_slot(policy: InputsPolicy) -> AgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
-        capabilities: xvision_engine::agents::default_capabilities(),
+        allowed_tools: Vec::new(),
         delta_briefing: None,
     }
 }

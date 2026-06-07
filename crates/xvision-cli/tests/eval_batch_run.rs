@@ -147,7 +147,7 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
                 bar_history_limit: None,
                 memory_mode: Default::default(),
                 noop_skip: None,
-                capabilities: ::std::collections::BTreeSet::new(),
+                allowed_tools: Vec::new(),
                 delta_briefing: None,
             }],
             scope_strategy_id: None,
@@ -180,9 +180,9 @@ async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) {
             agent_id: agent.agent_id.clone(),
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
         intern_slot: None,
@@ -365,7 +365,7 @@ async fn batch_result_serialises_to_expected_json_shape() {
 //
 // These use the same explicit migration subset as `ctx_with_tables` so the
 // in-memory agent schema stays aligned with AgentStore writes such as
-// agent_slots.capabilities and agents.scope_strategy_id.
+// agent_slots.allowed_tools_json and agents.scope_strategy_id.
 
 /// Build an ApiContext with the batch-test migration set for the
 /// --review-with tests.

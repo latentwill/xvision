@@ -77,9 +77,9 @@ fn trader_strategy() -> Strategy {
             agent_id: "01HZT".into(),
             role: "trader".into(),
             activates: Some(Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: PipelineDef {
             kind: PipelineKind::Sequential,
             edges: Vec::new(),
@@ -115,7 +115,6 @@ fn trader_slot() -> ResolvedAgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
-        capabilities: std::collections::BTreeSet::new(),
         noop_skip: false,
     }
 }

@@ -45,6 +45,7 @@ pub mod search;
 pub mod settings;
 pub mod skills;
 pub mod strategy;
+pub mod tools;
 
 /// Migrations baked into the binary at compile time. Order matters —
 /// applied sequentially. Each migration uses `CREATE TABLE IF NOT EXISTS`
@@ -103,6 +104,8 @@ const MIGRATION_053_PATTERN_OPTIMIZATIONS: &str =
     include_str!("../../migrations/053_pattern_optimizations.sql");
 const MIGRATION_054_AGENT_SLOT_OPTIMIZATION_GATES: &str =
     include_str!("../../migrations/054_agent_slot_optimization_gates.sql");
+const MIGRATION_056_AGENT_SLOT_ALLOWED_TOOLS: &str =
+    include_str!("../../migrations/056_agent_slot_allowed_tools.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -384,6 +387,7 @@ impl ApiContext {
         migrate_eval_runs_dependent_fks_038(&pool).await?;
         migrate_agent_slot_optimizations(&pool).await?;
         migrate_pattern_optimizations(&pool).await?;
+        migrate_agent_slot_allowed_tools(&pool).await?;
         migrate_trajectory_frames(&pool).await?;
         migrate_chat_session_rail_state(&pool).await?;
         migrate_session_events(&pool).await?;
@@ -627,9 +631,7 @@ async fn build_memory_recorder(
 /// relevant env vars, into the pure `resolve_embedder_choice` decision
 /// function. The async I/O lives here; the decision itself is unit-tested
 /// in isolation (`tests/memory_embedder_provisioning.rs`).
-async fn build_default_embedder(
-    xvn_home: &Path,
-) -> Option<Arc<dyn xvision_memory::embedder::Embedder>> {
+async fn build_default_embedder(xvn_home: &Path) -> Option<Arc<dyn xvision_memory::embedder::Embedder>> {
     use crate::agent::embedder_choice::EmbedderChoice;
 
     match resolve_embedder_choice_from_env(xvn_home).await {
@@ -679,10 +681,9 @@ pub(crate) async fn resolve_embedder_choice_from_env(
     let providers = settings::providers::effective_providers_with_paths(xvn_home, &config_path)
         .await
         .unwrap_or_default();
-    let resolved_provider_keys =
-        settings::providers::resolved_provider_keys(xvn_home, &config_path)
-            .await
-            .unwrap_or_default();
+    let resolved_provider_keys = settings::providers::resolved_provider_keys(xvn_home, &config_path)
+        .await
+        .unwrap_or_default();
 
     // Cortex deployment: fold in the persisted memory-settings embedder
     // choice (off/local/auto/<provider>) so the default `auto` falls back to
@@ -1662,6 +1663,15 @@ async fn migrate_agent_slot_optimizations(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_pattern_optimizations(pool: &SqlitePool) -> ApiResult<()> {
     if !table_exists(pool, "pattern_optimizations").await? {
         sqlx::query(MIGRATION_053_PATTERN_OPTIMIZATIONS)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn migrate_agent_slot_allowed_tools(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "agent_slots", "allowed_tools_json").await? {
+        sqlx::query(MIGRATION_056_AGENT_SLOT_ALLOWED_TOOLS)
             .execute(pool)
             .await?;
     }

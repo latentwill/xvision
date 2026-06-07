@@ -170,9 +170,9 @@ fn minimal_strategy() -> Strategy {
             agent_id: "agent-schema-patch-trader".into(),
             role: "trader".into(),
             activates: None,
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: Default::default(),
         regime_slot: None,
         intern_slot: None,
@@ -205,7 +205,6 @@ fn resolved_trader_slot() -> ResolvedAgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: "agent-schema-patch-trader".into(),
-        capabilities: std::collections::BTreeSet::new(),
         noop_skip: true,
     }
 }

@@ -28,7 +28,7 @@ use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 use xvision_engine::agents::model::InputsPolicy;
 use xvision_engine::agents::store::{AgentStore, NewAgent};
-use xvision_engine::agents::{default_capabilities, AgentSlot};
+use xvision_engine::agents::AgentSlot;
 use xvision_engine::mint::{HoldoutStore, NewHoldoutResult};
 use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
 
@@ -60,7 +60,7 @@ fn slot(name: &str, prompt: &str) -> AgentSlot {
         bar_history_limit: None,
         memory_mode: xvision_memory::types::MemoryMode::default(),
         noop_skip: None,
-        capabilities: default_capabilities(),
+        allowed_tools: Vec::new(),
         delta_briefing: None,
     }
 }

@@ -644,7 +644,7 @@ mod tests {
     use super::*;
     use crate::agents::model::InputsPolicy;
     use crate::agents::store::NewAgent;
-    use crate::agents::{default_capabilities, AgentSlot};
+    use crate::agents::AgentSlot;
     use crate::api::{Actor as ApiActor, ApiContext};
     use crate::chat_session::{ChatSessionStore, ContextScope};
     use crate::strategies::manifest::PublicManifest;
@@ -728,7 +728,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::default(),
             noop_skip: None,
-            capabilities: default_capabilities(),
+            allowed_tools: Vec::new(),
             delta_briefing: None,
         }
     }

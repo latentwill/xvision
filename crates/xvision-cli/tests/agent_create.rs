@@ -1,14 +1,11 @@
-//! Integration tests for `xvn agent create` (firing-filter Phase 2 —
-//! `team/contracts/agent-firing-filter-cli-verbs.md`). Spawns the
-//! built binary against a tempdir-rooted `XVN_HOME` so the persisted
-//! agent shape goes through the real engine API, store, and JSON emit
-//! path.
+//! Integration tests for `xvn agent create` tool grants. Spawns the built
+//! binary against a tempdir-rooted `XVN_HOME` so the persisted agent shape goes
+//! through the real engine API, store, and JSON emit path.
 
 use std::path::Path;
 use std::process::Command;
 
 use tempfile::tempdir;
-use xvision_engine::agents::Capability;
 
 /// Long-enough prompt to satisfy `validate_agent_for_save`'s content
 /// gate (≥200 characters of actual content). Reused across tests.
@@ -27,7 +24,7 @@ fn code(out: &std::process::Output) -> i32 {
 }
 
 #[test]
-fn agent_create_filter_persists_capability() {
+fn agent_create_filter_persists_tools() {
     let dir = tempdir().unwrap();
     let out = xvn(
         &[
@@ -35,8 +32,8 @@ fn agent_create_filter_persists_capability() {
             "create",
             "--name",
             "test-filter-agent",
-            "--capability",
-            "filter",
+            "--tools",
+            "indicator_panel",
             "--provider",
             "anthropic",
             "--model",
@@ -59,17 +56,13 @@ fn agent_create_filter_persists_capability() {
     let slot = &body["slots"][0];
     assert_eq!(slot["provider"], "anthropic");
     assert_eq!(slot["model"], "claude-haiku-4-5");
-    let caps: Vec<String> = slot["capabilities"]
+    let tools: Vec<String> = slot["allowed_tools"]
         .as_array()
-        .expect("capabilities array")
+        .expect("allowed_tools array")
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    assert_eq!(
-        caps,
-        vec!["filter".to_string()],
-        "expected only filter capability"
-    );
+    assert_eq!(tools, vec!["indicator_panel".to_string()]);
 }
 
 #[test]
@@ -81,8 +74,8 @@ fn agent_create_trader_with_overrides_round_trips() {
             "create",
             "--name",
             "test-trader-agent",
-            "--capability",
-            "trader",
+            "--tools",
+            "ohlcv,submit_decision",
             "--provider",
             "openrouter",
             "--model",
@@ -120,14 +113,13 @@ fn agent_create_trader_with_overrides_round_trips() {
         .collect();
     assert!(tags.contains(&"smoke".to_string()));
 
-    // Capability surfaces correctly even when only Trader is requested.
-    let caps: Vec<String> = slot["capabilities"]
+    let tools: Vec<String> = slot["allowed_tools"]
         .as_array()
         .unwrap()
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
-    assert_eq!(caps, vec!["trader".to_string()]);
+    assert_eq!(tools, vec!["ohlcv".to_string(), "submit_decision".to_string()]);
 }
 
 #[test]
@@ -143,8 +135,8 @@ fn agent_create_at_prefix_reads_prompt_from_file() {
             "create",
             "--name",
             "test-prompt-from-file",
-            "--capability",
-            "filter",
+            "--tools",
+            "indicator_panel",
             "--provider",
             "anthropic",
             "--model",
@@ -167,15 +159,16 @@ fn agent_create_at_prefix_reads_prompt_from_file() {
 // ── Failure modes — exit code 2 (Usage) ───────────────────────────────────
 
 #[test]
-fn agent_create_missing_required_arg_returns_usage() {
+fn agent_create_deprecated_capability_returns_usage() {
     let dir = tempdir().unwrap();
     let out = xvn(
         &[
             "agent",
             "create",
-            // missing --capability
             "--name",
-            "no-capability",
+            "deprecated-capability",
+            "--capability",
+            "filter",
             "--provider",
             "anthropic",
             "--model",
@@ -185,13 +178,13 @@ fn agent_create_missing_required_arg_returns_usage() {
         ],
         dir.path(),
     );
-    // clap returns exit 2 for missing required args.
     assert_eq!(
         code(&out),
         2,
-        "expected exit 2 on missing --capability; stderr: {}",
+        "expected exit 2 on deprecated --capability; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("use --tools instead"));
 }
 
 #[test]
@@ -207,8 +200,8 @@ fn agent_create_empty_prompt_after_file_read_returns_usage() {
             "create",
             "--name",
             "empty-prompt",
-            "--capability",
-            "filter",
+            "--tools",
+            "indicator_panel",
             "--provider",
             "anthropic",
             "--model",
@@ -235,8 +228,8 @@ fn agent_create_unreadable_at_path_returns_usage() {
             "create",
             "--name",
             "missing-prompt-file",
-            "--capability",
-            "filter",
+            "--tools",
+            "indicator_panel",
             "--provider",
             "anthropic",
             "--model",
@@ -252,24 +245,4 @@ fn agent_create_unreadable_at_path_returns_usage() {
         "expected exit 2 when --system-prompt @path is unreadable; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-}
-
-// ── In-process capability mapping (no subprocess) ─────────────────────────
-
-#[test]
-fn capability_enum_round_trips_through_clap() {
-    use clap::ValueEnum;
-    use xvision_cli::commands::agent::CapabilityArg;
-
-    for (name, expected) in [
-        ("trader", Capability::Trader),
-        ("filter", Capability::Filter),
-        ("critic", Capability::Critic),
-        ("intern", Capability::Intern),
-        ("router", Capability::Router),
-    ] {
-        let parsed = CapabilityArg::from_str(name, true).expect("known capability");
-        let cap: Capability = parsed.into();
-        assert_eq!(cap, expected, "capability `{name}` must map to `{expected:?}`");
-    }
 }

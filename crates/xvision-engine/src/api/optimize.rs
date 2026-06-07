@@ -1137,7 +1137,7 @@ fn escape_xml(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{default_capabilities, AgentSlot, InputsPolicy};
+    use crate::agents::{AgentSlot, InputsPolicy};
     use crate::api::{Actor, ApiContext};
     use tempfile::tempdir;
     use xvision_memory::store::MemoryStore;
@@ -1157,7 +1157,7 @@ mod tests {
             bar_history_limit: None,
             memory_mode: xvision_memory::types::MemoryMode::Off,
             noop_skip: None,
-            capabilities: default_capabilities(),
+            allowed_tools: Vec::new(),
             delta_briefing: None,
         }
     }

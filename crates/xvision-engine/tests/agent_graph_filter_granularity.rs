@@ -126,7 +126,6 @@ fn resolved(role: &str) -> ResolvedAgentSlot {
         memory_mode: xvision_memory::types::MemoryMode::Off,
         agent_id: String::new(),
         noop_skip: false,
-        capabilities: std::collections::BTreeSet::new(),
     }
 }
 
