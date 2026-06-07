@@ -129,17 +129,17 @@ describe("DecisionsTable step + asset columns", () => {
     expect(stamps[0]?.getAttribute("title")).toBe(TS_A);
   });
 
-  test("action-filter pill reads 'No-op', not 'Filtered'", () => {
-    // Intake §5. The 970433b commit renamed the row-level chip from
-    // "FILTERED" to "NO-OP" but left the action-filter pill in this toolbar
-    // saying "Filtered" — which then read as "Filtered 0" on a run where
-    // the engine filter actually suppressed 1399 bars, conflating the two
-    // distinct concepts.
+  test("action-filter pill row has All/Buy/Sell/Short/Hold pills and no No-op", () => {
+    // No-op/Filtered pill removed: filtered rows aren't real decisions and
+    // the pill added clutter. SHORT pill added for short-entry actions.
     render(<DecisionsTable decisions={decisions} focusedIdx={null} onJump={() => {}} />);
-    expect(screen.getByRole("button", { name: /No-op/i })).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /^Filtered/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /All/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Buy/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sell/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Short/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hold/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /No-op/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Filtered/i })).not.toBeInTheDocument();
   });
 
   test("engine-filter activity line is omitted when no filter summaries are present", () => {

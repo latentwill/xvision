@@ -421,8 +421,17 @@ async fn build_autooptimizer_dispatch(
     };
     Ok(match entry.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicDispatch::new(api_key)),
-        ProviderKind::OpenaiCompat | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
+        ProviderKind::OpenaiCompat | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
             Arc::new(OpenaiCompatDispatch::new(entry.base_url.clone(), api_key))
+        }
+        ProviderKind::Ollama => {
+            let base = entry.base_url.trim_end_matches('/');
+            let url = if base.ends_with("/v1") {
+                base.to_string()
+            } else {
+                format!("{base}/v1")
+            };
+            Arc::new(OpenaiCompatDispatch::new(url, api_key))
         }
         ProviderKind::LocalCandle => {
             return Err(DashboardError::Validation {

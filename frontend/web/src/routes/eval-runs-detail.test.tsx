@@ -1363,11 +1363,11 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
     expect(screen.getByText("+$642.00")).toBeInTheDocument();
   });
 
-  it("maps engine actions to the Signal 4-action vocabulary (BUY/SELL/CLOSE/HOLD)", async () => {
-    // Signal collapses the 5-verb table into the 4-action design vocabulary:
+  it("maps engine actions to the Signal action vocabulary (BUY/SELL/SHORT/CLOSE/HOLD)", async () => {
+    // Signal action vocabulary:
     //   0  long_open            → BUY
     //   1  flat (prior=long)    → SELL   (exit a long)
-    //   2  short_open           → SELL   (short entry is a sell)
+    //   2  short_open           → SHORT  (short entry)
     //   3  flat (prior=short)   → CLOSE  (cover the short)
     //   4  hold (reasoned)      → HOLD
     vi.mocked(evalApi.getRun).mockResolvedValue(
@@ -1405,10 +1405,11 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
     // Each action verb appears at least once across the rows + density legend.
     expect((await screen.findAllByText("BUY")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("SELL").length).toBeGreaterThan(0);
+    // short_open now maps to SHORT (distinct from SELL which is long-exit)
+    expect(screen.getAllByText("SHORT").length).toBeGreaterThan(0);
     expect(screen.getAllByText("CLOSE").length).toBeGreaterThan(0);
     expect(screen.getAllByText("HOLD").length).toBeGreaterThan(0);
-    // The old SHORT/COVER vocabulary is gone from the redesigned table.
-    expect(screen.queryByText("SHORT")).not.toBeInTheDocument();
+    // COVER is gone from the redesigned table.
     expect(screen.queryByText("COVER")).not.toBeInTheDocument();
   });
 

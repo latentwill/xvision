@@ -361,9 +361,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
     queryFn: listProviders,
   });
   const [newAgentId, setNewAgentId] = useState("");
-  const [newRole, setNewRole] = useState("");
   const [newAgentName, setNewAgentName] = useState("");
-  const [newAgentRole, setNewAgentRole] = useState("");
   const [newAgentProvider, setNewAgentProvider] = useState<string | null>(null);
   const [newAgentModel, setNewAgentModel] = useState("");
   const [newAgentPrompt, setNewAgentPrompt] = useState("");
@@ -395,7 +393,6 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
       addStrategyAgent(strategy.manifest.id, payload),
     onSuccess: () => {
       setNewAgentId("");
-      setNewRole("");
       invalidateStrategy();
     },
   });
@@ -422,13 +419,12 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
       });
       await addStrategyAgent(strategy.manifest.id, {
         agent_id: agent.agent_id,
-        role: newAgentRole.trim(),
+        role: nameToRole(newAgentName),
       });
       return agent;
     },
     onSuccess: async () => {
       setNewAgentName("");
-      setNewAgentRole("");
       setNewAgentProvider(null);
       setNewAgentModel("");
       setNewAgentPrompt("");
@@ -615,24 +611,21 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
           providers={providers}
           newAgentId={newAgentId}
           setNewAgentId={setNewAgentId}
-          newRole={newRole}
-          setNewRole={setNewRole}
           newAgentName={newAgentName}
           setNewAgentName={setNewAgentName}
-          newAgentRole={newAgentRole}
-          setNewAgentRole={setNewAgentRole}
           newAgentProvider={newAgentProvider}
           setNewAgentProvider={setNewAgentProvider}
           newAgentModel={newAgentModel}
           setNewAgentModel={setNewAgentModel}
           newAgentPrompt={newAgentPrompt}
           setNewAgentPrompt={setNewAgentPrompt}
-          onAttachExisting={() =>
+          onAttachExisting={() => {
+            const agent = (agentPool.data ?? []).find((a) => a.agent_id === newAgentId);
             addMut.mutate({
               agent_id: newAgentId,
-              role: newRole.trim(),
-            })
-          }
+              role: nameToRole(agent?.name ?? newAgentId),
+            });
+          }}
           attachExistingPending={addMut.isPending}
           onCreateAndAttach={() => createAttachMut.mutate()}
           createPending={createAttachMut.isPending}
@@ -648,12 +641,8 @@ type AddAgentAccordionProps = {
   providers: { data: { providers: ProviderRow[] } | undefined; isPending: boolean };
   newAgentId: string;
   setNewAgentId: (v: string) => void;
-  newRole: string;
-  setNewRole: (v: string) => void;
   newAgentName: string;
   setNewAgentName: (v: string) => void;
-  newAgentRole: string;
-  setNewAgentRole: (v: string) => void;
   newAgentProvider: string | null;
   setNewAgentProvider: (v: string | null) => void;
   newAgentModel: string;
@@ -675,8 +664,6 @@ type AddAgentAccordionProps = {
 function AddAgentAccordion(props: AddAgentAccordionProps) {
   const [mode, setMode] = useState<"existing" | "create">("existing");
   const [open, setOpen] = useState(true);
-  const existingRoleReserved = isReservedAgentRole(props.newRole);
-  const newAgentRoleReserved = isReservedAgentRole(props.newAgentRole);
 
   return (
     <div
@@ -748,26 +735,11 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                   ))}
                 </select>
               </Field>
-              <Field label="Existing agent role">
-                <input
-                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-                  value={props.newRole}
-                  onChange={(e) => props.setNewRole(e.target.value)}
-                  placeholder="Role name (e.g. trader)"
-                />
-                {existingRoleReserved ? (
-                  <div className="mt-1 text-[11px] text-warn">
-                    filter is reserved for saved strategy JSON filters.
-                  </div>
-                ) : null}
-              </Field>
               <button
                 type="button"
                 onClick={props.onAttachExisting}
                 disabled={
                   !props.newAgentId ||
-                  !props.newRole.trim() ||
-                  existingRoleReserved ||
                   props.attachExistingPending
                 }
                 className="px-3 py-1.5 rounded text-[12px] border border-border disabled:opacity-50"
@@ -777,29 +749,14 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
             </div>
           ) : (
             <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Field label="New agent name">
-                  <input
-                    className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
-                    value={props.newAgentName}
-                    onChange={(e) => props.setNewAgentName(e.target.value)}
-                    placeholder="DeepSeek trader"
-                  />
-                </Field>
-                <Field label="New agent role">
-                  <input
-                    className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
-                    value={props.newAgentRole}
-                    onChange={(e) => props.setNewAgentRole(e.target.value)}
-                    placeholder="trader"
-                  />
-                  {newAgentRoleReserved ? (
-                    <div className="mt-1 text-[11px] text-warn">
-                      filter is reserved for saved strategy JSON filters.
-                    </div>
-                  ) : null}
-                </Field>
-              </div>
+              <Field label="New agent name">
+                <input
+                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text"
+                  value={props.newAgentName}
+                  onChange={(e) => props.setNewAgentName(e.target.value)}
+                  placeholder="DeepSeek trader"
+                />
+              </Field>
               <Field label="New agent model">
                 <ModelPicker
                   rows={props.providers.data?.providers ?? []}
@@ -829,8 +786,6 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                 onClick={props.onCreateAndAttach}
                 disabled={
                   !props.newAgentName.trim() ||
-                  !props.newAgentRole.trim() ||
-                  newAgentRoleReserved ||
                   !props.newAgentProvider ||
                   !props.newAgentModel ||
                   props.createPending
@@ -931,15 +886,9 @@ export function AttachedAgentRow({
           </span>
           <div className="min-w-0">
             <div className="truncate">
-              <span className="break-all font-mono text-text">
-                {agentRef.role}
+              <span className="font-mono text-text">
+                {agent ? agent.name : agentRef.agent_id}
               </span>
-              {agent ? (
-                <>
-                  <span className="text-text-3"> · </span>
-                  <span className="text-text">{agent.name}</span>
-                </>
-              ) : null}
               {modelLabel ? (
                 <span className="ml-2 inline-flex items-center rounded-sm border border-gold/30 bg-gold/[0.1] px-1.5 py-0.5 align-middle font-mono text-[11px] leading-none text-gold">
                   {modelLabel}
@@ -1791,6 +1740,16 @@ function agentSupportsFilter(agent: Agent): boolean {
 
 function isReservedAgentRole(role: string): boolean {
   return role.trim().toLowerCase() === "filter";
+}
+
+function nameToRole(name: string): string {
+  return (
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "") || "agent"
+  );
 }
 
 function Field({

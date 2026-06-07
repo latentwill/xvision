@@ -21,7 +21,7 @@
 //   deliberately reasoned out) is ENGAGED.
 //
 // Action mapping reuses the same prior-side logic the legacy table used so the
-// pill verb matches intent: long_open→BUY, short_open→SELL(short entry),
+// pill verb matches intent: long_open→BUY, short_open→SHORT,
 // flat-after-long→SELL, flat-after-short→CLOSE(cover), hold→HOLD.
 
 import type { DecisionRowDto } from "@/api/types.gen";
@@ -80,7 +80,7 @@ function derivePhase(row: DecisionRowDto): Phase {
 
 export function mapAction(action: string, priorSide: PositionSide): ActionPillAction {
   if (action === "long_open") return "BUY";
-  if (action === "short_open") return "SELL";
+  if (action === "short_open") return "SHORT";
   if (action === "flat") {
     if (priorSide === "long") return "SELL";
     if (priorSide === "short") return "CLOSE";
@@ -215,7 +215,14 @@ export function toTimelineDecisions(rows: DecisionRowDto[]): TimelineDecision[] 
     if (phase === "filtered") {
       return { i: row.decision_index, t: row.timestamp, phase, asset: row.asset };
     }
-    const action = mapAction(row.action, priorSide.get(row.decision_index) ?? "flat");
+    const priorSideForRow = priorSide.get(row.decision_index) ?? "flat";
+    let action: ActionPillAction;
+    if (rowExt.exit_reason) {
+      // Position was force-closed by risk engine; show actual closing action
+      action = priorSideForRow === "short" ? "CLOSE" : "SELL";
+    } else {
+      action = mapAction(row.action, priorSideForRow);
+    }
     return {
       i: row.decision_index,
       t: row.timestamp,

@@ -66,6 +66,15 @@ const PILLS: {
     filled: true,
   },
   {
+    k: "SHORT",
+    label: "Short",
+    dotColor: "rgba(200,0,0,0.85)",
+    activeBg: "rgba(200,0,0,0.15)",
+    activeBd: "rgba(200,0,0,0.7)",
+    activeFg: "rgba(200,0,0,0.9)",
+    filled: true,
+  },
+  {
     k: "HOLD",
     label: "Hold",
     dotColor: "var(--text-3)",
@@ -73,20 +82,6 @@ const PILLS: {
     activeBd: "var(--border-strong)",
     activeFg: "var(--text)",
     filled: true,
-  },
-  {
-    k: "FILTERED",
-    // Pill label matches the PhaseChip's `NO-OP` (commit 970433b renamed the
-    // chip but missed the pill, leaving the toolbar reading "Filtered 0"
-    // when in fact 1399 bars were suppressed by the engine filter — two
-    // distinct concepts. Engine-filter suppression is surfaced as a
-    // separate activity line on the card header.)
-    label: "No-op",
-    dotColor: "var(--text-3)",
-    activeBg: "transparent",
-    activeBd: "var(--text-3)",
-    activeFg: "var(--text-2)",
-    filled: false,
   },
 ];
 
