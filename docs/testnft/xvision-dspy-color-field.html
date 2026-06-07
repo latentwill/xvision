@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Xvision DSPy Color Field — AGENT / FILTER / RISK</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #050505;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #wrap {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.06), transparent 60%),
+        linear-gradient(135deg, #040404 0%, #0a0712 35%, #0d0917 65%, #030303 100%);
+    }
+    canvas {
+      display: block;
+      width: min(94vmin, 1040px);
+      height: min(94vmin, 1040px);
+      background: #050505;
+      box-shadow: 0 22px 70px rgba(0,0,0,0.8);
+      border: 1px solid rgba(255,255,255,0.10);
+    }
+    #ui {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      width: min(500px, calc(100vw - 32px));
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      background: rgba(0,0,0,0.82);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 38px rgba(0,0,0,0.5);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .label {
+      padding-top: 10px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+      color: rgba(255,255,255,0.72);
+    }
+    input, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+      font: inherit;
+      font-size: 13px;
+      padding: 10px 12px;
+      outline: none;
+    }
+    textarea { min-height: 78px; resize: vertical; line-height: 1.35; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    button {
+      padding: 9px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.16);
+      background: #fff;
+      color: #000;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    button.secondary { background: rgba(255,255,255,0.08); color: #fff; }
+    .hint {
+      color: rgba(255,255,255,0.62);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .hint code {
+      background: rgba(255,255,255,0.08);
+      border-radius: 6px;
+      padding: 1px 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap"><canvas id="c"></canvas></div>
+
+  <div id="ui">
+    <div class="row">
+      <div class="label">AGENT</div>
+      <textarea id="agent" spellcheck="false">atlas, vector, hush</textarea>
+    </div>
+    <div class="row">
+      <div class="label">DSPY</div>
+      <textarea id="dspy" spellcheck="false">metric_name=delta_sharpe, optimizer_name=gepa, optimizer_version=0.9.1, rng_seed=4721, signature_hash=9f2a8c2f, score=0.84, gain=0.13, cost=0.42, latency=1.7, steps=24, tokens=1870, trial=0.91, delta=0.18</textarea>
+    </div>
+    <div class="row">
+      <div class="label">FILTER</div>
+      <input id="filter" value="threshold-01" spellcheck="false" />
+    </div>
+    <div class="row">
+      <div class="label">RISK</div>
+      <input id="risk" value="volatile-07" spellcheck="false" />
+    </div>
+    <div class="actions">
+      <button id="rerender">Rerender</button>
+      <button id="randomize" class="secondary">Randomize</button>
+      <span class="hint">Color field. DSPy metrics drive palette, density, orbit, and fragmentation.</span>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const SIZE = 1000;
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const agentInput = document.getElementById('agent');
+  const dspyInput = document.getElementById('dspy');
+  const filterInput = document.getElementById('filter');
+  const riskInput = document.getElementById('risk');
+  const rerenderBtn = document.getElementById('rerender');
+  const randomizeBtn = document.getElementById('randomize');
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+
+  function hashString(str) {
+    let h = 2166136261 >>> 0;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  }
+  function mulberry32(seed) {
+    return function() {
+      let t = seed += 0x6D2B79F5;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function rngFrom(...parts) { return mulberry32(hashString(parts.join('::'))); }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const rr = (rng, a, b) => a + (b - a) * rng();
+  const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
+  const parseSeeds = text => text.split(/[\n,;|]+/).map(s => s.trim()).filter(Boolean);
+  const parseNumbers = text => (text.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number).filter(Number.isFinite);
+  const parseKV = text => {
+    const out = {};
+    for (const part of text.split(/[\n,]+/)) {
+      const m = part.match(/\s*([^=:\s]+)\s*[:=]\s*(.+?)\s*$/);
+      if (m) out[m[1].trim()] = m[2].trim();
+    }
+    return out;
+  };
+
+  function normalizeNumbers(nums) {
+    if (!nums.length) return [0.5];
+    let min = Infinity, max = -Infinity;
+    for (const n of nums) { if (n < min) min = n; if (n > max) max = n; }
+    const span = max - min || 1;
+    return nums.map(n => (n - min) / span);
+  }
+
+  function buildProfile(nums) {
+    const n = nums.length ? nums.slice() : [0.5];
+    const norm = normalizeNumbers(n);
+    const avg = n.reduce((a, b) => a + b, 0) / n.length;
+    const variance = n.reduce((a, b) => a + (b - avg) ** 2, 0) / n.length;
+    const spread = Math.sqrt(variance);
+    const score = clamp(norm[0] ?? 0.5, 0, 1);
+    const gain = clamp(norm[1] ?? score * 0.7, 0, 1);
+    const cost = clamp(norm[2] ?? (1 - score) * 0.6 + 0.2, 0, 1);
+    const latency = 10 + ((n[3] ?? avg * 10) * 170);
+    const steps = Math.max(1, Math.round((n[4] ?? n.length) * 12));
+    const tokens = Math.max(120, Math.round((n[5] ?? avg * 1000) * 1200));
+    const trial = clamp(norm[6] ?? 0.5, 0, 1);
+    const delta = clamp(norm[7] ?? spread, 0, 1);
+    const density = clamp(0.18 + score * 0.34 + gain * 0.22 + trial * 0.16, 0.08, 0.96);
+    const fracture = clamp(cost * 0.4 + latency / 260 + delta * 0.28, 0.05, 0.98);
+    const contrast = clamp(0.22 + score * 0.42 + delta * 0.2, 0.1, 0.98);
+    const rhythm = clamp(0.12 + (steps / 120) + spread * 0.6, 0.08, 1.2);
+    return { avg, spread, score, gain, cost, latency, steps, tokens, trial, delta, density, fracture, contrast, rhythm };
+  }
+
+  function hueFromSeed(seed, offset = 0) {
+    return (hashString(seed) % 360 + offset) % 360;
+  }
+
+  function paletteFrom(snapshot, profile) {
+    const base = hueFromSeed(snapshot.optimizer_name || snapshot.metric_name || 'dspy', (snapshot.rng_seed || 0) % 37);
+    const sat = 72 + Math.round(profile.contrast * 22);
+    const lum = 50;
+    return [
+      `hsl(${(base + 0) % 360} ${sat}% ${lum}%)`,
+      `hsl(${(base + 34) % 360} ${sat}% ${lum + 8}%)`,
+      `hsl(${(base + 68) % 360} ${sat}% ${lum - 3}%)`,
+      `hsl(${(base + 118) % 360} ${sat}% ${lum + 5}%)`,
+      `hsl(${(base + 168) % 360} ${sat}% ${lum - 5}%)`,
+      `hsl(${(base + 214) % 360} ${sat}% ${lum + 2}%)`,
+      `hsl(${(base + 260) % 360} ${sat}% ${lum - 2}%)`,
+    ];
+  }
+
+  function hslWithAlpha(hsl, alpha) {
+    const m = String(hsl).match(/hsl\((\d+)\s+(\d+)%\s+(\d+)%\)/);
+    if (!m) return hsl;
+    return `hsla(${m[1]}, ${m[2]}%, ${m[3]}%, ${alpha})`;
+  }
+
+  function addNoise(rng, count, aMin, aMax) {
+    for (let i = 0; i < count; i++) {
+      const x = rng() * SIZE;
+      const y = rng() * SIZE;
+      const s = rr(rng, 1, 2.4);
+      ctx.fillStyle = `rgba(255,255,255,${rr(rng, aMin, aMax)})`;
+      ctx.fillRect(x, y, s, s);
+    }
+  }
+
+  function drawBackground(rng, palette, profile) {
+    const g = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+    g.addColorStop(0, '#06050a');
+    g.addColorStop(0.4, '#09060f');
+    g.addColorStop(1, '#030304');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    // colorful nebulas
+    const nebulaCount = 10;
+    for (let i = 0; i < nebulaCount; i++) {
+      const x = rr(rng, -120, SIZE + 120);
+      const y = rr(rng, -120, SIZE + 120);
+      const r = rr(rng, 150, 380) * (0.7 + profile.density * 0.7);
+      const c1 = pick(rng, palette);
+      const c2 = pick(rng, palette);
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, hslWithAlpha(c1, 0.8));
+      grad.addColorStop(0.35, hslWithAlpha(c2, 0.53));
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // subtle grid / axis aura
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    for (let i = 0; i < 18; i++) {
+      const x = 60 + i * 52 + rr(rng, -6, 6);
+      ctx.fillStyle = `rgba(255,255,255,${0.04 + (i / 18) * 0.06})`;
+      ctx.fillRect(x, 100, 1, 800);
+      const y = 110 + i * 42 + rr(rng, -6, 6);
+      ctx.fillRect(100, y, 800, 1);
+    }
+    ctx.restore();
+
+    addNoise(rng, 4200, 0.012, 0.05);
+  }
+
+  function drawLabelFrame() {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(24, 24, SIZE - 48, SIZE - 48);
+    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(36, 36, SIZE - 72, SIZE - 72);
+    ctx.restore();
+  }
+
+  function drawHeaders(agentSeeds, snapshot, filterSeed, riskSeed, profile) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.textBaseline = 'top';
+    ctx.font = '800 36px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('AGENT', 54, 50);
+    ctx.textAlign = 'center';
+    ctx.fillText('DSPY', SIZE / 2, 50);
+    ctx.save();
+    ctx.translate(948, 54);
+    ctx.rotate(Math.PI / 2);
+    ctx.textAlign = 'left';
+    ctx.fillText('RISK', 0, 0);
+    ctx.restore();
+
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.74)';
+    ctx.textAlign = 'left';
+    ctx.fillText(`agent seeds: ${agentSeeds.join(' · ') || '(none)'}`, 58, 96);
+    ctx.fillText(`filter seed: ${filterSeed}`, 58, 918);
+    ctx.textAlign = 'right';
+    ctx.fillText(`metric ${snapshot.metric_name || '-'} · optimizer ${snapshot.optimizer_name || '-'}`, 944, 96);
+    ctx.fillText(`sig ${String(snapshot.signature_hash || '-').slice(0, 12)} · rng ${snapshot.rng_seed ?? '-'}`, 944, 918);
+    ctx.fillText(`score ${profile.score.toFixed(2)} · gain ${profile.gain.toFixed(2)} · cost ${profile.cost.toFixed(2)} · latency ${profile.latency.toFixed(1)}ms`, 944, 940);
+    ctx.restore();
+  }
+
+  function drawPolyline(points, strokeStyle, lineWidth = 2, alpha = 1, closed = false) {
+    if (!points.length) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = lineWidth;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i][0], points[i][1]);
+    if (closed) ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBlob(rng, x, y, r, col, profile) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rr(rng, -1, 1));
+    const pts = [];
+    const count = 18 + Math.round(profile.density * 18);
+    for (let i = 0; i < count; i++) {
+      const a = (Math.PI * 2 * i) / count;
+      const rr0 = r * rr(rng, 0.72, 1.24) * (0.85 + profile.fracture * 0.35);
+      pts.push([Math.cos(a) * rr0, Math.sin(a) * rr0]);
+    }
+    ctx.fillStyle = col;
+    ctx.globalAlpha = 0.22 + profile.contrast * 0.26;
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawRays(rng, palette, profile, centerX, centerY) {
+    const rayCount = 18 + Math.round(profile.density * 18);
+    for (let i = 0; i < rayCount; i++) {
+      const a = (Math.PI * 2 * i) / rayCount + rr(rng, -0.12, 0.12);
+      const len = rr(rng, 120, 360) * (0.7 + profile.rhythm * 0.5);
+      const w = rr(rng, 4, 16);
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(a);
+      const grad = ctx.createLinearGradient(0, 0, len, 0);
+      const c1 = pick(rng, palette);
+      const c2 = pick(rng, palette);
+      grad.addColorStop(0, hslWithAlpha(c1, 0));
+      grad.addColorStop(0.15, hslWithAlpha(c1, 0.66));
+      grad.addColorStop(0.7, hslWithAlpha(c2, 0.4));
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.globalAlpha = 0.55;
+      ctx.fillRect(0, -w / 2, len, w);
+      ctx.restore();
+    }
+  }
+
+  function drawCluster(rng, palette, profile, x, y, label, seedText) {
+    const size = rr(rng, 130, 280) * (0.75 + profile.density * 0.5);
+    const rings = 4 + Math.round(profile.contrast * 8);
+    const fragments = 10 + Math.round(profile.fracture * 14);
+    const base = pick(rng, palette);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rr(rng, -0.8, 0.8));
+
+    // colored stacked gradients.
+    for (let i = 0; i < rings; i++) {
+      const t = i / Math.max(1, rings - 1);
+      const rad = size * (0.22 + t * 0.45);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, rad);
+      g.addColorStop(0, hslWithAlpha(base, 0.45 + t * 0.25));
+      g.addColorStop(0.45, hslWithAlpha(pick(rng, palette), 0.28 + t * 0.22));
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.globalAlpha = 0.58;
+      ctx.beginPath();
+      ctx.arc(0, 0, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // cross-shaped nucleus.
+    ctx.save();
+    ctx.rotate(rr(rng, -0.4, 0.4));
+    ctx.fillStyle = pick(rng, palette);
+    ctx.globalAlpha = 0.55;
+    ctx.fillRect(-size * 0.44, -size * 0.06, size * 0.88, size * 0.12);
+    ctx.fillRect(-size * 0.06, -size * 0.44, size * 0.12, size * 0.88);
+    ctx.restore();
+
+    // shards and random shapes.
+    for (let i = 0; i < fragments; i++) {
+      const a = (Math.PI * 2 * i) / fragments + rr(rng, -0.35, 0.35);
+      const r = rr(rng, size * 0.12, size * 0.48);
+      const px = Math.cos(a) * r;
+      const py = Math.sin(a) * r;
+      const kind = i % 5;
+      const col = pick(rng, palette);
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.rotate(rr(rng, -1.8, 1.8));
+      if (kind === 0) {
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(-10, -16);
+        ctx.lineTo(18, -3);
+        ctx.lineTo(-8, 12);
+        ctx.closePath();
+        ctx.fill();
+      } else if (kind === 1) {
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.58;
+        ctx.fillRect(-14, -6, 28, 12);
+      } else if (kind === 2) {
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = 0.68;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(0, 0, rr(rng, 10, 28), rr(rng, 0, Math.PI), rr(rng, Math.PI, Math.PI * 2));
+        ctx.stroke();
+      } else if (kind === 3) {
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.62;
+        ctx.beginPath();
+        ctx.arc(0, 0, rr(rng, 6, 18), 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = col;
+        ctx.globalAlpha = 0.55;
+        ctx.fillRect(-6, -22, 12, 44);
+        ctx.fillRect(-22, -6, 44, 12);
+      }
+      ctx.restore();
+    }
+
+    // metric-driven orbit loops.
+    ctx.save();
+    ctx.rotate(rr(rng, -0.3, 0.3));
+    for (let i = 0; i < 8; i++) {
+      const t = i / 7;
+      const rad = size * (0.28 + t * 0.5);
+      ctx.strokeStyle = pick(rng, palette);
+      ctx.globalAlpha = 0.08 + t * 0.14;
+      ctx.lineWidth = 1.2 + t * 0.6;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rad * (0.9 + profile.fracture * 0.4), rad * (0.42 + profile.density * 0.35), rr(rng, -0.5, 0.5), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // label tag.
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(seedText, 0, size * 0.58);
+    ctx.restore();
+
+    // outline shell, clipped edge.
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rr(rng, -0.18, 0.18));
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-size / 2, -size / 2, size, size);
+    ctx.restore();
+  }
+
+  function drawDSPyBand(rng, palette, profile, snapshot, dspyNums) {
+    const bandX = 84;
+    const bandY = 344;
+    const bandW = SIZE - 168;
+    const bandH = 282;
+    const count = Math.max(7, dspyNums.length);
+    const slotW = bandW / count;
+
+    ctx.save();
+    const g = ctx.createLinearGradient(bandX, bandY, bandX + bandW, bandY + bandH);
+    g.addColorStop(0, 'rgba(255,255,255,0.03)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.09)');
+    g.addColorStop(1, 'rgba(255,255,255,0.03)');
+    ctx.fillStyle = g;
+    ctx.fillRect(bandX, bandY, bandW, bandH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.strokeRect(bandX, bandY, bandW, bandH);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.font = '800 18px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('DSPY OPTIMIZATION FIELD', bandX + 16, bandY + 12);
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.fillText(`${snapshot.metric_name || 'metric'} · ${snapshot.optimizer_name || 'optimizer'} · rng ${snapshot.rng_seed ?? '-'}`, bandX + 16, bandY + 35);
+
+    // Strong colorful bars.
+    const norm = normalizeNumbers(dspyNums);
+    for (let i = 0; i < count; i++) {
+      const v = norm[i % norm.length];
+      const raw = dspyNums[i % dspyNums.length];
+      const x = bandX + i * slotW + slotW * 0.14;
+      const w = slotW * 0.68;
+      const h = 50 + v * 178 * (0.72 + profile.contrast * 0.45);
+      const y = bandY + bandH - 28 - h;
+      const c1 = pick(rng, palette);
+      const c2 = pick(rng, palette);
+      const grad = ctx.createLinearGradient(x, y, x + w, y + h);
+      grad.addColorStop(0, c1);
+      grad.addColorStop(0.5, c2);
+      grad.addColorStop(1, c1);
+      ctx.globalAlpha = 0.74;
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(x + 2, y + 2, Math.max(4, w * 0.12), Math.max(12, h * 0.2));
+      ctx.fillStyle = 'rgba(255,255,255,0.82)';
+      ctx.font = '700 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(Number.isFinite(raw) ? raw.toFixed(raw < 10 ? 2 : 1) : String(raw), x + w / 2, y - 4);
+    }
+
+    // colorful topological ribbons behind the bars.
+    for (let i = 0; i < 7; i++) {
+      const yy = bandY + 60 + i * 24;
+      const ribbon = [];
+      const segs = 10 + Math.round(profile.rhythm * 4);
+      for (let s = 0; s <= segs; s++) {
+        const t = s / segs;
+        ribbon.push([
+          bandX + 20 + t * (bandW - 40),
+          yy + Math.sin(t * Math.PI * 2 + i) * (8 + profile.fracture * 22) + rr(rng, -4, 4)
+        ]);
+      }
+      drawPolyline(ribbon, `${pick(rng, palette)}`, 2, 0.28, false);
+    }
+
+    // seed chips / numerals.
+    ctx.fillStyle = 'rgba(255,255,255,0.78)';
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`field ${snapshot.signature_hash ? snapshot.signature_hash.slice(0, 12) : '-'}`, bandX + 16, bandY + bandH - 10);
+    ctx.restore();
+  }
+
+  function drawFilterGate(rng, palette, filterSeed, profile) {
+    const x = 86, y = 118, w = 828, h = 84;
+    ctx.save();
+    const g = ctx.createLinearGradient(x, y, x + w, y + h);
+    g.addColorStop(0, 'rgba(255,255,255,0.02)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.06)');
+    g.addColorStop(1, 'rgba(255,255,255,0.02)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.font = '800 34px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText('FILTER', x + 16, y + 14);
+    ctx.font = '700 11px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.68)';
+    ctx.fillText(filterSeed, x + 16, y + 48);
+
+    const swatches = 9;
+    for (let i = 0; i < swatches; i++) {
+      const bw = rr(rng, 12, 32);
+      const bx = x + 330 + i * 34 + rr(rng, -6, 6);
+      const by = y + rr(rng, 18, 34);
+      const grad = ctx.createLinearGradient(bx, by, bx + bw, by + 28);
+      grad.addColorStop(0, pick(rng, palette));
+      grad.addColorStop(1, pick(rng, palette));
+      ctx.fillStyle = grad;
+      ctx.globalAlpha = 0.88;
+      ctx.fillRect(bx, by, bw, rr(rng, 18, 32));
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.strokeRect(bx, by, bw, rr(rng, 18, 32));
+    }
+
+    // gate aperture / threshold.
+    ctx.save();
+    ctx.translate(x + 610, y + 42);
+    ctx.rotate(rr(rng, -0.16, 0.16));
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(-150, -24, 300, 48);
+    ctx.globalCompositeOperation = 'destination-out';
+    for (let i = 0; i < 7; i++) {
+      ctx.fillRect(-128 + i * 35, -18, 20, 36);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.strokeRect(-150, -24, 300, 48);
+    ctx.restore();
+    ctx.restore();
+  }
+
+  function drawRiskDamage(rng, palette, riskSeed, profile) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    const count = 9 + Math.round(profile.fracture * 15);
+    for (let i = 0; i < count; i++) {
+      const x1 = rr(rng, 40, SIZE - 40);
+      const y1 = rr(rng, 40, SIZE - 40);
+      const x2 = x1 + rr(rng, -260, 260) * (0.22 + profile.fracture * 0.95);
+      const y2 = y1 + rr(rng, -260, 260) * (0.22 + profile.fracture * 0.95);
+      const steps = 7 + Math.round(profile.fracture * 8);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      for (let s = 1; s <= steps; s++) {
+        const t = s / steps;
+        const x = x1 + (x2 - x1) * t + rr(rng, -18, 18) * profile.fracture;
+        const y = y1 + (y2 - y1) * t + rr(rng, -18, 18) * profile.fracture;
+        ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = pick(rng, palette);
+      ctx.lineWidth = rr(rng, 1.1, 3.4);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.globalAlpha = 0.22 + profile.fracture * 0.28;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawCaption(agentSeeds, snapshot, profile, dspyNums) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    ctx.font = '700 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(`agent ${agentSeeds.length || 1}x · dspy nums ${dspyNums.length} · density ${profile.density.toFixed(2)} · fracture ${profile.fracture.toFixed(2)} · rhythm ${profile.rhythm.toFixed(2)}`, SIZE / 2, SIZE - 54);
+    ctx.fillText(`optimizer ${snapshot.optimizer_name || '-'} · metric ${snapshot.metric_name || '-'} · seed ${snapshot.rng_seed ?? '-'}`, SIZE / 2, SIZE - 34);
+    ctx.restore();
+  }
+
+  function render() {
+    const agentSeeds = parseSeeds(agentInput.value);
+    const filterSeed = filterInput.value.trim() || 'filter';
+    const riskSeed = riskInput.value.trim() || 'risk';
+    const dspyText = dspyInput.value;
+    const kv = parseKV(dspyText);
+    const dspyNums = parseNumbers(dspyText);
+    const profile = buildProfile(dspyNums);
+    const snapshot = {
+      metric_name: kv.metric_name || 'metric',
+      optimizer_name: kv.optimizer_name || 'optimizer',
+      optimizer_version: kv.optimizer_version || 'v0',
+      rng_seed: Number.isFinite(Number(kv.rng_seed)) ? Number(kv.rng_seed) : hashString(dspyText) % 100000,
+      signature_hash: kv.signature_hash || dspyText.slice(0, 12),
+    };
+    const palette = paletteFrom(snapshot, profile);
+    const baseRng = rngFrom('base', agentSeeds.join('|'), filterSeed, riskSeed, dspyText);
+    const masterRng = rngFrom('master', agentSeeds.join('|'), filterSeed, riskSeed, dspyText);
+    const agentRng = rngFrom('agent', agentSeeds.join('|'));
+    const riskRng = rngFrom('risk', riskSeed, String(profile.fracture), String(profile.delta));
+
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    drawBackground(baseRng, palette, profile);
+    drawFilterGate(riskRng, palette, filterSeed, profile);
+    drawDSPyBand(baseRng, palette, profile, snapshot, dspyNums);
+
+    // clusters are positioned from DSPy metrics + agent seeds.
+    const seeds = agentSeeds.length ? agentSeeds : ['agent-default'];
+    const count = Math.max(seeds.length, 4 + Math.round(profile.density * 4));
+    for (let i = 0; i < count; i++) {
+      const seed = seeds[i % seeds.length];
+      const rng = rngFrom('cluster', seed, String(i), dspyText, filterSeed, riskSeed);
+      const cx = rr(rng, 140, SIZE - 140);
+      const cy = rr(rng, 180, SIZE - 180);
+      drawCluster(rng, palette, profile, cx, cy, `cluster-${i + 1}`, seed);
+    }
+
+    // central energy field.
+    const centerRng = rngFrom('center', dspyText, filterSeed, riskSeed);
+    drawRays(centerRng, palette, profile, SIZE / 2, SIZE / 2);
+    for (let i = 0; i < 8; i++) {
+      const x = rr(centerRng, 120, SIZE - 120);
+      const y = rr(centerRng, 160, SIZE - 160);
+      const r = rr(centerRng, 34, 110) * (0.7 + profile.fracture * 0.6);
+      drawBlob(centerRng, x, y, r, pick(centerRng, palette), profile);
+    }
+
+    drawRiskDamage(riskRng, palette, riskSeed, profile);
+
+    // color confetti / motion trail.
+    ctx.save();
+    for (let i = 0; i < 140; i++) {
+      const t = i / 139;
+      const x = 64 + t * 872 + rr(masterRng, -26, 26);
+      const y = 500 + Math.sin(t * Math.PI * 2 + masterRng() * 2) * (120 + profile.fracture * 150) + rr(masterRng, -14, 14);
+      const s = rr(masterRng, 2, 8);
+      ctx.fillStyle = pick(masterRng, palette);
+      ctx.globalAlpha = 0.08 + t * 0.22;
+      ctx.fillRect(x, y, s, s);
+    }
+    ctx.restore();
+
+    drawLabelFrame();
+    drawHeaders(agentSeeds, snapshot, filterSeed, riskSeed, profile);
+    drawCaption(agentSeeds, snapshot, profile, dspyNums);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    ctx.restore();
+  }
+
+  function randomize() {
+    const token = () => Math.random().toString(36).slice(2, 8);
+    const n = 1 + Math.floor(Math.random() * 4);
+    agentInput.value = Array.from({ length: n }, () => token()).join(', ');
+    dspyInput.value = `metric_name=${pick(Math.random, ['delta_sharpe', 'grader_score', 'return_pct', 'win_rate'])}, optimizer_name=${pick(Math.random, ['gepa', 'miprov2', 'copro'])}, optimizer_version=0.9.${Math.floor(Math.random() * 5)}, rng_seed=${Math.floor(Math.random() * 9999)}, signature_hash=${token()}${token()}, score=${(Math.random() * 1.2).toFixed(2)}, gain=${(Math.random() * 1.2).toFixed(2)}, cost=${(Math.random() * 1.2).toFixed(2)}, latency=${(Math.random() * 3.5).toFixed(1)}, steps=${Math.floor(Math.random() * 40 + 8)}, tokens=${Math.floor(Math.random() * 2200 + 400)}, trial=${(Math.random()).toFixed(2)}, delta=${(Math.random() * 1.1).toFixed(2)}`;
+    filterInput.value = `filter-${token()}`;
+    riskInput.value = `risk-${token()}`;
+    render();
+  }
+
+  const params = new URLSearchParams(location.search);
+  if (params.get('agent')) agentInput.value = params.get('agent');
+  if (params.get('seed')) agentInput.value = params.get('seed');
+  if (params.get('hash')) agentInput.value = params.get('hash');
+  if (params.get('dspy')) dspyInput.value = params.get('dspy');
+  if (params.get('filter')) filterInput.value = params.get('filter');
+  if (params.get('risk')) riskInput.value = params.get('risk');
+
+  rerenderBtn.addEventListener('click', render);
+  randomizeBtn.addEventListener('click', randomize);
+  [agentInput, dspyInput, filterInput, riskInput].forEach(el => el.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (el === agentInput ? (e.metaKey || e.ctrlKey) : true)) render();
+  }));
+
+  render();
+})();
+</script>
+</body>
+</html>
