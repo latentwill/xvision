@@ -9,6 +9,13 @@ import * as evalApi from "@/api/eval";
 import * as strategyApi from "@/api/strategies";
 import * as scenarioApi from "@/api/scenarios";
 
+vi.mock("@/api/safety", () => ({
+  safetyKeys: {
+    state: () => ["safety", "state"],
+  },
+  getSafetyState: vi.fn().mockResolvedValue({ paused: false, reason: null }),
+}));
+
 vi.mock("@/api/health", () => ({
   healthKeys: {
     report: () => ["health", "report"],

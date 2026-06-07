@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
+import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ApiError } from "@/api/client";
@@ -89,6 +90,8 @@ export function HomeRoute() {
         horizontal CountCard row above the rest of the content.
       */}
       <div className="space-y-5">
+        <SafetyPauseBanner />
+
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
           <CountCard
             label="Strategies"
