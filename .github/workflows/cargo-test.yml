@@ -5,6 +5,10 @@ on:
     types: [opened, synchronize, reopened]
     branches:
       - main
+    paths-ignore:
+      - "frontend/**"
+      - "docs/**"
+      - "**.md"
 
 concurrency:
   group: cargo-test-${{ github.ref }}
