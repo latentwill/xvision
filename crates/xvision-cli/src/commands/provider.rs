@@ -118,11 +118,29 @@ enum ProviderAction {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
     },
-    /// Show the cached catalog for a provider. Does NOT hit the network —
-    /// run `refresh-models` first if you want a fresh fetch.
+    /// Show the cached model catalog for a provider.
+    ///
+    /// By default only models in the provider's `enabled_models` allowlist
+    /// are shown. When `enabled_models` is empty (nothing configured yet),
+    /// all cached models are shown as a fallback.
+    ///
+    /// Does NOT hit the network — run `refresh-models` first if you want
+    /// a fresh fetch.
     Models {
         #[arg(long)]
         name: String,
+        /// Show all cached models regardless of the `enabled_models`
+        /// allowlist. Useful for discovering models to enable.
+        #[arg(long, default_value_t = false)]
+        all: bool,
+        /// Add a model id to this provider's `enabled_models` allowlist
+        /// and persist it to config/default.toml.
+        #[arg(long)]
+        enable: Option<String>,
+        /// Remove a model id from this provider's `enabled_models`
+        /// allowlist and persist the change to config/default.toml.
+        #[arg(long)]
+        disable: Option<String>,
     },
 }
 
@@ -197,7 +215,12 @@ pub async fn run(cmd: ProviderCmd) -> Result<()> {
         ProviderAction::RefreshModels { name, dry_run } => {
             refresh_models(&ctx, &config_path, name.as_deref(), dry_run).await
         }
-        ProviderAction::Models { name } => models(&ctx, &config_path, &name).await,
+        ProviderAction::Models {
+            name,
+            all,
+            enable,
+            disable,
+        } => models(&ctx, &config_path, &name, all, enable, disable).await,
     }
 }
 
@@ -496,7 +519,57 @@ async fn refresh_models(
     Ok(())
 }
 
-async fn models(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> Result<()> {
+async fn models(
+    ctx: &ApiContext,
+    config_path: &std::path::Path,
+    name: &str,
+    show_all: bool,
+    enable: Option<String>,
+    disable: Option<String>,
+) -> Result<()> {
+    // --enable and --disable are mutually exclusive write operations.
+    if enable.is_some() && disable.is_some() {
+        anyhow::bail!("--enable and --disable cannot be used together");
+    }
+
+    if let Some(model_id) = enable {
+        let row = providers::show(ctx, config_path, name)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let mut updated = row.enabled_models.clone();
+        if updated.iter().any(|m| m == &model_id) {
+            eprintln!("`{model_id}` is already enabled for `{name}`");
+            return Ok(());
+        }
+        updated.push(model_id.clone());
+        providers::set_enabled_models(ctx, config_path, name, updated)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        eprintln!("enabled `{model_id}` for provider `{name}`");
+        return Ok(());
+    }
+
+    if let Some(model_id) = disable {
+        let row = providers::show(ctx, config_path, name)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let before_len = row.enabled_models.len();
+        let updated: Vec<String> = row
+            .enabled_models
+            .into_iter()
+            .filter(|m| m != &model_id)
+            .collect();
+        if updated.len() == before_len {
+            anyhow::bail!("`{model_id}` is not in the enabled_models list for `{name}`");
+        }
+        providers::set_enabled_models(ctx, config_path, name, updated)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        eprintln!("disabled `{model_id}` for provider `{name}`");
+        return Ok(());
+    }
+
+    // Read-only display path.
     let cat = providers_catalog::get(ctx, config_path, name)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -508,14 +581,32 @@ async fn models(ctx: &ApiContext, config_path: &std::path::Path, name: &str) -> 
             );
         }
     };
+
+    // Load the allowlist from config. Empty = nothing configured yet.
+    let row = providers::show(ctx, config_path, name)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let allowlist = &row.enabled_models;
+    let filtering = !show_all && !allowlist.is_empty();
+
+    let visible: Vec<_> = cat
+        .models
+        .iter()
+        .filter(|m| !filtering || allowlist.iter().any(|a| a == &m.id))
+        .collect();
+
     println!(
-        "{} ({} models, fetched {})",
+        "{} ({} models{})",
         cat.provider,
-        cat.models.len(),
-        cat.fetched_at.to_rfc3339()
+        visible.len(),
+        if filtering {
+            format!(", {} in catalog — use --all to see everything", cat.models.len())
+        } else {
+            format!(", fetched {}", cat.fetched_at.to_rfc3339())
+        }
     );
     println!("{:<48} {:>10} {:>10} {:>6}", "ID", "CONTEXT", "MAX_OUT", "REASON");
-    for m in &cat.models {
+    for m in &visible {
         let ctx_str = m
             .context_window
             .map(|n| n.to_string())
@@ -646,6 +737,62 @@ api_key_env = "K"
     #[test]
     fn url_parse_rejects_no_scheme() {
         assert!(url_parse_minimal("api.openai.com/v1").is_err());
+    }
+
+    #[tokio::test]
+    async fn models_enable_adds_to_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
+        models(&ctx, &config, "anthropic", false, Some("claude-test".into()), None)
+            .await
+            .unwrap();
+        let cfg = xvision_core::config::load_runtime(&config).unwrap();
+        let p = cfg.providers.iter().find(|p| p.name == "anthropic").unwrap();
+        assert!(p.enabled_models.contains(&"claude-test".to_string()));
+    }
+
+    #[tokio::test]
+    async fn models_disable_removes_from_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
+        // Enable two models first, then disable one.
+        models(&ctx, &config, "anthropic", false, Some("claude-keep".into()), None)
+            .await
+            .unwrap();
+        models(&ctx, &config, "anthropic", false, Some("claude-remove-me".into()), None)
+            .await
+            .unwrap();
+        models(&ctx, &config, "anthropic", false, None, Some("claude-remove-me".into()))
+            .await
+            .unwrap();
+        let cfg = xvision_core::config::load_runtime(&config).unwrap();
+        let p = cfg.providers.iter().find(|p| p.name == "anthropic").unwrap();
+        assert!(!p.enabled_models.contains(&"claude-remove-me".to_string()));
+        assert!(p.enabled_models.contains(&"claude-keep".to_string()));
+    }
+
+    #[tokio::test]
+    async fn models_disable_unknown_model_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
+        let err = models(&ctx, &config, "anthropic", false, None, Some("ghost".into()))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("not in the enabled_models list"));
+    }
+
+    #[tokio::test]
+    async fn models_enable_and_disable_flags_are_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
+        let err = models(&ctx, &config, "anthropic", false, Some("a".into()), Some("b".into()))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("cannot be used together"));
     }
 
     #[test]
