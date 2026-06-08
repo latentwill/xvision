@@ -1474,7 +1474,8 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         dspy_ctx.as_ref(),
         opt_mem.as_deref(),
         Some(cycle_lock_id.clone()),
-        None,
+        None, // cancel flag: off for one-shot CLI cycles
+        None, // pause flag: off for one-shot CLI cycles
     )
     .await;
     // F34: release the workspace lock as soon as the cycle ends (success or
