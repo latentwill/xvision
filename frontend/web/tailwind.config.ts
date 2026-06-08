@@ -23,6 +23,9 @@ export default {
         "text-3": "var(--text-3)",
         "text-4": "var(--text-4)",
 
+        accent: "var(--accent)",
+        "on-accent": "var(--on-accent)",
+
         gold: "var(--gold)",
         "gold-soft": "var(--gold-soft)",
         warn: "var(--warn)",

@@ -25,6 +25,9 @@
   --text-3: #5f6670;
   --text-4: #3a3f47;
 
+  --accent: #00e676;
+  --on-accent: #000000;
+
   --gold: #00e676;
   --gold-soft: #00b85f;
   --gold-bg: rgba(0, 230, 118, 0.1);
@@ -54,6 +57,9 @@
   --text-3: #5f6670;
   --text-4: #3a3f47;
 
+  --accent: #00e676;
+  --on-accent: #000000;
+
   --gold: #00e676;
   --gold-soft: #00b85f;
   --gold-bg: rgba(0, 230, 118, 0.1);
@@ -79,6 +85,9 @@
   --text-2: #4a5560;
   --text-3: #6b7682;
   --text-4: #9aa4ae;
+
+  --accent: #00a15c;
+  --on-accent: #000000;
 
   --gold: #00a15c;
   --gold-soft: #007a48;
