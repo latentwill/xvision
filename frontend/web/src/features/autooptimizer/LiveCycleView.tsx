@@ -12,7 +12,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
-import { ApiError } from "@/api/client";
 import {
   type CycleProgressEvent,
   type LineageNode,
@@ -123,19 +122,6 @@ function countActiveLineages(nodes: LineageNode[]): number {
     if (n.status === "active" && n.cycle_id) seen.add(n.cycle_id);
   }
   return seen.size;
-}
-
-function deriveCycleState(
-  events: EventRow[],
-): { isRunning: boolean; activeCycleId: string | null } {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
-    if (et === "cycle_finished") {
-      return { isRunning: false, activeCycleId: null };
-    }
-    if (et === "cycle_started") return { isRunning: true, activeCycleId: events[i].cycle_id ?? null };
-  }
-  return { isRunning: false, activeCycleId: null };
 }
 
 function formatRelativeDate(ts: string): string {
@@ -269,7 +255,7 @@ function LaunchStrip({
     let budget: number | null = null;
     if (budgetUsd.trim() !== "") {
       const n = Number(budgetUsd);
-      if (!Number.isFinite(n) || n <= 0) { setLaunchError("Per-cycle budget must be positive"); return; }
+      if (!Number.isFinite(n) || n <= 0) { setLaunchError("Per-cycle budget must be a positive USD amount"); return; }
       budget = n;
     }
     let maxC: number | null = null;
@@ -281,7 +267,7 @@ function LaunchStrip({
     let totalBudget: number | null = null;
     if (totalBudgetUsd.trim() !== "") {
       const n = Number(totalBudgetUsd);
-      if (!Number.isFinite(n) || n <= 0) { setLaunchError("Total budget must be positive"); return; }
+      if (!Number.isFinite(n) || n <= 0) { setLaunchError("Total budget must be a positive USD amount"); return; }
       totalBudget = n;
     }
     const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
@@ -300,9 +286,9 @@ function LaunchStrip({
       totalBudgetUsd: totalBudget,
     });
   };
-  const disabled = isRunning || !strategyId.trim() || (!strategiesLoading && (!strategies || strategies.length === 0));
   const inp = "min-h-9 bg-surface-elev border border-border rounded text-text text-[13px] px-2 py-1";
   const noStrategies = !strategiesLoading && (!strategies || strategies.length === 0);
+  const disabled = isRunning || !strategyId.trim() || noStrategies;
   return (
     <div className="flex flex-col gap-2">
       <label htmlFor="optimizer-strategy" className="text-[12px] text-text-3">
@@ -345,20 +331,38 @@ function LaunchStrip({
         aria-label="Per-cycle budget cap in USD"
         className={`${inp} w-full`}
       />
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col gap-1">
-          <label className="text-[12px] text-text-3">Max cycles</label>
-          <input type="number" min="1" step="1" inputMode="numeric" value={maxCycles}
-            onChange={(e) => setMaxCycles(e.target.value)} disabled={isRunning}
-            placeholder="∞" aria-label="Maximum cycle count" className={`${inp} w-full`} />
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1">
+            <label className="text-[12px] text-text-3">Max cycles</label>
+            <input
+              type="number"
+              min="1"
+            step="1"
+            inputMode="numeric"
+            value={maxCycles}
+            onChange={(e) => setMaxCycles(e.target.value)}
+            disabled={isRunning}
+            placeholder="∞"
+            aria-label="Maximum cycle count"
+            className={`${inp} w-full`}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[12px] text-text-3">Total budget (USD)</label>
-          <input type="number" min="0" step="0.01" inputMode="decimal" value={totalBudgetUsd}
-            onChange={(e) => setTotalBudgetUsd(e.target.value)} disabled={isRunning}
-            placeholder="∞" aria-label="Total budget cap" className={`${inp} w-full`} />
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            value={totalBudgetUsd}
+            onChange={(e) => setTotalBudgetUsd(e.target.value)}
+            disabled={isRunning}
+            placeholder="∞"
+              aria-label="Total budget cap across all cycles"
+              className={`${inp} w-full`}
+            />
+          </div>
         </div>
-      </div>
       <span className="text-[12px] text-text-3">Evaluation window (optional)</span>
       <div className="grid grid-cols-2 gap-2">
         <input type="date" value={dayStart} onChange={(e) => setDayStart(e.target.value)}
@@ -376,7 +380,9 @@ function LaunchStrip({
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />
             <span>Cycle {cyclesCompleted + (isRunning ? 1 : 0)} running</span>
           </div>
-          {cumulativeSpent > 0 && <div className="text-text-3">Spent: ${cumulativeSpent.toFixed(4)}</div>}
+          {cumulativeSpent > 0 && (
+            <div className="text-text-3">Spent: ${cumulativeSpent.toFixed(4)}</div>
+          )}
         </div>
       )}
       <div className="flex gap-2">
@@ -389,8 +395,11 @@ function LaunchStrip({
           {isRunning && !loopActive ? "Starting…" : "Run optimizer"}
         </button>
         {loopActive && (
-          <button type="button" onClick={onStop}
-            className="rounded border border-danger/40 px-3 py-2.5 text-[13px] text-danger hover:bg-danger/10 transition-colors">
+          <button
+            type="button"
+            onClick={onStop}
+            className="rounded border border-danger/40 px-3 py-2.5 text-[13px] text-danger hover:bg-danger/10 transition-colors"
+          >
             Stop
           </button>
         )}
@@ -891,13 +900,23 @@ function LiveCostTicker({
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 
-export function LiveCycleView({ onTabChange, embedded = false }: { onTabChange?: (tab: string) => void; embedded?: boolean } = {}) {
+export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home" }: { onTabChange?: (tab: string) => void; embedded?: boolean; activeTab?: string } = {}) {
   const queryClient = useQueryClient();
   const [events, setEvents] = useState<EventRow[]>([]);
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const { data: lineageNodes = [] } = useLineageNodes();
-  const { isRunning, activeCycleId } = deriveCycleState(events);
+
+  // Derive cycle state from the local SSE event buffer (replaces deleted deriveCycleState).
+  // The source of truth for the full session state is useOptimizerStatus() in OptimizerHome;
+  // this local buffer tracks the latest cycle within LiveCycleView's own event stream.
+  let isRunning = false;
+  let activeCycleId: string | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
+    if (et === "cycle_finished") { isRunning = false; activeCycleId = null; break; }
+    if (et === "cycle_started") { isRunning = true; activeCycleId = events[i].cycle_id ?? null; break; }
+  }
 
   // Continuous loop state
   const loopConfigRef = useRef<LaunchConfig | null>(null);
@@ -916,10 +935,10 @@ export function LiveCycleView({ onTabChange, embedded = false }: { onTabChange?:
 
   const startLoop = useCallback(async (config: LaunchConfig) => {
     stopRequestedRef.current = false;
+    setLoopError(null);
     loopConfigRef.current = config;
     setCyclesCompleted(0);
     setCumulativeSpent(0);
-    setLoopError(null);
     lastProcessedRowId.current = -1;
     setLoopActive(true);
     try {
@@ -1078,7 +1097,7 @@ export function LiveCycleView({ onTabChange, embedded = false }: { onTabChange?:
         <EventLogCard events={events} bottomRef={bottomRef} />
         <KeptNextCard nodes={lineageNodes} />
       </div>
-      <ActiveLineagesSectionFull nodes={lineageNodes} />
+      {activeTab === "genealogy" && <ActiveLineagesSectionFull nodes={lineageNodes} />}
       {!embedded && (
         <RecentCyclesSectionFull nodes={lineageNodes} onTabChange={onTabChange} />
       )}

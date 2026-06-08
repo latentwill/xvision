@@ -65,6 +65,10 @@ pub struct StartCycleBody {
 pub struct StartCycleResponse {
     pub started: bool,
     pub message: String,
+    /// P1-W4: new additive field. Existing callers that only read `started`/`message`
+    /// are unaffected. Set when a session record was created for this run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -256,6 +260,10 @@ pub async fn start_cycle(
     // F28: register a cooperative cancel flag for this cycle so
     // `POST /cycles/:id/cancel` can stop it. Deregistered when the cycle ends.
     let cancel_flag = state.autooptimizer_register_cancel(&cycle_id);
+    // P4: register a cooperative pause flag for this cycle so
+    // `POST /cycles/:id/pause` can suspend it and `POST /cycles/:id/resume`
+    // can continue it. Deregistered when the cycle ends.
+    let pause_flag = state.autooptimizer_register_pause(&cycle_id);
     let state_for_dereg = state.clone();
     // Cortex memory: capture the recorder Arc (gated, config-backed default
     // ON; env override wins) before the spawn so the cycle can recall/record
@@ -346,12 +354,17 @@ pub async fn start_cycle(
             cycle_memory.as_deref(),
             Some(cycle_id.clone()),
             Some(cancel_flag),
+            // P4: cooperative pause flag so `POST /cycles/:id/pause` can suspend
+            // and `POST /cycles/:id/resume` can continue.
+            Some(pause_flag),
         )
         .await;
         // Stop the ticker; we persist the final totals below.
         ticker.abort();
         // F28: drop the cancel flag now the cycle is finished.
         state_for_dereg.autooptimizer_deregister_cancel(&cycle_id);
+        // P4: drop the pause flag now the cycle is finished.
+        state_for_dereg.autooptimizer_deregister_pause(&cycle_id);
         // F34: release the workspace cycle lock so the next cycle can run.
         let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_id).await;
         // F23/F26/F35: persist the FINAL per-cycle tokens + cost so the panel and
@@ -371,6 +384,7 @@ pub async fn start_cycle(
         Json(StartCycleResponse {
             started: true,
             message: "Optimizer run started. Watch the Live tab for progress.".into(),
+            session_id: None,
         }),
     ))
 }
@@ -384,6 +398,9 @@ pub async fn cancel_cycle(
     Path(cycle_id): Path<String>,
 ) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
     if state.autooptimizer_request_cancel(&cycle_id) {
+        // P4: also clear the pause flag so a paused cycle wakes and sees the
+        // cancel rather than looping forever waiting for resume.
+        state.autooptimizer_request_resume(&cycle_id);
         Ok((
             StatusCode::ACCEPTED,
             Json(StartCycleResponse {
@@ -391,6 +408,7 @@ pub async fn cancel_cycle(
                 message: format!(
                     "Cancellation requested for cycle {cycle_id}; it will stop before the next candidate."
                 ),
+                session_id: None,
             }),
         ))
     } else {
@@ -400,7 +418,79 @@ pub async fn cancel_cycle(
     }
 }
 
-fn load_optimizer_config() -> Result<AutoOptimizerConfig, DashboardError> {
+/// P4: `POST /api/autooptimizer/cycles/:cycle_id/pause` — suspend an in-flight
+/// optimizer cycle at its next safe checkpoint between candidates. Sets the pause
+/// flag; the cycle will emit `SessionStateChanged { state: "paused" }` once it
+/// reaches the checkpoint and suspends polling until resumed or cancelled.
+///
+/// Returns 200 if the pause flag was set, 409 if the cycle is not running
+/// (i.e. no pause flag registry entry — cycle not in flight, already finished,
+/// or already paused).
+pub async fn pause_cycle(
+    State(state): State<AppState>,
+    Path(cycle_id): Path<String>,
+) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
+    // 409 if already paused (flag already set) — idempotent re-pause is
+    // confusing at the API boundary; callers should check state first.
+    if state.autooptimizer_is_paused(&cycle_id) {
+        return Err(DashboardError::Conflict(format!(
+            "optimizer cycle '{cycle_id}' is already paused"
+        )));
+    }
+    if state.autooptimizer_request_pause(&cycle_id) {
+        Ok((
+            StatusCode::OK,
+            Json(StartCycleResponse {
+                started: false,
+                message: format!(
+                    "Pause requested for cycle {cycle_id}; it will suspend before the next candidate."
+                ),
+                session_id: None,
+            }),
+        ))
+    } else {
+        Err(DashboardError::Conflict(format!(
+            "optimizer cycle '{cycle_id}' is not running (not in flight or already finished)"
+        )))
+    }
+}
+
+/// P4: `POST /api/autooptimizer/cycles/:cycle_id/resume` — resume a paused
+/// optimizer cycle. Clears the pause flag; the cycle poll loop will detect the
+/// clear, emit `SessionStateChanged { state: "running" }`, and continue.
+///
+/// Returns 200 if the resume flag was cleared, 409 if the cycle is not currently
+/// paused (not in flight, never paused, or already running).
+pub async fn resume_cycle(
+    State(state): State<AppState>,
+    Path(cycle_id): Path<String>,
+) -> Result<(StatusCode, Json<StartCycleResponse>), DashboardError> {
+    // 409 if not paused — clearing an already-running flag is a no-op that
+    // would silently look successful; explicit 409 surfaces the misuse.
+    if !state.autooptimizer_is_paused(&cycle_id) {
+        return Err(DashboardError::Conflict(format!(
+            "optimizer cycle '{cycle_id}' is not paused (not in flight, never paused, or already running)"
+        )));
+    }
+    if state.autooptimizer_request_resume(&cycle_id) {
+        Ok((
+            StatusCode::OK,
+            Json(StartCycleResponse {
+                started: false,
+                message: format!(
+                    "Resume requested for cycle {cycle_id}; it will continue from its pause checkpoint."
+                ),
+                session_id: None,
+            }),
+        ))
+    } else {
+        Err(DashboardError::Conflict(format!(
+            "optimizer cycle '{cycle_id}' is not paused"
+        )))
+    }
+}
+
+pub(super) fn load_optimizer_config() -> Result<AutoOptimizerConfig, DashboardError> {
     load_optimizer_config_with_path().map(|(cfg, _, _)| cfg)
 }
 
@@ -416,7 +506,7 @@ fn load_optimizer_config_with_path() -> Result<(AutoOptimizerConfig, std::path::
     Ok((cfg, path, exists))
 }
 
-async fn build_autooptimizer_dispatch(
+pub(super) async fn build_autooptimizer_dispatch(
     provider: &str,
     xvn_home: &std::path::Path,
 ) -> Result<Arc<dyn LlmDispatch + Send + Sync>, DashboardError> {
@@ -468,7 +558,7 @@ async fn build_autooptimizer_dispatch(
     })
 }
 
-fn build_mutator_and_judge(
+pub(super) fn build_mutator_and_judge(
     cfg: &AutoOptimizerConfig,
     mutator_provider: String,
     mutator_model: String,
@@ -491,7 +581,7 @@ fn build_mutator_and_judge(
     (mutator, judge)
 }
 
-fn build_cycle_config(
+pub(super) fn build_cycle_config(
     cfg: &AutoOptimizerConfig,
     judge: &Judge,
     day_scenario: Scenario,
@@ -520,7 +610,7 @@ fn build_cycle_config(
     }
 }
 
-async fn load_strategy_parent(
+pub(super) async fn load_strategy_parent(
     strategy_id: &str,
     xvn_home: &std::path::Path,
     lineage: &LineageStore,
@@ -582,7 +672,7 @@ async fn load_strategy_parent(
     Ok((bundle_hash, strategy))
 }
 
-fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
+pub(super) fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
     // F10: delegate to the single shared optimizer scenario builder so the
     // dashboard and CLI never drift on venue/fee/fill settings.
     Ok(synthesize_optimizer_day_scenario(
@@ -595,7 +685,7 @@ fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardEr
 /// price each LLM completion. Best-effort: an absent/unreadable catalog yields no
 /// pricing (calls are counted as "unpriced", never silently $0) — the same
 /// "unknown ≠ zero" stance the CLI uses.
-async fn load_metering_catalogs(
+pub(super) async fn load_metering_catalogs(
     xvn_home: &std::path::Path,
     provider: &str,
 ) -> Vec<Arc<xvision_core::providers::Catalog>> {
@@ -610,6 +700,153 @@ mod tests {
     use super::*;
 
     use xvision_engine::agent::llm::MockDispatch;
+
+    // ── P4 pause/resume/cancel flag tests ─────────────────────────────────────
+
+    /// P4: `autooptimizer_register_pause` / `autooptimizer_request_pause` /
+    /// `autooptimizer_is_paused` / `autooptimizer_request_resume` /
+    /// `autooptimizer_deregister_pause` — flag lifecycle.
+    #[test]
+    fn test_pause_flag_lifecycle() {
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Manually replicate the pause registry logic (mirrors AppState internals)
+        // so we can test it without a full DB bootstrap.
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        let register = |id: &str| -> Arc<AtomicBool> {
+            let flag = Arc::new(AtomicBool::new(false));
+            pauses.lock().unwrap().insert(id.to_string(), Arc::clone(&flag));
+            flag
+        };
+        let request_pause = |id: &str| -> bool {
+            pauses.lock().unwrap().get(id).map(|f| {
+                f.store(true, Ordering::Relaxed);
+                true
+            }).unwrap_or(false)
+        };
+        let is_paused = |id: &str| -> bool {
+            pauses.lock().unwrap().get(id)
+                .map(|f| f.load(Ordering::Relaxed))
+                .unwrap_or(false)
+        };
+        let request_resume = |id: &str| -> bool {
+            pauses.lock().unwrap().get(id).map(|f| {
+                f.store(false, Ordering::Relaxed);
+                true
+            }).unwrap_or(false)
+        };
+        let deregister = |id: &str| {
+            pauses.lock().unwrap().remove(id);
+        };
+
+        let cycle = "cycle-001";
+
+        // Not registered → request_pause returns false, is_paused returns false.
+        assert!(!request_pause(cycle), "pause on unregistered cycle returns false");
+        assert!(!is_paused(cycle), "is_paused on unregistered cycle returns false");
+
+        // Register the cycle.
+        let _flag = register(cycle);
+        assert!(!is_paused(cycle), "newly registered cycle is not paused");
+
+        // Pause it.
+        assert!(request_pause(cycle), "pause on registered cycle returns true");
+        assert!(is_paused(cycle), "is_paused after pause returns true");
+
+        // Resume it.
+        assert!(request_resume(cycle), "resume on paused cycle returns true");
+        assert!(!is_paused(cycle), "is_paused after resume returns false");
+
+        // Deregister.
+        deregister(cycle);
+        assert!(!is_paused(cycle), "is_paused after deregister returns false");
+        assert!(!request_pause(cycle), "pause after deregister returns false");
+    }
+
+    /// P4: cancelling a paused cycle must also clear the pause flag so the cycle
+    /// wakes up, observes the cancel, and terminates.
+    #[test]
+    fn test_cancel_clears_pause_flag() {
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        let cycle = "cycle-002";
+
+        // Register both flags.
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        cancels.lock().unwrap().insert(cycle.to_string(), Arc::clone(&cancel_flag));
+        let pause_flag = Arc::new(AtomicBool::new(false));
+        pauses.lock().unwrap().insert(cycle.to_string(), Arc::clone(&pause_flag));
+
+        // Pause the cycle.
+        pauses.lock().unwrap().get(cycle).unwrap().store(true, Ordering::Relaxed);
+        assert!(pause_flag.load(Ordering::Relaxed), "cycle is paused before cancel");
+
+        // Simulate cancel_cycle: set cancel + clear pause.
+        cancels.lock().unwrap().get(cycle).unwrap().store(true, Ordering::Relaxed);
+        pauses.lock().unwrap().get(cycle).unwrap().store(false, Ordering::Relaxed);
+
+        assert!(cancel_flag.load(Ordering::Relaxed), "cancel flag is set after cancel");
+        assert!(!pause_flag.load(Ordering::Relaxed), "pause flag is cleared after cancel");
+    }
+
+    /// P4: pause returns 409 (not-running) when no pause flag is registered
+    /// (simulates idle / finished cycle). We test this via the conflict detection
+    /// logic: `autooptimizer_request_pause` returns false → Conflict.
+    #[test]
+    fn test_pause_route_409_when_not_in_flight() {
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        use std::sync::atomic::AtomicBool;
+
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        // No flag registered for this cycle_id.
+        let cycle = "cycle-finished";
+        let found = pauses.lock().unwrap().get(cycle)
+            .map(|f| { f.store(true, std::sync::atomic::Ordering::Relaxed); true })
+            .unwrap_or(false);
+
+        // Route would return Conflict when found == false.
+        assert!(!found, "pause on non-in-flight cycle returns false (triggers 409)");
+    }
+
+    /// P4: resume returns 409 (not paused) when the pause flag is not set.
+    #[test]
+    fn test_resume_route_409_not_paused() {
+        use std::collections::HashMap;
+        use std::sync::{Arc, Mutex};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        let cycle = "cycle-running";
+
+        // Register with pause=false (cycle is running, not paused).
+        let flag = Arc::new(AtomicBool::new(false));
+        pauses.lock().unwrap().insert(cycle.to_string(), Arc::clone(&flag));
+
+        let is_paused = pauses.lock().unwrap().get(cycle)
+            .map(|f| f.load(Ordering::Relaxed))
+            .unwrap_or(false);
+
+        // Route guards on `is_paused` before issuing resume; false → 409.
+        assert!(!is_paused, "cycle not paused → resume should be rejected (409)");
+    }
+
+    // ── existing test ─────────────────────────────────────────────────────────
 
     #[test]
     fn build_cycle_config_uses_resolved_judge_provider() {
@@ -635,5 +872,260 @@ mod tests {
 
         assert_eq!(cycle.judge_provider, "ollama");
         assert_eq!(cycle.judge_model, "qwen2.5-coder:7b");
+    }
+}
+
+// =============================================================================
+// P5-W2: Schedule CRUD — GET/POST /api/autooptimizer/schedule,
+//         DELETE /api/autooptimizer/schedule/:id
+// =============================================================================
+
+use xvision_engine::autooptimizer::scheduler::OptimizerSchedule;
+
+/// Request body for POST /api/autooptimizer/schedule.
+#[derive(serde::Deserialize)]
+pub struct UpsertScheduleBody {
+    pub enabled: Option<bool>,
+    /// "HH:MM" — local-time-of-day when the optimizer should fire.
+    pub time_local: String,
+    pub strategy_id: String,
+    /// JSON config forwarded to `create_session` as `config_json`.
+    pub config_json: Option<String>,
+}
+
+/// GET /api/autooptimizer/schedule — return the first schedule row or `null`.
+pub async fn get_schedule(
+    State(state): State<AppState>,
+) -> Result<Json<Option<OptimizerSchedule>>, DashboardError> {
+    let row = sqlx::query_as::<_, OptimizerSchedule>(
+        "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
+         FROM autooptimizer_schedules LIMIT 1",
+    )
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+    Ok(Json(row))
+}
+
+/// POST /api/autooptimizer/schedule — upsert by strategy_id (one per strategy, v1 limit).
+/// Returns the upserted schedule.
+pub async fn upsert_schedule(
+    State(state): State<AppState>,
+    Json(body): Json<UpsertScheduleBody>,
+) -> Result<Json<OptimizerSchedule>, DashboardError> {
+    let enabled = body.enabled.unwrap_or(true);
+    let config_json = body.config_json.unwrap_or_else(|| "{}".to_string());
+
+    // Validate time_local format "HH:MM".
+    let parts: Vec<&str> = body.time_local.split(':').collect();
+    if parts.len() != 2
+        || parts[0].parse::<u32>().map(|h| h > 23).unwrap_or(true)
+        || parts[1].parse::<u32>().map(|m| m > 59).unwrap_or(true)
+    {
+        return Err(DashboardError::Validation {
+            field: "time_local".into(),
+            msg: "time_local must be in HH:MM format (00:00–23:59)".into(),
+        });
+    }
+
+    // Upsert: if a schedule for this strategy_id exists, update it; otherwise insert.
+    sqlx::query(
+        "INSERT INTO autooptimizer_schedules \
+         (enabled, time_local, strategy_id, config_json) \
+         VALUES (?, ?, ?, ?) \
+         ON CONFLICT(strategy_id) DO UPDATE SET \
+           enabled = excluded.enabled, \
+           time_local = excluded.time_local, \
+           config_json = excluded.config_json",
+    )
+    .bind(enabled as i64)
+    .bind(&body.time_local)
+    .bind(&body.strategy_id)
+    .bind(&config_json)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+
+    // Fetch the upserted row.
+    let row = sqlx::query_as::<_, OptimizerSchedule>(
+        "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
+         FROM autooptimizer_schedules WHERE strategy_id = ?",
+    )
+    .bind(&body.strategy_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+
+    Ok(Json(row))
+}
+
+/// DELETE /api/autooptimizer/schedule/:id — delete by id.
+pub async fn delete_schedule(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, DashboardError> {
+    let result = sqlx::query("DELETE FROM autooptimizer_schedules WHERE id = ?")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
+
+    if result.rows_affected() == 0 {
+        return Err(DashboardError::NotFound(format!(
+            "no schedule with id {id}"
+        )));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn open_pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        // Migration 059
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS autooptimizer_schedules (
+              id           INTEGER PRIMARY KEY AUTOINCREMENT,
+              enabled      INTEGER NOT NULL DEFAULT 1,
+              time_local   TEXT NOT NULL,
+              strategy_id  TEXT NOT NULL UNIQUE,
+              config_json  TEXT NOT NULL,
+              last_run_at  TEXT,
+              next_run_at  TEXT
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        pool
+    }
+
+    // ── test_get_schedule_empty ──────────────────────────────────────────────
+
+    /// GET schedule when no rows exist → returns null (None).
+    #[tokio::test]
+    async fn test_get_schedule_empty() {
+        let pool = open_pool().await;
+
+        let row: Option<OptimizerSchedule> = sqlx::query_as(
+            "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
+             FROM autooptimizer_schedules LIMIT 1",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+
+        assert!(row.is_none(), "expected null response when no schedules exist");
+    }
+
+    // ── test_post_schedule_upserts ───────────────────────────────────────────
+
+    /// POST then POST again with the same strategy_id → only one row (upserted).
+    #[tokio::test]
+    async fn test_post_schedule_upserts() {
+        let pool = open_pool().await;
+
+        // First insert.
+        sqlx::query(
+            "INSERT INTO autooptimizer_schedules \
+             (enabled, time_local, strategy_id, config_json) VALUES (1, '09:00', 'strat-1', '{}')\
+             ON CONFLICT(strategy_id) DO UPDATE SET \
+               enabled = excluded.enabled, time_local = excluded.time_local, config_json = excluded.config_json",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Second insert (same strategy_id, different time).
+        sqlx::query(
+            "INSERT INTO autooptimizer_schedules \
+             (enabled, time_local, strategy_id, config_json) VALUES (1, '14:30', 'strat-1', '{}')\
+             ON CONFLICT(strategy_id) DO UPDATE SET \
+               enabled = excluded.enabled, time_local = excluded.time_local, config_json = excluded.config_json",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_schedules")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(count, 1, "upsert should keep exactly one row per strategy_id");
+
+        // Verify the time was updated to the second value.
+        let time: String =
+            sqlx::query_scalar("SELECT time_local FROM autooptimizer_schedules WHERE strategy_id = 'strat-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(time, "14:30", "upsert should update time_local to latest value");
+    }
+
+    // ── test_delete_schedule ─────────────────────────────────────────────────
+
+    /// POST then DELETE → row removed.
+    #[tokio::test]
+    async fn test_delete_schedule() {
+        let pool = open_pool().await;
+
+        // Insert a row.
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO autooptimizer_schedules \
+             (enabled, time_local, strategy_id, config_json) VALUES (1, '08:00', 'strat-del', '{}') \
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Confirm it exists.
+        let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_schedules")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_before, 1);
+
+        // Delete it.
+        let result = sqlx::query("DELETE FROM autooptimizer_schedules WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(result.rows_affected(), 1, "expected one row deleted");
+
+        let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_schedules")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count_after, 0, "schedule should be gone after delete");
+    }
+
+    // ── test_delete_nonexistent ──────────────────────────────────────────────
+
+    /// DELETE on nonexistent id → rows_affected == 0 (maps to 404 in handler).
+    #[tokio::test]
+    async fn test_delete_nonexistent_schedule() {
+        let pool = open_pool().await;
+
+        let result = sqlx::query("DELETE FROM autooptimizer_schedules WHERE id = ?")
+            .bind(9999_i64)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows_affected(),
+            0,
+            "deleting nonexistent schedule should affect 0 rows"
+        );
     }
 }

@@ -91,8 +91,7 @@ what `xvn strategy run` already exercises.
 
 ### ACPX intern subprocess (removed 2026-05-10)
 
-Previously, `xvn run-setup --intern acpx[:agent]` and `xvn ab-compare --intern
-acpx[:agent]` spawned the [acpx](https://github.com/openclaw/acpx) CLI to
+Previously, `xvn run-setup --intern acpx[:agent]` spawned the [acpx](https://github.com/openclaw/acpx) CLI to
 delegate Stage 1 to a coding-agent harness (codex / claude / openclaw / pi /
 …). Removed in favor of API-only intern paths (Anthropic Messages, OpenAI
 Chat Completions). Agents now drive xvn directly via Bash; the `xvn intern
@@ -115,8 +114,7 @@ addition to the pre-existing commands, exposes:
 - `xvn metrics` / `xvn gate` — pre-committed metrics + anti-overfit verdict
 - `xvn indicator <name>` — compute one indicator from a JSON price series
 - `xvn provider {list,show,check,add,remove}` — manage the LLM provider
-  registry in `config/default.toml` (per-arm Intern/Trader model selection
-  for `xvn ab-compare`). `add` / `remove` mutate the file in place via
+  registry in `config/default.toml`. `add` / `remove` mutate the file in place via
   `toml_edit` (comments preserved); `check` is a TCP-connect smoke with an
   opt-in `--probe` that GETs `<base_url>/models`. See migration note
   `docs/migrations/2026-05-10-providers-config.md`.

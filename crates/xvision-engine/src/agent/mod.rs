@@ -3,6 +3,7 @@ pub mod cline_recording;
 pub mod dispatch_capability;
 pub mod edge_predicate;
 pub mod embedder_choice;
+pub mod episodic;
 pub mod execute;
 pub mod execute_cline;
 pub mod filter_dispatch;

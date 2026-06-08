@@ -897,12 +897,63 @@ pub struct OpenaiCompatDispatch {
 }
 
 impl OpenaiCompatDispatch {
+    /// `base_url` is the OpenAI-compat root. A trailing `/v1` is optional for
+    /// conventional providers (OpenAI, Groq, Ollama, vLLM, local proxies), so
+    /// bare roots like `http://host:port` normalize to `http://host:port/v1`.
+    /// Provider roots that already include a non-`/v1` OpenAI-compatible API
+    /// path (for example Gemini's `/v1beta/openai`) are preserved.
     pub fn new(base_url: String, api_key: String) -> Self {
         Self {
-            base_url,
+            base_url: normalize_openai_compat_base_url(&base_url),
             api_key,
             client: reqwest::Client::new(),
         }
+    }
+}
+
+fn normalize_openai_compat_base_url(base_url: &str) -> String {
+    let trimmed = base_url.trim_end_matches('/');
+    if trimmed.ends_with("/v1") || trimmed.ends_with("/openai") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
+}
+
+#[cfg(test)]
+mod openai_compat_base_url_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_bare_roots_to_v1() {
+        assert_eq!(
+            normalize_openai_compat_base_url("http://localhost:11434"),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            normalize_openai_compat_base_url("https://api.deepseek.com/"),
+            "https://api.deepseek.com/v1"
+        );
+    }
+
+    #[test]
+    fn preserves_existing_v1_roots() {
+        assert_eq!(
+            normalize_openai_compat_base_url("https://openrouter.ai/api/v1/"),
+            "https://openrouter.ai/api/v1"
+        );
+        assert_eq!(
+            normalize_openai_compat_base_url("https://api.groq.com/openai/v1"),
+            "https://api.groq.com/openai/v1"
+        );
+    }
+
+    #[test]
+    fn preserves_gemini_openai_compat_root() {
+        assert_eq!(
+            normalize_openai_compat_base_url("https://generativelanguage.googleapis.com/v1beta/openai/"),
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        );
     }
 }
 

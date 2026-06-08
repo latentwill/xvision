@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { Icon, type IconName } from "@/components/primitives/Icon";
 import { BrandMark } from "@/components/primitives/BrandMark";
 import { useUi } from "@/stores/ui";
+import { WalletConnectFooter } from "@/components/shell/WalletConnectFooter";
 
 // MobileDrawer is the phone-breakpoint navigation surface. It is
 // *not* a popup — when open it occupies the full viewport with an
@@ -110,17 +111,8 @@ export function MobileDrawer() {
           View history
         </button>
       </div>
-      <div className="mt-auto flex items-center gap-2.5 px-5 py-3.5 border-t border-border-soft">
-        <div className="w-8 h-8 rounded-full bg-surface-panel border border-border flex items-center justify-center text-[11px] font-semibold text-text">
-          AK
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-[13px] text-text leading-tight">Alex Kim</div>
-          <div className="text-[11px] text-text-3 leading-tight truncate">
-            alex@xvn.dev
-          </div>
-        </div>
-        <Icon name="settings" size={14} className="text-text-3" />
+      <div className="mt-auto">
+        <WalletConnectFooter />
       </div>
     </nav>
   );

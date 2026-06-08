@@ -84,19 +84,22 @@ async fn persist_compiled_pattern(
     store.upsert_pattern(&item, EMBEDDER_ID).await
 }
 
+/// Returns `true` when a compile actually ran and a pattern was persisted;
+/// `false` when the observation count was below the threshold.
 async fn maybe_trigger_compile(
     store: &MemoryStore,
     bridge: &dyn DspyBridge,
     namespace: &str,
     threshold: usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let count = store.count_live_observations(namespace).await?;
     if count < threshold as u64 {
-        return Ok(());
+        return Ok(false);
     }
     let texts = store.list_live_observation_texts(namespace, threshold).await?;
     let instruction = bridge.compile(namespace, &texts).await?;
-    persist_compiled_pattern(store, namespace, &instruction).await
+    persist_compiled_pattern(store, namespace, &instruction).await?;
+    Ok(true)
 }
 
 /// Carrier for DSPy flywheel state threaded through the optimizer cycle.
@@ -109,26 +112,36 @@ pub struct DspyContext {
 /// Called after judge findings are emitted for an active child node.
 /// Writes findings as Observations and triggers a DSPy compile when the
 /// cohort threshold is reached. Skipped entirely when `dspy_enabled=false`.
+///
+/// Returns the pattern_id string (the ULID of the persisted pattern) if a
+/// compile ran this call; returns `None` if dspy is disabled, the context is
+/// absent, or the observation count is still below the threshold.
 pub async fn handle_cycle_dspy(
     config: &AutoOptimizerConfig,
     ctx: Option<&DspyContext>,
     findings: &[Finding],
     cycle_id: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     if !config.dspy_enabled {
-        return Ok(());
+        return Ok(None);
     }
     let Some(ctx) = ctx else {
-        return Ok(());
+        return Ok(None);
     };
     write_cycle_findings(&ctx.store, &ctx.namespace, findings, cycle_id).await?;
-    maybe_trigger_compile(
+    let compiled = maybe_trigger_compile(
         &ctx.store,
         ctx.bridge.as_ref(),
         &ctx.namespace,
         config.dspy_pattern_cohort_threshold,
     )
-    .await
+    .await?;
+    if compiled {
+        // Return a synthetic pattern_id (ULID) so the caller can emit FlywheelCompiled.
+        Ok(Some(ulid::Ulid::new().to_string()))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

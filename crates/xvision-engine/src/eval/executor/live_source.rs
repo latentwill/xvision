@@ -5,9 +5,9 @@
 //! Sub-track 3 of the 2026-05-21 Alpaca-Live executor refactor
 //! (see `team/contracts/live-bar-source-alpaca.md`). Companion to the
 //! Backtest `BarSource` ([`crate::eval::executor::InjectedBars`]); the
-//! Live counterpart drains a warmup buffer first, then yields live
-//! bars from the websocket subscription, and falls back to REST
-//! polling on websocket budget exhaustion.
+//! Live counterpart retains a warmup buffer for decision history, then
+//! yields only live bars from the websocket subscription, and falls back
+//! to REST polling on websocket budget exhaustion.
 //!
 //! ## Construction
 //!
@@ -23,7 +23,8 @@
 //!
 //! The stream transitions through four states:
 //!
-//! 1. `Warmup` — `next_bar()` pops from `warmup` until empty.
+//! 1. `Warmup` — retained historical bars are drained into the live
+//!    executor's per-asset history before the first tradable bar.
 //! 2. `WebsocketLive` — consumes [`BarStreamEvent::Bar`] events.
 //!    On [`BarStreamEvent::GapDetected`], the event is logged but
 //!    not yielded (the next event drives `next_bar`).
@@ -41,7 +42,7 @@
 //! provided by [`MultiLiveStream`], which owns one [`LiveStream`] per
 //! active asset and merges their bar streams.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::pin::Pin;
 
 use async_trait::async_trait;
@@ -90,9 +91,9 @@ pub enum LiveStreamError {
 impl LiveStream {
     /// Production constructor. Performs a synchronous historical
     /// warmup fetch ending at `now()` before any live bars are
-    /// pulled. Once `new_with_warmup` returns, the stream is ready
-    /// for `next_bar()` calls — the warmup buffer drains first,
-    /// then the websocket subscription is consulted.
+    /// pulled. Once `new_with_warmup` returns, callers should drain
+    /// the warmup through [`Self::take_warmup`] into decision history;
+    /// `next_bar()` itself yields only tradable live bars.
     pub async fn new_with_warmup(
         ctx: &ApiContext,
         asset: &str,
@@ -144,6 +145,17 @@ impl LiveStream {
     pub fn last_yielded_ts(&self) -> Option<DateTime<Utc>> {
         self.last_yielded_ts
     }
+
+    /// Drain historical warmup bars without yielding them as live
+    /// decisions. The live executor uses these bars only as
+    /// `bar_history` context for the first tradable websocket/poll bar.
+    pub fn take_warmup(&mut self) -> Vec<Ohlcv> {
+        let warmup = self.warmup.drain(..).collect();
+        if self.state == LiveStreamState::Warmup {
+            self.state = LiveStreamState::WebsocketLive;
+        }
+        warmup
+    }
 }
 
 #[async_trait]
@@ -152,10 +164,7 @@ impl BarSource for LiveStream {
         loop {
             match self.state {
                 LiveStreamState::Warmup => {
-                    if let Some(bar) = self.warmup.pop_front() {
-                        self.last_yielded_ts = Some(bar.timestamp);
-                        return Some(bar);
-                    }
+                    self.warmup.clear();
                     self.state = LiveStreamState::WebsocketLive;
                 }
                 LiveStreamState::WebsocketLive => {
@@ -304,6 +313,7 @@ pub type TaggedBar = (AssetSymbol, Ohlcv);
 /// preserves L1 single-asset byte-identity.
 pub struct MultiLiveStream {
     merged: SelectAll<BoxStream<'static, TaggedBar>>,
+    warmup_history: BTreeMap<AssetSymbol, Vec<Ohlcv>>,
     last_yielded_ts: Option<DateTime<Utc>>,
 }
 
@@ -313,14 +323,28 @@ impl MultiLiveStream {
     /// asset set first); an empty `Vec` yields a stream that closes
     /// immediately.
     pub fn new(streams: Vec<(AssetSymbol, LiveStream)>) -> Self {
+        let mut warmup_history = BTreeMap::new();
         let tagged: Vec<BoxStream<'static, TaggedBar>> = streams
             .into_iter()
-            .map(|(asset, stream)| tag_stream(asset, stream))
+            .map(|(asset, mut stream)| {
+                let warmup = stream.take_warmup();
+                if !warmup.is_empty() {
+                    warmup_history.insert(asset, warmup);
+                }
+                tag_stream(asset, stream)
+            })
             .collect();
         Self {
             merged: stream::select_all(tagged),
+            warmup_history,
             last_yielded_ts: None,
         }
+    }
+
+    /// Drain per-asset historical warmup bars for seeding live
+    /// `bar_history`. These bars are not emitted as tradable stream bars.
+    pub fn take_warmup_history(&mut self) -> BTreeMap<AssetSymbol, Vec<Ohlcv>> {
+        std::mem::take(&mut self.warmup_history)
     }
 
     /// Pull the next `(asset, bar)` across all sub-streams, or `None` when

@@ -269,6 +269,53 @@ export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResp
   );
 }
 
+// ─── Session-level control mutations (P4) ────────────────────────────────────
+
+/** Pause a running optimizer session. */
+export async function pauseSession(sessionId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/sessions/${encodeURIComponent(sessionId)}/pause`,
+    { method: "POST" },
+  );
+}
+
+/** Resume a paused optimizer session. */
+export async function resumeSession(sessionId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/sessions/${encodeURIComponent(sessionId)}/resume`,
+    { method: "POST" },
+  );
+}
+
+/** Cancel a running or paused optimizer session. */
+export async function cancelSession(sessionId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/sessions/${encodeURIComponent(sessionId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+/** useMutation hook: pause session. */
+export function usePauseSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) => pauseSession(sessionId),
+  });
+}
+
+/** useMutation hook: resume session. */
+export function useResumeSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) => resumeSession(sessionId),
+  });
+}
+
+/** useMutation hook: cancel session. */
+export function useCancelSession() {
+  return useMutation({
+    mutationFn: (sessionId: string) => cancelSession(sessionId),
+  });
+}
+
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {
@@ -388,6 +435,241 @@ export function useExperimentRegimeResults(
     return { results: [], isLoading: isLoading || !hash || !cycleId };
   const node = cycle.nodes?.find((n) => n.bundle_hash === hash);
   return { results: node?.regime_results ?? [], isLoading: false };
+}
+
+// ─── Schedule types (P5-W3) ───────────────────────────────────────────────────
+
+/** A scheduled optimizer run record from GET /api/autooptimizer/schedule. */
+export interface Schedule {
+  id: number;
+  enabled: boolean;
+  /** Local time in HH:MM format, e.g. "21:00" */
+  time_local: string;
+  strategy_id: string;
+  last_run_at: string | null;
+  next_run_at: string | null;
+}
+
+/** Request body for POST /api/autooptimizer/schedule (upsert). */
+export type UpsertScheduleRequest = {
+  enabled: boolean;
+  time_local: string;
+  strategy_id: string;
+};
+
+export async function getSchedule(): Promise<Schedule | null> {
+  return apiFetch<Schedule | null>("/api/autooptimizer/schedule").catch(() => null);
+}
+
+export async function upsertSchedule(body: UpsertScheduleRequest): Promise<Schedule> {
+  return apiFetch<Schedule>("/api/autooptimizer/schedule", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function useSchedule() {
+  return useQuery({
+    queryKey: ["optimizer/schedule"],
+    queryFn: getSchedule,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+export function useUpsertSchedule() {
+  return useMutation({
+    mutationFn: (req: UpsertScheduleRequest) => upsertSchedule(req),
+  });
+}
+
+// ─── Flywheel types (P3-W4) ───────────────────────────────────────────────────
+
+/** Metrics from the most recent DSPy prompt-compile gate evaluation. */
+export interface LastPromptCompile {
+  dev_metric: string | null;
+  parent_dev_score: number | null;
+  child_dev_score: number | null;
+  delta_dev: number | null;
+  parent_holdout_score: number | null;
+  child_holdout_score: number | null;
+  delta_holdout: number | null;
+  gate_verdict: string | null;
+  gated_at: string | null;
+}
+
+/** Response from GET /api/autooptimizer/flywheel */
+export interface FlywheelResponse {
+  enabled: boolean;
+  cohort_count?: number;
+  threshold?: number;
+  compiled_pattern_count?: number;
+  latest_optimization_run_id?: string;
+  last_prompt_compile?: LastPromptCompile | null;
+}
+
+export function useFlywheel() {
+  return useQuery({
+    queryKey: ["optimizer/flywheel"],
+    queryFn: () =>
+      fetch("/api/autooptimizer/flywheel").then((r) => r.json()) as Promise<FlywheelResponse>,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+// ─── Stats rows (P3-W3 charts) ────────────────────────────────────────────────
+
+/** One row from GET /api/autooptimizer/stats — per-cycle aggregates for charts. */
+export interface StatsRow {
+  cycle_id: string;
+  session_id: string;
+  ts: string;
+  kept: number;
+  suspect: number;
+  dropped: number;
+  best_delta_holdout: number | null;
+  cost_usd: number;
+  cum_cost_usd: number;
+}
+
+export type StatsQuery = {
+  strategy_id?: string;
+  session_id?: string;
+  since?: string;
+};
+
+export function useOptimizerStats(params?: StatsQuery) {
+  return useQuery({
+    queryKey: ["optimizer/stats", params ?? {}] as const,
+    queryFn: () => {
+      const q = new URLSearchParams(
+        Object.fromEntries(
+          Object.entries(params ?? {}).filter(([, v]) => v != null),
+        ) as Record<string, string>,
+      );
+      const qs = q.toString();
+      return fetch(`/api/autooptimizer/stats${qs ? `?${qs}` : ""}`).then(
+        (r) => r.json(),
+      ) as Promise<StatsRow[]>;
+    },
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+// ─── Session-level status types (P1 hero / status polling) ───────────────────
+
+/** Summary of one optimizer session for the status hero and recent-runs list. */
+export interface SessionSummary {
+  session_id: string;
+  strategy_id: string;
+  /** State machine state: "running" | "paused" | "cancelling" | "finished" | "failed" | "idle" */
+  state: string;
+  /** Run mode label: "explore" | "exploit" | etc. */
+  mode: string;
+  cycles_completed: number;
+  kept_count: number;
+  suspect_count: number;
+  dropped_count: number;
+}
+
+/** Response from GET /api/autooptimizer/status */
+export interface StatusResponse {
+  active_session: SessionSummary | null;
+  last_event_seq: number;
+}
+
+/** Row in the recent-sessions list (GET /api/autooptimizer/sessions) */
+export interface SessionListItem {
+  session_id: string;
+  strategy_id: string;
+  state: string;
+  mode: string;
+  cycles_completed: number;
+  kept_count: number;
+  cost_usd?: number;
+  finished_at?: string;
+}
+
+/** Poll the running-session status. Refetch every 5 s while active, 30 s when idle. */
+export function useOptimizerStatus(): StatusResponse | undefined {
+  const { data } = useQuery({
+    queryKey: ["optimizer/status"],
+    queryFn: () =>
+      fetch("/api/autooptimizer/status").then((r) => r.json()) as Promise<StatusResponse>,
+    refetchInterval: (query) => (query.state.data?.active_session ? 5_000 : 30_000),
+    // Fall back gracefully when the backend endpoint doesn't exist yet
+    retry: false,
+  });
+  return data;
+}
+
+/** Fetch the 10 most recent sessions for the recent-runs list. */
+export function useSessionList() {
+  return useQuery({
+    queryKey: ["optimizer/sessions"],
+    queryFn: () =>
+      fetch("/api/autooptimizer/sessions?limit=10").then(
+        (r) => r.json(),
+      ) as Promise<SessionListItem[]>,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+// ─── Experiment detail types ──────────────────────────────────────────────────
+
+/** Gate evaluation record for a single lineage node. */
+export interface GateRecord {
+  bundle_hash: string;
+  parent_day_score: number | null;
+  child_day_score: number | null;
+  parent_holdout_score: number | null;
+  child_holdout_score: number | null;
+  gate_epsilon: number | null;
+  delta_day: number | null;
+  delta_holdout: number | null;
+  drawdown_ratio: number | null;
+  verdict: string;
+  reason: string | null;
+}
+
+/** A single finding emitted by the judge for an experiment. */
+export interface ExperimentFinding {
+  id: number;
+  bundle_hash: string;
+  severity: "info" | "warn" | "risk";
+  code: string;
+  summary: string;
+  detail: string | null;
+  model: string | null;
+}
+
+/** Full detail response for a single experiment. */
+export interface ExperimentDetailResponse {
+  lineage_node: LineageNode;
+  rationale: string | null;
+  gate_record: GateRecord | null;
+  findings: ExperimentFinding[];
+  regime_results: RegimeResult[];
+}
+
+export async function getExperimentDetail(hash: string): Promise<ExperimentDetailResponse> {
+  return apiFetch<ExperimentDetailResponse>(
+    `/api/autooptimizer/experiments/${encodeURIComponent(hash)}/detail`,
+  );
+}
+
+export function useExperimentDetail(hash: string) {
+  return useQuery({
+    queryKey: ["experiments", hash, "detail"],
+    queryFn: () => getExperimentDetail(hash),
+    enabled: !!hash,
+    staleTime: 60_000,
+    // Fail gracefully — the endpoint may not exist yet in older backend versions.
+    retry: false,
+  });
 }
 
 // ─── Operator label helpers ───────────────────────────────────────────────────

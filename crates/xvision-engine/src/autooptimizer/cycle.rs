@@ -1,6 +1,7 @@
 //! Optimizer cycle orchestrator — AR-2 Task 9.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
@@ -16,13 +17,14 @@ use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
 use crate::autooptimizer::gate::{aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective};
+use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
 use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
 use crate::autooptimizer::mutator::{MutationDiff, Mutator};
 use crate::autooptimizer::mutator_ladder::{record_outcome, record_proposal};
 use crate::autooptimizer::parent_policy::{select_parents, ParentPolicy};
-use crate::autooptimizer::progress::CycleProgressEvent;
+use crate::autooptimizer::progress::{CycleProgressEvent, Phase};
 use crate::autooptimizer::regime_results::{insert_regime_results, RegimeResultRow};
 use crate::eval::run::MetricsSummary;
 use crate::eval::scenario::Scenario;
@@ -87,6 +89,23 @@ struct MutationOutcome {
     /// Phase 2: per-regime evaluation rows. Empty when `regime_set` is empty
     /// (legacy / single-window path).
     regime_rows: Vec<RegimeResultRow>,
+    /// Gate record scores — the oriented objective values for parent+child on
+    /// both windows, plus the epsilon threshold and drawdown ratio.  `None` for
+    /// regime-matrix paths where no single day/holdout pair is definitive.
+    gate_scores: Option<GateScores>,
+}
+
+/// Numeric gate inputs captured at gate-verdict time so they can be persisted
+/// to `autooptimizer_gate_records` by `process_parent_mutations`.
+struct GateScores {
+    pub parent_day_score: f64,
+    pub child_day_score: f64,
+    pub parent_holdout_score: f64,
+    pub child_holdout_score: f64,
+    pub gate_epsilon: f64,
+    pub delta_day: f64,
+    pub delta_holdout: f64,
+    pub drawdown_ratio: Option<f64>,
 }
 
 pub async fn run_cycle(
@@ -109,6 +128,10 @@ pub async fn run_cycle(
     // mutations/backtests (checked between candidates and parents) so an operator
     // can halt a long/expensive run. `None` = never cancelled.
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    // P4: a cooperative pause flag. When set, the cycle suspends at its next safe
+    // checkpoint (between candidates) and polls every 1s until the flag is cleared
+    // (resume) or the cancel flag is set. `None` = never paused.
+    pause: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<CycleResult> {
     let cycle_id = cycle_id_override.unwrap_or_else(|| Ulid::new().to_string());
     let min_improvement =
@@ -144,6 +167,7 @@ pub async fn run_cycle(
         explicit
     };
     progress(CycleProgressEvent::CycleStarted {
+        session_id: String::new(),
         cycle_id: cycle_id.clone(),
         parent_count: parents.len(),
     });
@@ -164,9 +188,23 @@ pub async fn run_cycle(
         if is_cancelled() {
             break;
         }
+        // P4: pause checkpoint — suspend here between parents if pause is set,
+        // polling every 1s until the flag is cleared (resume) or the cycle is
+        // cancelled. This is the outer per-parent boundary; the inner per-mutation
+        // boundary in `process_parent_mutations` does the same check.
+        while pause.as_ref().is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed)) {
+            if is_cancelled() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if is_cancelled() {
+            break;
+        }
         let ph = parent_node.bundle_hash.to_hex();
         if let Some(parent_strategy) = cycle_config.parent_strategies.get(&ph) {
             progress(CycleProgressEvent::ParentSelected {
+                session_id: String::new(),
                 cycle_id: cycle_id.clone(),
                 parent_hash: ph,
             });
@@ -188,6 +226,7 @@ pub async fn run_cycle(
                 dspy_ctx,
                 memory,
                 cancel.as_ref(),
+                pause.as_ref(),
             )
             .await?;
             active_nodes.extend(active);
@@ -202,6 +241,14 @@ pub async fn run_cycle(
     // is pure waste — there is no candidate whose gating to sanity-check. Skip it
     // and record a skipped result, mirroring the existing "no canary parent"
     // skipped representation (sabotage_variant "none" + a skipped message).
+    progress(CycleProgressEvent::PhaseStarted {
+        session_id: String::new(),
+        cycle_id: cycle_id.clone(),
+        parent_hash: None,
+        phase: Phase::HonestyCheck,
+        detail: "Running honesty check (sabotage canary)".to_string(),
+    });
+    let honesty_t0 = Instant::now();
     let honesty_check = if honesty_check_warranted(&active_nodes, &suspect_nodes, &rejected_nodes) {
         run_cycle_canary(
             &parents,
@@ -226,6 +273,7 @@ pub async fn run_cycle(
                 .to_string(),
         };
         progress(CycleProgressEvent::HonestyCheckRun {
+            session_id: String::new(),
             cycle_id: cycle_id.clone(),
             passed: skipped.passed_check,
             sabotage_variant: skipped.sabotage_variant.clone(),
@@ -233,6 +281,13 @@ pub async fn run_cycle(
         });
         skipped
     };
+    progress(CycleProgressEvent::PhaseFinished {
+        session_id: String::new(),
+        cycle_id: cycle_id.clone(),
+        parent_hash: None,
+        phase: Phase::HonestyCheck,
+        duration_ms: honesty_t0.elapsed().as_millis() as u64,
+    });
     // F13: persist the honesty-check outcome so a historic cycle's detail can
     // report it (it was previously emitted only over SSE / the CLI summary).
     persist_honesty_check(pool, &cycle_id, &honesty_check).await;
@@ -309,6 +364,7 @@ where
     )
     .await?;
     progress(CycleProgressEvent::HonestyCheckRun {
+        session_id: String::new(),
         cycle_id: cycle_id.to_string(),
         passed: check.passed_check,
         sabotage_variant: check.sabotage_variant.clone(),
@@ -350,6 +406,7 @@ async fn process_parent_mutations<F>(
     dspy_ctx: Option<&DspyContext>,
     memory: Option<&crate::agent::memory_recorder::MemoryRecorder>,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    pause: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(Vec<LineageNode>, Vec<LineageNode>, Vec<LineageNode>, usize)>
 where
     F: Fn(CycleProgressEvent),
@@ -445,6 +502,17 @@ where
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
             break;
         }
+        // P4: pause checkpoint — suspend here between mutations if pause flag is
+        // set; poll every 1s until cleared (resume) or cancelled.
+        while pause.is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed)) {
+            if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
+            break;
+        }
         // F32: a per-cycle, per-mutation exploration seed so the experiment writer
         // proposes DIVERSE candidates across cycles (it was deterministic — same
         // parent always yielded the identical candidate, so the optimizer never
@@ -459,13 +527,30 @@ where
         // `NoCandidate` event instead of a silent `continue`, so a cycle that
         // produced nothing is distinguishable in the CLI summary and panel from
         // one that gated a real experiment.
-        let diff = if config.tournament_enabled {
+        let ph_str = parent_node.bundle_hash.to_hex();
+        progress(CycleProgressEvent::PhaseStarted {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(ph_str.clone()),
+            phase: Phase::WriterProposing,
+            detail: "Experiment writer proposing candidate".to_string(),
+        });
+        let writer_t0 = Instant::now();
+        let diff_result: Option<crate::autooptimizer::mutator::MutationDiff> = if config.tournament_enabled {
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
             match runner.run_tournament(parent_strategy, config).await {
                 Ok(r) if r.incumbent_wins => {
                     no_candidate_count += 1;
+                    progress(CycleProgressEvent::PhaseFinished {
+                        session_id: String::new(),
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: Some(ph_str.clone()),
+                        phase: Phase::WriterProposing,
+                        duration_ms: writer_t0.elapsed().as_millis() as u64,
+                    });
                     progress(CycleProgressEvent::NoCandidate {
+                        session_id: String::new(),
                         cycle_id: cycle_id.to_string(),
                         parent_hash: parent_node.bundle_hash.to_hex(),
                         reason: "tournament incumbent retained (no challenger improved on the parent)"
@@ -473,10 +558,18 @@ where
                     });
                     continue;
                 }
-                Ok(r) => r.winner_diff,
+                Ok(r) => Some(r.winner_diff),
                 Err(e) => {
                     no_candidate_count += 1;
+                    progress(CycleProgressEvent::PhaseFinished {
+                        session_id: String::new(),
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: Some(ph_str.clone()),
+                        phase: Phase::WriterProposing,
+                        duration_ms: writer_t0.elapsed().as_millis() as u64,
+                    });
                     progress(CycleProgressEvent::NoCandidate {
+                        session_id: String::new(),
                         cycle_id: cycle_id.to_string(),
                         parent_hash: parent_node.bundle_hash.to_hex(),
                         reason: format!("tournament failed: {e}"),
@@ -496,13 +589,21 @@ where
                 )
                 .await
             {
-                Ok(d) => d,
+                Ok(d) => Some(d),
                 Err(e) => {
                     // The mutator exhausted its retries without a distinct,
                     // valid diff (e.g. every attempt was an identity/no-op —
                     // F14). Surface it rather than exiting the iteration silently.
                     no_candidate_count += 1;
+                    progress(CycleProgressEvent::PhaseFinished {
+                        session_id: String::new(),
+                        cycle_id: cycle_id.to_string(),
+                        parent_hash: Some(ph_str.clone()),
+                        phase: Phase::WriterProposing,
+                        duration_ms: writer_t0.elapsed().as_millis() as u64,
+                    });
                     progress(CycleProgressEvent::NoCandidate {
+                        session_id: String::new(),
                         cycle_id: cycle_id.to_string(),
                         parent_hash: parent_node.bundle_hash.to_hex(),
                         reason: format!("experiment writer produced no usable candidate: {e}"),
@@ -511,6 +612,14 @@ where
                 }
             }
         };
+        let diff = diff_result.expect("diff_result is None only on continue paths above");
+        progress(CycleProgressEvent::PhaseFinished {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(ph_str.clone()),
+            phase: Phase::WriterProposing,
+            duration_ms: writer_t0.elapsed().as_millis() as u64,
+        });
         // F12 defensive guard: never gate or persist a child byte-identical to
         // its parent. The mutator already rejects identity diffs, but the
         // tournament path does not, and a no-op child's content hash equals the
@@ -529,6 +638,7 @@ where
             );
             no_candidate_count += 1;
             progress(CycleProgressEvent::NoCandidate {
+                session_id: String::new(),
                 cycle_id: cycle_id.to_string(),
                 parent_hash: parent_node.bundle_hash.to_hex(),
                 reason: "experiment writer produced a no-op (identity) diff".to_string(),
@@ -551,6 +661,7 @@ where
                 );
                 no_candidate_count += 1;
                 progress(CycleProgressEvent::NoCandidate {
+                    session_id: String::new(),
                     cycle_id: cycle_id.to_string(),
                     parent_hash: parent_node.bundle_hash.to_hex(),
                     reason: "experiment writer re-derived a candidate already evaluated on this parent"
@@ -560,9 +671,18 @@ where
             }
         }
         progress(CycleProgressEvent::MutationProposed {
+            session_id: String::new(),
             cycle_id: cycle_id.to_string(),
             parent_hash: parent_node.bundle_hash.to_hex(),
         });
+        progress(CycleProgressEvent::PhaseStarted {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(ph_str.clone()),
+            phase: Phase::GateEvaluating,
+            detail: "Running backtests and numeric gate".to_string(),
+        });
+        let gate_t0 = Instant::now();
         let outcome = gate_and_classify(
             parent_strategy,
             diff,
@@ -572,8 +692,18 @@ where
             &parent_untouched,
             min_improvement,
             &parent_regime_metrics,
+            progress,
+            cycle_id,
+            &ph_str,
         )
         .await?;
+        progress(CycleProgressEvent::PhaseFinished {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(ph_str.clone()),
+            phase: Phase::GateEvaluating,
+            duration_ms: gate_t0.elapsed().as_millis() as u64,
+        });
         // Fix 1+2: build_and_insert_node now atomically writes node + regime rows
         // and returns the *resolved* status (which may be Active when the
         // collision-guard preserves an existing active node).  Emit the SSE event
@@ -585,11 +715,46 @@ where
             LineageStatus::Rejected => "dropped",
         };
         progress(CycleProgressEvent::MutationGated {
+            session_id: String::new(),
             cycle_id: cycle_id.to_string(),
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
             outcome: outcome_str.to_string(),
         });
+        // P2-W2: persist gate record to autooptimizer_gate_records. Best-effort —
+        // a DB error must never abort the cycle.
+        if let Some(gs) = &outcome.gate_scores {
+            let verdict_str = outcome.verdict.as_str();
+            let reason_str = match &outcome.verdict {
+                GateVerdict::Fail { reason } => Some(reason.as_str()),
+                GateVerdict::Pass => None,
+            };
+            if let Err(e) = persist_gate_record(
+                pool,
+                GateRecord {
+                    bundle_hash: &outcome.child_hash.to_hex(),
+                    parent_day_score: Some(gs.parent_day_score),
+                    child_day_score: Some(gs.child_day_score),
+                    parent_holdout_score: Some(gs.parent_holdout_score),
+                    child_holdout_score: Some(gs.child_holdout_score),
+                    gate_epsilon: Some(gs.gate_epsilon),
+                    delta_day: Some(gs.delta_day),
+                    delta_holdout: Some(gs.delta_holdout),
+                    drawdown_ratio: gs.drawdown_ratio,
+                    verdict: &verdict_str,
+                    reason: reason_str,
+                    rationale: Some(outcome.diff.rationale.as_str()),
+                },
+            )
+            .await
+            {
+                tracing::warn!(
+                    cycle_id,
+                    child_hash = %outcome.child_hash.to_hex(),
+                    "failed to persist gate record (best-effort, ignoring): {e}"
+                );
+            }
+        }
         // P3 write-back: record EVERY gated candidate's outcome (both Active and
         // Rejected) as an Observation in the mutations namespace, so a later
         // distillation pass can promote recurring lessons (e.g. "raising leverage
@@ -637,6 +802,14 @@ where
                 record_outcome(pool, &outcome.child_hash, outcome.delta_sharpe).await?;
                 // P2: pass the recorder + eval scenario start so judge recall is
                 // temporally safe (Patterns trained inside the scenario can't leak).
+                progress(CycleProgressEvent::PhaseStarted {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: Some(ph_str.clone()),
+                    phase: Phase::ReviewerRunning,
+                    detail: "Reviewer evaluating active candidate".to_string(),
+                });
+                let reviewer_t0 = Instant::now();
                 let findings = run_judge(
                     judge,
                     parent_strategy,
@@ -647,13 +820,38 @@ where
                     Some(cycle_config.day_scenario.time_window.start),
                 )
                 .await?;
+                progress(CycleProgressEvent::PhaseFinished {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: Some(ph_str.clone()),
+                    phase: Phase::ReviewerRunning,
+                    duration_ms: reviewer_t0.elapsed().as_millis() as u64,
+                });
                 for f in &findings {
                     progress(CycleProgressEvent::JudgeFinding {
+                        session_id: String::new(),
                         cycle_id: cycle_id.to_string(),
                         child_hash: outcome.child_hash.to_hex(),
                         severity: format!("{:?}", f.severity),
                         code: f.code.clone(),
                     });
+                    // P2-W2: persist each finding to autooptimizer_findings so the
+                    // GET /findings/:hash endpoint can return real data. Best-effort.
+                    let judge_model = format!("{}/{}", judge.provider, judge.model);
+                    if let Err(e) = persist_finding(
+                        pool,
+                        &outcome.child_hash.to_hex(),
+                        f,
+                        Some(judge_model.as_str()),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            cycle_id,
+                            child_hash = %outcome.child_hash.to_hex(),
+                            "failed to persist judge finding (best-effort, ignoring): {e}"
+                        );
+                    }
                 }
                 // P2 write-back: record each real finding as an Observation in the
                 // judge namespace so a later distillation pass can promote recurring
@@ -680,7 +878,15 @@ where
                         }
                     }
                 }
-                handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await?;
+                if let Some(pattern_id) = handle_cycle_dspy(config, dspy_ctx, &findings, cycle_id).await? {
+                    // DSPy flywheel compiled findings into a prompt pattern this cycle.
+                    progress(CycleProgressEvent::FlywheelCompiled {
+                        session_id: String::new(),
+                        cycle_id: cycle_id.to_string(),
+                        optimization_run_id: cycle_id.to_string(),
+                        pattern_id,
+                    });
+                }
                 findings_by_node.insert(outcome.child_hash, findings);
                 active.push(node);
             }
@@ -695,7 +901,7 @@ where
     Ok((active, suspect, rejected, no_candidate_count))
 }
 
-async fn gate_and_classify(
+async fn gate_and_classify<F>(
     parent_strategy: &Strategy,
     diff: MutationDiff,
     cycle_config: &CycleConfig,
@@ -707,7 +913,14 @@ async fn gate_and_classify(
     // `process_parent_mutations` so each parent is evaluated only once per
     // regime window across all its mutations.
     parent_regime_metrics: &HashMap<String, (MetricsSummary, MetricsSummary)>,
-) -> Result<MutationOutcome> {
+    // Progress callback + context for emitting inner phase events.
+    progress: &F,
+    cycle_id: &str,
+    parent_hash_str: &str,
+) -> Result<MutationOutcome>
+where
+    F: Fn(CycleProgressEvent),
+{
     let child = diff.apply_to(parent_strategy);
     let child_hash = ContentHash::of_json(&serde_json::to_value(&child)?);
 
@@ -718,8 +931,40 @@ async fn gate_and_classify(
         for rw in &cycle_config.regime_set {
             let (regime_day_scen, regime_baseline_scen) =
                 build_regime_scenario_pair(cycle_config, rw)?;
+            // EvalDayWindow phase for each regime.
+            progress(CycleProgressEvent::PhaseStarted {
+                session_id: String::new(),
+                cycle_id: cycle_id.to_string(),
+                parent_hash: Some(parent_hash_str.to_string()),
+                phase: Phase::EvalDayWindow,
+                detail: format!("Day-window backtest for regime '{}'", rw.label),
+            });
+            let t0 = Instant::now();
             let child_day_r = paper_tester.run(&child, &regime_day_scen).await?;
+            progress(CycleProgressEvent::PhaseFinished {
+                session_id: String::new(),
+                cycle_id: cycle_id.to_string(),
+                parent_hash: Some(parent_hash_str.to_string()),
+                phase: Phase::EvalDayWindow,
+                duration_ms: t0.elapsed().as_millis() as u64,
+            });
+            // EvalUntouchedWindow phase for each regime.
+            progress(CycleProgressEvent::PhaseStarted {
+                session_id: String::new(),
+                cycle_id: cycle_id.to_string(),
+                parent_hash: Some(parent_hash_str.to_string()),
+                phase: Phase::EvalUntouchedWindow,
+                detail: format!("Untouched-window backtest for regime '{}'", rw.label),
+            });
+            let t0 = Instant::now();
             let child_untouched_r = paper_tester.run(&child, &regime_baseline_scen).await?;
+            progress(CycleProgressEvent::PhaseFinished {
+                session_id: String::new(),
+                cycle_id: cycle_id.to_string(),
+                parent_hash: Some(parent_hash_str.to_string()),
+                phase: Phase::EvalUntouchedWindow,
+                duration_ms: t0.elapsed().as_millis() as u64,
+            });
             let (parent_day_r, parent_untouched_r) = parent_regime_metrics
                 .get(&rw.label)
                 .map(|(d, u)| (d.clone(), u.clone()))
@@ -769,6 +1014,14 @@ async fn gate_and_classify(
         // scoped only to Active candidates — and downgrade to Rejected on noise.
         let (regime_status, verdict) = match regime_status {
             LineageStatus::Active => {
+                progress(CycleProgressEvent::PhaseStarted {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: Some(parent_hash_str.to_string()),
+                    phase: Phase::ReverseCheck,
+                    detail: "Inversion-pair symmetric-noise check".to_string(),
+                });
+                let t0 = Instant::now();
                 let inv = run_inversion_pair(
                     parent_strategy,
                     &diff,
@@ -777,6 +1030,13 @@ async fn gate_and_classify(
                     &cycle_config.baseline_scenario,
                 )
                 .await?;
+                progress(CycleProgressEvent::PhaseFinished {
+                    session_id: String::new(),
+                    cycle_id: cycle_id.to_string(),
+                    parent_hash: Some(parent_hash_str.to_string()),
+                    phase: Phase::ReverseCheck,
+                    duration_ms: t0.elapsed().as_millis() as u64,
+                });
                 if inv.symmetric_noise {
                     (
                         LineageStatus::Rejected,
@@ -812,12 +1072,46 @@ async fn gate_and_classify(
             child_day,
             child_untouched,
             regime_rows,
+            // Regime-matrix path: no single day/holdout pair is the gate gate.
+            gate_scores: None,
         });
     }
 
     // ── Legacy / empty-regime-set path (UNCHANGED) ───────────────────────────
+    progress(CycleProgressEvent::PhaseStarted {
+        session_id: String::new(),
+        cycle_id: cycle_id.to_string(),
+        parent_hash: Some(parent_hash_str.to_string()),
+        phase: Phase::EvalDayWindow,
+        detail: "Day-window backtest".to_string(),
+    });
+    let t0 = Instant::now();
     let child_day = paper_tester.run(&child, &cycle_config.day_scenario).await?;
+    progress(CycleProgressEvent::PhaseFinished {
+        session_id: String::new(),
+        cycle_id: cycle_id.to_string(),
+        parent_hash: Some(parent_hash_str.to_string()),
+        phase: Phase::EvalDayWindow,
+        duration_ms: t0.elapsed().as_millis() as u64,
+    });
+
+    progress(CycleProgressEvent::PhaseStarted {
+        session_id: String::new(),
+        cycle_id: cycle_id.to_string(),
+        parent_hash: Some(parent_hash_str.to_string()),
+        phase: Phase::EvalUntouchedWindow,
+        detail: "Untouched-window backtest".to_string(),
+    });
+    let t0 = Instant::now();
     let child_untouched = paper_tester.run(&child, &cycle_config.baseline_scenario).await?;
+    progress(CycleProgressEvent::PhaseFinished {
+        session_id: String::new(),
+        cycle_id: cycle_id.to_string(),
+        parent_hash: Some(parent_hash_str.to_string()),
+        phase: Phase::EvalUntouchedWindow,
+        duration_ms: t0.elapsed().as_millis() as u64,
+    });
+
     let raw_verdict = gate_check(
         parent_day,
         &child_day,
@@ -829,6 +1123,14 @@ async fn gate_and_classify(
     let delta_sharpe = child_day.sharpe - parent_day.sharpe;
 
     let (verdict, status) = if matches!(raw_verdict, GateVerdict::Pass) {
+        progress(CycleProgressEvent::PhaseStarted {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(parent_hash_str.to_string()),
+            phase: Phase::ReverseCheck,
+            detail: "Inversion-pair symmetric-noise check".to_string(),
+        });
+        let t0 = Instant::now();
         let inv = run_inversion_pair(
             parent_strategy,
             &diff,
@@ -837,6 +1139,13 @@ async fn gate_and_classify(
             &cycle_config.baseline_scenario,
         )
         .await?;
+        progress(CycleProgressEvent::PhaseFinished {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(parent_hash_str.to_string()),
+            phase: Phase::ReverseCheck,
+            duration_ms: t0.elapsed().as_millis() as u64,
+        });
         if inv.symmetric_noise {
             (
                 GateVerdict::Fail {
@@ -851,6 +1160,38 @@ async fn gate_and_classify(
         (raw_verdict, LineageStatus::Rejected)
     };
 
+    // Capture numeric gate scores for persistence to autooptimizer_gate_records.
+    let obj = cycle_config.objective;
+    let parent_day_score = obj.oriented_value(parent_day);
+    let child_day_score = obj.oriented_value(&child_day);
+    let parent_holdout_score = obj.oriented_value(parent_untouched);
+    let child_holdout_score = obj.oriented_value(&child_untouched);
+    let drawdown_ratio = {
+        let parent_worst = parent_day
+            .max_drawdown_pct
+            .abs()
+            .max(parent_untouched.max_drawdown_pct.abs());
+        let child_worst = child_day
+            .max_drawdown_pct
+            .abs()
+            .max(child_untouched.max_drawdown_pct.abs());
+        if parent_worst > 0.0 {
+            Some(child_worst / parent_worst)
+        } else {
+            None
+        }
+    };
+    let gate_scores = Some(GateScores {
+        parent_day_score,
+        child_day_score,
+        parent_holdout_score,
+        child_holdout_score,
+        gate_epsilon: min_improvement,
+        delta_day: child_day_score - parent_day_score,
+        delta_holdout: child_holdout_score - parent_holdout_score,
+        drawdown_ratio,
+    });
+
     Ok(MutationOutcome {
         child,
         diff,
@@ -861,6 +1202,7 @@ async fn gate_and_classify(
         child_day,
         child_untouched,
         regime_rows: vec![],
+        gate_scores,
     })
 }
 

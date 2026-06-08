@@ -1,5 +1,11 @@
 # Intake — 2026-05-19 — Compare AB evaluations feature
 
+> **NOTE: ab-compare removed 2026-06-07. This intake is archived.**
+> The `xvn ab-compare` CLI command and the underlying `xvision-eval::ab_compare`
+> engine function have been permanently removed. Any items below that reference
+> `xvn ab-compare` or `ab_compare` should be re-scoped to use `xvn eval compare`
+> / `xvn eval batch` / `xvn experiment run` as appropriate before reopening.
+
 **Status: Reserved — gated on charting rework (F33).** Do not open
 contracts until the chart rework lands. The 10 asks below remain valid
 as the decomposition source once F33 is complete.

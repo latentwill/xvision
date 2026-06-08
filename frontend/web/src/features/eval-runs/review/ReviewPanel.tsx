@@ -21,17 +21,17 @@ import { ReviewContent } from "./ReviewContent";
 ///    panel doesn't render an empty card when no review exists.
 export function ReviewPanel({
   runId,
-  runIsCompleted,
+  runCanReview,
 }: {
   runId: string;
-  runIsCompleted: boolean;
+  runCanReview: boolean;
 }) {
   const qc = useQueryClient();
 
   const listQuery = useQuery({
     queryKey: reviewKeys.forRun(runId),
     queryFn: () => listReviewsForRun(runId),
-    enabled: runId.length > 0 && runIsCompleted,
+    enabled: runId.length > 0 && runCanReview,
   });
 
   // The selected review id; `null` means "show the newest non-failed one
@@ -39,10 +39,10 @@ export function ReviewPanel({
   // history entry or by a successful generate mutation.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Format key for the post-copy "Copied" affordance on the review actions
-  // row. Declared up here (rather than after the `!runIsCompleted` early
+  // row. Declared up here (rather than after the `!runCanReview` early
   // return below) so the hook order is identical between the "run still
-  // in progress" render and the "run completed" render — otherwise an
-  // eval transitioning from in-progress → completed flips the hook count
+  // active" render and the "terminal run" render — otherwise an eval
+  // transitioning from in-progress → terminal flips the hook count
   // (5 → 6) and triggers React error #310.
   const [copiedFormat, setCopiedFormat] = useState<"md" | "json" | null>(null);
 
@@ -65,12 +65,12 @@ export function ReviewPanel({
     },
   });
 
-  if (!runIsCompleted) {
+  if (!runCanReview) {
     return (
       <Card className="p-5">
         <PanelHeader />
         <div className="text-text-3 text-[13px] font-medium">
-          Reviews are available after the run finishes.
+          Reviews are available once the run is no longer active.
         </div>
       </Card>
     );

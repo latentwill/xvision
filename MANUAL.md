@@ -208,23 +208,6 @@ with the configured Alpaca paper account.
   ```
   (M4's headline run reads from the Q8 dir.)
 
-### M12. Source paired setups + bars JSON for the backtest
-
-- **What:** the `xvn ab-compare` runner needs:
-  - `data/setups/<n>.json` — `Vec<MarketSnapshot>` covering 2022–2024 paired
-    setups on BTC-USD (≥100 setups for the headline N).
-  - `data/bars/btc_2022_2024.json` — `Vec<MarketBar>` (OHLCV) covering the
-    span and granularity that the setups reference.
-- **Sourcing options:**
-  - Binance public data → polars Parquet → JSON via the existing
-    `xvision-data` pipeline.
-  - Coinbase pro CSV → same.
-  - The repo's `data/baselines/` may already have a starter dataset; check
-    `data/` before sourcing fresh.
-- **Setup-id assignment:** each `MarketSnapshot.setup_id` is a `Uuid::new_v4()`
-  generated at dataset-build time and persisted alongside the row so re-runs
-  pair correctly (Tier 1 fix #1).
-
 ---
 
 ## Tier 4 — non-blocking research / upstream
@@ -419,7 +402,7 @@ codes so AI agents can dispatch on the *number*, not the error text:
 | 5 | Upstream / network / disk / database error | retry with backoff |
 | 7 | State conflict (e.g. duplicate name on rename) | inspect the resource and reconcile state |
 
-Other verbs (`fire-trade`, `venue`, `ab-compare`, `dashboard`, `eod`, …)
+Other verbs (`fire-trade`, `venue`, `dashboard`, `eod`, …)
 default to exit 5 on any error pending per-command opt-in.
 
 ```bash

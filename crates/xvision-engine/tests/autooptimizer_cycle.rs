@@ -375,7 +375,8 @@ async fn run_cycle_smoke() {
         None,
         None, // memory (P2 cortex): off in this test
         None,
-        None,
+        None, // cancel flag: off in this test
+        None, // pause flag (P4): off in this test
     )
     .await;
 
@@ -529,7 +530,8 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         None,
         None, // memory (P2 cortex): off in this test
         None,
-        None,
+        None, // cancel flag: off in this test
+        None, // pause flag (P4): off in this test
     )
     .await
     .expect("run_cycle must return Ok");

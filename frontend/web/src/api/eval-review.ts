@@ -144,6 +144,57 @@ export function updateAgentProfile(
   );
 }
 
+export type CriticalFinding = ReviewFinding & {
+  runId: string;
+  strategyName?: string;
+};
+
+export async function listCriticalFindings(
+  runs: Array<{ id: string; strategy?: { display_name?: string } | null }>,
+  opts?: { maxRuns?: number; maxFindings?: number },
+): Promise<CriticalFinding[]> {
+  const maxRuns = opts?.maxRuns ?? 3;
+  const maxFindings = opts?.maxFindings ?? 5;
+
+  // Take the first maxRuns runs
+  const targetRuns = runs.slice(0, maxRuns);
+
+  // Fan out: for each run, get its reviews
+  const results = await Promise.all(
+    targetRuns.map(async (run) => {
+      try {
+        const reviews = await listReviewsForRun(run.id);
+        // Find the first completed review
+        const completed = reviews.find((r) => r.status === "completed");
+        if (!completed) return [];
+        // Get findings
+        const detail = await getReview(completed.id);
+        // Filter to critical only
+        return detail.findings
+          .filter((f) => f.severity === "critical")
+          .map(
+            (f): CriticalFinding => ({
+              ...f,
+              runId: run.id,
+              strategyName: run.strategy?.display_name ?? undefined,
+            }),
+          );
+      } catch {
+        return [];
+      }
+    }),
+  );
+
+  // Flatten, sort by created_at desc (if available), cap at maxFindings
+  return results
+    .flat()
+    .sort((a, b) => {
+      if (!a.created_at || !b.created_at) return 0;
+      return b.created_at.localeCompare(a.created_at);
+    })
+    .slice(0, maxFindings);
+}
+
 /// Canonical review-agent profile ids seeded by migration 016.
 /// Used as a static fallback for label/blurb metadata that isn't
 /// stored on the AgentProfile row itself.

@@ -86,6 +86,18 @@ impl PositionRiskState {
             tp2_pct,
         }
     }
+
+    /// Returns the effective stop-loss price considering all active SL sources.
+    pub fn get_effective_sl_price(&self) -> f64 {
+        effective_sl_price(self)
+    }
+
+    /// Returns the effective take-profit price: ATR-based when configured,
+    /// falling back to the basic percentage-based level.
+    pub fn get_effective_tp_price(&self) -> f64 {
+        atr_tp_price(self)
+            .unwrap_or_else(|| basic_tp_price(self.direction, self.entry_price, self.take_profit_pct))
+    }
 }
 
 fn update_hwm(state: &mut PositionRiskState, bar: &Ohlcv) {

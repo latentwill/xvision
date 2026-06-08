@@ -43,6 +43,7 @@ const MOCK_BY_ID: Record<string, AgentRunDetail> = {
 
 export const agentRunKeys = {
   all: ["agent-runs"] as const,
+  list: (params?: { status?: string }) => [...agentRunKeys.all, "list", params] as const,
   run: (id: string) => [...agentRunKeys.all, "run", id] as const,
 };
 
@@ -439,6 +440,33 @@ export function validateAgentRunDetail(payload: unknown): AgentRunDetail {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Alias so callers can use the more natural name.
+ * @see shouldUseMockAgentRuns
+ */
+export const useMockAgentRuns = shouldUseMockAgentRuns;
+
+/**
+ * List agent runs, optionally filtered by status.
+ *
+ * In mock mode returns the MOCK_RUN_LIVE summary. In production calls
+ * `GET /api/agent-runs` and returns the run list.
+ */
+export async function listAgentRuns(params?: {
+  status?: string;
+  limit?: number;
+}): Promise<AgentRunSummary[]> {
+  if (shouldUseMockAgentRuns()) {
+    return Promise.resolve([MOCK_RUN_LIVE.summary]);
+  }
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const url = `/api/agent-runs${qs.toString() ? `?${qs}` : ""}`;
+  const resp = await apiFetch<{ runs: AgentRunSummary[]; total: number }>(url);
+  return resp.runs;
+}
 
 /**
  * Fetch the body bytes for a payload ref owned by `runId`. Server

@@ -11,13 +11,13 @@ import type { TimeWindow } from "./TimeWindow";
 import type { VenueLabel } from "./VenueLabel";
 import type { VenueSettings } from "./VenueSettings";
 
-export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode, 
+export type Scenario = { id: string, parent_scenario_id: string | null, source: ScenarioSource, display_name: string, description: string, tags: Array<string>, notes: string | null, asset_class: AssetClass, quote_currency: QuoteCurrency, time_window: TimeWindow, granularity: string, timezone: string, calendar: CalendarRef, data_source: DataSource, venue: VenueSettings, replay_mode: ReplayMode,
 /**
  * Initial trading capital for this evaluation scenario. Moved back onto
  * Scenario (from Strategy) so backtest results are reproducible
  * independent of which strategy is run against the scenario.
  */
-capital: { initial: number, currency: string }, bar_cache_policy: BarCachePolicy, 
+capital: { initial: number, currency: string }, bar_cache_policy: BarCachePolicy,
 /**
  * Number of bars to pre-fetch from immediately before
  * `time_window.start` so per-decision context (indicators, trader
@@ -26,30 +26,30 @@ capital: { initial: number, currency: string }, bar_cache_policy: BarCachePolicy
  * `body_json` predates this field hydrate to the same default via
  * `serde(default)`.
  */
-warmup_bars: number, 
+warmup_bars: number,
 /**
  * Broad market-regime character.
  */
-regime_label: string | null, 
+regime_label: string | null,
 /**
  * Per-bar volatility bucket.
  */
-volatility_label: string | null, 
+volatility_label: string | null,
 /**
  * Net price direction over the window.
  */
-trend_direction: string | null, 
+trend_direction: string | null,
 /**
  * `true` when labels were derived by `xvn scenario classify`;
  * `false` (default) when set by the operator.
  */
-regime_derived: boolean, created_at: string, created_by: string, archived_at: string | null, 
+regime_derived: boolean, created_at: string, created_by: string, archived_at: string | null,
 /**
  * Coarse venue classification. Drives the UI badge (green/amber/red) and
  * the confused-deputy gate (Paper scenario must not hit a Live broker).
  * Defaults to `Paper` for all existing scenarios via `serde(default)`.
  */
-venue_label: VenueLabel, 
+venue_label: VenueLabel,
 /**
  * Optional per-run safety limits. When set, the gate checks these at
  * every broker submit and aborts the run on breach.

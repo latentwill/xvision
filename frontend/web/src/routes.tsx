@@ -28,6 +28,7 @@ const EvalRunsRoute = lazy(() => import("./routes/eval-runs").then((m) => ({ def
 const EvalRunDetailRoute = lazy(() => import("./routes/eval-runs-detail").then((m) => ({ default: m.EvalRunDetailRoute })));
 const AgentRunDetailRoute = lazy(() => import("./routes/agent-runs-detail").then((m) => ({ default: m.AgentRunDetailRoute })));
 const EvalCompareRoute = lazy(() => import("./routes/eval-compare").then((m) => ({ default: m.EvalCompareRoute })));
+const LiveListRoute = lazy(() => import("./routes/live-list").then((m) => ({ default: m.LiveListRoute })));
 const LiveRoute = lazy(() => import("./routes/live").then((m) => ({ default: m.LiveRoute })));
 const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m.SetupRoute })));
 const DocsRoute = lazy(() => import("./routes/docs").then((m) => ({ default: m.DocsRoute })));
@@ -59,6 +60,7 @@ const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => (
 const OptimizerHome = lazy(() => import("./features/autooptimizer/screens/OptimizerHome").then((m) => ({ default: m.OptimizerHome })));
 const OptimizerCycle = lazy(() => import("./features/autooptimizer/screens/CycleDetail").then((m) => ({ default: m.CycleDetail })));
 const OptimizerExperiment = lazy(() => import("./features/autooptimizer/screens/ExperimentDetail").then((m) => ({ default: m.ExperimentDetail })));
+const OptimizerRunDetail = lazy(() => import("./features/autooptimizer/screens/RunDetail").then((m) => ({ default: m.RunDetail })));
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
@@ -80,6 +82,12 @@ function RouteLoaded() {
     noteSuccessfulPageLoad();
   }, []);
   return null;
+}
+
+function OptimizerRunRoute() {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  if (!sessionId) return <Navigate to="/optimizer" replace />;
+  return <OptimizerRunDetail sessionId={sessionId} />;
 }
 
 function LegacyDiffRedirect() {
@@ -148,6 +156,7 @@ export const router = createBrowserRouter([
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
       // Backward-compat alias: deep links to /memory continue to work.
       { path: "memory", element: <Navigate to="/agents/memory" replace /> },
+      { path: "live", element: page(<LiveListRoute />) },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },
@@ -208,6 +217,7 @@ export const router = createBrowserRouter([
           { index: true, element: page(<OptimizerHome />) },
           { path: "cycle/:cycleId", element: page(<OptimizerCycle />) },
           { path: "experiment/:hash", element: page(<OptimizerExperiment />) },
+          { path: "run/:sessionId", element: page(<OptimizerRunRoute />) },
         ],
       },
       // Legacy deep-links (bookmarks, old SSE/diff URLs) → new optimizer surface.

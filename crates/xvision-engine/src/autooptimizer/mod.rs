@@ -23,12 +23,15 @@
 
 pub mod blob_store;
 pub mod canary;
+pub mod scheduler;
 pub mod config;
 pub mod content_hash;
 pub mod cycle;
+pub mod evidence;
 pub mod cycle_loosen;
 pub mod cycle_runs;
 pub mod diversity;
+pub mod events_store;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
 pub mod eval_adapter;
@@ -47,10 +50,15 @@ pub mod progress;
 pub mod regime_results;
 pub mod run_lock;
 pub mod scenario_synthesis;
+pub mod session;
 pub mod tournament;
 pub mod validator;
 
 pub use blob_store::BlobStore;
+pub use evidence::{
+    ensure_evidence_schema, load_findings, load_gate_record, persist_finding, persist_gate_record,
+    FindingRow, GateRecord, GateRecordRow,
+};
 pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult, SabotageVariant};
 pub use config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
@@ -61,6 +69,7 @@ pub use cycle_runs::{
     NodeProvenance,
 };
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
+pub use events_store::{append_event, prune_old_events};
 pub use eval_adapter::{
     BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
 };
@@ -74,4 +83,8 @@ pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, Mutato
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};
 pub use program_view::{from_markdown, round_trip_invariant_ok, to_markdown, ProgramViewError};
 pub use scenario_synthesis::synthesize_baseline_untouched_scenario;
+pub use session::{
+    create_session, get_active_session, increment_cycle_completed, loosening_floor_reached,
+    mark_interrupted_sessions, run_session, CycleRunOutcome, OptimizerSession,
+};
 pub use validator::{validate_mutation_diff, ValidationError};

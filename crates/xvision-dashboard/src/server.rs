@@ -66,8 +66,11 @@
 // 50. POST   /api/chat-rail/sessions                  chat_rail::create_session
 // 51. DELETE /api/chat-rail/sessions/:id              chat_rail::delete_session
 // 52. POST   /api/chat-rail/chat                      chat_rail::chat
-// 53. POST   /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
+// 53. POST   /api/autooptimizer/sessions                autooptimizer_route::start_session  (P1-W4)
+// 53a. POST  /api/autooptimizer/run-cycle               autooptimizer_cycle::start_cycle
 // 53b. POST  /api/autooptimizer/run                    flywheel::autooptimizer_run
+// 53c. POST  /api/autooptimizer/cycles/:id/pause        autooptimizer_cycle::pause_cycle  (P4)
+// 53d. POST  /api/autooptimizer/cycles/:id/resume       autooptimizer_cycle::resume_cycle (P4)
 // 54. POST   /api/memory/:id/activate                 memory::activate_pattern
 // 55. POST   /api/memory/:id/demote                   memory::demote_pattern
 // 56. POST   /api/autooptimizer/:id/gate               flywheel::autooptimizer_gate
@@ -105,7 +108,8 @@
 //  R25. GET  /api/eval/runs/:id/stream   (SSE — read-only stream)
 //  R26. GET  /api/eval/compare
 //  R27. GET  /api/eval/scenarios
-//  R28. GET  /api/agent-runs/:id
+//  R28. GET  /api/agent-runs
+//  R28b GET  /api/agent-runs/:id
 //  R29. GET  /api/agent-runs/:id/export.json
 //  R30. GET  /api/agent-runs/:id/export.md
 //  R31. GET  /api/agent-runs/:id/stream  (SSE — read-only stream)
@@ -138,6 +142,8 @@
 //  R58. GET  /api/autooptimizer/:id
 //  R59. GET  /api/autooptimizer/events    (SSE — AR-3 live cycle progress)
 //  R60. GET  /api/autooptimizer/blob/:hash
+//  R61. GET  /api/autooptimizer/flywheel
+//  R62. GET  /api/autooptimizer/stats    (P3-W1 per-cycle aggregates)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -251,6 +257,7 @@ fn readonly_router(state: AppState) -> Router {
             "/api/v2/charts/market-context",
             get(charts_market_context::get),
         )
+        .route("/api/agent-runs", get(agent_runs::list_agent_runs))
         .route("/api/agent-runs/:id", get(agent_runs::get))
         .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))
         .route("/api/agent-runs/:id/export.md", get(agent_runs::export_md))
@@ -275,6 +282,26 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/flywheel/velocity", get(flywheel::velocity))
         .route("/api/flywheel/lineage", get(flywheel::lineage))
         .route("/api/autooptimizer", get(flywheel::autooptimizer_list))
+        // P5-W2: schedule CRUD (GET is read-only, lives here).
+        // IMPORTANT: registered BEFORE /api/autooptimizer/:id catch-all.
+        .route(
+            "/api/autooptimizer/schedule",
+            get(autooptimizer_cycle::get_schedule),
+        )
+        // P1-W4: session management endpoints.
+        // IMPORTANT: static segments registered BEFORE /api/autooptimizer/:id.
+        .route(
+            "/api/autooptimizer/status",
+            get(autooptimizer_route::get_status),
+        )
+        .route(
+            "/api/autooptimizer/sessions",
+            get(autooptimizer_route::list_sessions),
+        )
+        .route(
+            "/api/autooptimizer/sessions/:id",
+            get(autooptimizer_route::get_session),
+        )
         // AR-3 backend: lineage graph, mutator ladder, diversity, findings.
         // IMPORTANT: these static-segment routes must be registered BEFORE
         // /api/autooptimizer/:id (the flywheel memory-distillation detail route)
@@ -305,6 +332,13 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/findings/:bundle_hash",
             get(autooptimizer_route::get_findings),
         )
+        // P2-W2: experiment detail — 5-field envelope (lineage_node, rationale,
+        // gate_record, findings, regime_results). Static "experiments" segment
+        // registered before /api/autooptimizer/:id catch-all.
+        .route(
+            "/api/autooptimizer/experiments/:hash/detail",
+            get(autooptimizer_route::get_experiment_detail),
+        )
         .route(
             "/api/autooptimizer/blob/:hash",
             get(autooptimizer_route::get_blob),
@@ -326,6 +360,17 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cost",
             get(autooptimizer_route::get_cycle_cost_handler),
+        )
+        // P3-W1: per-cycle aggregate statistics (kept/suspect/dropped/cost/cum_cost).
+        // Registered before the /:id catch-all.
+        .route(
+            "/api/autooptimizer/stats",
+            get(autooptimizer_route::get_stats),
+        )
+        // P3-W2: DSPy flywheel state endpoint. Registered before the /:id catch-all.
+        .route(
+            "/api/autooptimizer/flywheel",
+            get(autooptimizer_route::get_flywheel),
         )
         // Flywheel memory-distillation detail — catch-all after static AR-3 routes.
         .route("/api/autooptimizer/:id", get(flywheel::autooptimizer_get))
@@ -466,6 +511,21 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/memory/:id/demote", post(memory_route::demote_pattern))
         .route("/api/memory/:id", delete(memory_route::delete_one))
         // ── Flywheel / offline self-improvement ─────────────────────────
+        // P5-W2: schedule CRUD mutating routes.
+        // Registered before /api/autooptimizer/:id catch-all.
+        .route(
+            "/api/autooptimizer/schedule",
+            post(autooptimizer_cycle::upsert_schedule),
+        )
+        .route(
+            "/api/autooptimizer/schedule/:id",
+            delete(autooptimizer_cycle::delete_schedule),
+        )
+        // P1-W4: POST /sessions creates a new optimizer session (409 if active).
+        .route(
+            "/api/autooptimizer/sessions",
+            post(autooptimizer_route::start_session),
+        )
         .route(
             "/api/autooptimizer/run-cycle",
             post(autooptimizer_cycle::start_cycle),
@@ -474,6 +534,15 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cancel",
             post(autooptimizer_cycle::cancel_cycle),
+        )
+        // P4: pause / resume an in-flight optimizer cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/pause",
+            post(autooptimizer_cycle::pause_cycle),
+        )
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/resume",
+            post(autooptimizer_cycle::resume_cycle),
         )
         // F29: retire a cycle-produced candidate (move its lineage node to
         // Rejected) — dashboard parity for `xvn optimizer retire`.
@@ -702,6 +771,31 @@ pub async fn serve(
     // it terminates with the process. See
     // `crates/xvision-engine/src/api/eval.rs::spawn_retention_janitor`.
     let _janitor = api_eval::spawn_retention_janitor(&state.api_context());
+
+    // P5-W2: spawn the 60-second schedule ticker. It checks
+    // `autooptimizer_schedules` once per minute and fires `create_session`
+    // when a schedule's `time_local` (±30 s window) matches the current
+    // local time and no session is active, or logs `schedule_skipped` when
+    // a session is already running. The JoinHandle is intentionally dropped —
+    // the ticker lives for the full process lifetime.
+    {
+        let ticker_pool = state.pool.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(e) =
+                    xvision_engine::autooptimizer::scheduler::tick_schedules(&ticker_pool).await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        "autooptimizer schedule ticker error",
+                    );
+                }
+            }
+        });
+    }
 
     // AR-3: start the autooptimizer IPC Unix socket listener when the
     // operator passes `--autooptimizer-ipc-socket`. Optimizer-cycle CLI
