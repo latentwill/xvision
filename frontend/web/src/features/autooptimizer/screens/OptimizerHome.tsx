@@ -302,6 +302,44 @@ function ImprovementChartsSection() {
   );
 }
 
+// ─── Outcome strip (Zone 4) ───────────────────────────────────────────────────
+
+/**
+ * Horizontal KPI tiles for the active (or most-recent) session — Kept / Suspect
+ * / Dropped / Cycles. Absorbs the data the removed KeptNextCard rail used to
+ * show, as a glanceable row rather than a tall side card.
+ */
+function OutcomeStrip() {
+  const status = useOptimizerStatus();
+  const session = status?.active_session ?? null;
+  if (!session) return null;
+
+  const tiles: Array<{ label: string; value: number; tone: string }> = [
+    { label: "Kept", value: session.kept_count, tone: "text-gold" },
+    { label: "Suspect", value: session.suspect_count, tone: "text-warn" },
+    { label: "Dropped", value: session.dropped_count, tone: "text-text-2" },
+    { label: "Cycles", value: session.cycles_completed, tone: "text-text" },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {tiles.map((t) => (
+        <div
+          key={t.label}
+          className="rounded border border-border bg-surface-panel px-3 py-2"
+        >
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-text-3">
+            {t.label}
+          </div>
+          <div className={`mt-0.5 font-mono text-xl font-semibold tabular-nums ${t.tone}`}>
+            {t.value}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Page root ────────────────────────────────────────────────────────────────
 
 export function OptimizerHome() {
@@ -327,6 +365,9 @@ export function OptimizerHome() {
           launcherOpen={launcherOpen && !isActive}
           onLaunchToggle={() => setLauncherOpen((v) => !v)}
         />
+
+        {/* Zone 4: outcome KPI strip — Kept / Suspect / Dropped / Cycles */}
+        <OutcomeStrip />
 
         {/* Zone 5: Inline launch panel — launchOnly shows just the form card */}
         {launcherOpen && !isActive && <LiveCycleView embedded launchOnly />}
