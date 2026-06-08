@@ -43,7 +43,7 @@ const MOCK_BY_ID: Record<string, AgentRunDetail> = {
 
 export const agentRunKeys = {
   all: ["agent-runs"] as const,
-  list: () => [...agentRunKeys.all, "list"] as const,
+  list: (params?: { status?: string }) => [...agentRunKeys.all, "list", params] as const,
   run: (id: string) => [...agentRunKeys.all, "run", id] as const,
 };
 
@@ -448,19 +448,24 @@ export function validateAgentRunDetail(payload: unknown): AgentRunDetail {
 export const useMockAgentRuns = shouldUseMockAgentRuns;
 
 /**
- * List live agent runs.
+ * List agent runs, optionally filtered by status.
  *
- * Dev/test: returns the mock MOCK_RUN_LIVE fixture so the UI has data to
- * render immediately.
- *
- * Prod stub: returns an empty array until S2-W1 adds the real
- * GET /api/agent-runs endpoint.
+ * In mock mode returns the MOCK_RUN_LIVE summary. In production calls
+ * `GET /api/agent-runs` and returns the run list.
  */
-export function listAgentRuns(): Promise<AgentRunSummary[]> {
+export async function listAgentRuns(params?: {
+  status?: string;
+  limit?: number;
+}): Promise<AgentRunSummary[]> {
   if (shouldUseMockAgentRuns()) {
     return Promise.resolve([MOCK_RUN_LIVE.summary]);
   }
-  return Promise.resolve([]);
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const url = `/api/agent-runs${qs.toString() ? `?${qs}` : ""}`;
+  const resp = await apiFetch<{ runs: AgentRunSummary[]; total: number }>(url);
+  return resp.runs;
 }
 
 /**

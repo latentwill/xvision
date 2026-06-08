@@ -1,11 +1,14 @@
-//! `GET /api/agent-runs/:id` + export sidecars.
+//! `GET /api/agent-runs` list + `GET /api/agent-runs/:id` detail + export sidecars.
 //!
 //! Wraps `xvision_observability::build_export` / `build_report` —
 //! the same loaders the `xvn run inspect` CLI verb uses — so the JSON
 //! shape served here matches the operator's local file byte-for-byte.
 //!
-//! Three routes:
+//! Routes:
 //!
+//! - `GET /api/agent-runs` — paginated list of all agent runs, newest-first.
+//!   Supports `?status=running,queued` (comma-separated filter) and
+//!   `?limit=N` (default 20, max 100).
 //! - `GET /api/agent-runs/:id` — returns the `xvn.agent_run.v1` JSON
 //!   payload as the response body.
 //! - `GET /api/agent-runs/:id/export.json` — same payload with a
@@ -20,10 +23,11 @@
 //! `qa-dashboard-auth-hardening` lands, the gate it introduces for
 //! `/api/agent-runs/**` should cover these too — see TODO below.
 
+use std::collections::HashSet;
 use std::convert::Infallible;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{
         sse::{Event, Sse},
@@ -31,6 +35,8 @@ use axum::{
     },
     Json,
 };
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
 use serde_json::json;
@@ -43,6 +49,115 @@ use xvision_observability::{
 use crate::error::DashboardError;
 use crate::sse::agent_run_sse;
 use crate::state::AppState;
+
+// ─── List endpoint types ─────────────────────────────────────────────────────
+
+/// Slim summary shape for a single agent run, used by `GET /api/agent-runs`.
+/// Contains the run-level columns from the `agent_runs` table — no nested
+/// span/model_call detail — so the list query is cheap.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRunSummary {
+    pub run_id: String,
+    pub objective: String,
+    pub strategy_id: Option<String>,
+    pub eval_run_id: Option<String>,
+    pub status: String,
+    pub retention_mode: String,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub sidecar_version: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Query-string parameters for `GET /api/agent-runs`.
+#[derive(Debug, Deserialize, Default)]
+pub struct ListAgentRunsParams {
+    /// Comma-separated status values to include, e.g. `running,queued`.
+    /// Omit to return all statuses.
+    pub status: Option<String>,
+    /// Maximum number of runs to return. Defaults to 20, capped at 100.
+    pub limit: Option<usize>,
+}
+
+/// Response envelope for `GET /api/agent-runs`.
+#[derive(Debug, Serialize)]
+pub struct ListAgentRunsResponse {
+    /// Summaries ordered newest-first by `started_at`, after filtering and
+    /// before the limit cap.
+    pub runs: Vec<AgentRunSummary>,
+    /// Total number of runs that matched the `?status` filter before the
+    /// `?limit` cap was applied.
+    pub total: usize,
+}
+
+/// Default page size for `GET /api/agent-runs`.
+const LIST_DEFAULT_LIMIT: usize = 20;
+/// Hard cap — no operator can pull more than this in a single request.
+const LIST_MAX_LIMIT: usize = 100;
+
+/// `GET /api/agent-runs` — list all agent runs from the SQLite ledger,
+/// newest-first. Supports optional `?status` filter and `?limit` cap.
+pub async fn list_agent_runs(
+    State(state): State<AppState>,
+    Query(params): Query<ListAgentRunsParams>,
+) -> Result<Json<ListAgentRunsResponse>, DashboardError> {
+    // Query only the columns needed for the summary; avoid loading heavy
+    // JSON blobs (skills_json, mcp_servers_json) on the list surface.
+    let rows: Vec<(String, String, Option<String>, Option<String>, String, String, String, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT id, objective, strategy_id, eval_run_id, status, retention_mode, \
+             started_at, finished_at, sidecar_version, error \
+             FROM agent_runs \
+             ORDER BY started_at DESC",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_agent_runs: {e}")))?;
+
+    // Parse rows into summary structs. Skip rows with unparseable timestamps
+    // (shouldn't happen — recorder always writes valid RFC 3339) with a warning.
+    let mut summaries: Vec<AgentRunSummary> = Vec::with_capacity(rows.len());
+    for (id, objective, strategy_id, eval_run_id, status, retention_mode, started_at_str, finished_at_str, sidecar_version, error) in rows {
+        let started_at = match started_at_str.parse::<DateTime<Utc>>() {
+            Ok(ts) => ts,
+            Err(e) => {
+                tracing::warn!(run_id = %id, error = %e, "list_agent_runs: skipping row with unparseable started_at");
+                continue;
+            }
+        };
+        let finished_at = finished_at_str.as_deref().and_then(|s| {
+            s.parse::<DateTime<Utc>>().map_err(|e| {
+                tracing::warn!(run_id = %id, error = %e, "list_agent_runs: unparseable finished_at — treating as null");
+            }).ok()
+        });
+        summaries.push(AgentRunSummary {
+            run_id: id,
+            objective,
+            strategy_id,
+            eval_run_id,
+            status,
+            retention_mode,
+            started_at,
+            finished_at,
+            sidecar_version,
+            error,
+        });
+    }
+
+    // Apply optional status filter.
+    let filtered: Vec<AgentRunSummary> = if let Some(status_param) = &params.status {
+        let allowed: HashSet<&str> = status_param.split(',').map(str::trim).collect();
+        summaries.into_iter().filter(|s| allowed.contains(s.status.as_str())).collect()
+    } else {
+        summaries
+    };
+
+    let total = filtered.len();
+    let limit = params.limit.unwrap_or(LIST_DEFAULT_LIMIT).min(LIST_MAX_LIMIT);
+    let runs: Vec<AgentRunSummary> = filtered.into_iter().take(limit).collect();
+
+    Ok(Json(ListAgentRunsResponse { runs, total }))
+}
 
 // TODO(qa-dashboard-auth-hardening): when the dashboard auth surface
 // lands, the gate it introduces for `/api/agent-runs/**` should
@@ -335,4 +450,152 @@ pub async fn get_blob(
         HeaderValue::from_static("private, no-store"),
     );
     Ok((StatusCode::OK, headers, bytes).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum_test::TestServer;
+    use tempfile::TempDir;
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    /// Spin up a fresh `AppState` backed by a temp dir with a minimal
+    /// `config/default.toml`. Mirrors the pattern used in
+    /// `routes/eval/agent_profiles.rs`.
+    async fn fresh_state() -> (AppState, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let xvn_home = tmp.path().to_path_buf();
+        std::fs::create_dir_all(xvn_home.join("config")).unwrap();
+        let cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
+        std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
+        let state = AppState::new(xvn_home).await.expect("AppState::new");
+        (state, tmp)
+    }
+
+    /// Seed one `agent_runs` row directly into the pool.
+    async fn seed_run(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        status: &str,
+        started_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO agent_runs \
+             (id, objective, status, started_at, retention_mode) \
+             VALUES (?, ?, ?, ?, 'full_debug')",
+        )
+        .bind(id)
+        .bind(format!("objective for {id}"))
+        .bind(status)
+        .bind(started_at)
+        .execute(pool)
+        .await
+        .expect("seed agent_runs row");
+    }
+
+    // ── Test 1: empty — no agent_runs rows ───────────────────────────────────
+
+    #[tokio::test]
+    async fn list_returns_empty_when_no_runs() {
+        let (state, _tmp) = fresh_state().await;
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server.get("/api/agent-runs").await;
+        resp.assert_status_ok();
+        let v: serde_json::Value = resp.json();
+        assert_eq!(v["runs"].as_array().unwrap().len(), 0);
+        assert_eq!(v["total"].as_u64().unwrap(), 0);
+    }
+
+    // ── Test 2: all runs returned, newest-first ───────────────────────────────
+
+    #[tokio::test]
+    async fn list_returns_all_runs_sorted_newest_first() {
+        let (state, _tmp) = fresh_state().await;
+        // Insert oldest → newest; expect response newest → oldest.
+        seed_run(&state.pool, "run-a", "completed", "2026-01-01T00:00:00Z").await;
+        seed_run(&state.pool, "run-b", "completed", "2026-01-02T00:00:00Z").await;
+        seed_run(&state.pool, "run-c", "completed", "2026-01-03T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server.get("/api/agent-runs").await;
+        resp.assert_status_ok();
+        let v: serde_json::Value = resp.json();
+        let runs = v["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 3);
+        assert_eq!(runs[0]["run_id"].as_str().unwrap(), "run-c");
+        assert_eq!(runs[1]["run_id"].as_str().unwrap(), "run-b");
+        assert_eq!(runs[2]["run_id"].as_str().unwrap(), "run-a");
+        assert_eq!(v["total"].as_u64().unwrap(), 3);
+    }
+
+    // ── Test 3: ?status filter ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_filters_by_status() {
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "run-running-1", "running", "2026-01-01T00:00:00Z").await;
+        seed_run(&state.pool, "run-queued-1", "queued", "2026-01-02T00:00:00Z").await;
+        seed_run(&state.pool, "run-completed-1", "completed", "2026-01-03T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server.get("/api/agent-runs?status=running").await;
+        resp.assert_status_ok();
+        let v: serde_json::Value = resp.json();
+        let runs = v["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0]["run_id"].as_str().unwrap(), "run-running-1");
+        assert_eq!(v["total"].as_u64().unwrap(), 1);
+    }
+
+    // ── Test 4: ?limit cap; total reflects full pre-limit count ──────────────
+
+    #[tokio::test]
+    async fn list_limit_caps_results_and_total_reflects_full_count() {
+        let (state, _tmp) = fresh_state().await;
+        for i in 1..=5u32 {
+            seed_run(
+                &state.pool,
+                &format!("run-{i:02}"),
+                "completed",
+                &format!("2026-01-{i:02}T00:00:00Z"),
+            )
+            .await;
+        }
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server.get("/api/agent-runs?limit=2").await;
+        resp.assert_status_ok();
+        let v: serde_json::Value = resp.json();
+        assert_eq!(v["runs"].as_array().unwrap().len(), 2);
+        assert_eq!(v["total"].as_u64().unwrap(), 5);
+    }
+
+    // ── Test 5: response shape — required fields present ─────────────────────
+
+    #[tokio::test]
+    async fn list_response_shape_has_required_fields() {
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "shape-run", "completed", "2026-06-01T12:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server.get("/api/agent-runs").await;
+        resp.assert_status_ok();
+        let v: serde_json::Value = resp.json();
+        let run = &v["runs"][0];
+        // All required summary fields must be present (not missing).
+        assert!(run.get("run_id").is_some(), "missing run_id");
+        assert!(run.get("objective").is_some(), "missing objective");
+        assert!(run.get("status").is_some(), "missing status");
+        assert!(run.get("retention_mode").is_some(), "missing retention_mode");
+        assert!(run.get("started_at").is_some(), "missing started_at");
+        // Nullable fields should serialize as null, not be absent.
+        assert!(run.get("strategy_id").is_some(), "missing strategy_id");
+        assert!(run.get("eval_run_id").is_some(), "missing eval_run_id");
+        assert!(run.get("finished_at").is_some(), "missing finished_at");
+        assert!(run.get("error").is_some(), "missing error");
+        // Top-level envelope
+        assert!(v.get("total").is_some(), "missing total");
+    }
 }
