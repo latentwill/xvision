@@ -1,331 +1,349 @@
 # Design Improvement Sweep — QA Spec
 
 **Date:** 2026-06-08  
-**Status:** ready-to-work  
+**Status:** ready-to-work (A-series), scoped-pending-decision (B7/C-series)  
 **Source material:** `docs/design/DesignImprovementSweep/` — 5 standalone HTML prototypes (Moves 04–06 + Accent Explorer + List Ergonomics) and 2 detailed handoff READMEs (`design_handoff_list_ergonomics/README.md`, `design_handoff_optimizer_redesign/README.md`).
 
-Each prototype is a self-contained browser demo. Open them to see before/after. The READMEs contain pixel-level implementation specs.
+Investigation B1–B7 completed 2026-06-08. Findings are folded into each section below. New items A5, A6, and the C-series were derived from the investigation.
 
 ---
 
 ## Part A — Small items (direct, clear spec, ≤ 1 day each)
 
-These can be worked in parallel by independent agents. Each has a complete spec, specific file targets, and no open architecture questions.
+These can be worked in parallel by independent agents.
 
 ---
 
 ### A1 · Legibility token lift (Move 06)
 
 **Source:** `DesignImprovementSweep/XVN Legibility Pass (standalone).html`  
-**Effort:** ~1 hour, one file.
+**Effort:** ~1 hour  
+**Status:** ready
 
-**Problem:** `--text-3` on `--bg` is ~3.6:1 (below WCAG AA 4.5:1 threshold). It carries the heaviest load in the UI — column headers, timestamps, IDs, eyebrows. `--border` hairlines are near-invisible at 1.06:1.
+**Problem:** `--text-3` on `--bg` is ~3.6:1 (below WCAG AA 4.5:1). It carries the heaviest load in the UI — column headers, timestamps, IDs. `--border` hairlines are near-invisible at 1.06:1.
 
-**Change:** Three token value changes in `frontend/web/src/styles/tokens.css` under `:root` (and `[data-theme="dark"]` if it shadows these):
+**Dark theme changes** in `frontend/web/src/styles/tokens.css` under `:root` (and `[data-theme="dark"]` if it shadows these):
 
 | Token | Current | Proposed | WCAG on --bg |
 |---|---|---|---|
 | `--bg` | `#000000` | `#070809` | n/a |
 | `--surface-card` | `#0a0a0a` | `#111318` | n/a |
 | `--text-3` | `#5f6670` | `#9aa3b2` | ~3.6:1 → ~7:1 |
-| `--text-2` | `#9ca3af` | `#aeb6c2` | — → higher |
+| `--text-2` | `#9ca3af` | `#aeb6c2` | higher |
 | `--border` | `#1a1a1a` | `#2c313b` | hairline → readable |
+
+**Light theme note** (from B6): Light theme also needs a parallel pass. It's token-driven so the same approach applies. Additional constraint: once the heatmap KPI tiles ship, their low-alpha fills (`gold-bg 0.10`, `info testing cells`) must be checked on the light background — bump alpha or go border-forward if they wash out. Include light theme tuning in this PR; it's the same one-file change.
 
 **Target file:** `frontend/web/src/styles/tokens.css`
 
 **Acceptance criteria:**
-- [ ] Dark theme `--text-3` on `--bg` ≥ 4.5:1 (WCAG AA small text)
-- [ ] Dark theme `--border` visibly separates rows in dense tables
-- [ ] Light theme tokens are unchanged (they have separate values)
+- [ ] Dark `--text-3` on `--bg` ≥ 4.5:1 (WCAG AA small text)
+- [ ] Dark `--border` visibly separates rows in dense tables
+- [ ] Light theme receives parallel contrast review; no new wash-out on light surfaces
 - [ ] No layout changes — tokens only
-
-**Note on scope:** This is a global change — all dense surfaces (eval runs, decisions, marketplace, settings) get the lift automatically. That's the point.
 
 ---
 
 ### A2 · Focal metric on eval-run detail header (Move 04)
 
 **Source:** `DesignImprovementSweep/XVN Focal Metric (standalone).html`  
-**Effort:** ~½ day, 2 files.
+**Effort:** ~½ day  
+**Status:** ready
 
-**Problem:** The eval-run detail header (`eval-runs-detail.tsx`, line 261) leads with the ULID as its `<h1>` and renders total return / Sharpe / drawdown as small, equal-weight figures in a flat row. The reader hunts for the verdict.
+**Problem:** `eval-runs-detail.tsx` line 261 leads with the ULID as `<h1>`. Total return / Sharpe / drawdown are small equal-weight figures. The reader hunts for the verdict.
 
-**Change:** Layout + type-scale change only. No new colors beyond the locked palette.
+**Change:** Layout + type-scale only. No new colors.
 
-- ULID moves to the breadcrumb (already at line ~258, the `{/* Body header */}` section)
-- Total return becomes the `<h1>` at display scale: `text-5xl font-bold text-pos tabular-nums`
-- Supporting stat rail below: Sharpe · Max drawdown · Win rate · Trades · Cost — `text-sm text-text-2`
-- Equity curve inline at the right of the header (already available via `getRunChart`)
-- On mobile (`eval-runs-detail-mobile.tsx`): stack vertically, equity curve below the stat rail
+- ULID → breadcrumb row (~line 258)
+- Total return → `<h1>` at `text-5xl font-bold text-pos tabular-nums`
+- Supporting stat rail: Sharpe · Max drawdown · Win rate · Trades · Cost — `text-sm text-text-2`, single horizontal row
+- Equity curve inline on the right of the header (already available via `getRunChart`)
+- Mobile (`eval-runs-detail-mobile.tsx`): stack vertically, equity curve below stat rail
 
 **Target files:**
-- `frontend/web/src/routes/eval-runs-detail.tsx` (~line 252–300, the header section)
-- `frontend/web/src/routes/eval-runs-detail-mobile.tsx` (mobile header)
+- `frontend/web/src/routes/eval-runs-detail.tsx` (~line 252–300)
+- `frontend/web/src/routes/eval-runs-detail-mobile.tsx`
 
 **Acceptance criteria:**
-- [ ] Total return is the largest text element in the header (`text-5xl` or equivalent)
-- [ ] ULID appears in the breadcrumb row, not as H1
-- [ ] Sharpe, MaxDD, Win rate, Trades, Cost are in a single horizontal stat rail
-- [ ] Equity curve is visible in the header on desktop
-- [ ] Mobile: single-column stacking, no truncation
-- [ ] No new color tokens introduced
+- [ ] Total return is the largest text element in the header
+- [ ] ULID in breadcrumb, not H1
+- [ ] Stat rail is single horizontal row on desktop
+- [ ] Equity curve visible in header on desktop
+- [ ] Mobile: no truncation, single-column stacking
+- [ ] No new tokens introduced
 
 ---
 
-### A3 · Optimizer phantom Start — kill the scroll-only button (P0 of optimizer redesign)
+### A3 · Optimizer phantom Start — kill the scroll-only button
 
 **Source:** `DesignImprovementSweep/design_handoff_optimizer_redesign/README.md`  
-**Effort:** ~30 min, one file.
+**Effort:** ~30 min  
+**Status:** ready
 
-**Problem:** `OptimizerHome.tsx` line 192–193: the `Start` button inside `ConfigureSection()` calls `document.getElementById("optimizer-run-controls").scrollIntoView()` — it does NOT start a run. The real launch is `LaunchStrip` inside `LiveCycleView.tsx`. The phantom button is confusing.
+**Problem:** `OptimizerHome.tsx:192–193` — `ConfigureSection`'s `Start` button calls `document.getElementById("optimizer-run-controls").scrollIntoView()` and does NOT start a run. The real launch is `LaunchStrip` in `LiveCycleView.tsx`.
 
-**Change (P0 only — do not tackle the full redesign yet):**
-- Delete the `scrollIntoView` `Start` button from `ConfigureSection` (line ~191–199)
-- Optionally: add a clear comment that `LaunchStrip` inside `LiveCycleView` is the real launch path
-- Do NOT attempt to merge `ConfigureSection + ScheduleStrip + LaunchStrip` yet (that's the larger P0/P1 work in I5)
+**Change:** Delete the `scrollIntoView` button from `ConfigureSection` (~line 191–199). Do not attempt the launch drawer consolidation yet (that's C1).
+
+Also: update `ConfigureSection`'s primary button to `bg-accent text-on-accent` (instead of any `bg-gold` styling) — this exercises the accent token wiring from A5 and ensures the optimizer uses `--accent` for interactive chrome, keeping `--gold` for running-state signals. Gate this on A5 completing first.
 
 **Target file:** `frontend/web/src/features/autooptimizer/screens/OptimizerHome.tsx` (~line 169–210)
 
 **Acceptance criteria:**
-- [ ] No `scrollIntoView` code in `ConfigureSection`
-- [ ] The page still renders correctly (ConfigureSection can remain as a config display, just without the phantom button)
-- [ ] The real launch flow in `LiveCycleView` / `LaunchStrip` is unaffected
+- [ ] No `scrollIntoView` in `ConfigureSection`
+- [ ] Page renders correctly; `LaunchStrip` unaffected
+- [ ] Primary action buttons in `ConfigureSection` use `bg-accent text-on-accent`
+
+**Dependency:** A5 (accent token wiring) should land first so `bg-accent` is available in Tailwind.
 
 ---
 
 ### A4 · List ergonomics — column picker + scroll affordance
 
 **Source:** `DesignImprovementSweep/design_handoff_list_ergonomics/README.md`  
-**Effort:** ~2–3 days, 6 files.
+**Effort:** ~2–3 days  
+**Status:** ready
 
-This is the most detailed small-item spec — the README is a complete implementation document. Summary below; agents must read the full README.
+Full implementation spec is in the handoff README. Summary:
 
 **Files:**
 
 | File | Action |
 |---|---|
 | `src/components/lists/useListState.ts` | Extend `ListColumn` type; add `useListColumns` hook |
-| `src/components/lists/ListCard.tsx` | Add scroll affordance (fades, sticky, nudge arrows), wire column visibility |
+| `src/components/lists/ListCard.tsx` | Scroll affordance (fades, sticky, nudge arrows); wire column visibility |
 | `src/components/lists/ListToolbar.tsx` | Add Columns menu button using `SignalMenu` |
 | `src/components/lists/ResponsiveListCard.tsx` | Pass column-picker props through |
 | `src/routes/eval-runs.tsx` | Add metadata to each column; fold ULID into name cell |
-| `src/components/primitives/SignalMenu.tsx` | Reuse as column picker popover (likely no changes needed) |
+| `src/components/primitives/SignalMenu.tsx` | Reuse as picker popover (likely no changes) |
 
 **`ListColumn` type extensions:**
 ```ts
-interface ListColumn {
-  // existing fields ...
-  key: string;
-  essential?: boolean;       // always visible, locked in picker
-  defaultOff?: boolean;      // hidden by default (opt-in)
-  priority?: number;         // higher = drop first during auto-hide
-  estWidth?: number;         // estimated px width for auto-hide math
-}
+key: string;
+essential?: boolean;    // always visible, locked in picker
+defaultOff?: boolean;   // hidden by default
+priority?: number;      // higher = drop first on auto-hide
+estWidth?: number;      // estimated px width
 ```
 
-**`useListColumns` hook (new, in `useListState.ts`):**
-- `visibleKeys: Set<string>` — from localStorage at `xvn:list:${listId}:columns`
-- `toggle(key: string)` — persists immediately; essentials are unclearable
-- `reset()` — clears stored key, reverts to defaults
-- `isEssential(key: string)` — returns true for locked columns
-- Parse failures fall back to defaults silently
+**`useListColumns(listId)` hook:**
+- `visibleKeys: Set<string>` — localStorage at `xvn:list:${listId}:columns`
+- `toggle(key)`, `reset()`, `isEssential(key)` — parse failures fall back to defaults silently
 
 **Scroll affordance (`ListCard.tsx`):**
-- `ResizeObserver` on the scroll container
-- Left/right gradient fade overlays when `scrollLeft > 0` / `scrollLeft < scrollWidth - clientWidth`
-- Sticky `<thead>` row
-- Nudge arrows: click = `scrollBy({ left: ±240, behavior: 'smooth' })`, hidden at boundaries
-- Auto-hide: when container width < sum of `estWidth` of visible columns, drop non-essential columns by priority (highest priority number = first to drop). Auto-hidden columns remain in the picker tagged "auto" — nothing lost.
-- Recompute on resize via the existing `ResizeObserver`
-- Respect `prefers-reduced-motion` for smooth scroll
-
-**Column picker popover:**
-- Triggered by Columns button in `ListToolbar` (shows badge count of hidden columns)
-- Uses `SignalMenu` or equivalent popover primitive
-- Checkboxes for each non-essential column, toggle on click
-- Essential columns shown locked (greyed checkbox)
-- Reset link at bottom
+- `ResizeObserver` on scroll container
+- Left/right gradient fades when overflowing; sticky `<thead>`
+- Nudge arrows: `scrollBy({ left: ±240, behavior: 'smooth' })`; hidden at boundaries
+- Auto-hide: when container overflows, drop non-essentials by `priority` (highest first). Auto-hidden columns remain in picker tagged "auto"
+- Respect `prefers-reduced-motion`
 
 **Acceptance criteria:**
-- [ ] Columns button appears in eval-runs toolbar
-- [ ] Toggling a column persists across page reload
+- [ ] Columns button in eval-runs toolbar; picker opens on click
+- [ ] Toggling a column persists across reload
 - [ ] Essential columns (Run ID) cannot be hidden
-- [ ] Auto-hide engages when table overflows container; tagged "auto" in picker
-- [ ] Left/right fade overlays appear when horizontally scrollable
+- [ ] Auto-hide engages on overflow; "auto" tag visible in picker
+- [ ] Left/right fade overlays on overflow
 - [ ] Nudge arrows scroll 240px; hide at boundaries
-- [ ] Sticky header holds on vertical scroll
-- [ ] `prefers-reduced-motion` disables smooth-scroll
-- [ ] ULID is folded into the name cell (not a separate column)
+- [ ] Sticky header on vertical scroll
+- [ ] ULID folded into name cell
 
 ---
 
-## Part B — Investigation questions
+### A5 · Wire `--accent` / `--on-accent` tokens into Tailwind + tokens.css
 
-These require research before implementation can be scoped. Each item identifies what needs to be understood and what decision must come out of the investigation. Write findings as a note appended to this spec or as a separate linked doc.
+**Source:** B1 investigation finding  
+**Effort:** ~1 hour  
+**Status:** ready — prerequisite for A3 and C1
 
----
+**Finding (from B1):** `--accent`/`--on-accent` CSS vars are defined in `theme/themes.ts` and injected at runtime by `ThemeProvider`, but they are **not in `tailwind.config.ts`** and **not in `tokens.css`**. This means `bg-accent` / `text-on-accent` Tailwind utilities don't exist today. `OptimizerHome.tsx:141/212` and `RunDetail`, `ScheduleStrip` reference them — confirm whether those are painting correctly or silently falling back.
 
-### B1 · Accent system: is `--gold` the right token name for interactive accent?
+**Change:**
+1. Add to `tailwind.config.ts` `theme.extend.colors`:
+   ```ts
+   accent: "var(--accent)",
+   "on-accent": "var(--on-accent)",
+   ```
+2. Add fallback values to `tokens.css` `:root` (so the tokens resolve before ThemeProvider mounts):
+   ```css
+   --accent: #00e676;        /* matches current --gold dark value */
+   --on-accent: #000000;     /* dark text on green accent */
+   ```
+3. Verify `[data-theme="light"]` in `tokens.css` has a light-appropriate `--accent` (e.g. `#00A15C` from `themes.ts` — confirm they match)
 
-**Source:** `DesignImprovementSweep/XVN Accent Explorer (standalone).html`
+**Target files:**
+- `frontend/web/tailwind.config.ts`
+- `frontend/web/src/styles/tokens.css`
 
-**What the prototype shows:** 5 brand accent presets (Azure / Cyan / Teal / Amber / Magenta / Mono) — each driving nav, links, focus rings, ⌘K, and decision markers. The prototype treats this as a conceptually separate `--accent` token, distinct from `--pos`/`--neg` (gain/loss green/red) and `--warn`/`--danger`.
-
-**The tension:** `tokens.css` comments say "Token NAMES are unchanged — `--gold` is the brand accent." But the Accent Explorer imagines swapping the brand color without touching money signals. If `--gold` is used interchangeably for both "running optimizer state" and "interactive UI accent", they can't be cleanly separated.
-
-**What to investigate:**
-1. Run `grep -rn "\-\-gold\b" frontend/web/src/` — how many uses? Sort into semantic buckets: nav/link/focus vs running/kept/optimizer-active vs decorative
-2. Check `tailwind.config.ts` for `gold` utility mappings
-3. Answer: **Can `--gold` already be treated as pure interactive accent, with `--pos` covering gains?** Or are there places where it means "running" (a machine-state semantic that shouldn't change with brand color)?
-4. If yes to clean split: **is a `--accent: var(--gold)` alias additive and safe?** (enables future swapping without touching all callsites)
-
-**Decision needed:** Whether to introduce `--accent` as an alias now, defer, or declare `--gold` is already the correct name and the Explorer is aspirational only.
-
----
-
-### B2 · Chart craft: what renders the dashboard "Chart snapshot" card?
-
-**Source:** `DesignImprovementSweep/XVN Chart Craft (standalone).html` (Move 05)
-
-**What the prototype shows:** The dashboard's "Chart snapshot" card currently shows a flat single-line equity curve with a simple gradient fill. Move 05 proposes composing the full chart2 vocabulary onto it: gradient fill + drawdown pane + buy/sell/veto/hold decision markers + SMA 20/50 lines + monthly returns heat ramp.
-
-**What to investigate:**
-1. `frontend/web/src/routes/home.tsx` uses `getRunChart()` (line 51) — trace to the component that renders it. What chart primitive does it use? (KlineChart? inline SVG? uPlot?)
-2. Does the home chart already use `Chart2ThemeDefinition` tokens from `themes.ts`?
-3. The chart2 vocabulary (`equityTop`, `drawdown`, `markerBuy/Sell/Veto`, `sma20/50`, `CHART2_HEAT_RAMP`) is defined in `frontend/web/src/theme/themes.ts` — are there chart2 rendering components that accept these tokens, or are they only used in the chart-lab routes?
-4. How does the "Chart snapshot" in `home.tsx` differ from the eval-runs-detail equity chart? Are they the same component?
-
-**Decision needed:** Whether the dashboard chart needs a component-level upgrade (new chart2 composition) vs a simpler token wiring, and which component is the right upgrade target.
+**Acceptance criteria:**
+- [ ] `bg-accent` utility resolves to the theme accent color in both dark and light
+- [ ] `text-on-accent` resolves correctly (readable text on accent background)
+- [ ] Existing `bg-accent text-on-accent` usages in `OptimizerHome.tsx`, `RunDetail`, `ScheduleStrip` are visually unchanged (they already painted via ThemeProvider vars, just making Tailwind aware)
+- [ ] No new visual regressions
 
 ---
 
-### B3 · Optimizer redesign: SSE wiring stability in LiveCycleView decomposition
+### A6 · Extract `useCycleEventStream` hook from LiveCycleView
 
-**Source:** `DesignImprovementSweep/design_handoff_optimizer_redesign/README.md`
+**Source:** B3 investigation finding  
+**Effort:** ~½ day  
+**Status:** ready — prerequisite for C1 (optimizer decomposition)
 
-**What the spec proposes:** Decompose `LiveCycleView.tsx` (1163 lines) — keep the SSE/event logic, replace the 3-column `[300px·1fr·260px]` layout with the new Live zone. Delete its duplicate `RecentCyclesSectionFull`.
+**Finding (from B3):** The SSE connection in `LiveCycleView.tsx` lives at lines 1035–1052 in a single self-contained `useEffect`: opens `EventSource("/api/autooptimizer/events")`, registers `SSE_EVENT_NAMES` listeners, parses via `parseSsePayload`, pushes via `appendEvent`. No other subscribers to this endpoint. The running-state derivation (`isRunning`, `activeCycleId`) is computed from the event buffer at the component root.
 
-**What to investigate:**
-1. How is the SSE connection structured in `LiveCycleView.tsx`? Is `EventSource` instantiated inside the component or in a custom hook (e.g., `useOptimizerEvents`)?
-2. Can the event buffer be extracted to a standalone hook without breaking the current tests (`LiveCycleView.test.tsx`)?
-3. Are there other subscribers to `/api/autooptimizer/events` beyond `LiveCycleView`? (Search for `autooptimizer/events` in the codebase.)
-4. What is the event buffer type? (Check for `OptimizerEvent` type or similar in `features/autooptimizer/api.ts`)
-5. How does `EvalMatrix.tsx` currently get its data? Does it consume SSE events or query a separate endpoint?
+**Change:** Extract into `features/autooptimizer/hooks/useCycleEventStream.ts`:
+```ts
+function useCycleEventStream(): { events: OptimizerEvent[]; connected: boolean }
+```
+Move the `isRunning`/`activeCycleId` derivation into the hook so the heatmap and command bar read one source. Extract the auto-relaunch loop as a separate optional `useOptimizerLoop()` hook.
 
-**Decision needed:** Whether to extract SSE logic into a custom hook first (pre-flight for the full redesign) or proceed directly to the zone-by-zone decomposition described in the README.
+Keep `LiveCycleView.tsx` consuming the new hook — no UI changes in this PR. The extracted hook is the seam that makes the optimizer zone decomposition in C1 safe.
 
----
+**Target files:**
+- New: `frontend/web/src/features/autooptimizer/hooks/useCycleEventStream.ts`
+- Modified: `frontend/web/src/features/autooptimizer/LiveCycleView.tsx` (consume the hook)
 
-### B4 · Optimizer redesign: EvalMatrix current state and heatmap viability
-
-**Source:** `DesignImprovementSweep/design_handoff_optimizer_redesign/README.md` (Zone 3)
-
-**What the spec proposes:** `panels/EvalMatrix.tsx` becomes the live heatmap anchor. Each cell shows an experiment×regime backtest state: `done` (gold fill), `testing` (info-blue shimmer), `queued` (surface-panel), `failed` (danger). The animated shimmer is to be ported from `Autoresearch.html` → `ar-home.jsx` `HeatCell`.
-
-**What to investigate:**
-1. Open `frontend/web/src/features/autooptimizer/panels/EvalMatrix.tsx` — what does it currently render? Is it an active component or a stub?
-2. Check `EvalMatrix.test.tsx` for coverage of current behavior
-3. Where is `Autoresearch.html` / `ar-home.jsx`? Check `docs/design/XVN_optimizer/` — is `ar-home.jsx` there?
-4. Does `EvalMatrix` already accept experiments×regimes data, or does it need a new data shape?
-5. Check what `useCycleRuns()` returns — does it expose per-regime eval state that maps to the heatmap cells?
-
-**Decision needed:** Whether `EvalMatrix` is ready to be promoted as-is (just repositioned) or needs a significant data/rendering upgrade first.
+**Acceptance criteria:**
+- [ ] `LiveCycleView.test.tsx` passes without modification
+- [ ] SSE behavior is unchanged (same connection, same event types)
+- [ ] `useCycleEventStream` is exported and importable from other optimizer components
+- [ ] No UI changes; this is a pure refactor
 
 ---
 
-### B5 · Optimizer launch consolidation: what are the 3 surfaces and is ScheduleStrip functional?
+## Part C — Scoped multi-day work (post-investigation)
 
-**Source:** `DesignImprovementSweep/design_handoff_optimizer_redesign/README.md` (Zone 5)
-
-**What the spec proposes:** Merge `ConfigureSection + ScheduleStrip + LaunchStrip` into one inline launch drawer. This is the P0/P1 core work.
-
-**What to investigate:**
-1. `features/autooptimizer/ui/ScheduleStrip.tsx` — does it work end-to-end or is it a UI stub? Is there a schedule endpoint in `api.ts`?
-2. `features/autooptimizer/ui/ModePicker.tsx` — is it a standalone component or embedded inside `LaunchStrip`?
-3. In `features/autooptimizer/api.ts` — what does `startRunCycle()` accept? Does it take schedule parameters today, or is that missing from the API?
-4. `features/autooptimizer/screens/OptimizerHome.tsx` line 169 — how large is `ConfigureSection`? What fields does it render that `LaunchStrip` doesn't already cover?
-5. Does `preferences.ts` already persist model overrides for the experiment-writer and reviewer model pickers?
-
-**Decision needed:** Whether the launch drawer consolidation is additive (wrap existing components) or requires deleting and rewriting `ConfigureSection` from scratch. This affects whether it's a 1-day or 3-day task.
+These are larger items now fully scoped after the B-series. Each is a standalone track.
 
 ---
 
-### B6 · Legibility lift: light theme impact
+### C1 · Optimizer surface redesign — 3-zone layout
 
-**Source:** `DesignImprovementSweep/XVN Legibility Pass (standalone).html`
+**Source:** `DesignImprovementSweep/design_handoff_optimizer_redesign/README.md`  
+**Effort:** ~1 week  
+**Status:** ready to spec after A3, A5, A6 land  
+**Dependencies:** A3 (phantom Start), A5 (accent tokens), A6 (SSE hook)
 
-**What the prototype shows:** The legibility pass focuses on dark theme. Light theme exists (`[data-theme="light"]` in `tokens.css`).
+**Architecture (from B3/B4/B5 findings):**
 
-**What to investigate:**
-1. What are the current light theme values for `--text-3`, `--border`, `--bg`?
-2. Run the same WCAG math: `ratio("--text-3", "--bg")` in light mode — does it also fail 4.5:1?
-3. Is the light theme actively used in the dashboard (accessible to users) or is it dev-only?
+The redesign proceeds in this order. Each phase is a PR:
 
-**Decision needed:** Whether the light theme needs a parallel lift (A1 scope doubles) or is out of scope for this wave.
+**Phase 1 — Foundation (A6 already covers this):** `useCycleEventStream` hook extracted.
+
+**Phase 2 — Zone 1: Command bar + Zone 5: Launch drawer (~2 days)**
+- `OptimizerHome.tsx`: replace today's stacked layout with the 3-zone shell
+- Zone 1 command bar: state pill + active-run identity + contextual primary button (`Launch run` / `Pause` / `Resume` / `Cancel`)
+- Zone 5 launch drawer: merge `ConfigureSection + LaunchStrip + ScheduleStrip` into one inline-expanding drawer
+  - `ScheduleStrip` is functional; drop in as "Schedule" tab unchanged (B5 finding)
+  - `ModePicker` is standalone; embed in the drawer
+  - Single real `startRunCycle()` submit; delete the `scrollIntoView` path (already done in A3)
+  - Strategy `<select>` + budget + window fields from `LaunchStrip`; model pickers from `preferences.ts`
+- Remove `Configure run` anchor link from header
+
+**Phase 3 — Zone 2: Phase spine + Zone 3: Live work band (~2 days)**
+- Promote `PhaseStepper.tsx` to full-width strip under command bar (visible when running)
+- Zone 3: 2-up grid replacing old `[300px·1fr·260px]`
+  - Left (~60%): `LiveEvalHeatmap` (new component — see below)
+  - Right (~40%): `EventLogCard` from `LiveCycleView` + `LiveCostTicker`
+- `KeptNextCard` rail removed; its data moves to Zone 4
+
+**Phase 4 — Zone 4: Outcome strip + Zone 6: History (~1 day)**
+- Zone 4: `grid-cols-2 sm:grid-cols-4` KPI tiles (Kept/Suspect/Dropped/Top Δ)
+- Zone 6: keep `RecentCyclesTable`; delete `RecentCyclesSectionFull` from `LiveCycleView`; add Runs ⇄ Cycles toggle
+
+**LiveEvalHeatmap component (new, from B4 finding):**
+`EvalMatrix.tsx` is a static numeric table (done/queued only, no animation, cycle-detail data). It is NOT ready to promote as the live anchor. Build a new `panels/LiveEvalHeatmap.tsx`:
+- Takes per-cell live state from `useCycleEventStream` events (`queued → testing → done/failed`)
+- Reuses `EvalMatrix`'s regime-union layout logic
+- Animated `HeatCell` with `bar-flow` shimmer from `ar-home.jsx` (in `docs/design/XVN_optimizer/`)
+- `done` → gold fill; `testing` → info-blue shimmer; `queued` → surface-panel; `failed` → danger
+- Keep `EvalMatrix` as-is for the cycle-detail (completed runs) view
+
+**State management:** No new global state — all from `useOptimizerStatus()`, `useOptimizerStats()`, `useSessionList()`, `useCycleEventStream()`.
 
 ---
 
-### B7 · Scope: what does the Accent Explorer actually require as deliverable?
+### C2 · Chart craft — dashboard "Chart snapshot" upgrade (Move 05)
 
-**Source:** `DesignImprovementSweep/XVN Accent Explorer (standalone).html`
+**Source:** `DesignImprovementSweep/XVN Chart Craft (standalone).html`  
+**Effort:** ~1–2 days  
+**Status:** needs surface identification before work starts
 
-**What the prototype shows:** An interactive tool to pick brand color, showing it in light and dark themes across a full dashboard layout. 5 presets: Azure, Cyan, Teal, Amber, Magenta, Mono.
+**Finding (from B2):** No component is literally named "Chart snapshot." Two distinct chart systems exist:
+- `chart-v2` (`components/chart/v2/…`, `useChart2Theme`, chart2 tokens) — main trading/kline charts
+- `usePlotSimple` (`features/autooptimizer/ui/usePlotSimple.ts`) — optimizer-specific, intentionally minimal and independent of chart-v2
 
-**The question:** Is this prototype asking for:
-- (a) A token change — pick one accent color and apply it (and if so, which one?)
-- (b) A runtime switcher — add a color-picker to settings
-- (c) A developer reference only — no production deliverable yet
+For the optimizer redesign: **do not introduce chart2 tokens** into optimizer charts. Use `usePlotSimple` + standard tokens.
 
-The prototype itself is a design decision tool, not a deployment plan. Without knowing which accent to ship, there's no implementation task.
+**The "Chart snapshot" surface** is one of these candidates on the home dashboard:
+- `OptimizerDigestStrip`
+- `LiveStrategiesSection`
+- `StrategyOutcomesList`
 
-**What to investigate:**
-1. Is there any existing `--accent` token in `tokens.css`? (From the grep, `--gold` is the accent today.)
-2. Has a specific accent been chosen, or is the Explorer still open for user selection?
-3. Check `B1` first — the accent system and `--gold` aliasing question is the precondition.
+**Blocked on:** Identifying the exact home surface that shows a flat equity line today. Once identified, the upgrade is:
+- Compose chart2 primitives: gradient fill + drawdown pane + buy/sell/veto/hold markers + SMA 20/50 + monthly returns heat ramp
+- Use existing `Chart2ThemeDefinition` tokens from `themes.ts` (equityTop, drawdown, markerBuy/Sell/Veto/Hold, sma20/50, CHART2_HEAT_RAMP)
+- Same tokens, composition only — no new colors
 
-**Decision needed:** Owner (user/designer) must select which accent preset to ship (or confirm no change to current green). Block on user input before any implementation.
+**Next step:** Identify the component (a 30-min file read). Once found, add to this section and mark ready.
+
+---
+
+### C3 · Accent Explorer — ship one non-green accent
+
+**Source:** `DesignImprovementSweep/XVN Accent Explorer (standalone).html`  
+**Effort:** ~½ day once decision made  
+**Status:** blocked on user decision
+
+**Finding (from B1/B7):** `--accent`/`--on-accent` are already architecturally split from `--gold` (interactive vs signal/running). A5 makes the Tailwind utilities available. The Accent Explorer is the move to repoint `--accent` off green so green/red read strictly as money.
+
+**Decision needed:** Pick one preset, or defer.
+
+| Option | What it means |
+|---|---|
+| **Azure** (#3B82F6 dark / #2563EB light) | "Classic, trustworthy, interactive." Safe non-green default. |
+| **Cyan** (#22D3EE dark / #0E96B3 light) | Electric, data-signal feel. |
+| **Teal** (#14C8AE dark / #0D9488 light) | Calm blue-green. Distinct from gain-green if gains stay brighter/warmer. |
+| **Amber** (#F5A524 dark / #B7770C light) | Warm, premium. |
+| **Magenta** | Bold, distinctive. |
+| **Mono** | Off-white/grey accent. Minimal. |
+| **Defer** | Keep green for now; `--accent` stays `#00e676`. A5 still lands (no visual change). |
+
+**Recommendation:** Ship one preset (Azure is the safest non-green default) as a standalone, app-wide change. Do not couple to the optimizer redesign. The optimizer should bind to `--accent` (from A3/A5), so it inherits whatever you pick automatically.
+
+**Implementation (once decided):**
+- Update `--accent` / `--on-accent` values in `tokens.css` (`:root` dark + `[data-theme="light"]`)
+- Update matching values in `theme/themes.ts` `SIGNAL_DARK` / `SIGNAL_LIGHT` so ThemeProvider stays in sync
+- Visual QA: every `bg-accent` / `text-accent` surface in the app
 
 ---
 
 ## Summary table
 
-| ID | Title | Type | Effort | Dependencies | Status |
+| ID | Title | Type | Effort | Deps | Status |
 |---|---|---|---|---|---|
-| A1 | Legibility token lift | Small | ~1h | — | ready |
+| A1 | Legibility token lift (+ light theme) | Small | ~1h | — | ready |
 | A2 | Focal metric on eval-run detail | Small | ~½d | — | ready |
-| A3 | Optimizer phantom Start delete | Small | ~30min | — | ready |
+| A3 | Optimizer phantom Start delete | Small | ~30min | A5 | ready (A5 first) |
 | A4 | List ergonomics (column picker + scroll) | Small | ~2–3d | — | ready |
-| B1 | Accent system: `--gold` vs `--accent` | Investigation | ~1h | — | open |
-| B2 | Chart craft: dashboard chart snapshot | Investigation | ~1h | — | open |
-| B3 | Optimizer SSE wiring stability | Investigation | ~1h | B4 | open |
-| B4 | EvalMatrix current state + heatmap | Investigation | ~1h | — | open |
-| B5 | Launch drawer: 3 surfaces viability | Investigation | ~1h | A3 | open |
-| B6 | Legibility lift: light theme impact | Investigation | ~30min | A1 | open |
-| B7 | Accent Explorer: what's the deliverable? | Investigation | ~30min | B1 | open |
+| A5 | Wire --accent/--on-accent into Tailwind | Small | ~1h | — | ready |
+| A6 | Extract useCycleEventStream hook | Small | ~½d | — | ready |
+| C1 | Optimizer 3-zone layout redesign | Large | ~1 week | A3+A5+A6 | ready to spec |
+| C2 | Chart craft: dashboard chart upgrade | Medium | ~1–2d | — | blocked (surface ID) |
+| C3 | Accent: ship one non-green preset | Medium | ~½d | A5 | blocked (decision) |
 
 **Recommended execution order:**
-1. **Parallel, no-risk:** A1 (token lift), A3 (phantom Start delete)
-2. **Medium effort, clear spec:** A2 (focal metric), A4 (list ergonomics)
-3. **Investigation sprint:** B1–B7 in parallel (each ≤ 1h, mostly file reads)
-4. **After B-series:** scope and write implementation specs for:
-   - Chart craft upgrade (from B2)
-   - Optimizer launch drawer (from B3, B4, B5)
-   - Accent token decision (from B1, B7)
+1. **No-risk, parallel:** A1, A4, A5
+2. **After A5:** A3, A2
+3. **After A6 (pre-flight):** Begin C1 phase 2
+4. **Unblocked separately:** C2 (surface ID first), C3 (after user picks accent)
 
 ---
 
 ## Agent instructions
 
-When working a small item (A-series):
-1. Read the source prototype HTML (open in browser) and/or the handoff README for full context
-2. Identify the exact lines to change — do not refactor surrounding code
-3. Write tests if the change touches logic (hooks, state); no tests needed for pure CSS token changes
-4. Do not tackle adjacent items; each A item is a standalone PR
+**A-series items:** Read the source prototype HTML (open in browser) and/or the handoff README. Identify the exact lines to change. Do not refactor surrounding code. Write tests if the change touches logic; no tests for pure CSS token changes. One PR per item.
 
-When working an investigation item (B-series):
-1. Write findings as a short "Investigation findings" note appended to this spec (under the item's section)
-2. If the finding unblocks an implementation, write a concrete spec addendum here
-3. If a user decision is needed, surface the decision clearly — do not default
-4. Investigation items are read-only (grep, file reads, no code changes)
+**C-series items:** Read the full optimizer handoff README at `design_handoff_optimizer_redesign/README.md` before touching any file. Work in phases as described in C1. Do not combine phases into one PR.
 
-Design source of truth: `docs/design/DesignImprovementSweep/` — the standalone HTML prototypes are canonical for visual treatment; the two handoff READMEs are canonical for implementation spec.
+**Design source of truth:** `docs/design/DesignImprovementSweep/` — standalone HTML prototypes are canonical for visual treatment; the two handoff READMEs are canonical for implementation spec.
+
+**Token discipline:** `--gold` stays as the running-state / kept-signal color. `--accent` is the interactive chrome. Never use `--pos`/`--neg` for UI chrome (those are strictly money: gains/losses).
