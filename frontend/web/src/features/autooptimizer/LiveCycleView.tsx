@@ -884,7 +884,7 @@ function LiveCostTicker({
 
 // ─── Root export ──────────────────────────────────────────────────────────────
 
-export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home" }: { onTabChange?: (tab: string) => void; embedded?: boolean; activeTab?: string } = {}) {
+export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home", launchOnly = false }: { onTabChange?: (tab: string) => void; embedded?: boolean; activeTab?: string; launchOnly?: boolean } = {}) {
   const queryClient = useQueryClient();
   const { events, connected, isRunning, activeCycleId } = useCycleEventStream();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -1001,6 +1001,21 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [events.length]);
+
+  // launchOnly: render just the launch form panel, no event feed or live status bar.
+  if (launchOnly) {
+    return (
+      <CycleLeftCard
+        isRunning={isRunning}
+        loopActive={loopActive}
+        cyclesCompleted={cyclesCompleted}
+        cumulativeSpent={cumulativeSpent}
+        loopError={loopError}
+        onStartLoop={(config) => { void startLoop(config); }}
+        onStop={stopLoop}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

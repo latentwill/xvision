@@ -296,8 +296,8 @@ export function OptimizerHome() {
           onLaunchToggle={() => setLauncherOpen((v) => !v)}
         />
 
-        {/* Zone 5: Inline launch panel (Phase 2a — wraps existing LiveCycleView form) */}
-        {launcherOpen && !isActive && <LiveCycleView embedded />}
+        {/* Zone 5: Inline launch panel — launchOnly shows just the form card */}
+        {launcherOpen && !isActive && <LiveCycleView embedded launchOnly />}
 
         {/* Scheduled run config strip — only when launcher is closed */}
         {!launcherOpen && <ScheduleStrip />}
