@@ -257,28 +257,59 @@ export function EvalRunDetailRoute() {
         <div className="max-w-[1400px] mx-auto">
           {/* Body header */}
           <div className="mb-5">
-            <div className="flex items-baseline gap-4 flex-wrap">
-              <h1
+            {/* Breadcrumb: run ID + meta */}
+            <div
+              data-testid="eval-run-meta"
+              className="flex items-center gap-2 flex-wrap text-[11px] font-mono text-text-3 mb-3"
+            >
+              <span
                 data-testid="eval-run-id"
                 aria-label={`Eval run id ${detail.summary.id}`}
-                className="font-mono text-[28px] leading-none text-text tabular-nums break-all select-all"
-                style={{ fontWeight: 500, letterSpacing: "-0.03em" }}
+                className="tabular-nums select-all cursor-default"
               >
                 {detail.summary.id}
-              </h1>
-              <div
-                data-testid="eval-run-meta"
-                className="text-[12px] font-mono text-text-3"
-              >
+              </span>
+              <span className="text-text-4">·</span>
+              <span>
                 started{" "}
                 <span className="text-text-2">{fmtTime(detail.summary.started_at)}</span>
-                <span className="text-text-4 mx-2">·</span>
-                token cost <span className="text-text-2">{formatSpendUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd || null))}</span>
-                <span className="text-text-4 mx-2">·</span>
-                <span className="text-text-2">{disambiguator}</span>
-              </div>
+              </span>
+              <span className="text-text-4">·</span>
+              <span className="text-text-2">{disambiguator}</span>
             </div>
-            <div className="mt-4 flex items-center gap-2 flex-wrap">
+
+            {/* Focal metric: total return at display scale */}
+            <h1
+              className={[
+                "text-5xl font-bold tabular-nums leading-none mb-3",
+                detail.summary.total_return_pct == null
+                  ? "text-text-3"
+                  : detail.summary.total_return_pct > 0
+                    ? "text-pos"
+                    : detail.summary.total_return_pct < 0
+                      ? "text-neg"
+                      : "text-text",
+              ].join(" ")}
+            >
+              {fmtPct(detail.summary.total_return_pct)}
+              <span className="text-[16px] font-normal text-text-3 ml-2 tracking-wide">TOTAL RETURN</span>
+            </h1>
+
+            {/* Stat rail */}
+            <div className="flex items-center gap-3 flex-wrap text-[11px] font-mono tabular-nums text-text-3 mb-4">
+              <span>SHARPE <span className="text-text-2 ml-1">{fmtNumber(detail.summary.sharpe)}</span></span>
+              <span className="text-text-4">·</span>
+              <span>
+                MAX DD{" "}
+                <span className={`ml-1 ${drawdownMetricTone(detail.summary.max_drawdown_pct) === "neg" ? "text-neg" : "text-text-2"}`}>
+                  {fmtPct(detail.summary.max_drawdown_pct)}
+                </span>
+              </span>
+              <span className="text-text-4">·</span>
+              <span>COST <span className="text-text-2 ml-1">{formatSpendUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd || null))}</span></span>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
               <MetaChip
                 label="Strategy"
                 value={labels.strategyName}
