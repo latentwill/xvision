@@ -739,6 +739,7 @@ impl Mutator {
                 temperature: Some(exploration_temperature(attempt_seed)),
                 response_schema: None,
                 cache_control: None,
+                force_json: true,
             };
 
             let resp = self

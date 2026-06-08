@@ -92,6 +92,7 @@ fn req_from(resolved_max: Option<u32>, resolved_temp: Option<f64>) -> LlmRequest
         temperature: resolved_temp,
         response_schema: None,
         cache_control: None,
+        force_json: false,
     }
 }
 

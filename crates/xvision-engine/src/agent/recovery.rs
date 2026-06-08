@@ -698,6 +698,7 @@ pub(crate) async fn try_repair_malformed_json(
         temperature: repair_ctx.temperature,
         response_schema: Some(schema),
         cache_control: None,
+        force_json: false,
     };
 
     let repair_resp = match dispatch.complete(req).await {
@@ -929,6 +930,7 @@ pub(crate) async fn try_repair_schema_missing_field(
         temperature: repair_ctx.temperature,
         response_schema: Some(schema),
         cache_control: None,
+        force_json: false,
     };
 
     let repair_resp = match dispatch.complete(req).await {

@@ -49,6 +49,7 @@ mod tests {
             temperature: None,
             response_schema: None,
             cache_control: None,
+            force_json: false,
         }
     }
 

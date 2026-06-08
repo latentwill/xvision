@@ -13,6 +13,7 @@ async fn mock_dispatch_returns_text_block() {
             temperature: None,
             response_schema: None,
             cache_control: None,
+            force_json: false,
         })
         .await
         .unwrap();
@@ -46,6 +47,7 @@ async fn mock_dispatch_sequence_drives_tool_use_loop() {
         temperature: None,
         response_schema: None,
         cache_control: None,
+        force_json: false,
     };
 
     let r1 = mock.complete(req.clone()).await.unwrap();
@@ -106,6 +108,7 @@ mod openai_retry {
             temperature: None,
             response_schema: None,
             cache_control: None,
+            force_json: false,
         }
     }
 
@@ -304,6 +307,7 @@ async fn anthropic_dispatch_returns_real_text() {
             temperature: None,
             response_schema: None,
             cache_control: None,
+            force_json: false,
         })
         .await
         .unwrap();

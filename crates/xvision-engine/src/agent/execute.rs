@@ -459,6 +459,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
             // wire when appropriate. Callers that want to force the
             // hint set this directly; `execute_slot` leaves it None.
             cache_control: None,
+            force_json: false,
         };
 
         // Open a ModelCall span around this dispatch iteration. Per
@@ -1009,6 +1010,7 @@ async fn try_context_overflow_recovery<'a>(
             .clone()
             .or_else(|| response_schema_for_slot(input.slot)),
         cache_control: None,
+        force_json: false,
     };
 
     // Open a fresh ModelCall span for the retry dispatch so the

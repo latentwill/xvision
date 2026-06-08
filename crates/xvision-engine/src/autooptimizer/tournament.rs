@@ -126,6 +126,7 @@ impl TournamentRunner {
                 temperature: None,
                 response_schema: None,
                 cache_control: None,
+                force_json: true,
             };
             let resp = self
                 .dispatch
@@ -174,6 +175,7 @@ impl TournamentRunner {
             temperature: None,
             response_schema: None,
             cache_control: None,
+            force_json: true,
         };
         let resp = self
             .dispatch
