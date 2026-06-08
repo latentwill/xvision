@@ -3,9 +3,11 @@
 //   - Settings → Providers Default-LLM card (filtered to one provider)
 //   - Strategy inspector slot editors (all providers, grouped)
 //
-// Two variants:
-//   ModelPicker — legacy native <select> for tight inline use
-//   ModelPickerDropdown — Signal-styled floating dropdown with filter + context window
+// Both the `ModelPicker` and `ModelPickerDropdown` exports render the
+// Signal-styled floating dropdown (filter + provider groups + context window).
+// `ModelPicker` is kept as the call-site name; it forwards to
+// `ModelPickerDropdown`. The legacy native <select> was retired so every model
+// surface gets the same control.
 
 import type { ProviderRow } from "@/api/types.gen";
 import { isProviderConfigured } from "@/lib/providers";
@@ -14,18 +16,10 @@ import type { ModelOption } from "@/components/primitives/SignalMenu";
 
 export type ProviderModelOption = { provider: string; model: string };
 
-export function ModelPicker({
-  rows,
-  loading,
-  provider,
-  model,
-  onChange,
-  filterProvider,
-  className,
-  ariaLabel,
-  emptyHint,
-  placeholder,
-}: {
+/** Call-site name for the model picker. Delegates to {@link ModelPickerDropdown}
+ *  (the Signal-styled floating dropdown). Kept so the ~7 existing call sites
+ *  need no import change. */
+export function ModelPicker(props: {
   rows: ProviderRow[];
   loading: boolean;
   /** Selected provider name. Null when nothing is picked yet. */
@@ -35,84 +29,24 @@ export function ModelPicker({
   /** Fires with (provider, model). Both null/empty when the user clears
    *  the selection. */
   onChange: (provider: string | null, model: string) => void;
-  /** Limit options to one provider; renders a flat list without optgroup
-   *  headers. Useful when the caller already picks the provider via a
-   *  separate control (e.g. the DefaultLlmCard's provider dropdown). */
+  /** Limit options to one provider. Useful when the caller already picks the
+   *  provider via a separate control (e.g. the DefaultLlmCard). */
   filterProvider?: string;
+  /** Layout/width classes for the trigger button (e.g. `w-full`,
+   *  `flex-1 min-w-0`). */
   className?: string;
   ariaLabel?: string;
-  /** Override the "no models" message. */
+  /** Override the "no models available" message. */
   emptyHint?: string;
   /** Override the "— pick a model —" placeholder. */
   placeholder?: string;
+  align?: "left" | "right";
 }) {
-  const configuredProviders = rows.filter(isProviderConfigured);
-  const all = configuredProviders
-    .flatMap((r) =>
-      r.enabled_models.map((m) => ({ provider: r.name, model: m })),
-    );
-  const options = filterProvider
-    ? all.filter((o) => o.provider === filterProvider)
-    : all;
-  const value =
-    provider &&
-    model &&
-    options.find((o) => o.provider === provider && o.model === model)
-      ? `${provider}::${model}`
-      : "";
-  const handleChange = (raw: string) => {
-    if (!raw) {
-      onChange(null, "");
-      return;
-    }
-    const [p, ...rest] = raw.split("::");
-    onChange(p, rest.join("::"));
-  };
-  return (
-    <select
-      value={value}
-      onChange={(e) => handleChange(e.target.value)}
-      disabled={loading}
-      aria-label={ariaLabel ?? "Model"}
-      className={className}
-    >
-      {options.length === 0 ? (
-        <option value="">
-          {emptyHint ??
-            (configuredProviders.length === 0
-              ? "No provider configured"
-              : "no models — visit Settings → Providers")}
-        </option>
-      ) : (
-        <option value="">{placeholder ?? "— pick a model —"}</option>
-      )}
-      {filterProvider
-        ? options.map((o) => (
-            <option
-              key={`${o.provider}::${o.model}`}
-              value={`${o.provider}::${o.model}`}
-            >
-              {o.model}
-            </option>
-          ))
-        : groupByProvider(options).map((g) => (
-            <optgroup key={g.provider} label={g.provider}>
-              {g.items.map((o) => (
-                <option
-                  key={`${o.provider}::${o.model}`}
-                  value={`${o.provider}::${o.model}`}
-                >
-                  {o.model}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-    </select>
-  );
+  return <ModelPickerDropdown {...props} />;
 }
 
 // ─── ModelPickerDropdown ──────────────────────────────────────────────────────
-// Signal-styled rich model picker. Replaces native <select> where space allows.
+// Signal-styled rich model picker (filter + provider groups + context window).
 
 const CONTEXT_WINDOWS: Record<string, string> = {
   "claude-opus-4-8": "200K",
@@ -150,6 +84,9 @@ export function ModelPickerDropdown({
   filterProvider,
   align,
   placeholder,
+  className,
+  ariaLabel,
+  emptyHint,
 }: {
   rows: ProviderRow[];
   loading: boolean;
@@ -159,6 +96,9 @@ export function ModelPickerDropdown({
   filterProvider?: string;
   align?: "left" | "right";
   placeholder?: string;
+  className?: string;
+  ariaLabel?: string;
+  emptyHint?: string;
 }) {
   const configuredProviders = rows.filter(isProviderConfigured);
   const options: ModelOption[] = configuredProviders
@@ -180,21 +120,9 @@ export function ModelPickerDropdown({
       loading={loading}
       align={align}
       placeholder={placeholder}
+      className={className}
+      ariaLabel={ariaLabel}
+      emptyHint={emptyHint}
     />
   );
-}
-
-function groupByProvider(
-  options: ProviderModelOption[],
-): { provider: string; items: ProviderModelOption[] }[] {
-  const map = new Map<string, ProviderModelOption[]>();
-  for (const o of options) {
-    const arr = map.get(o.provider) ?? [];
-    arr.push(o);
-    map.set(o.provider, arr);
-  }
-  return Array.from(map.entries()).map(([provider, items]) => ({
-    provider,
-    items,
-  }));
 }

@@ -35,12 +35,37 @@ describe("ModelPicker", () => {
       />,
     );
 
-    expect(screen.getByRole("option", { name: "llama3.2:latest" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "qwen2.5-coder:7b" })).toBeInTheDocument();
+    // Closed by default — options only mount once the trigger opens the menu.
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /pick a model/i }));
 
-    fireEvent.change(screen.getByRole("combobox"), {
-      target: { value: "ollama::qwen2.5-coder:7b" },
-    });
+    // (option names include the trailing "ollama" context-window label)
+    expect(screen.getByRole("option", { name: /llama3\.2:latest/ })).toBeInTheDocument();
+    const qwen = screen.getByRole("option", { name: /qwen2\.5-coder:7b/ });
+    expect(qwen).toBeInTheDocument();
+
+    fireEvent.click(qwen);
     expect(onChange).toHaveBeenCalledWith("ollama", "qwen2.5-coder:7b");
+  });
+
+  it("can clear the current selection from the placeholder row", () => {
+    const onChange = vi.fn();
+
+    render(
+      <ModelPicker
+        rows={[provider()]}
+        loading={false}
+        provider="ollama"
+        model="qwen2.5-coder:7b"
+        filterProvider="ollama"
+        onChange={onChange}
+        placeholder="No override"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /qwen2\.5-coder:7b/i }));
+    fireEvent.click(screen.getByRole("option", { name: "No override" }));
+
+    expect(onChange).toHaveBeenCalledWith(null, "");
   });
 });

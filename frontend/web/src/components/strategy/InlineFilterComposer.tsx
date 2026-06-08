@@ -271,6 +271,7 @@ export function InlineFilterComposer({
               setNewProvider(p);
               setNewModel(m);
             }}
+            className="w-full"
           />
           <FieldLabel>System prompt</FieldLabel>
           <textarea

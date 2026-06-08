@@ -206,7 +206,7 @@ export function SlotForm({
                   model,
                 });
               }}
-              className="w-full px-3 py-2 bg-surface-card border border-border rounded-sm text-[13.5px] text-text font-mono focus:outline-none focus:border-gold/40"
+              className="w-full"
             />
           ) : (
             <input

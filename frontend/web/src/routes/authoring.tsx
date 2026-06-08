@@ -770,7 +770,7 @@ function AddAgentAccordion(props: AddAgentAccordionProps) {
                     props.setNewAgentProvider(provider);
                     props.setNewAgentModel(model);
                   }}
-                  className="w-full bg-surface-elev border border-border rounded px-3 py-2 text-[13px] text-text font-mono"
+                  className="w-full"
                   ariaLabel="New agent model"
                   emptyHint="No enabled models for agent creation"
                 />
