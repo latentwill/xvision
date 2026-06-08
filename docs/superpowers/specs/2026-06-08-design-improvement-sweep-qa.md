@@ -219,16 +219,18 @@ These are larger items now fully scoped after the B-series. Each is a standalone
 
 **Source:** `DesignImprovementSweep/design_handoff_optimizer_redesign/README.md`  
 **Effort:** ~1 week  
-**Status:** in progress — structural phases done; live-zone heatmap remains  
+**Status:** ✅ COMPLETE — all six zones shipped  
 **Dependencies:** A3, A5, A6 — all merged
 
 **Progress (2026-06-08):**
 - Phase 1 ✅ — A6 `useCycleEventStream` hook (#865)
-- Phase 2a ✅ — #870: `CommandBar` (Zone 1) + Launch run button + phase spine when running
-- Phase 2b ✅ — #871: `launchOnly` mode renders just the launch form inline
+- Zone 1 ✅ — #870: `CommandBar` + Launch run button + phase spine when running
+- Zone 5 ✅ — #871: `launchOnly` mode renders just the launch form inline
 - Zone 6 ✅ — #872: single `HistoryLedger` with Cycles ⇄ Runs toggle; removed the duplicate standalone table + RecentSessionsList
-- **Phase 3 (remaining) — NEEDS DESIGN REVIEW, not loop-merged:** `LiveEvalHeatmap` is net-new animated UI (shimmer ported from `ar-home.jsx`, cell-state mapping from the SSE stream) AND restructures LiveCycleView's working `[300px·1fr·260px]` grid into the 2-up Zone 3 band. High visual-judgment + touches live SSE wiring → should be a reviewed session with the page rendered, not an unseen autonomous merge.
-- **Zone 4 (remaining) — low value:** the KPI summary (cycles · kept · suspect) already lives in the Zone 1 command bar; a separate Kept/Suspect/Dropped/Top-Δ strip is largely redundant. Worth doing only alongside Phase 3.
+- Zone 3 ✅ — #873: `LiveEvalHeatmap` (experiments×regimes, done/testing/queued cells + shimmer) replacing the 3-col grid with a 2-up band; fed by `useCycleRun(activeCycleId)`. Screenshot-verified via headless Chrome against fixtures (no Rust build).
+- Zone 4 ✅ — #874: `OutcomeStrip` KPI tiles (Kept/Suspect/Dropped/Cycles), closing the KeptNextCard gap.
+
+Deferred niceties (non-blocking): Top-Δ tile on the outcome strip (needs `useOptimizerStats`); per-cell SSE granularity for the heatmap (backend would need to emit per-backtest events — today cells flip to done on `useCycleRun` poll refresh).
 
 **Architecture (from B3/B4/B5 findings):**
 
