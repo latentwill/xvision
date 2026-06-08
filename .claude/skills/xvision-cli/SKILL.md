@@ -391,10 +391,50 @@ For command-style live-node work, prefer the typed remote CLI job API instead of
 Engineering-side deployment + crate-level architecture moved to the
 `xvision-dev` skill.
 
+## Filter DSL — wake_when_in_position
+
+Controls whether the trader is called while a position is open. Set in filter JSON:
+
+| Value | Behavior | When to use |
+|---|---|---|
+| `"never"` | No mid-position calls | Mean-reversion strategies (hold to target) |
+| `"on_invalidation_or_target_only"` | Fire when filter state changes | Strategies needing early exit on signal reversal — caution on oscillating indicators |
+| `"always"` | Every bar while in position | Almost never correct |
+
+Default: `"on_invalidation_or_target_only"`. Start with `"never"` unless you need early exits.
+
+**Session data:** A 21-trade SORB strategy produced 153 decisions with `on_invalidation_or_target_only` vs 14 decisions with `never`.
+
+## Eval chain — process group isolation
+
+Eval chains launched as background shell scripts share PIDs with their parent shell. Kill with:
+```bash
+# Launch: store the process group ID
+setsid bash /tmp/eval_chain.sh &
+PGID=$!
+
+# Kill the entire process group (kills child processes too)
+kill -- -$PGID
+```
+
+Or add a lockfile guard at the top of eval_chain.sh:
+```bash
+LOCKFILE=/tmp/eval_chain.lock
+exec 200>"$LOCKFILE"
+flock -n 200 || { echo "chain already running"; exit 1; }
+```
+
+## Critical workflow: agent tools attachment
+
+After `xvn strategy new`, ALWAYS run:
+```bash
+xvn agent set-tools <AGENT_ID> --slot main --tools submit_decision
+```
+Atomic strategy creation does NOT attach the submit_decision tool. The strategy will not function until this is done.
+
 ---
 
 *Skills owner: whichever track ships a new `xvn` verb, Filter DSL
 surface, or operator-visible strategy/eval workflow is responsible for
-updating this file in the same PR. Last refresh: 2026-06-06 (verb
-disambiguation: `eval compare` vs `experiment run`, `optimizer` vs `optimize`;
-added `optimizer`/`flywheel` to the CLI quick map).*
+updating this file in the same PR. Last refresh: 2026-06-08 (wake_when_in_position
+docs, eval chain process-group kill pattern, agent tools-attach reminder).*

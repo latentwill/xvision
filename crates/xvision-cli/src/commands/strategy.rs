@@ -308,6 +308,27 @@ enum StrategyAction {
     /// Indicator/operator catalog and examples: see
     /// `docs/operator/filter-dsl-catalog.md` or the in-app docs page
     /// "Filter DSL Catalog".
+    ///
+    /// ## wake_when_in_position
+    ///
+    /// Controls whether the trader agent is called while a position is open.
+    /// Set this field in the filter JSON payload:
+    ///
+    /// - `"never"` — no mid-position calls; recommended for mean-reversion
+    ///   strategies where you want to hold to a defined target.
+    ///   Produces the fewest decisions.
+    /// - `"on_invalidation_or_target_only"` — fire when the filter changes
+    ///   state while in position (e.g. condition flips from true to false).
+    ///   **Caution**: oscillating indicators (Ichimoku, ORB levels, MFI
+    ///   extremes) flip frequently — one session recorded 21 trades expanding
+    ///   to 153 decisions with this setting.
+    /// - `"always"` — fire on every bar while in position; almost never
+    ///   correct for anything other than stop-management strategies.
+    ///
+    /// Default: `"on_invalidation_or_target_only"`.
+    /// Rule of thumb: start with `"never"`. Only switch to
+    /// `"on_invalidation_or_target_only"` if the strategy needs to exit
+    /// early when the signal reverses.
     SetFilter {
         /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
