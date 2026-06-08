@@ -1717,10 +1717,10 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         .await
         .exit_with(XvnExit::Upstream)?;
     let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
-    api_strategy::get(&ctx, &args.strategy)
+    let strategy = api_strategy::get(&ctx, &args.strategy)
         .await
         .map_err(|e| api_to_cli("eval validate strategy", e))?;
-    api_scenario::get(&ctx, &args.scenario)
+    let scenario = api_scenario::get(&ctx, &args.scenario)
         .await
         .map_err(|e| api_to_cli("eval validate scenario", e))?;
 
@@ -1749,6 +1749,28 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         });
     }
 
+    // Warmup warnings (non-fatal): alert when filter indicators need more
+    // history than the scenario window provides.
+    let warmup_warnings: Vec<String> = if let Some(filter) = &strategy.filter {
+        let cadence = strategy.manifest.decision_cadence_minutes;
+        if cadence > 0 {
+            let duration_minutes = (scenario.time_window.end - scenario.time_window.start)
+                .num_minutes();
+            xvision_filters::check_filter_warmup(filter, cadence, duration_minutes)
+                .into_iter()
+                .map(|w| w.message)
+                .collect()
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    for msg in &warmup_warnings {
+        eprintln!("warn: {msg}");
+    }
+
     if args.json {
         let body = serde_json::json!({
             "ok": true,
@@ -1756,6 +1778,7 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
             "scenario": args.scenario,
             "mode": mode.as_str(),
             "errors": [],
+            "warnings": warmup_warnings,
         });
         crate::io::print_json(&body)?;
     } else {
@@ -1767,17 +1790,15 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
         println!("  strategy   {}", args.strategy);
         println!("  scenario   {}", args.scenario);
         println!("  mode       {}", mode.as_str());
-        if let Ok(strategy) = api_strategy::get(&ctx, &args.strategy).await {
-            println!("  assets     {}", strategy.manifest.asset_universe.join(", "));
-            println!("  timeframe  {}min", strategy.manifest.decision_cadence_minutes);
-            for a in &strategy.agents {
-                println!("  agent      role={} id={}", a.role, a.agent_id);
-            }
-            println!(
-                "  filter     {}",
-                if strategy.filter.is_some() { "yes" } else { "none" }
-            );
+        println!("  assets     {}", strategy.manifest.asset_universe.join(", "));
+        println!("  timeframe  {}min", strategy.manifest.decision_cadence_minutes);
+        for a in &strategy.agents {
+            println!("  agent      role={} id={}", a.role, a.agent_id);
         }
+        println!(
+            "  filter     {}",
+            if strategy.filter.is_some() { "yes" } else { "none" }
+        );
     }
     Ok(())
 }

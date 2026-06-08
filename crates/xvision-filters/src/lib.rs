@@ -24,6 +24,7 @@ pub mod runtime;
 pub mod state;
 pub mod types;
 pub mod validate;
+pub mod warmup;
 
 pub use errors::{ParseError, ValidationError};
 pub use events::{FilterEventV1, FilterSummary, SuppressedReason};
@@ -40,6 +41,7 @@ pub use types::{
     ScanCadence, StrategyId, Symbol, Timeframe, WakeInPosition, DEFAULT_AGENT_CONTEXT_TEMPLATE,
 };
 pub use validate::validate;
+pub use warmup::{check_filter_warmup, WarmupWarning};
 
 /// Average token cost of a single LLM briefing dispatch, used by
 /// [`events::FilterSummary::from_events`] to estimate the tokens saved
