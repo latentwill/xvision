@@ -42,7 +42,7 @@ describe("OptimizerDigestStrip", () => {
       isError: false,
       isPending: false,
       isSuccess: true,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     const { container } = renderStrip();
     expect(container.firstChild).toBeNull();
@@ -56,7 +56,7 @@ describe("OptimizerDigestStrip", () => {
       isError: false,
       isPending: true,
       isSuccess: false,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     const { container } = renderStrip();
     expect(container.firstChild).toBeNull();
@@ -70,7 +70,7 @@ describe("OptimizerDigestStrip", () => {
       isError: false,
       isPending: false,
       isSuccess: true,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderStrip();
     const strip = screen.getByTestId("optimizer-digest-strip");
@@ -87,7 +87,7 @@ describe("OptimizerDigestStrip", () => {
       isError: false,
       isPending: false,
       isSuccess: true,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderStrip();
     const strip = screen.getByTestId("optimizer-digest-strip");
@@ -103,7 +103,7 @@ describe("OptimizerDigestStrip", () => {
       isError: false,
       isPending: false,
       isSuccess: true,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderStrip();
     const strip = screen.getByTestId("optimizer-digest-strip");
@@ -118,7 +118,7 @@ describe("OptimizerDigestStrip", () => {
       isError: false,
       isPending: false,
       isSuccess: true,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderStrip();
     const strip = screen.getByTestId("optimizer-digest-strip");
@@ -134,7 +134,7 @@ describe("OptimizerDigestStrip", () => {
       isError: false,
       isPending: false,
       isSuccess: true,
-    } as ReturnType<typeof apiModule.useSessionList>);
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
     renderStrip();
     const link = screen.getByRole("link", { name: /view run/i });

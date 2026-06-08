@@ -97,7 +97,7 @@ function RunRow({ summary }: { summary: AgentRunSummary }) {
 export function LiveStrategiesSection() {
   const { data, isPending } = useQuery({
     queryKey: agentRunKeys.list(),
-    queryFn: listAgentRuns,
+    queryFn: () => listAgentRuns(),
     refetchInterval: 10_000,
   });
 
