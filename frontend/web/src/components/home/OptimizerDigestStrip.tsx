@@ -1,11 +1,5 @@
 import { Link } from "react-router-dom";
-import { useSessionList, type SessionListItem } from "@/features/autooptimizer/api";
-
-// Extend SessionListItem to include suspect_count which the API returns but
-// the current TypeScript interface does not yet declare.
-type SessionListItemFull = SessionListItem & {
-  suspect_count?: number;
-};
+import { useSessionList } from "@/features/autooptimizer/api";
 
 /**
  * OptimizerDigestStrip — compact one-liner on the home page showing the last
@@ -28,16 +22,24 @@ export function OptimizerDigestStrip() {
     return null;
   }
 
-  const session = sessions[0] as SessionListItemFull;
+  const session = sessions[0];
 
   const costLabel =
     session.cost_usd != null ? `$${session.cost_usd.toFixed(2)}` : "$?";
 
-  // suspect_count is not currently in SessionListItem's TypeScript type, but is
-  // present in the API response. Render a dash until the type is updated.
-  // TODO: add suspect_count to SessionListItem interface when the API type is extended.
+  // suspect_count is now part of SessionListItem (S0 / O1a) — render the real
+  // value, falling back to a dash only when the field is genuinely absent.
   const suspectLabel =
     session.suspect_count != null ? `${session.suspect_count} suspect` : "— suspect";
+
+  // Honesty check outcome of the session's newest cycle (S0 / O1b).
+  // undefined → "—" (no honesty check ran yet).
+  const honestyLabel =
+    session.honesty_passed == null
+      ? "Honesty check —"
+      : session.honesty_passed
+        ? "Honesty check ✓"
+        : "Honesty check ✗ failed";
 
   return (
     <div
@@ -47,7 +49,15 @@ export function OptimizerDigestStrip() {
       <span className="font-medium text-foreground/70">Last run:</span>
       <span>
         {session.cycles_completed} experiments · {session.kept_count} kept ·{" "}
-        {suspectLabel} · Honesty check — · {costLabel}
+        {suspectLabel} ·{" "}
+        <span
+          className={
+            session.honesty_passed === false ? "text-amber-600 dark:text-amber-400" : undefined
+          }
+        >
+          {honestyLabel}
+        </span>{" "}
+        · {costLabel}
       </span>
       <Link
         to={`/optimizer/run/${session.session_id}`}

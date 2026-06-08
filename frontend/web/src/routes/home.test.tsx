@@ -63,8 +63,13 @@ vi.mock("@/api/agents", () => ({
 
 // OptimizerDigestStrip pulls the last optimizer session via this hook. Default
 // to no sessions (strip renders nothing); the reachability test overrides it.
+// ActiveTasksStrip pulls the running optimizer cycle via useOptimizerStatus
+// (default: idle → no cycle row) and the cycle pause/resume mutations.
 vi.mock("@/features/autooptimizer/api", () => ({
   useSessionList: vi.fn(() => ({ data: [] })),
+  useOptimizerStatus: vi.fn(() => undefined),
+  usePauseCycle: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useResumeCycle: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 vi.mock("@/api/agent-runs", () => ({

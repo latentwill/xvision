@@ -140,4 +140,42 @@ describe("OptimizerDigestStrip", () => {
     const link = screen.getByRole("link", { name: /view run/i });
     expect(link).toHaveAttribute("href", "/optimizer/run/sess_01TESTABCDEF");
   });
+
+  // ─── S0 / O1a + O1b: real suspect + honesty rendering ─────────────────────
+
+  function mockSession(session: SessionListItem) {
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [session] as SessionListItem[],
+      isLoading: false,
+      isError: false,
+      isPending: false,
+      isSuccess: true,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+  }
+
+  it("renders the real suspect_count from the typed field (O1a)", () => {
+    mockSession({ ...baseSession, suspect_count: 4 });
+    renderStrip();
+    expect(screen.getByTestId("optimizer-digest-strip").textContent).toContain("4 suspect");
+  });
+
+  it("shows 'Honesty check ✓' when the latest cycle passed (O1b)", () => {
+    mockSession({ ...baseSession, honesty_passed: true });
+    renderStrip();
+    expect(screen.getByTestId("optimizer-digest-strip").textContent).toContain("Honesty check ✓");
+  });
+
+  it("shows 'Honesty check ✗ failed' when the latest cycle failed (O1b)", () => {
+    mockSession({ ...baseSession, honesty_passed: false });
+    renderStrip();
+    expect(screen.getByTestId("optimizer-digest-strip").textContent).toContain(
+      "Honesty check ✗ failed",
+    );
+  });
+
+  it("shows 'Honesty check —' when no honesty signal is present (O1b)", () => {
+    mockSession({ ...baseSession, honesty_passed: undefined });
+    renderStrip();
+    expect(screen.getByTestId("optimizer-digest-strip").textContent).toContain("Honesty check —");
+  });
 });

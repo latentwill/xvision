@@ -19,6 +19,42 @@ vi.mock("@/api/eval", async () => {
   };
 });
 
+// S0 / O2+O3: control the optimizer-status hook + pause/resume mutations.
+const { pauseMutate, resumeMutate, statusRef } = vi.hoisted(() => ({
+  pauseMutate: vi.fn(),
+  resumeMutate: vi.fn(),
+  statusRef: { current: undefined as unknown },
+}));
+
+vi.mock("@/features/autooptimizer/api", () => ({
+  useOptimizerStatus: () => statusRef.current,
+  usePauseCycle: () => ({ mutate: pauseMutate, isPending: false }),
+  useResumeCycle: () => ({ mutate: resumeMutate, isPending: false }),
+}));
+
+function setStatus(
+  activeSession: Record<string, unknown> | null,
+  activeCycleId: string | null = null,
+) {
+  statusRef.current = activeSession
+    ? { active_session: activeSession, last_event_seq: 0, active_cycle_id: activeCycleId }
+    : { active_session: null, last_event_seq: 0 };
+}
+
+function runningSession(overrides: Record<string, unknown> = {}) {
+  return {
+    session_id: "sess-1",
+    strategy_id: "Optimus",
+    state: "running",
+    mode: "explore",
+    cycles_completed: 7,
+    kept_count: 3,
+    suspect_count: 1,
+    dropped_count: 2,
+    ...overrides,
+  };
+}
+
 function makeRun(overrides: Partial<{
   id: string;
   status: string;
@@ -69,6 +105,9 @@ function renderStrip() {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  statusRef.current = undefined;
+  pauseMutate.mockReset();
+  resumeMutate.mockReset();
 });
 
 describe("ActiveTasksStrip", () => {
@@ -140,5 +179,66 @@ describe("ActiveTasksStrip", () => {
     await screen.findByText("Alpha");
     const link = screen.getByRole("link", { name: /alpha/i });
     expect(link).toHaveAttribute("href", "/eval-runs/run-1");
+  });
+
+  // ─── S0 / O2+O3: optimizer cycle in Active tasks ──────────────────────────
+
+  it("shows the running optimizer cycle even when there are no eval runs", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(runningSession(), "cyc-1");
+
+    renderStrip();
+
+    const cycle = await screen.findByTestId("active-optimizer-cycle");
+    expect(cycle.textContent).toContain("optimizer");
+    expect(cycle.textContent).toContain("Optimus");
+    expect(cycle.textContent).toContain("7 cycles");
+    // Reachability: a running cycle must surface even with an empty eval list.
+    expect(screen.queryByText("No active tasks")).toBeNull();
+  });
+
+  it("pauses the in-flight cycle via the cycle-level endpoint", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(runningSession(), "cyc-1");
+
+    renderStrip();
+
+    const pauseBtn = await screen.findByRole("button", { name: /pause optimizer cycle/i });
+    await userEvent.click(pauseBtn);
+    expect(pauseMutate).toHaveBeenCalledWith("cyc-1");
+  });
+
+  it("shows Resume (not Pause) when the cycle is paused", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(runningSession({ state: "paused" }), "cyc-9");
+
+    renderStrip();
+
+    const resumeBtn = await screen.findByRole("button", { name: /resume optimizer cycle/i });
+    await userEvent.click(resumeBtn);
+    expect(resumeMutate).toHaveBeenCalledWith("cyc-9");
+    expect(screen.queryByRole("button", { name: /pause optimizer cycle/i })).toBeNull();
+  });
+
+  it("disables pause when no in-flight cycle id is known yet", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(runningSession(), null);
+
+    renderStrip();
+
+    const pauseBtn = await screen.findByRole("button", { name: /pause optimizer cycle/i });
+    expect(pauseBtn).toBeDisabled();
+  });
+
+  it("does not show a cycle row when the optimizer is idle", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeRun({ id: "run-1", status: "running" }),
+    ]);
+    setStatus(null);
+
+    renderStrip();
+
+    await screen.findByTestId("active-tasks-strip");
+    expect(screen.queryByTestId("active-optimizer-cycle")).toBeNull();
   });
 });
