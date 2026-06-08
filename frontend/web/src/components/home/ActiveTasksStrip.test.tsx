@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import * as evalApi from "@/api/eval";
+import type { RunSummary } from "@/api/types.gen";
 import { ActiveTasksStrip } from "./ActiveTasksStrip";
 
 vi.mock("@/api/eval", async () => {
@@ -21,16 +22,16 @@ vi.mock("@/api/eval", async () => {
 function makeRun(overrides: Partial<{
   id: string;
   status: string;
-  started_at: string | null;
-  strategy: { display_name: string } | null;
+  started_at: string;
+  strategy: RunSummary["strategy"];
   agent_id: string;
   scenario_id: string;
-}> = {}) {
+}> = {}): RunSummary {
   return {
     id: "run-1",
     agent_id: "agent-1",
     scenario_id: "scenario-1",
-    strategy: { display_name: "Alpha" } as never,
+    strategy: { id: "strategy-1", display_name: "Alpha" },
     scenario: null,
     mode: "backtest",
     status: "running",
@@ -73,9 +74,9 @@ afterEach(() => {
 describe("ActiveTasksStrip", () => {
   it("renders running + queued runs, hides completed/failed/cancelled", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
-      makeRun({ id: "1", status: "running", strategy: { display_name: "Alpha" } as never }),
-      makeRun({ id: "2", status: "queued", started_at: null, strategy: { display_name: "Beta" } as never }),
-      makeRun({ id: "3", status: "completed", strategy: { display_name: "Gamma" } as never }),
+      makeRun({ id: "1", status: "running", strategy: { id: "strategy-1", display_name: "Alpha" } }),
+      makeRun({ id: "2", status: "queued", started_at: "", strategy: { id: "strategy-2", display_name: "Beta" } }),
+      makeRun({ id: "3", status: "completed", strategy: { id: "strategy-3", display_name: "Gamma" } }),
     ]);
 
     renderStrip();
@@ -93,9 +94,9 @@ describe("ActiveTasksStrip", () => {
     await screen.findByText(/no active tasks/i);
   });
 
-  it("shows '—' for null started_at", async () => {
+  it("shows '—' for missing started_at", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
-      makeRun({ id: "1", status: "queued", started_at: null, strategy: { display_name: "Beta" } as never }),
+      makeRun({ id: "1", status: "queued", started_at: "", strategy: { id: "strategy-2", display_name: "Beta" } }),
     ]);
 
     renderStrip();
@@ -131,7 +132,7 @@ describe("ActiveTasksStrip", () => {
 
   it("run row links to /eval-runs/:id", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
-      makeRun({ id: "run-1", status: "running", strategy: { display_name: "Alpha" } as never }),
+      makeRun({ id: "run-1", status: "running", strategy: { id: "strategy-1", display_name: "Alpha" } }),
     ]);
 
     renderStrip();

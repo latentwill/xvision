@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import * as evalReviewApi from "@/api/eval-review";
 import type { RunSummary } from "@/api/types.gen";
+import type { CriticalFinding, ReviewSeverity } from "@/api/eval-review";
 import { CriticalFindingsRow } from "./CriticalFindingsRow";
 
 vi.mock("@/api/eval-review", async () => {
@@ -48,11 +49,11 @@ function makeRun(
 
 function makeFinding(
   id: string,
-  severity: string,
+  severity: ReviewSeverity,
   summary: string,
   runId: string,
   strategyName?: string,
-) {
+): CriticalFinding {
   return {
     id,
     run_id: runId,
