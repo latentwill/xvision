@@ -124,7 +124,7 @@ export function AgentPicker({
             setModel(nextModel);
             setLocalError(null);
           }}
-          className="bg-bg border border-border rounded-sm px-2 py-1.5 text-text text-[12px] font-mono"
+          className="w-full"
           ariaLabel="Review model"
           emptyHint="No enabled review models"
         />

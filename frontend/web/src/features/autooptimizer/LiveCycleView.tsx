@@ -459,7 +459,6 @@ function ModelSelectRow({
       ? `${defaults.data.judge_provider} / ${defaults.data.judge_model}`
       : "loading fallback...";
   const judgeFallbackSource = writerOverrideFallback ? "experiment writer" : fallbackSource;
-  const sel = "min-h-9 bg-surface-elev border border-border rounded text-text text-[13px] px-2 py-1";
   return (
     <div className="space-y-3 pt-3 border-t border-border">
       <div className="space-y-1.5">
@@ -481,7 +480,7 @@ function ModelSelectRow({
               setStoredMutatorModel(m);
             }
           }}
-          className={`${sel} w-full`}
+          className="w-full"
           ariaLabel="Experiment writer model override"
           placeholder="No override"
         />
@@ -508,7 +507,7 @@ function ModelSelectRow({
               setStoredJudgeModel(m);
             }
           }}
-          className={`${sel} w-full`}
+          className="w-full"
           ariaLabel="Reviewer model override"
           placeholder="No override"
         />

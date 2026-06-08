@@ -917,7 +917,8 @@ function RailModelBar({
           provider={provider}
           model={model}
           onChange={onChange}
-          className="flex-1 min-w-0 text-[12px] bg-transparent border border-border-soft rounded-sm px-1.5 py-0.5 text-text font-mono"
+          className="flex-1 min-w-0"
+          ariaLabel="Model"
           emptyHint="no models picked — visit Settings → Providers"
         />
       </div>

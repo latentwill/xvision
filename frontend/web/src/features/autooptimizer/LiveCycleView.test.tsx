@@ -266,9 +266,25 @@ describe("LiveCycleView", () => {
       default_model: null,
     });
 
+    const user = userEvent.setup();
     renderLiveCycleView({ launchOnly: true });
 
-    expect(await screen.findAllByRole("option", { name: "qwen2.5-coder:7b" })).toHaveLength(2);
+    // Each override is a Signal dropdown; open them one at a time and confirm
+    // the no-auth model is listed. (option names carry a trailing kind label.)
+    const writer = await screen.findByLabelText("Experiment writer model override");
+    await user.click(writer);
+    expect(
+      await screen.findByRole("option", { name: /qwen2\.5-coder:7b/ }),
+    ).toBeInTheDocument();
+    await user.click(writer); // close before opening the next
+
+    const reviewer = screen.getByLabelText("Reviewer model override");
+    await user.click(reviewer);
+    expect(
+      await screen.findByRole("option", { name: /qwen2\.5-coder:7b/ }),
+    ).toBeInTheDocument();
+    await user.click(reviewer);
+
     expect(screen.getByText(/No override uses built-in fallback/)).toBeInTheDocument();
     expect(screen.getByText(/No override reviews with built-in fallback/)).toBeInTheDocument();
   });
@@ -293,14 +309,13 @@ describe("LiveCycleView", () => {
     renderLiveCycleView({ launchOnly: true });
 
     await screen.findByRole("option", { name: "Trend follower" });
-    await user.selectOptions(
-      screen.getByLabelText("Experiment writer model override"),
-      "ollama::qwen2.5-coder:7b",
-    );
-    await user.selectOptions(
-      screen.getByLabelText("Reviewer model override"),
-      "ollama::qwen2.5-coder:7b",
-    );
+    // The model overrides are Signal dropdowns: open, then click the option.
+    const writer = screen.getByLabelText("Experiment writer model override");
+    await user.click(writer);
+    await user.click(await screen.findByRole("option", { name: /qwen2\.5-coder:7b/ }));
+    const reviewer = screen.getByLabelText("Reviewer model override");
+    await user.click(reviewer);
+    await user.click(await screen.findByRole("option", { name: /qwen2\.5-coder:7b/ }));
     await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
     await user.click(screen.getByRole("button", { name: "Run optimizer" }));
 

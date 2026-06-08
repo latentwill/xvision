@@ -505,6 +505,14 @@ export interface SignalModelPickerMenuProps {
   loading?: boolean;
   align?: "left" | "right";
   placeholder?: string;
+  /** Layout/width classes appended to the trigger button (e.g. `w-full`,
+   *  `flex-1 min-w-0`). The trigger keeps its own visual styling. */
+  className?: string;
+  /** Accessible name for the trigger button. */
+  ariaLabel?: string;
+  /** Message shown in the menu body when there are no options at all
+   *  (e.g. no providers configured). */
+  emptyHint?: string;
 }
 
 export function SignalModelPickerMenu({
@@ -515,6 +523,9 @@ export function SignalModelPickerMenu({
   loading,
   align = "left",
   placeholder = "— pick a model —",
+  className,
+  ariaLabel,
+  emptyHint,
 }: SignalModelPickerMenuProps) {
   const { open, setOpen, toggle, triggerRef, menuRef, pos } = useSignalMenu(align);
   const [filter, setFilter] = useState("");
@@ -553,9 +564,13 @@ export function SignalModelPickerMenu({
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-label={ariaLabel}
         disabled={loading}
         onClick={toggle}
-        className="inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors whitespace-nowrap hover:border-text-3 disabled:opacity-50"
+        className={[
+          "inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors whitespace-nowrap hover:border-text-3 disabled:opacity-50",
+          className ?? "",
+        ].join(" ")}
       >
         <span className="flex-1 text-left font-mono text-[12px]">
           {loading ? "Loading…" : selectedLabel}
@@ -580,7 +595,9 @@ export function SignalModelPickerMenu({
         {/* Provider groups */}
         <div className="max-h-[320px] overflow-y-auto py-1">
           {Object.entries(groups).length === 0 && (
-            <div className="px-3 py-3 text-[12px] text-text-3 font-mono">No models match</div>
+            <div className="px-3 py-3 text-[12px] text-text-3 font-mono">
+              {options.length === 0 ? (emptyHint ?? "No models available") : "No models match"}
+            </div>
           )}
           {Object.entries(groups).map(([prov, models]) => (
             <div key={prov}>

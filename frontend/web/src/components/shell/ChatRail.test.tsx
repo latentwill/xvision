@@ -761,10 +761,12 @@ describe("ChatRail", () => {
 
     renderRail();
 
-    await waitFor(() => {
-      const select = screen.getByRole("combobox", { name: /model/i });
-      expect(select.querySelector('option[value="ollama::llama3"]')).not.toBeNull();
-    });
+    // Open the Signal model dropdown, then assert the no-auth model is listed.
+    const trigger = await screen.findByRole("button", { name: /model/i });
+    fireEvent.click(trigger);
+    expect(
+      await screen.findByRole("option", { name: /llama3/ }),
+    ).toBeInTheDocument();
   });
 
   it("does not dispatch stale stored chat picker values absent from the picker", async () => {
