@@ -154,7 +154,12 @@ describe("OptimizerHome — status hero", () => {
       isError: false,
     } as unknown as ReturnType<typeof apiModule.useSessionList>);
 
+    const user = userEvent.setup();
     renderWithProviders(<OptimizerHome />);
+
+    // History ledger defaults to the Cycles view; switch to Runs to see sessions.
+    const runsToggle = await screen.findByRole("button", { name: "Runs" });
+    await user.click(runsToggle);
 
     expect(await screen.findByText("alpha-strategy")).toBeInTheDocument();
     expect(screen.getByText("beta-strategy")).toBeInTheDocument();

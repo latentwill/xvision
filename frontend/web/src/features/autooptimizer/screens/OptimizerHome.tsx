@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Pill } from "@/components/primitives/Pill";
 import { LiveCycleView } from "../LiveCycleView";
-import { RecentCyclesTable } from "../panels/RecentCyclesTable";
+import { RecentCyclesTableBody } from "../panels/RecentCyclesTable";
 import { ExperimentWritersPanel } from "../panels/ExperimentWritersPanel";
 import { PhaseStepper } from "../ui/PhaseStepper";
 import { FlywheelStrip } from "../ui/FlywheelStrip";
@@ -218,27 +218,59 @@ function RecentSessionRow({ item }: { item: SessionListItem }) {
   );
 }
 
-function RecentSessionsList() {
+function RecentSessionsBody() {
   const { data: sessions, isLoading } = useSessionList();
 
-  if (isLoading) return null;
+  if (isLoading) return <p className="text-[12px] text-text-3">Loading…</p>;
   if (!sessions || sessions.length === 0) {
-    return (
-      <div className="rounded-md border border-border px-4 py-3">
-        <p className="text-[13px] text-text-3">No runs yet</p>
-      </div>
-    );
+    return <p className="text-[12px] text-text-3">No runs yet.</p>;
   }
 
   return (
-    <div className="space-y-2">
-      <h2 className="text-sm font-semibold text-text">Recent runs</h2>
-      <div className="rounded-md border border-border overflow-hidden bg-surface-card">
-        {sessions.map((item) => (
-          <RecentSessionRow key={item.session_id} item={item} />
-        ))}
-      </div>
+    <div className="-mx-5 -mb-1">
+      {sessions.map((item) => (
+        <RecentSessionRow key={item.session_id} item={item} />
+      ))}
     </div>
+  );
+}
+
+// ─── History ledger (Zone 6) ──────────────────────────────────────────────────
+
+/**
+ * Single history surface with a Cycles ⇄ Runs toggle. Replaces the previous
+ * duplicate of a standalone RecentCyclesTable plus a separate RecentSessionsList.
+ */
+function HistoryLedger() {
+  const [view, setView] = useState<"cycles" | "runs">("cycles");
+
+  const toggleBtn = (key: "cycles" | "runs", label: string) => (
+    <button
+      type="button"
+      onClick={() => setView(key)}
+      aria-pressed={view === key}
+      className={[
+        "px-2.5 py-1 text-[12px] rounded-sm transition-colors",
+        view === key
+          ? "bg-surface-panel text-text"
+          : "text-text-3 hover:text-text-2",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <section className="rounded-md border border-border bg-surface-card p-5">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h2 className="m-0 text-[15px] font-semibold tracking-tight">History</h2>
+        <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+          {toggleBtn("cycles", "Cycles")}
+          {toggleBtn("runs", "Runs")}
+        </div>
+      </div>
+      {view === "cycles" ? <RecentCyclesTableBody /> : <RecentSessionsBody />}
+    </section>
   );
 }
 
@@ -313,10 +345,9 @@ export function OptimizerHome() {
         {!isActive && !launcherOpen && <LiveCycleView embedded />}
 
         <ExperimentWritersPanel />
-        <RecentCyclesTable />
 
-        {/* Recent session runs list */}
-        <RecentSessionsList />
+        {/* Zone 6: single history ledger with Cycles ⇄ Runs toggle */}
+        <HistoryLedger />
       </div>
     </>
   );
