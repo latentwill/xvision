@@ -1073,9 +1073,10 @@ describe("EvalRunDetailRoute", () => {
       expect(useTraceDock.getState().costOverrideUsd).toBe(0.4242),
     );
 
-    // And the meta strip renders the same number.
-    const meta = screen.getByTestId("eval-run-meta");
-    expect(meta.textContent ?? "").toMatch(/\$0\.4242/);
+    // And the stat rail in the page header renders the same number.
+    await waitFor(() =>
+      expect(document.body.textContent ?? "").toMatch(/\$0\.4242/),
+    );
   });
 
   it("renders the topbar status pill from run.status while the run is running", async () => {
