@@ -10,7 +10,6 @@ import { FlywheelStrip } from "../ui/FlywheelStrip";
 import { ScheduleStrip } from "../ui/ScheduleStrip";
 import { ImprovementChart } from "../ui/ImprovementChart";
 import { OutcomeStackedChart } from "../ui/OutcomeStackedChart";
-import { ModePicker, type RunMode } from "../ui/ModePicker";
 import {
   useOptimizerStatus,
   useOptimizerStats,
@@ -161,74 +160,6 @@ function StatusHero() {
   );
 }
 
-// ─── Configure strip (P4) ─────────────────────────────────────────────────────
-
-/** Run configure section — shown when no session is active.
- *  Lets the operator pick run mode (once / N experiments / until budget) then
- *  start a new session via POST /sessions. */
-function ConfigureSection() {
-  const status = useOptimizerStatus();
-  const isActive =
-    status?.active_session != null &&
-    ["running", "paused", "cancelling"].includes(status.active_session.state);
-
-  const [runMode, setRunMode] = useState<RunMode>("once");
-  const [runCount, setRunCount] = useState<number | undefined>(undefined);
-  const [runBudget, setRunBudget] = useState<number | undefined>(undefined);
-
-  if (isActive) return null;
-
-  function handleModeChange(mode: RunMode, count?: number, budget?: number) {
-    setRunMode(mode);
-    setRunCount(count);
-    setRunBudget(budget);
-  }
-
-  function handleStart() {
-    // Build a start request from the selected mode.
-    // The actual POST /sessions API integration would use a strategy_id
-    // from the user's strategy picker (not in scope for ModePicker alone).
-    // For now, scroll to #optimizer-run-controls where the full launch form lives.
-    const el = document.getElementById("optimizer-run-controls");
-    if (el) el.scrollIntoView({ behavior: "smooth" });
-  }
-
-  return (
-    <div
-      id="optimizer-run-controls"
-      className="rounded-md border border-border bg-surface-card px-5 py-4 space-y-3"
-    >
-      <div>
-        <h2 className="text-[13px] font-semibold tracking-tight text-text">Configure run</h2>
-        <p className="text-[11px] text-text-3 mt-0.5">
-          Choose how many experiments to run before stopping
-        </p>
-      </div>
-      <ModePicker value={runMode} onChange={handleModeChange} />
-      <div className="flex items-center gap-3 pt-1">
-        <button
-          type="button"
-          onClick={handleStart}
-          className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity"
-          data-testid="configure-start-button"
-        >
-          Start
-        </button>
-        {runMode === "n_experiments" && runCount != null && (
-          <span className="text-[11px] text-text-3">
-            Will run {runCount} experiment{runCount !== 1 ? "s" : ""}
-          </span>
-        )}
-        {runMode === "until_budget" && runBudget != null && (
-          <span className="text-[11px] text-text-3">
-            Budget cap: ${runBudget.toFixed(2)}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Recent sessions list ─────────────────────────────────────────────────────
 
 function SessionStateChip({ state }: { state: string }) {
@@ -326,7 +257,6 @@ export function OptimizerHome() {
         <StatusHero />
 
         {/* Configure strip — shown when idle (P4) */}
-        <ConfigureSection />
 
         {/* Scheduled run config strip (P5-W3) */}
         <ScheduleStrip />

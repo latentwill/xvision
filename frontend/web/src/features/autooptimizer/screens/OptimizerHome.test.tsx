@@ -72,7 +72,7 @@ beforeEach(() => {
 });
 
 describe("OptimizerHome — status hero", () => {
-  it("shows Idle pill and Start button when status returns null active_session", async () => {
+  it("shows Idle pill when status returns null active_session", async () => {
     vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
       active_session: null,
       last_event_seq: 0,
@@ -86,9 +86,7 @@ describe("OptimizerHome — status hero", () => {
     renderWithProviders(<OptimizerHome />);
 
     expect(await screen.findByText("Idle")).toBeInTheDocument();
-    // Start button must be visible when idle
-    expect(screen.getByRole("button", { name: /start/i })).toBeInTheDocument();
-    // Pause/Cancel must NOT be visible
+    // Pause/Cancel must NOT be visible when idle
     expect(screen.queryByRole("button", { name: /pause/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
   });
@@ -118,7 +116,6 @@ describe("OptimizerHome — status hero", () => {
     expect(await screen.findByText("Running")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /pause/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /start/i })).toBeNull();
   });
 
   it("does not import or call deriveCycleState", () => {
