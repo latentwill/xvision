@@ -8,12 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
+import { useCycleEventStream, type EventRow } from "./hooks/useCycleEventStream";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { ModelPicker } from "@/components/ModelPicker";
 import {
-  type CycleProgressEvent,
   type LineageNode,
   type StartRunCycleRequest,
   formatEventLabel,
@@ -45,28 +45,12 @@ import { listStrategies, strategyKeys } from "@/api/strategies";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { isProviderConfigured } from "@/lib/providers";
 
-type EventRow = CycleProgressEvent & { _row_id: number };
-
 type OptimizerModelSelection = {
   mutatorProvider: string | null;
   mutatorModel: string;
   judgeProvider: string | null;
   judgeModel: string;
 };
-
-let nextRowId = 1;
-
-const SSE_EVENT_NAMES = [
-  "cycle_started",
-  "parent_selected",
-  "mutation_proposed",
-  "no_candidate",
-  "mutation_gated",
-  "honesty_check_run",
-  "judge_finding",
-  "cycle_finished",
-  "lagged",
-] as const;
 
 
 // ─── Lineage helpers ──────────────────────────────────────────────────────────
@@ -902,21 +886,9 @@ function LiveCostTicker({
 
 export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home" }: { onTabChange?: (tab: string) => void; embedded?: boolean; activeTab?: string } = {}) {
   const queryClient = useQueryClient();
-  const [events, setEvents] = useState<EventRow[]>([]);
-  const [connected, setConnected] = useState(false);
+  const { events, connected, isRunning, activeCycleId } = useCycleEventStream();
   const bottomRef = useRef<HTMLDivElement>(null);
   const { data: lineageNodes = [] } = useLineageNodes();
-
-  // Derive cycle state from the local SSE event buffer (replaces deleted deriveCycleState).
-  // The source of truth for the full session state is useOptimizerStatus() in OptimizerHome;
-  // this local buffer tracks the latest cycle within LiveCycleView's own event stream.
-  let isRunning = false;
-  let activeCycleId: string | null = null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
-    if (et === "cycle_finished") { isRunning = false; activeCycleId = null; break; }
-    if (et === "cycle_started") { isRunning = true; activeCycleId = events[i].cycle_id ?? null; break; }
-  }
 
   // Continuous loop state
   const loopConfigRef = useRef<LaunchConfig | null>(null);
@@ -961,14 +933,6 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
       setLoopError(err instanceof Error ? err.message : "Failed to start optimizer cycle");
     }
   }, [queryClient]);
-
-  const appendEvent = useCallback((event: CycleProgressEvent) => {
-    setEvents((prev) => {
-      const row: EventRow = { ...event, _row_id: nextRowId++ };
-      const next = prev.length >= 200 ? prev.slice(1) : prev;
-      return [...next, row];
-    });
-  }, []);
 
   // Auto-relaunch after cycle_finished when loop is active
   useEffect(() => {
@@ -1031,26 +995,6 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
       relaunch(cumulativeSpent);
     }
   }, [events, loopActive, cyclesCompleted, cumulativeSpent, queryClient]);
-
-  useEffect(() => {
-    const source = new EventSource("/api/autooptimizer/events");
-    const handleMessage = (ev: Event) => {
-      const event = parseSsePayload((ev as MessageEvent).data, ev.type);
-      if (event) appendEvent(event);
-    };
-    source.addEventListener("open", () => { setConnected(true); });
-    source.addEventListener("message", handleMessage);
-    for (const name of SSE_EVENT_NAMES) source.addEventListener(name, handleMessage);
-    source.addEventListener("error", () => { setConnected(false); });
-    return () => {
-      source.removeEventListener("message", handleMessage);
-      for (const eventName of SSE_EVENT_NAMES) {
-        source.removeEventListener(eventName, handleMessage);
-      }
-      source.close();
-      setConnected(false);
-    };
-  }, [appendEvent]);
 
   useEffect(() => {
     if (typeof bottomRef.current?.scrollIntoView === "function") {
@@ -1119,45 +1063,3 @@ function formatEventTime(ts: string | undefined): string {
   }
 }
 
-function parseSsePayload(raw: unknown, fallbackKind: string): CycleProgressEvent | null {
-  if (typeof raw !== "string" || raw.trim() === "") return null;
-  const parsed = parseJsonObject(raw);
-  if (!parsed) return null;
-  if ("dropped" in parsed) return null;
-
-  const data = isRecord(parsed.data) ? parsed.data : parsed;
-  const kind =
-    stringValue(data.event_type) ??
-    stringValue(data.type) ??
-    stringValue(parsed.kind) ??
-    fallbackKind;
-  if (kind === "message") return null;
-  return {
-    ...data,
-    event_type: kind,
-    kind,
-    display_label: stringValue(parsed.display_label) ?? stringValue(data.display_label),
-    ts: stringValue(data.ts) ?? new Date().toISOString(),
-    cycle_id: stringValue(data.cycle_id),
-    bundle_hash: stringValue(data.bundle_hash),
-    parent_hash: stringValue(data.parent_hash),
-    child_hash: stringValue(data.child_hash),
-  };
-}
-
-function parseJsonObject(raw: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
