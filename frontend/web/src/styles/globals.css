@@ -309,6 +309,28 @@
       box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 30%, transparent);
     }
   }
+
+  /* Heat-cell shimmer for the optimizer live experiments×regimes heatmap
+     (LiveEvalHeatmap). A "testing" cell sweeps an info-blue gradient bar L→R
+     to read as actively backtesting. Ported from the Autoresearch.html mock
+     (`bar-flow`). Gated on reduced-motion. */
+  .xvn-heat-flow {
+    animation: xvn-heat-flow 2.4s ease-in-out infinite alternate;
+  }
+  @keyframes xvn-heat-flow {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(0%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .xvn-heat-flow {
+      animation: none;
+    }
+  }
 }
 
 /*

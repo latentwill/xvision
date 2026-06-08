@@ -23,10 +23,12 @@ import {
   cancelRunCycle,
   useLineageNodes,
   useCycleRuns,
+  useCycleRun,
   useCycleCost,
   type CycleRunSummary,
   autooptimizerKeys,
 } from "./api";
+import { LiveEvalHeatmap } from "./panels/LiveEvalHeatmap";
 import {
   clearStoredJudgeModel,
   clearStoredJudgeProvider,
@@ -568,42 +570,6 @@ function CycleLeftCard({
   );
 }
 
-// ─── Right column ─────────────────────────────────────────────────────────────
-
-function KeptNextCard({ nodes }: { nodes: LineageNode[] }) {
-  const kept = nodes.filter((n) => n.status === "active");
-  const recent = [...kept]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 3);
-  return (
-    <div className="rounded-md border border-border p-5 space-y-4">
-      <div>
-        <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium block">
-          Kept
-        </span>
-        <span className="font-mono text-3xl font-semibold text-gold">{kept.length}</span>
-        <p className="text-[12px] text-text-3 mt-1">experiments kept this week</p>
-      </div>
-      {recent.length > 0 && (
-        <div className="space-y-1.5">
-          {recent.map((n) => (
-            <div key={n.bundle_hash} className="flex items-center justify-between gap-2">
-              <span className="font-mono text-[11px] text-text-2">{n.bundle_hash.slice(0, 8)}</span>
-              <span className="text-[11px] text-text-3">{formatRelativeDate(n.created_at)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="border-t border-border pt-4">
-        <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium block">
-          Next
-        </span>
-        <p className="text-[13px] text-text-2 mt-1">No scheduled run</p>
-      </div>
-    </div>
-  );
-}
-
 // ─── Middle column ────────────────────────────────────────────────────────────
 
 function EventLogCard({ events, bottomRef }: { events: EventRow[]; bottomRef: RefObject<HTMLDivElement> }) {
@@ -889,6 +855,10 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
   const { events, connected, isRunning, activeCycleId } = useCycleEventStream();
   const bottomRef = useRef<HTMLDivElement>(null);
   const { data: lineageNodes = [] } = useLineageNodes();
+  // Active cycle's per-regime node detail feeds the live experiments×regimes
+  // heatmap. Polls via useCycleRun; cells flip to "done" as results land.
+  const { data: activeCycle } = useCycleRun(activeCycleId ?? undefined);
+  const heatmapNodes = activeCycle?.nodes ?? [];
 
   // Continuous loop state
   const loopConfigRef = useRef<LaunchConfig | null>(null);
@@ -1043,18 +1013,13 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
         )}
       </div>
       <LiveCostTicker activeCycleId={activeCycleId} isRunning={isRunning} />
-      <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr_260px] gap-6">
-        <CycleLeftCard
-          isRunning={isRunning}
-          loopActive={loopActive}
-          cyclesCompleted={cyclesCompleted}
-          cumulativeSpent={cumulativeSpent}
-          loopError={loopError}
-          onStartLoop={(config) => { void startLoop(config); }}
-          onStop={stopLoop}
-        />
+      {/* Zone 3 — 2-up live band: experiments×regimes heatmap (left) +
+          event feed (right). Replaces the old 3-col [300·1fr·260] grid; the
+          launch form now lives in the command-bar drawer (launchOnly) and the
+          Kept/Next rail folded into Zone 4. */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr] gap-6 items-stretch">
+        <LiveEvalHeatmap nodes={heatmapNodes} isRunning={isRunning} />
         <EventLogCard events={events} bottomRef={bottomRef} />
-        <KeptNextCard nodes={lineageNodes} />
       </div>
       {activeTab === "genealogy" && <ActiveLineagesSectionFull nodes={lineageNodes} />}
       {!embedded && (
