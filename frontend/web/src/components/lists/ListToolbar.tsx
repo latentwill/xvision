@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 
 import { Icon, type IconName } from "@/components/primitives/Icon";
 import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
@@ -7,9 +7,11 @@ import { ListActiveChips } from "./ListActiveChips";
 import {
   isFilterActive,
   type ActiveFilter,
+  type ColumnState,
   type ListSearchState,
   type ListSortState,
 } from "./useListState";
+import type { ListColumn } from "./ListCard";
 
 export type ListToolbarProps = {
   search?: ListSearchState;
@@ -21,6 +23,9 @@ export type ListToolbarProps = {
   showSort?: boolean;
   showActiveChips?: boolean;
   clearAll?: () => void;
+  columnState?: ColumnState;
+  columns?: ListColumn[];
+  autoHiddenKeys?: Set<string>;
 };
 
 export const ListToolbar = forwardRef<HTMLInputElement, ListToolbarProps>(
@@ -35,8 +40,20 @@ export const ListToolbar = forwardRef<HTMLInputElement, ListToolbarProps>(
       showSort = true,
       showActiveChips = true,
       clearAll,
+      columnState,
+      columns = [],
+      autoHiddenKeys = new Set(),
     } = props;
     const compact = density === "compact";
+
+    // Count hidden non-essential columns for the badge.
+    const hiddenCount = columnState
+      ? columns.filter(
+          (c) =>
+            !c.essential &&
+            (!columnState.visibleKeys.has(c.key) || autoHiddenKeys.has(c.key)),
+        ).length
+      : 0;
 
     return (
       <div className="flex flex-col gap-2.5">
@@ -82,6 +99,15 @@ export const ListToolbar = forwardRef<HTMLInputElement, ListToolbarProps>(
               onChange={sort.setValue}
             />
           )}
+          {columnState && columns.length > 0 && (
+            <ColumnPickerButton
+              columns={columns}
+              columnState={columnState}
+              autoHiddenKeys={autoHiddenKeys}
+              hiddenCount={hiddenCount}
+              compact={compact}
+            />
+          )}
           {actions && (
             <div className="ml-auto flex items-center gap-2">{actions}</div>
           )}
@@ -98,6 +124,114 @@ export const ListToolbar = forwardRef<HTMLInputElement, ListToolbarProps>(
     );
   },
 );
+
+function ColumnPickerButton({
+  columns,
+  columnState,
+  autoHiddenKeys,
+  hiddenCount,
+  compact,
+}: {
+  columns: ListColumn[];
+  columnState: ColumnState;
+  autoHiddenKeys: Set<string>;
+  hiddenCount: number;
+  compact: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  // Close on outside click.
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (
+        !panelRef.current?.contains(e.target as Node) &&
+        !btnRef.current?.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  // Columns available for the picker (all non-essential columns).
+  const pickableColumns = columns.filter((c) => !c.essential);
+
+  return (
+    <div className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={[
+          "inline-flex items-center gap-1.5 border rounded-sm cursor-pointer font-sans transition-colors",
+          compact ? "h-8 px-2 text-[12px]" : "h-8 px-2.5 text-[13px]",
+          open
+            ? "border-gold-soft bg-gold-bg text-text"
+            : "border-border bg-surface-elev text-text-2 hover:border-text-3 hover:text-text",
+        ].join(" ")}
+      >
+        <Icon name="list" size={12} className="shrink-0" />
+        Columns
+        {hiddenCount > 0 && (
+          <span className="inline-flex items-center justify-center h-4 min-w-[16px] px-1 rounded-sm bg-gold-bg border border-gold-soft text-gold font-mono text-[9px]">
+            {hiddenCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div
+          ref={panelRef}
+          className="absolute left-0 top-full mt-1 z-30 w-56 rounded-md border border-border bg-surface-panel shadow-[0_8px_24px_rgba(0,0,0,.5)] py-2"
+        >
+          <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-wider text-text-3">
+            Columns
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {pickableColumns.map((c) => {
+              const checked = columnState.visibleKeys.has(c.key);
+              const isAuto = autoHiddenKeys.has(c.key);
+              return (
+                <label
+                  key={c.key}
+                  className="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer hover:bg-surface-elev transition-colors"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => columnState.toggle(c.key)}
+                    className="accent-gold w-3.5 h-3.5 shrink-0"
+                  />
+                  <span className="flex-1 text-[12.5px] text-text-2">{c.label}</span>
+                  {isAuto && (
+                    <span className="text-[10px] font-mono text-text-4 italic">auto</span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+          <div className="border-t border-border mt-1 pt-1 px-3">
+            <button
+              type="button"
+              onClick={() => {
+                columnState.reset();
+                setOpen(false);
+              }}
+              className="w-full text-left text-[11px] text-text-3 hover:text-accent py-1 transition-colors"
+            >
+              Reset to defaults
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 type ListSearchProps = {
   value: string;

@@ -8,11 +8,13 @@ export {
   ResponsiveListCard,
   type ResponsiveListCardProps,
 } from "./ResponsiveListCard";
-export { useListState, LIST_STD_DEFAULT_SORT, isFilterActive } from "./useListState";
+export { useListState, useListColumns, LIST_STD_DEFAULT_SORT, isFilterActive } from "./useListState";
 export type {
   ActiveFilter,
+  ColumnState,
   FilterDef,
   FilterOption,
+  ListColumnMeta,
   ListSearchState,
   ListSortState,
   ListState,

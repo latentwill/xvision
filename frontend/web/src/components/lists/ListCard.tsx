@@ -1,13 +1,18 @@
-import { forwardRef, useEffect, useState } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { ListToolbar, type ListToolbarProps } from "./ListToolbar";
+import type { ColumnState } from "./useListState";
 
 export type ListColumn = {
   key: string;
   label: ReactNode;
   align?: "left" | "right" | "center";
   width?: number | string;
+  essential?: boolean;
+  defaultOff?: boolean;
+  priority?: number;
+  estWidth?: number;
 };
 
 export type ListCardProps<T> = {
@@ -18,6 +23,7 @@ export type ListCardProps<T> = {
   density?: "full" | "compact";
   toolbar?: Omit<ListToolbarProps, "density">;
   columns?: ListColumn[];
+  columnState?: ColumnState;
   rows: T[];
   renderRow: (row: T, index: number) => ReactNode;
   actions?: ReactNode;
@@ -42,6 +48,7 @@ export const ListCard = forwardRef(function ListCard<T>(
     density: densityProp = "full",
     toolbar,
     columns = [],
+    columnState,
     rows,
     renderRow,
     actions,
@@ -56,6 +63,72 @@ export const ListCard = forwardRef(function ListCard<T>(
 
   const density = useResolvedDensity(listId, densityProp);
   const compact = density === "compact";
+
+  // ── Column visibility ──────────────────────────────────────────────────────
+  const [autoHiddenKeys, setAutoHiddenKeys] = useState<Set<string>>(new Set());
+
+  const visibleColumns = columns.filter((c) => {
+    if (columnState && !columnState.visibleKeys.has(c.key)) return false;
+    if (autoHiddenKeys.has(c.key)) return false;
+    return true;
+  });
+
+  // ── Scroll affordance ──────────────────────────────────────────────────────
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(true);
+  const [overflowing, setOverflowing] = useState(false);
+
+  const updateScrollState = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const overflow = el.scrollWidth > el.clientWidth + 1;
+    setOverflowing(overflow);
+    setAtStart(el.scrollLeft <= 1);
+    setAtEnd(el.scrollLeft + el.clientWidth >= el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      updateScrollState();
+      // Auto-hide: drop non-essential columns by priority when overflowing.
+      if (!columnState) return;
+      const totalEst = columns
+        .filter((c) => columnState.visibleKeys.has(c.key))
+        .reduce((sum, c) => sum + (c.estWidth ?? 120), 0);
+      if (totalEst <= el.clientWidth) {
+        setAutoHiddenKeys(new Set());
+        return;
+      }
+      const candidates = columns
+        .filter((c) => !c.essential && columnState.visibleKeys.has(c.key))
+        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+      const hidden = new Set<string>();
+      let remaining = totalEst;
+      for (const c of candidates) {
+        if (remaining <= el.clientWidth) break;
+        hidden.add(c.key);
+        remaining -= c.estWidth ?? 120;
+      }
+      setAutoHiddenKeys(hidden);
+    });
+    ro.observe(el);
+    updateScrollState();
+    return () => ro.disconnect();
+  }, [columns, columnState, updateScrollState]);
+
+  const nudge = useCallback((dir: 1 | -1) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? ("instant" as ScrollBehavior)
+      : "smooth";
+    el.scrollBy({ left: dir * 240, behavior });
+  }, []);
+
+  const colSpan = Math.max(visibleColumns.length, 1);
 
   return (
     <div
@@ -91,55 +164,110 @@ export const ListCard = forwardRef(function ListCard<T>(
       )}
       {toolbar && (
         <div className={`px-5 ${compact ? "pt-1 pb-2.5" : "pt-1 pb-3.5"}`}>
-          <ListToolbar ref={searchRef} {...toolbar} density={density} />
+          <ListToolbar
+            ref={searchRef}
+            {...toolbar}
+            density={density}
+            columnState={columnState}
+            columns={columns}
+            autoHiddenKeys={autoHiddenKeys}
+          />
         </div>
       )}
-      <div className="border-t border-border-soft overflow-x-auto xvn-scroll">
-        <table className="w-full min-w-max border-collapse">
-          {columns.length > 0 && (
-            <thead>
-              <tr>
-                {columns.map((c, i) => (
-                  <th
-                    key={c.key}
-                    style={{
-                      textAlign: c.align ?? "left",
-                      width: c.width,
-                      paddingLeft: i === 0 ? 20 : undefined,
-                      paddingRight: i === columns.length - 1 ? 20 : undefined,
-                    }}
-                    className="font-mono text-[10.5px] uppercase tracking-wider text-text-3 py-2 border-b border-border-soft"
-                  >
-                    {c.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          )}
-          <tbody>
-            {loading ? (
-              <ListSkeleton
-                columnSpan={Math.max(columns.length, 1)}
-                compact={compact}
-              />
-            ) : error ? (
-              <ListErrorRow
-                columnSpan={Math.max(columns.length, 1)}
-                error={error}
-              />
-            ) : rows.length === 0 ? (
-              <ListEmptyRow
-                columnSpan={Math.max(columns.length, 1)}
-                message={empty ?? "No results."}
-                action={emptyAction}
-                compact={compact}
-              />
-            ) : (
-              rows.map((r, i) => renderRow(r, i))
+
+      {/* Scroll track with fade overlays and nudge arrows */}
+      <div className="relative border-t border-border-soft">
+        {/* Left fade */}
+        {overflowing && !atStart && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-0 top-0 bottom-0 w-12 z-10"
+            style={{ background: "linear-gradient(to right, var(--surface-card), transparent)" }}
+          />
+        )}
+        {/* Right fade */}
+        {overflowing && !atEnd && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute right-0 top-0 bottom-0 w-12 z-10"
+            style={{ background: "linear-gradient(to left, var(--surface-card), transparent)" }}
+          />
+        )}
+        {/* Left nudge */}
+        {overflowing && !atStart && (
+          <button
+            type="button"
+            aria-label="Scroll left"
+            onClick={() => nudge(-1)}
+            className="absolute left-1 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-sm border border-border bg-surface-panel text-text-3 hover:text-text hover:border-text-3 transition-colors"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+              <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        )}
+        {/* Right nudge */}
+        {overflowing && !atEnd && (
+          <button
+            type="button"
+            aria-label="Scroll right"
+            onClick={() => nudge(1)}
+            className="absolute right-1 top-1/2 -translate-y-1/2 z-20 flex h-6 w-6 items-center justify-center rounded-sm border border-border bg-surface-panel text-text-3 hover:text-text hover:border-text-3 transition-colors"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+              <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        )}
+
+        <div
+          ref={scrollRef}
+          className="overflow-x-auto xvn-scroll"
+          onScroll={updateScrollState}
+        >
+          <table className="w-full min-w-max border-collapse">
+            {visibleColumns.length > 0 && (
+              <thead>
+                <tr
+                  style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--surface-card)" }}
+                >
+                  {visibleColumns.map((c, i) => (
+                    <th
+                      key={c.key}
+                      style={{
+                        textAlign: c.align ?? "left",
+                        width: c.width,
+                        paddingLeft: i === 0 ? 20 : undefined,
+                        paddingRight: i === visibleColumns.length - 1 ? 20 : undefined,
+                      }}
+                      className="font-mono text-[10.5px] uppercase tracking-wider text-text-3 py-2 border-b border-border-soft"
+                    >
+                      {c.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
             )}
-          </tbody>
-        </table>
+            <tbody>
+              {loading ? (
+                <ListSkeleton columnSpan={colSpan} compact={compact} />
+              ) : error ? (
+                <ListErrorRow columnSpan={colSpan} error={error} />
+              ) : rows.length === 0 ? (
+                <ListEmptyRow
+                  columnSpan={colSpan}
+                  message={empty ?? "No results."}
+                  action={emptyAction}
+                  compact={compact}
+                />
+              ) : (
+                rows.map((r, i) => renderRow(r, i))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
+
       {footer != null && (
         <div className="px-5 py-2.5 border-t border-border-soft text-text-3 text-[12px] flex items-center justify-between">
           {footer}
@@ -158,10 +286,10 @@ function ListSkeleton({
   columnSpan: number;
   compact: boolean;
 }) {
-  const rows = compact ? 3 : 6;
+  const rowCount = compact ? 3 : 6;
   return (
     <>
-      {Array.from({ length: rows }).map((_, i) => (
+      {Array.from({ length: rowCount }).map((_, i) => (
         <tr key={i} aria-hidden>
           <td colSpan={columnSpan} className="px-5 py-3">
             <div className="h-4 w-full bg-surface-elev/80 rounded-sm animate-pulse" />

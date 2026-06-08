@@ -17,6 +17,7 @@ import {
 import {
   ResponsiveListCard,
   useListState,
+  useListColumns,
   useListUrlState,
   type FilterDef,
   type SortOption,
@@ -328,20 +329,21 @@ export function EvalRunsRoute() {
   const subtitle = subtitleFor(q, list.totalRows, list.rows.length);
 
   const desktopColumns = [
-    { key: "select", label: "", width: 32 },
-    { key: "run", label: "Run" },
-    { key: "strategy", label: "Strategy" },
-    { key: "scenario", label: "Scenario" },
-    { key: "mode", label: "Mode" },
-    { key: "status", label: "Status" },
-    { key: "sharpe", label: "Sharpe", align: "right" as const },
-    { key: "drawdown", label: "Max DD", align: "right" as const },
-    { key: "return", label: "Return", align: "right" as const },
-    { key: "tokens", label: "Tokens", align: "right" as const },
-    { key: "duration", label: "Duration", align: "right" as const },
-    { key: "started", label: "Started" },
-    { key: "actions", label: "" },
+    { key: "select",   label: "",          width: 32,    essential: true,  estWidth: 42 },
+    { key: "run",      label: "Run",                     essential: true,  estWidth: 210 },
+    { key: "strategy", label: "Strategy",                essential: true,  estWidth: 160 },
+    { key: "scenario", label: "Scenario",                essential: true,  estWidth: 150 },
+    { key: "status",   label: "Status",                  essential: true,  estWidth: 100 },
+    { key: "return",   label: "Return",  align: "right" as const, priority: 6, estWidth: 90 },
+    { key: "sharpe",   label: "Sharpe",  align: "right" as const, priority: 5, estWidth: 90 },
+    { key: "drawdown", label: "Max DD",  align: "right" as const, priority: 4, estWidth: 90 },
+    { key: "mode",     label: "Mode",                    priority: 3,      estWidth: 90 },
+    { key: "tokens",   label: "Tokens",  align: "right" as const, priority: 2, estWidth: 80 },
+    { key: "duration", label: "Duration",align: "right" as const, priority: 1, estWidth: 90 },
+    { key: "started",  label: "Started",                 priority: 0,      estWidth: 130 },
+    { key: "actions",  label: "",                        essential: true,  estWidth: 80 },
   ];
+  const columnState = useListColumns("eval-runs", desktopColumns);
 
   return (
     <>
@@ -386,6 +388,7 @@ export function EvalRunsRoute() {
           clearAll: list.clearAll,
         }}
         columns={desktopColumns}
+        columnState={columnState}
         rows={list.rows}
         loading={q.isPending}
         error={
