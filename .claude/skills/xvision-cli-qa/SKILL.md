@@ -353,6 +353,30 @@ Always save:
 - **Likely cause:**
 - **Recommendation:**
 
+## Indicator warmup requirements
+
+Some indicators require more history than the standard warmup. Check before running evals:
+
+| Indicator | Required warmup | Notes |
+|---|---|---|
+| `rvol_tod_N` | N × bars_per_day same-slot bars | For 15m: N×96; for 1h: N×24 |
+| `highest_N` / `lowest_N` | N bars | May include current bar (verify runtime behavior) |
+| `opening_range_high_30` | Requires market-open alignment | Fine for US equity 15m |
+
+**Example:** `rvol_tod_20` on a 15m strategy needs 20×96=1920 bars of same-slot history. A 14-day 15m scenario has ~1344 bars — insufficient. Use `volume_zscore_20` instead (20-bar warmup only).
+
+Run `xvn eval validate` against a scenario before launching — it prints warmup warnings.
+
+## Prompt-level regime gates are unreliable
+
+Qwen3-4B and similar models regularly ignore soft rules in the presence of concrete indicator values. Example: "if adx_14 > 25, output FLAT" was overridden ~33% of the time during eval sessions.
+
+**Rule:** Regime gating MUST be in the filter DSL (deterministic) to be reliable. Prompt-only gates are advisory at best.
+
+## Eval chain race condition
+
+If a chain script is killed by PID, the background subprocess may continue running — launching duplicate evals. See the xvision-cli skill for the process group kill pattern. Always check `pgrep -f eval_chain` before starting a new chain.
+
 ## References
 
 See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload shapes, and failure messages observed during QA.
@@ -362,5 +386,5 @@ See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload
 *Skills owner: any track that adds or changes an `/api/*` route, the
 corresponding `xvn` verb, Filter DSL contract, or a QA-critical operator
 workflow is responsible for updating this file in the same PR. Last
-refresh: 2026-06-01 (safe agent eval path, execution-mode QA labels,
-no-agent mechanical distinction).*
+refresh: 2026-06-08 (indicator warmup table, prompt-gate reliability note,
+eval chain race condition).*
