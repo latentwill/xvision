@@ -287,32 +287,74 @@ For the optimizer redesign: **do not introduce chart2 tokens** into optimizer ch
 
 ---
 
-### C3 · Accent Explorer — ship one non-green accent
+### C3 · Accent color picker in Settings
 
 **Source:** `DesignImprovementSweep/XVN Accent Explorer (standalone).html`  
-**Effort:** ~½ day once decision made  
-**Status:** blocked on user decision
+**Effort:** ~1 day  
+**Status:** ready (decision made: user-selectable in settings)  
+**Dependencies:** A5
 
-**Finding (from B1/B7):** `--accent`/`--on-accent` are already architecturally split from `--gold` (interactive vs signal/running). A5 makes the Tailwind utilities available. The Accent Explorer is the move to repoint `--accent` off green so green/red read strictly as money.
+**Presets (from the Explorer):**
 
-**Decision needed:** Pick one preset, or defer.
+| Key | Dark | Light | Character |
+|---|---|---|---|
+| `green` | `#00e676` | `#00A15C` | Current default (keep as option) |
+| `azure` | `#3B82F6` | `#2563EB` | Classic interactive blue |
+| `cyan` | `#22D3EE` | `#0E96B3` | Electric, data-signal |
+| `teal` | `#14C8AE` | `#0D9488` | Calm blue-green |
+| `amber` | `#F5A524` | `#B7770C` | Warm, premium |
+| `magenta` | `#D946EF` | `#A21CAF` | Bold, distinctive |
+| `mono` | `#9ca3af` | `#6b7280` | Off-white, minimal |
 
-| Option | What it means |
-|---|---|
-| **Azure** (#3B82F6 dark / #2563EB light) | "Classic, trustworthy, interactive." Safe non-green default. |
-| **Cyan** (#22D3EE dark / #0E96B3 light) | Electric, data-signal feel. |
-| **Teal** (#14C8AE dark / #0D9488 light) | Calm blue-green. Distinct from gain-green if gains stay brighter/warmer. |
-| **Amber** (#F5A524 dark / #B7770C light) | Warm, premium. |
-| **Magenta** | Bold, distinctive. |
-| **Mono** | Off-white/grey accent. Minimal. |
-| **Defer** | Keep green for now; `--accent` stays `#00e676`. A5 still lands (no visual change). |
+Each preset also needs an `--on-accent` (text on the accent background): dark presets use `#000000`; light presets use `#ffffff`. Exception: `mono` light uses `#000000`.
 
-**Recommendation:** Ship one preset (Azure is the safest non-green default) as a standalone, app-wide change. Do not couple to the optimizer redesign. The optimizer should bind to `--accent` (from A3/A5), so it inherits whatever you pick automatically.
+**Implementation:**
 
-**Implementation (once decided):**
-- Update `--accent` / `--on-accent` values in `tokens.css` (`:root` dark + `[data-theme="light"]`)
-- Update matching values in `theme/themes.ts` `SIGNAL_DARK` / `SIGNAL_LIGHT` so ThemeProvider stays in sync
-- Visual QA: every `bg-accent` / `text-accent` surface in the app
+**1. `frontend/web/src/theme/themes.ts`** — add:
+```ts
+export const ACCENT_PREFERENCE_KEY = "xvn.accent.preference";
+export type AccentKey = "green" | "azure" | "cyan" | "teal" | "amber" | "magenta" | "mono";
+export const ACCENT_PRESETS: Record<AccentKey, { dark: string; light: string; onAccentDark: string; onAccentLight: string; label: string }> = { /* table above */ };
+export function coerceAccentPreference(raw: string | null): AccentKey { /* default "green" */ }
+```
+
+**2. New `frontend/web/src/theme/useAccent.ts`** — mirrors `useTheme.ts` pattern exactly:
+- Module-level snapshot + `useSyncExternalStore`
+- `safeStorageGet/Set(ACCENT_PREFERENCE_KEY, ...)`
+- Exports `useAccent()` → `{ accentKey, setAccent }`
+
+**3. `frontend/web/src/theme/ThemeProvider.tsx`** — extend `useEffect` to also write accent vars:
+```ts
+const { accentKey } = useAccent();
+// inside useEffect:
+const preset = ACCENT_PRESETS[accentKey];
+const isDark = definition.mode === "dark";
+root.style.setProperty("--accent", isDark ? preset.dark : preset.light);
+root.style.setProperty("--on-accent", isDark ? preset.onAccentDark : preset.onAccentLight);
+```
+Add `accentKey` and `definition.mode` to the `useEffect` deps array.
+
+**4. `frontend/web/src/routes/settings/general.tsx`** — add accent row below the existing theme toggle:
+- Section label: "Accent color"
+- Render one swatch button per preset key: filled circle (`w-5 h-5 rounded-full`) in the preset's dark color + label below
+- Selected state: `ring-2 ring-offset-2 ring-border-strong`
+- On click: `setAccent(key)`
+- No popup, no sheet — inline row of swatches, same pattern as the theme radio group
+
+**Target files:**
+- `frontend/web/src/theme/themes.ts`
+- New: `frontend/web/src/theme/useAccent.ts`
+- `frontend/web/src/theme/ThemeProvider.tsx`
+- `frontend/web/src/routes/settings/general.tsx`
+
+**Acceptance criteria:**
+- [ ] Accent swatches visible in Settings → General, below theme toggle
+- [ ] Selecting a swatch updates `--accent`/`--on-accent` immediately (no page reload)
+- [ ] Selection persists across reload (localStorage)
+- [ ] Both dark and light themes use the correct per-theme color value
+- [ ] Default is `green` (no visual regression for existing users)
+- [ ] All existing `bg-accent`/`text-accent`/`text-on-accent` usages pick up the new color
+- [ ] `--gold` (running state, kept counts) is visually unaffected
 
 ---
 
@@ -328,7 +370,7 @@ For the optimizer redesign: **do not introduce chart2 tokens** into optimizer ch
 | A6 | Extract useCycleEventStream hook | Small | ~½d | — | ready |
 | C1 | Optimizer 3-zone layout redesign | Large | ~1 week | A3+A5+A6 | ready to spec |
 | C2 | Chart craft: dashboard chart upgrade | Medium | ~1–2d | — | blocked (surface ID) |
-| C3 | Accent: ship one non-green preset | Medium | ~½d | A5 | blocked (decision) |
+| C3 | Accent color picker in Settings | Medium | ~1d | A5 | ready |
 
 **Recommended execution order:**
 1. **No-risk, parallel:** A1, A4, A5
