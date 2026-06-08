@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import { Pill } from "@/components/primitives/Pill";
@@ -58,9 +58,23 @@ function formatRelativeTime(iso?: string): string {
   }
 }
 
-// ─── Status hero ──────────────────────────────────────────────────────────────
+// ─── Command bar (Zone 1) ─────────────────────────────────────────────────────
 
-function StatusHero() {
+/**
+ * Full-width command bar at the top of the Optimizer page.
+ * Shows optimizer state, active-run identity, and a single contextual
+ * primary action: Launch run (idle) | Pause + Cancel (running) |
+ * Resume + Cancel (paused).
+ *
+ * `onLaunchToggle` lets the parent show/hide the inline launch panel.
+ */
+function CommandBar({
+  launcherOpen,
+  onLaunchToggle,
+}: {
+  launcherOpen: boolean;
+  onLaunchToggle: () => void;
+}) {
   const status = useOptimizerStatus();
   const session = status?.active_session ?? null;
   const state = session?.state ?? "idle";
@@ -75,42 +89,54 @@ function StatusHero() {
 
   return (
     <div className="rounded-md border border-border bg-surface-card px-5 py-4 space-y-3">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
-            <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium">
-              Optimizer
-            </span>
-            <StatePill state={state} />
-          </div>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        {/* Left group: state pill + identity */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <StatePill state={state} />
           {isActive && session ? (
-            <h2 className="text-lg font-semibold tracking-tight text-text">
-              Run {session.session_id.slice(0, 8)} · {session.strategy_id} ·{" "}
+            <span className="font-mono text-[12px] text-text-2">
+              {session.session_id.slice(0, 8)}
+              <span className="text-text-4 mx-1">·</span>
+              {session.strategy_id}
+              <span className="text-text-4 mx-1">·</span>
               {modeLabel(session.mode)}
-            </h2>
+            </span>
           ) : (
-            <h2 className="text-lg font-semibold tracking-tight text-text-3">
-              No run in progress
-            </h2>
+            <span className="text-[13px] text-text-3">No run in progress</span>
           )}
           {isActive && session && (
-            <p className="font-mono text-[11.5px] text-text-3">
+            <span className="font-mono text-[11px] text-text-3">
               {session.cycles_completed} cycles · {session.kept_count} kept ·{" "}
-              {session.suspect_count} suspect · {session.dropped_count} dropped
-            </p>
+              {session.suspect_count} suspect
+            </span>
           )}
         </div>
+
+        {/* Right group: single primary action */}
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          {/* "Watch live →" appears for running, paused, and cancelling states */}
           {isActive && session && (
             <Link
               to={`/optimizer/run/${session.session_id}`}
-              className="text-[13px] text-accent hover:underline"
+              className="text-[13px] text-accent hover:underline mr-1"
             >
               Watch live →
             </Link>
           )}
-          {/* Action buttons only for running (Pause + Cancel) and paused (Resume + Cancel) */}
+          {!isActive && (
+            <button
+              type="button"
+              onClick={onLaunchToggle}
+              aria-expanded={launcherOpen}
+              className={[
+                "rounded px-3 py-1.5 text-[13px] font-medium transition-colors",
+                launcherOpen
+                  ? "bg-surface-panel border border-border text-text-2"
+                  : "bg-accent text-on-accent hover:opacity-90",
+              ].join(" ")}
+            >
+              {launcherOpen ? "Hide launcher" : "Launch run"}
+            </button>
+          )}
           {isRunning && session && (
             <>
               <button
@@ -153,6 +179,8 @@ function StatusHero() {
           )}
         </div>
       </div>
+
+      {/* Phase spine: visible when running */}
       {isRunning && (
         <PhaseStepper currentPhase={null} completedPhases={[]} />
       )}
@@ -245,38 +273,49 @@ function ImprovementChartsSection() {
 // ─── Page root ────────────────────────────────────────────────────────────────
 
 export function OptimizerHome() {
+  const [launcherOpen, setLauncherOpen] = useState(false);
   const status = useOptimizerStatus();
   const sessionState = status?.active_session?.state ?? "idle";
-  const isActive = sessionState === "running" || sessionState === "paused" || sessionState === "cancelling";
+  const isActive =
+    sessionState === "running" ||
+    sessionState === "paused" ||
+    sessionState === "cancelling";
+
+  // Close launcher when a run becomes active.
+  useEffect(() => {
+    if (isActive) setLauncherOpen(false);
+  }, [isActive]);
 
   return (
     <>
       <Topbar title="Optimizer" sub="Tonight's run, experiment writers, and recent cycles" />
       <div className="space-y-5">
-        {/* Server-driven status hero (P1) */}
-        <StatusHero />
+        {/* Zone 1: Command bar */}
+        <CommandBar
+          launcherOpen={launcherOpen && !isActive}
+          onLaunchToggle={() => setLauncherOpen((v) => !v)}
+        />
 
-        {/* Configure strip — shown when idle (P4) */}
+        {/* Zone 5: Inline launch panel (Phase 2a — wraps existing LiveCycleView form) */}
+        {launcherOpen && !isActive && <LiveCycleView embedded />}
 
-        {/* Scheduled run config strip (P5-W3) */}
-        <ScheduleStrip />
+        {/* Scheduled run config strip — only when launcher is closed */}
+        {!launcherOpen && <ScheduleStrip />}
 
-        {/* Improvement chart + outcome mix toggle (P3-W3) */}
+        {/* Improvement chart + outcome mix toggle */}
         <ImprovementChartsSection />
 
-        {/* DSPy flywheel progress strip (P3-W4) — hidden when dspy_enabled=false */}
+        {/* DSPy flywheel progress strip — hidden when dspy_enabled=false */}
         <FlywheelStrip />
 
-        {/* Cycle runner + live events — only shown when optimizer is idle.
-            When active, the StatusHero "Watch live →" link leads to RunDetail
-            for per-cycle observability. Hiding it when active prevents the
-            confusing dual-status display (optimizer state + eval SSE state). */}
-        {!isActive && <LiveCycleView embedded />}
+        {/* Cycle runner + live events — only when idle (Level-2 IA fix: no dual
+            status display when active). Use "Watch live →" from the command bar. */}
+        {!isActive && !launcherOpen && <LiveCycleView embedded />}
 
         <ExperimentWritersPanel />
         <RecentCyclesTable />
 
-        {/* Recent session runs list linking to /optimizer/run/:id */}
+        {/* Recent session runs list */}
         <RecentSessionsList />
       </div>
     </>
