@@ -40,7 +40,7 @@ describe("BrowseRoute", () => {
   it("renders at least one GenArtPlaceholder thumb", async () => {
     const { container } = render(<BrowseRoute />, { wrapper: Wrapper });
     await waitFor(() => {
-      expect(container.querySelectorAll('[data-genart="placeholder"]').length).toBeGreaterThan(0);
+      expect(container.querySelectorAll('[data-genart="bitfields-v2"]').length).toBeGreaterThan(0);
     });
   });
 

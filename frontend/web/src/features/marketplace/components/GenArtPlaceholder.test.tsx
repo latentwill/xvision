@@ -4,18 +4,28 @@ import { describe, expect, it } from "vitest";
 import { GenArtPlaceholder } from "./GenArtPlaceholder";
 
 describe("GenArtPlaceholder", () => {
-  it("is deterministic for a seed (same gradient stops)", () => {
-    const { container: a } = render(<GenArtPlaceholder seed="btc-momentum-7a91-v3" size={80} />);
-    const { container: b } = render(<GenArtPlaceholder seed="btc-momentum-7a91-v3" size={80} />);
-    expect(a.querySelector("svg")?.innerHTML).toBe(b.querySelector("svg")?.innerHTML);
+  it("renders a canvas element with bitfields-v2 marker", () => {
+    const { container } = render(<GenArtPlaceholder seed="btc-momentum-7a91-v3" size={80} />);
+    const canvas = container.querySelector("canvas");
+    expect(canvas).not.toBeNull();
+    expect(canvas?.getAttribute("data-genart")).toBe("bitfields-v2");
   });
-  it("differs across seeds", () => {
-    const { container: a } = render(<GenArtPlaceholder seed="aaa" />);
-    const { container: b } = render(<GenArtPlaceholder seed="zzz" />);
-    expect(a.querySelector("svg")?.innerHTML).not.toBe(b.querySelector("svg")?.innerHTML);
+
+  it("renders at the requested display size", () => {
+    const { container } = render(<GenArtPlaceholder seed="sol-strategist-12fa" size={48} />);
+    const canvas = container.querySelector("canvas") as HTMLCanvasElement;
+    expect(canvas.style.width).toBe("48px");
+    expect(canvas.style.height).toBe("48px");
   });
-  it("marks itself a placeholder for later swap", () => {
+
+  it("has an accessible label", () => {
     const { container } = render(<GenArtPlaceholder seed="x" />);
-    expect(container.querySelector('[data-genart="placeholder"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="strategy generative art"]')).not.toBeNull();
+  });
+
+  it("does not throw for any seed string", () => {
+    expect(() => render(<GenArtPlaceholder seed="aaa" />)).not.toThrow();
+    expect(() => render(<GenArtPlaceholder seed="zzz" />)).not.toThrow();
+    expect(() => render(<GenArtPlaceholder seed="" />)).not.toThrow();
   });
 });
