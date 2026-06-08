@@ -1,7 +1,6 @@
 //! xvision-eval — backtest simulator + baselines + Δ-Sharpe evaluation.
 //! See implementation-plan.md §6.4 (sim), §7 (baselines), §8 (eval framework).
 
-// pub mod ab_compare;
 pub mod algorithm;
 pub mod backtest;
 pub mod baselines;
