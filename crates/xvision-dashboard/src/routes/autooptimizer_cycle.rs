@@ -135,11 +135,12 @@ pub async fn start_cycle(
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let judge_provider = body.judge_provider.unwrap_or_else(|| mutator_provider.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| mutator_model.clone());
-    let raw_mutator_dispatch = build_autooptimizer_dispatch(&mutator_provider, &state.xvn_home).await?;
+    let raw_mutator_dispatch =
+        build_autooptimizer_dispatch(&mutator_provider, &mutator_model, &state.xvn_home).await?;
     let raw_judge_dispatch = if judge_provider == mutator_provider {
         Arc::clone(&raw_mutator_dispatch)
     } else {
-        build_autooptimizer_dispatch(&judge_provider, &state.xvn_home).await?
+        build_autooptimizer_dispatch(&judge_provider, &judge_model, &state.xvn_home).await?
     };
 
     // F11/F23/F26: one shared meter for the whole cycle — tokens, realized cost,
@@ -508,6 +509,7 @@ fn load_optimizer_config_with_path() -> Result<(AutoOptimizerConfig, std::path::
 
 pub(super) async fn build_autooptimizer_dispatch(
     provider: &str,
+    model: &str,
     xvn_home: &std::path::Path,
 ) -> Result<Arc<dyn LlmDispatch + Send + Sync>, DashboardError> {
     let config_path = xvision_core::config::runtime_config_path(xvn_home);
@@ -524,6 +526,15 @@ pub(super) async fn build_autooptimizer_dispatch(
             field: "provider".into(),
             msg: format!("autooptimizer provider '{provider_name}' not configured in Settings → Providers"),
         })?;
+    if !entry.enabled_models.is_empty() && !entry.enabled_models.iter().any(|m| m == model) {
+        return Err(DashboardError::Validation {
+            field: "model".into(),
+            msg: format!(
+                "model '{model}' is not in the enabled_models allowlist for provider \
+                 '{provider_name}'; update the allowlist in Settings → Providers"
+            ),
+        });
+    }
     let api_key = if entry.api_key_env.is_empty() {
         String::new()
     } else {
