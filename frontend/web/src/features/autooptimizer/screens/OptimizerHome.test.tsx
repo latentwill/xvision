@@ -197,6 +197,37 @@ describe("OptimizerHome — FlywheelStrip integration", () => {
     expect(await screen.findByText(/Observations toward next prompt compile/i)).toBeInTheDocument();
   });
 
+  it("renders the Zone 4 outcome strip from the active session counts", async () => {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+
+    renderWithProviders(<OptimizerHome />);
+
+    expect(await screen.findByText("Kept")).toBeInTheDocument();
+    expect(screen.getByText("Suspect")).toBeInTheDocument();
+    expect(screen.getByText("Dropped")).toBeInTheDocument();
+    // dropped_count = 2 in the running fixture
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("hides the outcome strip when there is no active session", async () => {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+
+    renderWithProviders(<OptimizerHome />);
+
+    await screen.findByText("Idle");
+    expect(screen.queryByText("Suspect")).toBeNull();
+  });
+
   it("does not render FlywheelStrip when useFlywheel returns enabled=false", async () => {
     vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
     vi.spyOn(apiModule, "useSessionList").mockReturnValue({
