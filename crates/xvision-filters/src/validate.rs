@@ -46,7 +46,7 @@ pub fn validate(filter: &Filter) -> Result<(), ValidationError> {
 
     // Per-condition rules: 1, 2, 3, 4, 5, 6.
     let variant = filter.conditions.variant_name();
-    for (idx, cond) in filter.conditions.conditions().iter().enumerate() {
+    for (idx, cond) in filter.conditions.leaves_dfs().iter().enumerate() {
         let base = format!("/conditions/{}/{}", variant, idx);
         validate_condition(cond, &base)?;
     }
@@ -114,7 +114,7 @@ fn validate_cooldown(_filter: &Filter) -> Result<(), ValidationError> {
 
 fn validate_condition_tree_non_empty(tree: &ConditionTree) -> Result<(), ValidationError> {
     let variant = tree.variant_name();
-    if tree.conditions().is_empty() {
+    if tree.leaf_count() == 0 {
         return Err(ValidationError::EmptyTree {
             path: format!("/conditions/{}", variant),
             detail: format!("condition tree '{}' must contain at least one condition", variant),

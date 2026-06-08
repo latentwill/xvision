@@ -109,7 +109,7 @@ pub struct ConditionResult {
 #[derive(Debug, Clone)]
 pub struct FilterEvalOutcome {
     pub decision: ActivationDecision,
-    /// Per-condition boolean (index aligns with `conditions.conditions()`).
+    /// Per-condition boolean (index aligns with `conditions.leaves_dfs()`).
     /// Empty during warmup.
     pub conditions_passed: Vec<ConditionResult>,
     /// True iff the tree itself evaluated to true on this bar (ignoring
@@ -192,15 +192,15 @@ impl<'f> RuntimeFilter<'f> {
         }
 
         // Evaluate every condition leaf using the current indicator values.
-        let leaves = self.filter.conditions.conditions();
+        let leaves = self.filter.conditions.leaves_dfs();
         let mut results: Vec<ConditionResult> = Vec::with_capacity(leaves.len());
         let mut current_pairs: Vec<Option<(f64, f64)>> = Vec::with_capacity(leaves.len());
 
         for (i, cond) in leaves.iter().enumerate() {
             let prev_pair = state.prev_numeric_pairs.get(i).copied().unwrap_or(None);
-            let current_pair = numeric_pair(cond, &state.indicators);
+            let current_pair = numeric_pair(*cond, &state.indicators);
             let (passed, raw_signal) = eval_condition(
-                cond,
+                *cond,
                 prev_pair,
                 current_pair,
                 state.numeric_pair_history.get(i),
@@ -621,8 +621,8 @@ mod bridge_tests {
 mod tests {
     use super::*;
     use crate::types::{
-        AgentContextTemplateId, FilterId, FilterStatus, IndicatorName, ScanCadence, StrategyId, Symbol,
-        Timeframe,
+        AgentContextTemplateId, ConditionItem, FilterId, FilterStatus, IndicatorName, ScanCadence,
+        StrategyId, Symbol, Timeframe,
     };
     use chrono::TimeZone;
 
@@ -660,20 +660,20 @@ mod tests {
     }
 
     fn close_gt_threshold(threshold: f64) -> Filter {
-        let tree = ConditionTree::All(vec![Condition {
+        let tree = ConditionTree::All(vec![ConditionItem::Leaf(Condition {
             lhs: Operand::Indicator(IndicatorRef::close()),
             op: Operator::Gt,
             rhs: Operand::Numeric(threshold),
-        }]);
+        })]);
         mk_filter(tree, 0, None)
     }
 
     fn close_op_threshold(op: Operator, threshold: f64) -> Filter {
-        let tree = ConditionTree::All(vec![Condition {
+        let tree = ConditionTree::All(vec![ConditionItem::Leaf(Condition {
             lhs: Operand::Indicator(IndicatorRef::close()),
             op,
             rhs: Operand::Numeric(threshold),
-        }]);
+        })]);
         mk_filter(tree, 0, None)
     }
 
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn crossed_above_remains_true_inside_recent_window() {
-        let tree = ConditionTree::All(vec![Condition {
+        let tree = ConditionTree::All(vec![ConditionItem::Leaf(Condition {
             lhs: Operand::Indicator(IndicatorRef::close()),
             op: Operator::CrossedAbove(3),
             rhs: Operand::Indicator(IndicatorRef {
@@ -740,7 +740,7 @@ mod tests {
                 period: None,
                 bar_offset: None,
             }),
-        }]);
+        })]);
         let f = mk_filter(tree, 0, None);
         let rt = RuntimeFilter::new(&f).unwrap();
         let mut state = rt.fresh_state();
@@ -805,7 +805,7 @@ mod tests {
 
     #[test]
     fn within_pct_compares_distance_to_rhs() {
-        let tree = ConditionTree::All(vec![Condition {
+        let tree = ConditionTree::All(vec![ConditionItem::Leaf(Condition {
             lhs: Operand::Indicator(IndicatorRef::close()),
             op: Operator::WithinPct(1.0),
             rhs: Operand::Indicator(IndicatorRef {
@@ -813,7 +813,7 @@ mod tests {
                 period: None,
                 bar_offset: None,
             }),
-        }]);
+        })]);
         let f = mk_filter(tree, 0, None);
         let rt = RuntimeFilter::new(&f).unwrap();
         let mut state = rt.fresh_state();
@@ -837,11 +837,11 @@ mod tests {
     #[test]
     fn cooldown_suppresses_re_trip() {
         let f = mk_filter(
-            ConditionTree::All(vec![Condition {
+            ConditionTree::All(vec![ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::close()),
                 op: Operator::Gt,
                 rhs: Operand::Numeric(50.0),
-            }]),
+            })]),
             2,
             None,
         );
@@ -862,11 +862,11 @@ mod tests {
     #[test]
     fn crosses_above_fires_once_on_actual_numeric_cross() {
         let f = mk_filter(
-            ConditionTree::All(vec![Condition {
+            ConditionTree::All(vec![ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::close()),
                 op: Operator::CrossesAbove,
                 rhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Sma, 2)),
-            }]),
+            })]),
             0,
             None,
         );
@@ -894,11 +894,11 @@ mod tests {
         // `close crosses_above 50` — rhs is a constant. Passes validation
         // and the runtime evaluates prev_close <= 50 && close > 50.
         let f = mk_filter(
-            ConditionTree::All(vec![Condition {
+            ConditionTree::All(vec![ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::close()),
                 op: Operator::CrossesAbove,
                 rhs: Operand::Numeric(50.0),
-            }]),
+            })]),
             0,
             None,
         );
@@ -928,11 +928,11 @@ mod tests {
     #[test]
     fn crosses_below_numeric_threshold_fires_on_cross() {
         let f = mk_filter(
-            ConditionTree::All(vec![Condition {
+            ConditionTree::All(vec![ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::close()),
                 op: Operator::CrossesBelow,
                 rhs: Operand::Numeric(70.0),
-            }]),
+            })]),
             0,
             None,
         );
@@ -952,11 +952,11 @@ mod tests {
     #[test]
     fn capped_for_day_blocks_extra_trips() {
         let f = mk_filter(
-            ConditionTree::All(vec![Condition {
+            ConditionTree::All(vec![ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::close()),
                 op: Operator::Gt,
                 rhs: Operand::Numeric(50.0),
-            }]),
+            })]),
             0,
             Some(1),
         );
@@ -976,11 +976,11 @@ mod tests {
     #[test]
     fn capped_for_day_stays_capped_while_tree_stays_true() {
         let f = mk_filter(
-            ConditionTree::All(vec![Condition {
+            ConditionTree::All(vec![ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::close()),
                 op: Operator::Gt,
                 rhs: Operand::Numeric(50.0),
-            }]),
+            })]),
             0,
             Some(1),
         );
@@ -1192,11 +1192,11 @@ mod tests {
     fn crosses_above_fires_on_transition() {
         // close crosses_above ema_3 — uses two indicators so the
         // condition can genuinely flip false → true.
-        let tree = ConditionTree::All(vec![Condition {
+        let tree = ConditionTree::All(vec![ConditionItem::Leaf(Condition {
             lhs: Operand::Indicator(IndicatorRef::close()),
             op: Operator::CrossesAbove,
             rhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Ema, 3)),
-        }]);
+        })]);
         let f = mk_filter(tree, 0, None);
         let rt = RuntimeFilter::new(&f).unwrap();
         let mut state = rt.fresh_state();

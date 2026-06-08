@@ -7,7 +7,7 @@ import type { IndicatorName } from "./IndicatorName";
  */
 export type IndicatorRef = { name: IndicatorName, 
 /**
- * `None` only when `name == Close`. Validator enforces this.
+ * `None` only when `name` is periodless. Validator enforces this.
  */
 period: number | null, 
 /**

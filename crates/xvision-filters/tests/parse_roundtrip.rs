@@ -4,8 +4,8 @@
 
 use pretty_assertions::assert_eq;
 use xvision_filters::{
-    parse_json, parse_toml, validate, ActivationMode, Condition, ConditionTree, Filter, FilterStatus,
-    IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, WakeInPosition,
+    parse_json, parse_toml, validate, ActivationMode, Condition, ConditionItem, ConditionTree, Filter,
+    FilterStatus, IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, WakeInPosition,
     DEFAULT_AGENT_CONTEXT_TEMPLATE,
 };
 
@@ -23,26 +23,26 @@ fn expected_spec_filter() -> Filter {
         timeframe: "1h".into(),
         scan_cadence: ScanCadence::BarClose,
         conditions: ConditionTree::All(vec![
-            Condition {
+            ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Ema, 20)),
                 op: Operator::Gt,
                 rhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Ema, 50)),
-            },
-            Condition {
+            }),
+            ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::close()),
                 op: Operator::CrossesAbove,
                 rhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Ema, 20)),
-            },
-            Condition {
+            }),
+            ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Rsi, 14)),
                 op: Operator::Between,
                 rhs: Operand::Range(50.0, 70.0),
-            },
-            Condition {
+            }),
+            ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::AtrPct, 14)),
                 op: Operator::Gt,
                 rhs: Operand::Numeric(0.6),
-            },
+            }),
         ]),
         fire: None,
         cooldown_bars: 3,
@@ -457,7 +457,7 @@ fn common_operator_aliases_parse_to_canonical_operators() {
         );
         let f =
             parse_toml(&toml_doc).unwrap_or_else(|e| panic!("parse failed for operator alias {alias}: {e}"));
-        assert_eq!(f.conditions.conditions()[0].op, expected);
+        assert_eq!(f.conditions.leaves_dfs()[0].op, expected);
         validate(&f).unwrap_or_else(|e| panic!("validate failed for operator alias {alias}: {e}"));
     }
 }

@@ -13,8 +13,8 @@
 //!   Both layers share the wire code in the contract.
 
 use xvision_filters::{
-    parse_toml, validate, Condition, ConditionTree, Filter, IndicatorName, IndicatorRef, Operand, Operator,
-    ParseError, ValidationError, WakeInPosition,
+    parse_toml, validate, Condition, ConditionItem, ConditionTree, Filter, IndicatorName, IndicatorRef,
+    Operand, Operator, ParseError, ValidationError, WakeInPosition,
 };
 
 // ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ fn base_filter(conditions: ConditionTree) -> Filter {
 }
 
 fn one_cond(lhs: Operand, op: Operator, rhs: Operand) -> ConditionTree {
-    ConditionTree::All(vec![Condition { lhs, op, rhs }])
+    ConditionTree::All(vec![ConditionItem::Leaf(Condition { lhs, op, rhs })])
 }
 
 fn ind(name: IndicatorName, period: u32) -> Operand {
