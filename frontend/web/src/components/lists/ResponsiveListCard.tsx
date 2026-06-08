@@ -7,6 +7,7 @@ import { ListCard, type ListColumn } from "./ListCard";
 import { MListCard } from "./MListCard";
 import type {
   ActiveFilter,
+  ColumnState,
   ListSearchState,
   ListSortState,
 } from "./useListState";
@@ -24,6 +25,7 @@ export type ResponsiveListCardProps<T> = {
     clearAll?: () => void;
   };
   columns?: ListColumn[];
+  columnState?: ColumnState;
   rows: T[];
   renderRow: (row: T, index: number) => ReactNode;
   renderMobileRow: (row: T, index: number) => ReactNode;
@@ -71,6 +73,7 @@ export function ResponsiveListCard<T>(props: ResponsiveListCardProps<T>) {
       density={props.density}
       toolbar={props.toolbar}
       columns={props.columns}
+      columnState={props.columnState}
       rows={props.rows}
       renderRow={props.renderRow}
       actions={props.actions}

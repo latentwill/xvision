@@ -1,5 +1,95 @@
 import { useCallback, useMemo, useState } from "react";
 
+// ─── Column picker ────────────────────────────────────────────────────────────
+
+export type ListColumnMeta = {
+  key: string;
+  essential?: boolean;
+  defaultOff?: boolean;
+  priority?: number;
+  estWidth?: number;
+};
+
+export type ColumnState = {
+  visibleKeys: Set<string>;
+  toggle: (key: string) => void;
+  reset: () => void;
+  isEssential: (key: string) => boolean;
+};
+
+function colStorageKey(listId: string) {
+  return `xvn:list:${listId}:columns`;
+}
+
+function parseStoredKeys(raw: string | null, columns: ListColumnMeta[]): Set<string> {
+  if (!raw) return defaultVisibleKeys(columns);
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return defaultVisibleKeys(columns);
+    const stored = new Set(parsed.filter((k) => typeof k === "string") as string[]);
+    // Always include essentials even if absent from storage.
+    columns.filter((c) => c.essential).forEach((c) => stored.add(c.key));
+    return stored;
+  } catch {
+    return defaultVisibleKeys(columns);
+  }
+}
+
+function defaultVisibleKeys(columns: ListColumnMeta[]): Set<string> {
+  return new Set(columns.filter((c) => !c.defaultOff).map((c) => c.key));
+}
+
+export function useListColumns(listId: string, columns: ListColumnMeta[]): ColumnState {
+  const storageKey = colStorageKey(listId);
+
+  const [visibleKeys, setVisibleKeys] = useState<Set<string>>(() => {
+    try {
+      return parseStoredKeys(localStorage.getItem(storageKey), columns);
+    } catch {
+      return defaultVisibleKeys(columns);
+    }
+  });
+
+  const essentialKeys = useMemo(
+    () => new Set(columns.filter((c) => c.essential).map((c) => c.key)),
+    [columns],
+  );
+
+  const isEssential = useCallback((key: string) => essentialKeys.has(key), [essentialKeys]);
+
+  const toggle = useCallback(
+    (key: string) => {
+      if (essentialKeys.has(key)) return;
+      setVisibleKeys((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+        essentialKeys.forEach((k) => next.add(k));
+        try {
+          localStorage.setItem(storageKey, JSON.stringify([...next]));
+        } catch { /* ignore */ }
+        return next;
+      });
+    },
+    [essentialKeys, storageKey],
+  );
+
+  const reset = useCallback(() => {
+    try {
+      localStorage.removeItem(storageKey);
+    } catch { /* ignore */ }
+    setVisibleKeys(defaultVisibleKeys(columns));
+  }, [columns, storageKey]);
+
+  return useMemo(
+    () => ({ visibleKeys, toggle, reset, isEssential }),
+    [visibleKeys, toggle, reset, isEssential],
+  );
+}
+
 export type FilterOption = { value: string; label: string };
 
 export type FilterDef = {
