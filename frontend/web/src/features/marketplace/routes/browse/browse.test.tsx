@@ -263,7 +263,7 @@ describe("ListingCard", () => {
     const { container } = render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, {
       wrapper: Wrapper,
     });
-    expect(container.querySelector('[data-genart="placeholder"]')).not.toBeNull();
+    expect(container.querySelector('[data-genart="bitfields-v2"]')).not.toBeNull();
   });
 
   it("renders the Sparkline", () => {

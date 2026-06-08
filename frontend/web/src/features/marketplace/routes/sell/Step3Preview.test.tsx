@@ -50,7 +50,7 @@ describe("Step3Preview", () => {
 
   it("renders the gen-art placeholder inside the preview card", () => {
     const { container } = render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
-    expect(container.querySelector('[data-genart="placeholder"]')).not.toBeNull();
+    expect(container.querySelector('[data-genart="bitfields-v2"]')).not.toBeNull();
   });
 
   it("lists all ingredients with their kind label", () => {
