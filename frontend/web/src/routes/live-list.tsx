@@ -71,7 +71,7 @@ function RunRow({ run }: { run: AgentRunSummary }) {
 export function LiveListRoute() {
   const q = useQuery({
     queryKey: agentRunKeys.list(),
-    queryFn: listAgentRuns,
+    queryFn: () => listAgentRuns(),
     refetchInterval: 10_000,
   });
 
