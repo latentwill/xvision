@@ -263,6 +263,27 @@ export type ThemeDefinition = {
 };
 
 export const THEME_PREFERENCE_KEY = "xvn.theme.preference";
+export const ACCENT_PREFERENCE_KEY = "xvn.accent.preference";
+
+export type AccentKey = "green" | "azure" | "cyan" | "teal" | "amber" | "magenta" | "mono";
+
+export const ACCENT_PRESETS: Record<
+  AccentKey,
+  { label: string; dark: string; light: string; onAccent: string }
+> = {
+  green:   { label: "Green",   dark: "#00e676", light: "#00a15c", onAccent: "#000000" },
+  azure:   { label: "Azure",   dark: "#3B82F6", light: "#2563EB", onAccent: "#ffffff" },
+  cyan:    { label: "Cyan",    dark: "#22D3EE", light: "#0E96B3", onAccent: "#000000" },
+  teal:    { label: "Teal",    dark: "#14C8AE", light: "#0D9488", onAccent: "#000000" },
+  amber:   { label: "Amber",   dark: "#F5A524", light: "#B7770C", onAccent: "#000000" },
+  magenta: { label: "Magenta", dark: "#D946EF", light: "#A21CAF", onAccent: "#ffffff" },
+  mono:    { label: "Mono",    dark: "#9ca3af", light: "#6b7280", onAccent: "#000000" },
+};
+
+export function coerceAccentPreference(raw: string | null): AccentKey {
+  if (raw && raw in ACCENT_PRESETS) return raw as AccentKey;
+  return "green";
+}
 
 export const themePreferenceOptions: { value: ThemePreference; label: string }[] =
   [

@@ -2,9 +2,12 @@ import { Card } from "@/components/primitives/Card";
 import {
   themeDefinitions,
   themePreferenceOptions,
+  ACCENT_PRESETS,
   type ResolvedTheme,
+  type AccentKey,
 } from "@/theme/themes";
 import { useTheme } from "@/theme/useTheme";
+import { useAccent } from "@/theme/useAccent";
 import { RestartTourButton } from "@/features/onboarding";
 import { MemorySettingsCard } from "./MemorySettingsCard";
 
@@ -15,6 +18,7 @@ function swatchFor(value: string) {
 
 export function SettingsGeneralRoute() {
   const { preference, setPreference } = useTheme();
+  const { accentKey, setAccent } = useAccent();
 
   return (
     <div className="space-y-5">
@@ -74,6 +78,47 @@ export function SettingsGeneralRoute() {
               </label>
             );
           })}
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-border">
+          <p className="text-[11px] font-medium text-text-3 uppercase tracking-[0.08em] mb-3">
+            Accent color
+          </p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {(Object.keys(ACCENT_PRESETS) as AccentKey[]).map((key) => {
+              const preset = ACCENT_PRESETS[key];
+              const selected = accentKey === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-label={`${preset.label} accent`}
+                  aria-pressed={selected}
+                  title={preset.label}
+                  onClick={() => setAccent(key)}
+                  className={[
+                    "flex flex-col items-center gap-1 rounded px-2 py-1.5 transition-colors",
+                    selected ? "bg-surface-panel" : "hover:bg-surface-elev",
+                  ].join(" ")}
+                >
+                  <span
+                    className={[
+                      "w-5 h-5 rounded-full",
+                      selected
+                        ? "ring-2 ring-offset-1 ring-offset-surface-card ring-text-2"
+                        : "ring-1 ring-border",
+                    ].join(" ")}
+                    style={{ background: preset.dark }}
+                  />
+                  <span
+                    className={`text-[10px] font-mono ${selected ? "text-text" : "text-text-3"}`}
+                  >
+                    {preset.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </Card>
 
