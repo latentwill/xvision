@@ -594,6 +594,30 @@ export function SignalModelPickerMenu({
         </div>
         {/* Provider groups */}
         <div className="max-h-[320px] overflow-y-auto py-1">
+          {options.length > 0 && placeholder && (
+            <button
+              type="button"
+              role="option"
+              aria-selected={!provider && !model}
+              onClick={() => {
+                onChange(null, "");
+                setOpen(false);
+              }}
+              className={[
+                "flex w-full items-center gap-2 px-3 h-[34px] transition-colors",
+                !provider && !model ? "bg-gold/10" : "hover:bg-surface-hover",
+              ].join(" ")}
+            >
+              <span className="flex-1 text-left font-mono text-[12px] text-text-3">
+                {placeholder}
+              </span>
+              {!provider && !model && (
+                <svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-gold flex-shrink-0" aria-hidden>
+                  <path d="M4 10l4 4 8-8" />
+                </svg>
+              )}
+            </button>
+          )}
           {Object.entries(groups).length === 0 && (
             <div className="px-3 py-3 text-[12px] text-text-3 font-mono">
               {options.length === 0 ? (emptyHint ?? "No models available") : "No models match"}
@@ -640,4 +664,3 @@ export function SignalModelPickerMenu({
     </>
   );
 }
-

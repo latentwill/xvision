@@ -47,4 +47,25 @@ describe("ModelPicker", () => {
     fireEvent.click(qwen);
     expect(onChange).toHaveBeenCalledWith("ollama", "qwen2.5-coder:7b");
   });
+
+  it("can clear the current selection from the placeholder row", () => {
+    const onChange = vi.fn();
+
+    render(
+      <ModelPicker
+        rows={[provider()]}
+        loading={false}
+        provider="ollama"
+        model="qwen2.5-coder:7b"
+        filterProvider="ollama"
+        onChange={onChange}
+        placeholder="No override"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /qwen2\.5-coder:7b/i }));
+    fireEvent.click(screen.getByRole("option", { name: "No override" }));
+
+    expect(onChange).toHaveBeenCalledWith(null, "");
+  });
 });
