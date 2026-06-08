@@ -13,8 +13,8 @@
 //!   Both layers share the wire code in the contract.
 
 use xvision_filters::{
-    parse_toml, validate, Condition, ConditionItem, ConditionTree, Filter, IndicatorName, IndicatorRef,
-    Operand, Operator, ParseError, ValidationError, WakeInPosition,
+    parse_toml, validate, Condition, ConditionGroup, ConditionItem, ConditionTree, Filter, IndicatorName,
+    IndicatorRef, Operand, Operator, ParseError, ValidationError, WakeInPosition,
 };
 
 // ---------------------------------------------------------------------------
@@ -679,4 +679,81 @@ fn every_validation_variant_exposes_stable_code() {
         assert_eq!(err.code(), *expected);
         assert_eq!(err.field_path(), "/x");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Nested ConditionGroup — per-item dispatch correctness (B-W2)
+// ---------------------------------------------------------------------------
+
+fn make_condition(indicator: &str, op_str: &str, rhs_val: f64) -> Condition {
+    use xvision_filters::{IndicatorRef, Operand, Operator};
+    Condition {
+        lhs: Operand::Indicator(IndicatorRef::parse_dsl(indicator).expect("valid indicator")),
+        op: Operator::parse_dsl(op_str).expect("valid operator"),
+        rhs: Operand::Numeric(rhs_val),
+    }
+}
+
+fn make_condition_with_rhs(indicator: &str, op_str: &str, rhs_val: f64) -> Condition {
+    make_condition(indicator, op_str, rhs_val)
+}
+
+#[test]
+fn validate_nested_ok() {
+    // All([adx_lt_25, Any([mfi_lt_20, mfi_gt_80])]) — valid nested filter
+    let inner = ConditionGroup::Any(vec![
+        make_condition("mfi_14", "lt", 20.0),
+        make_condition("mfi_14", "gt", 80.0),
+    ]);
+    let filter = base_filter(ConditionTree::All(vec![
+        ConditionItem::Leaf(make_condition("adx_14", "lt", 25.0)),
+        ConditionItem::Group(inner),
+    ]));
+    assert!(validate(&filter).is_ok());
+}
+
+#[test]
+fn validate_nested_empty_inner_group_fails() {
+    // All([Leaf, Group(Any([]))]) — empty inner group should fail
+    let filter = base_filter(ConditionTree::All(vec![
+        ConditionItem::Leaf(make_condition("close", "gt", 0.0)),
+        ConditionItem::Group(ConditionGroup::Any(vec![])),
+    ]));
+    let err = validate(&filter).unwrap_err();
+    assert_eq!(err.code(), "E_FILTER_EMPTY_TREE");
+    // path should reference the inner group at index 1: /conditions/all/1/any
+    assert!(
+        err.field_path().contains("/1/"),
+        "path should contain inner index: {}",
+        err.field_path()
+    );
+}
+
+#[test]
+fn validate_nested_leaf_bounds_checked() {
+    // All([Leaf, Any([Leaf with RSI > 150])]) — bounds error inside group
+    let inner = ConditionGroup::Any(vec![
+        make_condition_with_rhs("rsi_14", "gt", 150.0), // out of [0,100] range
+    ]);
+    let filter = base_filter(ConditionTree::All(vec![
+        ConditionItem::Leaf(make_condition("close", "gt", 0.0)),
+        ConditionItem::Group(inner),
+    ]));
+    let err = validate(&filter).unwrap_err();
+    assert_eq!(err.code(), "E_FILTER_NUMERIC_BOUNDS");
+    assert!(
+        err.field_path().contains("/1/"),
+        "path should be inside group (index 1): {}",
+        err.field_path()
+    );
+}
+
+#[test]
+fn validate_empty_tree_group_with_no_leaves() {
+    // All([Group(Any([]))]) — tree has an item but no leaves (empty group)
+    let filter = base_filter(ConditionTree::All(vec![
+        ConditionItem::Group(ConditionGroup::Any(vec![])),
+    ]));
+    let err = validate(&filter).unwrap_err();
+    assert_eq!(err.code(), "E_FILTER_EMPTY_TREE");
 }
