@@ -8,16 +8,9 @@
 ## Blockers (fix before next session)
 
 ### B1 — F9: Daemon restart at ~40–43 min kills long evals
-**Observed:** Container restarts at the ~40–43 minute mark of any eval session. Any 15m strategy targeting 50+ decisions crosses this window. Three concurrent Ollama calls accelerate it to ~21 min.  
-**Impact:** Long evals silently die; results lost if capture-on-interrupt isn't working.  
-**Investigation needed first:**
-- What is actually restarting? Run `docker ps --format "{{.Names}} {{.Status}}"` at the 35-min mark during a session to check uptime. Compare with `systemctl status` or Coolify task logs.
-- Is this the xvn container (Docker restart policy), the Ollama daemon (memory/timeout), or the host process manager?
-**Fix path:**
-- If Docker restart policy: set `restart: unless-stopped` with a longer health-check interval, or detach eval runs from the container health path.
-- If Ollama: reduce concurrent calls to ≤2 (already documented in Part 4 — enforce it in the eval chain script).
-- If host: nothing to fix in xvn, document the window.  
-**Evidence required:** Run `docker inspect xvn-app --format "{{.HostConfig.RestartPolicy}}"` and record output. Capture uptime at the point of next restart (`docker ps` output showing container start time vs wall clock).
+**Observed:** Container restarts at the ~40–43 minute mark of any eval session.  
+**Resolution (2026-06-08):** Confirmed as a manual image push by the operator — not a recurring technical issue and not a crash/restart-policy problem. Same root cause as the F28 "container restart" in run-5. No code fix needed.  
+**Remaining action:** Enforce the ≤2 concurrent Ollama calls limit in eval chain scripts (already documented in Part 4). The 21-min restart risk at 3+ concurrent is an Ollama memory issue, separate from container restart policy.
 
 ---
 
