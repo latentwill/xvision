@@ -108,7 +108,8 @@
 //  R25. GET  /api/eval/runs/:id/stream   (SSE — read-only stream)
 //  R26. GET  /api/eval/compare
 //  R27. GET  /api/eval/scenarios
-//  R28. GET  /api/agent-runs/:id
+//  R28. GET  /api/agent-runs
+//  R28b GET  /api/agent-runs/:id
 //  R29. GET  /api/agent-runs/:id/export.json
 //  R30. GET  /api/agent-runs/:id/export.md
 //  R31. GET  /api/agent-runs/:id/stream  (SSE — read-only stream)
@@ -256,6 +257,7 @@ fn readonly_router(state: AppState) -> Router {
             "/api/v2/charts/market-context",
             get(charts_market_context::get),
         )
+        .route("/api/agent-runs", get(agent_runs::list_agent_runs))
         .route("/api/agent-runs/:id", get(agent_runs::get))
         .route("/api/agent-runs/:id/export.json", get(agent_runs::export_json))
         .route("/api/agent-runs/:id/export.md", get(agent_runs::export_md))
