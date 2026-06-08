@@ -592,7 +592,7 @@ async fn models(
     let visible: Vec<_> = cat
         .models
         .iter()
-        .filter(|m| !filtering || allowlist.iter().any(|a| a == &m.id))
+        .filter(|m| should_show_catalog_model(&m.id, allowlist, show_all))
         .collect();
 
     println!(
@@ -623,6 +623,10 @@ async fn models(
         println!("{:<48} {:>10} {:>10} {:>6}", m.id, ctx_str, out_str, reason);
     }
     Ok(())
+}
+
+fn should_show_catalog_model(model_id: &str, allowlist: &[String], show_all: bool) -> bool {
+    show_all || allowlist.is_empty() || allowlist.iter().any(|allowed| allowed == model_id)
 }
 
 #[cfg(test)]
@@ -744,9 +748,16 @@ api_key_env = "K"
         let dir = tempfile::tempdir().unwrap();
         let config = write_min_config(&dir);
         let ctx = test_ctx(&dir).await;
-        models(&ctx, &config, "anthropic", false, Some("claude-test".into()), None)
-            .await
-            .unwrap();
+        models(
+            &ctx,
+            &config,
+            "anthropic",
+            false,
+            Some("claude-test".into()),
+            None,
+        )
+        .await
+        .unwrap();
         let cfg = xvision_core::config::load_runtime(&config).unwrap();
         let p = cfg.providers.iter().find(|p| p.name == "anthropic").unwrap();
         assert!(p.enabled_models.contains(&"claude-test".to_string()));
@@ -758,15 +769,36 @@ api_key_env = "K"
         let config = write_min_config(&dir);
         let ctx = test_ctx(&dir).await;
         // Enable two models first, then disable one.
-        models(&ctx, &config, "anthropic", false, Some("claude-keep".into()), None)
-            .await
-            .unwrap();
-        models(&ctx, &config, "anthropic", false, Some("claude-remove-me".into()), None)
-            .await
-            .unwrap();
-        models(&ctx, &config, "anthropic", false, None, Some("claude-remove-me".into()))
-            .await
-            .unwrap();
+        models(
+            &ctx,
+            &config,
+            "anthropic",
+            false,
+            Some("claude-keep".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        models(
+            &ctx,
+            &config,
+            "anthropic",
+            false,
+            Some("claude-remove-me".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        models(
+            &ctx,
+            &config,
+            "anthropic",
+            false,
+            None,
+            Some("claude-remove-me".into()),
+        )
+        .await
+        .unwrap();
         let cfg = xvision_core::config::load_runtime(&config).unwrap();
         let p = cfg.providers.iter().find(|p| p.name == "anthropic").unwrap();
         assert!(!p.enabled_models.contains(&"claude-remove-me".to_string()));
@@ -789,10 +821,35 @@ api_key_env = "K"
         let dir = tempfile::tempdir().unwrap();
         let config = write_min_config(&dir);
         let ctx = test_ctx(&dir).await;
-        let err = models(&ctx, &config, "anthropic", false, Some("a".into()), Some("b".into()))
-            .await
-            .unwrap_err();
+        let err = models(
+            &ctx,
+            &config,
+            "anthropic",
+            false,
+            Some("a".into()),
+            Some("b".into()),
+        )
+        .await
+        .unwrap_err();
         assert!(format!("{err}").contains("cannot be used together"));
+    }
+
+    #[test]
+    fn model_catalog_filter_honors_nonempty_allowlist() {
+        let allowlist = vec!["claude-keep".to_string()];
+        assert!(should_show_catalog_model("claude-keep", &allowlist, false));
+        assert!(!should_show_catalog_model("claude-hide", &allowlist, false));
+    }
+
+    #[test]
+    fn model_catalog_filter_show_all_bypasses_allowlist() {
+        let allowlist = vec!["claude-keep".to_string()];
+        assert!(should_show_catalog_model("claude-hide", &allowlist, true));
+    }
+
+    #[test]
+    fn model_catalog_filter_empty_allowlist_shows_everything() {
+        assert!(should_show_catalog_model("claude-any", &[], false));
     }
 
     #[test]
