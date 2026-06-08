@@ -295,3 +295,262 @@ describe("OptimizerHome — ScheduleStrip integration (P5-W3)", () => {
     expect(screen.queryByText("No scheduled run · Set one")).toBeNull();
   });
 });
+
+// ─── Helpers shared across new tests ─────────────────────────────────────────
+
+function mockMutations() {
+  const pauseMutateMock = vi.fn();
+  const resumeMutateMock = vi.fn();
+  const cancelMutateMock = vi.fn();
+
+  vi.spyOn(apiModule, "usePauseSession").mockReturnValue({
+    mutate: pauseMutateMock,
+    isPending: false,
+  } as unknown as ReturnType<typeof apiModule.usePauseSession>);
+
+  vi.spyOn(apiModule, "useResumeSession").mockReturnValue({
+    mutate: resumeMutateMock,
+    isPending: false,
+  } as unknown as ReturnType<typeof apiModule.useResumeSession>);
+
+  vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
+    mutate: cancelMutateMock,
+    isPending: false,
+  } as unknown as ReturnType<typeof apiModule.useCancelSession>);
+
+  return { pauseMutateMock, resumeMutateMock, cancelMutateMock };
+}
+
+const runningSessionStatus = {
+  active_session: {
+    session_id: "sess_01ABCDEFGHIJ",
+    strategy_id: "strat-xyz",
+    state: "running",
+    mode: "explore",
+    cycles_completed: 3,
+    kept_count: 1,
+    suspect_count: 0,
+    dropped_count: 2,
+  },
+  last_event_seq: 10,
+};
+
+const pausedSessionStatus = {
+  active_session: {
+    session_id: "sess_01ABCDEFGHIJ",
+    strategy_id: "strat-xyz",
+    state: "paused",
+    mode: "explore",
+    cycles_completed: 3,
+    kept_count: 1,
+    suspect_count: 0,
+    dropped_count: 2,
+  },
+  last_event_seq: 10,
+};
+
+describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
+  function setupRunning() {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    return mockMutations();
+  }
+
+  function setupPaused() {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(pausedSessionStatus);
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    return mockMutations();
+  }
+
+  it("does NOT render 'Live · cycle in progress' text at any time", async () => {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
+      active_session: null,
+      last_event_seq: 0,
+    });
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    mockMutations();
+
+    renderWithProviders(<OptimizerHome />);
+    await screen.findByText("Idle");
+
+    expect(screen.queryByText(/Live · cycle in progress/i)).toBeNull();
+  });
+
+  it("does NOT render LiveCycleView content when optimizer is running (no 'Live' heading)", async () => {
+    setupRunning();
+    renderWithProviders(<OptimizerHome />);
+    await screen.findByText("Running");
+    // LiveCycleView's "Live" / "Waiting for connection…" header must not appear when active
+    expect(screen.queryByText(/^Live$/i)).toBeNull();
+    expect(screen.queryByText(/Waiting for connection/i)).toBeNull();
+  });
+
+  it("shows 'Watch live →' link when optimizer is running", async () => {
+    setupRunning();
+    renderWithProviders(<OptimizerHome />);
+    const link = await screen.findByRole("link", { name: /watch live/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "/optimizer/run/sess_01ABCDEFGHIJ");
+  });
+
+  it("shows 'Watch live →' link when optimizer is paused", async () => {
+    setupPaused();
+    renderWithProviders(<OptimizerHome />);
+    const link = await screen.findByRole("link", { name: /watch live/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "/optimizer/run/sess_01ABCDEFGHIJ");
+  });
+
+  it("shows 'Watch live →' link when optimizer is cancelling", async () => {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
+      active_session: {
+        session_id: "sess_01ABCDEFGHIJ",
+        strategy_id: "strat-xyz",
+        state: "cancelling",
+        mode: "explore",
+        cycles_completed: 3,
+        kept_count: 1,
+        suspect_count: 0,
+        dropped_count: 2,
+      },
+      last_event_seq: 10,
+    });
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    mockMutations();
+
+    renderWithProviders(<OptimizerHome />);
+    const link = await screen.findByRole("link", { name: /watch live/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "/optimizer/run/sess_01ABCDEFGHIJ");
+  });
+
+  it("hides Pause and Cancel action buttons when state is cancelling", async () => {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
+      active_session: {
+        session_id: "sess_01ABCDEFGHIJ",
+        strategy_id: "strat-xyz",
+        state: "cancelling",
+        mode: "explore",
+        cycles_completed: 3,
+        kept_count: 1,
+        suspect_count: 0,
+        dropped_count: 2,
+      },
+      last_event_seq: 10,
+    });
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    mockMutations();
+
+    renderWithProviders(<OptimizerHome />);
+    await screen.findByText("Cancelling");
+    expect(screen.queryByRole("button", { name: /pause/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+  });
+
+  it("Pause button calls usePauseSession mutate with sessionId when running", async () => {
+    const { pauseMutateMock } = setupRunning();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+    const pauseBtn = await screen.findByRole("button", { name: /pause/i });
+    await user.click(pauseBtn);
+    expect(pauseMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+  });
+
+  it("Cancel button calls useCancelSession mutate with sessionId when running", async () => {
+    const { cancelMutateMock } = setupRunning();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+    const cancelBtn = await screen.findByRole("button", { name: /cancel/i });
+    await user.click(cancelBtn);
+    expect(cancelMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+  });
+
+  it("Resume button calls useResumeSession mutate with sessionId when paused", async () => {
+    const { resumeMutateMock } = setupPaused();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+    const resumeBtn = await screen.findByRole("button", { name: /resume/i });
+    await user.click(resumeBtn);
+    expect(resumeMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+  });
+
+  it("Cancel button calls useCancelSession mutate with sessionId when paused", async () => {
+    const { cancelMutateMock } = setupPaused();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+    const cancelBtn = await screen.findByRole("button", { name: /cancel/i });
+    await user.click(cancelBtn);
+    expect(cancelMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+  });
+
+  it("Pause button is disabled while pauseMutation.isPending", async () => {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    vi.spyOn(apiModule, "usePauseSession").mockReturnValue({
+      mutate: vi.fn(),
+      isPending: true,
+    } as unknown as ReturnType<typeof apiModule.usePauseSession>);
+    vi.spyOn(apiModule, "useResumeSession").mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof apiModule.useResumeSession>);
+    vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof apiModule.useCancelSession>);
+
+    renderWithProviders(<OptimizerHome />);
+    const pauseBtn = await screen.findByRole("button", { name: /pause/i });
+    expect(pauseBtn).toBeDisabled();
+  });
+
+  it("Cancel button is disabled while cancelMutation.isPending", async () => {
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
+    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    vi.spyOn(apiModule, "usePauseSession").mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof apiModule.usePauseSession>);
+    vi.spyOn(apiModule, "useResumeSession").mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof apiModule.useResumeSession>);
+    vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
+      mutate: vi.fn(),
+      isPending: true,
+    } as unknown as ReturnType<typeof apiModule.useCancelSession>);
+
+    renderWithProviders(<OptimizerHome />);
+    const cancelBtn = await screen.findByRole("button", { name: /cancel/i });
+    expect(cancelBtn).toBeDisabled();
+  });
+});

@@ -11,7 +11,15 @@ import { ScheduleStrip } from "../ui/ScheduleStrip";
 import { ImprovementChart } from "../ui/ImprovementChart";
 import { OutcomeStackedChart } from "../ui/OutcomeStackedChart";
 import { ModePicker, type RunMode } from "../ui/ModePicker";
-import { useOptimizerStatus, useOptimizerStats, useSessionList, type SessionListItem } from "../api";
+import {
+  useOptimizerStatus,
+  useOptimizerStats,
+  useSessionList,
+  usePauseSession,
+  useResumeSession,
+  useCancelSession,
+  type SessionListItem,
+} from "../api";
 
 // ─── State pill helper ────────────────────────────────────────────────────────
 
@@ -62,6 +70,10 @@ function StatusHero() {
   const isCancelling = state === "cancelling";
   const isActive = isRunning || isPaused || isCancelling;
 
+  const pauseMutation = usePauseSession();
+  const resumeMutation = useResumeSession();
+  const cancelMutation = useCancelSession();
+
   return (
     <div className="rounded-md border border-border bg-surface-card px-5 py-4 space-y-3">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -78,7 +90,9 @@ function StatusHero() {
               {modeLabel(session.mode)}
             </h2>
           ) : (
-            <h2 className="text-lg font-semibold tracking-tight text-text-3">No run in progress</h2>
+            <h2 className="text-lg font-semibold tracking-tight text-text-3">
+              No run in progress
+            </h2>
           )}
           {isActive && session && (
             <p className="font-mono text-[11.5px] text-text-3">
@@ -88,21 +102,31 @@ function StatusHero() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
+          {/* "Watch live →" appears for running, paused, and cancelling states */}
+          {isActive && session && (
+            <Link
+              to={`/optimizer/run/${session.session_id}`}
+              className="text-[13px] text-accent hover:underline"
+            >
+              Watch live →
+            </Link>
+          )}
+          {/* Action buttons only for running (Pause + Cancel) and paused (Resume + Cancel) */}
           {isRunning && session && (
             <>
               <button
                 type="button"
-                disabled
-                title="Pause"
-                className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 opacity-60 cursor-not-allowed"
+                onClick={() => pauseMutation.mutate(session.session_id)}
+                disabled={pauseMutation.isPending}
+                className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:bg-surface-elev/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 Pause
               </button>
               <button
                 type="button"
-                disabled
-                title="Cancel"
-                className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger opacity-60 cursor-not-allowed"
+                onClick={() => cancelMutation.mutate(session.session_id)}
+                disabled={cancelMutation.isPending}
+                className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
@@ -112,17 +136,17 @@ function StatusHero() {
             <>
               <button
                 type="button"
-                disabled
-                title="Resume"
-                className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent opacity-60 cursor-not-allowed"
+                onClick={() => resumeMutation.mutate(session.session_id)}
+                disabled={resumeMutation.isPending}
+                className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 Resume
               </button>
               <button
                 type="button"
-                disabled
-                title="Cancel"
-                className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger opacity-60 cursor-not-allowed"
+                onClick={() => cancelMutation.mutate(session.session_id)}
+                disabled={cancelMutation.isPending}
+                className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
@@ -290,6 +314,10 @@ function ImprovementChartsSection() {
 // ─── Page root ────────────────────────────────────────────────────────────────
 
 export function OptimizerHome() {
+  const status = useOptimizerStatus();
+  const sessionState = status?.active_session?.state ?? "idle";
+  const isActive = sessionState === "running" || sessionState === "paused" || sessionState === "cancelling";
+
   return (
     <>
       <Topbar title="Optimizer" sub="Tonight's run, experiment writers, and recent cycles" />
@@ -309,8 +337,11 @@ export function OptimizerHome() {
         {/* DSPy flywheel progress strip (P3-W4) — hidden when dspy_enabled=false */}
         <FlywheelStrip />
 
-        {/* In-flight cycle + live event feed (existing dashboard body). */}
-        <LiveCycleView embedded />
+        {/* Cycle runner + live events — only shown when optimizer is idle.
+            When active, the StatusHero "Watch live →" link leads to RunDetail
+            for per-cycle observability. Hiding it when active prevents the
+            confusing dual-status display (optimizer state + eval SSE state). */}
+        {!isActive && <LiveCycleView embedded />}
 
         <ExperimentWritersPanel />
         <RecentCyclesTable />
