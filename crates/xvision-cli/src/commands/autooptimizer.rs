@@ -1923,9 +1923,20 @@ async fn build_dispatch(
         .as_ref()
         .and_then(|cfg| cfg.providers.iter().find(|p| p.name == requested_provider))
     {
+        let normalized = normalize_model(requested_model);
+        if !entry.enabled_models.is_empty()
+            && !entry.enabled_models.iter().any(|m| m == &normalized)
+        {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "model {normalized:?} is not in the enabled_models allowlist for provider \
+                 {requested_provider:?}; run `xvn provider models --name {requested_provider}` \
+                 to see allowed models, or `xvn provider models --name {requested_provider} \
+                 --enable {normalized}` to add it"
+            )));
+        }
         return Ok(DispatchBinding {
             provider: entry.name.clone(),
-            model: normalize_model(requested_model),
+            model: normalized,
             dispatch: dispatch_from_provider_entry(xvn_home, entry).await?,
         });
     }

@@ -135,11 +135,15 @@ pub async fn start_cycle(
     let mutator_model = body.mutator_model.unwrap_or_else(|| cfg.mutator.model.clone());
     let judge_provider = body.judge_provider.unwrap_or_else(|| mutator_provider.clone());
     let judge_model = body.judge_model.unwrap_or_else(|| mutator_model.clone());
-    let raw_mutator_dispatch = build_autooptimizer_dispatch(&mutator_provider, &state.xvn_home).await?;
+    let raw_mutator_dispatch =
+        build_autooptimizer_dispatch(&mutator_provider, &mutator_model, &state.xvn_home).await?;
     let raw_judge_dispatch = if judge_provider == mutator_provider {
+        if judge_model != mutator_model {
+            validate_autooptimizer_model_allowlist(&judge_provider, &judge_model, &state.xvn_home).await?;
+        }
         Arc::clone(&raw_mutator_dispatch)
     } else {
-        build_autooptimizer_dispatch(&judge_provider, &state.xvn_home).await?
+        build_autooptimizer_dispatch(&judge_provider, &judge_model, &state.xvn_home).await?
     };
 
     // F11/F23/F26: one shared meter for the whole cycle — tokens, realized cost,
@@ -508,29 +512,18 @@ fn load_optimizer_config_with_path() -> Result<(AutoOptimizerConfig, std::path::
 
 pub(super) async fn build_autooptimizer_dispatch(
     provider: &str,
+    model: &str,
     xvn_home: &std::path::Path,
 ) -> Result<Arc<dyn LlmDispatch + Send + Sync>, DashboardError> {
-    let config_path = xvision_core::config::runtime_config_path(xvn_home);
-    let provider_name = provider.to_owned();
-    let rt = tokio::task::spawn_blocking(move || xvision_core::config::load_runtime(&config_path))
-        .await
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("task join: {e}")))?
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("load runtime config: {e}")))?;
-    let entry = rt
-        .providers
-        .iter()
-        .find(|p| p.name == provider_name)
-        .ok_or_else(|| DashboardError::Validation {
-            field: "provider".into(),
-            msg: format!("autooptimizer provider '{provider_name}' not configured in Settings → Providers"),
-        })?;
+    let entry = load_autooptimizer_provider(provider, xvn_home).await?;
+    validate_enabled_model(&entry, provider, model)?;
     let api_key = if entry.api_key_env.is_empty() {
         String::new()
     } else {
         std::env::var(&entry.api_key_env).map_err(|_| DashboardError::Validation {
             field: "provider".into(),
             msg: format!(
-                "env var '{}' unset for provider '{provider_name}'",
+                "env var '{}' unset for provider '{provider}'",
                 entry.api_key_env
             ),
         })?
@@ -556,6 +549,51 @@ pub(super) async fn build_autooptimizer_dispatch(
             })
         }
     })
+}
+
+async fn validate_autooptimizer_model_allowlist(
+    provider: &str,
+    model: &str,
+    xvn_home: &std::path::Path,
+) -> Result<(), DashboardError> {
+    let entry = load_autooptimizer_provider(provider, xvn_home).await?;
+    validate_enabled_model(&entry, provider, model)
+}
+
+async fn load_autooptimizer_provider(
+    provider: &str,
+    xvn_home: &std::path::Path,
+) -> Result<xvision_core::config::ProviderEntry, DashboardError> {
+    let config_path = xvision_core::config::runtime_config_path(xvn_home);
+    let provider_name = provider.to_owned();
+    let rt = tokio::task::spawn_blocking(move || xvision_core::config::load_runtime(&config_path))
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("task join: {e}")))?
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("load runtime config: {e}")))?;
+    rt.providers
+        .into_iter()
+        .find(|p| p.name == provider_name)
+        .ok_or_else(|| DashboardError::Validation {
+            field: "provider".into(),
+            msg: format!("autooptimizer provider '{provider_name}' not configured in Settings -> Providers"),
+        })
+}
+
+fn validate_enabled_model(
+    entry: &xvision_core::config::ProviderEntry,
+    provider: &str,
+    model: &str,
+) -> Result<(), DashboardError> {
+    if !entry.enabled_models.is_empty() && !entry.enabled_models.iter().any(|m| m == model) {
+        return Err(DashboardError::Validation {
+            field: "model".into(),
+            msg: format!(
+                "model '{model}' is not in the enabled_models allowlist for provider \
+                 '{provider}'; update the allowlist in Settings -> Providers"
+            ),
+        });
+    }
+    Ok(())
 }
 
 pub(super) fn build_mutator_and_judge(
@@ -700,6 +738,38 @@ mod tests {
     use super::*;
 
     use xvision_engine::agent::llm::MockDispatch;
+
+    fn provider_with_enabled_models(models: Vec<&str>) -> xvision_core::config::ProviderEntry {
+        xvision_core::config::ProviderEntry {
+            name: "ollama".into(),
+            kind: xvision_core::config::ProviderKind::Ollama,
+            base_url: "http://localhost:11434".into(),
+            api_key_env: String::new(),
+            enabled_models: models.into_iter().map(str::to_string).collect(),
+        }
+    }
+
+    #[test]
+    fn autooptimizer_allowlist_accepts_enabled_model() {
+        let entry = provider_with_enabled_models(vec!["lfm2.5:8b"]);
+        validate_enabled_model(&entry, "ollama", "lfm2.5:8b").expect("enabled model passes");
+    }
+
+    #[test]
+    fn autooptimizer_allowlist_rejects_disabled_model() {
+        let entry = provider_with_enabled_models(vec!["lfm2.5:8b"]);
+        let err = validate_enabled_model(&entry, "ollama", "gemma4:26b-mlx")
+            .expect_err("disabled model should fail");
+        let msg = format!("{err}");
+        assert!(msg.contains("gemma4:26b-mlx"), "error should name model: {msg}");
+        assert!(msg.contains("enabled_models"), "error should name allowlist: {msg}");
+    }
+
+    #[test]
+    fn autooptimizer_allowlist_empty_list_preserves_legacy_passthrough() {
+        let entry = provider_with_enabled_models(vec![]);
+        validate_enabled_model(&entry, "ollama", "any-model").expect("empty allowlist passes");
+    }
 
     // ── P4 pause/resume/cancel flag tests ─────────────────────────────────────
 
