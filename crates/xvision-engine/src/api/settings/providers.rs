@@ -1480,16 +1480,10 @@ fn effective_from_entry(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -
 }
 
 fn row_from_entry(entry: &ProviderEntry, cfg: &RuntimeConfig, secrets: &ProvidersSecretsFile) -> ProviderRow {
-    let api_key_set = if entry.api_key_env.is_empty() {
-        false
-    } else {
-        // Counts as set if EITHER a stored secret exists OR the env var is
-        // already populated (CI / one-shot scripts).
-        secrets.provider.contains_key(&entry.name)
-            || std::env::var(&entry.api_key_env)
-                .map(|v| !v.is_empty())
-                .unwrap_or(false)
-    };
+    // No-auth kinds (Ollama, LlamaCpp, Vllm) have api_key_set=true when
+    // api_key_env is empty — they need no key. entry_has_key encodes that
+    // and keeps this in sync with effective_from_entry / resolve_provider.
+    let api_key_set = entry_has_key(entry, secrets);
     let is_default = provider_matches_default(entry, cfg);
     ProviderRow {
         name: entry.name.clone(),

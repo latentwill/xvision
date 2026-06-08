@@ -184,3 +184,72 @@ async fn effective_providers_is_publicly_exported() {
     let cfg = write_config(&ctx, OPENROUTER_NO_KEY_CONFIG);
     let _ = providers::effective_providers(&ctx, &cfg).await.unwrap();
 }
+
+/// Regression guard: Ollama (and other no-auth kinds) must report
+/// `api_key_set = true` even though `api_key_env` is empty — the API
+/// contract says "key set" means "provider is auth-ready", and Ollama
+/// needs no key.  Previously `row_from_entry` returned `false` for any
+/// row with an empty `api_key_env`, which caused ModelPicker to filter
+/// out the entire Ollama group.
+///
+/// The parity assertion (`has_key == api_key_set`) must also hold so
+/// `GET /api/settings/providers` and `xvn provider list --effective`
+/// agree on key presence.
+const OLLAMA_NO_AUTH_CONFIG: &str = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "ollama"
+kind = "ollama"
+base_url = "http://localhost:11434"
+api_key_env = ""
+enabled_models = ["llama3.2:latest"]
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+
+#[tokio::test]
+async fn ollama_no_auth_provider_api_key_set_is_true() {
+    let (ctx, _d) = open_api_context().await;
+    let cfg = write_config(&ctx, OLLAMA_NO_AUTH_CONFIG);
+
+    // list() powers GET /api/settings/providers — the ModelPicker consumer.
+    let report = providers::list(&ctx, &cfg).await.unwrap();
+    assert_eq!(report.providers.len(), 1);
+    let row = &report.providers[0];
+    assert_eq!(row.name, "ollama");
+    assert!(
+        row.api_key_set,
+        "Ollama with empty api_key_env must have api_key_set=true (no auth needed)"
+    );
+
+    // Parity: effective_providers must agree.
+    let effective = providers::effective_providers(&ctx, &cfg).await.unwrap();
+    assert_eq!(effective.len(), 1);
+    let eff = &effective[0];
+    assert!(eff.has_key, "effective has_key must match api_key_set");
+    assert_eq!(eff.has_key, row.api_key_set, "parity: has_key == api_key_set");
+    assert!(eff.launchable, "Ollama with a model in enabled_models must be launchable");
+}
