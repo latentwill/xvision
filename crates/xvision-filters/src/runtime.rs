@@ -16,7 +16,7 @@ use std::collections::VecDeque;
 use crate::errors::ValidationError;
 use crate::indicators::Bar;
 use crate::state::{FilterState, CONDITION_HISTORY_CAP};
-use crate::types::{Condition, ConditionTree, Filter, IndicatorRef, Operand, Operator, WakeInPosition};
+use crate::types::{Condition, ConditionGroup, ConditionItem, ConditionTree, Filter, IndicatorRef, Operand, Operator, WakeInPosition};
 use crate::validate::validate;
 
 /// Decision the runtime returns for a bar.
@@ -224,7 +224,8 @@ impl<'f> RuntimeFilter<'f> {
             }
         }
 
-        let tree_true = combine_tree(&self.filter.conditions, &results);
+        let bool_results: Vec<bool> = results.iter().map(|r| r.passed).collect();
+        let tree_true = evaluate_tree_with_groups(&self.filter.conditions, &bool_results, &mut 0);
 
         if !tree_true {
             state.prev_tree = Some(false);
@@ -333,10 +334,48 @@ impl<'f> RuntimeFilter<'f> {
 }
 
 /// Combine per-condition booleans via the tree's logical op.
+///
+/// Deprecated in favour of [`evaluate_tree_with_groups`] which correctly
+/// handles nested `ConditionGroup` items. Kept only so existing call-sites
+/// outside this module (benchmarks, etc.) do not break during the transition.
+#[allow(dead_code)]
 fn combine_tree(tree: &ConditionTree, results: &[ConditionResult]) -> bool {
     match tree {
         ConditionTree::All(_) => results.iter().all(|r| r.passed),
         ConditionTree::Any(_) => results.iter().any(|r| r.passed),
+    }
+}
+
+/// Walk the `ConditionTree` in DFS leaf order, consuming booleans from
+/// `leaf_results` one-at-a-time (the same order that [`ConditionTree::leaves_dfs`]
+/// produces them). Handles nested [`ConditionGroup`]s: each group's inner
+/// leaves are consumed and combined with the group's own `All`/`Any` logic
+/// before the outer tree operator is applied to the group's result.
+///
+/// # Panics
+/// Panics if `leaf_results` is shorter than the number of leaves in `tree`
+/// (i.e. the caller must have sized it correctly via `leaves_dfs()`).
+fn evaluate_tree_with_groups(tree: &ConditionTree, leaf_results: &[bool], offset: &mut usize) -> bool {
+    let item_results: Vec<bool> = tree.items().iter().map(|item| match item {
+        ConditionItem::Leaf(_) => {
+            let r = leaf_results[*offset];
+            *offset += 1;
+            r
+        }
+        ConditionItem::Group(group) => {
+            let n = group.conditions().len();
+            let inner: Vec<bool> = (0..n).map(|_| {
+                let r = leaf_results[*offset];
+                *offset += 1;
+                r
+            }).collect();
+            group.combine(&inner)
+        }
+    }).collect();
+
+    match tree {
+        ConditionTree::All(_) => item_results.iter().all(|&r| r),
+        ConditionTree::Any(_) => item_results.iter().any(|&r| r),
     }
 }
 
@@ -1215,5 +1254,167 @@ mod tests {
         // prev_leaf was false (10 !> 10) → cross fires → Trip.
         let o4 = rt.evaluate(&mut state, &bar(20.0), ctx);
         assert!(o4.decision.is_trip(), "expected Trip, got {:?}", o4.decision);
+    }
+
+    // ------------------------------------------------------------------
+    // B-W3: evaluate_tree_with_groups regression + group logic tests
+    // ------------------------------------------------------------------
+
+    /// Flat (leaf-only) filter produces the same results it did before B-W3
+    /// (regression guard: no panic, correct active/inactive decisions).
+    #[test]
+    fn flat_filter_evaluates_unchanged() {
+        // close > 50 — single leaf, All tree.
+        let f = close_gt_threshold(50.0);
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let mut state = rt.fresh_state();
+        let ctx = EvalContext { ts: ts(0), in_position: false };
+
+        // Warmup bar (EMA-1 uses 1 bar; IndicatorRef::close() uses 1 bar)
+        rt.evaluate(&mut state, &bar(40.0), ctx);
+
+        // Post-warmup: close=60 > 50 → Active/Trip
+        let active = rt.evaluate(&mut state, &bar(60.0), ctx);
+        assert!(
+            active.decision.is_active(),
+            "flat filter: close>50 should be active, got {:?}",
+            active.decision
+        );
+
+        // close=40 < 50 → Inactive
+        let inactive = rt.evaluate(&mut state, &bar(40.0), ctx);
+        assert_eq!(
+            inactive.decision,
+            ActivationDecision::Inactive,
+            "flat filter: close<50 should be inactive, got {:?}",
+            inactive.decision
+        );
+    }
+
+    /// Nested All([leaf_adx, Any([leaf_mfi_lo, leaf_mfi_hi])]) evaluates
+    /// the inner Any group independently before applying the outer All.
+    ///
+    /// We use two numeric operand leaves so we can drive values precisely
+    /// without real indicator warmup: `close > threshold` with two
+    /// different thresholds for adx and mfi stand-ins.
+    ///
+    ///   Scenario 1: adx_pass=T, mfi_pass=T  → outer All: T  (fires)
+    ///   Scenario 2: adx_pass=T, mfi_pass=F  → outer All: F  (no fire)
+    ///   Scenario 3: adx_pass=F, mfi_pass=T  → outer All: F  (no fire)
+    #[test]
+    fn nested_all_any_evaluates_correctly() {
+        use crate::types::ConditionGroup;
+
+        // Conditions:
+        //   outer All:
+        //     Leaf:  close > 100    (adx stand-in; high threshold = always passes when close=150)
+        //     Group Any:
+        //       close > 200         (mfi_lo stand-in; passes when close=250)
+        //       close > 300         (mfi_hi stand-in; never passes with close<=250)
+        //
+        // We drive the "adx" leaf via close > 100, and the "mfi any" group
+        // via close > 200 OR close > 300. Because both leaves inside the
+        // group reference close, only one can be independently controlled
+        // at a time — we set up three distinct close values to hit each scenario.
+
+        // Outer tree: All([leaf_adx, group_any])
+        // leaf_adx  = close > 100
+        // group_any = Any([close > 200, close > 300])
+        //   → passes when close > 200
+        let leaf_adx = ConditionItem::Leaf(Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::Gt,
+            rhs: Operand::Numeric(100.0),
+        });
+
+        // mfi_lo: close > 200 — fires when close >= 201
+        let mfi_lo = Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::Gt,
+            rhs: Operand::Numeric(200.0),
+        };
+        // mfi_hi: close > 300 — only fires when close > 300
+        let mfi_hi = Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::Gt,
+            rhs: Operand::Numeric(300.0),
+        };
+        let group_any = ConditionItem::Group(ConditionGroup::Any(vec![mfi_lo, mfi_hi]));
+
+        let tree = ConditionTree::All(vec![leaf_adx, group_any]);
+        let f = mk_filter(tree, 0, None);
+        let rt = RuntimeFilter::new(&f).unwrap();
+        let ctx = EvalContext { ts: ts(0), in_position: false };
+
+        // ---- Scenario 1: close=250 → adx T (250>100), mfi_lo T (250>200) → fires ----
+        let mut state = rt.fresh_state();
+        // warmup bar (close indicator needs 1 bar)
+        rt.evaluate(&mut state, &bar(50.0), ctx);
+        let s1 = rt.evaluate(&mut state, &bar(250.0), ctx);
+        assert!(
+            s1.decision.is_active(),
+            "nested All/Any scenario 1 (adx=T, mfi=T): expected Active, got {:?}",
+            s1.decision
+        );
+
+        // ---- Scenario 2: close=150 → adx T (150>100), mfi_lo F (150<=200), mfi_hi F → no fire ----
+        let mut state = rt.fresh_state();
+        rt.evaluate(&mut state, &bar(50.0), ctx);
+        let s2 = rt.evaluate(&mut state, &bar(150.0), ctx);
+        assert_eq!(
+            s2.decision,
+            ActivationDecision::Inactive,
+            "nested All/Any scenario 2 (adx=T, mfi=F): expected Inactive, got {:?}",
+            s2.decision
+        );
+
+        // ---- Scenario 3: close=50 → adx F (50<=100), mfi_lo F → outer All fails ----
+        let mut state = rt.fresh_state();
+        rt.evaluate(&mut state, &bar(10.0), ctx);
+        let s3 = rt.evaluate(&mut state, &bar(50.0), ctx);
+        assert_eq!(
+            s3.decision,
+            ActivationDecision::Inactive,
+            "nested All/Any scenario 3 (adx=F, mfi=F): expected Inactive, got {:?}",
+            s3.decision
+        );
+    }
+
+    /// FilterState created for a nested filter must have `prev_conditions`
+    /// sized to `leaf_count()`, not `items().len()`.
+    #[test]
+    fn state_leaf_count_matches_state_size() {
+        use crate::state::FilterState;
+        use crate::types::ConditionGroup;
+
+        // All([leaf_a, Group Any([leaf_b, leaf_c])]) → leaf_count = 3
+        let leaf_a = ConditionItem::Leaf(Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::Gt,
+            rhs: Operand::Numeric(10.0),
+        });
+        let leaf_b = Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::Gt,
+            rhs: Operand::Numeric(20.0),
+        };
+        let leaf_c = Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::Gt,
+            rhs: Operand::Numeric(30.0),
+        };
+        let group = ConditionItem::Group(ConditionGroup::Any(vec![leaf_b, leaf_c]));
+        let tree = ConditionTree::All(vec![leaf_a, group]);
+
+        let expected_leaves = tree.leaf_count(); // should be 3
+        assert_eq!(expected_leaves, 3, "leaf_count() should be 3 for 1 leaf + 1 group of 2");
+
+        let f = mk_filter(tree, 0, None);
+        let state = FilterState::new(&f);
+        assert_eq!(
+            state.prev_conditions.len(),
+            expected_leaves,
+            "FilterState.prev_conditions must match leaf_count()"
+        );
     }
 }
