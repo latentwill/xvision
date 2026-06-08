@@ -32,21 +32,57 @@ const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
 
 /// Query params for `GET /api/scenarios`. Mirrors `ListScenariosFilter` but
-/// uses a flat, query-string-friendly shape. `tags` and `exclude_tags` are
-/// repeated: `?tags=a&exclude_tags=b`.
+/// uses a flat, query-string-friendly shape. `tags` and `exclude_tags` accept
+/// either a single value (`?tags=a`) or repeated keys (`?tags=a&tags=b`).
 /// `#[serde(default)]` ensures missing fields use their defaults rather than 400ing.
 #[derive(Debug, Default, Deserialize)]
 pub struct ListParams {
     pub source: Option<ScenarioSource>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_vec")]
     pub tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_vec")]
     pub exclude_tags: Vec<String>,
     #[serde(default)]
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+/// Deserializes a query param that may arrive as a bare string (`?tags=a`) or
+/// as repeated keys (`?tags=a&tags=b`) into `Vec<String>`. `serde_urlencoded`
+/// (used by axum's `Query` extractor) yields a single string for a lone
+/// occurrence, causing "expected a sequence" if the field is typed `Vec<String>`.
+fn string_or_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{SeqAccess, Visitor};
+    use std::fmt;
+
+    struct StringOrVec;
+
+    impl<'de> Visitor<'de> for StringOrVec {
+        type Value = Vec<String>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a string or sequence of strings")
+        }
+
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(vec![v.to_owned()])
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(s) = seq.next_element::<String>()? {
+                out.push(s);
+            }
+            Ok(out)
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
 }
 
 #[derive(Serialize)]
