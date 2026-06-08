@@ -120,11 +120,19 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim AS runtime
 
 ARG WITH_IDENTITY=0
+# Build provenance — supplied by scripts/deploy-image.sh (--build-arg). Default
+# to "unknown" so a bare `docker build` still produces a valid image; the deploy
+# script always passes the real values. Surfaced at runtime via the ENV block
+# below and at rest via the OCI labels here.
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
 
 LABEL org.opencontainers.image.title="xvision (deploy)" \
       org.opencontainers.image.description="xvision dashboard + xvn CLI, SPA baked in" \
       org.opencontainers.image.source="https://github.com/latentwill/xvision" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_TIME}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -160,7 +168,9 @@ ENV XVN_DATA_DIR=/data \
     XVN_HOME=/data \
     XVN_CONFIG_DIR=/config \
     XVN_AGENTD_BIN=/opt/xvision-agentd/dist/index.js \
-    APCA_API_BASE_URL=https://paper-api.alpaca.markets
+    APCA_API_BASE_URL=https://paper-api.alpaca.markets \
+    XVN_GIT_SHA=${GIT_SHA} \
+    XVN_BUILT_AT=${BUILD_TIME}
 # XVN_CONFIG_PATH is intentionally NOT set here. The entrypoint seeds the
 # read-only /config/default.toml to the writable $XVN_HOME/config/default.toml
 # on first boot and exports XVN_CONFIG_PATH to that writable path. Leaving it

@@ -66,6 +66,13 @@ if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; th
 fi
 [[ -z "$TAG" ]] && TAG="xvision:deploy-${SHA}${DIRTY}"
 
+# Build provenance baked into the image (ARG GIT_SHA / BUILD_TIME in
+# Dockerfile.deploy → ENV XVN_GIT_SHA / XVN_BUILT_AT + OCI labels →
+# GET /api/version). Full SHA carries the dirty marker so a build off an
+# uncommitted tree is never mistaken for a clean commit.
+FULL_SHA="$(git rev-parse HEAD 2>/dev/null || echo "nogit")${DIRTY}"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
 # --- Branch sanity preflight ---------------------------------------------------
 # This block surfaces what's about to be built so deploys can't silently ship
 # from a branch that's parallel to main (the failure mode that produced the
@@ -106,12 +113,15 @@ if [[ "${XVN_DEPLOY_QUIET:-0}" != "1" ]] && command -v git >/dev/null 2>&1; then
 fi
 
 echo "==> Building $TAG (WITH_IDENTITY=$WITH_IDENTITY, platform=$PLATFORM)"
+echo "==> Provenance: GIT_SHA=$FULL_SHA  BUILD_TIME=$BUILD_TIME"
 # `--load` so the image lands in the local daemon (default for single-platform
 # builds, but explicit is better when buildx is the active builder).
 DOCKER_BUILDKIT=1 docker buildx build \
   -f Dockerfile.deploy \
   --platform "$PLATFORM" \
   --build-arg "WITH_IDENTITY=${WITH_IDENTITY}" \
+  --build-arg "GIT_SHA=${FULL_SHA}" \
+  --build-arg "BUILD_TIME=${BUILD_TIME}" \
   --load \
   -t "$TAG" \
   -t "xvision:deploy-latest" \
