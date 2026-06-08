@@ -61,6 +61,12 @@ vi.mock("@/api/agents", () => ({
   listAgents: vi.fn().mockResolvedValue([]),
 }));
 
+// OptimizerDigestStrip pulls the last optimizer session via this hook. Default
+// to no sessions (strip renders nothing); the reachability test overrides it.
+vi.mock("@/features/autooptimizer/api", () => ({
+  useSessionList: vi.fn(() => ({ data: [] })),
+}));
+
 vi.mock("@/api/agent-runs", () => ({
   agentRunKeys: {
     all: ["agent-runs"],
@@ -232,5 +238,31 @@ describe("HomeRoute", () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
     expect(screen.getByText(/cockpit/)).toBeInTheDocument();
+  });
+
+  // Reachability gate: the OptimizerDigestStrip must actually be MOUNTED on the
+  // home route — not just exist as a component. (It was built + tested but never
+  // wired into home.tsx; a component-only test can't catch that.)
+  it("mounts OptimizerDigestStrip on the home route when a session exists", async () => {
+    const { useSessionList } = await import("@/features/autooptimizer/api");
+    vi.mocked(useSessionList).mockReturnValue({
+      data: [
+        {
+          session_id: "sess_01HOMEDIGEST",
+          strategy_id: "strat-x",
+          state: "finished",
+          mode: "explore",
+          cycles_completed: 12,
+          kept_count: 2,
+          cost_usd: 4.1,
+        },
+      ],
+    } as unknown as ReturnType<typeof useSessionList>);
+
+    renderRoute();
+
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(await screen.findByText(/Last run:/)).toBeInTheDocument();
+    expect(screen.getByText(/12 experiments/)).toBeInTheDocument();
   });
 });

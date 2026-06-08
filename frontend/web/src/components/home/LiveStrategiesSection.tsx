@@ -10,6 +10,11 @@ import { Link } from "react-router-dom";
 
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
+import { isInflightRunStatus } from "@/lib/run-status";
+
+// Cap the rows so the section can't grow unbounded (the endpoint returns every
+// agent run ever recorded, not just live deployments — see header comment).
+const MAX_ROWS = 8;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -58,6 +63,25 @@ function EmptyState() {
   );
 }
 
+function StatusBadge({ status }: { status: string }) {
+  // Reflect the run's ACTUAL status. The previous hardcoded green "Live" badge
+  // mislabelled every row (including backtests) as live real money — dangerous
+  // on a real-money surface. Distinguishing live-money from backtest needs a
+  // backend signal the AgentRunSummary doesn't carry yet (see header comment).
+  const running = status === "running";
+  return (
+    <span
+      className={
+        running
+          ? "rounded-full bg-green-500/15 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400"
+          : "rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400"
+      }
+    >
+      {running ? "Running" : "Queued"}
+    </span>
+  );
+}
+
 function RunRow({ summary }: { summary: AgentRunSummary }) {
   const shortId = summary.run_id.slice(0, 8);
   const startedRelative = relativeTime(summary.started_at);
@@ -71,10 +95,8 @@ function RunRow({ summary }: { summary: AgentRunSummary }) {
       {/* Run ID */}
       <span className="font-mono text-xs text-muted-foreground">{shortId}</span>
 
-      {/* Live badge */}
-      <span className="rounded-full bg-green-500/15 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
-        Live
-      </span>
+      {/* Actual status (not a hardcoded "Live") */}
+      <StatusBadge status={summary.status} />
 
       {/* Started */}
       <span className="ml-auto text-xs text-muted-foreground">{startedRelative}</span>
@@ -101,6 +123,13 @@ export function LiveStrategiesSection() {
     refetchInterval: 10_000,
   });
 
+  // Only runs in flight (queued/running) are "live strategies running now" —
+  // completed/historical agent runs (backtests, finished evals) are not. This
+  // also collapses the unbounded list to the handful actually executing.
+  const inflight = (data ?? []).filter((r) => isInflightRunStatus(r.status));
+  const shown = inflight.slice(0, MAX_ROWS);
+  const overflow = inflight.length - shown.length;
+
   return (
     <section
       aria-label="live-strategies-section"
@@ -116,13 +145,21 @@ export function LiveStrategiesSection() {
       {/* Body */}
       {isPending ? (
         <LoadingSkeleton />
-      ) : !data || data.length === 0 ? (
+      ) : inflight.length === 0 ? (
         <EmptyState />
       ) : (
         <div className="space-y-1">
-          {data.map((summary) => (
+          {shown.map((summary) => (
             <RunRow key={summary.run_id} summary={summary} />
           ))}
+          {overflow > 0 && (
+            <Link
+              to="/live"
+              className="block px-3 py-1.5 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              View all {inflight.length} running →
+            </Link>
+          )}
         </div>
       )}
     </section>

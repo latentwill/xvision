@@ -10,6 +10,7 @@ import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { LiveStrategiesSection } from "@/components/home/LiveStrategiesSection";
+import { OptimizerDigestStrip } from "@/components/home/OptimizerDigestStrip";
 import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
 import { StrategyOutcomesList } from "@/components/home/StrategyOutcomesList";
 import { NagStrip } from "@/components/home/NagStrip";
@@ -78,6 +79,7 @@ export function HomeRoute() {
         <SafetyPauseBanner />
         <ActiveTasksStrip />
         <LiveStrategiesSection />
+        <OptimizerDigestStrip />
         <CriticalFindingsRow runs={runs.data ?? []} />
         <StrategyOutcomesList strategies={strategies.data ?? []} runs={runs.data ?? []} />
         <NagStrip items={attentionItems} />

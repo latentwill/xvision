@@ -44,14 +44,31 @@ describe("LiveStrategiesSection", () => {
     await screen.findByText(/no active live deployments/i);
   });
 
-  it("renders a run row with MOCK_RUN_LIVE — shows first 8 chars of run_id and 'Live' badge", async () => {
-    const summary = MOCK_RUN_LIVE.summary;
+  it("renders a running run row — shows first 8 chars of run_id and the actual status badge", async () => {
+    const summary = MOCK_RUN_LIVE.summary; // status: "running"
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([summary]);
 
     renderSection();
 
     await screen.findByText(summary.run_id.slice(0, 8));
-    expect(screen.getAllByText(/live/i).length).toBeGreaterThanOrEqual(1);
+    // Badge reflects the real status, not a hardcoded "Live".
+    expect(screen.getByText("Running")).toBeInTheDocument();
+  });
+
+  it("filters OUT completed/historical runs (only in-flight shown)", async () => {
+    const live = { ...MOCK_RUN_LIVE.summary, status: "running" as const };
+    const done = {
+      ...MOCK_RUN_LIVE.summary,
+      run_id: "done0000completed",
+      status: "completed" as const,
+    };
+    vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([live, done]);
+
+    renderSection();
+
+    await screen.findByText(live.run_id.slice(0, 8));
+    // The completed run must NOT appear — it is not a live strategy running now.
+    expect(screen.queryByText(done.run_id.slice(0, 8))).toBeNull();
   });
 
   it("section header contains 'Live' and 'Real money' text", async () => {
