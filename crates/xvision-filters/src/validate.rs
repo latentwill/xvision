@@ -18,7 +18,7 @@
 //! — both endpoints must lie in `[0, 100]`).
 
 use crate::errors::ValidationError;
-use crate::types::{Condition, ConditionTree, Filter, IndicatorName, IndicatorRef, Operand, Operator};
+use crate::types::{Condition, ConditionItem, ConditionTree, Filter, IndicatorName, IndicatorRef, Operand, Operator};
 
 /// Validate a `Filter`. Returns on the **first** rule violation; rules
 /// are checked in spec-table order so the most semantically-meaningful
@@ -45,10 +45,38 @@ pub fn validate(filter: &Filter) -> Result<(), ValidationError> {
     validate_fire_metadata(filter)?;
 
     // Per-condition rules: 1, 2, 3, 4, 5, 6.
+    // Iterate per item (Leaf or Group) so nested groups get correct JSON
+    // pointer paths and empty inner groups are caught.
     let variant = filter.conditions.variant_name();
-    for (idx, cond) in filter.conditions.conditions().iter().enumerate() {
-        let base = format!("/conditions/{}/{}", variant, idx);
-        validate_condition(cond, &base)?;
+    for (outer_idx, item) in filter.conditions.items().iter().enumerate() {
+        match item {
+            ConditionItem::Leaf(cond) => {
+                let path = format!("/conditions/{}/{}", variant, outer_idx);
+                validate_condition(cond, &path)?;
+            }
+            ConditionItem::Group(group) => {
+                let group_path = format!(
+                    "/conditions/{}/{}/{}",
+                    variant,
+                    outer_idx,
+                    group.variant_name()
+                );
+                if group.is_empty() {
+                    return Err(ValidationError::EmptyTree {
+                        path: group_path.clone(),
+                        detail: format!(
+                            "condition group '{}' at index {} must contain at least one condition",
+                            group.variant_name(),
+                            outer_idx
+                        ),
+                    });
+                }
+                for (inner_idx, cond) in group.conditions().iter().enumerate() {
+                    let path = format!("{}/{}", group_path, inner_idx);
+                    validate_condition(cond, &path)?;
+                }
+            }
+        }
     }
 
     Ok(())
@@ -114,7 +142,7 @@ fn validate_cooldown(_filter: &Filter) -> Result<(), ValidationError> {
 
 fn validate_condition_tree_non_empty(tree: &ConditionTree) -> Result<(), ValidationError> {
     let variant = tree.variant_name();
-    if tree.conditions().is_empty() {
+    if tree.leaf_count() == 0 {
         return Err(ValidationError::EmptyTree {
             path: format!("/conditions/{}", variant),
             detail: format!("condition tree '{}' must contain at least one condition", variant),

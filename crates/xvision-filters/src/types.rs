@@ -898,9 +898,133 @@ pub struct Condition {
     pub rhs: Operand,
 }
 
-/// Logical tree above leaf `Condition`s. v1 is a flat `All` or `Any`; the
-/// spec's TOML example uses `[[filter.conditions.all]]`. Serde
-/// `rename_all = "snake_case"` produces that tag.
+/// Inner condition group — non-recursive. Holds only flat `Condition`s.
+/// Depth > 1 is structurally impossible: `ConditionGroup` contains
+/// `Vec<Condition>`, not `Vec<ConditionItem>`.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConditionGroup {
+    All(Vec<Condition>),
+    Any(Vec<Condition>),
+}
+
+impl ConditionGroup {
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::All(_) => "all",
+            Self::Any(_) => "any",
+        }
+    }
+
+    pub fn conditions(&self) -> &[Condition] {
+        match self {
+            Self::All(v) | Self::Any(v) => v,
+        }
+    }
+
+    pub fn conditions_mut(&mut self) -> &mut Vec<Condition> {
+        match self {
+            Self::All(v) | Self::Any(v) => v,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.conditions().is_empty()
+    }
+
+    pub fn combine(&self, results: &[bool]) -> bool {
+        match self {
+            Self::All(_) => results.iter().all(|&r| r),
+            Self::Any(_) => results.iter().any(|&r| r),
+        }
+    }
+}
+
+/// A top-level item in a `ConditionTree`: either a flat `Leaf` condition
+/// or a nested `ConditionGroup` (max 1 level deep by type construction).
+///
+/// Serializes as untagged (Leaf: `{lhs,op,rhs}`, Group: `{all:[...]}` /
+/// `{any:[...]}`). Deserialization uses a custom visitor that peeks at the
+/// first map key to choose the variant — this avoids swallowing Operand/
+/// Operator parse errors the way `#[serde(untagged)]` would.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConditionItem {
+    Leaf(Condition),
+    Group(ConditionGroup),
+}
+
+impl Serialize for ConditionItem {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            ConditionItem::Leaf(c) => c.serialize(serializer),
+            ConditionItem::Group(g) => g.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConditionItem {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ConditionItemVisitor)
+    }
+}
+
+struct ConditionItemVisitor;
+
+impl<'de> serde::de::Visitor<'de> for ConditionItemVisitor {
+    type Value = ConditionItem;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a condition leaf {lhs, op, rhs} or a group {all: [...]} / {any: [...]}")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        // Collect all key-value pairs as raw serde_json::Value so we can
+        // inspect the keys and then re-deserialize to the right type.
+        use serde::de::Error as _;
+
+        let mut raw: std::collections::BTreeMap<String, serde_json::Value> =
+            std::collections::BTreeMap::new();
+        while let Some((k, v)) = map.next_entry::<String, serde_json::Value>()? {
+            raw.insert(k, v);
+        }
+
+        // Discriminate by key set.
+        let is_group = raw.contains_key("all") || raw.contains_key("any");
+
+        let json_obj = serde_json::Value::Object(
+            raw.into_iter()
+                .map(|(k, v)| (k, v))
+                .collect::<serde_json::Map<String, serde_json::Value>>(),
+        );
+
+        if is_group {
+            let group: ConditionGroup =
+                serde_json::from_value(json_obj).map_err(|e| A::Error::custom(e.to_string()))?;
+            Ok(ConditionItem::Group(group))
+        } else {
+            // It looks like a Leaf — propagate any Condition parse error
+            // verbatim (preserving OperandVisitor messages).
+            let cond: Condition =
+                serde_json::from_value(json_obj).map_err(|e| A::Error::custom(e.to_string()))?;
+            Ok(ConditionItem::Leaf(cond))
+        }
+    }
+}
+
+/// Logical tree above leaf `Condition`s. Serde `rename_all = "snake_case"`
+/// produces the `all`/`any` tag expected by the DSL (`[[filter.conditions.all]]`).
+///
+/// Items may be flat `Leaf` conditions or one level of nested `Group`.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -909,22 +1033,65 @@ pub struct Condition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConditionTree {
-    All(Vec<Condition>),
-    Any(Vec<Condition>),
+    All(Vec<ConditionItem>),
+    Any(Vec<ConditionItem>),
 }
 
 impl ConditionTree {
     pub fn variant_name(&self) -> &'static str {
         match self {
-            ConditionTree::All(_) => "all",
-            ConditionTree::Any(_) => "any",
+            Self::All(_) => "all",
+            Self::Any(_) => "any",
         }
     }
 
-    pub fn conditions(&self) -> &[Condition] {
+    pub fn items(&self) -> &[ConditionItem] {
         match self {
-            ConditionTree::All(v) | ConditionTree::Any(v) => v,
+            Self::All(v) | Self::Any(v) => v,
         }
+    }
+
+    pub fn items_mut(&mut self) -> &mut Vec<ConditionItem> {
+        match self {
+            Self::All(v) | Self::Any(v) => v,
+        }
+    }
+
+    /// Total number of leaf `Condition`s, counting into nested groups.
+    pub fn leaf_count(&self) -> usize {
+        self.items()
+            .iter()
+            .map(|i| match i {
+                ConditionItem::Leaf(_) => 1,
+                ConditionItem::Group(g) => g.conditions().len(),
+            })
+            .sum()
+    }
+
+    /// All leaf `Condition`s in depth-first order.
+    pub fn leaves_dfs(&self) -> Vec<&Condition> {
+        self.items()
+            .iter()
+            .flat_map(|i| match i {
+                ConditionItem::Leaf(c) => vec![c],
+                ConditionItem::Group(g) => g.conditions().iter().collect(),
+            })
+            .collect()
+    }
+
+    /// All leaf `Condition`s in depth-first order, mutably.
+    ///
+    /// Collected into a `Vec` — a lazy iterator is not feasible with
+    /// heterogeneous mutable refs across enum arms.
+    pub fn leaves_dfs_mut(&mut self) -> Vec<&mut Condition> {
+        let mut out = Vec::new();
+        for item in self.items_mut().iter_mut() {
+            match item {
+                ConditionItem::Leaf(c) => out.push(c),
+                ConditionItem::Group(g) => out.extend(g.conditions_mut().iter_mut()),
+            }
+        }
+        out
     }
 }
 

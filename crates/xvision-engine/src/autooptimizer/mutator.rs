@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use xvision_filters::{Filter, Operator, Operand, ConditionTree};
+use xvision_filters::{Filter, Operator, Operand};
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 use crate::autooptimizer::config::AutoOptimizerConfig;
@@ -260,8 +260,11 @@ pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
 pub fn filter_tunable_paths(filter: &Filter) -> Vec<(String, serde_json::Value)> {
     let mut paths: Vec<(String, serde_json::Value)> = Vec::new();
 
-    let conditions = filter.conditions.conditions();
-    for (i, cond) in conditions.iter().enumerate() {
+    for (i, item) in filter.conditions.items().iter().enumerate() {
+        let cond = match item {
+            xvision_filters::ConditionItem::Leaf(c) => c,
+            xvision_filters::ConditionItem::Group(_) => continue, // groups are not individually tunable
+        };
         let prefix = format!("conditions.{i}");
         // LHS
         match &cond.lhs {
@@ -387,11 +390,12 @@ pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Val
             return false;
         };
         let rest = parts[2];
-        let conditions = match &mut filter.conditions {
-            ConditionTree::All(v) | ConditionTree::Any(v) => v,
-        };
-        let Some(cond) = conditions.get_mut(idx) else {
+        let Some(item) = filter.conditions.items_mut().get_mut(idx) else {
             return false;
+        };
+        let cond = match item {
+            xvision_filters::ConditionItem::Leaf(c) => c,
+            xvision_filters::ConditionItem::Group(_) => return false,
         };
 
         match rest {
@@ -1454,7 +1458,7 @@ mod tests {
         };
         let child = diff.apply_to(&base);
         let filter = child.filter.as_ref().expect("child must have a filter");
-        let cond = filter.conditions.conditions().first().expect("one condition");
+        let cond = filter.conditions.leaves_dfs().into_iter().next().expect("one condition");
         match &cond.rhs {
             Operand::Numeric(v) => {
                 assert!((v - 28.0).abs() < 1e-9, "rhs should be 28.0, got {v}");

@@ -2664,6 +2664,19 @@ impl Executor {
             anyhow::bail!("eval run stopped");
         }
 
+        // Mark-to-market: close all open positions at their last-seen mark
+        // price before computing metrics. Applied at NORMAL COMPLETION only
+        // (all bars consumed). Early-stop/cancel bails above this point, so
+        // this block is unreachable on a cancelled run.
+        for (_asset, pnl) in book.close_all_at_mark() {
+            realized_count += 1;
+            n_trades += 1;
+            if pnl > 0.0 {
+                wins += 1;
+            }
+            equity += pnl;
+        }
+
         let cadence_minutes = strategy.manifest.decision_cadence_minutes;
         let strategy_return_pct = total_return_pct(initial, equity);
 
@@ -4762,5 +4775,55 @@ mod live_shell_tests {
         // Live construction now needs broker + stream handles; API-level tests
         // cover validation without requiring real Alpaca credentials here.
         assert!(true);
+    }
+}
+
+#[cfg(test)]
+mod mark_to_market_tests {
+    use crate::eval::executor::book::PortfolioBook;
+    use xvision_core::trading::AssetSymbol::Btc;
+
+    #[test]
+    fn mark_to_market_adds_to_win_count() {
+        // A LONG entered at 100, marked at 150 — should be a win.
+        let mut book = PortfolioBook::new(10_000.0);
+        book.set_position(Btc, 1.0, 100.0);
+        book.mark(Btc, 150.0);
+
+        let mut realized_count = 0u32;
+        let mut wins = 0u32;
+        let mut equity = 10_000.0f64;
+
+        for (_asset, pnl) in book.close_all_at_mark() {
+            realized_count += 1;
+            if pnl > 0.0 {
+                wins += 1;
+            }
+            equity += pnl;
+        }
+
+        assert_eq!(realized_count, 1);
+        assert_eq!(wins, 1);
+        assert!(equity > 10_000.0);
+    }
+
+    #[test]
+    fn mark_to_market_loss_not_win() {
+        let mut book = PortfolioBook::new(10_000.0);
+        book.set_position(Btc, 1.0, 100.0);
+        book.mark(Btc, 80.0); // price fell
+
+        let mut wins = 0u32;
+        let mut realized_count = 0u32;
+
+        for (_asset, pnl) in book.close_all_at_mark() {
+            realized_count += 1;
+            if pnl > 0.0 {
+                wins += 1;
+            }
+        }
+
+        assert_eq!(realized_count, 1);
+        assert_eq!(wins, 0, "loss should not count as win");
     }
 }

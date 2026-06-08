@@ -74,7 +74,7 @@ impl FilterState {
     pub fn new(filter: &Filter) -> Self {
         let refs = collect_filter_indicator_refs(filter);
         let indicators = IndicatorEngine::new(refs.iter());
-        let n_conditions = filter.conditions.conditions().len();
+        let n_conditions = filter.conditions.leaf_count();
         Self {
             indicators,
             prev_conditions: vec![None; n_conditions],
@@ -161,7 +161,7 @@ impl FilterState {
 /// Walk a condition tree and collect every `IndicatorRef` it touches.
 pub fn collect_indicator_refs(tree: &ConditionTree) -> Vec<IndicatorRef> {
     let mut out = Vec::new();
-    for cond in tree.conditions() {
+    for cond in tree.leaves_dfs() {
         collect_from_condition(cond, &mut out);
     }
     // Dedup while preserving order.
@@ -205,7 +205,8 @@ fn collect_from_operand(o: &Operand, out: &mut Vec<IndicatorRef>) {
 mod tests {
     use super::*;
     use crate::types::{
-        Condition, ConditionTree, FilterId, IndicatorName, Operator, StrategyId, Symbol, Timeframe,
+        Condition, ConditionItem, ConditionTree, FilterId, IndicatorName, Operator, StrategyId, Symbol,
+        Timeframe,
     };
     use chrono::TimeZone;
 
@@ -231,11 +232,11 @@ mod tests {
     }
 
     fn one_indicator_filter() -> Filter {
-        let tree = ConditionTree::All(vec![Condition {
+        let tree = ConditionTree::All(vec![ConditionItem::Leaf(Condition {
             lhs: Operand::Indicator(IndicatorRef::periodic(IndicatorName::Sma, 3)),
             op: Operator::Gt,
             rhs: Operand::Numeric(0.0),
-        }]);
+        })]);
         mk_filter(tree, 0, None)
     }
 
@@ -278,16 +279,16 @@ mod tests {
     fn collect_indicator_refs_dedups() {
         let r = IndicatorRef::periodic(IndicatorName::Ema, 10);
         let tree = ConditionTree::All(vec![
-            Condition {
+            ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(r.clone()),
                 op: Operator::Gt,
                 rhs: Operand::Numeric(0.0),
-            },
-            Condition {
+            }),
+            ConditionItem::Leaf(Condition {
                 lhs: Operand::Indicator(r.clone()),
                 op: Operator::Lt,
                 rhs: Operand::Numeric(100.0),
-            },
+            }),
         ]);
         let refs = collect_indicator_refs(&tree);
         assert_eq!(refs.len(), 1);

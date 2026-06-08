@@ -74,6 +74,22 @@ impl PortfolioBook {
     pub fn open_position_count(&self) -> usize {
         self.legs.len()
     }
+    /// Close all open positions at their last-seen mark price.
+    /// Returns `(AssetSymbol, realized_pnl)` for each closed leg.
+    /// The book is flat after this call and `realized` is updated.
+    pub fn close_all_at_mark(&mut self) -> Vec<(AssetSymbol, f64)> {
+        let closed: Vec<(AssetSymbol, f64)> = self
+            .legs
+            .iter()
+            .map(|(sym, leg)| (*sym, leg.position * (leg.last_mark - leg.entry_price)))
+            .collect();
+        for (_, pnl) in &closed {
+            self.realized += pnl;
+        }
+        self.legs.clear();
+        closed
+    }
+
     /// Mark-to-market equity. `marks[a]` is the price to value asset `a` at;
     /// an asset absent from `marks` falls back to its stored `last_mark`
     /// (the last price it was marked at via `mark`/`set_position`) rather
@@ -153,5 +169,49 @@ mod tests {
         b.mark(Btc, 51_000.0); // no leg yet — must not panic / create a leg
         assert_eq!(b.position(Btc), 0.0);
         assert_eq!(b.equity(&std::collections::BTreeMap::new()), 100_000.0);
+    }
+
+    #[test]
+    fn close_all_at_mark_closes_open_long() {
+        let mut book = PortfolioBook::new(10_000.0);
+        book.set_position(Btc, 1.0, 100.0); // long 1 unit at 100
+        book.mark(Btc, 120.0); // mark at 120
+        let closed = book.close_all_at_mark();
+        assert_eq!(closed.len(), 1);
+        let (_, pnl) = &closed[0];
+        assert!(*pnl > 0.0, "long from 100→120 should be positive");
+        assert_eq!(book.open_position_count(), 0, "book should be flat after close");
+    }
+
+    #[test]
+    fn close_all_at_mark_closes_open_short() {
+        let mut book = PortfolioBook::new(10_000.0);
+        book.set_position(Btc, -1.0, 100.0); // short 1 unit at 100
+        book.mark(Btc, 80.0); // mark at 80
+        let closed = book.close_all_at_mark();
+        assert_eq!(closed.len(), 1);
+        let (_, pnl) = &closed[0];
+        assert!(*pnl > 0.0, "short from 100→80 should be positive");
+        assert_eq!(book.open_position_count(), 0);
+    }
+
+    #[test]
+    fn close_all_at_mark_flat_noop() {
+        let mut book = PortfolioBook::new(10_000.0);
+        let closed = book.close_all_at_mark();
+        assert!(closed.is_empty());
+        assert_eq!(book.open_position_count(), 0);
+    }
+
+    #[test]
+    fn close_all_at_mark_two_assets() {
+        let mut book = PortfolioBook::new(10_000.0);
+        book.set_position(Btc, 1.0, 100.0);
+        book.mark(Btc, 110.0);
+        book.set_position(Eth, 2.0, 50.0);
+        book.mark(Eth, 60.0);
+        let closed = book.close_all_at_mark();
+        assert_eq!(closed.len(), 2);
+        assert_eq!(book.open_position_count(), 0);
     }
 }
