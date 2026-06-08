@@ -219,8 +219,16 @@ These are larger items now fully scoped after the B-series. Each is a standalone
 
 **Source:** `DesignImprovementSweep/design_handoff_optimizer_redesign/README.md`  
 **Effort:** ~1 week  
-**Status:** ready to spec after A3, A5, A6 land  
-**Dependencies:** A3 (phantom Start), A5 (accent tokens), A6 (SSE hook)
+**Status:** in progress — structural phases done; live-zone heatmap remains  
+**Dependencies:** A3, A5, A6 — all merged
+
+**Progress (2026-06-08):**
+- Phase 1 ✅ — A6 `useCycleEventStream` hook (#865)
+- Phase 2a ✅ — #870: `CommandBar` (Zone 1) + Launch run button + phase spine when running
+- Phase 2b ✅ — #871: `launchOnly` mode renders just the launch form inline
+- Zone 6 ✅ — #872: single `HistoryLedger` with Cycles ⇄ Runs toggle; removed the duplicate standalone table + RecentSessionsList
+- **Phase 3 (remaining) — NEEDS DESIGN REVIEW, not loop-merged:** `LiveEvalHeatmap` is net-new animated UI (shimmer ported from `ar-home.jsx`, cell-state mapping from the SSE stream) AND restructures LiveCycleView's working `[300px·1fr·260px]` grid into the 2-up Zone 3 band. High visual-judgment + touches live SSE wiring → should be a reviewed session with the page rendered, not an unseen autonomous merge.
+- **Zone 4 (remaining) — low value:** the KPI summary (cycles · kept · suspect) already lives in the Zone 1 command bar; a separate Kept/Suspect/Dropped/Top-Δ strip is largely redundant. Worth doing only alongside Phase 3.
 
 **Architecture (from B3/B4/B5 findings):**
 
@@ -265,7 +273,16 @@ The redesign proceeds in this order. Each phase is a PR:
 
 **Source:** `DesignImprovementSweep/XVN Chart Craft (standalone).html`  
 **Effort:** ~1–2 days  
-**Status:** needs surface identification before work starts
+**Status:** BLOCKED — design decision needed
+
+**Finding (2026-06-08):** The "Chart snapshot" card was removed from the home page in commit `9044b3c` (Control Tower S1 redesign). The chart query at `home.tsx` is still present but kept only "for hook-count stability" and is not rendered. The current home renders: SafetyPauseBanner, ActiveTasksStrip, LiveStrategiesSection, CriticalFindingsRow, StrategyOutcomesList, NagStrip — none with charts. The former chart was an inline `ControlChartCard` using `RunChartV2`.
+
+**Decision needed (owner):** Where should the upgraded chart live?
+- Restore a chart card to the home page, or
+- Add a chart to `StrategyOutcomesList` / `LiveStrategiesSection`, or
+- Re-scope Move 05 onto `eval-runs-detail` (already has a RunChartV2 chart that could gain the drawdown pane / markers / SMA).
+
+Block on user input before implementing.
 
 **Finding (from B2):** No component is literally named "Chart snapshot." Two distinct chart systems exist:
 - `chart-v2` (`components/chart/v2/…`, `useChart2Theme`, chart2 tokens) — main trading/kline charts
