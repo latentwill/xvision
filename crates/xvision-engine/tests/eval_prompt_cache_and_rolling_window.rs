@@ -131,6 +131,7 @@ fn eval_shaped_request(n_bars: usize, cache_control: Option<CacheControlMode>) -
         temperature: None,
         response_schema: None,
         cache_control,
+        force_json: false,
     }
 }
 

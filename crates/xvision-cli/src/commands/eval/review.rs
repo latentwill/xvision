@@ -504,6 +504,7 @@ mod tests {
             temperature: None,
             response_schema: None,
             cache_control: None,
+            force_json: false,
         };
         let resp = dispatch.complete(req).await.expect("dispatch");
         assert!(resp.text().contains("local-candle stub"));

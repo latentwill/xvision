@@ -270,6 +270,7 @@ pub async fn summarize_history(
         temperature: Some(0.0),
         response_schema: None,
         cache_control: None,
+        force_json: false,
     };
     let resp = dispatch.complete(req).await?;
     let summary_text = resp

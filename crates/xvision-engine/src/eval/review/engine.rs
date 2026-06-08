@@ -202,6 +202,7 @@ async fn call_model(
         temperature: Some(profile.temperature),
         response_schema: None,
         cache_control: None,
+        force_json: true,
     };
     let resp = dispatch.complete(req).await.map_err(|e| format!("{e}"))?;
     Ok(resp.text())

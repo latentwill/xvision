@@ -185,6 +185,7 @@ pub async fn run_judge(
         temperature: None,
         response_schema: None,
         cache_control: None,
+        force_json: true,
     };
 
     let resp = judge.dispatch.complete(req).await?;

@@ -52,6 +52,7 @@ pub async fn extract_findings(
         temperature: None,
         response_schema: None,
         cache_control: None,
+        force_json: true,
     };
     let resp = dispatch.complete(req).await?;
     let text = resp.text();

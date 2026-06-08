@@ -151,6 +151,16 @@ pub struct LlmRequest {
     /// `team/contracts/eval-prompt-cache-and-rolling-window.md`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<CacheControlMode>,
+    /// Ask the provider to return valid JSON (any shape). Emits
+    /// `response_format: {"type": "json_object"}` on OpenAI-compat
+    /// providers when `response_schema` is also `None` — the lighter
+    /// mode that works across all model sizes including small local
+    /// Ollama models that don't support `json_schema` constrained
+    /// generation. Ignored when `response_schema` is set (that already
+    /// implies JSON). No-op on Anthropic (JSON instruction lives in the
+    /// system prompt via `response_schema.prompt_contract()`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_json: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1082,6 +1092,8 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
     }
     if let Some(schema) = &req.response_schema {
         body["response_format"] = schema.openai_response_format();
+    } else if req.force_json {
+        body["response_format"] = serde_json::json!({"type": "json_object"});
     }
     if let Some(t) = req.temperature {
         body["temperature"] = serde_json::json!(t);
@@ -1465,6 +1477,7 @@ mod max_tokens_body_tests {
             temperature: None,
             response_schema: None,
             cache_control: None,
+            force_json: false,
         }
     }
 
@@ -1520,6 +1533,41 @@ mod max_tokens_body_tests {
         assert_eq!(
             body["max_tokens"], 200_000,
             "operator's max_tokens must pass through verbatim — no ceiling clamp",
+        );
+    }
+
+    #[test]
+    fn force_json_emits_json_object_response_format_when_no_schema() {
+        let mut req = req_with("lfm2.5:8b", None);
+        req.force_json = true;
+        let body = openai_compat_request_body(&req);
+        assert_eq!(
+            body.pointer("/response_format/type").and_then(|v| v.as_str()),
+            Some("json_object"),
+            "force_json must emit response_format={{type:json_object}} for small ollama models"
+        );
+    }
+
+    #[test]
+    fn force_json_is_overridden_by_response_schema() {
+        let mut req = req_with("lfm2.5:8b", None);
+        req.force_json = true;
+        req.response_schema = Some(ResponseSchema::trader_output());
+        let body = openai_compat_request_body(&req);
+        assert_eq!(
+            body.pointer("/response_format/type").and_then(|v| v.as_str()),
+            Some("json_schema"),
+            "response_schema takes precedence over force_json"
+        );
+    }
+
+    #[test]
+    fn force_json_false_does_not_add_response_format() {
+        let req = req_with("lfm2.5:8b", None);
+        let body = openai_compat_request_body(&req);
+        assert!(
+            body.get("response_format").is_none(),
+            "force_json=false must not add response_format"
         );
     }
 

@@ -1076,6 +1076,7 @@ impl WizardLoop {
                 tools,
                 response_schema: None,
                 cache_control: None,
+                force_json: false,
             };
             let resp: LlmResponse = self.dispatch.complete(req).await?;
 

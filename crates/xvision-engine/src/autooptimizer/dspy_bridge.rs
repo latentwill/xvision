@@ -67,6 +67,7 @@ impl DspyBridge for LiveDspyBridge {
             temperature: Some(0.3),
             response_schema: None,
             cache_control: None,
+            force_json: false,
         };
         let resp = self.dispatch.complete(req).await?;
         Ok(resp.text().trim().to_string())
