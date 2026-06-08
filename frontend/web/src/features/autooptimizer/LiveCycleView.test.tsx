@@ -121,7 +121,7 @@ beforeEach(() => {
   });
 });
 
-function renderLiveCycleView(props: { activeTab?: string } = {}) {
+function renderLiveCycleView(props: { activeTab?: string; launchOnly?: boolean } = {}) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -130,7 +130,7 @@ function renderLiveCycleView(props: { activeTab?: string } = {}) {
   });
   return render(
     <QueryClientProvider client={client}>
-      <LiveCycleView activeTab={props.activeTab} />
+      <LiveCycleView activeTab={props.activeTab} launchOnly={props.launchOnly} />
     </QueryClientProvider>,
   );
 }
@@ -228,7 +228,7 @@ describe("LiveCycleView", () => {
 
   it("launches an optimizer run through the dashboard API", async () => {
     const user = userEvent.setup();
-    renderLiveCycleView();
+    renderLiveCycleView({ launchOnly: true });
 
     await screen.findByRole("option", { name: "Trend follower" });
     await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
@@ -266,7 +266,7 @@ describe("LiveCycleView", () => {
       default_model: null,
     });
 
-    renderLiveCycleView();
+    renderLiveCycleView({ launchOnly: true });
 
     expect(await screen.findAllByRole("option", { name: "qwen2.5-coder:7b" })).toHaveLength(2);
     expect(screen.getByText(/No override uses built-in fallback/)).toBeInTheDocument();
@@ -290,7 +290,7 @@ describe("LiveCycleView", () => {
       ],
       default_model: null,
     });
-    renderLiveCycleView();
+    renderLiveCycleView({ launchOnly: true });
 
     await screen.findByRole("option", { name: "Trend follower" });
     await user.selectOptions(
@@ -354,7 +354,7 @@ describe("LiveCycleView", () => {
       ],
       default_model: null,
     });
-    renderLiveCycleView();
+    renderLiveCycleView({ launchOnly: true });
 
     await screen.findByRole("option", { name: "Trend follower" });
     await waitFor(() => {
