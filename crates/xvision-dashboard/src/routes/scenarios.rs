@@ -15,7 +15,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use xvision_engine::api::chart::{self as chart_api, ScenarioChartPayload};
 use xvision_engine::api::scenario::{
@@ -32,21 +32,68 @@ const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
 
 /// Query params for `GET /api/scenarios`. Mirrors `ListScenariosFilter` but
-/// uses a flat, query-string-friendly shape. `tags` and `exclude_tags` are
-/// repeated: `?tags=a&exclude_tags=b`.
-/// `#[serde(default)]` ensures missing fields use their defaults rather than 400ing.
-#[derive(Debug, Default, Deserialize)]
+/// uses a flat, query-string-friendly shape. `tags` and `exclude_tags` accept
+/// either a single value (`?tags=a`) or repeated keys (`?tags=a&tags=b`).
+#[derive(Debug, Default)]
 pub struct ListParams {
     pub source: Option<ScenarioSource>,
-    #[serde(default)]
     pub tags: Vec<String>,
-    #[serde(default)]
     pub exclude_tags: Vec<String>,
-    #[serde(default)]
     pub include_archived: bool,
     pub parent_scenario_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+impl ListParams {
+    fn from_query_pairs(pairs: Vec<(String, String)>) -> Result<Self, DashboardError> {
+        let mut params = Self::default();
+        for (key, value) in pairs {
+            match key.as_str() {
+                "source" => params.source = Some(parse_source(&value)?),
+                "tags" => params.tags.push(value),
+                "exclude_tags" => params.exclude_tags.push(value),
+                "include_archived" => params.include_archived = parse_bool("include_archived", &value)?,
+                "parent_scenario_id" => params.parent_scenario_id = Some(value),
+                "limit" => params.limit = Some(parse_i64("limit", &value)?),
+                "offset" => params.offset = Some(parse_i64("offset", &value)?),
+                _ => {}
+            }
+        }
+        Ok(params)
+    }
+}
+
+fn parse_source(value: &str) -> Result<ScenarioSource, DashboardError> {
+    match value {
+        "Canonical" => Ok(ScenarioSource::Canonical),
+        "User" => Ok(ScenarioSource::User),
+        "Clone" => Ok(ScenarioSource::Clone),
+        "Generated" => Ok(ScenarioSource::Generated),
+        "Frozen" => Ok(ScenarioSource::Frozen),
+        _ => Err(DashboardError::Validation {
+            field: "source".into(),
+            msg: "must be one of Canonical, User, Clone, Generated, Frozen".into(),
+        }),
+    }
+}
+
+fn parse_bool(field: &str, value: &str) -> Result<bool, DashboardError> {
+    match value {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(DashboardError::Validation {
+            field: field.into(),
+            msg: "must be boolean".into(),
+        }),
+    }
+}
+
+fn parse_i64(field: &str, value: &str) -> Result<i64, DashboardError> {
+    value.parse::<i64>().map_err(|_| DashboardError::Validation {
+        field: field.into(),
+        msg: "must be an integer".into(),
+    })
 }
 
 #[derive(Serialize)]
@@ -58,8 +105,9 @@ pub struct ScenariosListResponse {
 
 pub async fn list(
     State(state): State<AppState>,
-    Query(params): Query<ListParams>,
+    Query(raw_params): Query<Vec<(String, String)>>,
 ) -> Result<Json<ScenariosListResponse>, DashboardError> {
+    let params = ListParams::from_query_pairs(raw_params)?;
     let limit_raw = params.limit.unwrap_or(DEFAULT_LIMIT);
     if limit_raw < 0 {
         return Err(DashboardError::Validation {
@@ -164,6 +212,55 @@ pub async fn preview(
 ) -> Result<Json<chart_api::ScenarioPreviewPayload>, DashboardError> {
     let payload = chart_api::build_scenario_preview(&state.api_context(), q).await?;
     Ok(Json(payload))
+}
+
+#[cfg(test)]
+mod list_params {
+    use super::ListParams;
+
+    fn parse(query: &str) -> ListParams {
+        let pairs: Vec<(String, String)> =
+            serde_urlencoded::from_str(query).expect("query pairs should parse");
+        ListParams::from_query_pairs(pairs).expect("ListParams should parse")
+    }
+
+    #[test]
+    fn accepts_single_tag_value() {
+        let params = parse("tags=source%3Aautooptimizer");
+        assert_eq!(params.tags, vec!["source:autooptimizer"]);
+    }
+
+    #[test]
+    fn accepts_single_exclude_tag_value() {
+        let params = parse("exclude_tags=source%3Aautooptimizer");
+        assert_eq!(params.exclude_tags, vec!["source:autooptimizer"]);
+    }
+
+    #[test]
+    fn accepts_repeated_tag_values() {
+        let params = parse("tags=a&tags=b");
+        assert_eq!(params.tags, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn missing_tag_params_default_to_empty_lists() {
+        let params = parse("");
+        assert!(params.tags.is_empty());
+        assert!(params.exclude_tags.is_empty());
+    }
+
+    #[test]
+    fn parses_scalar_fields() {
+        let params = parse("source=Generated&include_archived=true&parent_scenario_id=p&limit=10&offset=5");
+        assert_eq!(
+            params.source,
+            Some(xvision_engine::eval::scenario::ScenarioSource::Generated)
+        );
+        assert!(params.include_archived);
+        assert_eq!(params.parent_scenario_id.as_deref(), Some("p"));
+        assert_eq!(params.limit, Some(10));
+        assert_eq!(params.offset, Some(5));
+    }
 }
 
 #[cfg(test)]
