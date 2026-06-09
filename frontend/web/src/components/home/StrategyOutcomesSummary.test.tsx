@@ -52,6 +52,9 @@ function makeRun(
     auto_fire_review: false,
     review_model: null,
     max_annotations_per_review: null,
+    paused: false,
+    paused_at: null,
+    flatten_requested: false,
   };
 }
 
