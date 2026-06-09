@@ -401,3 +401,22 @@
     }
   }
 }
+
+/*
+ * Global reduced-motion safeguard. Users who request reduced motion at the OS
+ * level get near-instant animations/transitions everywhere, including Tailwind
+ * `transition-*` / `animate-*` utilities and `active:scale-*` flashes. Kept at
+ * top level (outside @layer) so the !important resets reliably win the cascade.
+ * Component-scoped reduced-motion blocks above remain as explicit documentation
+ * of the loudest animations; this is the catch-all.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
