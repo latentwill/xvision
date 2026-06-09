@@ -121,6 +121,28 @@
     animation: xvn-flash-in var(--duration-slow) var(--ease-out);
   }
 
+  /* Stat-number update pop. A quick scale bump played when a live stat value
+     changes, drawing the eye to the update. Consumers remount the number span
+     via `key={value}`, so the CSS-mount-only animation fires on each new value
+     and never replays while the value is unchanged. Left-anchored so the focal
+     metric does not shift. The global reduced-motion block collapses it. */
+  @keyframes xvn-num-pop {
+    0% {
+      transform: scale(1);
+    }
+    35% {
+      transform: scale(1.12);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  .xvn-num-pop {
+    display: inline-block;
+    transform-origin: left center;
+    animation: xvn-num-pop var(--duration-base) var(--ease-out);
+  }
+
   .input {
     @apply w-full bg-surface-elev border border-border rounded px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-text-3;
   }
