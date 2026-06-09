@@ -79,7 +79,7 @@ export function LiveListRoute() {
 
   return (
     <>
-      <Topbar title="Live strategies" sub="Real money · active deployments" />
+      <Topbar title="Live trading" sub="Not enabled in this build" />
 
       <div className="space-y-3">
         {q.isPending ? (
@@ -91,16 +91,11 @@ export function LiveListRoute() {
         ) : runs.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <p className="text-[15px] font-medium text-text-2">
-              No active live deployments
+              Live trading is not enabled yet
             </p>
-            <p className="text-[13px] text-text-3">
-              Configure a broker to start live trading.{" "}
-              <Link
-                to="/settings/brokers"
-                className="text-text-2 underline underline-offset-2 hover:text-text"
-              >
-                Settings → Brokers
-              </Link>
+            <p className="max-w-lg text-[13px] text-text-3">
+              This dashboard does not currently have a live-trading deployment surface.
+              Use evals and the Optimizer to test strategies before live-trading support lands.
             </p>
           </div>
         ) : (

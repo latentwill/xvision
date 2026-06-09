@@ -63,8 +63,13 @@ vi.mock("@/api/agents", () => ({
 
 // OptimizerDigestStrip pulls the last optimizer session via this hook. Default
 // to no sessions (strip renders nothing); the reachability test overrides it.
+// ActiveTasksStrip pulls the running optimizer cycle via useOptimizerStatus
+// (default: idle → no cycle row) and the cycle pause/resume mutations.
 vi.mock("@/features/autooptimizer/api", () => ({
   useSessionList: vi.fn(() => ({ data: [] })),
+  useOptimizerStatus: vi.fn(() => undefined),
+  usePauseCycle: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useResumeCycle: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 vi.mock("@/api/agent-runs", () => ({
@@ -136,6 +141,17 @@ describe("HomeRoute", () => {
     expect(document.querySelector('[data-testid="control-chart-card"]')).toBeNull();
   });
 
+  // CT0: home must not imply live trading exists (no agent_runs labeled as
+  // "Live strategies / Real money / active live deployments")
+  it("does not imply live trading exists on the home dashboard", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    expect(screen.queryByText(/Live strategies/i)).toBeNull();
+    expect(screen.queryByText(/Real money/i)).toBeNull();
+    expect(screen.queryByText(/active live deployments/i)).toBeNull();
+  });
+
   // S1-W7: NagStrip renders when there are nag items (missing provider key)
   it("renders nag-strip when a provider has a missing API key", async () => {
     const { listProviders } = await import("@/api/settings");
@@ -177,6 +193,23 @@ describe("HomeRoute", () => {
   // S1-W7: Section DOM order — NagStrip renders last when nag items exist
   it("renders sections in correct order when nag items are present", async () => {
     const { listProviders } = await import("@/api/settings");
+    const { useOptimizerStatus } = await import("@/features/autooptimizer/api");
+    // CT2: an empty Active tasks panel renders nothing; give it a running
+    // optimizer cycle so the section is present to anchor DOM-order assertions.
+    vi.mocked(useOptimizerStatus).mockReturnValue({
+      active_session: {
+        session_id: "sess_order",
+        strategy_id: "strat-order",
+        state: "running",
+        mode: "explore",
+        cycles_completed: 1,
+        kept_count: 0,
+        suspect_count: 0,
+        dropped_count: 0,
+      },
+      active_cycle_id: "cycle_order",
+      last_event_seq: 1,
+    } as unknown as ReturnType<typeof useOptimizerStatus>);
     vi.mocked(listProviders).mockResolvedValueOnce({
       providers: [
         {
@@ -206,31 +239,34 @@ describe("HomeRoute", () => {
       expect(document.querySelector('[data-testid="nag-strip"]')).not.toBeNull();
     });
 
+    const outcomeStrip = document.querySelector('[data-testid="home-outcome-strip"]');
     const activeTasksStrip = document.querySelector('[data-testid="active-tasks-strip"]');
-    const liveStrategiesSection = document.querySelector('[data-testid="live-strategies-section"]');
     const criticalFindingsRow = document.querySelector('[data-testid="critical-findings-row"]');
-    const strategyOutcomesList = document.querySelector('[data-testid="strategy-outcomes-list"]');
+    const strategyOutcomesSummary = document.querySelector('[data-testid="strategy-outcomes-summary"]');
     const nagStrip = document.querySelector('[data-testid="nag-strip"]');
 
+    expect(outcomeStrip).not.toBeNull();
     expect(activeTasksStrip).not.toBeNull();
-    expect(liveStrategiesSection).not.toBeNull();
     expect(criticalFindingsRow).not.toBeNull();
-    expect(strategyOutcomesList).not.toBeNull();
+    expect(strategyOutcomesSummary).not.toBeNull();
     expect(nagStrip).not.toBeNull();
 
-    // Verify DOM order: NagStrip is last
+    // Verify DOM order: outcome strip first, NagStrip last
     const container = activeTasksStrip!.parentElement!;
     const children = Array.from(container.children);
+    const idxOutcomeStrip = children.indexOf(outcomeStrip as Element);
     const idxActive = children.indexOf(activeTasksStrip as Element);
-    const idxLive = children.indexOf(liveStrategiesSection as Element);
     const idxCritical = children.indexOf(criticalFindingsRow as Element);
-    const idxOutcomes = children.indexOf(strategyOutcomesList as Element);
+    const idxOutcomes = children.indexOf(strategyOutcomesSummary as Element);
     const idxNag = children.indexOf(nagStrip as Element);
 
-    expect(idxActive).toBeLessThan(idxLive);
-    expect(idxLive).toBeLessThan(idxCritical);
+    expect(idxOutcomeStrip).toBeLessThan(idxActive);
+    expect(idxActive).toBeLessThan(idxCritical);
     expect(idxCritical).toBeLessThan(idxOutcomes);
     expect(idxOutcomes).toBeLessThan(idxNag);
+
+    // Reset the optimizer-status override so it does not leak to later tests.
+    vi.mocked(useOptimizerStatus).mockReturnValue(undefined);
   });
 
   // S1-W2: Topbar subtitle updated

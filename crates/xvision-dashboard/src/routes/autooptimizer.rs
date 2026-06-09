@@ -87,6 +87,14 @@ impl From<OptimizerSession> for SessionSummary {
 pub struct StatusResponse {
     pub active_session: Option<SessionSummary>,
     pub last_event_seq: i64,
+    /// Control Tower S0 (O3): the in-flight cycle id for the active session,
+    /// derived from the newest `autooptimizer_events` row that carries a
+    /// `cycle_id`. Pause/resume controls target this cycle via
+    /// `POST /api/autooptimizer/cycles/:cycle_id/{pause,resume}` (the only
+    /// mounted pause/resume surface — there is no session-level pause route).
+    /// `None` when no session is active or no cycle has emitted events yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_cycle_id: Option<String>,
 }
 
 /// GET /api/autooptimizer/status
@@ -99,6 +107,7 @@ pub async fn get_status(
         return Ok(Json(StatusResponse {
             active_session: None,
             last_event_seq: 0,
+            active_cycle_id: None,
         }));
     }
 
@@ -107,7 +116,9 @@ pub async fn get_status(
         .map_err(|e| DashboardError::Internal(e))?
         .map(SessionSummary::from);
 
-    let last_event_seq: i64 = if table_exists(&state.pool, "autooptimizer_events").await? {
+    let has_events = table_exists(&state.pool, "autooptimizer_events").await?;
+
+    let last_event_seq: i64 = if has_events {
         sqlx::query_scalar("SELECT COALESCE(MAX(seq), 0) FROM autooptimizer_events")
             .fetch_one(&state.pool)
             .await
@@ -116,9 +127,17 @@ pub async fn get_status(
         0
     };
 
+    // The pause/resume registry is keyed by cycle_id; surface the active
+    // session's newest in-flight cycle so the Active-tasks strip can drive it.
+    let active_cycle_id: Option<String> = match (&active, has_events) {
+        (Some(s), true) => active_session_cycle_id(&state.pool, &s.session_id).await?,
+        _ => None,
+    };
+
     Ok(Json(StatusResponse {
         active_session: active,
         last_event_seq,
+        active_cycle_id,
     }))
 }
 
@@ -191,18 +210,39 @@ fn default_session_limit() -> i64 {
     20
 }
 
+/// One session row enriched with the two cross-table digest signals the
+/// Control Tower home strip needs (S0 / O1b+O1c). The session table itself
+/// carries no realized cost or honesty column, so both are aggregated from
+/// the per-cycle tables via the `autooptimizer_events(session_id, cycle_id)`
+/// link and serialized alongside the flattened session fields.
+#[derive(Serialize)]
+pub struct SessionListRow {
+    #[serde(flatten)]
+    pub session: OptimizerSession,
+    /// Sum of `cycle_cost.cost_usd` across every cycle this session ran.
+    /// `None` (renders as "$?") when no cost rows exist yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    /// The most-recent cycle's honesty-check outcome for this session
+    /// (`true` = passed, `false` = failed). `None` (renders as "—") when no
+    /// cycle in the session has an honesty-check row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub honesty_passed: Option<bool>,
+}
+
 /// GET /api/autooptimizer/sessions
 ///
-/// Returns sessions newest-first.
+/// Returns sessions newest-first, each enriched with realized cost and the
+/// latest honesty-check outcome (S0 / O1b+O1c).
 pub async fn list_sessions(
     State(state): State<AppState>,
     Query(q): Query<SessionListQuery>,
-) -> Result<Json<Vec<OptimizerSession>>, DashboardError> {
+) -> Result<Json<Vec<SessionListRow>>, DashboardError> {
     if !table_exists(&state.pool, "autooptimizer_session_state").await? {
         return Ok(Json(Vec::new()));
     }
 
-    let rows: Vec<OptimizerSession> = sqlx::query_as(
+    let sessions: Vec<OptimizerSession> = sqlx::query_as(
         "SELECT * FROM autooptimizer_session_state \
          ORDER BY created_at DESC \
          LIMIT ? OFFSET ?",
@@ -213,7 +253,90 @@ pub async fn list_sessions(
     .await
     .map_err(|e| DashboardError::Internal(e.into()))?;
 
+    // Aggregation tables are created lazily by the optimizer; treat absence as
+    // "no data" rather than an error so the strip still renders the counts.
+    let has_events = table_exists(&state.pool, "autooptimizer_events").await?;
+    let has_cost = has_events && table_exists(&state.pool, "cycle_cost").await?;
+    let has_honesty = has_events && table_exists(&state.pool, "cycle_honesty_checks").await?;
+
+    let mut rows = Vec::with_capacity(sessions.len());
+    for session in sessions {
+        let cost_usd = if has_cost {
+            session_cost_usd(&state.pool, &session.session_id).await?
+        } else {
+            None
+        };
+        let honesty_passed = if has_honesty {
+            session_latest_honesty(&state.pool, &session.session_id).await?
+        } else {
+            None
+        };
+        rows.push(SessionListRow {
+            session,
+            cost_usd,
+            honesty_passed,
+        });
+    }
+
     Ok(Json(rows))
+}
+
+/// Realized cost for a session = Σ `cycle_cost.cost_usd` over the distinct
+/// cycles it ran. Returns `None` when the session has no priced cycle yet
+/// (SUM over zero rows is SQL NULL), so the UI shows "$?" rather than "$0.00".
+async fn session_cost_usd(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+) -> Result<Option<f64>, DashboardError> {
+    sqlx::query_scalar::<_, Option<f64>>(
+        "SELECT SUM(cc.cost_usd) FROM cycle_cost cc \
+         WHERE cc.cycle_id IN ( \
+            SELECT DISTINCT cycle_id FROM autooptimizer_events \
+            WHERE session_id = ? AND cycle_id IS NOT NULL )",
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))
+}
+
+/// The newest in-flight cycle id for a session (by event `seq`). Drives the
+/// Active-tasks pause/resume controls (S0 / O3). `None` when the session has
+/// emitted no cycle-bearing events.
+async fn active_session_cycle_id(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+) -> Result<Option<String>, DashboardError> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT cycle_id FROM autooptimizer_events \
+         WHERE session_id = ? AND cycle_id IS NOT NULL \
+         ORDER BY seq DESC LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))
+    .map(Option::flatten)
+}
+
+/// The newest honesty-check outcome among the session's cycles (by
+/// `cycle_honesty_checks.created_at`). `None` when none of its cycles ran one.
+async fn session_latest_honesty(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+) -> Result<Option<bool>, DashboardError> {
+    let passed: Option<i64> = sqlx::query_scalar(
+        "SELECT h.passed FROM cycle_honesty_checks h \
+         WHERE h.cycle_id IN ( \
+            SELECT DISTINCT cycle_id FROM autooptimizer_events \
+            WHERE session_id = ? AND cycle_id IS NOT NULL ) \
+         ORDER BY h.created_at DESC LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))?;
+    Ok(passed.map(|p| p != 0))
 }
 
 /// GET /api/autooptimizer/sessions/:id
@@ -2082,5 +2205,91 @@ mod tests {
             .expect("load_stats_rows with since filter");
         assert_eq!(rows.len(), 1, "since filter must exclude old cycle");
         assert_eq!(rows[0].cycle_id, "cycle-new");
+    }
+
+    // ─── Control Tower S0: session digest enrichment (O1b/O1c/O3) ─────────────
+
+    /// Seed a session with two cycles, link them via events, attach costs to
+    /// both and an honesty check to the newer cycle. The session-level
+    /// aggregations must sum cost across both cycles, report the newest
+    /// honesty outcome, and surface the newest cycle id for pause/resume.
+    #[tokio::test]
+    async fn test_session_enrichment_cost_honesty_and_active_cycle() {
+        let pool = open_stats_pool().await;
+
+        sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sess-ct', 'strat-ct', '{}', 'running', 'once', '2026-06-07T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Two cycles, newer one has the higher seq (autoincrement insert order).
+        for (cid, ts) in [
+            ("cycle-ct-01", "2026-06-07T00:00:00Z"),
+            ("cycle-ct-02", "2026-06-07T01:00:00Z"),
+        ] {
+            sqlx::query(
+                "INSERT INTO autooptimizer_events \
+                 (session_id, cycle_id, kind, payload_json, ts) \
+                 VALUES ('sess-ct', ?, 'cycle_started', '{}', ?)",
+            )
+            .bind(cid)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Cost on both cycles → session total = 0.10 + 0.05 = 0.15.
+        seed_cycle_cost(&pool, "cycle-ct-01", 0.10, "2026-06-07T00:00:00Z").await;
+        seed_cycle_cost(&pool, "cycle-ct-02", 0.05, "2026-06-07T01:00:00Z").await;
+
+        // Honesty check FAILED on the newer cycle (passed = 0).
+        sqlx::query(
+            "INSERT INTO cycle_honesty_checks \
+             (cycle_id, passed, sabotage_variant, message, gate_verdict, parent_hash, created_at) \
+             VALUES ('cycle-ct-02', 0, 'shuffle', 'caught', 'Vetoed', 'p', '2026-06-07T01:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let cost = session_cost_usd(&pool, "sess-ct").await.expect("cost");
+        assert!(
+            (cost.unwrap() - 0.15).abs() < 1e-9,
+            "session cost must sum both cycles, got {cost:?}"
+        );
+
+        let honesty = session_latest_honesty(&pool, "sess-ct").await.expect("honesty");
+        assert_eq!(honesty, Some(false), "newest cycle's honesty check failed");
+
+        let cycle = active_session_cycle_id(&pool, "sess-ct").await.expect("active cycle");
+        assert_eq!(
+            cycle.as_deref(),
+            Some("cycle-ct-02"),
+            "active cycle must be the newest by event seq"
+        );
+    }
+
+    /// A session with no priced cycles and no honesty check yields `None` for
+    /// both (renders as "$?" / "—"), never a misleading "$0.00" or "passed".
+    #[tokio::test]
+    async fn test_session_enrichment_absent_signals_are_none() {
+        let pool = open_stats_pool().await;
+        sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sess-empty', 'strat-x', '{}', 'finished', 'once', '2026-06-07T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(session_cost_usd(&pool, "sess-empty").await.unwrap(), None);
+        assert_eq!(session_latest_honesty(&pool, "sess-empty").await.unwrap(), None);
+        assert_eq!(active_session_cycle_id(&pool, "sess-empty").await.unwrap(), None);
     }
 }

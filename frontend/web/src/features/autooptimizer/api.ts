@@ -13,7 +13,7 @@
 //   Mutator        → "Experiment writer"
 //   gate_verdict   displayed as "Accepted" / "Rejected" / "Suspect"
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
 
 // ─── Wire shapes ──────────────────────────────────────────────────────────────
@@ -267,6 +267,46 @@ export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResp
     `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/cancel`,
     { method: "POST" },
   );
+}
+
+// ─── Cycle-level pause/resume (Control Tower S0 / O3) ─────────────────────────
+// NOTE: the mounted pause/resume surface is cycle-level
+// (`/api/autooptimizer/cycles/:cycle_id/{pause,resume}`). The older
+// `pauseSession`/`resumeSession` helpers below target an unmounted
+// `/sessions/:id/...` route and are dead — use these from the Active-tasks strip.
+
+/** Pause the in-flight optimizer cycle (suspends before the next candidate). */
+export async function pauseCycle(cycleId: string): Promise<StartRunCycleResponse> {
+  return apiFetch<StartRunCycleResponse>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/pause`,
+    { method: "POST" },
+  );
+}
+
+/** Resume a paused optimizer cycle. */
+export async function resumeCycle(cycleId: string): Promise<StartRunCycleResponse> {
+  return apiFetch<StartRunCycleResponse>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/resume`,
+    { method: "POST" },
+  );
+}
+
+/** useMutation hook: pause the in-flight cycle, then refresh status. */
+export function usePauseCycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cycleId: string) => pauseCycle(cycleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["optimizer/status"] }),
+  });
+}
+
+/** useMutation hook: resume the in-flight cycle, then refresh status. */
+export function useResumeCycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cycleId: string) => resumeCycle(cycleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["optimizer/status"] }),
+  });
 }
 
 // ─── Session-level control mutations (P4) ────────────────────────────────────
@@ -578,6 +618,9 @@ export interface SessionSummary {
 export interface StatusResponse {
   active_session: SessionSummary | null;
   last_event_seq: number;
+  /** Newest in-flight cycle id for the active session — target for the
+   *  Active-tasks pause/resume controls (S0 / O3). Absent when idle. */
+  active_cycle_id?: string | null;
 }
 
 /** Row in the recent-sessions list (GET /api/autooptimizer/sessions) */
@@ -588,7 +631,12 @@ export interface SessionListItem {
   mode: string;
   cycles_completed: number;
   kept_count: number;
+  /** Candidates demoted to "suspect" across the session (S0 / O1a). */
+  suspect_count?: number;
+  /** Σ realized cost across the session's cycles (S0 / O1c); undefined → "$?". */
   cost_usd?: number;
+  /** Newest cycle's honesty-check outcome (S0 / O1b); undefined → "—". */
+  honesty_passed?: boolean;
   finished_at?: string;
 }
 

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
+import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
 import { ActiveTasksStrip } from "@/components/home/ActiveTasksStrip";
 import { evalKeys, listRuns } from "@/api/eval";
 import { chartKeys, getRunChart } from "@/api/chart";
@@ -9,10 +10,9 @@ import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { isInflightRunStatus } from "@/lib/run-status";
-import { LiveStrategiesSection } from "@/components/home/LiveStrategiesSection";
 import { OptimizerDigestStrip } from "@/components/home/OptimizerDigestStrip";
 import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
-import { StrategyOutcomesList } from "@/components/home/StrategyOutcomesList";
+import { StrategyOutcomesSummary } from "@/components/home/StrategyOutcomesSummary";
 import { NagStrip } from "@/components/home/NagStrip";
 import type { AttentionItem } from "@/components/home/NagStrip";
 import type {
@@ -77,11 +77,11 @@ export function HomeRoute() {
 
       <div className="space-y-5">
         <SafetyPauseBanner />
+        <HomeOutcomeStrip strategies={strategies.data ?? []} runs={runs.data ?? []} />
         <ActiveTasksStrip />
-        <LiveStrategiesSection />
         <OptimizerDigestStrip />
         <CriticalFindingsRow runs={runs.data ?? []} />
-        <StrategyOutcomesList strategies={strategies.data ?? []} runs={runs.data ?? []} />
+        <StrategyOutcomesSummary strategies={strategies.data ?? []} runs={runs.data ?? []} />
         <NagStrip items={attentionItems} />
       </div>
     </>
