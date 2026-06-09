@@ -384,7 +384,7 @@ function NewStrategyButton({
       disabled={pending}
       onClick={onClick}
       className={[
-        "inline-flex w-full items-center justify-center gap-2 rounded bg-gold font-medium text-bg transition-colors hover:bg-gold-soft disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto",
+        "inline-flex w-full items-center justify-center gap-2 rounded bg-gold font-medium text-bg transition-colors hover:bg-gold-soft disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto motion-safe:active:scale-[0.96]",
         compact ? "px-3 py-1.5 text-[12px]" : "px-3.5 py-1.5 text-[13px]",
       ].join(" ")}
     >
@@ -424,7 +424,7 @@ function DesktopRow({
   return (
     <tr
       key={row.agent_id}
-      className="border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
+      className="xvn-row-in border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
     >
       <td className="px-3 py-3 text-text">
         <Link

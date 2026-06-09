@@ -216,7 +216,7 @@ export function ScenariosRoute() {
       <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         <Link
           to="/scenarios/new"
-          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto motion-safe:active:scale-[0.96]"
         >
           <Icon name="plus" size={13} /> New scenario
         </Link>
@@ -310,7 +310,7 @@ function DesktopRow({
   return (
     <tr
       onClick={() => onGo(row.id)}
-      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
+      className="xvn-row-in cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
     >
       <td className="py-3 pl-5 pr-3">
         <Link

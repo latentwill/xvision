@@ -46,6 +46,16 @@ export default {
         // The prototype baselines body text at 13px; reflect that here.
         base: ["13px", "1.45"],
       },
+      // Motion tokens (src/styles/tokens.css). Enable `duration-fast/base/slow`
+      // and `ease-out` utilities; the global reduced-motion block collapses them.
+      transitionDuration: {
+        fast: "var(--duration-fast)",
+        base: "var(--duration-base)",
+        slow: "var(--duration-slow)",
+      },
+      transitionTimingFunction: {
+        out: "var(--ease-out)",
+      },
     },
   },
   plugins: [],

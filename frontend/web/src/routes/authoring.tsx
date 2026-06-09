@@ -1020,7 +1020,7 @@ function DecisionModeCard({ strategy }: { strategy: Strategy }) {
             type="button"
             onClick={() => save.mutate()}
             disabled={!dirty || save.isPending}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors motion-safe:active:scale-[0.96]"
           >
             {save.isPending ? "Saving..." : "Save mode"}
           </button>
@@ -1246,7 +1246,7 @@ function MechanisticConfigCard({ strategy }: { strategy: Strategy }) {
             type="button"
             onClick={() => save.mutate()}
             disabled={save.isPending}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors motion-safe:active:scale-[0.96]"
           >
             {save.isPending ? "Saving..." : "Save config"}
           </button>
@@ -1440,7 +1440,7 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
               patch.mutate();
             }}
             disabled={!dirty || patch.isPending}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors motion-safe:active:scale-[0.96]"
           >
             {patch.isPending ? "Saving..." : "Save manifest"}
           </button>
@@ -1584,7 +1584,7 @@ function RiskCard({ strategy }: { strategy: Strategy }) {
             type="button"
             onClick={onSave}
             disabled={!dirty || apply.isPending}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors motion-safe:active:scale-[0.96]"
           >
             {apply.isPending ? "Saving…" : "Save risk"}
           </button>
@@ -1724,7 +1724,7 @@ function InspectorActions({
       {deleteButton}
       <Link
         to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
-        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors"
+        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors motion-safe:active:scale-[0.96]"
       >
         Run eval →
       </Link>

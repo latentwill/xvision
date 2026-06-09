@@ -165,7 +165,7 @@ export function AgentPicker({
           type="button"
           onClick={generateWithSelectedProfile}
           disabled={busy || isSaving || !profileId || !provider || !model}
-          className="px-3 py-1.5 rounded-sm text-[12px] border border-gold bg-gold text-bg font-medium disabled:opacity-50"
+          className="px-3 py-1.5 rounded-sm text-[12px] border border-gold bg-gold text-bg font-medium disabled:opacity-50 motion-safe:active:scale-[0.96]"
         >
           {busy || patchProfile.isPending ? "Generating..." : `Generate review`}
         </button>

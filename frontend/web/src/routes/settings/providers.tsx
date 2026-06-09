@@ -669,7 +669,7 @@ function EditProviderForm({
         <button
           type="submit"
           disabled={!submittable || save.isPending}
-          className="px-3 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40"
+          className="px-3 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 motion-safe:active:scale-[0.96]"
         >
           {save.isPending ? "Saving…" : "Save changes"}
         </button>
@@ -860,7 +860,7 @@ function ModelManager({
           type="button"
           disabled={!dirty || save.isPending}
           onClick={() => save.mutate(Array.from(selected))}
-          className="px-3 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40"
+          className="px-3 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 motion-safe:active:scale-[0.96]"
         >
           {save.isPending ? "Saving…" : "Save selection"}
         </button>
@@ -1110,7 +1110,7 @@ function AddProviderForm({
           type="submit"
           disabled={!submittable || add.isPending}
           title={submittable ? "" : errors.join("; ")}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors motion-safe:active:scale-[0.96]"
         >
           {add.isPending ? "Saving…" : "Save provider"}
         </button>
