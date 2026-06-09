@@ -18,6 +18,7 @@ const PRIMARY: Item[] = [
   { to: "/scenarios", label: "Scenarios", icon: "list" },
   { to: "/charts", label: "Charts", icon: "chartPie" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
+  { to: "/live", label: "Live Trading", icon: "play" },
   { to: "/optimizer", label: "Optimizer", icon: "pulse" },
   { to: "/docs", label: "Docs", icon: "book" },
   { to: "/settings", label: "Settings", icon: "sliders" },

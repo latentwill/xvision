@@ -72,6 +72,17 @@ describe("Sidebar Marketplace entry (C8 opt-in gate)", () => {
   });
 });
 
+// Track B — Live Trading cockpit nav entry (reachability: the /live cockpit
+// must be discoverable from the persistent sidebar, not deep-link only).
+describe("Sidebar Live Trading entry", () => {
+  it("renders an unconditional Live Trading entry linking to /live", () => {
+    renderSidebar();
+    expect(
+      screen.getByRole("link", { name: /^Live Trading$/ }),
+    ).toHaveAttribute("href", "/live");
+  });
+});
+
 // chart-rework spec Track B — Charts entry (unconditional after
 // B-rollout; placement: after Scenarios, before Eval per §11.1).
 describe("Sidebar Charts entry (chart-rework Track B)", () => {
