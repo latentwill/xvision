@@ -1731,3 +1731,201 @@ async fn live_flatten_on_a_flat_book_makes_no_broker_calls() {
         "no flat decision row should be recorded for a flat-book flatten",
     );
 }
+
+/// Broker that, on its FIRST (Buy) submit, both PAUSES the run AND requests a
+/// one-shot flatten on `run_id` (exactly once — armed flag flips off). This
+/// reproduces the spec UX: the operator pauses with a position held, THEN
+/// clicks Flatten. The NEXT loop iteration's A3 flatten checkpoint fires while
+/// the run is PAUSED and a long is held, and MUST still submit the close Sell
+/// through the broker — the A1 paused-submit-skip applies only to the
+/// per-cycle decision submit, NOT to the flatten close path. Mirrors
+/// `FlattenAfterOpenBroker` but also pauses the run.
+struct PauseFlattenAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    hook: Mutex<Option<(RunStore, String)>>,
+    requested: Mutex<bool>,
+}
+
+impl PauseFlattenAfterOpenBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            hook: Mutex::new(None),
+            requested: Mutex::new(false),
+        })
+    }
+    /// Arm the hook so the first Buy pauses the run AND requests a flatten.
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for PauseFlattenAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // On the FIRST opening Buy (position now held), pause the run AND
+        // request a one-shot flatten, exactly once, so the NEXT loop iteration
+        // sees BOTH `paused = true` AND `flatten_requested = true` while a long
+        // is open. The flatten checkpoint must still reach the broker.
+        if is_buy {
+            let already = {
+                let mut r = self.requested.lock().unwrap();
+                let was = *r;
+                *r = true;
+                was
+            };
+            if !already {
+                let hook = self.hook.lock().unwrap().clone();
+                if let Some((store, run_id)) = hook {
+                    store.set_paused(&run_id, true).await.unwrap();
+                    store.request_flatten(&run_id).await.unwrap();
+                }
+            }
+        }
+        let fill_price = if is_buy {
+            self.open_fill_price
+        } else {
+            self.close_fill_price
+        };
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_flatten_while_paused_still_closes_position_and_stays_paused() {
+    // Primary real-world path (spec §2.7 UX): the operator PAUSES a live run
+    // that holds an open position, THEN clicks [Flatten positions]. A1 makes a
+    // paused run SKIP the normal per-cycle broker submit while continuing to
+    // iterate; A3's flatten checkpoint closes open positions directly (NOT
+    // through the per-cycle submit gate). So a flatten issued while paused MUST
+    // still submit the broker close — the pause must NOT suppress it.
+    //
+    // Bar 1 opens a long; on that submit the broker sets BOTH `paused = true`
+    // and `flatten_requested = true`. Bar 2's loop-top flatten checkpoint fires
+    // while the run is paused and a long is held -> the shared close path
+    // submits a Sell to flatten through the broker, records a `flat` decision
+    // row, clears `flatten_requested`, and CONTINUES the run. Because the run
+    // is now paused, bar 2's long_open is submit-skipped (no reopen Buy), so
+    // the broker sees exactly two orders: the opening Buy and the flatten Sell.
+    // The run is STILL PAUSED and STILL RUNNING (Ok on stream end, not
+    // cancelled).
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = PauseFlattenAfterOpenBroker::new(50_000.0, 51_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // The run KEEPS RUNNING — a flatten does NOT terminate it, even when paused.
+    // It completes normally on stream end (Ok), unlike the cancel path (Err).
+    assert!(
+        result.is_ok(),
+        "a flatten-while-paused must NOT terminate the run; it should complete on stream end, got {result:?}",
+    );
+    assert!(
+        !store.is_cancelled(&run.id).await.unwrap(),
+        "a flatten-while-paused must not cancel the run",
+    );
+
+    // STILL PAUSED: the flatten consumes its own one-shot flag but leaves the
+    // independent A1 pause flag untouched. The run iterated to stream end while
+    // paused.
+    assert!(
+        store.is_paused(&run.id).await.unwrap(),
+        "the run must REMAIN paused after the flatten (flatten and pause are independent flags)",
+    );
+
+    // The one-shot flatten flag WAS cleared by the executor after flattening.
+    assert!(
+        !store.flatten_requested(&run.id).await.unwrap(),
+        "the executor must clear flatten_requested after flattening (one-shot), even while paused",
+    );
+
+    // CRUX: the broker DID receive the flattening close even though the run was
+    // paused. The paused-submit-skip suppresses bar-2's per-cycle long_open
+    // reopen, so the broker sees EXACTLY two orders: the opening Buy, then the
+    // flatten-driven Sell. There is NO third reopen Buy (it was paused-skipped).
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected exactly an opening Buy then a flatten Sell (no paused reopen), got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "the flatten close MUST reach the broker as a Sell even while paused, got {:?}",
+        submitted[1].side,
+    );
+    assert!(
+        (submitted[0].size - submitted[1].size).abs() < 1e-9,
+        "the flatten close must flatten exactly the open size",
+    );
+
+    // A `flat` closing decision row was recorded with the realized PnL from the
+    // broker-reported close (50_000 -> 51_000 on the open units).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let close_row = decisions
+        .iter()
+        .find(|d| d.action == "flat")
+        .expect("a flat close decision must be recorded on flatten-while-paused");
+    assert_eq!(
+        close_row.fill_price,
+        Some(51_000.0),
+        "close fill price comes from the broker's reported close price",
+    );
+    let realized = close_row.pnl_realized.expect("close settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL, got {realized}",
+    );
+    assert!(
+        close_row
+            .justification
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("flatten:"),
+        "flatten decision must carry a flatten:-prefixed justification, got {:?}",
+        close_row.justification,
+    );
+}
