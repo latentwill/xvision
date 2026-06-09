@@ -144,6 +144,7 @@
 //  R60. GET  /api/autooptimizer/blob/:hash
 //  R61. GET  /api/autooptimizer/flywheel
 //  R62. GET  /api/autooptimizer/stats    (P3-W1 per-cycle aggregates)
+//  R63. GET  /api/assets
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -168,7 +169,8 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated,
+    agent_runs, agents, assets as assets_route, autooptimizer as autooptimizer_route,
+    autooptimizer_cycle, bars, charts_annotated,
     charts_dashboards, charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -204,6 +206,7 @@ fn readonly_router(state: AppState) -> Router {
             "/api/agents/:id/diagnostics",
             get(diagnostics_route::agent),
         )
+        .route("/api/assets", get(assets_route::list))
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))

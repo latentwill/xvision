@@ -51,6 +51,8 @@ pub struct RegistryEntry {
     /// Coarse category: crypto | stable | meme | rwa | equity | index | commodity | orderly-broker
     pub category: String,
     pub data_source: DataSource,
+    /// Whether the asset is enabled in the whitelist (`enabled = true`).
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -115,6 +117,21 @@ pub fn has_alpaca_data(asset: AssetSymbol) -> bool {
 /// a whitelist is not part of the test/execution context.
 pub fn is_registry_loaded() -> bool {
     REGISTRY.get().is_some()
+}
+
+/// Returns a snapshot of all registered entries, sorted by symbol string.
+/// Returns an empty vec when the registry has not been populated yet.
+/// Used by `xvision_engine::api::assets::list_assets` to build the
+/// `GET /api/assets` response without exposing the internal `OnceLock`.
+pub fn list_registry_entries() -> Vec<RegistryEntry> {
+    REGISTRY
+        .get()
+        .map(|r| {
+            let mut entries: Vec<RegistryEntry> = r.values().cloned().collect();
+            entries.sort_by(|a, b| a.symbol.as_str().cmp(b.symbol.as_str()));
+            entries
+        })
+        .unwrap_or_default()
 }
 
 /// Returns `true` iff the asset is known to have Alpaca bar data and

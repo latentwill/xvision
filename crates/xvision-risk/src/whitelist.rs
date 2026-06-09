@@ -87,6 +87,7 @@ impl Whitelist {
                 alpaca_pair: entry.venues.get("alpaca").cloned(),
                 category: entry.category.clone(),
                 data_source: entry.data,
+                enabled: entry.enabled,
             })
             .collect();
         asset_registry::register(registry_entries);

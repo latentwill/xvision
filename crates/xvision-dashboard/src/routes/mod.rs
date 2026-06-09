@@ -1,5 +1,6 @@
 pub mod agent_runs;
 pub mod agents;
+pub mod assets;
 pub mod autooptimizer;
 pub mod autooptimizer_cycle;
 pub mod bars;
