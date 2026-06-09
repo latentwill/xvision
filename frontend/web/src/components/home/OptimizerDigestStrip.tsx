@@ -5,8 +5,8 @@ import { useSessionList } from "@/features/autooptimizer/api";
  * OptimizerDigestStrip — compact one-liner on the home page showing the last
  * optimizer run outcome.
  *
- * Sits between LiveStrategiesSection and CriticalFindingsRow.
- * S1-merge: move between LiveStrategiesSection and CriticalFindingsRow
+ * Sits between LiveSummaryStrip and CriticalFindingsRow.
+ * S1-merge: move between LiveSummaryStrip and CriticalFindingsRow
  *
  * Terminology (LOCKED — see CLAUDE.md):
  *   - "Honesty check"  (NOT "canary" or "null-result canary")

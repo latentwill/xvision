@@ -301,3 +301,192 @@ async fn record_and_read_equity_curve_in_timestamp_order() {
     assert_eq!(curve[1].1, 10_500.0);
     assert_eq!(curve[2].1, 11_000.0);
 }
+
+// ── A1: per-run (per-run) pause ───────────────────────────────────────────
+
+#[tokio::test]
+async fn fresh_run_defaults_to_not_paused() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+    let back = store.get(&id).await.unwrap();
+    assert!(!back.paused, "a freshly created run must default to not-paused");
+    assert!(
+        !store.is_paused(&id).await.unwrap(),
+        "is_paused must report false for a fresh run"
+    );
+}
+
+#[tokio::test]
+async fn set_paused_round_trips_through_get_and_is_paused() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    store.set_paused(&id, true).await.unwrap();
+    let back = store.get(&id).await.unwrap();
+    assert!(
+        back.paused,
+        "get must reflect paused = true after set_paused(true)"
+    );
+    assert!(
+        store.is_paused(&id).await.unwrap(),
+        "is_paused must report true after set_paused(true)"
+    );
+
+    // Resume clears it.
+    store.set_paused(&id, false).await.unwrap();
+    let back = store.get(&id).await.unwrap();
+    assert!(
+        !back.paused,
+        "get must reflect paused = false after set_paused(false)"
+    );
+    assert!(
+        !store.is_paused(&id).await.unwrap(),
+        "is_paused must report false after set_paused(false)"
+    );
+}
+
+#[tokio::test]
+async fn set_paused_writes_and_clears_paused_at_timestamp() {
+    // Item 3: `paused_at` is no longer write-only — `get` projects it.
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    // Fresh run: no pause timestamp.
+    assert!(
+        store.get(&id).await.unwrap().paused_at.is_none(),
+        "a fresh run must have no paused_at"
+    );
+
+    // Pausing records an RFC3339 timestamp surfaced through `get`.
+    store.set_paused(&id, true).await.unwrap();
+    let paused_at = store.get(&id).await.unwrap().paused_at;
+    let ts = paused_at.expect("paused_at must be set after set_paused(true)");
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(&ts).is_ok(),
+        "paused_at must be a valid RFC3339 timestamp, got {ts:?}"
+    );
+
+    // Resume clears it back to NULL.
+    store.set_paused(&id, false).await.unwrap();
+    assert!(
+        store.get(&id).await.unwrap().paused_at.is_none(),
+        "paused_at must clear to None after resume"
+    );
+}
+
+/// Item 1 (fail-closed LIVE path): a transient (non-missing-column) read
+/// error in `is_paused` must PROPAGATE, not be swallowed as `Ok(false)`.
+/// The live executor gate reads `is_paused(...).await.unwrap_or(true)` — so
+/// a propagated error there resolves to "paused" (no broker submit). We
+/// reproduce a real transient failure by closing the pool out from under the
+/// store (mirrors lock contention / pool exhaustion at the sqlx layer), then
+/// assert both halves of the contract: the error propagates, AND the live
+/// gate's `unwrap_or(true)` treats it as paused.
+#[tokio::test]
+async fn is_paused_propagates_transient_error_and_live_gate_fails_closed() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    // Force a transient read failure that is NOT "no such column" (the
+    // column exists; migration ran). Closing the pool surfaces as
+    // `sqlx::Error::PoolClosed`, which `is_missing_column_error` rejects.
+    store.pool().close().await;
+
+    let res = store.is_paused(&id).await;
+    assert!(
+        res.is_err(),
+        "a transient (non-missing-column) read error must PROPAGATE, not be swallowed as Ok(false)"
+    );
+
+    // The LIVE executor gate: `unwrap_or(true)` → treat the unconfirmed
+    // state as paused so no real order is submitted.
+    assert!(
+        res.unwrap_or(true),
+        "live gate must fail CLOSED (paused = true) when the pause state can't be read"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A3: one-shot flatten request flag
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fresh_run_defaults_to_no_flatten_requested() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+    assert!(
+        !store.flatten_requested(&id).await.unwrap(),
+        "flatten_requested must report false for a fresh run"
+    );
+}
+
+#[tokio::test]
+async fn request_and_clear_flatten_round_trip() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    store.request_flatten(&id).await.unwrap();
+    assert!(
+        store.flatten_requested(&id).await.unwrap(),
+        "flatten_requested must report true after request_flatten"
+    );
+
+    // Idempotent re-request is a harmless no-op.
+    store.request_flatten(&id).await.unwrap();
+    assert!(store.flatten_requested(&id).await.unwrap());
+
+    // Clearing (one-shot consumption) flips it back to false.
+    store.clear_flatten(&id).await.unwrap();
+    assert!(
+        !store.flatten_requested(&id).await.unwrap(),
+        "flatten_requested must report false after clear_flatten"
+    );
+
+    // Idempotent re-clear.
+    store.clear_flatten(&id).await.unwrap();
+    assert!(!store.flatten_requested(&id).await.unwrap());
+}
+
+#[tokio::test]
+async fn request_flatten_unknown_run_errors() {
+    let (store, _db_dir, _scenario_id) = store_with_migration().await;
+    let res = store.request_flatten("no-such-run").await;
+    assert!(
+        res.is_err(),
+        "request_flatten must error for an unknown run id"
+    );
+}
+
+/// Mirrors the `is_paused` transient-error contract: a non-missing-column
+/// read error in `flatten_requested` must PROPAGATE, not be swallowed as
+/// `Ok(false)`. The live executor reads `flatten_requested(...).await?` so a
+/// propagated error surfaces; it is never mistaken for "no flatten requested".
+#[tokio::test]
+async fn flatten_requested_propagates_transient_error() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    // Close the pool out from under the store → `sqlx::Error::PoolClosed`,
+    // which `is_missing_column_error` rejects, so the error must propagate.
+    store.pool().close().await;
+
+    let res = store.flatten_requested(&id).await;
+    assert!(
+        res.is_err(),
+        "a transient (non-missing-column) read error must PROPAGATE, not be swallowed as Ok(false)"
+    );
+}

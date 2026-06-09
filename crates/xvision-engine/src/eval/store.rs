@@ -144,6 +144,11 @@ impl RunStore {
             RunMode::Backtest => Some(run.scenario_id.as_str()),
         };
 
+        // NOTE: `paused` (migration 061) is intentionally NOT written here.
+        // A run is never *created* paused — pausing is a later UPDATE via
+        // `set_paused`. Omitting the column lets `create` work against an
+        // older schema that predates 061 (the column's DB DEFAULT 0 applies
+        // when it exists), keeping the prior binary's tables forward-usable.
         sqlx::query(
             "INSERT INTO eval_runs \
              (id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status, \
@@ -297,6 +302,153 @@ impl RunStore {
         Ok(self.status(id).await?.is_terminal())
     }
 
+    /// A1 per-run pause: set (or clear) the `paused` flag on a run.
+    ///
+    /// `paused = true` records `paused_at` = now (RFC3339); `paused = false`
+    /// (resume) clears it back to NULL. This is an ADDITIVE per-run gate that
+    /// the live executor honors ALONGSIDE the global `SafetyManager` pause —
+    /// a paused run keeps iterating but submits no broker orders for the
+    /// affected cycles. It does NOT change `status` and never terminates the
+    /// run. Idempotent: re-pausing/re-resuming is a harmless no-op write.
+    /// Errors if the run id is unknown.
+    pub async fn set_paused(&self, id: &str, paused: bool) -> Result<()> {
+        let paused_at = if paused {
+            Some(Utc::now().to_rfc3339())
+        } else {
+            None
+        };
+        let res = sqlx::query("UPDATE eval_runs SET paused = ?, paused_at = ? WHERE id = ?")
+            .bind(if paused { 1_i64 } else { 0_i64 })
+            .bind(paused_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("set_paused: run '{id}'"))?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("set_paused: no run with id '{id}'");
+        }
+        Ok(())
+    }
+
+    /// A1 per-run pause: read the current `paused` flag for a run.
+    ///
+    /// Called per-cycle by the executor loop (cheap single-column read,
+    /// mirroring the existing `is_cancelled` / `is_terminal` checkpoints) so
+    /// a pause issued mid-run via `POST /api/eval/runs/:id/pause` is honored
+    /// on the next cycle.
+    ///
+    /// Error semantics matter on the LIVE path (a real broker order rides on
+    /// this read): we distinguish the *missing column* case (a pre-061 schema,
+    /// or a test store that skipped migration 061) — where the feature is
+    /// simply inert and we return `Ok(false)` — from any *other* sqlx error
+    /// (lock contention, pool exhaustion, I/O), which we PROPAGATE rather than
+    /// swallow. A live caller can then fail closed (treat the unknown state as
+    /// paused) instead of submitting an order it couldn't confirm was allowed.
+    /// Returns `Ok(false)` for an unknown run id.
+    pub async fn is_paused(&self, id: &str) -> Result<bool> {
+        Ok(self.paused_state(id).await?.0)
+    }
+
+    /// A1 per-run pause: read both the `paused` flag and `paused_at` timestamp
+    /// for a run in one query. Shares the missing-column tolerance and
+    /// error-propagation semantics documented on [`is_paused`].
+    ///
+    /// Returns `(false, None)` for a missing column (pre-061) or an unknown
+    /// run id; propagates any other read error.
+    pub async fn paused_state(&self, id: &str) -> Result<(bool, Option<String>)> {
+        let row = match sqlx::query("SELECT paused, paused_at FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(row) => row,
+            // Missing column (pre-061) → inert: the feature isn't present yet.
+            // Any OTHER sqlx error (lock, pool exhaustion, I/O) is propagated
+            // so a live caller can fail closed instead of reading "not paused"
+            // off a transient failure.
+            Err(e) if is_missing_column_error(&e) => return Ok((false, None)),
+            Err(e) => return Err(anyhow::Error::new(e).context(format!("is_paused: run '{id}'"))),
+        };
+        let Some(row) = row else {
+            // Unknown run id.
+            return Ok((false, None));
+        };
+        let paused = row.try_get::<i64, _>("paused").unwrap_or(0) != 0;
+        let paused_at: Option<String> = row.try_get("paused_at").unwrap_or(None);
+        Ok((paused, paused_at))
+    }
+
+    /// A3 one-shot flatten: set the run's `flatten_requested` flag to `true`.
+    ///
+    /// Mirrors [`set_paused`] in shape. This is an ADDITIVE per-run, one-shot
+    /// REQUEST honored by the live executor ALONGSIDE the A1 `paused` flag: on
+    /// the next live cycle the executor closes ALL open broker positions (the
+    /// same close path A2 uses on cancel) and then [`clear_flatten`]s the flag.
+    /// It does NOT change `status` and never terminates the run. Idempotent
+    /// (re-requesting is a harmless no-op write). Errors if the run id is
+    /// unknown.
+    pub async fn request_flatten(&self, id: &str) -> Result<()> {
+        self.set_flatten_requested(id, true).await
+    }
+
+    /// A3 one-shot flatten: clear the run's `flatten_requested` flag.
+    ///
+    /// Called by the executor immediately after it has flattened (so the
+    /// request is honored exactly once — the run keeps iterating without
+    /// re-flattening every subsequent cycle). Idempotent. Errors if the run id
+    /// is unknown.
+    pub async fn clear_flatten(&self, id: &str) -> Result<()> {
+        self.set_flatten_requested(id, false).await
+    }
+
+    /// Shared body for [`request_flatten`]/[`clear_flatten`]: flips
+    /// `eval_runs.flatten_requested`. Mirrors [`set_paused`]'s write shape.
+    async fn set_flatten_requested(&self, id: &str, requested: bool) -> Result<()> {
+        let res = sqlx::query("UPDATE eval_runs SET flatten_requested = ? WHERE id = ?")
+            .bind(if requested { 1_i64 } else { 0_i64 })
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("set_flatten_requested: run '{id}'"))?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("set_flatten_requested: no run with id '{id}'");
+        }
+        Ok(())
+    }
+
+    /// A3 one-shot flatten: read the current `flatten_requested` flag for a run.
+    ///
+    /// Called per-cycle by the live executor loop (a cheap single-column read,
+    /// mirroring the [`is_paused`] checkpoint) so a flatten issued mid-run via
+    /// `POST /api/eval/runs/:id/flatten` is honored on the next cycle.
+    ///
+    /// Shares the missing-column tolerance [`paused_state`] uses: a pre-062
+    /// schema (or a test store that skipped migration 062) where the column is
+    /// absent returns `Ok(false)` (the feature is simply inert); any OTHER
+    /// sqlx error (lock contention, pool exhaustion, I/O) is PROPAGATED rather
+    /// than swallowed, so a live caller never reads "no flatten requested" off
+    /// a transient failure. Returns `Ok(false)` for an unknown run id.
+    pub async fn flatten_requested(&self, id: &str) -> Result<bool> {
+        let row = match sqlx::query("SELECT flatten_requested FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(row) => row,
+            // Missing column (pre-062) → inert: the feature isn't present yet.
+            // Any OTHER sqlx error is propagated (see `paused_state`).
+            Err(e) if is_missing_column_error(&e) => return Ok(false),
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context(format!("flatten_requested: run '{id}'")))
+            }
+        };
+        let Some(row) = row else {
+            // Unknown run id.
+            return Ok(false);
+        };
+        Ok(row.try_get::<i64, _>("flatten_requested").unwrap_or(0) != 0)
+    }
+
     pub async fn status(&self, id: &str) -> Result<RunStatus> {
         let row = sqlx::query("SELECT status FROM eval_runs WHERE id = ?")
             .bind(id)
@@ -434,7 +586,26 @@ impl RunStore {
         .await
         .context("select eval_runs by id")?
         .ok_or_else(|| anyhow::anyhow!("run not found: {id}"))?;
-        row_to_run(&row)
+        let mut run = row_to_run(&row)?;
+        // Overlay the A1 per-run pause flag + timestamp (migration 061). The
+        // shared SELECT above does not project `paused`/`paused_at` so
+        // `row_to_run` stays usable against pre-061 schemas; `paused_state` is
+        // tolerant of the columns' absence and returns the inert default
+        // there. This keeps `RunStore::get` — and the pause/resume route
+        // response built from it — reflecting the live state. Read errors
+        // collapse to the not-paused default here (the GET path carries no
+        // real-broker order); the live executor calls `is_paused` directly and
+        // fails closed on a read error.
+        let (paused, paused_at) = self.paused_state(id).await.unwrap_or((false, None));
+        run.paused = paused;
+        run.paused_at = paused_at;
+        // Overlay the A3 one-shot flatten request flag (migration 062), same
+        // pattern as the pause overlay above: not projected by the shared
+        // SELECT (so `row_to_run` stays pre-062-safe), tolerant of the column's
+        // absence, and read errors collapse to the not-requested default on the
+        // GET path (the live executor reads `flatten_requested` directly).
+        run.flatten_requested = self.flatten_requested(id).await.unwrap_or(false);
+        Ok(run)
     }
 
     /// Read just the `agents_agent_id` (long-lived workspace agent ULID)
@@ -1612,6 +1783,18 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
     })
 }
 
+/// True when a sqlx error is SQLite's "no such column" — i.e. the query
+/// referenced a column the schema doesn't have (a pre-migration DB). Used by
+/// [`RunStore::paused_state`] to stay tolerant of pre-061 schemas while
+/// propagating every OTHER read error (lock, pool exhaustion, I/O) so live
+/// callers can fail closed.
+fn is_missing_column_error(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(db) => db.message().contains("no such column"),
+        _ => false,
+    }
+}
+
 fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let started_at_str: String = row.try_get("started_at").context("read started_at")?;
     let started_at = DateTime::parse_from_rfc3339(&started_at_str)
@@ -1715,6 +1898,15 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         review_model,
         max_annotations_per_review,
         live_config,
+        // `paused` / `paused_at` (migration 061) and `flatten_requested`
+        // (migration 062) are NOT projected by the shared SELECTs so that
+        // `row_to_run` stays usable against pre-061/062 schemas. Callers that
+        // need the live flags (`RunStore::get`) overlay them via `paused_state`
+        // / `flatten_requested` after building the Run; everywhere else the
+        // harmless defaults apply.
+        paused: false,
+        paused_at: None,
+        flatten_requested: false,
     })
 }
 

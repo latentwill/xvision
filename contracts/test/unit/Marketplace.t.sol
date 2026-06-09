@@ -219,6 +219,114 @@ contract MarketplaceTest is BaseTest {
         market.buyWithAuthorization(lid, buyer, auth);
     }
 
+    /// @dev M-2: the license must go to the payer. A facilitator/front-runner
+    ///      submitting the buyer's signed auth with a different `recipient`
+    ///      would make the buyer pay while someone else receives the soulbound
+    ///      license. Enforce `recipient == auth.from`.
+    function test_buyWithAuthorization_revert_recipientNotPayer() public {
+        uint256 lid = _listed(PRICE, false);
+        usdc.mint(buyer, PRICE);
+        address attacker = makeAddr("attacker");
+
+        // Auth is signed by `buyer` (auth.from == buyer) but the facilitator
+        // tries to route the license to `attacker`.
+        IMarketplace.TransferAuthorization memory auth = _auth(buyer, PRICE, keccak256("n1"));
+        vm.prank(facilitator);
+        vm.expectRevert(Marketplace.RecipientMustBePayer.selector);
+        market.buyWithAuthorization(lid, attacker, auth);
+
+        // No funds moved, no license minted.
+        assertEq(usdc.balanceOf(buyer), PRICE, "buyer not charged");
+        assertEq(license.balanceOf(attacker, lid), 0, "attacker got no license");
+    }
+
+    /// @dev M-2: recipient == auth.from is the only accepted recipient, and it
+    ///      still settles normally (the happy path is unaffected).
+    function test_buyWithAuthorization_recipientEqualsPayer_succeeds() public {
+        uint256 lid = _listed(PRICE, false);
+        usdc.mint(buyer, PRICE);
+
+        IMarketplace.TransferAuthorization memory auth = _auth(buyer, PRICE, keccak256("n1"));
+        vm.prank(facilitator);
+        uint256 tokenId = market.buyWithAuthorization(lid, buyer, auth);
+
+        assertEq(tokenId, lid);
+        assertEq(license.balanceOf(buyer, lid), 1, "payer receives the license");
+    }
+
+    // ---- L-1: free-listing one-per-recipient cap -----------------------
+
+    /// @dev L-1: a free (priceUSDC == 0) listing may mint at most one license
+    ///      per recipient. The first direct buy succeeds; a second to the same
+    ///      recipient reverts.
+    function test_buy_freeListing_secondMintReverts() public {
+        uint256 lid = _listed(0, false);
+
+        vm.prank(buyer);
+        market.buy(lid, buyer);
+        assertEq(license.balanceOf(buyer, lid), 1);
+
+        vm.prank(buyer);
+        vm.expectRevert(Marketplace.AlreadyOwnsFreeLicense.selector);
+        market.buy(lid, buyer);
+
+        // Still exactly one.
+        assertEq(license.balanceOf(buyer, lid), 1, "free mint stays capped at one");
+    }
+
+    /// @dev L-1: the cap is per recipient — a different recipient can still
+    ///      claim their own first free license.
+    function test_buy_freeListing_perRecipientCap() public {
+        uint256 lid = _listed(0, false);
+        address other = makeAddr("other");
+
+        vm.prank(buyer);
+        market.buy(lid, buyer);
+
+        vm.prank(other);
+        market.buy(lid, other);
+
+        assertEq(license.balanceOf(buyer, lid), 1);
+        assertEq(license.balanceOf(other, lid), 1);
+    }
+
+    /// @dev L-1: the cap also applies on the x402 free-listing path.
+    function test_buyWithAuthorization_freeListing_secondMintReverts() public {
+        uint256 lid = _listed(0, false);
+
+        IMarketplace.TransferAuthorization memory auth = _auth(buyer, 0, keccak256("free1"));
+        vm.prank(facilitator);
+        market.buyWithAuthorization(lid, buyer, auth);
+        assertEq(license.balanceOf(buyer, lid), 1);
+
+        IMarketplace.TransferAuthorization memory auth2 = _auth(buyer, 0, keccak256("free2"));
+        vm.prank(facilitator);
+        vm.expectRevert(Marketplace.AlreadyOwnsFreeLicense.selector);
+        market.buyWithAuthorization(lid, buyer, auth2);
+    }
+
+    /// @dev L-1: paid listings are unaffected — a buyer may purchase the same
+    ///      paid listing more than once (the cap is free-only).
+    function test_buy_paidListing_secondMintAllowed() public {
+        uint256 lid = _listed(PRICE, false);
+        _fundAndApprove(buyer, 2 * uint256(PRICE));
+
+        vm.prank(buyer);
+        market.buy(lid, buyer);
+        vm.prank(buyer);
+        market.buy(lid, buyer);
+
+        assertEq(license.balanceOf(buyer, lid), 2, "paid re-purchase still allowed");
+    }
+
+    // ---- L-2: fee-recipient guard --------------------------------------
+
+    /// @dev L-2: setFeeRecipient must reject the zero address.
+    function test_setFeeRecipient_revert_zeroAddress() public {
+        vm.expectRevert(Marketplace.ZeroAddress.selector);
+        market.setFeeRecipient(address(0));
+    }
+
     // ---- admin ---------------------------------------------------------
 
     function test_setProtocolFeeBps_capped() public {

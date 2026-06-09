@@ -147,6 +147,95 @@ export function cancelRun(id: string): Promise<RunSummary> {
     });
 }
 
+/// Pause a live run's broker submits without stopping the run loop.
+/// Hits `POST /api/eval/runs/:id/pause`; the returned `RunSummary` has
+/// `paused: true` + a fresh `paused_at`. Mirrors `cancelRun` / `pauseSafety`.
+export function pauseRun(id: string): Promise<RunSummary> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.pause.start");
+  return apiFetch<RunSummary>(
+    `/api/eval/runs/${encodeURIComponent(id)}/pause`,
+    {
+      method: "POST",
+    },
+  )
+    .then((run) => {
+      trace.info("eval.pause.ok", {
+        paused: run.paused,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.pause.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+/// Resume a paused live run. Hits `POST /api/eval/runs/:id/resume`; the
+/// returned `RunSummary` has `paused: false`. Mirrors `pauseRun`.
+export function resumeRun(id: string): Promise<RunSummary> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.resume.start");
+  return apiFetch<RunSummary>(
+    `/api/eval/runs/${encodeURIComponent(id)}/resume`,
+    {
+      method: "POST",
+    },
+  )
+    .then((run) => {
+      trace.info("eval.resume.ok", {
+        paused: run.paused,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.resume.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+/// Request a one-shot "flatten positions" for a live run: close ALL open
+/// broker positions on the next cycle WITHOUT terminating the run. Hits
+/// `POST /api/eval/runs/:id/flatten`; the returned `RunSummary` has
+/// `flatten_requested: true` (cleared by the executor once it acts). Mirrors
+/// `pauseRun` / `cancelRun`. The cockpit fires this from the [Flatten
+/// positions] inline action after a pause (spec §2.7).
+export function flattenRun(id: string): Promise<RunSummary> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.flatten.start");
+  return apiFetch<RunSummary>(
+    `/api/eval/runs/${encodeURIComponent(id)}/flatten`,
+    {
+      method: "POST",
+    },
+  )
+    .then((run) => {
+      trace.info("eval.flatten.ok", {
+        flatten_requested: run.flatten_requested,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.flatten.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
 /// Re-queue a failed eval run with the same inputs as the source.
 /// Resolves to the `RunDetail` of the freshly-queued run (or the
 /// existing in-flight retry if one was already queued/running for the

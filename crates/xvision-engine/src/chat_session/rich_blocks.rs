@@ -905,6 +905,9 @@ mod tests {
             auto_fire_review: false,
             review_model: None,
             max_annotations_per_review: Some(8),
+            paused: false,
+            paused_at: None,
+            flatten_requested: false,
         }
     }
 

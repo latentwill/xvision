@@ -1,5 +1,6 @@
 // src/features/marketplace/routes/sell/Step3Preview.tsx
 import type { PublishDraft } from "@/features/marketplace/data/types";
+import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
 import { ListingPreviewCard } from "./ListingPreviewCard";
 
 export function Step3Preview({
@@ -76,9 +77,10 @@ export function Step3Preview({
               ? "bg-surface-elev border border-border text-text-3 cursor-not-allowed"
               : "bg-gold text-black hover:bg-gold/90"
           }`}
-          aria-label={minting ? "Minting…" : "Mint [Testnet]"}
+          aria-label={minting ? "Minting…" : "Mint on testnet"}
         >
-          {minting ? "Minting…" : "Mint [Testnet]"}
+          {minting ? "Minting…" : "Mint"}
+          {!minting ? <TestnetBadge /> : null}
         </button>
         <p className="text-[11px] text-text-3">
           Submits listing to the Mantle Sepolia testnet · one-time fee

@@ -13,6 +13,7 @@ import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
+import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
 import { relativeTime } from "@/features/marketplace/lib/time";
 import { IngredientBanner } from "./IngredientBanner";
 import { EquityPanel } from "./EquityPanel";
@@ -308,6 +309,13 @@ export function LineageRoute() {
     queryFn: () => mp.getViewer(),
   });
 
+  // DEPLOY WALL (C7 / AM6 + signer work): the real on-chain purchase is an
+  // EIP-3009 `buyWithAuthorization` that needs (a) a deployed Marketplace
+  // contract, (b) a wallet signer — `useWallet` currently exposes only an
+  // address, no signer/chain-id, and (c) a real MarketplaceData impl swapped in
+  // at MarketplaceLayout. Until all three land this stays the fixture
+  // `purchaseIntent`, which returns a fake TxRef and routes to the receipt.
+  // The real signing flow swaps in HERE; do NOT fake EIP-3009 signing.
   const buyMutation = useMutation({
     mutationFn: () => mp.purchaseIntent(detail!.id),
     onSuccess: (ref) => navigate(`/marketplace/receipts/${ref.txHash}`),
@@ -447,9 +455,7 @@ export function LineageRoute() {
               <span className="font-mono text-[24px] font-semibold text-foreground leading-none">
                 {detail.priceUsdc === null ? "FREE" : `${detail.priceUsdc} USDC`}
               </span>
-              <span className="font-mono text-[9px] tracking-[0.14em] text-warn uppercase px-1.5 py-0.5 rounded border border-warn/30 bg-warn/5">
-                TESTNET
-              </span>
+              <TestnetBadge size="sm" />
             </div>
             <div className="font-mono text-[10.5px] text-text-3 mt-0.5">
               perpetual license · one-time
@@ -472,6 +478,9 @@ export function LineageRoute() {
                   ? "Buy"
                   : "Connect wallet to buy"}
             </button>
+            <div className="mt-2 font-mono text-[10px] text-text-3 leading-snug">
+              Testnet — simulated purchase. No real funds move.
+            </div>
           </div>
 
           {/* Clone / Share row */}

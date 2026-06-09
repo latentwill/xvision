@@ -10,6 +10,7 @@ import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { agentKeys, listAgents } from "@/api/agents";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { isInflightRunStatus } from "@/lib/run-status";
+import { LiveSummaryStrip } from "@/components/home/LiveSummaryStrip";
 import { OptimizerDigestStrip } from "@/components/home/OptimizerDigestStrip";
 import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
 import { StrategyOutcomesSummary } from "@/components/home/StrategyOutcomesSummary";
@@ -79,6 +80,7 @@ export function HomeRoute() {
         <SafetyPauseBanner />
         <HomeOutcomeStrip strategies={strategies.data ?? []} runs={runs.data ?? []} />
         <ActiveTasksStrip />
+        <LiveSummaryStrip />
         <OptimizerDigestStrip />
         <CriticalFindingsRow runs={runs.data ?? []} />
         <StrategyOutcomesSummary strategies={strategies.data ?? []} runs={runs.data ?? []} />

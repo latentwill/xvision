@@ -9,14 +9,35 @@ import type { RunStrategyMetadata } from "./RunStrategyMetadata";
  * (future) MCP browse tools so the payload stays bounded as the engine adds
  * internal telemetry fields to `Run`.
  */
-export type RunSummary = { id: string, agent_id: string, scenario_id: string, strategy: RunStrategyMetadata | null, scenario: RunScenarioMetadata | null, mode: string, status: string, started_at: string, completed_at: string | null, sharpe: number | null, max_drawdown_pct: number | null, total_return_pct: number | null, error: string | null, actual_input_tokens: number | null, actual_output_tokens: number | null,
+export type RunSummary = { id: string, agent_id: string, scenario_id: string, strategy: RunStrategyMetadata | null, scenario: RunScenarioMetadata | null, mode: string, status: string, started_at: string, completed_at: string | null, sharpe: number | null, max_drawdown_pct: number | null, total_return_pct: number | null, error: string | null, actual_input_tokens: number | null, actual_output_tokens: number | null, 
 /**
  * LLM inference cost aggregated over all model calls for this run (in USD / quote currency).
  * `None` for old runs without pricing data or when the model isn't in the pricing catalog.
  */
-inference_cost_quote_total: number | null,
+inference_cost_quote_total: number | null, 
 /**
  * Net return after deducting LLM inference cost from gross trading return.
  * `None` for old runs without pricing data or when the model isn't in the pricing catalog.
  */
-net_return_pct: number | null, filter_summaries: Array<FilterSummary>, auto_fire_review: boolean, review_model: ReviewModel | null, max_annotations_per_review: number | null, };
+net_return_pct: number | null, filter_summaries: Array<FilterSummary>, auto_fire_review: boolean, review_model: ReviewModel | null, max_annotations_per_review: number | null, 
+/**
+ * A1 per-run pause flag. `true` ⇒ the live executor is skipping broker
+ * submits for this run's cycles (additive to the global safety pause)
+ * while it keeps iterating. Defaults to `false` for pre-061 runs.
+ */
+paused: boolean, 
+/**
+ * RFC3339 timestamp of the most recent pause (`eval_runs.paused_at`,
+ * migration 061); `null` when never paused or after resume. Mirrors how
+ * `safety_state.paused_at` is surfaced on the global safety status. Track
+ * B (cockpit) reads this to show "paused since …".
+ */
+paused_at: string | null, 
+/**
+ * A3 one-shot "flatten positions" request flag (`eval_runs.flatten_requested`,
+ * migration 062). `true` ⇒ the live executor will close ALL open broker
+ * positions on its next cycle and then clear the flag, WITHOUT terminating
+ * the run. The cockpit (spec §2.7) reads this to show a pending-flatten
+ * state. Defaults to `false` for pre-062 runs.
+ */
+flatten_requested: boolean, };

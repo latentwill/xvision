@@ -25,4 +25,22 @@ describe("SettingsLayout", () => {
     expect(screen.getByRole("link", { name: "General" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Providers" })).toBeInTheDocument();
   });
+
+  it("exposes the Marketplace opt-in tab (C8)", () => {
+    render(
+      <MemoryRouter initialEntries={["/settings/providers"]}>
+        <QueryClientProvider client={new QueryClient()}>
+          <Routes>
+            <Route path="/settings" element={<SettingsLayout />}>
+              <Route path="providers" element={<div />} />
+            </Route>
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(
+      screen.getByRole("link", { name: "Marketplace" }),
+    ).toHaveAttribute("href", "/settings/marketplace");
+  });
 });

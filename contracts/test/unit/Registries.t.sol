@@ -16,7 +16,9 @@ contract RegistriesTest is Test {
 
     function setUp() public {
         identity = new IdentityRegistry();
-        reputation = new ReputationRegistry();
+        // admin/registrar for the §3.6 license-gate wiring; these tests use
+        // ungated agents (no setListingForAgent), so feedback stays permissionless.
+        reputation = new ReputationRegistry(address(this));
         validation = new ValidationRegistry();
     }
 

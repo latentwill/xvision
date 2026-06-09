@@ -74,6 +74,22 @@ impl PortfolioBook {
     pub fn open_position_count(&self) -> usize {
         self.legs.len()
     }
+
+    /// Snapshot of every currently-open leg as
+    /// `(asset, position, entry_price, last_mark)`, in deterministic
+    /// `AssetSymbol` order. A leg is only present while its position is
+    /// non-zero, so this is exactly the set of assets the book holds real
+    /// exposure in. Used by the live cancel path to decide which assets to
+    /// flatten through the broker (close-in-loop on cancellation): `position`
+    /// gives the side/size to flatten and `last_mark` the best local reference
+    /// price for the closing order. Returns owned tuples so the caller can
+    /// mutate the book (closing legs) while iterating the snapshot.
+    pub fn open_legs(&self) -> Vec<(AssetSymbol, f64, f64, f64)> {
+        self.legs
+            .iter()
+            .map(|(sym, leg)| (*sym, leg.position, leg.entry_price, leg.last_mark))
+            .collect()
+    }
     /// Close all open positions at their last-seen mark price.
     /// Returns `(AssetSymbol, realized_pnl)` for each closed leg.
     /// The book is flat after this call and `realized` is updated.
@@ -201,6 +217,33 @@ mod tests {
         let closed = book.close_all_at_mark();
         assert!(closed.is_empty());
         assert_eq!(book.open_position_count(), 0);
+    }
+
+    #[test]
+    fn open_legs_reports_each_open_leg_with_position_entry_and_mark() {
+        let mut book = PortfolioBook::new(10_000.0);
+        assert!(book.open_legs().is_empty(), "flat book has no open legs");
+        book.set_position(Btc, 1.0, 100.0);
+        book.mark(Btc, 120.0);
+        book.set_position(Eth, -2.0, 50.0);
+        let legs = book.open_legs();
+        assert_eq!(legs.len(), 2, "two open legs");
+        // Deterministic AssetSymbol order (BTreeMap): Btc before Eth.
+        let (sym0, pos0, entry0, mark0) = legs[0];
+        assert_eq!(sym0, Btc);
+        assert_eq!(pos0, 1.0);
+        assert_eq!(entry0, 100.0);
+        assert_eq!(mark0, 120.0, "marked leg reports its last mark");
+        let (sym1, pos1, entry1, mark1) = legs[1];
+        assert_eq!(sym1, Eth);
+        assert_eq!(pos1, -2.0, "short position is signed negative");
+        assert_eq!(entry1, 50.0);
+        assert_eq!(mark1, 50.0, "un-marked leg falls back to entry");
+        // Closing a leg removes it from the snapshot.
+        book.set_position(Btc, 0.0, 0.0);
+        let legs = book.open_legs();
+        assert_eq!(legs.len(), 1);
+        assert_eq!(legs[0].0, Eth);
     }
 
     #[test]

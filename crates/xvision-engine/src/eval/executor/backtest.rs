@@ -2089,7 +2089,21 @@ impl Executor {
                 // A broker-rejected order also skips simulate_fill: the order is
                 // treated as if it never existed (fail-honest — the strategy sees
                 // the decision in the trace but no fill in outcomes).
-                let fill: FillRecord = if applied_action == "hold" || broker_rejected {
+                //
+                // A1 per-run pause: when the run is paused (an ADDITIVE per-run
+                // gate alongside the global SafetyManager pause), skip the fill
+                // submit for this cycle and emit a no-op fill — the run keeps
+                // iterating (decisions still record), it just doesn't trade.
+                // Re-read per cycle so a pause issued mid-run via
+                // `POST /api/eval/runs/:id/pause` takes effect on the next cycle.
+                //
+                // FAIL OPEN on the BACKTEST/simulated path (`simulate_fill`): no
+                // real money rides on this fill, so a transient read error
+                // degrades to "not paused" (`unwrap_or(false)`) rather than
+                // silently freezing a backtest. The LIVE path
+                // (`decide_one_live` → `RealBrokerFills`) fails CLOSED instead.
+                let run_paused = store.is_paused(&run.id).await.unwrap_or(false);
+                let fill: FillRecord = if applied_action == "hold" || broker_rejected || run_paused {
                     FillRecord {
                         new_pos: pre_fill_position,
                         new_entry: pre_fill_entry,
@@ -2945,6 +2959,38 @@ impl Executor {
         loop {
             // (c) cancellation / external stop.
             if store.is_terminal(&run.id).await? {
+                // A2: close-in-loop. A cancelled/terminated LIVE run can still
+                // hold real broker positions opened earlier in the loop. Before
+                // we finish, flatten every open leg through the broker (the same
+                // `RealBrokerFills` submit path normal fills use) so the run does
+                // not leave dangling exposure, and the closing fills settle
+                // realized PnL / equity. Best-effort and panic-free: a per-asset
+                // failure is logged + noted, then we still bail. This is the
+                // LIVE path only — the backtest/simulated cancel path never
+                // reaches here and keeps its no-broker-call behavior. `equity`
+                // is recomputed below from the post-flatten book before the
+                // partial snapshot so the cancelled run records its settled NAV.
+                let flatten = self
+                    .close_open_positions_on_cancel(
+                        store,
+                        run,
+                        strategy,
+                        scenario,
+                        &mut book,
+                        &mut runtime.fill_sink,
+                        equity,
+                        &mut decision_idx,
+                    )
+                    .await;
+                // Recompute equity on ANY settled close fill (full OR partial):
+                // a partial close still settles realized PnL on the book, so the
+                // cancelled run's partial metrics must use the refreshed NAV,
+                // not a stale pre-close value. Gating on the full-close count
+                // alone (`fully_closed > 0`) skipped this on a `flat_partial`.
+                if flatten.any_fill {
+                    equity = book.equity(&std::collections::BTreeMap::new());
+                    equity_curve.push(equity);
+                }
                 let partial = compute_run_metrics(
                     &equity_curve,
                     initial,
@@ -2961,6 +3007,60 @@ impl Executor {
                     .await;
                 anyhow::bail!("eval run stopped");
             }
+
+            // (c2) A3 one-shot flatten: the cockpit's [Flatten positions]
+            // action (spec §2.7) sets `eval_runs.flatten_requested` so the
+            // operator can close all open positions at market WITHOUT
+            // terminating the run (it typically stays paused/alive). Honored
+            // here, alongside the cancel checkpoint above: when the flag is
+            // set, flatten every open leg through the SAME close path A2 uses
+            // on cancel, then CLEAR the flag (one-shot) and CONTINUE the loop.
+            // The run is NOT terminated. `flatten_requested` shares the
+            // missing-column tolerance `is_paused` uses (a pre-062 schema is
+            // inert → Ok(false)); a non-missing-column read error propagates
+            // via `?` rather than silently skipping the flatten.
+            if store.flatten_requested(&run.id).await? {
+                let flatten = self
+                    .flatten_open_positions(
+                        FlattenReason::Flatten,
+                        store,
+                        run,
+                        strategy,
+                        scenario,
+                        &mut book,
+                        &mut runtime.fill_sink,
+                        equity,
+                        &mut decision_idx,
+                    )
+                    .await;
+                // Recompute equity on ANY settled close fill (full OR partial):
+                // a partial close settles realized PnL on the book, so the live
+                // run must continue from the refreshed NAV. Gating on the
+                // full-close count alone skipped this on a `flat_partial`.
+                if flatten.any_fill {
+                    equity = book.equity(&std::collections::BTreeMap::new());
+                    equity_curve.push(equity);
+                }
+                // Clear the request UNCONDITIONALLY (even when some legs failed
+                // to close or the book was already flat): the flag is a
+                // one-shot request, and re-flattening every cycle would trap a
+                // run that hit a partial/rejected close. Failures were already
+                // logged + recorded as supervisor notes inside the helper.
+                // Best-effort: a clear failure is logged but does not abort the
+                // run (the run stays alive; worst case the operator's next
+                // cycle re-attempts the flatten, which is safe — a flat book is
+                // a no-op).
+                if let Err(e) = store.clear_flatten(&run.id).await {
+                    tracing::warn!(
+                        target: "xvision_engine::live_executor",
+                        run_id = %run.id,
+                        error = %e,
+                        "live flatten: failed to clear flatten_requested after flattening; \
+                         the run continues and a stale flag may re-trigger one more flatten next cycle"
+                    );
+                }
+            }
+
             if last_partial_persist.elapsed() >= PARTIAL_PERSIST_INTERVAL {
                 let partial = compute_run_metrics(
                     &equity_curve,
@@ -3393,7 +3493,22 @@ impl Executor {
         // as `want_flat` and would CLOSE the position. The backtest path
         // guards this identically (`if applied_action == "hold" { no-op }`
         // before calling the sink), so we mirror it here.
-        let fill: FillRecord = if applied_action == "hold" {
+        //
+        // A1 per-run pause: when the run is paused (an ADDITIVE per-run gate
+        // alongside the global SafetyManager pause), skip the broker submit
+        // for this cycle and emit a no-op fill so the live run keeps iterating
+        // without placing an order. Re-read per cycle so a pause issued
+        // mid-run via `POST /api/eval/runs/:id/pause` is honored next cycle.
+        //
+        // FAIL CLOSED on the LIVE path: this is the real-broker (`RealBrokerFills`)
+        // dispatch — a read error here (lock contention, pool exhaustion, I/O)
+        // means we CANNOT confirm the run is unpaused. Submitting a real order
+        // we couldn't clear is unsafe, so treat an unconfirmed state as paused
+        // (`unwrap_or(true)`) and skip the submit. `is_paused` already
+        // propagates transient errors (only the inert pre-061 missing-column
+        // case returns Ok(false)), so this only trips on genuine read failures.
+        let run_paused = store.is_paused(&run.id).await.unwrap_or(true);
+        let fill: FillRecord = if applied_action == "hold" || run_paused {
             FillRecord {
                 new_pos: pre_fill_position,
                 new_entry: pre_fill_entry,
@@ -3540,6 +3655,370 @@ impl Executor {
             last_open_direction,
             broker_error,
         })
+    }
+
+    /// LIVE-only thin wrapper: flatten every open broker position before a
+    /// cancelled run finishes. Delegates to [`flatten_open_positions`] with the
+    /// `Cancel` reason and returns the [`FlattenOutcome`] (legs fully closed +
+    /// whether any close fill landed); the caller recomputes equity on any fill
+    /// and then `bail!`s to end the run as `Cancelled`. Behavior is unchanged
+    /// from the original A2 implementation — the close logic now lives in the
+    /// shared helper so the A3 one-shot flatten path can reuse it.
+    #[allow(clippy::too_many_arguments)]
+    async fn close_open_positions_on_cancel(
+        &self,
+        store: &RunStore,
+        run: &Run,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        book: &mut crate::eval::executor::book::PortfolioBook,
+        fill_sink: &mut RealBrokerFills,
+        equity: f64,
+        decision_idx: &mut u32,
+    ) -> FlattenOutcome {
+        self.flatten_open_positions(
+            FlattenReason::Cancel,
+            store,
+            run,
+            strategy,
+            scenario,
+            book,
+            fill_sink,
+            equity,
+            decision_idx,
+        )
+        .await
+    }
+
+    /// LIVE-only: flatten every open broker position at market.
+    ///
+    /// Shared close path used by BOTH the A2 cancel-time flatten (via
+    /// [`close_open_positions_on_cancel`], which calls this then `bail!`s the
+    /// run to `Cancelled`) and the A3 one-shot "flatten positions" cockpit
+    /// action (which calls this then CLEARS the request flag and CONTINUES the
+    /// run). The only difference between the two callers is the `reason` (which
+    /// shapes log/note/decision labels) and what the caller does AFTER — this
+    /// helper itself never terminates the run.
+    ///
+    /// It closes each open leg through the SAME `RealBrokerFills` submit path
+    /// that normal fills use (a `"flat"` `FillRequest` per asset, sized at
+    /// `|pos|`), applies the broker-reported closing fill to the pooled `book`
+    /// (settling realized PnL), and records a `flat` decision row + an equity
+    /// sample — so realized PnL / equity settle consistently with a
+    /// strategy-driven close.
+    ///
+    /// **Scope.** This is reachable ONLY from `run_inner_live`; the
+    /// backtest / simulated path never calls it and keeps its no-broker-call
+    /// behavior.
+    ///
+    /// **Robustness.** Best-effort and panic-free: if one asset's close errors
+    /// (broker rejection surfaced as a `Rejected` `FillRecord`, or a store
+    /// write failure) it is logged AND recorded as a run-level supervisor note
+    /// (severity `warn`), then the routine continues flattening the remaining
+    /// legs. The caller proceeds regardless — for cancel the run still ends
+    /// `Cancelled`; for flatten the flag is still cleared (so a partial/failed
+    /// close does NOT trap the loop re-flattening every cycle) — but the
+    /// failure is visible, not swallowed. The asset set is the book's actual
+    /// open legs (`PortfolioBook::open_legs`); flat legs are never submitted,
+    /// and `RealBrokerFills` additionally no-ops a zero-position flat. A flat
+    /// book is a no-op (returns 0, no broker calls).
+    ///
+    /// Returns a [`FlattenOutcome`] distinguishing "any close fill landed on
+    /// the book" (`any_fill`, true for full OR partial closes) from "N legs
+    /// fully flattened" (`fully_closed`). Callers recompute equity whenever a
+    /// fill landed — a PARTIAL close settles realized PnL on the book just like
+    /// a full close, so the equity/equity_curve must be refreshed even when no
+    /// leg reached flat. `decision_idx` is advanced once per recorded closing
+    /// decision so the `(run_id, decision_index)` PK never collides with the
+    /// loop's rows.
+    #[allow(clippy::too_many_arguments)]
+    async fn flatten_open_positions(
+        &self,
+        reason: FlattenReason,
+        store: &RunStore,
+        run: &Run,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        book: &mut crate::eval::executor::book::PortfolioBook,
+        fill_sink: &mut RealBrokerFills,
+        equity: f64,
+        decision_idx: &mut u32,
+    ) -> FlattenOutcome {
+        let open = book.open_legs();
+        if open.is_empty() {
+            return FlattenOutcome::default();
+        }
+        tracing::info!(
+            target: "xvision_engine::live_executor",
+            run_id = %run.id,
+            open_legs = open.len(),
+            reason = reason.tag(),
+            "live flatten: flattening open broker positions"
+        );
+
+        let now = Utc::now();
+        let mut closed = 0usize;
+        let mut any_fill = false;
+        for (asset_sym, pos, entry, last_mark) in open {
+            let asset = asset_sym.as_alpaca_pair();
+            // Reference price: the leg's last mark (falls back to entry inside
+            // the book). A flat close is sized at |pos| regardless, and the
+            // broker reports the true fill price; this only seeds the
+            // OrderRequest reference + fallback.
+            let reference = if last_mark > 0.0 && last_mark.is_finite() {
+                last_mark
+            } else {
+                entry
+            };
+            let fill: FillRecord = fill_sink
+                .submit(FillRequest {
+                    pos,
+                    entry,
+                    action: "flat".to_string(),
+                    next_open: reference,
+                    bar_volume: 0.0,
+                    slip_bps: 0.0,
+                    spread_bps: 0.0,
+                    taker_bps: scenario.venue.fees.taker_bps as f64,
+                    maker_bps: scenario.venue.fees.maker_bps as f64,
+                    equity,
+                    risk_pct: strategy.risk.risk_pct_per_trade,
+                    slippage_model: scenario.venue.slippage.clone(),
+                    fee_source: crate::eval::scenario::FeeSource::Default,
+                    asset: asset.clone(),
+                    bar_ts: now,
+                    bar_open: reference,
+                    bar_high: reference,
+                    bar_low: reference,
+                    bar_close: reference,
+                    decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
+                    bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                })
+                .await;
+
+            // A broker rejection surfaces as a no-fill `Rejected` record — the
+            // position did NOT close. Log + record a run-level note and keep
+            // flattening the other legs; the leg stays in the book so the
+            // dangling exposure remains visible in the finished run.
+            if let Some((class, msg)) = &fill.broker_error {
+                tracing::error!(
+                    target: "xvision_engine::live_executor",
+                    run_id = %run.id,
+                    asset = %asset,
+                    reason = reason.tag(),
+                    error_class = class.as_tag(),
+                    error_message = %msg,
+                    "live flatten: broker REJECTED position close; exposure may remain open"
+                );
+                let _ = store
+                    .record_supervisor_note(
+                        &run.id,
+                        "executor",
+                        "warn",
+                        &format!(
+                            "{}-close failed for {asset} [{}]: {msg} — position may remain open at the broker",
+                            reason.tag(),
+                            class.as_tag()
+                        ),
+                    )
+                    .await;
+                continue;
+            }
+
+            // Apply the broker-reported close to the pooled book (mirrors the
+            // normal fill path: set the new position + settle realized PnL).
+            book.set_position(asset_sym, fill.new_pos, fill.new_entry);
+            book.add_realized(fill.realized_pnl);
+
+            // A close that did NOT take the position to ~flat is a PARTIAL
+            // fill: the broker reported a fill, but residual exposure remains
+            // open. Use the same epsilon convention the book/loop use to
+            // distinguish "flat" from "still holding". A partial must not be
+            // labeled `flat` (it isn't), must not count toward `closed`, and
+            // leaves the (reduced) leg in the book so the residual exposure
+            // stays visible in the finished run.
+            let fully_closed = fill.new_pos.abs() <= f64::EPSILON;
+            let action_label = if fully_closed { "flat" } else { "flat_partial" };
+
+            if fill.fill_price.is_some() {
+                // ANY close fill — full OR partial — settled realized PnL on
+                // the book above, so the caller must refresh equity. A partial
+                // close does not increment `closed` (no leg reached flat) but
+                // still flips `any_fill`.
+                any_fill = true;
+                if fully_closed {
+                    closed += 1;
+                }
+                self.emit(ProgressEvent::FillRecorded {
+                    run_id: run.id.clone(),
+                    side: fill_side_for_action("flat", pos).into(),
+                    price: fill.fill_price.unwrap_or(0.0),
+                    qty: fill.fill_size.unwrap_or(0.0),
+                    fee: fill.fee.unwrap_or(0.0),
+                });
+            }
+
+            // For a partial, surface the residual exposure as a run-level warn
+            // note (mirrors the rejection branch's "exposure may remain open"
+            // signal) so the cancelled run's ledger is honest about it.
+            if !fully_closed {
+                tracing::warn!(
+                    target: "xvision_engine::live_executor",
+                    run_id = %run.id,
+                    asset = %asset,
+                    reason = reason.tag(),
+                    residual_pos = fill.new_pos,
+                    "live flatten: close only PARTIALLY filled; residual exposure remains open"
+                );
+                let _ = store
+                    .record_supervisor_note(
+                        &run.id,
+                        "executor",
+                        "warn",
+                        &format!(
+                            "{}-close for {asset} only partially filled (residual position {:.8}) — exposure remains open at the broker",
+                            reason.tag(),
+                            fill.new_pos
+                        ),
+                    )
+                    .await;
+            }
+
+            // Record the closing decision row + chart event so the cancelled
+            // run's ledger settles consistently with a strategy-driven flat.
+            // A partial is recorded as `flat_partial` (distinct from a full
+            // `flat`) with the realized PnL on the portion that DID close.
+            let decision_row = DecisionRow {
+                run_id: run.id.clone(),
+                decision_index: *decision_idx,
+                timestamp: now,
+                asset: asset.clone(),
+                action: action_label.to_string(),
+                conviction: None,
+                justification: Some(if fully_closed {
+                    format!("{}: flatten open position", reason.tag())
+                } else {
+                    format!("{}: partial flatten (residual exposure remains)", reason.tag())
+                }),
+                reasoning: Some(if fully_closed {
+                    format!("{}: flatten open position", reason.tag())
+                } else {
+                    format!("{}: partial flatten (residual exposure remains)", reason.tag())
+                }),
+                order_size: fill.fill_size,
+                fill_price: fill.fill_price,
+                fill_size: fill.fill_size,
+                fee: fill.fee,
+                pnl_realized: if fill.realized_pnl != 0.0 {
+                    Some(fill.realized_pnl)
+                } else {
+                    None
+                },
+            };
+            if let Err(e) = store.record_decision(&decision_row).await {
+                // The broker DID close the position (book already settled);
+                // only the local audit row failed. Surface it but do not
+                // unwind the close.
+                tracing::error!(
+                    target: "xvision_engine::live_executor",
+                    run_id = %run.id,
+                    asset = %asset,
+                    reason = reason.tag(),
+                    error = %e,
+                    "live flatten: closed position but failed to persist the closing decision row"
+                );
+                let _ = store
+                    .record_supervisor_note(
+                        &run.id,
+                        "executor",
+                        "warn",
+                        &format!("{}-close for {asset} filled but its decision row failed to persist: {e}", reason.tag()),
+                    )
+                    .await;
+            } else {
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+                )
+                .await;
+            }
+            *decision_idx += 1;
+        }
+
+        // Record one final equity sample at the post-flatten NAV so the
+        // cancelled run's equity curve ends on the settled value.
+        let marks = std::collections::BTreeMap::new();
+        let settled_equity = book.equity(&marks);
+        if let Err(e) = store
+            .record_equity_upsert(&run.id, now, settled_equity)
+            .await
+        {
+            tracing::warn!(
+                target: "xvision_engine::live_executor",
+                run_id = %run.id,
+                reason = reason.tag(),
+                error = %e,
+                "live flatten: failed to record post-flatten equity sample"
+            );
+        }
+        self.emit_chart(
+            &run.id,
+            RunChartEvent::Equity(ChartEquityPoint {
+                time: now.timestamp(),
+                equity_usd: settled_equity,
+            }),
+        )
+        .await;
+
+        FlattenOutcome {
+            fully_closed: closed,
+            any_fill,
+        }
+    }
+}
+
+/// Outcome of [`Executor::flatten_open_positions`]. Distinguishes "a close
+/// fill landed on the book" from "a leg reached flat" so callers refresh
+/// equity on ANY settled fill (full or partial), not only on a full flatten.
+///
+/// `any_fill` is true whenever at least one broker close fill was applied to
+/// the book — including a PARTIAL fill that left residual exposure (the
+/// `flat_partial` path), which still settles realized PnL. `fully_closed`
+/// counts only legs that reached flat. The A2 cancel-close wrapper exposes
+/// `fully_closed` as its leg count; both A2 and A3 callers recompute
+/// equity + push to the equity curve whenever `any_fill` is true.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FlattenOutcome {
+    /// Number of legs that produced a FULL closing fill (reached flat).
+    fully_closed: usize,
+    /// True iff at least one broker close fill (full OR partial) was applied
+    /// to the book, so realized PnL changed and equity must be recomputed.
+    any_fill: bool,
+}
+
+/// Why the live executor is flattening open positions. Shapes the log /
+/// supervisor-note / decision-row labels emitted by
+/// [`Executor::flatten_open_positions`]; it does NOT change the close
+/// mechanics. `Cancel` is the A2 cancel-time flatten (caller `bail!`s after);
+/// `Flatten` is the A3 one-shot cockpit "flatten positions" action (caller
+/// clears the request flag and keeps the run running).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FlattenReason {
+    /// A2: the run is being cancelled — flatten then end the run.
+    Cancel,
+    /// A3: a one-shot flatten was requested — flatten then keep running.
+    Flatten,
+}
+
+impl FlattenReason {
+    /// Short tag used in logs, supervisor notes, and the closing decision
+    /// row's justification/reasoning (e.g. `"cancel: flatten open position"`
+    /// vs `"flatten: flatten open position"`).
+    fn tag(self) -> &'static str {
+        match self {
+            FlattenReason::Cancel => "cancel",
+            FlattenReason::Flatten => "flatten",
+        }
     }
 }
 

@@ -6185,6 +6185,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",
@@ -9503,6 +9504,8 @@ version = "0.21.0"
 dependencies = [
  "alloy",
  "async-trait",
+ "mockito",
+ "reqwest 0.13.3",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

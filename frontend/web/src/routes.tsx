@@ -28,7 +28,6 @@ const EvalRunsRoute = lazy(() => import("./routes/eval-runs").then((m) => ({ def
 const EvalRunDetailRoute = lazy(() => import("./routes/eval-runs-detail").then((m) => ({ default: m.EvalRunDetailRoute })));
 const AgentRunDetailRoute = lazy(() => import("./routes/agent-runs-detail").then((m) => ({ default: m.AgentRunDetailRoute })));
 const EvalCompareRoute = lazy(() => import("./routes/eval-compare").then((m) => ({ default: m.EvalCompareRoute })));
-const LiveListRoute = lazy(() => import("./routes/live-list").then((m) => ({ default: m.LiveListRoute })));
 const LiveRoute = lazy(() => import("./routes/live").then((m) => ({ default: m.LiveRoute })));
 const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m.SetupRoute })));
 const DocsRoute = lazy(() => import("./routes/docs").then((m) => ({ default: m.DocsRoute })));
@@ -40,6 +39,7 @@ const SettingsGeneralRoute = lazy(() => import("./routes/settings").then((m) => 
 const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsProvidersRoute })));
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
 const SettingsWalletRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsWalletRoute })));
+const SettingsMarketplaceRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsMarketplaceRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
 const ChartLabLayout = lazy(() => import("./routes/chart-lab").then((m) => ({ default: m.ChartLabLayout })));
 const ChartLabOverview = lazy(() => import("./routes/chart-lab/ChartLabOverview").then((m) => ({ default: m.ChartLabOverview })));
@@ -156,7 +156,7 @@ export const router = createBrowserRouter([
       { path: "eval-runs/compare", element: page(<EvalCompareRoute />) },
       // Backward-compat alias: deep links to /memory continue to work.
       { path: "memory", element: <Navigate to="/agents/memory" replace /> },
-      { path: "live", element: page(<LiveListRoute />) },
+      { path: "live", element: page(<LiveRoute />) },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },
@@ -234,6 +234,7 @@ export const router = createBrowserRouter([
           { path: "brokers", element: page(<SettingsBrokersRoute />) },
           { path: "skills", element: <Navigate to="/agents/skills" replace /> },
           { path: "wallet", element: page(<SettingsWalletRoute />) },
+          { path: "marketplace", element: page(<SettingsMarketplaceRoute />) },
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },

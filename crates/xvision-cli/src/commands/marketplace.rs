@@ -87,7 +87,10 @@ fn fixture_path() -> CliResult<PathBuf> {
 fn driver() -> CliResult<Box<dyn AnchorDriver>> {
     if std::env::var("MARKETPLACE_DRIVER").as_deref() == Ok("onchain") {
         return Err(CliError::usage(anyhow::anyhow!(
-            "MARKETPLACE_DRIVER=onchain requires the MCP server or dashboard — onchain writes are not supported from the CLI directly"
+            "MARKETPLACE_DRIVER=onchain is not yet supported: the on-chain Erc8004MantleDriver \
+             is deploy-gated (needs deployed Mantle contracts + verified ABIs + a signer) and is \
+             not yet wired into any runtime surface. The CLI uses the in-memory MockDriver. See \
+             docs/superpowers/plans/2026-06-08-blockchain-implementation-synthesis.md §9."
         )));
     }
     Ok(Box::new(MockDriver::new()))
@@ -175,6 +178,7 @@ async fn buy(listing_id: u64, buyer: &str) -> CliResult<()> {
     let req = BuyRequest {
         listing_id: U256::from(listing_id),
         recipient,
+        authorization: None,
     };
 
     let d = driver()?;

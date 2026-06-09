@@ -34,11 +34,16 @@
 //! both return `None`.  Integration tests run against a local `anvil` instance
 //! only (`#[ignore]`d; see `client::tests`).
 
+pub mod attestation;
 pub mod client;
 pub mod contracts;
 pub mod genart;
 pub mod manifest;
 
+pub use attestation::{
+    build_attestation_outcome, decide_submission, AttestationDecision, TAG1_TRADING_YIELD,
+    TAG2_MONTH,
+};
 pub use client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
 pub use contracts::MarketplaceAddresses;
 pub use genart::{generate_svg, generate_token_uri};

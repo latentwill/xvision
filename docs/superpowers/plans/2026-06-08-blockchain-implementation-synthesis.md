@@ -288,3 +288,41 @@ and the **Alpaca-live cutover** decision made (D4 / Track A3). Real money = V4.
 - This doc **replaces the phase-ordering role** of `2026-05-26-blockchain-plan-navigation.md`. Keep the old nav doc as the source for the *resolved design decisions* (its §4 A1–A4) and source-material map; this doc owns *remaining execution*.
 - The old nav doc's Phase 7 (layout/popup audit) is now owned by the **design sweep** (`2026-06-08-master-implementation-list.md`), not this plan.
 - Update §1 state table as each item lands; move resolved AM/§6 decisions into the relevant spec or a new ADR.
+
+---
+
+## 9. Implementation status — 2026-06-09 session (branch `worktree-live-marketplace-impl`)
+
+All agent-doable code up to the manual deploy wall is **DONE, reviewed (spec + code-quality; contracts also got a security audit), and pushed** to `origin/worktree-live-marketplace-impl`. Not merged to main; not deployed.
+
+**Completed (each two-stage reviewed):**
+- **A1** per-run pause — additive broker-submit skip, fail-closed live gate, migration 061. **A2** close-positions-on-cancel — broker flatten via the normal fill path. **A3** on-demand flatten endpoint (migration 062) — shared close helper with A2, pause→flatten path tested.
+- **B-I…B-IV** Live Trading cockpit — `/live` cockpit shell, strategy strip + wallet banner, account stat strip + active positions table, transport controls (pause/resume/stop/flatten, inline-expand, optimistic cache), home summary strip. `RunSummary` ts-rs regenerated with `paused`/`paused_at`/`flatten_requested`.
+- **C1** contracts — §3.6 license-gated `giveFeedback` + `revokeFeedback` (tombstone) in `ReputationRegistry`; AM3 agent=strategy/listing semantics + subgraph schema `Lineage`→`Agent`; AM9 OZ re-pinned **v5.0.2** (had drifted to 5.6.1, breaking the `shanghai` build). 72 forge tests.
+- **Security audit** (OZ + building-secure-contracts skills) over the whole `contracts/` tree → fixed **M-1** (UUPS `ReentrancyGuardUpgradeable` + `__gap` recompute), **M-2** (x402 `recipient == auth.from` binding), **L-1** (free-listing one-per-recipient cap). 79 forge tests. Audit is now a standing review step (memory: `feedback_contract_security_audit_review_step`).
+- **C4** drivers — `Erc8004MantleDriver` (4 verbs) + `PinataDriver` (put/get) real; x402 recipient guard mirrors M-2.
+- **C6** attestation engine — pure verdict (sharpe-delta → 100/50/0), 20-trade rolling trigger, AM4 bridge (off-chain Ed25519 pre-anchor KEPT + on-chain `post_reputation` ADDED, license-gated, deploy-gated no-op).
+- **C8** frontend activation — Settings→Marketplace opt-in tab (localStorage, default-off, gates nav + routes), shared `TestnetBadge`/`TestnetBanner`, fixture buy CTA with honest "simulated purchase" cue.
+
+### Deferred-items register (owning phase)
+
+| Item | Why deferred | Owner |
+|---|---|---|
+| Real on-chain `buyWithAuthorization` (EIP-3009) from the frontend | needs deployed contract + `useWallet` signer + real `MarketplaceData` impl | §6 deploy + AM6 (C7) + a wallet-signer task |
+| `Erc8004MantleDriver` full anvil/Sepolia round-trip test | `sol!` bindings are interface-only (no bytecode); `#[ignore]`'d scaffold present | §6 deploy + AM7 ABI pin |
+| C6 live-loop hook: per-trade return-series accumulation; `listed_sharpe` source | `maybe_attest` takes them as inputs today; series-threading into the live driver + listing-manifest read are integration seams | Track C7 (data seam) + a live-driver wiring task |
+| AM6/C7 real `MarketplaceData` impl + subgraph indexer (manifest + mappings) | net-new backend/subgraph behind the fixture seam | C7 (deploy-gated) |
+| AM2 canonical gen-art renderer (Rust SVG vs frontend canvas-bitfield diverge) | decide canonical before mint flow goes live | pre-mint decision |
+| C5 validator signer service | not started | C5 |
+| AM7 verified ABI pinning under `crates/xvision-identity/abi/v1/` | post-deploy + verify | §6 deploy |
+| Audit Lows deferred to V4: renounce-bricks/`Ownable2Step`, permissionless `XvnDeployer` CREATE2 gating, install + run `slither`/`slither-check-upgradeability` | mainnet trust-model hardening | V4 (multisig/timelock prep) |
+| Pre-existing `decisions_count` 30/100-bar test failures (`supervisor_notes` missing in a minimal harness) | pre-existing on base; not introduced here | a test-harness fix |
+
+### Reachability pass (2026-06-09)
+
+A reachability audit traced every new capability from its entry point. **Reachable end-to-end:** A1/A2/A3 (pause/resume/cancel-flatten/flatten — routes registered in `dashboard/.../server.rs`, executor honor points in `backtest.rs`, cockpit `useTransport`); the `/live` cockpit components (data-wired); C8 marketplace (opt-in-gated nav + routes + fixture buy CTA). **Intentionally orphaned-pending-wiring (NOT accidental dead code):**
+
+- **C6 attestation engine (`maybe_attest`) is not called by the live loop yet.** Two real blockers beyond the documented seams: (1) the verdict needs `listed_sharpe`, which has **no source until the marketplace data seam (C7) lands**; (2) the on-chain submit lives in `xvision-identity`, which is **not a dependency of `xvision-engine`** — wiring it requires a deliberate dependency decision, not just a function call. Until both exist, force-wiring an always-inert `maybe_attest` call into the critical 4000-line live loop would add risk for zero behavior. Hook point when ready: `backtest.rs` ~`run_inner_live` fill-recognition site (add `realized_pnl` to `LiveDecisionOutcome`, accumulate a rolling returns buffer, call `maybe_attest`).
+- **`Erc8004MantleDriver` / `PinataDriver` / identity `submit_attestation`/`holds_license`/`post_reputation`** have no non-test callers — deploy-gated (need deployed contracts/addresses/JWT/signer). The CLI `marketplace.rs::driver()` deliberately blocks `MARKETPLACE_DRIVER=onchain` (message corrected 2026-06-09 to stop pointing at a non-existent MCP/dashboard path).
+
+**Discoverability:** the `/live` cockpit has no left-nav (`Sidebar.tsx`) entry — reachable only via deep-link and the home `LiveSummaryStrip` link. Adding a nav entry is a product decision (main framed live trading as "not enabled in this build"; `VenueLabel::Live` is OFF / no real money), tracked separately.

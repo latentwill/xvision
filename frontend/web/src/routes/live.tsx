@@ -1,24 +1,16 @@
-import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 
-import { LiveChartV2Container } from "@/components/chart/v2/surfaces/LiveChartV2Container";
-import { Topbar } from "@/components/shell/Topbar";
-import { useTraceDock } from "@/stores/trace-dock";
+import { LiveCockpit } from "@/features/live/LiveCockpit";
 
+/**
+ * `/live` and `/live/:id` both render the Live Trading cockpit
+ * (`LiveCockpit`). With no `:id` the cockpit auto-selects the most
+ * recently started live run; with an `:id` it preselects that run.
+ *
+ * The old `/live` run-list (`live-list.tsx`) was absorbed into the
+ * cockpit's strategy strip — it reuses the same `listAgentRuns` polling.
+ */
 export function LiveRoute() {
-  const { id = "" } = useParams();
-
-  useEffect(() => {
-    useTraceDock.getState().setActiveRun(id || null, id ? "live" : "post-hoc");
-  }, [id]);
-  // For v1, deployment_id == run_id. Replace when Plan 2c (live deployment
-  // model) lands the deployment → run mapping.
-  return (
-    <>
-      <Topbar title="Live cockpit" sub={id || "—"} />
-      <div className="px-6 py-5">
-        <LiveChartV2Container runId={id} />
-      </div>
-    </>
-  );
+  const { id } = useParams();
+  return <LiveCockpit runId={id || undefined} />;
 }

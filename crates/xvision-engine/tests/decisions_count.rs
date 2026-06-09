@@ -351,3 +351,177 @@ async fn final_bar_uses_close_as_next_open_fallback() {
         "long fill should derive from final close plus configured slippage"
     );
 }
+
+// ── A1: per-run pause skips the broker submit but keeps iterating ──────────
+
+/// `fresh_store` + migration 061 (`paused` / `paused_at`), so `set_paused`
+/// and the executor's per-cycle `is_paused` checkpoint have the columns
+/// they read. Mirrors `fresh_store` exactly otherwise.
+async fn fresh_store_with_pause() -> RunStore {
+    let store = fresh_store().await;
+    sqlx::query(include_str!("../migrations/062_eval_run_paused.sql"))
+        .execute(store.pool())
+        .await
+        .unwrap();
+    store
+}
+
+/// A paused run must keep producing a decision per bar (it does NOT
+/// terminate) while submitting NO broker order for the paused cycles —
+/// the additive-skip contract of A1. We assert this against the same
+/// `long_open`-every-bar setup that `final_bar_uses_close_as_next_open_fallback`
+/// uses to prove a fill DOES happen when not paused: here `fill_price`
+/// must be `None` for every decision and `metrics.n_trades` must be 0,
+/// yet `n_decisions` stays equal to the bar count.
+#[tokio::test]
+async fn paused_run_skips_broker_submit_but_keeps_iterating() {
+    let store = fresh_store_with_pause().await;
+    #[allow(deprecated)]
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let strategy = build_strategy("01TESTQAPAUSEDRUN0000000000A");
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    // Pause BEFORE the run drives. Every cycle's per-run `is_paused`
+    // checkpoint must then route the actionable `long_open` through the
+    // no-op fill branch instead of the fill sink.
+    store.set_paused(&run.id, true).await.unwrap();
+    assert!(store.is_paused(&run.id).await.unwrap());
+
+    let bars = daily_bars(4);
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
+        r#"{"action":"long_open","conviction":0.8,"justification":"qa-paused"}"#,
+    ));
+    let executor = Executor::with_bars(bars);
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            dispatch,
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("a paused run must complete, not abort");
+
+    // It kept iterating: one decision per bar, run reached terminal Completed.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(
+        decisions.len(),
+        4,
+        "paused run must still record a decision per bar"
+    );
+    assert_eq!(
+        metrics.n_decisions, 4,
+        "n_decisions must equal bar count while paused"
+    );
+    let persisted = store.get(&run.id).await.unwrap();
+    assert!(
+        persisted.status.is_terminal(),
+        "paused run must finish normally, not hang or abort: {:?}",
+        persisted.status
+    );
+
+    // But it placed no orders: every long_open was skipped at the submit gate.
+    assert_eq!(metrics.n_trades, 0, "a paused run must submit zero broker orders");
+    for d in &decisions {
+        assert_eq!(d.action, "long_open", "the trader's intent is still recorded");
+        assert!(
+            d.fill_price.is_none(),
+            "paused cycle must have no fill_price (broker submit skipped)"
+        );
+        assert!(
+            d.fill_size.is_none(),
+            "paused cycle must have no fill_size (broker submit skipped)"
+        );
+    }
+}
+
+/// Item 1 (missing-column tolerance): on a pre-061 store (no `paused`
+/// column), `is_paused` must stay INERT and return `Ok(false)` — the feature
+/// simply isn't present yet. This is the one error case that does NOT
+/// propagate, so the live gate's `unwrap_or(true)` never trips on a DB that
+/// predates the migration. (The transient-error propagation half is covered
+/// in `eval_store.rs`.)
+#[tokio::test]
+async fn is_paused_is_inert_on_pre_061_schema() {
+    // `fresh_store` (unlike `fresh_store_with_pause`) does NOT apply
+    // migration 061, so `eval_runs` has no `paused` column.
+    let store = fresh_store().await;
+    let mut run = Run::new_queued(
+        "01TESTPRE061PAUSE0000000000A".into(),
+        "flash-crash-2024-08".into(),
+        RunMode::Backtest,
+    );
+    run.scenario_id = "flash-crash-2024-08".into();
+    store.create(&run).await.unwrap();
+
+    let res = store.is_paused(&run.id).await;
+    assert!(
+        matches!(res, Ok(false)),
+        "is_paused on a pre-061 schema must return Ok(false) (inert), got {res:?}"
+    );
+}
+
+/// Control: the IDENTICAL setup WITHOUT pausing must place orders — proving
+/// the zero-trades result above is caused by the pause, not by the harness.
+#[tokio::test]
+async fn unpaused_run_with_same_setup_does_submit() {
+    let store = fresh_store_with_pause().await;
+    #[allow(deprecated)]
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+    let strategy = build_strategy("01TESTQAUNPAUSEDRUN00000000A");
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+    assert!(
+        !store.is_paused(&run.id).await.unwrap(),
+        "control run starts unpaused"
+    );
+
+    // Single bar so the long_open opens from flat and fills — a multi-bar
+    // long_open-every-bar run would trip the pyramid guardrail rewrite on
+    // later bars (extra supervisor-note table dependency this minimal store
+    // doesn't carry). One actionable open is enough to prove a trade lands.
+    let bars = daily_bars(1);
+    let dispatch: Arc<dyn LlmDispatch> = Arc::new(MockDispatch::echo(
+        r#"{"action":"long_open","conviction":0.8,"justification":"qa-unpaused"}"#,
+    ));
+    let executor = Executor::with_bars(bars);
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            dispatch,
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("control run should complete");
+
+    assert_eq!(metrics.n_decisions, 1);
+    assert!(
+        metrics.n_trades > 0,
+        "an unpaused long_open run must place at least one order (got {})",
+        metrics.n_trades
+    );
+}

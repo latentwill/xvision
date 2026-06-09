@@ -23,6 +23,7 @@ const TABS = [
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
   { to: "wallet", label: "Wallet" },
+  { to: "marketplace", label: "Marketplace" },
   { to: "danger", label: "Danger zone" },
 ];
 
@@ -79,6 +80,7 @@ export function SettingsBrokersRoute() {
 export { SettingsDangerRoute } from "./danger";
 export { SettingsSkillsRoute } from "./skills";
 export { SettingsWalletRoute } from "./wallet";
+export { SettingsMarketplaceRoute } from "./marketplace";
 
 // ────────────────────────────────────────────────────────────────────────────
 // helpers

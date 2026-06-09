@@ -4,19 +4,27 @@
 # no centralized DB. Third-party explorers can surface xvn listings without
 # permission. Entity ids and the `payerKind` / `purchasePath` fields are the
 # human-vs-agent moat surfaced by the Phase-1 data contract.
+#
+# AM3 (2026-06-08 live-trading-marketplace spec): the ERC-8004 agent IS the
+# strategy/listing — one `agentId` per listed strategy (1:1), NOT a per-lineage
+# grouping. The former `Lineage` entity is therefore an `Agent` record keyed by
+# the IdentityRegistry token id (`agentId`). `parentAgent` is an optional,
+# unused self-reference retained for forks recorded off-chain in the manifest;
+# nothing in the contracts enforces it.
 
-type Lineage @entity {
-  id: ID! # agentNftId
+type Agent @entity {
+  id: ID! # agentId (IdentityRegistry ERC-721 token id == strategy/listing agent)
   owner: Bytes!
   manifestCid: String!
-  reputation: [Feedback!]! @derivedFrom(field: "lineage")
-  validations: [Validation!]! @derivedFrom(field: "lineage")
-  listings: [Listing!]! @derivedFrom(field: "lineage")
+  parentAgent: Agent # optional fork ancestor (off-chain manifest hint; unused on-chain)
+  reputation: [Feedback!]! @derivedFrom(field: "agent")
+  validations: [Validation!]! @derivedFrom(field: "agent")
+  listings: [Listing!]! @derivedFrom(field: "agent")
 }
 
 type Listing @entity {
   id: ID! # listingId
-  lineage: Lineage! # agentNftId
+  agent: Agent! # agentId (1:1 strategy/listing under AM3)
   seller: Bytes!
   contentHash: Bytes!
   tier: Int!
@@ -50,17 +58,18 @@ type EvalAttestation @entity {
 
 type Feedback @entity {
   id: ID! # txHash-logIndex
-  lineage: Lineage!
+  agent: Agent!
   rater: Bytes!
   value: BigInt!
   feedbackHash: Bytes!
   tag1: String!
+  revoked: Boolean! # §3.7 tombstone — true once a FeedbackRevoked event fires; excluded from aggregate recompute
   blockTimestamp: BigInt!
 }
 
 type Validation @entity {
   id: ID! # txHash-logIndex
-  lineage: Lineage!
+  agent: Agent!
   validator: Bytes!
   resultHash: Bytes!
   tag: String!

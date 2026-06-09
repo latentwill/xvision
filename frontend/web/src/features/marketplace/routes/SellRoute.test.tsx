@@ -103,12 +103,14 @@ describe("SellRoute", () => {
     expect(screen.getByRole("button", { name: /Mint/ })).not.toBeDisabled();
   });
 
-  it("step 3: Mint button shows [Testnet] label", async () => {
+  it("step 3: Mint button carries the shared Testnet badge", async () => {
+    // C8: hand-rolled "[Testnet]" string replaced by the shared TestnetBadge,
+    // which renders the text "Testnet".
     renderSell();
     await userEvent.click(await screen.findByRole("button", { name: /btc-momentum/ }));
     await screen.findByTestId("sell-step-2-body");
     await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
     await screen.findByTestId("sell-step-3-body");
-    expect(screen.getByRole("button", { name: /Mint/ }).textContent).toMatch(/\[Testnet\]/);
+    expect(screen.getByRole("button", { name: /Mint/ }).textContent).toMatch(/Testnet/);
   });
 });

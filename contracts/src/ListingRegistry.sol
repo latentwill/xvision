@@ -8,6 +8,7 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {IListingRegistry} from "./interfaces/IListingRegistry.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 import {IMarketplace} from "./interfaces/IMarketplace.sol";
+import {IReputationRegistry} from "./interfaces/IReputationRegistry.sol";
 
 /// @title ListingRegistry — on-chain listing CRUD (surface spec §3.1).
 /// @notice Listings are variant-scoped (`contentHash`) and owned by
@@ -33,8 +34,22 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
     /// @dev listingId => listing record.
     mapping(uint256 => Listing) private _listings;
 
-    /// @dev Storage gap (surface spec §7.5). Four slots used above.
-    uint256[46] private __gap;
+    /// @dev ReputationRegistry — the §3.6 license-gate store. Wired once
+    ///      post-deploy (Finding 1). When set, {createListing} calls
+    ///      `setListingForAgent(agentNftId, listingId)` so the feedback gate is
+    ///      active ATOMICALLY at listing creation rather than depending on a
+    ///      separate manual owner action. Optional: if unset, {createListing}
+    ///      simply skips the call (the listing is still created).
+    IReputationRegistry private _reputationRegistry;
+
+    /// @dev Storage gap (surface spec §7.5). FIVE sequential slots are used
+    ///      above now (`_identityRegistry`, `_marketplace`, `_nextListingId`,
+    ///      `_listings`, `_reputationRegistry`), occupying slots 0..4. The gap
+    ///      shrinks from [46] to [45] so the total reserved stays at 50 slots
+    ///      (5 used + 45 gap). Pre-deploy layout change — no live proxy exists
+    ///      yet, so reordering is safe; the invariant kept is the fixed
+    ///      50-slot reservation.
+    uint256[45] private __gap;
 
     error NotLineageOwner(uint256 agentNftId, address caller);
     error InvalidTier(uint8 tier);
@@ -44,6 +59,12 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
     error NotSeller(uint256 listingId, address caller);
     error AlreadyRevoked(uint256 listingId);
     error ZeroAddress();
+    error ReputationRegistryAlreadySet();
+    /// @dev Finding 3: a free (priceUSDC == 0) AND transferable listing is
+    ///      nonsensical — the L-1 per-recipient cap reads live balance, so the
+    ///      recipient could mint, transfer the token away, and mint again
+    ///      without bound. Forbid the combination at creation.
+    error FreeTransferableForbidden();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -70,8 +91,23 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
         _marketplace = marketplace_;
     }
 
+    /// @notice Wire the ReputationRegistry. Callable exactly once by the admin.
+    ///         Once set, {createListing} auto-wires the §3.6 feedback gate by
+    ///         calling `setListingForAgent` on it (Finding 1). For that call to
+    ///         succeed, this ListingRegistry must also be set as the registrar
+    ///         on the ReputationRegistry (`setListingRegistrar`).
+    function setReputationRegistry(address reputationRegistry_) external onlyOwner {
+        if (reputationRegistry_ == address(0)) revert ZeroAddress();
+        if (address(_reputationRegistry) != address(0)) revert ReputationRegistryAlreadySet();
+        _reputationRegistry = IReputationRegistry(reputationRegistry_);
+    }
+
     function marketplace() external view returns (address) {
         return _marketplace;
+    }
+
+    function reputationRegistry() external view returns (address) {
+        return address(_reputationRegistry);
     }
 
     function identityRegistry() external view returns (address) {
@@ -96,6 +132,10 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
             revert NotLineageOwner(agentNftId, msg.sender);
         }
         if (tier > 1) revert InvalidTier(tier);
+        // Finding 3: a free + transferable license would let the recipient mint,
+        // transfer the token away, and mint again indefinitely (the L-1 cap reads
+        // live balance). The combination is nonsensical — forbid it.
+        if (priceUSDC == 0 && transferableLicense) revert FreeTransferableForbidden();
         if (_marketplace == address(0)) revert MarketplaceNotWired();
 
         // Snapshot the protocol fee at create time so a later fee bump cannot
@@ -118,6 +158,22 @@ contract ListingRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, 
         });
 
         emit ListingCreated(listingId, msg.sender, agentNftId, contentHash, tier, priceUSDC);
+
+        // Finding 1: wire the §3.6 license gate ATOMICALLY at listing creation
+        // (agent = strategy = listing, AM3 1:1). Without this, a freshly listed
+        // agent stays UNGATED — anyone could post feedback without holding a
+        // license — until a separate manual owner call. This ListingRegistry is
+        // the authorized registrar on the ReputationRegistry, so the call sets
+        // `_listingForAgent[agentNftId] = listingId` and the gate is live the
+        // instant `createListing` returns. The ReputationRegistry is a contract
+        // we deploy and own; `setListingForAgent` performs no external call back
+        // into this contract and mutates only its own storage, so there is no
+        // reentrancy surface (it also runs after all of this function's effects,
+        // satisfying checks-effects-interactions). If unset, skip (the listing
+        // is still created), but the wired deploy path always sets it.
+        if (address(_reputationRegistry) != address(0)) {
+            _reputationRegistry.setListingForAgent(agentNftId, listingId);
+        }
     }
 
     /// @inheritdoc IListingRegistry

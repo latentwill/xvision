@@ -652,6 +652,709 @@ async fn live_loop_exits_cleanly_on_cancellation() {
     );
 }
 
+/// Broker that opens a long on its first (Buy) submit, and on that SAME
+/// submit cancels the run via a captured store handle. The next loop
+/// iteration's `is_terminal` checkpoint then fires the A2 close-on-cancel
+/// path, which submits a Sell to flatten — recorded here as the second
+/// order. Every fill is reported with a per-call fill price so the close's
+/// realized PnL is observable.
+struct CancelAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+}
+
+impl CancelAfterOpenBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            cancel_hook: Mutex::new(None),
+        })
+    }
+    /// Arm the cancel hook so the first Buy cancels `run_id` on `store`.
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for CancelAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // On the opening Buy, cancel the run so the NEXT loop iteration sees a
+        // cancelled run while holding an open position.
+        if is_buy {
+            let hook = self.cancel_hook.lock().unwrap().clone();
+            if let Some((store, run_id)) = hook {
+                store
+                    .cancel_active(&run_id, "operator cancel mid-run")
+                    .await
+                    .unwrap();
+            }
+        }
+        let fill_price = if is_buy {
+            self.open_fill_price
+        } else {
+            self.close_fill_price
+        };
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_closes_open_positions_through_the_broker() {
+    // Bar 1 opens a long (and the broker cancels the run on that submit).
+    // Bar 2's loop-top `is_terminal` check fires while a long is held -> the
+    // A2 close-on-cancel path must submit a Sell to flatten the position
+    // through the broker and record the closing fill (realized PnL settled).
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    // Open at 50_000, close higher at 51_000 so the realized PnL is positive
+    // and observable on the closing decision row.
+    let broker = CancelAfterOpenBroker::new(50_000.0, 51_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // Cancellation still terminates the run (Err on the cancel path).
+    assert!(result.is_err(), "a cancelled run must not complete");
+
+    // The broker saw TWO orders: the opening Buy, then the cancel-driven
+    // Sell that flattened the position.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected an opening Buy then a cancel-close Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "cancel must flatten the long with a Sell",
+    );
+    assert!(
+        (submitted[0].size - submitted[1].size).abs() < 1e-9,
+        "the close must flatten exactly the open size",
+    );
+
+    // A `flat` closing decision row was recorded with the realized PnL from
+    // the broker-reported close (50_000 -> 51_000 on the open units).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let close_row = decisions
+        .iter()
+        .find(|d| d.action == "flat")
+        .expect("a flat close decision must be recorded on cancel");
+    assert_eq!(
+        close_row.fill_price,
+        Some(51_000.0),
+        "close fill price comes from the broker's reported close price",
+    );
+    let realized = close_row.pnl_realized.expect("close settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL, got {realized}",
+    );
+}
+
+/// Per-asset variant of [`CancelAfterOpenBroker`]: records every order with
+/// its asset + side, opens both legs, and cancels the run on the FIRST Buy so
+/// the next loop iteration fires the cancel-close path while BOTH assets hold
+/// an open long. Used by the multi-asset cancel test to prove BOTH legs are
+/// flattened in one cancel.
+struct PerAssetCancelAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_by_asset: std::collections::HashMap<String, f64>,
+    close_fill_by_asset: std::collections::HashMap<String, f64>,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+    cancelled: Mutex<bool>,
+    /// Cancel only AFTER this many distinct assets have opened a long, so both
+    /// legs are held when the cancel-close path fires (cancelling on the first
+    /// Buy would short-circuit the loop before the second asset opens).
+    cancel_after_open_assets: usize,
+    opened_assets: Mutex<std::collections::BTreeSet<String>>,
+}
+
+impl PerAssetCancelAfterOpenBroker {
+    fn new(opens: &[(&str, f64)], closes: &[(&str, f64)], cancel_after_open_assets: usize) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_by_asset: opens.iter().map(|(a, p)| ((*a).to_string(), *p)).collect(),
+            close_fill_by_asset: closes.iter().map(|(a, p)| ((*a).to_string(), *p)).collect(),
+            cancel_hook: Mutex::new(None),
+            cancelled: Mutex::new(false),
+            cancel_after_open_assets,
+            opened_assets: Mutex::new(std::collections::BTreeSet::new()),
+        })
+    }
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for PerAssetCancelAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // Cancel the run exactly once, only AFTER `cancel_after_open_assets`
+        // distinct assets have opened a long. Cancelling on the first Buy
+        // would short-circuit the loop before the second asset's bar is
+        // processed; waiting until both legs are open guarantees the
+        // cancel-close path has two legs to flatten.
+        if is_buy {
+            let distinct_opened = {
+                let mut opened = self.opened_assets.lock().unwrap();
+                opened.insert(req.asset.clone());
+                opened.len()
+            };
+            if distinct_opened >= self.cancel_after_open_assets {
+                let already = {
+                    let mut c = self.cancelled.lock().unwrap();
+                    let was = *c;
+                    *c = true;
+                    was
+                };
+                if !already {
+                    let hook = self.cancel_hook.lock().unwrap().clone();
+                    if let Some((store, run_id)) = hook {
+                        store
+                            .cancel_active(&run_id, "operator cancel mid-run")
+                            .await
+                            .unwrap();
+                    }
+                }
+            }
+        }
+        let table = if is_buy {
+            &self.open_fill_by_asset
+        } else {
+            &self.close_fill_by_asset
+        };
+        let fill_price = table.get(&req.asset).copied().unwrap_or(1.0);
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_closes_open_positions_in_both_assets() {
+    // Two assets (BTC + ETH), one opening bar each. Both legs open long, then
+    // the run is cancelled mid-run. The next loop-top `is_terminal` check must
+    // fire the A2 cancel-close path and flatten BOTH legs in one pass:
+    //   - the broker receives two opening Buys then two closing Sells (one per
+    //     asset);
+    //   - two `flat` decision rows are recorded (one per asset);
+    //   - each close's size matches the held position (the open size).
+    let (store, strategy, scenario, mut run, _dir) = multi_asset_live_fixtures(100_000.0).await;
+    let broker = PerAssetCancelAfterOpenBroker::new(
+        &[("BTC/USD", 50_000.0), ("ETH/USD", 3_000.0)],
+        &[("BTC/USD", 51_000.0), ("ETH/USD", 3_100.0)],
+        2,
+    );
+    broker.arm(store.clone(), run.id.clone());
+
+    let multi = MultiLiveStream::new(vec![
+        (
+            AssetSymbol::Btc,
+            live_stream_for(
+                "BTC/USD",
+                vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)],
+            ),
+        ),
+        (
+            AssetSymbol::Eth,
+            live_stream_for(
+                "ETH/USD",
+                vec![market_bar_at(60, 3_000.0), market_bar_at(120, 3_050.0)],
+            ),
+        ),
+    ]);
+
+    let executor = Executor::live(
+        &multi_asset_live_config(),
+        broker.clone(),
+        multi,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // Cancellation still terminates the run.
+    assert!(result.is_err(), "a cancelled run must not complete");
+    assert!(
+        store.is_cancelled(&run.id).await.unwrap(),
+        "the run must end Cancelled",
+    );
+
+    // Group the broker orders by asset; each asset must have exactly ONE Buy
+    // (the open) and ONE Sell (the cancel-close flatten).
+    let submitted = broker.submitted();
+    let buys: Vec<&OrderRequest> = submitted.iter().filter(|o| matches!(o.side, Side::Buy)).collect();
+    let sells: Vec<&OrderRequest> = submitted.iter().filter(|o| matches!(o.side, Side::Sell)).collect();
+    assert_eq!(buys.len(), 2, "both assets opened a long (two Buys), got {submitted:?}");
+    assert_eq!(
+        sells.len(),
+        2,
+        "the cancel must flatten BOTH legs (two closing Sells), got {submitted:?}",
+    );
+
+    let buy_assets: std::collections::BTreeSet<&str> = buys.iter().map(|o| o.asset.as_str()).collect();
+    let sell_assets: std::collections::BTreeSet<&str> = sells.iter().map(|o| o.asset.as_str()).collect();
+    assert!(buy_assets.contains("BTC/USD") && buy_assets.contains("ETH/USD"));
+    assert!(
+        sell_assets.contains("BTC/USD") && sell_assets.contains("ETH/USD"),
+        "both BTC and ETH must be flattened on cancel, got sells for {sell_assets:?}",
+    );
+
+    // Each close must flatten EXACTLY the held position: the Sell size equals
+    // the matching Buy size for that asset.
+    for asset in ["BTC/USD", "ETH/USD"] {
+        let buy = buys.iter().find(|o| o.asset == asset).unwrap();
+        let sell = sells.iter().find(|o| o.asset == asset).unwrap();
+        assert!(
+            (buy.size - sell.size).abs() < 1e-9,
+            "{asset}: close size {} must match the held open size {}",
+            sell.size,
+            buy.size,
+        );
+    }
+
+    // TWO `flat` decision rows recorded — one per asset.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let flats: Vec<_> = decisions.iter().filter(|d| d.action == "flat").collect();
+    assert_eq!(
+        flats.len(),
+        2,
+        "two flat close rows (one per asset) must be recorded on cancel, got {:?}",
+        decisions.iter().map(|d| (&d.asset, &d.action)).collect::<Vec<_>>(),
+    );
+    let flat_assets: std::collections::BTreeSet<&str> = flats.iter().map(|d| d.asset.as_str()).collect();
+    assert!(
+        flat_assets.contains("BTC/USD") && flat_assets.contains("ETH/USD"),
+        "a flat row must exist for BOTH assets, got {flat_assets:?}",
+    );
+}
+
+#[tokio::test]
+async fn live_cancel_with_flat_book_makes_no_broker_calls() {
+    // Cancel BEFORE any bar opens a position -> the book is flat, so the A2
+    // close path must be a no-op: no broker orders, no flat decision rows.
+    // This is the regression guard for the existing flat-cancel behavior.
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = CancelAfterOpenBroker::new(50_000.0, 51_000.0);
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    // Cancel up front; no position is ever opened.
+    store.begin_running(&run.id).await.unwrap();
+    store.cancel_active(&run.id, "operator cancel").await.unwrap();
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    assert!(result.is_err(), "a cancelled run must not complete");
+    assert!(
+        broker.submitted().is_empty(),
+        "a flat cancel must make NO broker calls (no dangling positions to close)",
+    );
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.iter().all(|d| d.action != "flat"),
+        "no close decision rows when the book is already flat",
+    );
+}
+
+/// Broker that fills the opening Buy normally, then REJECTS the cancel-close
+/// Sell with an error. Exercises the A2 cancel-close rejection branch: the
+/// close fails, the leg must remain open (exposure visible), a warn note is
+/// recorded, and the run still ends Cancelled — without panicking.
+struct RejectCloseBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+}
+
+impl RejectCloseBroker {
+    fn new(open_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            cancel_hook: Mutex::new(None),
+        })
+    }
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for RejectCloseBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        if is_buy {
+            // Fill the open, and cancel the run so the next loop iteration
+            // fires the cancel-close path while a long is held.
+            let hook = self.cancel_hook.lock().unwrap().clone();
+            if let Some((store, run_id)) = hook {
+                store
+                    .cancel_active(&run_id, "operator cancel mid-run")
+                    .await
+                    .unwrap();
+            }
+            Ok(OrderConfirmation {
+                broker_order_id: format!("recorded-{}", req.idempotency_key),
+                fill_price: Some(self.open_fill_price),
+                fill_size: req.size,
+                fee: None,
+            })
+        } else {
+            // REJECT the closing Sell — the broker refuses to flatten.
+            Err(anyhow::anyhow!(
+                "alpaca create_order: order rejected by exchange"
+            ))
+        }
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_close_rejection_retains_leg_and_warns_without_panicking() {
+    // Bar 1 opens a long (broker fills it and cancels the run). Bar 2's
+    // loop-top `is_terminal` check fires the A2 cancel-close path, which
+    // submits a Sell to flatten — but the broker REJECTS the close. The core
+    // safety guarantee: the executor must NOT panic, must leave the leg
+    // RETAINED (no `flat` close row, no successful closing fill), must record
+    // a `warn` supervisor note, and the run must still end Cancelled.
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RejectCloseBroker::new(50_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    // Must not panic; the run returns an Err on the cancel path.
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    assert!(result.is_err(), "a cancelled run must not complete");
+    // The run still ends Cancelled despite the failed close.
+    assert!(
+        store.is_cancelled(&run.id).await.unwrap(),
+        "the run must end Cancelled even when the cancel-close was rejected",
+    );
+
+    // The broker saw the opening Buy AND the attempted closing Sell (which it
+    // rejected). The Sell reaching the broker proves the flatten was tried.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected an opening Buy then a (rejected) close Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "the cancel-close must attempt a Sell",
+    );
+
+    // The leg is RETAINED: the rejected close did NOT settle, so NO `flat`
+    // close decision row exists (the exposure remains open). A successful
+    // close would have recorded one.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.iter().all(|d| d.action != "flat" && d.action != "flat_partial"),
+        "a rejected close must NOT record a flat/partial close row (leg retained), got {:?}",
+        decisions.iter().map(|d| (&d.asset, &d.action)).collect::<Vec<_>>(),
+    );
+
+    // A `warn` supervisor note flags the dangling exposure.
+    let notes = store.read_supervisor_notes(&run.id).await.unwrap();
+    let warn = notes.iter().find(|(_role, severity, content)| {
+        severity == "warn" && content.contains("BTC/USD") && content.contains("may remain open")
+    });
+    assert!(
+        warn.is_some(),
+        "a warn supervisor note must flag the un-flattened exposure, got notes {notes:?}",
+    );
+}
+
+/// Broker that fills the opening Buy fully, cancels the run, then on the
+/// cancel-close Sell reports a PARTIAL fill (`close_fill_size` < requested
+/// size). The book settles realized PnL on the partial close and retains the
+/// residual leg (recorded as `flat_partial`). Exercises the A2 cancel-close
+/// PARTIAL branch: the equity/equity_curve recompute must fire on ANY close
+/// fill (full OR partial), not only on a full flatten — otherwise the
+/// cancelled run's persisted partial metrics use stale equity that ignores the
+/// realized PnL from the partial close.
+struct PartialCloseOnCancelBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    /// Absolute units the broker actually fills on the close Sell. Must be
+    /// strictly less than the requested size to produce a partial close.
+    close_fill_size: f64,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+}
+
+impl PartialCloseOnCancelBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64, close_fill_size: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            close_fill_size,
+            cancel_hook: Mutex::new(None),
+        })
+    }
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for PartialCloseOnCancelBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        self.submitted.lock().unwrap().push(req.clone());
+        let is_buy = matches!(req.side, Side::Buy);
+        // On the opening Buy, cancel the run so the NEXT loop iteration fires
+        // the cancel-close path while a long is held.
+        if is_buy {
+            let hook = self.cancel_hook.lock().unwrap().clone();
+            if let Some((store, run_id)) = hook {
+                store
+                    .cancel_active(&run_id, "operator cancel mid-run")
+                    .await
+                    .unwrap();
+            }
+        }
+        // Buy fills fully at open price; the close Sell fills only PARTIALLY
+        // (reduced fill_size) so residual exposure remains -> flat_partial.
+        if is_buy {
+            Ok(OrderConfirmation {
+                broker_order_id: format!("recorded-{}", req.idempotency_key),
+                fill_price: Some(self.open_fill_price),
+                fill_size: req.size,
+                fee: None,
+            })
+        } else {
+            Ok(OrderConfirmation {
+                broker_order_id: format!("recorded-{}", req.idempotency_key),
+                fill_price: Some(self.close_fill_price),
+                fill_size: self.close_fill_size,
+                fee: None,
+            })
+        }
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_partial_close_recomputes_equity_from_realized_pnl() {
+    // Bar 1 opens a long (broker fills it fully and cancels the run). Bar 2's
+    // loop-top `is_terminal` check fires the A2 cancel-close path, which
+    // submits a Sell to flatten — but the broker only PARTIALLY fills the
+    // close (residual exposure remains -> `flat_partial`). The partial close
+    // still settles realized PnL on the book.
+    //
+    // REGRESSION: the cancel checkpoint must recompute `equity` + push to
+    // `equity_curve` whenever ANY close fill lands (full OR partial), not only
+    // when a leg fully flattens. With the old `closed > 0` gate a partial
+    // close left `closed == 0`, so the recompute was skipped and the persisted
+    // partial metrics used STALE equity (== initial, 0% return) that ignored
+    // the realized PnL. Assert the persisted metrics reflect the realized PnL.
+    let initial = 100_000.0;
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(initial).await;
+    // Open at 50_000, close higher at 51_000 -> positive realized PnL. Fill
+    // only a tiny sliver (0.001 units) on the close so it stays partial.
+    let broker = PartialCloseOnCancelBroker::new(50_000.0, 51_000.0, 0.001);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // Cancellation still terminates the run (Err on the cancel path).
+    assert!(result.is_err(), "a cancelled run must not complete");
+    assert!(
+        store.is_cancelled(&run.id).await.unwrap(),
+        "the run must end Cancelled",
+    );
+
+    // The broker saw the opening Buy then the cancel-close Sell.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected an opening Buy then a cancel-close Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[1].side, Side::Sell), "cancel flattens with a Sell");
+
+    // The close was PARTIAL: a `flat_partial` row (NOT a full `flat`) is
+    // recorded, carrying the realized PnL from the portion that settled.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let partial_row = decisions
+        .iter()
+        .find(|d| d.action == "flat_partial")
+        .expect("a flat_partial close row must be recorded on the partial cancel-close");
+    let realized = partial_row
+        .pnl_realized
+        .expect("a partial close still settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL even on a partial close, got {realized}",
+    );
+
+    // CRUX: the cancelled run's persisted PARTIAL metrics must reflect the
+    // realized PnL from the partial close — equity was recomputed after the
+    // partial fill, not left stale at the pre-close value. Stale equity would
+    // leave `total_return_pct == 0` (final equity == initial); the realized
+    // gain pushes it positive.
+    let persisted = store.get(&run.id).await.unwrap();
+    let metrics = persisted
+        .metrics
+        .expect("the cancelled run persists partial metrics");
+    assert!(
+        metrics.total_return_pct > 0.0,
+        "partial-close cancel metrics must reflect realized PnL (equity recomputed), \
+         got total_return_pct = {} (stale equity would be ~0)",
+        metrics.total_return_pct,
+    );
+}
+
 #[tokio::test]
 async fn live_loop_surfaces_broker_error_as_run_failure() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
@@ -946,4 +1649,453 @@ async fn multi_asset_fanout_continues_when_one_substream_ends_early() {
     let btc_decisions = decisions.iter().filter(|d| d.asset == "BTC/USD").count();
     assert_eq!(btc_decisions, 1, "BTC decided once before its stream closed");
     assert_eq!(eth_decisions, 3, "ETH kept deciding after BTC closed");
+}
+
+// ---------------------------------------------------------------------------
+// A3: one-shot "flatten positions" (flatten now, keep running)
+// ---------------------------------------------------------------------------
+
+/// Echoes `hold` on every cycle (the run never opens a position). Used by the
+/// flat-book flatten no-op test.
+fn hold_dispatch() -> Arc<dyn LlmDispatch> {
+    Arc::new(MockDispatch::echo(
+        r#"{"action":"hold","conviction":0.5,"justification":"live-loop-test-hold"}"#,
+    ))
+}
+
+/// Broker that opens a long on its FIRST (Buy) submit and, on that SAME submit,
+/// requests a one-shot flatten on `run_id` via a captured store handle (exactly
+/// once — armed flag flips off so later Buys don't re-request). The NEXT loop
+/// iteration's A3 flatten checkpoint then fires while a long is held, submitting
+/// a Sell to flatten — recorded here as the second order — WITHOUT terminating
+/// the run. Mirrors `CancelAfterOpenBroker` but requests a flatten instead of a
+/// cancel.
+struct FlattenAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    flatten_hook: Mutex<Option<(RunStore, String)>>,
+    requested: Mutex<bool>,
+}
+
+impl FlattenAfterOpenBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            flatten_hook: Mutex::new(None),
+            requested: Mutex::new(false),
+        })
+    }
+    /// Arm the flatten hook so the first Buy requests a flatten on `run_id`.
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.flatten_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for FlattenAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // On the FIRST opening Buy, request a one-shot flatten so the NEXT loop
+        // iteration sees `flatten_requested` while holding an open position.
+        // Request exactly once so the reopen-after-flatten Buy doesn't re-arm.
+        if is_buy {
+            let already = {
+                let mut r = self.requested.lock().unwrap();
+                let was = *r;
+                *r = true;
+                was
+            };
+            if !already {
+                let hook = self.flatten_hook.lock().unwrap().clone();
+                if let Some((store, run_id)) = hook {
+                    store.request_flatten(&run_id).await.unwrap();
+                }
+            }
+        }
+        let fill_price = if is_buy {
+            self.open_fill_price
+        } else {
+            self.close_fill_price
+        };
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_flatten_closes_open_position_and_keeps_running() {
+    // Bar 1 opens a long (and the broker requests a one-shot flatten on that
+    // submit). Bar 2's loop-top A3 flatten checkpoint fires while a long is
+    // held -> the shared close path submits a Sell to flatten the position
+    // through the broker, records a `flat` decision row, CLEARS the flag, and
+    // CONTINUES the run (the loop does NOT bail). The run then keeps deciding
+    // (bar 2's long_open reopens) and exits cleanly on stream end (Ok).
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = FlattenAfterOpenBroker::new(50_000.0, 51_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // CRUCIAL: the run KEEPS RUNNING — a flatten does NOT terminate it. The
+    // run completes normally on stream end (Ok), unlike the cancel path which
+    // ends Err.
+    assert!(
+        result.is_ok(),
+        "a flatten must NOT terminate the run; it should complete on stream end, got {result:?}",
+    );
+    assert!(
+        !store.is_cancelled(&run.id).await.unwrap(),
+        "a flatten must not cancel the run",
+    );
+
+    // The one-shot flag was cleared by the executor after flattening.
+    assert!(
+        !store.flatten_requested(&run.id).await.unwrap(),
+        "the executor must clear flatten_requested after flattening (one-shot)",
+    );
+
+    // The broker saw the opening Buy, then the flatten-driven Sell that closed
+    // the position. (Because the run keeps running, bar-2's long_open reopens
+    // afterwards — a third Buy — proving the loop is still alive.)
+    let submitted = broker.submitted();
+    assert!(
+        submitted.len() >= 2,
+        "expected at least an opening Buy then a flatten Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "flatten must close the long with a Sell, got {:?}",
+        submitted[1].side,
+    );
+    // The run kept running and reopened after the flatten (loop is alive).
+    assert!(
+        submitted.len() >= 3 && matches!(submitted[2].side, Side::Buy),
+        "the run must keep running after flatten (bar-2 reopens with a Buy), got {submitted:?}",
+    );
+
+    // A `flat` closing decision row was recorded with the realized PnL from the
+    // broker-reported close (50_000 -> 51_000 on the open units).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let close_row = decisions
+        .iter()
+        .find(|d| d.action == "flat")
+        .expect("a flat close decision must be recorded on flatten");
+    assert_eq!(
+        close_row.fill_price,
+        Some(51_000.0),
+        "close fill price comes from the broker's reported close price",
+    );
+    let realized = close_row.pnl_realized.expect("close settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL, got {realized}",
+    );
+    // The flatten decision's justification is `flatten:`-prefixed (distinct
+    // from the cancel path's `cancel:` prefix).
+    assert!(
+        close_row
+            .justification
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("flatten:"),
+        "flatten decision must carry a flatten:-prefixed justification, got {:?}",
+        close_row.justification,
+    );
+}
+
+#[tokio::test]
+async fn live_flatten_on_a_flat_book_makes_no_broker_calls() {
+    // A flatten requested while the book holds NO positions must be a no-op:
+    // the flatten checkpoint sees an empty book, submits nothing to the broker,
+    // clears the flag, and the run keeps running. Regression guard mirroring
+    // A2's `live_cancel_with_flat_book_makes_no_broker_calls`.
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_000.0);
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
+
+    // Request a flatten BEFORE the run starts. The book is flat (no position
+    // opened yet) and the dispatch only ever holds, so the flatten checkpoint
+    // must never reach the broker.
+    store.begin_running(&run.id).await.unwrap();
+    store.request_flatten(&run.id).await.unwrap();
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            hold_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "a flatten on a flat book must be a no-op and the run completes on stream end, got {result:?}",
+    );
+    assert!(
+        broker.submitted().is_empty(),
+        "no orders should reach the broker: the book was flat and the dispatch only holds, got {:?}",
+        broker.submitted(),
+    );
+    // The flag was still cleared (one-shot consumption even with nothing to do).
+    assert!(
+        !store.flatten_requested(&run.id).await.unwrap(),
+        "flatten_requested must be cleared even when the book was already flat",
+    );
+    // No `flat` decision row was recorded (nothing was closed).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.iter().all(|d| d.action != "flat"),
+        "no flat decision row should be recorded for a flat-book flatten",
+    );
+}
+
+/// Broker that, on its FIRST (Buy) submit, both PAUSES the run AND requests a
+/// one-shot flatten on `run_id` (exactly once — armed flag flips off). This
+/// reproduces the spec UX: the operator pauses with a position held, THEN
+/// clicks Flatten. The NEXT loop iteration's A3 flatten checkpoint fires while
+/// the run is PAUSED and a long is held, and MUST still submit the close Sell
+/// through the broker — the A1 paused-submit-skip applies only to the
+/// per-cycle decision submit, NOT to the flatten close path. Mirrors
+/// `FlattenAfterOpenBroker` but also pauses the run.
+struct PauseFlattenAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    hook: Mutex<Option<(RunStore, String)>>,
+    requested: Mutex<bool>,
+}
+
+impl PauseFlattenAfterOpenBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            hook: Mutex::new(None),
+            requested: Mutex::new(false),
+        })
+    }
+    /// Arm the hook so the first Buy pauses the run AND requests a flatten.
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for PauseFlattenAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // On the FIRST opening Buy (position now held), pause the run AND
+        // request a one-shot flatten, exactly once, so the NEXT loop iteration
+        // sees BOTH `paused = true` AND `flatten_requested = true` while a long
+        // is open. The flatten checkpoint must still reach the broker.
+        if is_buy {
+            let already = {
+                let mut r = self.requested.lock().unwrap();
+                let was = *r;
+                *r = true;
+                was
+            };
+            if !already {
+                let hook = self.hook.lock().unwrap().clone();
+                if let Some((store, run_id)) = hook {
+                    store.set_paused(&run_id, true).await.unwrap();
+                    store.request_flatten(&run_id).await.unwrap();
+                }
+            }
+        }
+        let fill_price = if is_buy {
+            self.open_fill_price
+        } else {
+            self.close_fill_price
+        };
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_flatten_while_paused_still_closes_position_and_stays_paused() {
+    // Primary real-world path (spec §2.7 UX): the operator PAUSES a live run
+    // that holds an open position, THEN clicks [Flatten positions]. A1 makes a
+    // paused run SKIP the normal per-cycle broker submit while continuing to
+    // iterate; A3's flatten checkpoint closes open positions directly (NOT
+    // through the per-cycle submit gate). So a flatten issued while paused MUST
+    // still submit the broker close — the pause must NOT suppress it.
+    //
+    // Bar 1 opens a long; on that submit the broker sets BOTH `paused = true`
+    // and `flatten_requested = true`. Bar 2's loop-top flatten checkpoint fires
+    // while the run is paused and a long is held -> the shared close path
+    // submits a Sell to flatten through the broker, records a `flat` decision
+    // row, clears `flatten_requested`, and CONTINUES the run. Because the run
+    // is now paused, bar 2's long_open is submit-skipped (no reopen Buy), so
+    // the broker sees exactly two orders: the opening Buy and the flatten Sell.
+    // The run is STILL PAUSED and STILL RUNNING (Ok on stream end, not
+    // cancelled).
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = PauseFlattenAfterOpenBroker::new(50_000.0, 51_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // The run KEEPS RUNNING — a flatten does NOT terminate it, even when paused.
+    // It completes normally on stream end (Ok), unlike the cancel path (Err).
+    assert!(
+        result.is_ok(),
+        "a flatten-while-paused must NOT terminate the run; it should complete on stream end, got {result:?}",
+    );
+    assert!(
+        !store.is_cancelled(&run.id).await.unwrap(),
+        "a flatten-while-paused must not cancel the run",
+    );
+
+    // STILL PAUSED: the flatten consumes its own one-shot flag but leaves the
+    // independent A1 pause flag untouched. The run iterated to stream end while
+    // paused.
+    assert!(
+        store.is_paused(&run.id).await.unwrap(),
+        "the run must REMAIN paused after the flatten (flatten and pause are independent flags)",
+    );
+
+    // The one-shot flatten flag WAS cleared by the executor after flattening.
+    assert!(
+        !store.flatten_requested(&run.id).await.unwrap(),
+        "the executor must clear flatten_requested after flattening (one-shot), even while paused",
+    );
+
+    // CRUX: the broker DID receive the flattening close even though the run was
+    // paused. The paused-submit-skip suppresses bar-2's per-cycle long_open
+    // reopen, so the broker sees EXACTLY two orders: the opening Buy, then the
+    // flatten-driven Sell. There is NO third reopen Buy (it was paused-skipped).
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected exactly an opening Buy then a flatten Sell (no paused reopen), got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "the flatten close MUST reach the broker as a Sell even while paused, got {:?}",
+        submitted[1].side,
+    );
+    assert!(
+        (submitted[0].size - submitted[1].size).abs() < 1e-9,
+        "the flatten close must flatten exactly the open size",
+    );
+
+    // A `flat` closing decision row was recorded with the realized PnL from the
+    // broker-reported close (50_000 -> 51_000 on the open units).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let close_row = decisions
+        .iter()
+        .find(|d| d.action == "flat")
+        .expect("a flat close decision must be recorded on flatten-while-paused");
+    assert_eq!(
+        close_row.fill_price,
+        Some(51_000.0),
+        "close fill price comes from the broker's reported close price",
+    );
+    let realized = close_row.pnl_realized.expect("close settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL, got {realized}",
+    );
+    assert!(
+        close_row
+            .justification
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("flatten:"),
+        "flatten decision must carry a flatten:-prefixed justification, got {:?}",
+        close_row.justification,
+    );
 }

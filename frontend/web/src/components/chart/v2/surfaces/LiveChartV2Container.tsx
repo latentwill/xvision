@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
-import { useRunStream } from "@/components/chart/use-run-stream";
+import { useRunStream, type LiveStatus } from "@/components/chart/use-run-stream";
+import type { RunChartPayload } from "@/api/types.gen";
 
 import { runChartPayloadToV2 } from "../adapters/run-chart-payload";
 import type { LiveChartV2Payload } from "../types";
@@ -9,16 +10,33 @@ import { LiveChartV2 } from "./LiveChartV2";
 /**
  * Live container for the v2 chart surface.
  *
- * Owns the proven `useRunStream(runId)` SSE hook (snapshot + merge-on-event,
- * reconnect, terminal close), adapts each streamed RunChartPayload to the
- * columnar v2 payload via `runChartPayloadToV2`, and renders `LiveChartV2`
- * with follow/freeze/resume controls — reproducing the v1 `LiveChart`
- * behavior (Following live / Frozen / Resume live, follow reset on runId
- * change). The surface re-adapts on every stream tick, so the chart updates
- * live without LiveChartV2 needing its own streaming hook.
+ * Adapts each streamed RunChartPayload to the columnar v2 payload via
+ * `runChartPayloadToV2`, and renders `LiveChartV2` with follow/freeze/resume
+ * controls — reproducing the v1 `LiveChart` behavior (Following live / Frozen
+ * / Resume live, follow reset on runId change). The surface re-adapts on every
+ * stream tick, so the chart updates live without LiveChartV2 needing its own
+ * streaming hook.
+ *
+ * Stream source: when an injected `stream` is supplied (the LiveCockpit lifts a
+ * single `useRunStream(selectedId)` and shares it with the connection dot, the
+ * account strip, the positions table, AND this container) the container
+ * consumes it and opens NO EventSource of its own. When `stream` is omitted
+ * (standalone use, e.g. tests), it falls back to owning the proven
+ * `useRunStream(runId)` SSE hook — collapsing the previous duplicate
+ * connection per selected run.
  */
-export function LiveChartV2Container({ runId }: { runId: string }) {
-  const { data, status } = useRunStream(runId);
+export interface LiveChartV2ContainerProps {
+  runId: string;
+  /** Optional lifted stream; when present the container opens no SSE itself. */
+  stream?: { data: RunChartPayload | undefined; status: LiveStatus };
+}
+
+export function LiveChartV2Container({ runId, stream }: LiveChartV2ContainerProps) {
+  // Hooks must run unconditionally. When a stream is injected we still call the
+  // hook but with an empty runId — its effect bails on `!runId` and opens no
+  // EventSource, so there is no duplicate connection.
+  const own = useRunStream(stream ? "" : runId);
+  const { data, status } = stream ?? own;
   const [follow, setFollow] = useState(true);
   const prevRunId = useRef(runId);
   // Until the runId-change effect runs, treat a changed runId as following so

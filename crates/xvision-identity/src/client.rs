@@ -106,6 +106,100 @@ sol! {
 }
 
 // ---------------------------------------------------------------------------
+// giveFeedback argument builder (pure, unit-testable without a chain)
+// ---------------------------------------------------------------------------
+
+/// The fully-encoded argument set for a single ERC-8004 `giveFeedback` call.
+///
+/// Factored out of [`IdentityClient::post_reputation_tagged`] so the encoding
+/// (in particular the `value` / `value_decimals` pair) is unit-testable without
+/// a live chain or signer. The struct holds exactly the eight `giveFeedback`
+/// arguments; building the contract call is then a trivial field splat.
+///
+/// Two constructors capture the two distinct value semantics:
+///
+/// - [`GiveFeedbackArgs::from_outcome`] — **dollar PnL**: encodes
+///   `realized_pnl_usd * 1e6` with `value_decimals = 6`. Used by the per-trade
+///   [`IdentityClient::post_reputation`] / [`IdentityClient::post_reputation_tagged`]
+///   path. A `realized_pnl_usd` of `12.34` becomes `value = 12_340_000`,
+///   `value_decimals = 6`.
+/// - [`GiveFeedbackArgs::raw`] — **explicit integer**: passes `value` and
+///   `value_decimals` straight through with no scaling. Used by the §3.6
+///   attestation path, where the value is an integer verdict score
+///   (`100`/`50`/`0`) that must land on-chain as exactly that with
+///   `value_decimals = 0` — NOT as a 6-decimal dollar amount.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GiveFeedbackArgs {
+    pub agent_id: U256,
+    pub value: i128,
+    pub value_decimals: u8,
+    pub tag1: String,
+    pub tag2: String,
+    pub endpoint: String,
+    pub feedback_uri: String,
+    pub feedback_hash: B256,
+}
+
+impl GiveFeedbackArgs {
+    /// Build args from a [`TradeOutcome`] using the **dollar-PnL** encoding:
+    /// `value = round(realized_pnl_usd * 1e6)`, `value_decimals = 6`.
+    ///
+    /// The `feedbackURI` is the JSON serialisation of `outcome`; `feedbackHash`
+    /// is its keccak256.
+    fn from_outcome(
+        agent: &TokenId,
+        outcome: &TradeOutcome,
+        tag1: &str,
+        tag2: &str,
+    ) -> Result<Self, IdentityError> {
+        let feedback_json =
+            serde_json::to_string(outcome).map_err(|e| IdentityError::Encode(e.to_string()))?;
+        let feedback_hash = B256::from(keccak256(feedback_json.as_bytes()).0);
+        let value = (outcome.realized_pnl_usd * 1_000_000.0) as i128;
+        Ok(Self {
+            agent_id: agent.0,
+            value,
+            value_decimals: 6,
+            tag1: tag1.to_string(),
+            tag2: tag2.to_string(),
+            endpoint: String::new(),
+            feedback_uri: feedback_json,
+            feedback_hash,
+        })
+    }
+
+    /// Build args with an **explicit integer** `value` and `value_decimals`,
+    /// applying no scaling. The `feedbackURI` is the JSON serialisation of
+    /// `outcome` (so the cycle_id / context is still recoverable on read);
+    /// `feedbackHash` is its keccak256.
+    ///
+    /// Used by the §3.6 attestation path so a verdict score of `100`/`50`/`0`
+    /// is posted on-chain as exactly that with `value_decimals = 0`.
+    fn raw(
+        agent: &TokenId,
+        outcome: &TradeOutcome,
+        value: i128,
+        value_decimals: u8,
+        tag1: &str,
+        tag2: &str,
+    ) -> Result<Self, IdentityError> {
+        let feedback_json =
+            serde_json::to_string(outcome).map_err(|e| IdentityError::Encode(e.to_string()))?;
+        let feedback_hash = B256::from(keccak256(feedback_json.as_bytes()).0);
+        Ok(Self {
+            agent_id: agent.0,
+            value,
+            value_decimals,
+            tag1: tag1.to_string(),
+            tag2: tag2.to_string(),
+            endpoint: String::new(),
+            feedback_uri: feedback_json,
+            feedback_hash,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -346,6 +440,10 @@ impl IdentityClient {
     /// Encodes `outcome` as JSON, computes keccak256 of that JSON, and calls
     /// `giveFeedback` on the ReputationRegistry.  The P&L value is encoded as
     /// `realized_pnl_usd * 1e6` (6 decimal places, i128).
+    ///
+    /// Uses the default per-trade tags `tag1="xvision"`, `tag2=cycle_id`. The
+    /// §3.6 attestation path uses [`Self::post_reputation_tagged`] to set
+    /// `tag1=tradingYield`, `tag2=month` instead.
     pub async fn post_reputation(
         &self,
         agent: TokenId,
@@ -353,13 +451,92 @@ impl IdentityClient {
         outcome: TradeOutcome,
         signer: &PrivateKeySigner,
     ) -> Result<TxHash, IdentityError> {
+        let tag2 = cycle_id.to_string();
+        self.post_reputation_tagged(agent, cycle_id, outcome, "xvision", &tag2, signer)
+            .await
+    }
+
+    /// Post a reputation update with explicit ERC-8004 `tag1`/`tag2`.
+    ///
+    /// This is the tag-parameterized core shared by [`Self::post_reputation`]
+    /// (per-trade outcomes) and the §3.6 attestation bridge
+    /// (`tag1="tradingYield"`, `tag2="month"`; see
+    /// [`crate::attestation::submit_attestation`]).
+    ///
+    /// Encodes `outcome` as JSON, computes keccak256 of that JSON, and calls
+    /// `giveFeedback` on the ReputationRegistry. The `value` field is encoded
+    /// as `realized_pnl_usd * 1e6` (6 decimal places, i128) — for attestation
+    /// posts the verdict value (100/50/0) is carried in `realized_pnl_usd`.
+    pub async fn post_reputation_tagged(
+        &self,
+        agent: TokenId,
+        cycle_id: Uuid,
+        outcome: TradeOutcome,
+        tag1: &str,
+        tag2: &str,
+        signer: &PrivateKeySigner,
+    ) -> Result<TxHash, IdentityError> {
         info!(
             chain_id = self.chain_id,
             %agent,
             %cycle_id,
-            "posting reputation update"
+            tag1,
+            tag2,
+            "posting reputation update (pnl)"
         );
 
+        let args = GiveFeedbackArgs::from_outcome(&agent, &outcome, tag1, tag2)?;
+        self.submit_feedback(args, signer).await
+    }
+
+    /// Post a reputation update with an **explicit integer** `value` and
+    /// `value_decimals`, applying no scaling.
+    ///
+    /// This is the raw counterpart to [`Self::post_reputation_tagged`]: where
+    /// that path encodes dollar PnL as `realized_pnl_usd * 1e6` with
+    /// `value_decimals = 6`, this path passes `value`/`value_decimals` straight
+    /// through to `giveFeedback`. Used by the §3.6 attestation bridge so a
+    /// verdict score (`100`/`50`/`0`) is posted on-chain as exactly that with
+    /// `value_decimals = 0` (see [`crate::attestation::submit_attestation`]).
+    ///
+    /// `outcome` is still serialised into `feedbackURI` (and hashed into
+    /// `feedbackHash`) so the cycle_id and context are recoverable on read; only
+    /// the numeric `value`/`value_decimals` encoding differs from the PnL path.
+    pub async fn post_reputation_raw(
+        &self,
+        agent: TokenId,
+        cycle_id: Uuid,
+        outcome: TradeOutcome,
+        value: i128,
+        value_decimals: u8,
+        tag1: &str,
+        tag2: &str,
+        signer: &PrivateKeySigner,
+    ) -> Result<TxHash, IdentityError> {
+        info!(
+            chain_id = self.chain_id,
+            %agent,
+            %cycle_id,
+            value,
+            value_decimals,
+            tag1,
+            tag2,
+            "posting reputation update (raw)"
+        );
+
+        let args = GiveFeedbackArgs::raw(&agent, &outcome, value, value_decimals, tag1, tag2)?;
+        self.submit_feedback(args, signer).await
+    }
+
+    /// Connect a wallet-backed provider and dispatch a single `giveFeedback`
+    /// call with the pre-built [`GiveFeedbackArgs`]. Shared by the PnL and raw
+    /// reputation paths so the on-chain selector/signature is identical for both
+    /// — only the argument VALUES differ.
+    async fn submit_feedback(
+        &self,
+        args: GiveFeedbackArgs,
+        signer: &PrivateKeySigner,
+    ) -> Result<TxHash, IdentityError> {
         let wallet = EthereumWallet::from(signer.clone());
         let provider = ProviderBuilder::new()
             .wallet(wallet)
@@ -367,23 +544,18 @@ impl IdentityClient {
             .await
             .map_err(|e| IdentityError::Rpc(e.to_string()))?;
 
-        let feedback_json =
-            serde_json::to_string(&outcome).map_err(|e| IdentityError::Encode(e.to_string()))?;
-        let feedback_hash = B256::from(keccak256(feedback_json.as_bytes()).0);
-        let value_raw = (outcome.realized_pnl_usd * 1_000_000.0) as i128;
-
         let contract = IReputationRegistry::new(self.addresses.reputation_registry, &provider);
 
         let receipt = contract
             .giveFeedback(
-                agent.0,
-                value_raw,
-                6u8,
-                "xvision".to_string(),
-                cycle_id.to_string(),
-                String::new(),
-                feedback_json,
-                feedback_hash,
+                args.agent_id,
+                args.value,
+                args.value_decimals,
+                args.tag1,
+                args.tag2,
+                args.endpoint,
+                args.feedback_uri,
+                args.feedback_hash,
             )
             .send()
             .await
@@ -395,6 +567,18 @@ impl IdentityClient {
         let tx_hash = TxHash(receipt.transaction_hash);
         debug!(%tx_hash, "reputation posted");
         Ok(tx_hash)
+    }
+
+    /// Borrow the underlying read provider (for view calls like
+    /// `balanceOf`).  Used by the attestation bridge's license check.
+    pub(crate) fn provider_ref(&self) -> &DynProvider {
+        &self.provider
+    }
+
+    /// Borrow the configured registry addresses.  Used by the attestation
+    /// bridge's deploy-gate check.
+    pub(crate) fn addresses_ref(&self) -> &RegistryAddresses {
+        &self.addresses
     }
 
     /// Read all reputation entries for an agent from the ReputationRegistry.
@@ -538,6 +722,84 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
+
+    // -----------------------------------------------------------------------
+    // GiveFeedbackArgs encoding — the §3.6 verdict regression guard.
+    //
+    // These assert at the level of the pure arg-builder (no chain/signer
+    // needed), so the value/valueDecimals encoding submitted to giveFeedback is
+    // observable without a network.
+    // -----------------------------------------------------------------------
+
+    fn sample_outcome(pnl: f64) -> TradeOutcome {
+        use chrono::TimeZone;
+        TradeOutcome {
+            cycle_id: Uuid::nil(),
+            realized_pnl_usd: pnl,
+            action: "attest".to_string(),
+            closed_at: chrono::Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn raw_args_pass_value_and_decimals_through_unscaled() {
+        let agent = TokenId(U256::from(7u64));
+        // A §3.6 verdict score: the on-chain `value` MUST be exactly 100, with
+        // `value_decimals == 0` — NOT 100_000_000 @ 6 decimals (the PnL path).
+        for verdict in [100i128, 50, 0] {
+            // `realized_pnl_usd` in the payload is incidental for the raw path;
+            // pick a non-matching number to prove it isn't what's encoded.
+            let outcome = sample_outcome(verdict as f64);
+            let args = GiveFeedbackArgs::raw(
+                &agent,
+                &outcome,
+                verdict,
+                0,
+                TAG1_TEST,
+                TAG2_TEST,
+            )
+            .expect("build raw args");
+
+            assert_eq!(args.value, verdict, "raw value must be the verdict score");
+            assert_eq!(args.value_decimals, 0, "raw value_decimals must be 0");
+            assert_ne!(
+                args.value, 100_000_000,
+                "verdict 100 must NOT be PnL-scaled to 100_000_000"
+            );
+            assert_eq!(args.agent_id, agent.0);
+            assert_eq!(args.tag1, TAG1_TEST);
+            assert_eq!(args.tag2, TAG2_TEST);
+        }
+    }
+
+    #[test]
+    fn from_outcome_args_keep_pnl_scaling() {
+        let agent = TokenId(U256::from(7u64));
+        // Dollar PnL path is UNCHANGED: 12.34 USD -> 12_340_000 @ 6 decimals.
+        let outcome = sample_outcome(12.34);
+        let args =
+            GiveFeedbackArgs::from_outcome(&agent, &outcome, "xvision", "cycle").expect("build");
+        assert_eq!(args.value, 12_340_000, "PnL must scale by 1e6");
+        assert_eq!(args.value_decimals, 6, "PnL value_decimals must stay 6");
+    }
+
+    #[test]
+    fn raw_and_pnl_share_feedback_uri_and_hash_shape() {
+        // Both paths serialise the outcome into feedbackURI and hash it; only
+        // the numeric value/decimals differ. Confirms the ABI args (selector
+        // signature) are identical — same fields, different VALUES.
+        let agent = TokenId(U256::from(1u64));
+        let outcome = sample_outcome(100.0);
+        let raw = GiveFeedbackArgs::raw(&agent, &outcome, 100, 0, "a", "b").unwrap();
+        let pnl = GiveFeedbackArgs::from_outcome(&agent, &outcome, "a", "b").unwrap();
+        // Same JSON payload + hash (value differs, payload doesn't).
+        assert_eq!(raw.feedback_uri, pnl.feedback_uri);
+        assert_eq!(raw.feedback_hash, pnl.feedback_hash);
+        assert!(raw.feedback_uri.contains("\"action\":\"attest\""));
+    }
+
+    const TAG1_TEST: &str = "tradingYield";
+    const TAG2_TEST: &str = "month";
 
     #[test]
     fn custom_addresses_roundtrip() {

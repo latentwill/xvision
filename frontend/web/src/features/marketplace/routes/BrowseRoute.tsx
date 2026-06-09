@@ -87,8 +87,10 @@ export function BrowseRoute() {
 
   const handleBuy = useCallback(
     async (id: string) => {
-      // purchaseIntent returns TxRef; in F1 we just call it to confirm the seam works.
-      // F6 will route to /marketplace/receipts/:tx.
+      // DEPLOY WALL (C7 / AM6 + signer): fixture `purchaseIntent` returns a fake
+      // TxRef. The real on-chain EIP-3009 `buyWithAuthorization` swaps in here
+      // once contracts are deployed and `useWallet` exposes a signer. Do NOT
+      // fake the signing flow. See LineageRoute buyMutation for the full note.
       await mp.purchaseIntent(id);
       // TODO(F6): navigate(`/marketplace/receipts/${ref.txHash}`)
     },

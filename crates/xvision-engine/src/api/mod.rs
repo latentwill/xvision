@@ -137,6 +137,23 @@ const MIGRATION_059_AUTOOPTIMIZER_SCHEDULES: &str =
 /// a no-op.
 const MIGRATION_061_AUTOOPTIMIZER_RANDOM_BASELINE: &str =
     include_str!("../../migrations/061_autooptimizer_random_baseline.sql");
+/// Migration 062: per-run (per-run) pause flag on `eval_runs`.
+/// Adds `paused` (BOOLEAN NOT NULL DEFAULT 0) and `paused_at` (nullable
+/// RFC3339 timestamp). The live executor honors `paused` as an ADDITIVE
+/// per-cycle broker-submit skip alongside the global SafetyManager pause —
+/// a paused run keeps iterating but submits no orders. Applied via
+/// `migrate_eval_run_paused`, which guards EACH column independently so a
+/// crash between the two non-atomic ALTERs can't strand the DB with `paused`
+/// present but `paused_at` missing; re-opening converges to both columns.
+const MIGRATION_062_EVAL_RUN_PAUSED: &str = include_str!("../../migrations/062_eval_run_paused.sql");
+/// Migration 063: one-shot per-run "flatten positions" request flag on
+/// `eval_runs`. Adds `flatten_requested` (BOOLEAN NOT NULL DEFAULT 0). The
+/// live executor honors it as an ADDITIVE per-cycle request: when set, the
+/// next cycle closes ALL open broker positions (the A2 close path) and then
+/// clears the flag — the run is NOT terminated and keeps iterating. Applied
+/// via `migrate_eval_run_flatten_requested`, mirroring `migrate_eval_run_paused`.
+const MIGRATION_063_EVAL_RUN_FLATTEN_REQUESTED: &str =
+    include_str!("../../migrations/063_eval_run_flatten_requested.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -422,6 +439,8 @@ impl ApiContext {
         migrate_autooptimizer_sessions(&pool).await?;
         migrate_autooptimizer_evidence(&pool).await?;
         migrate_autooptimizer_schedules(&pool).await?;
+        migrate_eval_run_paused(&pool).await?;
+        migrate_eval_run_flatten_requested(&pool).await?;
         // P1-W2: crash recovery — mark any in-flight sessions as failed.
         crate::autooptimizer::session::mark_interrupted_sessions(&pool)
             .await
@@ -1219,6 +1238,52 @@ async fn migrate_safety_state_and_audit(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
     if !table_has_column(pool, "eval_runs", "venue_label").await? {
         sqlx::query(MIGRATION_031_EVAL_RUNS_VENUE_LABEL)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 061 (A1 per-run pause): adds `paused` + `paused_at`
+/// columns to `eval_runs`. Gated on the `paused` column's absence so a
+/// re-open is a no-op. Both columns are added in a single multi-statement
+/// query, so guarding on `paused` alone covers `paused_at` too.
+async fn migrate_eval_run_paused(pool: &SqlitePool) -> ApiResult<()> {
+    // Partial-apply-safe: migration 061 adds two columns via two
+    // non-atomic ALTER TABLEs. A crash between them would strand the DB
+    // with `paused` present but `paused_at` missing; a guard that keyed
+    // only on `paused` would then skip the re-run and never add
+    // `paused_at`. Guard each ALTER independently so re-opening always
+    // converges to both columns present, and the fn stays idempotent.
+    //
+    // The DDL in `062_eval_run_paused.sql` (compiled in as
+    // `MIGRATION_062_EVAL_RUN_PAUSED`) remains authoritative for a clean
+    // apply; the per-column ALTERs below mirror it exactly.
+    let _ = MIGRATION_062_EVAL_RUN_PAUSED;
+    if !table_has_column(pool, "eval_runs", "paused").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN paused BOOLEAN NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !table_has_column(pool, "eval_runs", "paused_at").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN paused_at TEXT")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 063 (one-shot per-run flatten request): adds
+/// `flatten_requested` to `eval_runs`. Gated on column absence so the
+/// migration is idempotent on already-upgraded databases. Mirrors
+/// `migrate_eval_run_paused` exactly (single ADD COLUMN guarded by
+/// `table_has_column`). The DDL in `063_eval_run_flatten_requested.sql`
+/// (compiled in as `MIGRATION_063_EVAL_RUN_FLATTEN_REQUESTED`) remains
+/// authoritative for a clean apply; the ALTER below mirrors it.
+async fn migrate_eval_run_flatten_requested(pool: &SqlitePool) -> ApiResult<()> {
+    let _ = MIGRATION_063_EVAL_RUN_FLATTEN_REQUESTED;
+    if !table_has_column(pool, "eval_runs", "flatten_requested").await? {
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN flatten_requested BOOLEAN NOT NULL DEFAULT 0")
             .execute(pool)
             .await?;
     }
@@ -2679,5 +2744,85 @@ mod migration_registry_tests {
 
         // Second migration run is a no-op — must not error.
         migrate_autooptimizer_schedules(&pool).await.unwrap();
+    }
+
+    /// Item 4: migration 061 adds `paused` + `paused_at` via two non-atomic
+    /// ALTERs. A crash between them strands the DB with `paused` present but
+    /// `paused_at` missing. The guard must re-run for the MISSING column on a
+    /// re-open (not skip because `paused` already exists), and stay idempotent.
+    #[tokio::test]
+    async fn migrate_eval_run_paused_recovers_from_partial_apply() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        // Base eval schema (migration 002) creates `eval_runs` WITHOUT the
+        // pause columns.
+        sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
+        assert!(!table_has_column(&pool, "eval_runs", "paused").await.unwrap());
+        assert!(!table_has_column(&pool, "eval_runs", "paused_at").await.unwrap());
+
+        // Simulate a partial apply: only the FIRST ALTER landed before a
+        // crash, leaving `paused` present but `paused_at` missing.
+        sqlx::query("ALTER TABLE eval_runs ADD COLUMN paused BOOLEAN NOT NULL DEFAULT 0")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(table_has_column(&pool, "eval_runs", "paused").await.unwrap());
+        assert!(
+            !table_has_column(&pool, "eval_runs", "paused_at").await.unwrap(),
+            "precondition: paused_at must be missing for the partial-apply case"
+        );
+
+        // Re-opening must NOT skip just because `paused` exists — it must add
+        // the stranded `paused_at`.
+        migrate_eval_run_paused(&pool).await.unwrap();
+        assert!(
+            table_has_column(&pool, "eval_runs", "paused_at").await.unwrap(),
+            "migrate_eval_run_paused must add the stranded paused_at column on re-open"
+        );
+        assert!(table_has_column(&pool, "eval_runs", "paused").await.unwrap());
+
+        // Idempotent: a second run is a no-op (both columns already present).
+        migrate_eval_run_paused(&pool).await.unwrap();
+    }
+
+    /// Item 4 companion: on a clean (pre-061) DB the guard adds BOTH columns
+    /// and is idempotent on re-open.
+    #[tokio::test]
+    async fn migrate_eval_run_paused_adds_both_columns_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
+
+        migrate_eval_run_paused(&pool).await.unwrap();
+        assert!(table_has_column(&pool, "eval_runs", "paused").await.unwrap());
+        assert!(table_has_column(&pool, "eval_runs", "paused_at").await.unwrap());
+
+        // Re-open safe.
+        migrate_eval_run_paused(&pool).await.unwrap();
+    }
+
+    /// Migration 062 (A3): on a clean (pre-062) DB the guard adds the
+    /// `flatten_requested` column and is idempotent on re-open. Mirrors the
+    /// 061 pause-flag migration test.
+    #[tokio::test]
+    async fn migrate_eval_run_flatten_requested_adds_column_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        // Base eval schema (migration 002) creates `eval_runs` WITHOUT the
+        // flatten column.
+        sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
+        assert!(
+            !table_has_column(&pool, "eval_runs", "flatten_requested")
+                .await
+                .unwrap()
+        );
+
+        migrate_eval_run_flatten_requested(&pool).await.unwrap();
+        assert!(
+            table_has_column(&pool, "eval_runs", "flatten_requested")
+                .await
+                .unwrap(),
+            "migrate_eval_run_flatten_requested must add the flatten_requested column"
+        );
+
+        // Re-open safe (column already present).
+        migrate_eval_run_flatten_requested(&pool).await.unwrap();
     }
 }

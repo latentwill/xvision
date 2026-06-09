@@ -2,9 +2,19 @@
 import { render, screen } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarketplaceLayout } from "./MarketplaceLayout";
 import { ReceiptRoute } from "./ReceiptRoute";
+import { MARKETPLACE_OPTIN_KEY } from "@/features/marketplace/lib/optin";
+
+// C8: MarketplaceLayout gates on the opt-in (default OFF). Enable it so the
+// receipt surface behind the gate renders instead of redirecting.
+beforeEach(() => {
+  localStorage.setItem(MARKETPLACE_OPTIN_KEY, "1");
+});
+afterEach(() => {
+  localStorage.clear();
+});
 
 function routerAt(path: string) {
   return createMemoryRouter(
