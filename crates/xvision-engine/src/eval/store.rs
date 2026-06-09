@@ -1824,8 +1824,13 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let metrics: Option<MetricsSummary> = row
         .try_get::<Option<String>, _>("metrics_json")
         .context("read metrics_json")?
-        .map(|s| serde_json::from_str::<MetricsSummary>(&s).context("deserialize metrics"))
-        .transpose()?;
+        .and_then(|s| match serde_json::from_str::<MetricsSummary>(&s) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::warn!(error = %e, "row_to_run: metrics_json failed to deserialize; treating as null");
+                None
+            }
+        });
 
     // Migration-026 columns: fall back to None for pre-migration rows.
     let bars_content_hash: Option<String> = row
@@ -1846,8 +1851,13 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let review_model: Option<ReviewModel> = row
         .try_get::<Option<String>, _>("review_model_json")
         .unwrap_or(None)
-        .map(|s| serde_json::from_str(&s).context("deserialize review_model_json"))
-        .transpose()?;
+        .and_then(|s| match serde_json::from_str(&s) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::warn!(error = %e, "row_to_run: review_model_json failed to deserialize; treating as null");
+                None
+            }
+        });
     let max_annotations_per_review = row
         .try_get::<Option<i64>, _>("max_annotations_per_review")
         .unwrap_or(None)
@@ -1855,8 +1865,13 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let live_config: Option<LiveConfig> = row
         .try_get::<Option<String>, _>("live_config_json")
         .unwrap_or(None)
-        .map(|s| serde_json::from_str(&s).context("deserialize live_config_json"))
-        .transpose()?;
+        .and_then(|s| match serde_json::from_str(&s) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                tracing::warn!(error = %e, "row_to_run: live_config_json failed to deserialize; treating as null");
+                None
+            }
+        });
     let scenario_id = row
         .try_get::<Option<String>, _>("scenario_id")
         .context("read scenario_id")?
