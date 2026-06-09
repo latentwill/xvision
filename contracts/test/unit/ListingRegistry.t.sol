@@ -112,6 +112,39 @@ contract ListingRegistryTest is BaseTest {
         listings.setMarketplace(makeAddr("anotherMarket"));
     }
 
+    // ---- Finding 3: free + transferable is forbidden --------------------
+
+    /// A free (price == 0) AND transferable listing is nonsensical (the L-1
+    /// per-recipient cap reads live balance, so the recipient could mint,
+    /// transfer the token away, and mint again unboundedly). Forbid the combo
+    /// at creation with a typed error.
+    function test_createListing_revert_freeAndTransferable() public {
+        uint256 lineage = _mintLineage(seller);
+        vm.prank(seller);
+        vm.expectRevert(ListingRegistry.FreeTransferableForbidden.selector);
+        listings.createListing(lineage, keccak256("v"), "ipfs://v", 0, 0, true);
+    }
+
+    /// Free + soulbound (transferable == false) still works — the one-per-
+    /// recipient cap holds because the token cannot move.
+    function test_createListing_freeAndSoulbound_ok() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 0, false);
+        IListingRegistry.Listing memory l = listings.getListing(lid);
+        assertEq(l.priceUSDC, 0);
+        assertFalse(l.transferableLicense);
+    }
+
+    /// Paid + transferable still works — re-purchase is allowed, no free-mint
+    /// bypass exists when a payment throttles each unit.
+    function test_createListing_paidAndTransferable_ok() public {
+        uint256 lineage = _mintLineage(seller);
+        uint256 lid = _createListing(seller, lineage, 1, true);
+        IListingRegistry.Listing memory l = listings.getListing(lid);
+        assertEq(l.priceUSDC, 1);
+        assertTrue(l.transferableLicense);
+    }
+
     function test_createListing_emitsEvent() public {
         uint256 lineage = _mintLineage(seller);
         vm.expectEmit(true, true, true, true, address(listings));

@@ -24,9 +24,45 @@ contract ReputationGateTest is BaseTest {
         agentId = _mintLineage(seller);
         listingId = _createListing(seller, agentId, 1_000_000, false);
 
-        // Register the gate: feedback for `agentId` requires holding the
-        // license for `listingId` (admin/registrar action). admin == this.
-        reputation.setListingForAgent(agentId, listingId);
+        // No manual `setListingForAgent` here: under the Finding-1 fix the gate
+        // is wired AUTOMATICALLY by `createListing` (ListingRegistry is the
+        // authorized listing registrar on ReputationRegistry, wired in
+        // BaseTest). Assert that wiring happened as a side effect of listing.
+        assertEq(
+            reputation.listingForAgent(agentId), listingId, "gate auto-wired at createListing (no manual call)"
+        );
+    }
+
+    /// FINDING 1: immediately after `createListing` — with NO manual
+    /// `setListingForAgent` anywhere — the gate is already ACTIVE. A non-holder
+    /// is rejected and a license holder succeeds. Uses a fresh lineage+listing
+    /// so it does not lean on the setUp's listing.
+    function test_gateActiveImmediatelyAfterCreateListing_noManualWiring() public {
+        address seller2 = makeAddr("seller2");
+        address buyer2 = makeAddr("buyer2");
+        address stranger2 = makeAddr("stranger2");
+
+        uint256 agent2 = _mintLineage(seller2);
+        uint256 listing2 = _createListing(seller2, agent2, 2_000_000, false);
+
+        // Gate is live purely from createListing — no setListingForAgent call.
+        assertEq(reputation.listingForAgent(agent2), listing2, "auto-wired");
+
+        // Non-holder reverts.
+        vm.prank(stranger2);
+        vm.expectRevert(
+            abi.encodeWithSelector(ReputationRegistry.NotLicensed.selector, agent2, listing2, stranger2)
+        );
+        reputation.giveFeedback(agent2, int128(1), 0, "tradingYield", "", "", "ipfs://a", keccak256("a"));
+
+        // License holder succeeds.
+        _fundAndApprove(buyer2, 2_000_000);
+        vm.prank(buyer2);
+        market.buy(listing2, buyer2);
+        vm.prank(buyer2);
+        uint256 fid = reputation.giveFeedback(agent2, int128(7), 0, "tradingYield", "", "", "ipfs://b", keccak256("b"));
+        assertEq(fid, 0, "license holder posts first feedback");
+        assertEq(reputation.getFeedbackCount(agent2), 1);
     }
 
     // ---- license gate --------------------------------------------------

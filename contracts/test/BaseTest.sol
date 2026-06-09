@@ -80,9 +80,17 @@ abstract contract BaseTest is Test {
         listings.setMarketplace(address(market));
 
         // Wire the LicenseToken into the ReputationRegistry so the §3.6
-        // license gate can read `balanceOf(client, listingId)`. Per-agent
-        // gate mappings (`setListingForAgent`) are registered per listing.
+        // license gate can read `balanceOf(client, listingId)`.
         reputation.setLicenseToken(address(license));
+
+        // Finding 1: wire the ReputationRegistry <-> ListingRegistry so the
+        // per-agent feedback gate is set ATOMICALLY at listing creation. The
+        // ListingRegistry is authorized as the ReputationRegistry's listing
+        // registrar, and the ListingRegistry holds a reference to call
+        // `setListingForAgent`. After this, `createListing` auto-gates the
+        // agent — no manual `setListingForAgent` is needed.
+        reputation.setListingRegistrar(address(listings));
+        listings.setReputationRegistry(address(reputation));
     }
 
     // -----------------------------------------------------------------------

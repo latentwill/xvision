@@ -82,6 +82,15 @@ contract ReputationRegistry is Ownable {
     ///      starts at 1 in ListingRegistry, so 0 is an unambiguous "none".
     mapping(uint256 => uint256) private _listingForAgent;
 
+    /// @dev Authorized "listing registrar" — the ListingRegistry contract.
+    ///      Set once, post-deploy (Finding 1). When wired, {createListing}
+    ///      calls {setListingForAgent} so the §3.6 gate becomes active
+    ///      ATOMICALLY at listing creation rather than depending on a separate
+    ///      manual owner action. The owner can ALSO call {setListingForAgent}
+    ///      directly (relisting / repointing / clearing); the registrar branch
+    ///      is purely additive. A contract we deploy and own.
+    address private _listingRegistrar;
+
     /// @notice Indexer-friendly event (surface spec §6.1). `agentId` and
     ///         `rater` are indexed for subgraph filtering. UNCHANGED.
     event FeedbackPosted(
@@ -98,6 +107,9 @@ contract ReputationRegistry is Ownable {
     /// @notice Emitted when a per-agent listing gate is registered/updated.
     event ListingForAgentSet(uint256 indexed agentId, uint256 indexed listingId);
 
+    /// @notice Emitted when the listing registrar is wired (one-shot, Finding 1).
+    event ListingRegistrarSet(address indexed registrar);
+
     error LicenseTokenAlreadySet();
     error LicenseTokenNotSet();
     error ZeroAddress();
@@ -105,6 +117,8 @@ contract ReputationRegistry is Ownable {
     error UnknownFeedback(uint256 agentId, uint256 index);
     error AlreadyRevoked(uint256 agentId, uint256 index);
     error NotFeedbackOwner(uint256 agentId, uint256 index, address caller);
+    error ListingRegistrarAlreadySet();
+    error NotOwnerOrRegistrar(address caller);
 
     /// @param admin Platform registrar — owns the license-gate wiring.
     constructor(address admin) Ownable(admin) {}
@@ -122,21 +136,45 @@ contract ReputationRegistry is Ownable {
         emit LicenseTokenSet(licenseToken_);
     }
 
+    /// @notice Wire the authorized listing registrar (the ListingRegistry).
+    ///         Callable exactly once by the admin (one-shot, mirroring the
+    ///         other registries' wiring). Once set, the registrar may call
+    ///         {setListingForAgent} so the §3.6 gate is wired ATOMICALLY at
+    ///         listing creation (Finding 1) instead of via a separate manual
+    ///         owner action.
+    /// @dev    The registrar is a contract we deploy and own (ListingRegistry),
+    ///         not an arbitrary address. It can only set the per-agent gate; it
+    ///         has no other privilege here. The owner retains full direct
+    ///         control of {setListingForAgent} for relisting / repointing.
+    function setListingRegistrar(address registrar) external onlyOwner {
+        if (registrar == address(0)) revert ZeroAddress();
+        if (_listingRegistrar != address(0)) revert ListingRegistrarAlreadySet();
+        _listingRegistrar = registrar;
+        emit ListingRegistrarSet(registrar);
+    }
+
     /// @notice Register the listing that gates feedback for `agentId`. Setting
     ///         a non-zero `listingId` turns the §3.6 license gate ON for that
-    ///         agent; the registrar calls this when a strategy is listed
-    ///         (agent = strategy = listing, AM3). Idempotent / re-pointable by
-    ///         the admin (e.g. relisting). `listingId == 0` clears the gate.
-    /// @dev    TRUST MODEL: this is an unrestricted owner power. The platform
+    ///         agent; the ListingRegistry (registrar) calls this AUTOMATICALLY
+    ///         when a strategy is listed (agent = strategy = listing, AM3), so
+    ///         a freshly listed agent is gated immediately — not after a
+    ///         separate manual call (Finding 1). The owner may also call it
+    ///         directly. Idempotent / re-pointable by the owner (e.g.
+    ///         relisting). `listingId == 0` clears the gate.
+    /// @dev    Callable by the owner OR the wired listing registrar. TRUST
+    ///         MODEL: this is an unrestricted owner power. The platform
     ///         registrar (an operator EOA) can point any agent's gate at any
     ///         listing, re-point it, or clear it (`listingId == 0`) at any time,
     ///         which silently flips that agent's feedback path between gated and
     ///         permissionless. This centralization is intentional for the
     ///         V2-testnet deployment and is NOT trust-minimized. Note also that
-    ///         renouncing ownership permanently disables this function, freezing
-    ///         every agent's gate in its last-set state (see the contract-level
-    ///         trust-model note).
-    function setListingForAgent(uint256 agentId, uint256 listingId) external onlyOwner {
+    ///         renouncing ownership permanently disables the OWNER branch of
+    ///         this function (the registrar branch survives), freezing direct
+    ///         owner control of gates (see the contract-level trust-model note).
+    function setListingForAgent(uint256 agentId, uint256 listingId) external {
+        if (msg.sender != owner() && msg.sender != _listingRegistrar) {
+            revert NotOwnerOrRegistrar(msg.sender);
+        }
         _listingForAgent[agentId] = listingId;
         emit ListingForAgentSet(agentId, listingId);
     }
@@ -147,6 +185,10 @@ contract ReputationRegistry is Ownable {
 
     function listingForAgent(uint256 agentId) external view returns (uint256) {
         return _listingForAgent[agentId];
+    }
+
+    function listingRegistrar() external view returns (address) {
+        return _listingRegistrar;
     }
 
     // -----------------------------------------------------------------------

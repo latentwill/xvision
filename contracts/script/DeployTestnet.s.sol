@@ -110,9 +110,15 @@ contract DeployTestnet is Script {
         LicenseToken(d.licenseToken).setListingRegistry(d.listingRegistry);
         ListingRegistry(d.listingRegistry).setMarketplace(d.marketplace);
         // §3.6: wire the LicenseToken into the ReputationRegistry so per-listing
-        // feedback gates can read `balanceOf`. Per-agent gates are registered at
-        // runtime by the operator when a strategy is listed (setListingForAgent).
+        // feedback gates can read `balanceOf`.
         ReputationRegistry(d.reputationRegistry).setLicenseToken(d.licenseToken);
+        // Finding 1: wire ReputationRegistry <-> ListingRegistry so per-agent
+        // feedback gates are set ATOMICALLY when a strategy is listed
+        // (createListing -> setListingForAgent). The ListingRegistry is the
+        // authorized registrar; without this the gate would be inert until a
+        // separate manual setListingForAgent call.
+        ReputationRegistry(d.reputationRegistry).setListingRegistrar(d.listingRegistry);
+        ListingRegistry(d.listingRegistry).setReputationRegistry(d.reputationRegistry);
 
         vm.stopBroadcast();
 
