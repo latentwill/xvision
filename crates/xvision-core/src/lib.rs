@@ -5,6 +5,7 @@
 //! market snapshots, briefings, decisions, risk verdicts, persistence.
 
 pub mod agent_profiles;
+pub mod asset_registry;
 pub mod config;
 pub mod market;
 pub mod providers;
@@ -12,6 +13,8 @@ pub mod risk;
 pub mod slot;
 pub mod store;
 pub mod trading;
+
+pub use asset_registry::{DataSource, RegistryEntry};
 
 pub use market::{IndicatorPanel, MarketSnapshot, Ohlcv, OnchainPanel, SkillRef};
 

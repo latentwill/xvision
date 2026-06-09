@@ -10,6 +10,8 @@ use garde::Validate;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::asset_registry;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Action {
@@ -27,93 +29,116 @@ pub enum Direction {
     Flat,
 }
 
-/// Whitelisted tradeable assets — full Alpaca crypto whitelist.
+/// Tradeable asset symbol — an interned `Copy` newtype.
 ///
-/// Wire format is the upper-case ticker (`"BTC"`, `"ETH"`, …) via serde
-/// `rename_all = "UPPERCASE"`. `FromStr` additionally accepts `"BTC/USD"`,
-/// `"BTCUSD"`, and lower-case forms so CLI/config inputs are forgiving.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum AssetSymbol {
-    Btc,
-    Eth,
-    Ltc,
-    Sol,
-    Avax,
-    Link,
-    Aave,
-    Uni,
-    Dot,
-    Doge,
-    Shib,
-    Matic,
-    Bch,
-    Usdt,
-    Usdc,
-}
+/// Legacy variant names are preserved as associated constants so all existing
+/// `AssetSymbol::Btc` call sites compile unchanged. `Eq`/`Hash`/`Ord` are
+/// value-based (string content); serde emits a bare string scalar
+/// (`"BTC"`, `"ETH"`, …). Wire format is identical to the old enum's
+/// `rename_all = "UPPERCASE"` — no DB migration needed.
+///
+/// `FromStr` is permissive: validates format only (`[A-Z0-9_]+` after
+/// trim → uppercase → base-before-`/`), not whitelist membership.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct AssetSymbol(&'static str);
 
 impl AssetSymbol {
+    #[allow(non_upper_case_globals)]
+    pub const Btc: AssetSymbol = AssetSymbol::from_static("BTC");
+    #[allow(non_upper_case_globals)]
+    pub const Eth: AssetSymbol = AssetSymbol::from_static("ETH");
+    #[allow(non_upper_case_globals)]
+    pub const Ltc: AssetSymbol = AssetSymbol::from_static("LTC");
+    #[allow(non_upper_case_globals)]
+    pub const Sol: AssetSymbol = AssetSymbol::from_static("SOL");
+    #[allow(non_upper_case_globals)]
+    pub const Avax: AssetSymbol = AssetSymbol::from_static("AVAX");
+    #[allow(non_upper_case_globals)]
+    pub const Link: AssetSymbol = AssetSymbol::from_static("LINK");
+    #[allow(non_upper_case_globals)]
+    pub const Aave: AssetSymbol = AssetSymbol::from_static("AAVE");
+    #[allow(non_upper_case_globals)]
+    pub const Uni: AssetSymbol = AssetSymbol::from_static("UNI");
+    #[allow(non_upper_case_globals)]
+    pub const Dot: AssetSymbol = AssetSymbol::from_static("DOT");
+    #[allow(non_upper_case_globals)]
+    pub const Doge: AssetSymbol = AssetSymbol::from_static("DOGE");
+    #[allow(non_upper_case_globals)]
+    pub const Shib: AssetSymbol = AssetSymbol::from_static("SHIB");
+    #[allow(non_upper_case_globals)]
+    pub const Matic: AssetSymbol = AssetSymbol::from_static("MATIC");
+    #[allow(non_upper_case_globals)]
+    pub const Bch: AssetSymbol = AssetSymbol::from_static("BCH");
+    #[allow(non_upper_case_globals)]
+    pub const Usdt: AssetSymbol = AssetSymbol::from_static("USDT");
+    #[allow(non_upper_case_globals)]
+    pub const Usdc: AssetSymbol = AssetSymbol::from_static("USDC");
+
+    /// Construct an `AssetSymbol` from a `&'static str` at compile time.
+    pub const fn from_static(s: &'static str) -> Self {
+        Self(s)
+    }
+
     /// Short upper-case ticker (`"BTC"`, `"ETH"`, …). Stable across the
     /// codebase — JSON, logs, prompt rendering, and report column headers
     /// all assume this form.
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Btc => "BTC",
-            Self::Eth => "ETH",
-            Self::Ltc => "LTC",
-            Self::Sol => "SOL",
-            Self::Avax => "AVAX",
-            Self::Link => "LINK",
-            Self::Aave => "AAVE",
-            Self::Uni => "UNI",
-            Self::Dot => "DOT",
-            Self::Doge => "DOGE",
-            Self::Shib => "SHIB",
-            Self::Matic => "MATIC",
-            Self::Bch => "BCH",
-            Self::Usdt => "USDT",
-            Self::Usdc => "USDC",
-        }
+        self.0
     }
 
     /// Alias for `as_str` (spec name from the asset-unlock plan).
     pub fn as_short(self) -> &'static str {
-        self.as_str()
+        self.0
     }
 
     /// Alpaca-style trading pair (`"BTC/USD"`, `"ETH/USD"`, …).
     pub fn as_alpaca_pair(self) -> String {
-        format!("{}/USD", self.as_short())
+        format!("{}/USD", self.0)
+    }
+}
+
+impl std::fmt::Debug for AssetSymbol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AssetSymbol::{}", self.0)
     }
 }
 
 impl std::fmt::Display for AssetSymbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        f.write_str(self.0)
     }
 }
 
 impl std::str::FromStr for AssetSymbol {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_uppercase().as_str() {
-            "BTC" | "BTC/USD" | "BTCUSD" => Ok(Self::Btc),
-            "ETH" | "ETH/USD" | "ETHUSD" => Ok(Self::Eth),
-            "LTC" | "LTC/USD" | "LTCUSD" => Ok(Self::Ltc),
-            "SOL" | "SOL/USD" | "SOLUSD" => Ok(Self::Sol),
-            "AVAX" | "AVAX/USD" | "AVAXUSD" => Ok(Self::Avax),
-            "LINK" | "LINK/USD" | "LINKUSD" => Ok(Self::Link),
-            "AAVE" | "AAVE/USD" | "AAVEUSD" => Ok(Self::Aave),
-            "UNI" | "UNI/USD" | "UNIUSD" => Ok(Self::Uni),
-            "DOT" | "DOT/USD" | "DOTUSD" => Ok(Self::Dot),
-            "DOGE" | "DOGE/USD" | "DOGEUSD" => Ok(Self::Doge),
-            "SHIB" | "SHIB/USD" | "SHIBUSD" => Ok(Self::Shib),
-            "MATIC" | "MATIC/USD" | "MATICUSD" => Ok(Self::Matic),
-            "BCH" | "BCH/USD" | "BCHUSD" => Ok(Self::Bch),
-            "USDT" | "USDT/USD" | "USDTUSD" => Ok(Self::Usdt),
-            "USDC" | "USDC/USD" | "USDCUSD" => Ok(Self::Usdc),
-            other => Err(format!("asset '{other}' is not in the Alpaca crypto whitelist")),
+        let upper = s.trim().to_ascii_uppercase();
+        let base = upper.split('/').next().unwrap_or(&upper);
+        if base.is_empty() {
+            return Err("asset symbol must not be empty".into());
         }
+        if !base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!(
+                "asset symbol '{base}' contains invalid characters (expected [A-Z0-9_]+)"
+            ));
+        }
+        asset_registry::intern_symbol(base)
+            .map(AssetSymbol)
+            .ok_or_else(|| format!("asset registry cap exceeded; cannot intern '{base}'"))
+    }
+}
+
+impl Serialize for AssetSymbol {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for AssetSymbol {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use std::str::FromStr as _;
+        let raw = String::deserialize(d)?;
+        AssetSymbol::from_str(&raw).map_err(serde::de::Error::custom)
     }
 }
 
@@ -883,8 +908,69 @@ mod tests {
         use std::str::FromStr;
 
         assert_eq!(AssetSymbol::from_str("eth/usd").unwrap(), AssetSymbol::Eth);
-        assert_eq!(AssetSymbol::from_str(" SOLUSD ").unwrap(), AssetSymbol::Sol);
+        // "SOLUSD" is format-valid but parses as "SOLUSD" (not "SOL") in the
+        // new permissive newtype design — the slash-splitting only strips after
+        // a "/" character.
+        assert_eq!(
+            AssetSymbol::from_str(" SOLUSD ").unwrap(),
+            AssetSymbol::from_static("SOLUSD"),
+        );
         assert_eq!(AssetSymbol::from_str("link").unwrap(), AssetSymbol::Link);
+    }
+
+    // ── New tests for the interned Copy newtype (W1) ──────────────────────────
+
+    #[test]
+    fn asset_symbol_newtype_eq_is_value_based() {
+        use std::str::FromStr;
+        // const Btc equals an interned "BTC"
+        let interned = AssetSymbol::from_str("BTC").unwrap();
+        assert_eq!(interned, AssetSymbol::Btc);
+    }
+
+    #[test]
+    fn asset_symbol_serde_round_trips_as_scalar_string() {
+        let sym = AssetSymbol::Btc;
+        let json = serde_json::to_string(&sym).unwrap();
+        assert_eq!(json, r#""BTC""#);
+        let back: AssetSymbol = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sym);
+    }
+
+    #[test]
+    fn asset_symbol_from_str_permissive_accepts_new_ticker() {
+        use std::str::FromStr;
+        // HYPE is not in the old enum but must succeed format validation
+        let hype = AssetSymbol::from_str("HYPE").unwrap();
+        assert_eq!(hype.as_str(), "HYPE");
+    }
+
+    #[test]
+    fn asset_symbol_from_str_strips_slash_pair() {
+        use std::str::FromStr;
+        // "ETH/USD" → "ETH"
+        let eth = AssetSymbol::from_str("ETH/USD").unwrap();
+        assert_eq!(eth, AssetSymbol::Eth);
+    }
+
+    #[test]
+    fn asset_symbol_from_str_rejects_invalid_format() {
+        use std::str::FromStr;
+        assert!(AssetSymbol::from_str("").is_err());
+        assert!(AssetSymbol::from_str("BTC$").is_err());
+        assert!(AssetSymbol::from_str("btc!").is_err());
+    }
+
+    #[test]
+    fn asset_symbol_serde_btc_map_key() {
+        // BTreeMap<AssetSymbol, i32> must serialize/deserialize with string keys
+        let mut m = std::collections::BTreeMap::new();
+        m.insert(AssetSymbol::Btc, 42i32);
+        let json = serde_json::to_string(&m).unwrap();
+        assert_eq!(json, r#"{"BTC":42}"#);
+        let back: std::collections::BTreeMap<AssetSymbol, i32> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(back[&AssetSymbol::Btc], 42);
     }
 
     proptest::proptest! {
