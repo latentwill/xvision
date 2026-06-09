@@ -2,7 +2,7 @@ use xvision_identity::{generate_svg, generate_token_uri};
 
 const AGENT_A: &str = "01HWTEST0000000000000001AB";
 const AGENT_B: &str = "01HWTEST0000000000000002CD";
-const HASH_A: &str  = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+const HASH_A: &str = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
 
 fn b64_decode(s: &str) -> Vec<u8> {
     fn val(c: u8) -> u32 {
@@ -22,19 +22,21 @@ fn b64_decode(s: &str) -> Vec<u8> {
     let cap = full * 3 + if tail > 0 { tail - 1 } else { 0 };
     let mut out = Vec::with_capacity(cap);
     for i in 0..full {
-        let v = (val(raw[i*4]) << 18) | (val(raw[i*4+1]) << 12)
-              | (val(raw[i*4+2]) << 6) | val(raw[i*4+3]);
+        let v = (val(raw[i * 4]) << 18)
+            | (val(raw[i * 4 + 1]) << 12)
+            | (val(raw[i * 4 + 2]) << 6)
+            | val(raw[i * 4 + 3]);
         out.push((v >> 16) as u8);
         out.push((v >> 8) as u8);
         out.push(v as u8);
     }
     if tail >= 2 {
-        let a = val(raw[full*4]);
-        let b = val(raw[full*4+1]);
+        let a = val(raw[full * 4]);
+        let b = val(raw[full * 4 + 1]);
         let combined = (a << 18) | (b << 12);
         out.push((combined >> 16) as u8);
         if tail == 3 {
-            let c = val(raw[full*4+2]);
+            let c = val(raw[full * 4 + 2]);
             out.push(((combined | (c << 6)) >> 8) as u8);
         }
     }

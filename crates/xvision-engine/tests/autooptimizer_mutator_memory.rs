@@ -11,8 +11,7 @@ use std::sync::Arc;
 use xvision_engine::agent::memory_recorder::MemoryRecorder;
 use xvision_engine::agent::memory_recorder::RecallResult;
 use xvision_engine::autooptimizer::mutator::{
-    describe_mutation_outcome, MutationDiff, MutationKind, ParamChange, ProseEdit, ToolDiff,
-    MUTATIONS_NS,
+    describe_mutation_outcome, MutationDiff, MutationKind, ParamChange, ProseEdit, ToolDiff, MUTATIONS_NS,
 };
 
 use xvision_memory::store::MemoryStore;

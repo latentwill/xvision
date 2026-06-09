@@ -3249,10 +3249,7 @@ async fn build_backtest_executor(
                 Ok(bars) => {
                     if bars.is_empty() {
                         first_err.get_or_insert_with(|| {
-                            format!(
-                                "{}: no bars loaded for scenario window",
-                                asset.as_alpaca_pair()
-                            )
+                            format!("{}: no bars loaded for scenario window", asset.as_alpaca_pair())
                         });
                     } else {
                         asset_bars.insert(*asset, market_bars_to_ohlcv(bars));

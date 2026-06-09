@@ -36,7 +36,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use xvision_engine::autooptimizer::{
-    cycle_runs::{get_cycle_cost, get_cycle_run, list_cycle_runs, CycleCost, CycleRunDetail, CycleRunSummary},
+    cycle_runs::{
+        get_cycle_cost, get_cycle_run, list_cycle_runs, CycleCost, CycleRunDetail, CycleRunSummary,
+    },
     evidence::{load_findings, load_gate_record, FindingRow, GateRecordRow},
     lineage::{LineageNode, LineageStatus, LineageStore},
     mutator_ladder::{compute_ladder, MutatorScore},
@@ -100,9 +102,7 @@ pub struct StatusResponse {
 /// GET /api/autooptimizer/status
 ///
 /// Returns the active session (if any) and the highest persisted SSE event seq.
-pub async fn get_status(
-    State(state): State<AppState>,
-) -> Result<Json<StatusResponse>, DashboardError> {
+pub async fn get_status(State(state): State<AppState>) -> Result<Json<StatusResponse>, DashboardError> {
     if !table_exists(&state.pool, "autooptimizer_session_state").await? {
         return Ok(Json(StatusResponse {
             active_session: None,
@@ -175,9 +175,7 @@ pub async fn start_session(
         .await
         .map_err(|e| DashboardError::Internal(e))?;
     if active.is_some() {
-        return Err(DashboardError::Conflict(
-            "session already active".to_string(),
-        ));
+        return Err(DashboardError::Conflict("session already active".to_string()));
     }
 
     let config_json = body.config_json.unwrap_or_else(|| "{}".to_string());
@@ -191,10 +189,7 @@ pub async fn start_session(
     .await
     .map_err(|e| DashboardError::Internal(e))?;
 
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(StartSessionResponse { session_id }),
-    ))
+    Ok((StatusCode::ACCEPTED, Json(StartSessionResponse { session_id })))
 }
 
 /// Query parameters for `GET /api/autooptimizer/sessions`.
@@ -300,10 +295,7 @@ pub async fn list_sessions(
 /// Realized cost for a session = Σ `cycle_cost.cost_usd` over the distinct
 /// cycles it ran. Returns `None` when the session has no priced cycle yet
 /// (SUM over zero rows is SQL NULL), so the UI shows "$?" rather than "$0.00".
-async fn session_cost_usd(
-    pool: &sqlx::SqlitePool,
-    session_id: &str,
-) -> Result<Option<f64>, DashboardError> {
+async fn session_cost_usd(pool: &sqlx::SqlitePool, session_id: &str) -> Result<Option<f64>, DashboardError> {
     sqlx::query_scalar::<_, Option<f64>>(
         "SELECT SUM(cc.cost_usd) FROM cycle_cost cc \
          WHERE cc.cycle_id IN ( \
@@ -393,13 +385,12 @@ pub async fn get_session(
         )));
     }
 
-    let row: Option<OptimizerSession> = sqlx::query_as(
-        "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-    )
-    .bind(&session_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| DashboardError::Internal(e.into()))?;
+    let row: Option<OptimizerSession> =
+        sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+            .bind(&session_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(|e| DashboardError::Internal(e.into()))?;
 
     match row {
         Some(s) => Ok(Json(s)),
@@ -863,9 +854,7 @@ pub async fn get_experiment_detail(
 
     // 404 when the lineage table doesn't exist yet.
     if !table_exists(&state.pool, "lineage_nodes").await? {
-        return Err(DashboardError::NotFound(format!(
-            "experiment '{hash}' not found"
-        )));
+        return Err(DashboardError::NotFound(format!("experiment '{hash}' not found")));
     }
 
     let content_hash = ContentHash::from_hex(&hash).map_err(|e| DashboardError::Validation {
@@ -874,17 +863,10 @@ pub async fn get_experiment_detail(
     })?;
 
     let store = LineageStore::new(state.pool.clone());
-    let node = store
-        .get(&content_hash)
-        .await
-        .map_err(DashboardError::Internal)?;
+    let node = store.get(&content_hash).await.map_err(DashboardError::Internal)?;
     let lineage_node = match node {
         Some(n) => n,
-        None => {
-            return Err(DashboardError::NotFound(format!(
-                "experiment '{hash}' not found"
-            )))
-        }
+        None => return Err(DashboardError::NotFound(format!("experiment '{hash}' not found"))),
     };
 
     // Gate record (null if table absent or no row yet).
@@ -1000,7 +982,9 @@ pub struct LastPromptCompile {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum FlywheelResponse {
-    Disabled { enabled: bool },
+    Disabled {
+        enabled: bool,
+    },
     Enabled {
         enabled: bool,
         cohort_count: i64,
@@ -1015,9 +999,7 @@ pub enum FlywheelResponse {
 ///
 /// Returns the DSPy flywheel state. When `dspy_enabled=false` in the
 /// autooptimizer config, returns `{ "enabled": false }`.
-pub async fn get_flywheel(
-    State(state): State<AppState>,
-) -> Result<Json<FlywheelResponse>, DashboardError> {
+pub async fn get_flywheel(State(state): State<AppState>) -> Result<Json<FlywheelResponse>, DashboardError> {
     // Load config from the standard path (or default when file is absent).
     let cfg = load_autooptimizer_config_for_flywheel()?;
 
@@ -1045,12 +1027,10 @@ pub async fn get_flywheel(
     // compiled_pattern_count: rows in agent_slot_optimizations with a
     // non-null gate_verdict (i.e. rows that completed the gate step).
     let compiled_pattern_count: i64 = if table_exists(pool, "agent_slot_optimizations").await? {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM agent_slot_optimizations WHERE gate_verdict IS NOT NULL",
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(|e| DashboardError::Internal(e.into()))?
+        sqlx::query_scalar("SELECT COUNT(*) FROM agent_slot_optimizations WHERE gate_verdict IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| DashboardError::Internal(e.into()))?
     } else {
         0
     };
@@ -1250,21 +1230,20 @@ pub async fn get_stats(
     // When session / strategy filters are requested, resolve cycle_ids via the
     // autooptimizer_events bridge. When those tables are absent the result is
     // empty (no sessions → no matching cycles).
-    let filtered_cycle_ids: Option<Vec<String>> =
-        if q.strategy_id.is_some() || q.session_id.is_some() {
-            if !table_exists(pool, "autooptimizer_session_state").await?
-                || !table_exists(pool, "autooptimizer_events").await?
-            {
-                return Ok(Json(Vec::new()));
-            }
-            let ids = load_filtered_cycle_ids_stats(pool, &q).await?;
-            if ids.is_empty() {
-                return Ok(Json(Vec::new()));
-            }
-            Some(ids)
-        } else {
-            None
-        };
+    let filtered_cycle_ids: Option<Vec<String>> = if q.strategy_id.is_some() || q.session_id.is_some() {
+        if !table_exists(pool, "autooptimizer_session_state").await?
+            || !table_exists(pool, "autooptimizer_events").await?
+        {
+            return Ok(Json(Vec::new()));
+        }
+        let ids = load_filtered_cycle_ids_stats(pool, &q).await?;
+        if ids.is_empty() {
+            return Ok(Json(Vec::new()));
+        }
+        Some(ids)
+    } else {
+        None
+    };
 
     let rows = load_stats_rows(pool, since_dt, filtered_cycle_ids).await?;
     Ok(Json(rows))
@@ -1422,8 +1401,7 @@ async fn load_stats_rows(
             .try_get("ts")
             .map_err(|e| DashboardError::Internal(e.into()))?;
         let best_delta_holdout: Option<f64> = row.try_get("best_delta_holdout").ok().flatten();
-        let best_edge_over_random: Option<f64> =
-            row.try_get("best_edge_over_random").ok().flatten();
+        let best_edge_over_random: Option<f64> = row.try_get("best_edge_over_random").ok().flatten();
         let best_parent_edge: Option<f64> = row.try_get("best_parent_edge").ok().flatten();
         let cost_usd: Option<f64> = row.try_get("cost_usd").ok().flatten();
         let session_id: Option<String> = row.try_get("session_id").ok().flatten();
@@ -1541,9 +1519,7 @@ mod tests {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
             .expect("open in-memory pool");
-        ensure_lineage_schema(&pool)
-            .await
-            .expect("ensure_lineage_schema");
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
         ensure_evidence_schema(&pool)
             .await
             .expect("ensure_evidence_schema");
@@ -1589,10 +1565,12 @@ mod tests {
         .expect("persist_finding");
 
         // Verify via the load helper (the same one get_findings calls).
-        let rows = load_findings(&pool, &hash)
-            .await
-            .expect("load_findings");
-        assert_eq!(rows.len(), 1, "GET /findings/:hash must return 1 row after persist");
+        let rows = load_findings(&pool, &hash).await.expect("load_findings");
+        assert_eq!(
+            rows.len(),
+            1,
+            "GET /findings/:hash must return 1 row after persist"
+        );
         assert_eq!(rows[0].code, "test_code");
         assert_eq!(rows[0].severity, "warn");
         assert_eq!(rows[0].summary, "Test summary");
@@ -1605,7 +1583,10 @@ mod tests {
     /// finding + regime_results, `get_experiment_detail` returns all 5 fields.
     #[tokio::test]
     async fn test_experiments_detail_returns_5_fields() {
-        use xvision_engine::autooptimizer::{config::RegimeSide, regime_results::{insert_regime_results_standalone, RegimeResultRow}};
+        use xvision_engine::autooptimizer::{
+            config::RegimeSide,
+            regime_results::{insert_regime_results_standalone, RegimeResultRow},
+        };
         use xvision_engine::eval::run::MetricsSummary;
 
         let pool = open_pool().await;
@@ -1660,8 +1641,14 @@ mod tests {
             &[RegimeResultRow {
                 regime_label: "bull_2024".to_string(),
                 side: RegimeSide::Bull,
-                metrics_day: MetricsSummary { sharpe: 1.3, ..Default::default() },
-                metrics_untouched: MetricsSummary { sharpe: 1.0, ..Default::default() },
+                metrics_day: MetricsSummary {
+                    sharpe: 1.3,
+                    ..Default::default()
+                },
+                metrics_untouched: MetricsSummary {
+                    sharpe: 1.0,
+                    ..Default::default()
+                },
                 delta_sharpe: 0.3,
                 verdict: "pass".to_string(),
             }],
@@ -1682,9 +1669,7 @@ mod tests {
             "field 2: rationale"
         );
 
-        let findings = load_findings(&pool, &hash)
-            .await
-            .expect("load_findings");
+        let findings = load_findings(&pool, &hash).await.expect("load_findings");
         assert_eq!(findings.len(), 1, "field 4: findings");
 
         let regime_rows = xvision_engine::autooptimizer::regime_results::load_regime_results(&pool, &hash)
@@ -1721,9 +1706,7 @@ mod tests {
         assert!(gate.is_none());
 
         // Findings empty.
-        let findings = load_findings(&pool, &nonexistent)
-            .await
-            .expect("load_findings");
+        let findings = load_findings(&pool, &nonexistent).await.expect("load_findings");
         assert!(findings.is_empty());
     }
 
@@ -1737,9 +1720,7 @@ mod tests {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
             .expect("open in-memory pool");
-        ensure_lineage_schema(&pool)
-            .await
-            .expect("ensure_lineage_schema");
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
 
         let hash = ContentHash::of_bytes(b"quarantined-test").to_hex();
 
@@ -1903,7 +1884,10 @@ mod tests {
         .fetch_optional(&pool)
         .await
         .expect("query_optional");
-        assert!(compile_row.is_none(), "no gated rows → last_prompt_compile = None");
+        assert!(
+            compile_row.is_none(),
+            "no gated rows → last_prompt_compile = None"
+        );
     }
 
     // ─── test_flywheel_with_compile_data ─────────────────────────────────────
@@ -2015,9 +1999,7 @@ mod tests {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:")
             .await
             .expect("open in-memory pool");
-        ensure_lineage_schema(&pool)
-            .await
-            .expect("ensure_lineage_schema");
+        ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
         ensure_evidence_schema(&pool)
             .await
             .expect("ensure_evidence_schema");
@@ -2217,7 +2199,13 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        seed_cycle_nodes(&pool, "cycle-B", &[("node-B", "rejected")], "2026-06-02T00:00:00Z").await;
+        seed_cycle_nodes(
+            &pool,
+            "cycle-B",
+            &[("node-B", "rejected")],
+            "2026-06-02T00:00:00Z",
+        )
+        .await;
 
         let q = StatsQuery {
             strategy_id: Some("strat-A".to_string()),
@@ -2226,7 +2214,11 @@ mod tests {
         let ids = load_filtered_cycle_ids_stats(&pool, &q)
             .await
             .expect("load_filtered_cycle_ids_stats");
-        assert_eq!(ids, vec!["cycle-A"], "strategy_id filter must return only A's cycle");
+        assert_eq!(
+            ids,
+            vec!["cycle-A"],
+            "strategy_id filter must return only A's cycle"
+        );
 
         let rows = load_stats_rows(&pool, None, Some(ids))
             .await
@@ -2245,11 +2237,21 @@ mod tests {
         let pool = open_stats_pool().await;
 
         // Old cycle: created before the boundary.
-        seed_cycle_nodes(&pool, "cycle-old", &[("node-old", "active")], "2026-05-01T00:00:00Z")
-            .await;
+        seed_cycle_nodes(
+            &pool,
+            "cycle-old",
+            &[("node-old", "active")],
+            "2026-05-01T00:00:00Z",
+        )
+        .await;
         // New cycle: created after the boundary.
-        seed_cycle_nodes(&pool, "cycle-new", &[("node-new", "rejected")], "2026-06-05T00:00:00Z")
-            .await;
+        seed_cycle_nodes(
+            &pool,
+            "cycle-new",
+            &[("node-new", "rejected")],
+            "2026-06-05T00:00:00Z",
+        )
+        .await;
 
         let since = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
             .unwrap()
@@ -2321,7 +2323,9 @@ mod tests {
         let honesty = session_latest_honesty(&pool, "sess-ct").await.expect("honesty");
         assert_eq!(honesty, Some(false), "newest cycle's honesty check failed");
 
-        let cycle = active_session_cycle_id(&pool, "sess-ct").await.expect("active cycle");
+        let cycle = active_session_cycle_id(&pool, "sess-ct")
+            .await
+            .expect("active cycle");
         assert_eq!(
             cycle.as_deref(),
             Some("cycle-ct-02"),

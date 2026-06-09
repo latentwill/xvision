@@ -1,5 +1,7 @@
 use serde_json::json;
-use xvision_engine::autooptimizer::mutator::{FilterEdit, MutationDiff, MutationKind, ParamChange, ProseEdit, ToolDiff};
+use xvision_engine::autooptimizer::mutator::{
+    FilterEdit, MutationDiff, MutationKind, ParamChange, ProseEdit, ToolDiff,
+};
 use xvision_engine::autooptimizer::validator::validate_mutation_diff;
 use xvision_engine::strategies::Strategy;
 
@@ -49,7 +51,10 @@ fn make_filter_diff(edits: Vec<FilterEdit>) -> MutationDiff {
         kind: MutationKind::Filter,
         prose: vec![],
         params: vec![],
-        tools: ToolDiff { added: vec![], removed: vec![] },
+        tools: ToolDiff {
+            added: vec![],
+            removed: vec![],
+        },
         filter: edits,
         rationale: "test filter edit".into(),
     }
@@ -280,10 +285,7 @@ fn errors_aggregate_no_short_circuit() {
     );
     let errs = validate_mutation_diff(&diff, &base).unwrap_err();
     let c = codes(&errs);
-    assert!(
-        c.contains(&"unknown_role"),
-        "missing unknown_role in {errs:?}"
-    );
+    assert!(c.contains(&"unknown_role"), "missing unknown_role in {errs:?}");
     assert!(
         c.contains(&"tool_not_present"),
         "missing tool_not_present in {errs:?}"

@@ -45,9 +45,9 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
             agent_id: "01EVALMISSINGAGENT00000000".into(),
             role: "trader".into(),
             activates: Some(xvision_engine::agents::Capability::Trader),
-        prompt_override: None,
-        model_override: None,
-}],
+            prompt_override: None,
+            model_override: None,
+        }],
         pipeline: PipelineDef {
             kind: PipelineKind::Single,
             edges: vec![],

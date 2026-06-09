@@ -97,7 +97,16 @@ async fn run_judge_returns_findings_from_valid_mock_response() {
         model: "test-model".into(),
     };
 
-    let result = run_judge(&judge, &strategy, &strategy, &diff, "3 trades in window", None, None).await;
+    let result = run_judge(
+        &judge,
+        &strategy,
+        &strategy,
+        &diff,
+        "3 trades in window",
+        None,
+        None,
+    )
+    .await;
 
     assert!(result.is_ok(), "expected Ok but got: {:?}", result);
     let findings = result.unwrap();

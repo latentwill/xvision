@@ -59,9 +59,7 @@ pub async fn preflight_trader_provider(
     if !strategy.agents.is_empty() {
         // Resolution failure here isn't ours to surface — the normal run path
         // reports it. We only block on a *confirmed* cross-provider mismatch.
-        if let Ok(slots) =
-            crate::agent::pipeline::resolve_agent_slots_for_strategy(pool, strategy).await
-        {
+        if let Ok(slots) = crate::agent::pipeline::resolve_agent_slots_for_strategy(pool, strategy).await {
             for rs in &slots {
                 let model = rs.slot.effective_model();
                 if let Some(p) = infer_trader_provider(rs.slot.provider.as_deref().unwrap_or(""), &model) {

@@ -134,8 +134,7 @@ async fn judge_recalls_seeded_pattern_into_system_prompt() {
     let diff: MutationDiff = empty_mutation();
 
     let store = store_with_seeded_pattern().await;
-    let recorder =
-        MemoryRecorder::with_static_embedder(store, "static-test", vec![0.1, 0.2, 0.3]);
+    let recorder = MemoryRecorder::with_static_embedder(store, "static-test", vec![0.1, 0.2, 0.3]);
 
     let spy = Arc::new(SpyDispatch::new());
     let judge = make_judge(spy.clone());

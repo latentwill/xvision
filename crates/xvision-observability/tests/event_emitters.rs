@@ -46,9 +46,13 @@ async fn failed_is_sticky_against_late_completed() {
     let pool = pool_with_run(run_id).await;
     let rec = SqliteRecorder::new(pool.clone());
 
-    rec.handle_event(&finished(run_id, RunStatus::Failed, Some("step did not complete")))
-        .await
-        .unwrap();
+    rec.handle_event(&finished(
+        run_id,
+        RunStatus::Failed,
+        Some("step did not complete"),
+    ))
+    .await
+    .unwrap();
     // Late, unconditional `completed` from the sidecar — must NOT win.
     rec.handle_event(&finished(run_id, RunStatus::Completed, None))
         .await
@@ -68,9 +72,13 @@ async fn failed_overwrites_prior_completed() {
     rec.handle_event(&finished(run_id, RunStatus::Completed, None))
         .await
         .unwrap();
-    rec.handle_event(&finished(run_id, RunStatus::Failed, Some("step did not complete")))
-        .await
-        .unwrap();
+    rec.handle_event(&finished(
+        run_id,
+        RunStatus::Failed,
+        Some("step did not complete"),
+    ))
+    .await
+    .unwrap();
 
     assert_eq!(run_status(&pool, run_id).await, "failed");
 }

@@ -1152,10 +1152,7 @@ pub async fn status(store: &MemoryStore, xvn_home: &std::path::Path) -> ApiResul
     };
 
     let choice = crate::api::resolve_embedder_choice_from_env(xvn_home).await;
-    let embedder_present = !matches!(
-        choice,
-        crate::agent::embedder_choice::EmbedderChoice::None
-    );
+    let embedder_present = !matches!(choice, crate::agent::embedder_choice::EmbedderChoice::None);
 
     // Reuse the namespace rollup, then count live observations per namespace.
     let ns_list = list_namespaces(store).await?;

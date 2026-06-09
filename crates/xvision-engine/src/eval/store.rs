@@ -438,9 +438,7 @@ impl RunStore {
             // Missing column (pre-062) → inert: the feature isn't present yet.
             // Any OTHER sqlx error is propagated (see `paused_state`).
             Err(e) if is_missing_column_error(&e) => return Ok(false),
-            Err(e) => {
-                return Err(anyhow::Error::new(e).context(format!("flatten_requested: run '{id}'")))
-            }
+            Err(e) => return Err(anyhow::Error::new(e).context(format!("flatten_requested: run '{id}'"))),
         };
         let Some(row) = row else {
             // Unknown run id.

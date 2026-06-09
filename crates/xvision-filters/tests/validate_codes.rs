@@ -751,9 +751,9 @@ fn validate_nested_leaf_bounds_checked() {
 #[test]
 fn validate_empty_tree_group_with_no_leaves() {
     // All([Group(Any([]))]) — tree has an item but no leaves (empty group)
-    let filter = base_filter(ConditionTree::All(vec![
-        ConditionItem::Group(ConditionGroup::Any(vec![])),
-    ]));
+    let filter = base_filter(ConditionTree::All(vec![ConditionItem::Group(
+        ConditionGroup::Any(vec![]),
+    )]));
     let err = validate(&filter).unwrap_err();
     assert_eq!(err.code(), "E_FILTER_EMPTY_TREE");
 }

@@ -35,8 +35,8 @@ pub mod error;
 pub mod ipfs;
 
 pub use adapter::{
-    AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, ListingRef, MockDriver,
-    PublishRequest, SaleReceipt, TransferAuthorization,
+    AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, ListingRef, MockDriver, PublishRequest,
+    SaleReceipt, TransferAuthorization,
 };
 pub use error::MarketplaceError;
 pub use ipfs::{IpfsStore, PinataDriver};

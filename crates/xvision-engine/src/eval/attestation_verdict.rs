@@ -398,7 +398,10 @@ mod tests {
 
         let windowed = window_sharpe(&returns, 252.0);
         let direct = sharpe_from_returns(&tail, 252.0);
-        assert!((windowed - direct).abs() < 1e-9, "windowed={windowed} direct={direct}");
+        assert!(
+            (windowed - direct).abs() < 1e-9,
+            "windowed={windowed} direct={direct}"
+        );
         assert!(windowed > 0.0, "clean positive tail should yield positive Sharpe");
     }
 

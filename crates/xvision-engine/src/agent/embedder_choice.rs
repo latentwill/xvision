@@ -224,9 +224,7 @@ pub fn resolve_embedder_choice(env: &EmbedderEnv, providers: &[EffectiveProvider
     if let Some(base_url) = non_empty(&env.memory_embedder_base_url) {
         return EmbedderChoice::OpenAiCompat {
             base_url: base_url.to_string(),
-            api_key: non_empty(&env.openai_api_key)
-                .unwrap_or("")
-                .to_string(),
+            api_key: non_empty(&env.openai_api_key).unwrap_or("").to_string(),
             model,
         };
     }
@@ -416,7 +414,8 @@ mod tests {
         // A real openai provider with a key is PREFERRED over the Local
         // fallback when the config is auto (semantic > lexical).
         let mut env = EmbedderEnv::default();
-        env.resolved_provider_keys.insert("openai".into(), "sk-live".into());
+        env.resolved_provider_keys
+            .insert("openai".into(), "sk-live".into());
         let providers = vec![ep("openai", "https://api.openai.com/v1", true)];
         match resolve_embedder_choice(&env, &providers) {
             EmbedderChoice::OpenAiCompat { api_key, .. } => assert_eq!(api_key, "sk-live"),
@@ -486,7 +485,8 @@ mod tests {
             config_embedder_model: Some("text-embedding-3-large".into()),
             ..Default::default()
         };
-        env.resolved_provider_keys.insert("openai".into(), "sk-live".into());
+        env.resolved_provider_keys
+            .insert("openai".into(), "sk-live".into());
         let providers = vec![ep("openai", "https://api.openai.com/v1", true)];
         match resolve_embedder_choice(&env, &providers) {
             EmbedderChoice::OpenAiCompat { model, .. } => {
@@ -579,10 +579,13 @@ mod tests {
             config_embedder: Some("myproxy".into()),
             ..Default::default()
         };
-        env.resolved_provider_keys.insert("myproxy".into(), "sk-proxy".into());
+        env.resolved_provider_keys
+            .insert("myproxy".into(), "sk-proxy".into());
         let providers = vec![ep("myproxy", "https://proxy.internal/v1", true)];
         match resolve_embedder_choice(&env, &providers) {
-            EmbedderChoice::OpenAiCompat { base_url, api_key, .. } => {
+            EmbedderChoice::OpenAiCompat {
+                base_url, api_key, ..
+            } => {
                 assert_eq!(base_url, "https://proxy.internal/v1");
                 assert_eq!(api_key, "sk-proxy");
             }

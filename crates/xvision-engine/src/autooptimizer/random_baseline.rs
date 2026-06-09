@@ -33,7 +33,10 @@ impl RandomBaselineDispatch {
     /// `actions` is the legal `trader_output.action` set for the configured
     /// direction (see `TradeDirection::baseline_actions`). Must be non-empty.
     pub fn new(seed: u64, actions: Vec<String>) -> Self {
-        debug_assert!(!actions.is_empty(), "random baseline needs a non-empty action set");
+        debug_assert!(
+            !actions.is_empty(),
+            "random baseline needs a non-empty action set"
+        );
         Self {
             seed,
             actions,
@@ -132,7 +135,10 @@ mod tests {
             seq.iter().all(|a| a == "long_open" || a == "flat"),
             "long-only baseline must never short: {seq:?}"
         );
-        assert!(seq.iter().any(|a| a == "long_open"), "should open longs sometimes");
+        assert!(
+            seq.iter().any(|a| a == "long_open"),
+            "should open longs sometimes"
+        );
     }
 
     #[tokio::test]
@@ -147,8 +153,14 @@ mod tests {
     #[tokio::test]
     async fn both_direction_can_emit_long_and_short() {
         let seq = action_sequence(RANDOM_BASELINE_SEED, &["long_open", "short_open", "flat"], 96).await;
-        assert!(seq.iter().any(|a| a == "long_open"), "both should long sometimes: {seq:?}");
-        assert!(seq.iter().any(|a| a == "short_open"), "both should short sometimes: {seq:?}");
+        assert!(
+            seq.iter().any(|a| a == "long_open"),
+            "both should long sometimes: {seq:?}"
+        );
+        assert!(
+            seq.iter().any(|a| a == "short_open"),
+            "both should short sometimes: {seq:?}"
+        );
     }
 
     #[tokio::test]
@@ -162,6 +174,9 @@ mod tests {
         let text = d.complete(req).await.unwrap().text();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["granularity"].as_str(), Some("bar"));
-        assert!(v.get("payload").is_some(), "filter passthrough must carry a payload object");
+        assert!(
+            v.get("payload").is_some(),
+            "filter passthrough must carry a payload object"
+        );
     }
 }

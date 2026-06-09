@@ -227,16 +227,18 @@ pub fn validate_regime_set(regimes: &[RegimeWindow]) -> anyhow::Result<()> {
             .end
             .parse()
             .with_context(|| format!("regime '{}': invalid day.end '{}'", rw.label, rw.day.end))?;
-        let base_start: NaiveDate = rw
-            .baseline
-            .start
-            .parse()
-            .with_context(|| format!("regime '{}': invalid baseline.start '{}'", rw.label, rw.baseline.start))?;
-        let base_end: NaiveDate = rw
-            .baseline
-            .end
-            .parse()
-            .with_context(|| format!("regime '{}': invalid baseline.end '{}'", rw.label, rw.baseline.end))?;
+        let base_start: NaiveDate = rw.baseline.start.parse().with_context(|| {
+            format!(
+                "regime '{}': invalid baseline.start '{}'",
+                rw.label, rw.baseline.start
+            )
+        })?;
+        let base_end: NaiveDate = rw.baseline.end.parse().with_context(|| {
+            format!(
+                "regime '{}': invalid baseline.end '{}'",
+                rw.label, rw.baseline.end
+            )
+        })?;
 
         // Overlap when: day_start < base_end AND base_start < day_end
         let overlaps = day_start < base_end && base_start < day_end;
@@ -244,7 +246,11 @@ pub fn validate_regime_set(regimes: &[RegimeWindow]) -> anyhow::Result<()> {
             bail!(
                 "regime '{}': day window ({} – {}) overlaps with baseline ({} – {}); \
                  they must be disjoint to keep train and held-out data separate",
-                rw.label, day_start, day_end, base_start, base_end,
+                rw.label,
+                day_start,
+                day_end,
+                base_start,
+                base_end,
             );
         }
     }
@@ -339,12 +345,24 @@ impl AutoOptimizerConfig {
 mod tests {
     use super::*;
 
-    fn make_regime(label: &str, day_start: &str, day_end: &str, base_start: &str, base_end: &str) -> RegimeWindow {
+    fn make_regime(
+        label: &str,
+        day_start: &str,
+        day_end: &str,
+        base_start: &str,
+        base_end: &str,
+    ) -> RegimeWindow {
         RegimeWindow {
             label: label.to_string(),
             side: RegimeSide::Bull,
-            day: ScenarioWindow { start: day_start.to_string(), end: day_end.to_string() },
-            baseline: ScenarioWindow { start: base_start.to_string(), end: base_end.to_string() },
+            day: ScenarioWindow {
+                start: day_start.to_string(),
+                end: day_end.to_string(),
+            },
+            baseline: ScenarioWindow {
+                start: base_start.to_string(),
+                end: base_end.to_string(),
+            },
         }
     }
 
@@ -387,15 +405,22 @@ mod tests {
             make_regime("bull", "2023-01-01", "2023-03-01", "2023-03-01", "2023-04-01"),
         ];
         let err = validate_regime_set(&regimes).unwrap_err();
-        assert!(err.to_string().contains("duplicate regime label 'bull'"), "got: {err}");
+        assert!(
+            err.to_string().contains("duplicate regime label 'bull'"),
+            "got: {err}"
+        );
     }
 
     #[test]
     fn validate_regime_set_overlap_is_err() {
         // day 2024-01 to 2024-04, baseline 2024-03 to 2024-05 → overlaps in March
-        let regimes = vec![
-            make_regime("bull", "2024-01-01", "2024-04-01", "2024-03-01", "2024-05-01"),
-        ];
+        let regimes = vec![make_regime(
+            "bull",
+            "2024-01-01",
+            "2024-04-01",
+            "2024-03-01",
+            "2024-05-01",
+        )];
         let err = validate_regime_set(&regimes).unwrap_err();
         assert!(err.to_string().contains("overlaps"), "got: {err}");
     }
@@ -403,9 +428,13 @@ mod tests {
     #[test]
     fn validate_regime_set_adjacent_windows_are_ok() {
         // day ends exactly where baseline starts — no overlap (open interval semantics)
-        let regimes = vec![
-            make_regime("bull", "2024-01-01", "2024-03-01", "2024-03-01", "2024-04-01"),
-        ];
+        let regimes = vec![make_regime(
+            "bull",
+            "2024-01-01",
+            "2024-03-01",
+            "2024-03-01",
+            "2024-04-01",
+        )];
         assert!(validate_regime_set(&regimes).is_ok());
     }
 
@@ -417,9 +446,18 @@ mod tests {
             "default allowed_mutation_kinds must include \"filter\"; got: {defaults:?}"
         );
         // Existing defaults must still be present.
-        assert!(defaults.contains(&"prose".to_string()), "prose missing from defaults");
-        assert!(defaults.contains(&"param".to_string()), "param missing from defaults");
-        assert!(defaults.contains(&"tool".to_string()), "tool missing from defaults");
+        assert!(
+            defaults.contains(&"prose".to_string()),
+            "prose missing from defaults"
+        );
+        assert!(
+            defaults.contains(&"param".to_string()),
+            "param missing from defaults"
+        );
+        assert!(
+            defaults.contains(&"tool".to_string()),
+            "tool missing from defaults"
+        );
     }
 
     #[test]
@@ -438,9 +476,13 @@ mod tests {
         // toml::from_str("") would fail. Use Default::default() to verify
         // regime_set starts empty, then parse a full-config TOML with one entry.
         let cfg = AutoOptimizerConfig::default();
-        assert!(cfg.regime_set.is_empty(), "regime_set must default empty (back-compat)");
+        assert!(
+            cfg.regime_set.is_empty(),
+            "regime_set must default empty (back-compat)"
+        );
 
-        let cfg2: AutoOptimizerConfig = toml::from_str(r#"
+        let cfg2: AutoOptimizerConfig = toml::from_str(
+            r#"
             min_improvement = 0.05
 
             [day_window]
@@ -465,7 +507,9 @@ mod tests {
             [regime_set.baseline]
             start = "2024-03-01"
             end   = "2024-04-01"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(cfg2.regime_set.len(), 1);
         assert_eq!(cfg2.regime_set[0].label, "bull");
         assert!(matches!(cfg2.regime_set[0].side, RegimeSide::Bull));

@@ -167,10 +167,7 @@ pub enum CycleProgressEvent {
         duration_ms: u64,
     },
     /// Fired when the optimizer session state changes (e.g. running, finished, failed).
-    SessionStateChanged {
-        session_id: String,
-        state: String,
-    },
+    SessionStateChanged { session_id: String, state: String },
     /// Fired after the DSPy flywheel compiles findings into a prompt pattern.
     /// Operator label: "Findings compiled into prompt pattern".
     FlywheelCompiled {
@@ -223,7 +220,11 @@ mod tests {
         let json = r#"{"type":"cycle_started","cycle_id":"c1","parent_count":3}"#;
         let event: CycleProgressEvent = serde_json::from_str(json).unwrap();
         match event {
-            CycleProgressEvent::CycleStarted { session_id, cycle_id, parent_count } => {
+            CycleProgressEvent::CycleStarted {
+                session_id,
+                cycle_id,
+                parent_count,
+            } => {
                 assert_eq!(session_id, "", "session_id should default to empty string");
                 assert_eq!(cycle_id, "c1");
                 assert_eq!(parent_count, 3);
@@ -232,7 +233,8 @@ mod tests {
         }
 
         // MutationGated without session_id
-        let json = r#"{"type":"mutation_gated","cycle_id":"c1","child_hash":"abc","passed":true,"outcome":"kept"}"#;
+        let json =
+            r#"{"type":"mutation_gated","cycle_id":"c1","child_hash":"abc","passed":true,"outcome":"kept"}"#;
         let event: CycleProgressEvent = serde_json::from_str(json).unwrap();
         match event {
             CycleProgressEvent::MutationGated { session_id, .. } => {

@@ -16,7 +16,10 @@ use std::collections::VecDeque;
 use crate::errors::ValidationError;
 use crate::indicators::Bar;
 use crate::state::{FilterState, CONDITION_HISTORY_CAP};
-use crate::types::{Condition, ConditionGroup, ConditionItem, ConditionTree, Filter, IndicatorRef, Operand, Operator, WakeInPosition};
+use crate::types::{
+    Condition, ConditionGroup, ConditionItem, ConditionTree, Filter, IndicatorRef, Operand, Operator,
+    WakeInPosition,
+};
 use crate::validate::validate;
 
 /// Decision the runtime returns for a bar.
@@ -356,22 +359,28 @@ fn combine_tree(tree: &ConditionTree, results: &[ConditionResult]) -> bool {
 /// Panics if `leaf_results` is shorter than the number of leaves in `tree`
 /// (i.e. the caller must have sized it correctly via `leaves_dfs()`).
 fn evaluate_tree_with_groups(tree: &ConditionTree, leaf_results: &[bool], offset: &mut usize) -> bool {
-    let item_results: Vec<bool> = tree.items().iter().map(|item| match item {
-        ConditionItem::Leaf(_) => {
-            let r = leaf_results[*offset];
-            *offset += 1;
-            r
-        }
-        ConditionItem::Group(group) => {
-            let n = group.conditions().len();
-            let inner: Vec<bool> = (0..n).map(|_| {
+    let item_results: Vec<bool> = tree
+        .items()
+        .iter()
+        .map(|item| match item {
+            ConditionItem::Leaf(_) => {
                 let r = leaf_results[*offset];
                 *offset += 1;
                 r
-            }).collect();
-            group.combine(&inner)
-        }
-    }).collect();
+            }
+            ConditionItem::Group(group) => {
+                let n = group.conditions().len();
+                let inner: Vec<bool> = (0..n)
+                    .map(|_| {
+                        let r = leaf_results[*offset];
+                        *offset += 1;
+                        r
+                    })
+                    .collect();
+                group.combine(&inner)
+            }
+        })
+        .collect();
 
     match tree {
         ConditionTree::All(_) => item_results.iter().all(|&r| r),
@@ -949,10 +958,17 @@ mod tests {
         };
 
         // Bar 1: close=40, no prev_pair yet → Inactive.
-        assert_eq!(rt.evaluate(&mut state, &bar(40.0), ctx).decision, ActivationDecision::Inactive);
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(40.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
         // Bar 2: prev=40 (<= 50), current=60 (> 50) → Trip.
         let o = rt.evaluate(&mut state, &bar(60.0), ctx);
-        assert!(o.decision.is_trip(), "expected Trip on cross, got {:?}", o.decision);
+        assert!(
+            o.decision.is_trip(),
+            "expected Trip on cross, got {:?}",
+            o.decision
+        );
         // Bar 3: prev=60 (> 50), current=70 (> 50) → no cross → Hold is false → Inactive.
         let o = rt.evaluate(&mut state, &bar(70.0), ctx);
         assert_eq!(o.decision, ActivationDecision::Inactive);
@@ -982,10 +998,17 @@ mod tests {
             in_position: false,
         };
 
-        assert_eq!(rt.evaluate(&mut state, &bar(80.0), ctx).decision, ActivationDecision::Inactive);
+        assert_eq!(
+            rt.evaluate(&mut state, &bar(80.0), ctx).decision,
+            ActivationDecision::Inactive
+        );
         // prev=80 (>= 70), current=60 (< 70) → Trip.
         let o = rt.evaluate(&mut state, &bar(60.0), ctx);
-        assert!(o.decision.is_trip(), "expected Trip on cross below, got {:?}", o.decision);
+        assert!(
+            o.decision.is_trip(),
+            "expected Trip on cross below, got {:?}",
+            o.decision
+        );
     }
 
     #[test]
@@ -1141,18 +1164,27 @@ mod tests {
         rt.evaluate(
             &mut state,
             &bar(40.0),
-            EvalContext { ts: ts(0), in_position: false },
+            EvalContext {
+                ts: ts(0),
+                in_position: false,
+            },
         );
         rt.evaluate(
             &mut state,
             &bar(60.0),
-            EvalContext { ts: ts(1), in_position: true },
+            EvalContext {
+                ts: ts(1),
+                in_position: true,
+            },
         );
         // Gate invalidates (close drops below threshold) while holding.
         let invalidated = rt.evaluate(
             &mut state,
             &bar(40.0),
-            EvalContext { ts: ts(2), in_position: true },
+            EvalContext {
+                ts: ts(2),
+                in_position: true,
+            },
         );
         assert_eq!(
             invalidated.decision,
@@ -1202,18 +1234,27 @@ mod tests {
         rt.evaluate(
             &mut state,
             &bar(40.0),
-            EvalContext { ts: ts(0), in_position: false },
+            EvalContext {
+                ts: ts(0),
+                in_position: false,
+            },
         );
         let trip = rt.evaluate(
             &mut state,
             &bar(60.0),
-            EvalContext { ts: ts(1), in_position: true },
+            EvalContext {
+                ts: ts(1),
+                in_position: true,
+            },
         );
         assert!(trip.decision.is_active());
         let hold = rt.evaluate(
             &mut state,
             &bar(65.0),
-            EvalContext { ts: ts(2), in_position: true },
+            EvalContext {
+                ts: ts(2),
+                in_position: true,
+            },
         );
         assert!(
             matches!(
@@ -1268,7 +1309,10 @@ mod tests {
         let f = close_gt_threshold(50.0);
         let rt = RuntimeFilter::new(&f).unwrap();
         let mut state = rt.fresh_state();
-        let ctx = EvalContext { ts: ts(0), in_position: false };
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
 
         // Warmup bar (EMA-1 uses 1 bar; IndicatorRef::close() uses 1 bar)
         rt.evaluate(&mut state, &bar(40.0), ctx);
@@ -1344,7 +1388,10 @@ mod tests {
         let tree = ConditionTree::All(vec![leaf_adx, group_any]);
         let f = mk_filter(tree, 0, None);
         let rt = RuntimeFilter::new(&f).unwrap();
-        let ctx = EvalContext { ts: ts(0), in_position: false };
+        let ctx = EvalContext {
+            ts: ts(0),
+            in_position: false,
+        };
 
         // ---- Scenario 1: close=250 → adx T (250>100), mfi_lo T (250>200) → fires ----
         let mut state = rt.fresh_state();
@@ -1407,7 +1454,10 @@ mod tests {
         let tree = ConditionTree::All(vec![leaf_a, group]);
 
         let expected_leaves = tree.leaf_count(); // should be 3
-        assert_eq!(expected_leaves, 3, "leaf_count() should be 3 for 1 leaf + 1 group of 2");
+        assert_eq!(
+            expected_leaves, 3,
+            "leaf_count() should be 3 for 1 leaf + 1 group of 2"
+        );
 
         let f = mk_filter(tree, 0, None);
         let state = FilterState::new(&f);

@@ -1102,7 +1102,11 @@ impl Executor {
                     mark_price: seed_mark,
                     history_slice,
                     inputs_policy,
-                    entry_price: if seed_pos_size.abs() > f64::EPSILON { seed_entry } else { 0.0 },
+                    entry_price: if seed_pos_size.abs() > f64::EPSILON {
+                        seed_entry
+                    } else {
+                        0.0
+                    },
                     unrealized_pnl_pct: seed_upnl_pct,
                     bars_held: seed_bars_held,
                     stop_loss_price: seed_sl_price,
@@ -3410,7 +3414,11 @@ impl Executor {
             mark_price: live_mark,
             history_slice: &history_slice,
             inputs_policy,
-            entry_price: if live_pos_size.abs() > f64::EPSILON { live_entry } else { 0.0 },
+            entry_price: if live_pos_size.abs() > f64::EPSILON {
+                live_entry
+            } else {
+                0.0
+            },
             unrealized_pnl_pct: live_upnl_pct,
             // SLTP state and bars_held not threaded into the live context.
             bars_held: 0,
@@ -3932,7 +3940,10 @@ impl Executor {
                         &run.id,
                         "executor",
                         "warn",
-                        &format!("{}-close for {asset} filled but its decision row failed to persist: {e}", reason.tag()),
+                        &format!(
+                            "{}-close for {asset} filled but its decision row failed to persist: {e}",
+                            reason.tag()
+                        ),
                     )
                     .await;
             } else {
@@ -3949,10 +3960,7 @@ impl Executor {
         // cancelled run's equity curve ends on the settled value.
         let marks = std::collections::BTreeMap::new();
         let settled_equity = book.equity(&marks);
-        if let Err(e) = store
-            .record_equity_upsert(&run.id, now, settled_equity)
-            .await
-        {
+        if let Err(e) = store.record_equity_upsert(&run.id, now, settled_equity).await {
             tracing::warn!(
                 target: "xvision_engine::live_executor",
                 run_id = %run.id,

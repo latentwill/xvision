@@ -265,11 +265,17 @@ async fn duplicate_candidate_is_attributed_to_every_evaluating_cycle() {
     assert_eq!(detail_b.nodes[0].node.bundle_hash.to_hex(), shared_hex);
 
     // And cycle-A still sees it too.
-    let detail_a = get_cycle_run(&pool, "cycle-A").await.unwrap().expect("cycle-A exists");
+    let detail_a = get_cycle_run(&pool, "cycle-A")
+        .await
+        .unwrap()
+        .expect("cycle-A exists");
     assert_eq!(detail_a.nodes.len(), 1);
 
     // The list surfaces both cycles.
     let runs = list_cycle_runs(&pool, 50, 0).await.unwrap();
     let ids: std::collections::HashSet<_> = runs.iter().map(|r| r.cycle_id.clone()).collect();
-    assert!(ids.contains("cycle-A") && ids.contains("cycle-B"), "both cycles must list, got {ids:?}");
+    assert!(
+        ids.contains("cycle-A") && ids.contains("cycle-B"),
+        "both cycles must list, got {ids:?}"
+    );
 }

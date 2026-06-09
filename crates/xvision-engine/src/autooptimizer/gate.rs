@@ -195,7 +195,11 @@ use crate::autooptimizer::lineage::LineageStatus;
 /// (Quarantined) if any regime passes but not the both-sides rule; Dropped
 /// (Rejected) if no regime passes.
 pub fn aggregate_regime_verdicts(results: &[(RegimeSide, GateVerdict)]) -> LineageStatus {
-    let passed = |s: RegimeSide| results.iter().any(|(side, v)| *side == s && matches!(v, GateVerdict::Pass));
+    let passed = |s: RegimeSide| {
+        results
+            .iter()
+            .any(|(side, v)| *side == s && matches!(v, GateVerdict::Pass))
+    };
     let any_pass = results.iter().any(|(_, v)| matches!(v, GateVerdict::Pass));
     if passed(RegimeSide::Bull) && passed(RegimeSide::BearOrShock) {
         LineageStatus::Active
@@ -215,9 +219,21 @@ mod tests {
         use crate::autooptimizer::config::RegimeSide::*;
         let pass = GateVerdict::Pass;
         let fail = GateVerdict::Fail { reason: "neg".into() };
-        assert_eq!(aggregate_regime_verdicts(&[(Bull, pass.clone()), (BearOrShock, pass.clone())]), LineageStatus::Active);
-        assert_eq!(aggregate_regime_verdicts(&[(Bull, pass.clone()), (BearOrShock, fail.clone())]), LineageStatus::Quarantined);
-        assert_eq!(aggregate_regime_verdicts(&[(Bull, fail.clone()), (BearOrShock, fail.clone())]), LineageStatus::Rejected);
-        assert_eq!(aggregate_regime_verdicts(&[(Bull, pass.clone()), (Chop, pass.clone())]), LineageStatus::Quarantined);
+        assert_eq!(
+            aggregate_regime_verdicts(&[(Bull, pass.clone()), (BearOrShock, pass.clone())]),
+            LineageStatus::Active
+        );
+        assert_eq!(
+            aggregate_regime_verdicts(&[(Bull, pass.clone()), (BearOrShock, fail.clone())]),
+            LineageStatus::Quarantined
+        );
+        assert_eq!(
+            aggregate_regime_verdicts(&[(Bull, fail.clone()), (BearOrShock, fail.clone())]),
+            LineageStatus::Rejected
+        );
+        assert_eq!(
+            aggregate_regime_verdicts(&[(Bull, pass.clone()), (Chop, pass.clone())]),
+            LineageStatus::Quarantined
+        );
     }
 }

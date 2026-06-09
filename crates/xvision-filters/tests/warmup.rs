@@ -4,9 +4,8 @@
 //! no running server needed.
 
 use xvision_filters::{
-    check_filter_warmup, Condition, ConditionItem, ConditionTree, Filter, FilterStatus,
-    IndicatorName, IndicatorRef, Operand, Operator, ScanCadence, WakeInPosition,
-    DEFAULT_AGENT_CONTEXT_TEMPLATE,
+    check_filter_warmup, Condition, ConditionItem, ConditionTree, Filter, FilterStatus, IndicatorName,
+    IndicatorRef, Operand, Operator, ScanCadence, WakeInPosition, DEFAULT_AGENT_CONTEXT_TEMPLATE,
 };
 
 // ---------------------------------------------------------------------------

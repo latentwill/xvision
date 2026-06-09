@@ -194,8 +194,8 @@ impl MemoryConfig {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let body = toml::to_string_pretty(cfg)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let body =
+            toml::to_string_pretty(cfg).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(path, body)
     }
 }
@@ -381,8 +381,14 @@ mod tests {
     fn custom_is_a_reserved_keyword_not_a_provider() {
         // `custom` is the custom-endpoint keyword — it must parse to its own
         // variant, NOT be mistaken for a provider name.
-        assert_eq!(MemoryEmbedderSource::parse("custom"), MemoryEmbedderSource::Custom);
-        assert_eq!(MemoryEmbedderSource::parse("CUSTOM"), MemoryEmbedderSource::Custom);
+        assert_eq!(
+            MemoryEmbedderSource::parse("custom"),
+            MemoryEmbedderSource::Custom
+        );
+        assert_eq!(
+            MemoryEmbedderSource::parse("CUSTOM"),
+            MemoryEmbedderSource::Custom
+        );
         assert_eq!(MemoryEmbedderSource::Custom.as_config_string(), "custom");
     }
 

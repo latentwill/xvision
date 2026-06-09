@@ -2808,11 +2808,9 @@ mod migration_registry_tests {
         // Base eval schema (migration 002) creates `eval_runs` WITHOUT the
         // flatten column.
         sqlx::query(MIGRATION_002).execute(&pool).await.unwrap();
-        assert!(
-            !table_has_column(&pool, "eval_runs", "flatten_requested")
-                .await
-                .unwrap()
-        );
+        assert!(!table_has_column(&pool, "eval_runs", "flatten_requested")
+            .await
+            .unwrap());
 
         migrate_eval_run_flatten_requested(&pool).await.unwrap();
         assert!(

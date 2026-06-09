@@ -582,7 +582,14 @@ async fn run_list(args: ListArgs) -> CliResult<()> {
                 };
                 println!(
                     "  {:<28}  {:>5}  {:>5}  {:>7}  {:>5}  {:>9}  {:>10}  {}",
-                    c.cycle_id, c.node_count, c.active_count, c.suspect_count, c.rejected_count, cost, tokens, last
+                    c.cycle_id,
+                    c.node_count,
+                    c.active_count,
+                    c.suspect_count,
+                    c.rejected_count,
+                    cost,
+                    tokens,
+                    last
                 );
             }
             println!(
@@ -1935,9 +1942,7 @@ async fn build_dispatch(
         .and_then(|cfg| cfg.providers.iter().find(|p| p.name == requested_provider))
     {
         let normalized = normalize_model(requested_model);
-        if !entry.enabled_models.is_empty()
-            && !entry.enabled_models.iter().any(|m| m == &normalized)
-        {
+        if !entry.enabled_models.is_empty() && !entry.enabled_models.iter().any(|m| m == &normalized) {
             return Err(CliError::usage(anyhow::anyhow!(
                 "model {normalized:?} is not in the enabled_models allowlist for provider \
                  {requested_provider:?}; run `xvn provider models --name {requested_provider}` \

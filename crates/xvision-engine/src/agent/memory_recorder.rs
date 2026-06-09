@@ -187,10 +187,7 @@ impl MemoryRecorder {
             });
         };
         let q = embedder.embed(query_text).await?;
-        let hits = self
-            .store
-            .query(namespace, &q, k, current_scenario_start)
-            .await?;
+        let hits = self.store.query(namespace, &q, k, current_scenario_start).await?;
         Ok(RecallResult::Hits {
             namespace: namespace.to_string(),
             matches: hits,
@@ -330,7 +327,9 @@ mod tests {
             .await
             .expect("recall ok");
         match res {
-            RecallResult::Hits { namespace, matches, .. } => {
+            RecallResult::Hits {
+                namespace, matches, ..
+            } => {
                 assert_eq!(namespace, "n");
                 assert_eq!(matches.len(), 1, "expected the seeded pattern");
                 assert!(matches[0].text.contains("raising leverage"));
@@ -342,8 +341,7 @@ mod tests {
     #[tokio::test]
     async fn record_observation_in_namespace_writes_an_observation() {
         let store = store().await;
-        let rec =
-            MemoryRecorder::with_static_embedder(store.clone(), "static-test", vec![0.4, 0.5, 0.6]);
+        let rec = MemoryRecorder::with_static_embedder(store.clone(), "static-test", vec![0.4, 0.5, 0.6]);
 
         let win = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
         let id = rec
@@ -359,13 +357,7 @@ mod tests {
             .await
             .expect("record ok");
         assert!(id.is_some(), "embedder present → id returned");
-        assert_eq!(
-            store
-                .count_live_observations("n")
-                .await
-                .expect("count ok"),
-            1
-        );
+        assert_eq!(store.count_live_observations("n").await.expect("count ok"), 1);
     }
 
     #[tokio::test]
@@ -373,8 +365,7 @@ mod tests {
         // Cross-cutting closeout: the shared write primitive must redact
         // before persisting so a pasted secret never lands in memory.
         let store = store().await;
-        let rec =
-            MemoryRecorder::with_static_embedder(store.clone(), "static-test", vec![0.4, 0.5, 0.6]);
+        let rec = MemoryRecorder::with_static_embedder(store.clone(), "static-test", vec![0.4, 0.5, 0.6]);
         let win = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
         let secret = "sk-ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         rec.record_observation_in_namespace(
@@ -389,10 +380,7 @@ mod tests {
         .await
         .expect("record ok");
 
-        let texts = store
-            .list_live_observation_texts("n", 10)
-            .await
-            .expect("list ok");
+        let texts = store.list_live_observation_texts("n", 10).await.expect("list ok");
         assert_eq!(texts.len(), 1);
         assert!(
             !texts[0].contains(secret),

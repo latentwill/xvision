@@ -385,10 +385,7 @@ mod tests {
 
     #[test]
     fn legacy_active_rejected_still_parse() {
-        assert_eq!(
-            LineageStatus::from_str("active").unwrap(),
-            LineageStatus::Active
-        );
+        assert_eq!(LineageStatus::from_str("active").unwrap(), LineageStatus::Active);
         assert_eq!(
             LineageStatus::from_str("rejected").unwrap(),
             LineageStatus::Rejected

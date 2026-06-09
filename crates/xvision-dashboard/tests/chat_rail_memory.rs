@@ -209,10 +209,7 @@ async fn turn_writes_back_an_observation() {
     let events = run(&mut wl).await;
     assert!(drain_off(&events), "loop should finish");
 
-    let count = store
-        .count_live_observations("chat:strategy:s1")
-        .await
-        .unwrap();
+    let count = store.count_live_observations("chat:strategy:s1").await.unwrap();
     assert_eq!(count, 1, "exactly one observation should be written back");
 }
 
@@ -245,10 +242,7 @@ async fn disabled_memory_injects_nothing_and_writes_nothing() {
         "disabled memory must not inject a recall block"
     );
     assert_eq!(
-        store
-            .count_live_observations("chat:strategy:s1")
-            .await
-            .unwrap(),
+        store.count_live_observations("chat:strategy:s1").await.unwrap(),
         0,
         "disabled memory must not write back"
     );

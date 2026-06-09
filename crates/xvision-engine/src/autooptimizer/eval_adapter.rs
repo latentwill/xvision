@@ -96,7 +96,8 @@ impl BacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
     ) -> Result<MetricsSummary> {
-        self.run_inner_with_dispatch(strategy, scenario, canary, None).await
+        self.run_inner_with_dispatch(strategy, scenario, canary, None)
+            .await
     }
 
     /// Like [`run_inner`] but allows overriding the LLM dispatch — used to run
@@ -175,7 +176,8 @@ impl PaperTestRunner for BacktestPaperTester {
                 actions,
             ),
         );
-        self.run_inner_with_dispatch(strategy, scenario, None, Some(dispatch)).await
+        self.run_inner_with_dispatch(strategy, scenario, None, Some(dispatch))
+            .await
     }
 }
 
@@ -216,7 +218,8 @@ impl CachedBacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
     ) -> Result<MetricsSummary> {
-        self.run_inner_with_dispatch(strategy, scenario, canary, None).await
+        self.run_inner_with_dispatch(strategy, scenario, canary, None)
+            .await
     }
 
     async fn run_inner_with_dispatch(
@@ -292,7 +295,8 @@ impl PaperTestRunner for CachedBacktestPaperTester {
                 actions,
             ),
         );
-        self.run_inner_with_dispatch(strategy, scenario, None, Some(dispatch)).await
+        self.run_inner_with_dispatch(strategy, scenario, None, Some(dispatch))
+            .await
     }
 }
 
@@ -428,7 +432,9 @@ impl PaperTestRunner for BudgetCappedPaperTester {
     ) -> Result<MetricsSummary> {
         // The random baseline spends zero tokens, so the budget cap is moot —
         // forward straight to the inner tester so the real backtest path runs.
-        self.inner.run_random_baseline(strategy, scenario, direction).await
+        self.inner
+            .run_random_baseline(strategy, scenario, direction)
+            .await
     }
 }
 

@@ -35,8 +35,7 @@ pub async fn insert_regime_results(
 ) -> Result<()> {
     for r in rows {
         let side_json = serde_json::to_string(&r.side).context("serialize side")?;
-        let metrics_day_json =
-            serde_json::to_string(&r.metrics_day).context("serialize metrics_day")?;
+        let metrics_day_json = serde_json::to_string(&r.metrics_day).context("serialize metrics_day")?;
         let metrics_untouched_json =
             serde_json::to_string(&r.metrics_untouched).context("serialize metrics_untouched")?;
 
@@ -96,8 +95,9 @@ pub async fn load_regime_results(pool: &SqlitePool, bundle_hash: &str) -> Result
             let regime_label: String = row.try_get("regime_label").context("regime_label")?;
             let side_json: String = row.try_get("side").context("side")?;
             let metrics_day_json: String = row.try_get("metrics_day_json").context("metrics_day_json")?;
-            let metrics_untouched_json: String =
-                row.try_get("metrics_untouched_json").context("metrics_untouched_json")?;
+            let metrics_untouched_json: String = row
+                .try_get("metrics_untouched_json")
+                .context("metrics_untouched_json")?;
             let delta_sharpe: f64 = row.try_get("delta_sharpe").context("delta_sharpe")?;
             let verdict: String = row.try_get("verdict").context("verdict")?;
 

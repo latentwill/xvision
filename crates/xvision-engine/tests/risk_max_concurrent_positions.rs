@@ -86,7 +86,7 @@ fn three_asset_strategy(max_concurrent: u32) -> Strategy {
             min_warmup_bars: None,
             color: None,
             execution_mode: Default::default(), // PerAsset
-            capital_mode: Default::default(),    // Pooled
+            capital_mode: Default::default(),   // Pooled
         },
         hypothesis: None,
         agents: Vec::new(),

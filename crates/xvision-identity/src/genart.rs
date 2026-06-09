@@ -50,12 +50,19 @@ fn hsl_to_hex(hue: f64, sat: f64, light: f64) -> String {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let x = c * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
     let m = l - c / 2.0;
-    let (r1, g1, b1) = if hue < 60.0 { (c, x, 0.0) }
-        else if hue < 120.0 { (x, c, 0.0) }
-        else if hue < 180.0 { (0.0, c, x) }
-        else if hue < 240.0 { (0.0, x, c) }
-        else if hue < 300.0 { (x, 0.0, c) }
-        else { (c, 0.0, x) };
+    let (r1, g1, b1) = if hue < 60.0 {
+        (c, x, 0.0)
+    } else if hue < 120.0 {
+        (x, c, 0.0)
+    } else if hue < 180.0 {
+        (0.0, c, x)
+    } else if hue < 240.0 {
+        (0.0, x, c)
+    } else if hue < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
     let to_byte = |v: f64| ((v + m).clamp(0.0, 1.0) * 255.0) as u8;
     format!("#{:02x}{:02x}{:02x}", to_byte(r1), to_byte(g1), to_byte(b1))
 }
@@ -70,8 +77,8 @@ fn base64_encode(data: &[u8]) -> String {
         let b = ((data[i * 3] as u32) << 16) | ((data[i * 3 + 1] as u32) << 8) | (data[i * 3 + 2] as u32);
         out.push(CHARS[((b >> 18) & 0x3f) as usize] as char);
         out.push(CHARS[((b >> 12) & 0x3f) as usize] as char);
-        out.push(CHARS[((b >> 6)  & 0x3f) as usize] as char);
-        out.push(CHARS[(b         & 0x3f) as usize] as char);
+        out.push(CHARS[((b >> 6) & 0x3f) as usize] as char);
+        out.push(CHARS[(b & 0x3f) as usize] as char);
     }
     if rem == 1 {
         let b = (data[full * 3] as u32) << 16;
@@ -83,7 +90,7 @@ fn base64_encode(data: &[u8]) -> String {
         let b = ((data[full * 3] as u32) << 16) | ((data[full * 3 + 1] as u32) << 8);
         out.push(CHARS[((b >> 18) & 0x3f) as usize] as char);
         out.push(CHARS[((b >> 12) & 0x3f) as usize] as char);
-        out.push(CHARS[((b >> 6)  & 0x3f) as usize] as char);
+        out.push(CHARS[((b >> 6) & 0x3f) as usize] as char);
         out.push('=');
     }
     out
@@ -104,32 +111,88 @@ pub fn generate_svg(agent_id: &str, manifest_hash: &str) -> String {
     let c3 = hsl_to_hex((hue + 240.0) % 360.0, sat, lit);
     let label = &agent_id[..agent_id.len().min(8)];
     let mut s = String::with_capacity(950);
-    write!(s, r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">"#).unwrap();
+    write!(
+        s,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">"#
+    )
+    .unwrap();
     write!(s, r##"<rect width="400" height="400" fill="#0a0a0f"/>"##).unwrap();
-    write!(s, r#"<circle cx="{}" cy="{}" r="{}" fill="{}" opacity="0.7"/>"#,
-        50 + e[3] as u32 * 300 / 255, 50 + e[4] as u32 * 300 / 255,
-        40 + e[5] as u32 * 80 / 255, c1).unwrap();
-    write!(s, r#"<circle cx="{}" cy="{}" r="{}" fill="{}" opacity="0.6"/>"#,
-        50 + e[6] as u32 * 300 / 255, 50 + e[7] as u32 * 300 / 255,
-        30 + e[8] as u32 * 60 / 255, c2).unwrap();
-    write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" opacity="0.5"/>"#,
-        e[9] as u32 * 350 / 255, e[10] as u32 * 350 / 255,
-        20 + e[11] as u32 * 100 / 255, 20 + e[12] as u32 * 100 / 255, c3).unwrap();
-    write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" opacity="0.4"/>"#,
-        e[13] as u32 * 350 / 255, e[14] as u32 * 350 / 255,
-        15 + e[15] as u32 * 80 / 255, 15 + e[16] as u32 * 80 / 255, c1).unwrap();
-    write!(s, r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="2" opacity="0.8"/>"#,
-        e[17] as u32 * 400 / 255, e[18] as u32 * 400 / 255,
-        e[19] as u32 * 400 / 255, e[20] as u32 * 400 / 255, c2).unwrap();
-    write!(s, r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1.5" opacity="0.7"/>"#,
-        e[21] as u32 * 400 / 255, e[22] as u32 * 400 / 255,
-        e[23] as u32 * 400 / 255, e[24] as u32 * 400 / 255, c3).unwrap();
-    write!(s, r#"<polygon points="{},{} {},{} {},{}" fill="{}" opacity="0.45"/>"#,
-        e[25] as u32 * 400 / 255, e[26] as u32 * 400 / 255,
-        e[27] as u32 * 400 / 255, e[28] as u32 * 400 / 255,
-        e[29] as u32 * 400 / 255, e[30] as u32 * 400 / 255, c2).unwrap();
-    write!(s, r#"<text x="8" y="392" font-family="monospace" font-size="9" fill="{}" opacity="0.6">{}</text>"#,
-        c1, label).unwrap();
+    write!(
+        s,
+        r#"<circle cx="{}" cy="{}" r="{}" fill="{}" opacity="0.7"/>"#,
+        50 + e[3] as u32 * 300 / 255,
+        50 + e[4] as u32 * 300 / 255,
+        40 + e[5] as u32 * 80 / 255,
+        c1
+    )
+    .unwrap();
+    write!(
+        s,
+        r#"<circle cx="{}" cy="{}" r="{}" fill="{}" opacity="0.6"/>"#,
+        50 + e[6] as u32 * 300 / 255,
+        50 + e[7] as u32 * 300 / 255,
+        30 + e[8] as u32 * 60 / 255,
+        c2
+    )
+    .unwrap();
+    write!(
+        s,
+        r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" opacity="0.5"/>"#,
+        e[9] as u32 * 350 / 255,
+        e[10] as u32 * 350 / 255,
+        20 + e[11] as u32 * 100 / 255,
+        20 + e[12] as u32 * 100 / 255,
+        c3
+    )
+    .unwrap();
+    write!(
+        s,
+        r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" opacity="0.4"/>"#,
+        e[13] as u32 * 350 / 255,
+        e[14] as u32 * 350 / 255,
+        15 + e[15] as u32 * 80 / 255,
+        15 + e[16] as u32 * 80 / 255,
+        c1
+    )
+    .unwrap();
+    write!(
+        s,
+        r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="2" opacity="0.8"/>"#,
+        e[17] as u32 * 400 / 255,
+        e[18] as u32 * 400 / 255,
+        e[19] as u32 * 400 / 255,
+        e[20] as u32 * 400 / 255,
+        c2
+    )
+    .unwrap();
+    write!(
+        s,
+        r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="1.5" opacity="0.7"/>"#,
+        e[21] as u32 * 400 / 255,
+        e[22] as u32 * 400 / 255,
+        e[23] as u32 * 400 / 255,
+        e[24] as u32 * 400 / 255,
+        c3
+    )
+    .unwrap();
+    write!(
+        s,
+        r#"<polygon points="{},{} {},{} {},{}" fill="{}" opacity="0.45"/>"#,
+        e[25] as u32 * 400 / 255,
+        e[26] as u32 * 400 / 255,
+        e[27] as u32 * 400 / 255,
+        e[28] as u32 * 400 / 255,
+        e[29] as u32 * 400 / 255,
+        e[30] as u32 * 400 / 255,
+        c2
+    )
+    .unwrap();
+    write!(
+        s,
+        r#"<text x="8" y="392" font-family="monospace" font-size="9" fill="{}" opacity="0.6">{}</text>"#,
+        c1, label
+    )
+    .unwrap();
     write!(s, "</svg>").unwrap();
     s
 }

@@ -209,9 +209,7 @@ pub async fn list_scenarios(ctx: &ApiContext, filter: &ListScenariosFilter) -> A
         if !filter.tags.is_empty() && !filter.tags.iter().all(|t| s.tags.contains(t)) {
             continue;
         }
-        if !filter.exclude_tags.is_empty()
-            && filter.exclude_tags.iter().any(|t| s.tags.contains(t))
-        {
+        if !filter.exclude_tags.is_empty() && filter.exclude_tags.iter().any(|t| s.tags.contains(t)) {
             continue;
         }
         if !filter.include_archived && s.archived_at.is_some() {

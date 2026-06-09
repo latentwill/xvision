@@ -12,11 +12,11 @@ use chrono::{Duration, TimeZone, Utc};
 use sqlx::sqlite::SqlitePoolOptions;
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::llm::{LlmDispatch, LlmRequest, LlmResponse, MockDispatch};
+use xvision_engine::eval::executor::{Executor, RunExecutor};
+use xvision_engine::eval::run::MetricsSummary;
+use xvision_engine::eval::run::{Run, RunMode, RunStatus};
 #[allow(deprecated)]
 use xvision_engine::eval::scenario::canonical_scenarios;
-use xvision_engine::eval::executor::{Executor, RunExecutor};
-use xvision_engine::eval::run::{Run, RunMode, RunStatus};
-use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::eval::store::RunStore;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
@@ -74,7 +74,10 @@ impl LlmDispatch for CancelAfterDispatch {
     async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
         let n = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
         if n == self.cancel_after {
-            let _ = self.store.cancel_active(&self.run_id, "cancelled mid-flight by test").await;
+            let _ = self
+                .store
+                .cancel_active(&self.run_id, "cancelled mid-flight by test")
+                .await;
         }
         self.inner.complete(req).await
     }
@@ -210,7 +213,10 @@ async fn cancelled_run_persists_partial_metrics_not_null() {
         )
         .await;
     // The executor bails with "eval run stopped" once it sees the cancellation.
-    assert!(result.is_err(), "a mid-flight cancelled run must abort the executor");
+    assert!(
+        result.is_err(),
+        "a mid-flight cancelled run must abort the executor"
+    );
 
     let persisted = store.get(&run.id).await.unwrap();
     assert_eq!(
