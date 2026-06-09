@@ -13,6 +13,49 @@
 # See CLAUDE.md → "Worktree isolation (enforced)".
 set -euo pipefail
 
+# ── rustfmt drift guard ──────────────────────────────────────────────────────
+# Reject commits whose staged workspace Rust files aren't formatted to the repo's
+# rustfmt.toml (max_width = 110). Without this, an editor "format on save" or a
+# tool that runs rustfmt at a DIFFERENT width (or against an un-normalized tree)
+# reflows a large diff (the 2026-06-08 spew). The tree was normalized once with
+# `cargo fmt --all`, so this guard now has zero false positives.
+#
+# Scope: crates/**/*.rs only — that is exactly what `cargo fmt --all` formats.
+# Out-of-workspace files (probes/, team/notes/ salvage) are intentionally
+# excluded; cargo fmt does not reach them and some don't even parse standalone.
+# `--config-path` is passed explicitly so the check is correct even when rustfmt
+# config auto-discovery would fail (the original spew's root cause).
+# Skip with XVISION_SKIP_FMT_CHECK=1 (rare; e.g. an intentional mass reformat).
+if [ "${XVISION_SKIP_FMT_CHECK:-}" != "1" ] && command -v rustfmt >/dev/null 2>&1; then
+  fmt_root="$(git rev-parse --show-toplevel)"
+  fmt_cfg="$fmt_root/rustfmt.toml"
+  fmt_staged="$(git diff --cached --name-only --diff-filter=ACM | grep -E '^crates/.*\.rs$' || true)"
+  if [ -n "$fmt_staged" ] && [ -f "$fmt_cfg" ]; then
+    set --
+    while IFS= read -r f; do
+      [ -n "$f" ] && [ -f "$fmt_root/$f" ] && set -- "$@" "$fmt_root/$f"
+    done <<EOF_FMT
+$fmt_staged
+EOF_FMT
+    if [ "$#" -gt 0 ] && ! rustfmt --edition 2021 --config-path "$fmt_cfg" --check "$@" >/dev/null 2>&1; then
+      cat >&2 <<EOF_FMT_MSG
+
+  ✗ blocked: staged Rust files under crates/ are not formatted to rustfmt.toml
+    (max_width = 110). Reformat to the repo config and re-stage:
+
+        cargo fmt                 # from the repo root — picks up rustfmt.toml
+      or per file:
+        rustfmt --config-path "$fmt_cfg" <file>
+
+    Bypass (rare, e.g. an intentional mass reformat):
+        XVISION_SKIP_FMT_CHECK=1 git commit ...
+
+EOF_FMT_MSG
+      exit 1
+    fi
+  fi
+fi
+
 # Deliberate escape hatch for the rare, intentional main-checkout commit
 # (e.g. a hotfix straight to main, or fixing this hook itself).
 if [ "${XVISION_ALLOW_MAIN_COMMIT:-}" = "1" ]; then
