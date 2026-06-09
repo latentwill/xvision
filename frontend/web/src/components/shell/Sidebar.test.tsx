@@ -55,6 +55,23 @@ describe("Sidebar theme toggle", () => {
   });
 });
 
+// C8 — Marketplace is opt-in (default OFF). The sidebar entry only appears
+// once the user enables it in Settings → Marketplace.
+describe("Sidebar Marketplace entry (C8 opt-in gate)", () => {
+  it("hides the Marketplace entry by default (opt-in off)", () => {
+    renderSidebar();
+    expect(screen.queryByRole("link", { name: /^Marketplace$/ })).toBeNull();
+  });
+
+  it("shows the Marketplace entry when opt-in is enabled", () => {
+    localStorage.setItem("xvn_marketplace_optin", "1");
+    renderSidebar();
+    expect(
+      screen.getByRole("link", { name: /^Marketplace$/ }),
+    ).toHaveAttribute("href", "/marketplace");
+  });
+});
+
 // chart-rework spec Track B — Charts entry (unconditional after
 // B-rollout; placement: after Scenarios, before Eval per §11.1).
 describe("Sidebar Charts entry (chart-rework Track B)", () => {

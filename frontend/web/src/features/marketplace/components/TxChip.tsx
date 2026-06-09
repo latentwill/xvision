@@ -1,4 +1,6 @@
 // src/features/marketplace/components/TxChip.tsx
+import { TestnetBadge } from "./TestnetBadge";
+
 const TESTNETS = ["mantle-sepolia", "sepolia", "testnet"];
 
 function explorerTxUrl(hash: string, network?: string): string {
@@ -13,9 +15,7 @@ export function TxChip({ hash, label, network }: { hash: string; label?: string;
   return (
     <span className="inline-flex items-center gap-1 font-mono text-[11px] text-text-2">
       {label ? <span className="text-text-3 uppercase tracking-wide">{label}</span> : null}
-      {isTestnet ? (
-        <span className="px-1 rounded-sm border border-warn/40 text-warn text-[9px] uppercase">Testnet</span>
-      ) : null}
+      {isTestnet ? <TestnetBadge /> : null}
       <a
         href={explorerTxUrl(hash, network)}
         target="_blank"

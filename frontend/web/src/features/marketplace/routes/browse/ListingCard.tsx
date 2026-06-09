@@ -5,6 +5,7 @@ import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
+import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
 import type { ListingRow } from "@/features/marketplace/data/types";
 
 interface ListingCardProps {
@@ -12,17 +13,9 @@ interface ListingCardProps {
   onBuy: (id: string) => void;
 }
 
-// The Buy CTA is a chain-bound action (purchaseIntent → TxRef with network).
-// Per CLAUDE.md: [Testnet] on any chain-bound affordance.
-// The network is mantle-sepolia for fixture data; the label is inline near the button.
-function TestnetBadge() {
-  return (
-    <span className="px-1 rounded-[3px] border border-warn/40 text-warn text-[9px] uppercase font-mono tracking-[0.06em]">
-      Testnet
-    </span>
-  );
-}
-
+// The Buy CTA is a chain-bound action (purchaseIntent → TxRef with network,
+// mantle-sepolia for fixture data). It is labeled [Testnet] via the shared
+// TestnetBadge so every chain-bound affordance reads consistently.
 export function ListingCard({ row, onBuy }: ListingCardProps) {
   const positive = row.return30dPct >= 0;
   const retSign = positive ? "+" : "";

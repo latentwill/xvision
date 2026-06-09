@@ -2,11 +2,22 @@
 import { render, screen } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarketplaceLayout } from "./routes/MarketplaceLayout";
 import { MarketplaceBrowseStub, MarketplaceLineageStub } from "./routes/stubs";
 import { ReceiptRoute } from "./routes/ReceiptRoute";
 import { SellRoute } from "./routes/SellRoute";
+import { MARKETPLACE_OPTIN_KEY } from "./lib/optin";
+
+// C8: MarketplaceLayout now gates on the opt-in (default OFF), redirecting to
+// Settings → Marketplace when off. These integration tests exercise the
+// surfaces *behind* the gate, so enable the opt-in first.
+beforeEach(() => {
+  localStorage.setItem(MARKETPLACE_OPTIN_KEY, "1");
+});
+afterEach(() => {
+  localStorage.clear();
+});
 
 function routerAt(path: string) {
   return createMemoryRouter(

@@ -23,6 +23,11 @@ export interface MarketplaceData {
   listListableStrategies(): Promise<ListableStrategy[]>;
   createPublishDraft(strategyId: string): Promise<PublishDraft>;
   submitListing(d: PublishDraft): Promise<TxRef>;
+  // DEPLOY WALL (C7 / AM6 + signer): `purchaseIntent` is the seam for the real
+  // on-chain EIP-3009 `buyWithAuthorization`. The fixture impl returns a fake
+  // TxRef; the live impl (swapped in at MarketplaceLayout once contracts are
+  // deployed and `useWallet` exposes a signer) signs the authorization and
+  // submits it here. Callers MUST treat this as testnet/simulated until then.
   purchaseIntent(listingId: Id): Promise<TxRef>;
   cloneIntent(listingId: Id): Promise<TxRef>;
   subscribePurchases(cb: (e: PurchaseEvent) => void): () => void;

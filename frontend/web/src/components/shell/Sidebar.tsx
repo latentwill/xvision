@@ -3,6 +3,7 @@ import { Icon, type IconName } from "@/components/primitives/Icon";
 import { BrandMark } from "@/components/primitives/BrandMark";
 import { useTheme } from "@/theme/useTheme";
 import { WalletConnectFooter } from "@/components/shell/WalletConnectFooter";
+import { useMarketplaceOptIn } from "@/features/marketplace/lib/optin";
 
 type Item = { to: string; label: string; icon: IconName };
 
@@ -17,15 +18,29 @@ const PRIMARY: Item[] = [
   { to: "/scenarios", label: "Scenarios", icon: "list" },
   { to: "/charts", label: "Charts", icon: "chartPie" },
   { to: "/eval-runs", label: "Eval", icon: "bars" },
-  { to: "/marketplace", label: "Marketplace", icon: "bag" },
   { to: "/optimizer", label: "Optimizer", icon: "pulse" },
   { to: "/docs", label: "Docs", icon: "book" },
   { to: "/settings", label: "Settings", icon: "sliders" },
 ];
 
+// Marketplace is opt-in (C8): hidden by default, surfaced in the sidebar only
+// once enabled in Settings → Marketplace. Inserted after Eval, before Optimizer.
+const MARKETPLACE_ITEM: Item = {
+  to: "/marketplace",
+  label: "Marketplace",
+  icon: "bag",
+};
+
 export function Sidebar({ className = "" }: { className?: string }) {
   const { resolvedTheme, setDarkTheme, setLightTheme } = useTheme();
   const isLight = resolvedTheme === "light";
+  const { enabled: marketplaceEnabled } = useMarketplaceOptIn();
+
+  const items: Item[] = marketplaceEnabled
+    ? PRIMARY.flatMap((it) =>
+        it.to === "/optimizer" ? [MARKETPLACE_ITEM, it] : [it],
+      )
+    : PRIMARY;
 
   return (
     <aside
@@ -44,7 +59,7 @@ export function Sidebar({ className = "" }: { className?: string }) {
       </div>
 
       <nav className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-        {PRIMARY.map((it) => (
+        {items.map((it) => (
           <div key={it.to}>
             <NavLink
               to={it.to}

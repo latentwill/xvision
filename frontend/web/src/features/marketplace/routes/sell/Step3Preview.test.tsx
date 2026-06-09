@@ -65,9 +65,11 @@ describe("Step3Preview", () => {
     expect(screen.getByRole("button", { name: /Mint/ })).not.toBeDisabled();
   });
 
-  it("Mint button contains [Testnet] label", () => {
+  it("Mint button carries the shared Testnet badge", () => {
+    // C8: the hand-rolled "[Testnet]" string is replaced by the shared
+    // TestnetBadge component, which renders the text "Testnet".
     render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
-    expect(screen.getByRole("button", { name: /Mint/ }).textContent).toContain("[Testnet]");
+    expect(screen.getByRole("button", { name: /Mint/ }).textContent).toContain("Testnet");
   });
 
   it("Mint button is disabled when any listability check fails", () => {
