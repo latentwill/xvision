@@ -141,6 +141,17 @@ describe("HomeRoute", () => {
     expect(document.querySelector('[data-testid="control-chart-card"]')).toBeNull();
   });
 
+  // CT0: home must not imply live trading exists (no agent_runs labeled as
+  // "Live strategies / Real money / active live deployments")
+  it("does not imply live trading exists on the home dashboard", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    expect(screen.queryByText(/Live strategies/i)).toBeNull();
+    expect(screen.queryByText(/Real money/i)).toBeNull();
+    expect(screen.queryByText(/active live deployments/i)).toBeNull();
+  });
+
   // S1-W7: NagStrip renders when there are nag items (missing provider key)
   it("renders nag-strip when a provider has a missing API key", async () => {
     const { listProviders } = await import("@/api/settings");
@@ -212,13 +223,11 @@ describe("HomeRoute", () => {
     });
 
     const activeTasksStrip = document.querySelector('[data-testid="active-tasks-strip"]');
-    const liveStrategiesSection = document.querySelector('[data-testid="live-strategies-section"]');
     const criticalFindingsRow = document.querySelector('[data-testid="critical-findings-row"]');
     const strategyOutcomesList = document.querySelector('[data-testid="strategy-outcomes-list"]');
     const nagStrip = document.querySelector('[data-testid="nag-strip"]');
 
     expect(activeTasksStrip).not.toBeNull();
-    expect(liveStrategiesSection).not.toBeNull();
     expect(criticalFindingsRow).not.toBeNull();
     expect(strategyOutcomesList).not.toBeNull();
     expect(nagStrip).not.toBeNull();
@@ -227,13 +236,11 @@ describe("HomeRoute", () => {
     const container = activeTasksStrip!.parentElement!;
     const children = Array.from(container.children);
     const idxActive = children.indexOf(activeTasksStrip as Element);
-    const idxLive = children.indexOf(liveStrategiesSection as Element);
     const idxCritical = children.indexOf(criticalFindingsRow as Element);
     const idxOutcomes = children.indexOf(strategyOutcomesList as Element);
     const idxNag = children.indexOf(nagStrip as Element);
 
-    expect(idxActive).toBeLessThan(idxLive);
-    expect(idxLive).toBeLessThan(idxCritical);
+    expect(idxActive).toBeLessThan(idxCritical);
     expect(idxCritical).toBeLessThan(idxOutcomes);
     expect(idxOutcomes).toBeLessThan(idxNag);
   });

@@ -89,24 +89,26 @@ describe("LiveListRoute", () => {
     expect(screen.getByText("running")).toBeInTheDocument();
   });
 
-  test("Test 2: empty state shows 'No active live deployments'", async () => {
+  test("Test 2: empty state shows live trading is not enabled", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([]);
     renderLiveList();
 
     await waitFor(() =>
       expect(
-        screen.getByText(/No active live deployments/i),
+        screen.getByText(/Live trading is not enabled yet/i),
       ).toBeInTheDocument(),
     );
   });
 
-  test("Test 3: route title shows 'Live strategies'", async () => {
+  test("Test 3: route title shows 'Live trading', not real-money copy", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([]);
     renderLiveList();
 
     await waitFor(() =>
-      expect(screen.getByText("Live strategies")).toBeInTheDocument(),
+      expect(screen.getByText("Live trading")).toBeInTheDocument(),
     );
+    expect(screen.queryByText(/Live strategies/i)).toBeNull();
+    expect(screen.queryByText(/Real money/i)).toBeNull();
   });
 
   test("Test 4: each run row links to /live/:run_id", async () => {
