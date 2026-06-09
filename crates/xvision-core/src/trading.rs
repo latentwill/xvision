@@ -451,7 +451,6 @@ pub enum VetoReason {
     AssetNotWhitelisted,
     DailyLossCircuitBreaker,
     MaxOpenPositions,
-    CorrelationClusterCap,
     StopLossMissing,
     StopLossTooWide,
     TakeProfitMissing,

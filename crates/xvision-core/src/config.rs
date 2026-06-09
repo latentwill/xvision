@@ -455,8 +455,6 @@ pub struct RiskLimits {
     pub max_open_positions: u32,
     #[garde(range(min = 0.1, max = 100.0))]
     pub max_daily_loss_pct: f32,
-    #[garde(range(min = 1, max = 50))]
-    pub max_correlation_cluster: u32,
 }
 
 /// `#[serde(try_from = "RiskStopsRaw")]` runs the F-6 cross-field
@@ -716,7 +714,6 @@ mod tests {
                 max_total_exposure_pct: 100.0,
                 max_open_positions: 3,
                 max_daily_loss_pct: 5.0,
-                max_correlation_cluster: 2,
             },
             stops: RiskStops {
                 stop_loss_required: true,
@@ -832,7 +829,6 @@ max_position_pct_nav = 10.0
 max_total_exposure_pct = 100.0
 max_open_positions = 3
 max_daily_loss_pct = 5.0
-max_correlation_cluster = 2
 
 [stops]
 stop_loss_required = true
@@ -859,7 +855,6 @@ max_position_pct_nav = 10.0
 max_total_exposure_pct = 100.0
 max_open_positions = 3
 max_daily_loss_pct = 5.0
-max_correlation_cluster = 2
 
 [stops]
 stop_loss_required = true
