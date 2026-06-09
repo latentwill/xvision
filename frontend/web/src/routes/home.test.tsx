@@ -207,7 +207,7 @@ describe("HomeRoute", () => {
     });
 
     const activeTasksStrip = document.querySelector('[data-testid="active-tasks-strip"]');
-    const liveStrategiesSection = document.querySelector('[data-testid="live-strategies-section"]');
+    const liveStrategiesSection = document.querySelector('[data-testid="live-summary-strip"]');
     const criticalFindingsRow = document.querySelector('[data-testid="critical-findings-row"]');
     const strategyOutcomesList = document.querySelector('[data-testid="strategy-outcomes-list"]');
     const nagStrip = document.querySelector('[data-testid="nag-strip"]');
