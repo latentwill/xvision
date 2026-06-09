@@ -6,7 +6,7 @@ import type { Config } from "tailwindcss";
 // Tailwind's preflight default (#e5e7eb — near-white), which looks like a
 // bright white outline on dark backgrounds.
 function cv(variable: string) {
-  return ({ opacityValue }: { opacityValue?: string }) => {
+  const fn = ({ opacityValue }: { opacityValue?: string }) => {
     if (opacityValue !== undefined) {
       const pct = Math.round(parseFloat(opacityValue) * 100);
       if (!isNaN(pct)) {
@@ -15,6 +15,7 @@ function cv(variable: string) {
     }
     return `var(${variable})`;
   };
+  return fn as unknown as string;
 }
 
 // Signal theme — tokens live in src/styles/tokens.css; this config maps

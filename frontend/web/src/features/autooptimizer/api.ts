@@ -359,32 +359,6 @@ export function useCancelSession() {
   });
 }
 
-/** Pause an in-flight optimizer cycle at its next safe checkpoint. */
-export async function pauseCycle(cycleId: string): Promise<void> {
-  await apiFetch<unknown>(
-    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/pause`,
-    { method: "POST" },
-  );
-}
-
-/** Resume a paused optimizer cycle. */
-export async function resumeCycle(cycleId: string): Promise<void> {
-  await apiFetch<unknown>(
-    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/resume`,
-    { method: "POST" },
-  );
-}
-
-/** useMutation hook: pause cycle. */
-export function usePauseCycle() {
-  return useMutation({ mutationFn: (cycleId: string) => pauseCycle(cycleId) });
-}
-
-/** useMutation hook: resume cycle. */
-export function useResumeCycle() {
-  return useMutation({ mutationFn: (cycleId: string) => resumeCycle(cycleId) });
-}
-
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {
