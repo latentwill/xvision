@@ -333,7 +333,12 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
         {
             RecallResult::Skipped => None,
             RecallResult::NoEmbedder { namespace } => {
-                tracing::info!(
+                // Demoted to debug: fires on every agent decision (every
+                // "message") during a run, so at the default `info` level it
+                // spammed stderr per cycle. The dashboard surfaces memory state
+                // through `obs.emit_memory_recall` + the memory settings card,
+                // not this log line, so silencing it by default is safe.
+                tracing::debug!(
                     event = "memory_disabled_no_embedder",
                     namespace = %namespace,
                     "V2D memory recall skipped: no embedder configured",
@@ -678,8 +683,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                     // * IndicatorSnapshot is unavailable here; executor-level U5
                     //   writes carry the full indicator context.
                     let memory_text: String = {
-                        let parsed_v =
-                            serde_json::from_str::<serde_json::Value>(&assistant_text).ok();
+                        let parsed_v = serde_json::from_str::<serde_json::Value>(&assistant_text).ok();
                         let action = parsed_v
                             .as_ref()
                             .and_then(|v| v.get("action"))
@@ -716,8 +720,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                                     just,
                                     crate::agent::episodic::IndicatorSnapshot::default(),
                                 );
-                                serde_json::to_string(&obs)
-                                    .unwrap_or_else(|_| assistant_text.clone())
+                                serde_json::to_string(&obs).unwrap_or_else(|_| assistant_text.clone())
                             }
                             None => assistant_text.clone(),
                         }

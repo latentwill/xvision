@@ -133,7 +133,10 @@ async fn build_system_prompt(
             JUDGE_PROMPT.to_string()
         }
         Ok(RecallResult::NoEmbedder { .. }) => {
-            tracing::info!("judge recall: no embedder; using plain prompt");
+            // Demoted to debug: fires on every judge call during optimizer runs,
+            // so at the default `info` level it repeated the no-embedder notice
+            // per call. Silent by default; visible with RUST_LOG=debug.
+            tracing::debug!("judge recall: no embedder; using plain prompt");
             JUDGE_PROMPT.to_string()
         }
         Ok(RecallResult::Skipped) => JUDGE_PROMPT.to_string(),

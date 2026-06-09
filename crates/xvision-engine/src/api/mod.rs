@@ -667,7 +667,11 @@ async fn build_default_embedder(xvn_home: &Path) -> Option<Arc<dyn xvision_memor
 
     match resolve_embedder_choice_from_env(xvn_home).await {
         EmbedderChoice::Local => {
-            tracing::warn!(
+            // Demoted to debug: this runs on every ApiContext open (i.e. every
+            // CLI invocation), so at the default `info` level it spammed a notice
+            // on each call. Embedder status is surfaced on-demand via
+            // `xvn memory status` / `xvn doctor` and in the dashboard memory card.
+            tracing::debug!(
                 "memory: using the offline LocalEmbedder (default offline fallback when no \
                  real provider/key is configured, or via XVN_MEMORY_EMBEDDER=local / \
                  memory.toml embedder=local); recall quality is lexical/DEGRADED — \
@@ -680,13 +684,13 @@ async fn build_default_embedder(xvn_home: &Path) -> Option<Arc<dyn xvision_memor
             api_key,
             model,
         } => {
-            tracing::info!(base_url = %base_url, model = %model, "memory: embedder provisioned");
+            tracing::debug!(base_url = %base_url, model = %model, "memory: embedder provisioned");
             Some(Arc::new(
                 crate::agent::openai_embedder::OpenAiEmbedder::new(base_url, api_key).with_model(model),
             ))
         }
         EmbedderChoice::None => {
-            tracing::info!(
+            tracing::debug!(
                 "memory: no embedder configured (no XVN_MEMORY_EMBEDDER, \
                  XVN_MEMORY_EMBEDDER_PROVIDER, OPENAI_API_KEY, or auto-detectable \
                  OpenAI provider); recall/record will no-op"
@@ -2306,7 +2310,9 @@ mod migration_registry_tests {
             "finished_at",
         ] {
             assert!(
-                table_has_column(&pool, "autooptimizer_session_state", col).await.unwrap(),
+                table_has_column(&pool, "autooptimizer_session_state", col)
+                    .await
+                    .unwrap(),
                 "column {col} missing on autooptimizer_session_state"
             );
         }
@@ -2314,7 +2320,9 @@ mod migration_registry_tests {
         // Verify autooptimizer_events columns + AUTOINCREMENT seq.
         for col in ["seq", "session_id", "cycle_id", "kind", "payload_json", "ts"] {
             assert!(
-                table_has_column(&pool, "autooptimizer_events", col).await.unwrap(),
+                table_has_column(&pool, "autooptimizer_events", col)
+                    .await
+                    .unwrap(),
                 "column {col} missing on autooptimizer_events"
             );
         }
@@ -2339,7 +2347,10 @@ mod migration_registry_tests {
             .await
             .unwrap();
         assert_eq!(seqs.len(), 2);
-        assert!(seqs[1].0 > seqs[0].0, "seq must be monotonically increasing (AUTOINCREMENT)");
+        assert!(
+            seqs[1].0 > seqs[0].0,
+            "seq must be monotonically increasing (AUTOINCREMENT)"
+        );
 
         // Second run is a no-op (guarded on table existence) — must not error.
         migrate_autooptimizer_sessions(&pool).await.unwrap();
@@ -2390,9 +2401,17 @@ mod migration_registry_tests {
         );
 
         // All valid state values must be accepted.
-        for (i, state) in ["queued", "running", "paused", "cancelling", "cancelled", "finished", "failed"]
-            .iter()
-            .enumerate()
+        for (i, state) in [
+            "queued",
+            "running",
+            "paused",
+            "cancelling",
+            "cancelled",
+            "finished",
+            "failed",
+        ]
+        .iter()
+        .enumerate()
         {
             let res = sqlx::query(
                 "INSERT INTO autooptimizer_session_state \
@@ -2403,7 +2422,11 @@ mod migration_registry_tests {
             .bind(state)
             .execute(&pool)
             .await;
-            assert!(res.is_ok(), "valid state '{state}' should be accepted: {:?}", res.err());
+            assert!(
+                res.is_ok(),
+                "valid state '{state}' should be accepted: {:?}",
+                res.err()
+            );
         }
 
         // All valid mode values must be accepted.
@@ -2417,7 +2440,11 @@ mod migration_registry_tests {
             .bind(mode)
             .execute(&pool)
             .await;
-            assert!(res.is_ok(), "valid mode '{mode}' should be accepted: {:?}", res.err());
+            assert!(
+                res.is_ok(),
+                "valid mode '{mode}' should be accepted: {:?}",
+                res.err()
+            );
         }
     }
 
@@ -2446,9 +2473,20 @@ mod migration_registry_tests {
         );
 
         // Verify autooptimizer_findings columns.
-        for col in ["id", "bundle_hash", "severity", "code", "summary", "detail", "model", "created_at"] {
+        for col in [
+            "id",
+            "bundle_hash",
+            "severity",
+            "code",
+            "summary",
+            "detail",
+            "model",
+            "created_at",
+        ] {
             assert!(
-                table_has_column(&pool, "autooptimizer_findings", col).await.unwrap(),
+                table_has_column(&pool, "autooptimizer_findings", col)
+                    .await
+                    .unwrap(),
                 "column {col} missing on autooptimizer_findings"
             );
         }
@@ -2470,7 +2508,9 @@ mod migration_registry_tests {
             "created_at",
         ] {
             assert!(
-                table_has_column(&pool, "autooptimizer_gate_records", col).await.unwrap(),
+                table_has_column(&pool, "autooptimizer_gate_records", col)
+                    .await
+                    .unwrap(),
                 "column {col} missing on autooptimizer_gate_records"
             );
         }
@@ -2526,15 +2566,17 @@ mod migration_registry_tests {
         .await
         .unwrap();
         assert_eq!(verdict2, "vetoed", "verdict must be updated after upsert");
-        assert!((child_score2 - 0.75).abs() < 1e-9, "child_day_score must be updated after upsert");
+        assert!(
+            (child_score2 - 0.75).abs() < 1e-9,
+            "child_day_score must be updated after upsert"
+        );
 
         // Only one row — no duplication.
-        let count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM autooptimizer_gate_records WHERE bundle_hash = 'hash-abc'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM autooptimizer_gate_records WHERE bundle_hash = 'hash-abc'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(count.0, 1, "upsert must not duplicate the row");
     }
 
@@ -2588,15 +2630,14 @@ mod migration_registry_tests {
         .await
         .unwrap();
 
-        let (enabled, last_run, next_run): (i64, Option<String>, Option<String>) =
-            sqlx::query_as(
-                "SELECT enabled, last_run_at, next_run_at \
+        let (enabled, last_run, next_run): (i64, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT enabled, last_run_at, next_run_at \
                  FROM autooptimizer_schedules \
                  WHERE strategy_id = 'strat-abc'",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(enabled, 1, "enabled should default to 1");
         assert!(last_run.is_none(), "last_run_at should be NULL by default");
         assert!(next_run.is_none(), "next_run_at should be NULL by default");
@@ -2615,7 +2656,10 @@ mod migration_registry_tests {
             .await
             .unwrap();
         assert_eq!(ids.len(), 2);
-        assert!(ids[1].0 > ids[0].0, "id must be monotonically increasing (AUTOINCREMENT)");
+        assert!(
+            ids[1].0 > ids[0].0,
+            "id must be monotonically increasing (AUTOINCREMENT)"
+        );
 
         // Second migration run is a no-op — must not error.
         migrate_autooptimizer_schedules(&pool).await.unwrap();
