@@ -210,12 +210,23 @@ export function Icon({
   size = 16,
   strokeWidth = 1.5,
   className,
+  label,
 }: {
   name: IconName;
   size?: number;
   strokeWidth?: number;
   className?: string;
+  /**
+   * Accessible name for standalone icons (e.g. icon-only buttons that have
+   * no text). When set, the icon is exposed as role="img" with this label;
+   * otherwise the icon is decorative (aria-hidden) and the surrounding
+   * control/text must carry the accessible name.
+   */
+  label?: string;
 }) {
+  const labelled = label
+    ? { role: "img" as const, "aria-label": label }
+    : { "aria-hidden": true as const };
   return (
     <svg
       width={size}
@@ -227,7 +238,7 @@ export function Icon({
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
-      aria-hidden
+      {...labelled}
     >
       {PATHS[name]}
     </svg>
