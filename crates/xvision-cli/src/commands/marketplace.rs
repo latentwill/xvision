@@ -175,6 +175,7 @@ async fn buy(listing_id: u64, buyer: &str) -> CliResult<()> {
     let req = BuyRequest {
         listing_id: U256::from(listing_id),
         recipient,
+        authorization: None,
     };
 
     let d = driver()?;

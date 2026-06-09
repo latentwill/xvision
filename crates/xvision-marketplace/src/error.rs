@@ -9,6 +9,21 @@ pub enum MarketplaceError {
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
 
+    /// The driver has no deployed contract addresses for its target chain
+    /// (e.g. [`xvision_identity::MarketplaceAddresses::mantle_testnet`] returns
+    /// `None` pre-deploy). Inject explicit addresses to proceed.
+    #[error("marketplace not configured: {0}")]
+    NotConfigured(&'static str),
+
+    /// JSON-RPC transport / connection failure (endpoint unreachable, chain-id
+    /// mismatch, signer-provider construction).
+    #[error("rpc: {0}")]
+    Rpc(String),
+
+    /// A contract call reverted, or its receipt could not be decoded.
+    #[error("contract: {0}")]
+    Contract(String),
+
     /// On-chain interaction failed (rpc, revert, decode).
     #[error("chain: {0}")]
     Chain(String),

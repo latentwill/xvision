@@ -12,14 +12,19 @@
 //! The low-level `alloy::sol!` bindings live in
 //! [`xvision_identity::contracts`]; this crate wraps them.
 //!
-//! # Status — SKELETON
+//! # Status
 //!
 //! [`MockDriver`] is fully functional (in-memory) so dependents and tests can
-//! exercise the verbs today. [`Erc8004MantleDriver`] is a stub: it carries the
-//! deployed [`xvision_identity::MarketplaceAddresses`] and documents the wiring,
-//! but its methods return [`MarketplaceError::NotImplemented`] until the
-//! contracts are deployed to Mantle Sepolia (Phase 3/5). No other crate depends
-//! on this one yet.
+//! exercise the verbs today. [`Erc8004MantleDriver`] is wired to the real
+//! `alloy` bindings — each verb builds a signer-backed provider and transacts —
+//! but the marketplace contracts are not deployed on either Mantle chain yet
+//! ([`xvision_identity::MarketplaceAddresses::mantle_testnet`] returns `None`),
+//! so it must be constructed with explicitly-injected addresses + a signer
+//! ([`Erc8004MantleDriver::with_signer`]); pre-deploy / sentinel-zero addresses
+//! yield [`MarketplaceError::NotConfigured`]. The end-to-end anvil round-trip
+//! is deploy-gated (the bindings are interface-only — no bytecode — so the
+//! contracts can't be deployed from Rust); see the `#[ignore]`d scaffold in
+//! `adapter.rs`. [`PinataDriver`] performs real HTTP pins/fetches.
 //!
 //! ## Dependency rule (plugin spec §3.1)
 //! `marketplace` may import from engine/eval/strategy crates; the reverse is
@@ -30,8 +35,8 @@ pub mod error;
 pub mod ipfs;
 
 pub use adapter::{
-    AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, ListingRef, MockDriver, PublishRequest,
-    SaleReceipt,
+    AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, ListingRef, MockDriver,
+    PublishRequest, SaleReceipt, TransferAuthorization,
 };
 pub use error::MarketplaceError;
 pub use ipfs::{IpfsStore, PinataDriver};
