@@ -213,7 +213,7 @@ export function ReceiptRoute() {
               : "XVN not detected · install XVN first"
           }
           right={
-            <button className="font-mono text-[12px] bg-gold text-black px-3 py-1.5 rounded hover:opacity-90 font-semibold">
+            <button className="font-mono text-[12px] bg-gold text-black px-3 py-1.5 rounded hover:opacity-90 font-semibold active:scale-[0.96]">
               Install all
             </button>
           }

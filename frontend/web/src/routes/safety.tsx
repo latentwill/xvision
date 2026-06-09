@@ -110,7 +110,7 @@ export function SafetyRoute() {
                 type="button"
                 onClick={() => resumeMut.mutate()}
                 disabled={resumeMut.isPending}
-                className="px-4 py-1.5 bg-gold text-bg text-[13px] font-medium rounded hover:opacity-90 disabled:opacity-50 transition-opacity"
+                className="px-4 py-1.5 bg-gold text-bg text-[13px] font-medium rounded hover:opacity-90 disabled:opacity-50 transition-opacity active:scale-[0.96]"
                 data-testid="safety-resume-btn"
               >
                 {resumeMut.isPending ? "Resuming…" : "Resume"}

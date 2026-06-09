@@ -175,7 +175,7 @@ export function AgentsRoute() {
         </Link>
         <Link
           to="/agents/new"
-          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto active:scale-[0.96]"
         >
           <Icon name="plus" size={13} /> New agent
         </Link>

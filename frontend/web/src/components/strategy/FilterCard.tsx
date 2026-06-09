@@ -139,7 +139,7 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
             type="button"
             onClick={() => saveMut.mutate()}
             disabled={!canSave}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors"
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 disabled:hover:bg-gold transition-colors active:scale-[0.96]"
           >
             {saveMut.isPending ? "Saving…" : "Save filter"}
           </button>

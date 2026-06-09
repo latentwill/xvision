@@ -33,7 +33,7 @@ export function ChatActionCard({ payload }: { payload: ActionCardContentBlock })
         <button
           type="button"
           onClick={() => runInlineAction(payload.confirm, navigate)}
-          className="px-2.5 py-1 rounded bg-gold text-bg text-[11px] font-medium hover:bg-gold-soft"
+          className="px-2.5 py-1 rounded bg-gold text-bg text-[11px] font-medium hover:bg-gold-soft active:scale-[0.96]"
         >
           {payload.confirm.label}
         </button>

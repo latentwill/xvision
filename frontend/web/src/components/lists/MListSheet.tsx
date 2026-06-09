@@ -256,7 +256,7 @@ export function MListSheet({
           <button
             type="button"
             onClick={onClose}
-            className="w-full h-[46px] inline-flex items-center justify-center rounded-full bg-gold border border-gold text-bg font-medium text-[14px] cursor-pointer"
+            className="w-full h-[46px] inline-flex items-center justify-center rounded-full bg-gold border border-gold text-bg font-medium text-[14px] cursor-pointer active:scale-[0.96]"
           >
             Show {resultCount ?? 0}{" "}
             {resultCount === 1 ? "result" : "results"}

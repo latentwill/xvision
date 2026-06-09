@@ -364,7 +364,7 @@ export function AgentForm({
             type="button"
             onClick={onSave}
             disabled={saving}
-            className="px-4 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors disabled:opacity-50"
+            className="px-4 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors disabled:opacity-50 active:scale-[0.96]"
           >
             {saving ? "Saving…" : isEdit ? "Save changes" : "Create agent"}
           </button>
