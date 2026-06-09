@@ -4,7 +4,7 @@ This page is the landing zone for the 2026-05-29 research drop under `/opt/olymp
 
 ## Categories
 
-- [XVision / Agentic Trading](/docs?slug=xvision) — trading strategy, platform landscape, Optimizer, DSPy, Cline SDK, Rust infrastructure, and Degen Virtuals agent research.
+- [XVision / Agentic Trading](/docs?slug=xvision) — trading strategy, platform landscape, Optimizer, DSPy, Cline SDK, and Rust infrastructure.
 - [Growth / Marketing](/docs?slug=growth-marketing) — SaaS growth, architecture-firm GTM, Meta Ads for agencies, and Meta Ads for info products.
 - [AI Courses](/docs?slug=ai-courses) — OpenClaw / Hermes / Claude Code course positioning and curriculum opportunity.
 - [Frontier Image Model Training](/docs?slug=frontier-image-training) — training and fine-tuning playbook for SDXL / Flux / SD3.
@@ -17,10 +17,6 @@ This page is the landing zone for the 2026-05-29 research drop under `/opt/olymp
 ## Source drop
 
 - `/opt/olympus/100x/xvision-research-2026-05-29/`
-
-## Recent xvision research
-
-- [Degen Virtuals Agent Investigation](/docs?slug=degen-virtuals-agent-investigation) — top-20 agent wallet/strategy/risk synthesis from Degen Virtuals, Hyperliquid, and Virtuals metadata.
 
 ## Next click
 
