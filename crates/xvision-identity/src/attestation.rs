@@ -106,14 +106,16 @@ pub fn decide_submission(
 }
 
 /// Build the [`TradeOutcome`] payload that carries a §3.6 attestation verdict
-/// into [`IdentityClient::post_reputation`].
+/// into [`IdentityClient::post_reputation_raw`].
 ///
-/// The §3.6 attestation is a *verdict*, not a single trade, so the
-/// `realized_pnl_usd` field carries the `tradingYield` value (100/50/0) — this
-/// is what `post_reputation` encodes into the ERC-8004 `value` field. `action`
-/// is fixed to `"attest"` to distinguish attestation posts from per-trade
-/// outcome posts. `cycle_id` keys the post to the deployment's attestation
-/// cycle.
+/// The §3.6 attestation is a *verdict* SCORE (100/50/0), not a single trade.
+/// The `realized_pnl_usd` field carries the verdict value purely so the JSON
+/// payload (serialised into `feedbackURI`) records it; the on-chain numeric
+/// `value` is set explicitly by [`IdentityClient::submit_attestation`] via the
+/// RAW path as `value = verdict_value`, `valueDecimals = 0` — NOT through the
+/// PnL `*1e6` / `valueDecimals = 6` encoding. `action` is fixed to `"attest"`
+/// to distinguish attestation posts from per-trade outcome posts. `cycle_id`
+/// keys the post to the deployment's attestation cycle.
 pub fn build_attestation_outcome(cycle_id: Uuid, verdict_value: u8) -> TradeOutcome {
     TradeOutcome {
         cycle_id,
@@ -150,8 +152,9 @@ impl IdentityClient {
     ///
     /// Given an already-computed verdict value and the operator's license
     /// status, decides whether to submit (via [`decide_submission`]) and, if
-    /// so, posts the verdict on-chain via [`Self::post_reputation`] with
-    /// `tag1=tradingYield`, `tag2=month`.
+    /// so, posts the verdict on-chain via [`Self::post_reputation_raw`] with
+    /// `tag1=tradingYield`, `tag2=month`, `value=verdict_value`, and
+    /// `valueDecimals=0` (the verdict is an integer score, not dollar PnL).
     ///
     /// Returns the [`AttestationDecision`] plus the tx hash when submitted.
     /// Callers should have ALREADY recorded the off-chain Ed25519 pre-anchor
@@ -175,11 +178,19 @@ impl IdentityClient {
         match decision {
             AttestationDecision::Submit { value } => {
                 let outcome = build_attestation_outcome(cycle_id, value);
+                // A §3.6 verdict is an integer SCORE (100|50|0), not a dollar
+                // amount, so it must be posted via the RAW feedback path with
+                // `value = verdict_value` and `value_decimals = 0` — NOT the PnL
+                // path (which would scale by 1e6 and tag `valueDecimals = 6`,
+                // landing 100_000_000 @ 6 decimals on-chain). The outcome JSON is
+                // still carried in `feedbackURI` for context/cycle_id recovery.
                 let tx = self
-                    .post_reputation_tagged(
+                    .post_reputation_raw(
                         agent,
                         cycle_id,
                         outcome,
+                        i128::from(value),
+                        0u8,
                         TAG1_TRADING_YIELD,
                         TAG2_MONTH,
                         signer,
