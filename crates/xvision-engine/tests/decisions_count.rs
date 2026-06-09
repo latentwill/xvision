@@ -447,6 +447,32 @@ async fn paused_run_skips_broker_submit_but_keeps_iterating() {
     }
 }
 
+/// Item 1 (missing-column tolerance): on a pre-061 store (no `paused`
+/// column), `is_paused` must stay INERT and return `Ok(false)` — the feature
+/// simply isn't present yet. This is the one error case that does NOT
+/// propagate, so the live gate's `unwrap_or(true)` never trips on a DB that
+/// predates the migration. (The transient-error propagation half is covered
+/// in `eval_store.rs`.)
+#[tokio::test]
+async fn is_paused_is_inert_on_pre_061_schema() {
+    // `fresh_store` (unlike `fresh_store_with_pause`) does NOT apply
+    // migration 061, so `eval_runs` has no `paused` column.
+    let store = fresh_store().await;
+    let mut run = Run::new_queued(
+        "01TESTPRE061PAUSE0000000000A".into(),
+        "flash-crash-2024-08".into(),
+        RunMode::Backtest,
+    );
+    run.scenario_id = "flash-crash-2024-08".into();
+    store.create(&run).await.unwrap();
+
+    let res = store.is_paused(&run.id).await;
+    assert!(
+        matches!(res, Ok(false)),
+        "is_paused on a pre-061 schema must return Ok(false) (inert), got {res:?}"
+    );
+}
+
 /// Control: the IDENTICAL setup WITHOUT pausing must place orders — proving
 /// the zero-trades result above is caused by the pause, not by the harness.
 #[tokio::test]

@@ -171,6 +171,12 @@ pub struct RunSummary {
     /// while it keeps iterating. Defaults to `false` for pre-061 runs.
     #[serde(default)]
     pub paused: bool,
+    /// RFC3339 timestamp of the most recent pause (`eval_runs.paused_at`,
+    /// migration 061); `null` when never paused or after resume. Mirrors how
+    /// `safety_state.paused_at` is surfaced on the global safety status. Track
+    /// B (cockpit) reads this to show "paused since …".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<String>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -492,14 +498,18 @@ async fn set_paused_inner(ctx: &ApiContext, run_id: &str, paused: bool, action: 
     let started = Instant::now();
     let store = RunStore::new(ctx.db.clone());
     let result = async {
-        // Surface NotFound for an unknown id before attempting the write.
-        let run = get_inner(ctx, run_id).await?;
-        store
-            .set_paused(run_id, paused)
-            .await
-            .map_err(|e| ApiError::Internal(format!("{action} run: {e}")))?;
+        // `set_paused` bails with "no run with id" when the id is unknown;
+        // map that to NotFound (mirroring `get_inner`) so we surface the
+        // right status without a redundant pre-write existence round-trip.
+        store.set_paused(run_id, paused).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("no run with id") {
+                ApiError::NotFound(format!("run '{run_id}'"))
+            } else {
+                ApiError::Internal(format!("{action} run: {e}"))
+            }
+        })?;
         // Re-read so the returned Run reflects the new flag.
-        let _ = run;
         get_inner(ctx, run_id).await
     }
     .await;
@@ -4138,6 +4148,7 @@ fn summarise(run: Run) -> RunSummary {
         review_model: run.review_model,
         max_annotations_per_review: run.max_annotations_per_review,
         paused: run.paused,
+        paused_at: run.paused_at,
     }
 }
 

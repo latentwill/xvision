@@ -2096,6 +2096,12 @@ impl Executor {
                 // iterating (decisions still record), it just doesn't trade.
                 // Re-read per cycle so a pause issued mid-run via
                 // `POST /api/eval/runs/:id/pause` takes effect on the next cycle.
+                //
+                // FAIL OPEN on the BACKTEST/simulated path (`simulate_fill`): no
+                // real money rides on this fill, so a transient read error
+                // degrades to "not paused" (`unwrap_or(false)`) rather than
+                // silently freezing a backtest. The LIVE path
+                // (`decide_one_live` → `RealBrokerFills`) fails CLOSED instead.
                 let run_paused = store.is_paused(&run.id).await.unwrap_or(false);
                 let fill: FillRecord = if applied_action == "hold" || broker_rejected || run_paused {
                     FillRecord {
@@ -3407,7 +3413,15 @@ impl Executor {
         // for this cycle and emit a no-op fill so the live run keeps iterating
         // without placing an order. Re-read per cycle so a pause issued
         // mid-run via `POST /api/eval/runs/:id/pause` is honored next cycle.
-        let run_paused = store.is_paused(&run.id).await.unwrap_or(false);
+        //
+        // FAIL CLOSED on the LIVE path: this is the real-broker (`RealBrokerFills`)
+        // dispatch — a read error here (lock contention, pool exhaustion, I/O)
+        // means we CANNOT confirm the run is unpaused. Submitting a real order
+        // we couldn't clear is unsafe, so treat an unconfirmed state as paused
+        // (`unwrap_or(true)`) and skip the submit. `is_paused` already
+        // propagates transient errors (only the inert pre-061 missing-column
+        // case returns Ok(false)), so this only trips on genuine read failures.
+        let run_paused = store.is_paused(&run.id).await.unwrap_or(true);
         let fill: FillRecord = if applied_action == "hold" || run_paused {
             FillRecord {
                 new_pos: pre_fill_position,

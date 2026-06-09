@@ -337,25 +337,45 @@ impl RunStore {
     /// a pause issued mid-run via `POST /api/eval/runs/:id/pause` is honored
     /// on the next cycle.
     ///
-    /// Tolerant of a pre-061 schema: if the `paused` column does not exist
-    /// (an older DB, or a test store that didn't apply migration 061), the
-    /// query fails and we treat the run as not-paused rather than erroring —
-    /// the feature is simply inert until the column is present. Returns
-    /// `Ok(false)` for an unknown run id as well.
+    /// Error semantics matter on the LIVE path (a real broker order rides on
+    /// this read): we distinguish the *missing column* case (a pre-061 schema,
+    /// or a test store that skipped migration 061) — where the feature is
+    /// simply inert and we return `Ok(false)` — from any *other* sqlx error
+    /// (lock contention, pool exhaustion, I/O), which we PROPAGATE rather than
+    /// swallow. A live caller can then fail closed (treat the unknown state as
+    /// paused) instead of submitting an order it couldn't confirm was allowed.
+    /// Returns `Ok(false)` for an unknown run id.
     pub async fn is_paused(&self, id: &str) -> Result<bool> {
-        let row = match sqlx::query("SELECT paused FROM eval_runs WHERE id = ?")
+        Ok(self.paused_state(id).await?.0)
+    }
+
+    /// A1 per-run pause: read both the `paused` flag and `paused_at` timestamp
+    /// for a run in one query. Shares the missing-column tolerance and
+    /// error-propagation semantics documented on [`is_paused`].
+    ///
+    /// Returns `(false, None)` for a missing column (pre-061) or an unknown
+    /// run id; propagates any other read error.
+    pub async fn paused_state(&self, id: &str) -> Result<(bool, Option<String>)> {
+        let row = match sqlx::query("SELECT paused, paused_at FROM eval_runs WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await
         {
             Ok(row) => row,
-            // Missing column (pre-061) or other read error → inert (not paused).
-            Err(_) => return Ok(false),
+            // Missing column (pre-061) → inert: the feature isn't present yet.
+            // Any OTHER sqlx error (lock, pool exhaustion, I/O) is propagated
+            // so a live caller can fail closed instead of reading "not paused"
+            // off a transient failure.
+            Err(e) if is_missing_column_error(&e) => return Ok((false, None)),
+            Err(e) => return Err(anyhow::Error::new(e).context(format!("is_paused: run '{id}'"))),
         };
-        let paused = row
-            .map(|r| r.try_get::<i64, _>("paused").unwrap_or(0) != 0)
-            .unwrap_or(false);
-        Ok(paused)
+        let Some(row) = row else {
+            // Unknown run id.
+            return Ok((false, None));
+        };
+        let paused = row.try_get::<i64, _>("paused").unwrap_or(0) != 0;
+        let paused_at: Option<String> = row.try_get("paused_at").unwrap_or(None);
+        Ok((paused, paused_at))
     }
 
     pub async fn status(&self, id: &str) -> Result<RunStatus> {
@@ -496,12 +516,18 @@ impl RunStore {
         .context("select eval_runs by id")?
         .ok_or_else(|| anyhow::anyhow!("run not found: {id}"))?;
         let mut run = row_to_run(&row)?;
-        // Overlay the A1 per-run pause flag (migration 061). The shared SELECT
-        // above does not project `paused` so `row_to_run` stays usable against
-        // pre-061 schemas; `is_paused` is tolerant of the column's absence and
-        // returns false there. This keeps `RunStore::get` — and the
-        // pause/resume route response built from it — reflecting the live flag.
-        run.paused = self.is_paused(id).await.unwrap_or(false);
+        // Overlay the A1 per-run pause flag + timestamp (migration 061). The
+        // shared SELECT above does not project `paused`/`paused_at` so
+        // `row_to_run` stays usable against pre-061 schemas; `paused_state` is
+        // tolerant of the columns' absence and returns the inert default
+        // there. This keeps `RunStore::get` — and the pause/resume route
+        // response built from it — reflecting the live state. Read errors
+        // collapse to the not-paused default here (the GET path carries no
+        // real-broker order); the live executor calls `is_paused` directly and
+        // fails closed on a read error.
+        let (paused, paused_at) = self.paused_state(id).await.unwrap_or((false, None));
+        run.paused = paused;
+        run.paused_at = paused_at;
         Ok(run)
     }
 
@@ -1680,6 +1706,18 @@ fn row_to_review(row: &sqlx::sqlite::SqliteRow) -> Result<EvalReview> {
     })
 }
 
+/// True when a sqlx error is SQLite's "no such column" — i.e. the query
+/// referenced a column the schema doesn't have (a pre-migration DB). Used by
+/// [`RunStore::paused_state`] to stay tolerant of pre-061 schemas while
+/// propagating every OTHER read error (lock, pool exhaustion, I/O) so live
+/// callers can fail closed.
+fn is_missing_column_error(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(db) => db.message().contains("no such column"),
+        _ => false,
+    }
+}
+
 fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let started_at_str: String = row.try_get("started_at").context("read started_at")?;
     let started_at = DateTime::parse_from_rfc3339(&started_at_str)
@@ -1783,12 +1821,13 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         review_model,
         max_annotations_per_review,
         live_config,
-        // `paused` (migration 061) is NOT projected by the shared SELECTs so
-        // that `row_to_run` stays usable against pre-061 schemas. Callers that
-        // need the live flag (`RunStore::get`) overlay it via `is_paused`
-        // after building the Run; everywhere else the harmless `false`
-        // default applies.
+        // `paused` / `paused_at` (migration 061) are NOT projected by the
+        // shared SELECTs so that `row_to_run` stays usable against pre-061
+        // schemas. Callers that need the live flag (`RunStore::get`) overlay
+        // them via `paused_state` after building the Run; everywhere else the
+        // harmless defaults apply.
         paused: false,
+        paused_at: None,
     })
 }
 

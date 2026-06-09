@@ -194,6 +194,12 @@ pub struct Run {
     /// rows read back as `false`.
     #[serde(default)]
     pub paused: bool,
+    /// RFC3339 timestamp of the most recent pause (migration 061's
+    /// `eval_runs.paused_at`); `None` when never paused or after resume.
+    /// Overlaid by `RunStore::get` alongside `paused`; the harmless `None`
+    /// default applies everywhere else (and on pre-061 rows).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<String>,
 }
 
 impl Run {
@@ -222,6 +228,7 @@ impl Run {
             max_annotations_per_review: Some(8),
             live_config: None,
             paused: false,
+            paused_at: None,
         }
     }
 

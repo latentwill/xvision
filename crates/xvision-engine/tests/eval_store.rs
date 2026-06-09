@@ -348,3 +348,68 @@ async fn set_paused_round_trips_through_get_and_is_paused() {
         "is_paused must report false after set_paused(false)"
     );
 }
+
+#[tokio::test]
+async fn set_paused_writes_and_clears_paused_at_timestamp() {
+    // Item 3: `paused_at` is no longer write-only — `get` projects it.
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    // Fresh run: no pause timestamp.
+    assert!(
+        store.get(&id).await.unwrap().paused_at.is_none(),
+        "a fresh run must have no paused_at"
+    );
+
+    // Pausing records an RFC3339 timestamp surfaced through `get`.
+    store.set_paused(&id, true).await.unwrap();
+    let paused_at = store.get(&id).await.unwrap().paused_at;
+    let ts = paused_at.expect("paused_at must be set after set_paused(true)");
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(&ts).is_ok(),
+        "paused_at must be a valid RFC3339 timestamp, got {ts:?}"
+    );
+
+    // Resume clears it back to NULL.
+    store.set_paused(&id, false).await.unwrap();
+    assert!(
+        store.get(&id).await.unwrap().paused_at.is_none(),
+        "paused_at must clear to None after resume"
+    );
+}
+
+/// Item 1 (fail-closed LIVE path): a transient (non-missing-column) read
+/// error in `is_paused` must PROPAGATE, not be swallowed as `Ok(false)`.
+/// The live executor gate reads `is_paused(...).await.unwrap_or(true)` — so
+/// a propagated error there resolves to "paused" (no broker submit). We
+/// reproduce a real transient failure by closing the pool out from under the
+/// store (mirrors lock contention / pool exhaustion at the sqlx layer), then
+/// assert both halves of the contract: the error propagates, AND the live
+/// gate's `unwrap_or(true)` treats it as paused.
+#[tokio::test]
+async fn is_paused_propagates_transient_error_and_live_gate_fails_closed() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    // Force a transient read failure that is NOT "no such column" (the
+    // column exists; migration ran). Closing the pool surfaces as
+    // `sqlx::Error::PoolClosed`, which `is_missing_column_error` rejects.
+    store.pool().close().await;
+
+    let res = store.is_paused(&id).await;
+    assert!(
+        res.is_err(),
+        "a transient (non-missing-column) read error must PROPAGATE, not be swallowed as Ok(false)"
+    );
+
+    // The LIVE executor gate: `unwrap_or(true)` → treat the unconfirmed
+    // state as paused so no real order is submitted.
+    assert!(
+        res.unwrap_or(true),
+        "live gate must fail CLOSED (paused = true) when the pause state can't be read"
+    );
+}

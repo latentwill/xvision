@@ -906,6 +906,7 @@ mod tests {
             review_model: None,
             max_annotations_per_review: Some(8),
             paused: false,
+            paused_at: None,
         }
     }
 
