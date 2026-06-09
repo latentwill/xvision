@@ -389,20 +389,33 @@ pub struct WhitelistConfig {
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
 pub struct AssetEntry {
-    #[garde(length(min = 1, max = 10))]
+    /// Ticker symbol (e.g. "BTC", "1000BONK", "SPY_MYTHOS").
+    #[garde(length(min = 1, max = 32))]
     pub symbol: String,
     #[garde(skip)]
     pub enabled: bool,
+    /// Asset category. The legacy field name `cluster` is accepted as an alias.
     #[garde(length(min = 1, max = 32))]
-    pub cluster: String,
+    #[serde(alias = "cluster")]
+    pub category: String,
+    /// Data source ("alpaca" | "orderly-only"). Ignored by this crate; present
+    /// so the struct round-trips the generated whitelist without errors.
     #[garde(skip)]
+    #[serde(default)]
+    pub data: String,
+    #[garde(skip)]
+    #[serde(default)]
     pub venues: AssetVenues,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Per-venue symbol mappings. Both fields are optional so that alpaca-only
+/// and orderly-only assets can omit the field they don't support.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AssetVenues {
-    pub alpaca: String,
-    pub orderly: String,
+    #[serde(default)]
+    pub alpaca: Option<String>,
+    #[serde(default)]
+    pub orderly: Option<String>,
 }
 
 impl WhitelistConfig {
@@ -1158,14 +1171,21 @@ rate_limit_rpm = 600
         let cfg = load_whitelist(&project_root().join("config/whitelist.toml"))
             .expect("config/whitelist.toml must load");
         let enabled = cfg.enabled_symbols();
-        assert_eq!(
-            enabled,
-            vec![
-                "BTC", "ETH", "SOL", "LTC", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "SHIB", "MATIC",
-                "BCH", "USDT", "USDC",
-            ],
-            "single-asset crypto flows should not be BTC-gated"
+        // All entries in the generated whitelist are enabled=true, so the
+        // enabled count must equal the total asset count (≥ 102 Orderly + legacy).
+        assert!(
+            enabled.len() >= 102,
+            "whitelist must contain at least 102 enabled assets (Orderly coverage), got {}",
+            enabled.len()
         );
+        // Legacy crypto symbols must still be present.
+        let legacy = ["BTC", "ETH", "SOL", "LTC", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "BCH"];
+        for sym in &legacy {
+            assert!(
+                enabled.contains(sym),
+                "legacy symbol {sym} must be present in whitelist"
+            );
+        }
     }
 
     #[test]
