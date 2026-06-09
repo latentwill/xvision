@@ -125,7 +125,7 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
     <>
       <Topbar
         title="Live cockpit"
-        sub={selectedId ?? "Real money · active deployments"}
+        sub={selectedId ?? "Live trading · active deployments"}
       />
 
       {/* §2.4 Strategy strip — fixed, always visible. */}
