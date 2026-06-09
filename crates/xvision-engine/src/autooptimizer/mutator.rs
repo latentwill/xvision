@@ -129,28 +129,28 @@ pub enum MutationKind {
 ///   `path = "conditions.0.rhs.numeric"`, `before = 25.0`, `after = 28.0`
 ///   `path = "conditions.0.op.within_pct"`, `before = 1.5`, `after = 2.0`
 ///   `path = "cooldown_bars"`, `before = 3`, `after = 6`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FilterEdit {
     pub path: String,
     pub before: serde_json::Value,
     pub after: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProseEdit {
     pub agent_role: String,
     pub before: String,
     pub after: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParamChange {
     pub key: String,
     pub before: serde_json::Value,
     pub after: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolDiff {
     pub added: Vec<String>,
     pub removed: Vec<String>,
@@ -178,6 +178,159 @@ pub fn empty_mutation() -> MutationDiff {
         },
         filter: Vec::new(),
         rationale: String::new(),
+    }
+}
+
+/// Structural diff between two strategies computed by field comparison (not
+/// LLM). Used by the Strategy Inspector UI's "diff from originating strategy"
+/// panel to show what changed between a parent and its lineage descendant.
+///
+/// Mirrors [`MutationDiff`]'s shape but carries no `kind` or `rationale` —
+/// those are LLM-proposal concepts. `StrategyDiff` is a pure data product.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StrategyDiff {
+    pub prose: Vec<ProseEdit>,
+    pub params: Vec<ParamChange>,
+    pub tools: ToolDiff,
+    pub filter: Vec<FilterEdit>,
+}
+
+/// Compute a [`StrategyDiff`] by comparing strategy `a` (the originating /
+/// parent) with strategy `b` (the descendant).
+///
+/// - **Prose**: walks `b.agents`; for each role present in both strategies,
+///   emits a [`ProseEdit`] when `prompt_override` differs (treating `None` as
+///   `""`).
+/// - **Params**: flat-diffs scalar values in `mechanical_params`; keys only in
+///   `b` are emitted with `before: null`.
+/// - **Tools**: always returns an empty [`ToolDiff`] — tools are managed at
+///   the agent level, not the strategy level.
+/// - **Filter**: recursively diffs numeric leaf values in the serialised filter
+///   JSON; non-numeric leaves and structural differences are ignored.
+pub fn strategy_diff(a: &Strategy, b: &Strategy) -> StrategyDiff {
+    // ── Prose ──────────────────────────────────────────────────────────────
+    let mut prose: Vec<ProseEdit> = Vec::new();
+    for agent_b in &b.agents {
+        let role_b = agent_b.canonical_role();
+        let before_str = a
+            .agents
+            .iter()
+            .find(|ag| ag.canonical_role() == role_b)
+            .and_then(|ag| ag.prompt_override.as_deref())
+            .unwrap_or("")
+            .to_string();
+        let after_str = agent_b.prompt_override.as_deref().unwrap_or("").to_string();
+        if before_str != after_str {
+            prose.push(ProseEdit {
+                agent_role: role_b,
+                before: before_str,
+                after: after_str,
+            });
+        }
+    }
+
+    // ── Params ─────────────────────────────────────────────────────────────
+    let mut params: Vec<ParamChange> = Vec::new();
+    if let Some(b_obj) = b.mechanical_params.as_object() {
+        for (key, val_b) in b_obj {
+            // Only diff scalar leaves (skip nested objects/arrays).
+            if val_b.is_object() || val_b.is_array() {
+                continue;
+            }
+            let val_a = a
+                .mechanical_params
+                .get(key)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            if val_a != *val_b {
+                params.push(ParamChange {
+                    key: key.clone(),
+                    before: val_a,
+                    after: val_b.clone(),
+                });
+            }
+        }
+    }
+
+    // ── Tools ──────────────────────────────────────────────────────────────
+    // Tools are agent-level, not strategy-level; always empty here.
+    let tools = ToolDiff {
+        added: Vec::new(),
+        removed: Vec::new(),
+    };
+
+    // ── Filter ─────────────────────────────────────────────────────────────
+    let mut filter: Vec<FilterEdit> = Vec::new();
+    let val_a = match &a.filter {
+        Some(f) => serde_json::to_value(f).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    };
+    let val_b = match &b.filter {
+        Some(f) => serde_json::to_value(f).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    };
+    diff_filter_values(&val_a, &val_b, "", &mut filter);
+
+    StrategyDiff {
+        prose,
+        params,
+        tools,
+        filter,
+    }
+}
+
+/// Recursively walk two JSON values and emit a [`FilterEdit`] for every
+/// differing `Number` leaf, addressed by a dotted `path`. Objects are
+/// walked key-by-key; arrays are walked index-by-index. Non-numeric
+/// leaves and structural differences (one side is an object, the other
+/// is a scalar) are silently skipped — the function is a best-effort
+/// numeric diff, not a full structural JSON differ.
+fn diff_filter_values(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+    path: &str,
+    out: &mut Vec<FilterEdit>,
+) {
+    match (a, b) {
+        (serde_json::Value::Object(map_a), serde_json::Value::Object(map_b)) => {
+            for (key, val_b) in map_b {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                let val_a = map_a
+                    .get(key)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                diff_filter_values(&val_a, val_b, &child_path, out);
+            }
+        }
+        (serde_json::Value::Array(arr_a), serde_json::Value::Array(arr_b)) => {
+            for (i, val_b) in arr_b.iter().enumerate() {
+                let child_path = if path.is_empty() {
+                    i.to_string()
+                } else {
+                    format!("{path}.{i}")
+                };
+                let val_a = arr_a
+                    .get(i)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                diff_filter_values(&val_a, val_b, &child_path, out);
+            }
+        }
+        (val_a, val_b) if val_b.is_number() => {
+            if val_a != val_b {
+                out.push(FilterEdit {
+                    path: path.to_string(),
+                    before: val_a.clone(),
+                    after: val_b.clone(),
+                });
+            }
+        }
+        // Non-numeric leaf or mismatched types — skip.
+        _ => {}
     }
 }
 
@@ -1744,6 +1897,43 @@ mod tests {
         assert!(desc.contains("ΔSharpe -0.40"), "{desc}");
         assert!(desc.contains("(rejected)"), "{desc}");
         assert_eq!(desc.lines().count(), 1, "must be one line: {desc}");
+    }
+
+    #[test]
+    fn strategy_diff_detects_prose_change() {
+        let mut a = fixture_strategy();
+        a.agents[0].prompt_override = Some("buy low".to_string());
+        let mut b = a.clone();
+        b.agents[0].prompt_override = Some("sell high".to_string());
+        let diff = strategy_diff(&a, &b);
+        assert_eq!(diff.prose.len(), 1);
+        assert_eq!(diff.prose[0].before, "buy low");
+        assert_eq!(diff.prose[0].after, "sell high");
+        assert!(diff.params.is_empty());
+    }
+
+    #[test]
+    fn strategy_diff_detects_param_change() {
+        let mut a = fixture_strategy();
+        a.mechanical_params = serde_json::json!({ "rsi_period": 14 });
+        let mut b = a.clone();
+        b.mechanical_params = serde_json::json!({ "rsi_period": 21 });
+        let diff = strategy_diff(&a, &b);
+        assert_eq!(diff.params.len(), 1);
+        assert_eq!(diff.params[0].key, "rsi_period");
+        assert_eq!(diff.params[0].before, serde_json::json!(14));
+        assert_eq!(diff.params[0].after, serde_json::json!(21));
+    }
+
+    #[test]
+    fn strategy_diff_identical_strategies_empty() {
+        let s = fixture_strategy();
+        let diff = strategy_diff(&s, &s);
+        assert!(diff.prose.is_empty());
+        assert!(diff.params.is_empty());
+        assert!(diff.tools.added.is_empty());
+        assert!(diff.tools.removed.is_empty());
+        assert!(diff.filter.is_empty());
     }
 
     #[test]
