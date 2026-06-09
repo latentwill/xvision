@@ -652,7 +652,7 @@ fn strip_code_fence(raw: &str) -> Option<&str> {
     Some(&rest[..end])
 }
 
-fn extract_first_json_object(raw: &str) -> Option<String> {
+pub(crate) fn extract_first_json_object(raw: &str) -> Option<String> {
     for (start, ch) in raw.char_indices() {
         if ch != '{' {
             continue;
