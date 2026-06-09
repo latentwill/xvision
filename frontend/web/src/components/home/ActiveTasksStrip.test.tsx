@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
@@ -125,12 +125,20 @@ describe("ActiveTasksStrip", () => {
     expect(screen.queryByText("Gamma")).toBeNull();
   });
 
-  it("renders 'No active tasks' when list is empty", async () => {
+  // CT2: an empty Active tasks panel must not occupy above-fold space.
+  // The pending state is also null, so we flush past the resolved empty load
+  // (macrotask after the query's microtask resolution) before asserting.
+  it("returns null when there are no active evals and no optimizer cycle", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
 
-    renderStrip();
+    const { container } = renderStrip();
 
-    await screen.findByText(/no active tasks/i);
+    await waitFor(() => expect(evalApi.listRuns).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText(/no active tasks/i)).toBeNull();
+    expect(container.firstChild).toBeNull();
   });
 
   it("shows '—' for missing started_at", async () => {

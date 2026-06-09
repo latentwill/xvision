@@ -193,6 +193,23 @@ describe("HomeRoute", () => {
   // S1-W7: Section DOM order — NagStrip renders last when nag items exist
   it("renders sections in correct order when nag items are present", async () => {
     const { listProviders } = await import("@/api/settings");
+    const { useOptimizerStatus } = await import("@/features/autooptimizer/api");
+    // CT2: an empty Active tasks panel renders nothing; give it a running
+    // optimizer cycle so the section is present to anchor DOM-order assertions.
+    vi.mocked(useOptimizerStatus).mockReturnValue({
+      active_session: {
+        session_id: "sess_order",
+        strategy_id: "strat-order",
+        state: "running",
+        mode: "explore",
+        cycles_completed: 1,
+        kept_count: 0,
+        suspect_count: 0,
+        dropped_count: 0,
+      },
+      active_cycle_id: "cycle_order",
+      last_event_seq: 1,
+    } as unknown as ReturnType<typeof useOptimizerStatus>);
     vi.mocked(listProviders).mockResolvedValueOnce({
       providers: [
         {
@@ -243,6 +260,9 @@ describe("HomeRoute", () => {
     expect(idxActive).toBeLessThan(idxCritical);
     expect(idxCritical).toBeLessThan(idxOutcomes);
     expect(idxOutcomes).toBeLessThan(idxNag);
+
+    // Reset the optimizer-status override so it does not leak to later tests.
+    vi.mocked(useOptimizerStatus).mockReturnValue(undefined);
   });
 
   // S1-W2: Topbar subtitle updated

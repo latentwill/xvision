@@ -193,6 +193,11 @@ export function ActiveTasksStrip() {
 
   const total = inflight.length + (showCycle ? 1 : 0);
 
+  // CT2: never render a permanent empty card above the fold. Once the eval list
+  // has loaded and there is nothing in flight (and no optimizer cycle), the
+  // panel renders nothing at all.
+  if (data !== undefined && total === 0) return null;
+
   return (
     <div
       data-testid="active-tasks-strip"
@@ -202,27 +207,19 @@ export function ActiveTasksStrip() {
         <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
           Active tasks
         </span>
-        {total > 0 && (
-          <span className="text-[11px] text-muted-foreground">
-            {total} in flight
-          </span>
-        )}
+        <span className="text-[11px] text-muted-foreground">
+          {total} in flight
+        </span>
       </div>
 
-      {total === 0 ? (
-        <p className="px-3 py-3 text-[13px] text-muted-foreground">
-          No active tasks
-        </p>
-      ) : (
-        <div className="divide-y divide-border/50">
-          {showCycle && session !== null && (
-            <OptimizerCycleRow session={session} cycleId={activeCycleId} />
-          )}
-          {inflight.map((run) => (
-            <RunRow key={run.id} run={run} />
-          ))}
-        </div>
-      )}
+      <div className="divide-y divide-border/50">
+        {showCycle && session !== null && (
+          <OptimizerCycleRow session={session} cycleId={activeCycleId} />
+        )}
+        {inflight.map((run) => (
+          <RunRow key={run.id} run={run} />
+        ))}
+      </div>
     </div>
   );
 }
