@@ -652,6 +652,195 @@ async fn live_loop_exits_cleanly_on_cancellation() {
     );
 }
 
+/// Broker that opens a long on its first (Buy) submit, and on that SAME
+/// submit cancels the run via a captured store handle. The next loop
+/// iteration's `is_terminal` checkpoint then fires the A2 close-on-cancel
+/// path, which submits a Sell to flatten — recorded here as the second
+/// order. Every fill is reported with a per-call fill price so the close's
+/// realized PnL is observable.
+struct CancelAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+}
+
+impl CancelAfterOpenBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            cancel_hook: Mutex::new(None),
+        })
+    }
+    /// Arm the cancel hook so the first Buy cancels `run_id` on `store`.
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for CancelAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // On the opening Buy, cancel the run so the NEXT loop iteration sees a
+        // cancelled run while holding an open position.
+        if is_buy {
+            let hook = self.cancel_hook.lock().unwrap().clone();
+            if let Some((store, run_id)) = hook {
+                store
+                    .cancel_active(&run_id, "operator cancel mid-run")
+                    .await
+                    .unwrap();
+            }
+        }
+        let fill_price = if is_buy {
+            self.open_fill_price
+        } else {
+            self.close_fill_price
+        };
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_closes_open_positions_through_the_broker() {
+    // Bar 1 opens a long (and the broker cancels the run on that submit).
+    // Bar 2's loop-top `is_terminal` check fires while a long is held -> the
+    // A2 close-on-cancel path must submit a Sell to flatten the position
+    // through the broker and record the closing fill (realized PnL settled).
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    // Open at 50_000, close higher at 51_000 so the realized PnL is positive
+    // and observable on the closing decision row.
+    let broker = CancelAfterOpenBroker::new(50_000.0, 51_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // Cancellation still terminates the run (Err on the cancel path).
+    assert!(result.is_err(), "a cancelled run must not complete");
+
+    // The broker saw TWO orders: the opening Buy, then the cancel-driven
+    // Sell that flattened the position.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected an opening Buy then a cancel-close Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "cancel must flatten the long with a Sell",
+    );
+    assert!(
+        (submitted[0].size - submitted[1].size).abs() < 1e-9,
+        "the close must flatten exactly the open size",
+    );
+
+    // A `flat` closing decision row was recorded with the realized PnL from
+    // the broker-reported close (50_000 -> 51_000 on the open units).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let close_row = decisions
+        .iter()
+        .find(|d| d.action == "flat")
+        .expect("a flat close decision must be recorded on cancel");
+    assert_eq!(
+        close_row.fill_price,
+        Some(51_000.0),
+        "close fill price comes from the broker's reported close price",
+    );
+    let realized = close_row.pnl_realized.expect("close settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL, got {realized}",
+    );
+}
+
+#[tokio::test]
+async fn live_cancel_with_flat_book_makes_no_broker_calls() {
+    // Cancel BEFORE any bar opens a position -> the book is flat, so the A2
+    // close path must be a no-op: no broker orders, no flat decision rows.
+    // This is the regression guard for the existing flat-cancel behavior.
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = CancelAfterOpenBroker::new(50_000.0, 51_000.0);
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    // Cancel up front; no position is ever opened.
+    store.begin_running(&run.id).await.unwrap();
+    store.cancel_active(&run.id, "operator cancel").await.unwrap();
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    assert!(result.is_err(), "a cancelled run must not complete");
+    assert!(
+        broker.submitted().is_empty(),
+        "a flat cancel must make NO broker calls (no dangling positions to close)",
+    );
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.iter().all(|d| d.action != "flat"),
+        "no close decision rows when the book is already flat",
+    );
+}
+
 #[tokio::test]
 async fn live_loop_surfaces_broker_error_as_run_failure() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
