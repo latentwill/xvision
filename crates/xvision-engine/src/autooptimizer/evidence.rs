@@ -72,6 +72,14 @@ pub struct GateRecord<'a> {
     pub reason: Option<&'a str>,
     /// Experiment writer's rationale (from `MutationDiff.rationale`).
     pub rationale: Option<&'a str>,
+    /// Edge metrics vs a fixed-seed random baseline (informational, never
+    /// gating). `None` when the baseline run was unavailable for this cycle.
+    /// `edge_over_random = child_day_score - random_baseline_score`.
+    pub edge_over_random: Option<f64>,
+    /// `parent_edge = parent_day_score - random_baseline_score`.
+    pub parent_edge: Option<f64>,
+    /// `edge_delta = edge_over_random - parent_edge`.
+    pub edge_delta: Option<f64>,
 }
 
 /// Insert or replace a gate record in `autooptimizer_gate_records`.
@@ -82,8 +90,9 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
          (bundle_hash, parent_day_score, child_day_score, \
           parent_holdout_score, child_holdout_score, \
           gate_epsilon, delta_day, delta_holdout, drawdown_ratio, \
-          verdict, reason, rationale, created_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          verdict, reason, rationale, \
+          edge_over_random, parent_edge, edge_delta, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(rec.bundle_hash)
     .bind(rec.parent_day_score)
@@ -97,6 +106,9 @@ pub async fn persist_gate_record(pool: &SqlitePool, rec: GateRecord<'_>) -> Resu
     .bind(rec.verdict)
     .bind(rec.reason)
     .bind(rec.rationale)
+    .bind(rec.edge_over_random)
+    .bind(rec.parent_edge)
+    .bind(rec.edge_delta)
     .bind(created_at)
     .execute(pool)
     .await?;
@@ -136,6 +148,9 @@ pub struct GateRecordRow {
     pub verdict: String,
     pub reason: Option<String>,
     pub rationale: Option<String>,
+    pub edge_over_random: Option<f64>,
+    pub parent_edge: Option<f64>,
+    pub edge_delta: Option<f64>,
     pub created_at: String,
 }
 
@@ -170,6 +185,7 @@ pub async fn load_findings(pool: &SqlitePool, bundle_hash: &str) -> Result<Vec<F
 pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Option<GateRecordRow>> {
     let row = sqlx::query(
         "SELECT bundle_hash, parent_day_score, child_day_score, \
+         edge_over_random, parent_edge, edge_delta, \
                 parent_holdout_score, child_holdout_score, \
                 gate_epsilon, delta_day, delta_holdout, drawdown_ratio, \
                 verdict, reason, rationale, created_at \
@@ -196,6 +212,9 @@ pub async fn load_gate_record(pool: &SqlitePool, bundle_hash: &str) -> Result<Op
         verdict: row.try_get("verdict")?,
         reason: row.try_get("reason")?,
         rationale: row.try_get("rationale")?,
+        edge_over_random: row.try_get("edge_over_random")?,
+        parent_edge: row.try_get("parent_edge")?,
+        edge_delta: row.try_get("edge_delta")?,
         created_at: row.try_get("created_at")?,
     }))
 }
@@ -212,6 +231,18 @@ pub async fn ensure_evidence_schema(pool: &SqlitePool) -> Result<()> {
     // execute each one individually (SQLite can't batch multi-statement queries
     // via plain `sqlx::query`).
     for stmt in sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        sqlx::query(stmt).execute(pool).await?;
+    }
+    // Migration 061: additive edge-metric columns on the gate-records table.
+    // Strip `--` comment lines before splitting so leading comments don't get
+    // glued onto the first ALTER and dropped.
+    let baseline_sql = include_str!("../../migrations/061_autooptimizer_random_baseline.sql");
+    let baseline_sql: String = baseline_sql
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for stmt in baseline_sql.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         sqlx::query(stmt).execute(pool).await?;
     }
     Ok(())
@@ -334,6 +365,9 @@ mod tests {
                 verdict: "passed",
                 reason: None,
                 rationale: Some("Adjusted ADX threshold from 25 to 30 for stronger trend filter"),
+                edge_over_random: Some(0.4),
+                parent_edge: Some(0.1),
+                edge_delta: Some(0.3),
             },
         )
         .await
@@ -355,6 +389,10 @@ mod tests {
             rec.rationale.as_deref(),
             Some("Adjusted ADX threshold from 25 to 30 for stronger trend filter")
         );
+        // Random-baseline edge metrics round-trip through migration 061's columns.
+        assert!((rec.edge_over_random.unwrap() - 0.4).abs() < 1e-9);
+        assert!((rec.parent_edge.unwrap() - 0.1).abs() < 1e-9);
+        assert!((rec.edge_delta.unwrap() - 0.3).abs() < 1e-9);
     }
 
     /// INSERT OR REPLACE: re-persisting the same bundle_hash with a new verdict
@@ -380,6 +418,9 @@ mod tests {
                     verdict,
                     reason: None,
                     rationale: None,
+                    edge_over_random: None,
+                    parent_edge: None,
+                    edge_delta: None,
                 },
             )
             .await

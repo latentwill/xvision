@@ -707,6 +707,15 @@ impl Mutator {
         } else {
             Vec::new()
         };
+        // Issues 1/2 (QA 2026-06-08): the prose-capable agent roles, so the
+        // exploration focus can rotate onto the PROSE lever. Only enumerate when
+        // "prose" is actually applicable (the strategy has agents AND prose is in
+        // the allowed kinds), matching the validator's known-role set.
+        let prose_roles: Vec<String> = if kinds.iter().any(|k| k == "prose") {
+            base.agents.iter().map(|a| a.role.clone()).collect()
+        } else {
+            Vec::new()
+        };
 
         for attempt in 0..max_attempts {
             // F32 (run-7): rotate the exploration seed per attempt so the focus
@@ -723,6 +732,7 @@ impl Mutator {
                 attempt_seed,
                 memory_context,
                 avoid.len(),
+                &prose_roles,
             );
             let req = LlmRequest {
                 model: self.model.clone(),
@@ -877,6 +887,11 @@ fn build_user_payload(
     exploration_seed: u64,
     memory_context: Option<&str>,
     avoid_count: usize,
+    // Issues 1/2 (QA 2026-06-08): the agent roles that can carry a
+    // `prompt_override`, so the exploration focus can rotate onto the PROSE lever
+    // (rewrite an agent's prompt) and not only numeric levers. Empty when prose is
+    // not an applicable kind for this strategy.
+    prose_roles: &[String],
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
     let param_allowed = allowed_kinds.iter().any(|k| k == "param");
@@ -931,36 +946,72 @@ fn build_user_payload(
     // real model (e.g. gemini-flash-lite) ignores — it collapses the constrained
     // experiment space to the single most obvious tweak every cycle, so repeat
     // cycles re-derived the byte-identical candidate and never explored. Instead,
-    // use the exploration seed to NAME a concrete focus parameter the writer must
-    // experiment on. Different cycles ⇒ different seed ⇒ different focus key ⇒ a
-    // materially different prompt ⇒ a different candidate, even from a fully
-    // deterministic model. (Pairs with the hard `already_tried` reject in
-    // `propose`, which guarantees a previously-seen candidate is never re-emitted.)
-    // Build a focus key from the ALLOWED axes only. For param-allowed configs,
-    // rotate across risk.* keys. For filter-only configs, rotate across filter
-    // paths. Falls back to a generic directive when no focusable axis is present.
-    let focusable_keys: Vec<String> = if param_allowed && !param_keys.is_empty() {
-        param_keys.to_vec()
-    } else if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
-        filter_paths.iter().map(|(p, _)| p.clone()).collect()
-    } else {
-        vec![]
-    };
-    let exploration_section = if focusable_keys.is_empty() {
+    // use the exploration seed to NAME a concrete focus the writer must experiment
+    // on. Different cycles ⇒ different seed ⇒ different focus ⇒ a materially
+    // different prompt ⇒ a different candidate, even from a fully deterministic
+    // model. (Pairs with the hard `already_tried` reject in `propose`, which
+    // guarantees a previously-seen candidate is never re-emitted.)
+    //
+    // Issues 1/2 (QA 2026-06-08): the focus must rotate across the applicable
+    // mutation KINDS, not just param keys. The previous version only ever named a
+    // `risk.*` param whenever `param` was allowed (the default), so a weak
+    // experiment-writer was steered onto the numeric risk lever every single
+    // cycle — prose (prompt) and filter levers were never focused and so never
+    // exercised (QA: gemma mutated only risk.* across all 7 cycles). Build one
+    // focus group per applicable, focusable kind in a fixed priority order, pick
+    // the KIND by `seed % n_kinds` (balanced kind-level rotation, independent of
+    // how many param keys exist), then pick a concrete target within that kind by
+    // `seed / n_kinds`. This guarantees prose and filter each get focused on a
+    // fixed cadence rather than losing every cycle to the 6 risk.* keys.
+    let mut focus_groups: Vec<(&str, Vec<String>)> = Vec::new();
+    if allowed_kinds.iter().any(|k| k == "prose") && !prose_roles.is_empty() {
+        focus_groups.push(("prose", prose_roles.to_vec()));
+    }
+    if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+        focus_groups.push((
+            "filter",
+            filter_paths.iter().map(|(p, _)| p.clone()).collect(),
+        ));
+    }
+    if param_allowed && !param_keys.is_empty() {
+        focus_groups.push(("param", param_keys.to_vec()));
+    }
+    let exploration_section = if focus_groups.is_empty() {
         format!(
             "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
              the single most obvious one, so repeated runs explore rather than re-propose one tweak."
         )
     } else {
-        let focus = &focusable_keys[(exploration_seed as usize) % focusable_keys.len()];
-        format!(
-            "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on \
-             `{focus}` — propose a meaningful change to its value (a clear direction and \
-             magnitude). This focus is chosen to make successive runs on this strategy explore \
-             different levers rather than re-proposing one fixed tweak. If `{focus}` genuinely \
-             cannot be improved, you may target another listed key, but do not default to the most \
-             obvious change."
-        )
+        let n_kinds = focus_groups.len();
+        let (kind, targets) = &focus_groups[(exploration_seed as usize) % n_kinds];
+        let target = &targets[((exploration_seed as usize) / n_kinds) % targets.len()];
+        match *kind {
+            "prose" => format!(
+                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
+                 `{target}` agent's system prompt — propose a `prose` experiment that rewrites its \
+                 trading logic, reasoning steps, or entry/exit criteria (NOT merely a number). This \
+                 focus rotates the optimizer across its levers so successive runs explore the prompt, \
+                 the filter, and the numeric parameters rather than re-proposing one fixed tweak. If \
+                 the prompt genuinely cannot be improved, you may target another listed lever instead."
+            ),
+            "filter" => format!(
+                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on filter \
+                 path `{target}` — propose a `filter` experiment changing its value with a clear \
+                 direction and magnitude (e.g. loosen a threshold to admit more trades, or tighten it \
+                 to be more selective). This focus rotates the optimizer across its levers so \
+                 successive runs explore the prompt, the filter, and the numeric parameters rather \
+                 than re-proposing one fixed tweak. If `{target}` genuinely cannot be improved, you \
+                 may target another listed lever instead."
+            ),
+            _ => format!(
+                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on \
+                 parameter `{target}` — propose a meaningful change to its value (a clear direction \
+                 and magnitude). This focus rotates the optimizer across its levers so successive \
+                 runs explore the prompt, the filter, and the numeric parameters rather than \
+                 re-proposing one fixed tweak. If `{target}` genuinely cannot be improved, you may \
+                 target another listed lever instead."
+            ),
+        }
     };
     // F32: when this parent has already produced candidates in prior experiments,
     // tell the writer so it aims for genuinely new territory (the `already_tried`
@@ -1213,7 +1264,7 @@ mod tests {
         let keys = vec!["risk.max_leverage".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![];
         let ctx = "param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)";
-        let with = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some(ctx), 0);
+        let with = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some(ctx), 0, &[]);
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
             "memory section header missing: {with}"
@@ -1226,7 +1277,7 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0);
+        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0, &[]);
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1236,7 +1287,7 @@ mod tests {
             "F32 exploration section must remain when no memory: {without}"
         );
 
-        let empty = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some("   "), 0);
+        let empty = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some("   "), 0, &[]);
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
@@ -1251,7 +1302,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, None, 0);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, None, 0, &[]);
         assert!(
             payload.contains("Tunable filter paths"),
             "filter section header must be present: {payload}"
@@ -1268,7 +1319,7 @@ mod tests {
         // When filter is NOT in allowed kinds, section must be absent.
         let kinds_no_filter = vec!["param".to_string()];
         let no_filter_payload =
-            build_user_payload("prog", &kinds_no_filter, &keys, &filter_paths, None, 5, None, 0);
+            build_user_payload("prog", &kinds_no_filter, &keys, &filter_paths, None, 5, None, 0, &[]);
         assert!(
             !no_filter_payload.contains("Tunable filter paths"),
             "filter section must be absent when filter not in allowed kinds: {no_filter_payload}"
@@ -1286,7 +1337,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0, &[]);
 
         // Param key list and risk.* references must be absent.
         assert!(
@@ -1307,6 +1358,82 @@ mod tests {
             payload.contains("Tunable filter paths"),
             "filter section must still be present: {payload}"
         );
+    }
+
+    #[test]
+    fn exploration_focus_rotates_across_prose_filter_and_param_kinds() {
+        // Issues 1/2 (QA 2026-06-08) regression: when `param` is allowed (the
+        // default), the focus directive used to ALWAYS name a `risk.*` param, so
+        // the prose (prompt) and filter levers were never focused and the
+        // experiment-writer mutated only risk config every cycle. The focus must
+        // now rotate across the applicable KINDS so prose and filter each get
+        // focused on a fixed cadence.
+        let kinds = vec!["prose".to_string(), "filter".to_string(), "param".to_string()];
+        let keys = vec!["risk.stop_loss_atr_multiple".to_string()];
+        let filter_paths = vec![(
+            "conditions.0.rhs.numeric".to_string(),
+            serde_json::json!(25.0),
+        )];
+        let prose_roles = vec!["trader".to_string()];
+
+        let mut saw_prose = false;
+        let mut saw_filter = false;
+        let mut saw_param = false;
+        for seed in 0..6u64 {
+            let p = build_user_payload(
+                "prog",
+                &kinds,
+                &keys,
+                &filter_paths,
+                None,
+                seed,
+                None,
+                0,
+                &prose_roles,
+            );
+            // Exactly one lever is focused per cycle (the three directive
+            // signatures are mutually exclusive).
+            let prose_hit = p.contains("agent's system prompt");
+            let filter_hit = p.contains("filter path `conditions.0.rhs.numeric`");
+            let param_hit = p.contains("parameter `risk.stop_loss_atr_multiple`");
+            let hits = [prose_hit, filter_hit, param_hit]
+                .iter()
+                .filter(|b| **b)
+                .count();
+            assert_eq!(
+                hits, 1,
+                "exactly one lever must be focused per cycle (seed {seed}): {p}"
+            );
+            saw_prose |= prose_hit;
+            saw_filter |= filter_hit;
+            saw_param |= param_hit;
+        }
+        assert!(saw_prose, "the PROSE lever must be focused on some cycle");
+        assert!(saw_filter, "the FILTER lever must be focused on some cycle");
+        assert!(saw_param, "the PARAM lever must still be focused on some cycle");
+    }
+
+    #[test]
+    fn exploration_focus_skips_prose_when_no_agent_roles() {
+        // Prose must only be focused when the strategy actually has a prose-capable
+        // agent role to carry the override; with no roles the rotation falls back
+        // to filter/param and never names a prose directive.
+        let kinds = vec!["prose".to_string(), "param".to_string()];
+        let keys = vec!["risk.max_leverage".to_string()];
+        let filter_paths: Vec<(String, serde_json::Value)> = vec![];
+        for seed in 0..4u64 {
+            let p = build_user_payload(
+                "prog", &kinds, &keys, &filter_paths, None, seed, None, 0, &[],
+            );
+            assert!(
+                !p.contains("agent's system prompt"),
+                "prose must not be focused when no agent roles are available (seed {seed}): {p}"
+            );
+            assert!(
+                p.contains("parameter `risk.max_leverage`"),
+                "param lever must be focused when it is the only focusable kind (seed {seed}): {p}"
+            );
+        }
     }
 
     #[test]
@@ -1576,6 +1703,7 @@ mod tests {
             base_seed.wrapping_add(0),
             None,
             0,
+            &[],
         );
         let p1 = build_user_payload(
             "prog",
@@ -1586,6 +1714,7 @@ mod tests {
             base_seed.wrapping_add(1),
             None,
             0,
+            &[],
         );
         // The focus directive must name a different key for attempt 0 vs attempt 1.
         // Since `build_user_payload` embeds the focus in the exploration_section,

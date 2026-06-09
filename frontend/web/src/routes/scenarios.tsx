@@ -216,7 +216,7 @@ export function ScenariosRoute() {
       <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         <Link
           to="/scenarios/new"
-          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 rounded bg-gold px-3.5 py-1.5 text-[13px] font-medium text-bg transition-colors hover:bg-gold-soft sm:w-auto motion-safe:active:scale-[0.96]"
         >
           <Icon name="plus" size={13} /> New scenario
         </Link>
@@ -309,21 +309,17 @@ function DesktopRow({
 }) {
   return (
     <tr
-      role="link"
-      tabIndex={0}
       onClick={() => onGo(row.id)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onGo(row.id);
-        }
-      }}
-      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+      className="xvn-row-in cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
     >
       <td className="py-3 pl-5 pr-3">
-        <div className="text-[13px] leading-tight text-text">
+        <Link
+          to={`/scenarios/${row.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="block text-[13px] leading-tight text-text hover:underline"
+        >
           {row.display_name}
-        </div>
+        </Link>
         {row.description ? (
           <div className="mt-0.5 max-w-[260px] truncate text-[11px] leading-tight text-text-3">
             {row.description}

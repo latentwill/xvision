@@ -129,6 +129,11 @@ describe("EvalCompareRoute sort", () => {
       .getAllByText(/^run-[A-Z]$/)
       .map((el) => el.textContent);
     expect(ids).toEqual(["run-A", "run-B"]);
+
+    // Non-color run letters (A, B, …) label each row so runs stay
+    // distinguishable without relying on palette color (colorblind a11y).
+    expect(screen.getByLabelText("Run A")).toBeInTheDocument();
+    expect(screen.getByLabelText("Run B")).toBeInTheDocument();
   });
 
   it("re-orders rows by Sharpe (high → low) when the sort is changed", async () => {

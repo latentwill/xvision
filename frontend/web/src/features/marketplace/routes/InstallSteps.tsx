@@ -87,7 +87,7 @@ function Step({
 function ChipBtn({ children, variant = "chip" }: { children: React.ReactNode; variant?: "primary" | "chip" | "ghost" }) {
   const base = "font-mono text-[11.5px] px-2.5 py-1 rounded cursor-pointer flex items-center gap-1";
   const styles: Record<string, string> = {
-    primary: `${base} bg-gold text-black font-semibold`,
+    primary: `${base} bg-gold text-black font-semibold motion-safe:active:scale-[0.96]`,
     chip:    `${base} border border-border-strong text-text-2 hover:text-text`,
     ghost:   `${base} text-text-3 hover:text-text`,
   };

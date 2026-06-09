@@ -112,7 +112,7 @@ export function ListingCard({ row, onBuy }: ListingCardProps) {
             e.stopPropagation();
             onBuy(row.id);
           }}
-          className="w-full px-3 py-1.5 rounded bg-gold text-[#001A0A] text-[12px] font-bold hover:opacity-90 transition-opacity"
+          className="w-full px-3 py-1.5 rounded bg-gold text-[#001A0A] text-[12px] font-bold hover:opacity-90 transition-opacity motion-safe:active:scale-[0.96]"
         >
           {isFree ? "Run free" : "Buy"}
         </button>

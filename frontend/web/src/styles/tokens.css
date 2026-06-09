@@ -9,6 +9,18 @@
  */
 
 :root {
+  /* Keyboard focus indicator — interactive chrome, tracks --accent so it
+     re-themes automatically (var() resolves --accent per active data-theme). */
+  --focus-ring: var(--accent);
+
+  /* Motion. Shared durations + standard ease for transitions/animations.
+     The global prefers-reduced-motion block in globals.css collapses all
+     animation/transition to near-zero, so these are honoured project-wide. */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
   --bg: #070809;
   --surface-sidebar: #070809;
   --surface-card: #111318;

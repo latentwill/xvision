@@ -95,9 +95,17 @@ describe("NagStrip", () => {
     // Before expand: only 3 shown
     expect(screen.queryByText("Nag four")).not.toBeInTheDocument();
 
-    // Click the expand toggle
+    // Collapsed toggle exposes aria-expanded=false (accessible disclosure)
     const toggle = screen.getByText(/\+ 2 more/i);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveAttribute("aria-controls", "nag-strip-items");
     await user.click(toggle);
+
+    // After expanding, the "show less" toggle reports aria-expanded=true
+    expect(screen.getByText(/show less/i)).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
 
     // After expand: all 5 visible inline — no dialog/modal
     expect(screen.getByText("Nag one")).toBeInTheDocument();

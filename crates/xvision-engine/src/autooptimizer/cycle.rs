@@ -10,7 +10,9 @@ use ulid::Ulid;
 
 use crate::autooptimizer::blob_store::BlobStore;
 use crate::autooptimizer::canary::{run_honesty_check, HonestyCheckResult};
-use crate::autooptimizer::config::{validate_regime_set, AutoOptimizerConfig, RegimeSide, RegimeWindow};
+use crate::autooptimizer::config::{
+    validate_regime_set, AutoOptimizerConfig, RegimeSide, RegimeWindow, TradeDirection,
+};
 use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
@@ -106,6 +108,47 @@ struct GateScores {
     pub delta_day: f64,
     pub delta_holdout: f64,
     pub drawdown_ratio: Option<f64>,
+    /// Edge vs a fixed-seed random baseline (informational, never gating).
+    /// `None` when the baseline run was unavailable for this cycle.
+    pub edge_over_random: Option<f64>,
+    pub parent_edge: Option<f64>,
+    pub edge_delta: Option<f64>,
+}
+
+/// Per-cycle memoization of the random-baseline objective score, keyed by
+/// (day-scenario id, direction). The baseline depends only on the training
+/// window + direction, so it is computed once and reused for every candidate.
+type BaselineCache =
+    tokio::sync::Mutex<std::collections::HashMap<(String, TradeDirection), f64>>;
+
+/// Compute (memoized) the random-baseline objective score for `day_scenario`
+/// under `direction`, using `structure_strategy` for risk sizing / filters.
+/// Returns `f64::NAN` when the baseline run is unavailable; the caller maps NAN
+/// to "no edge metrics" (the metric is informational and never blocks).
+async fn random_baseline_score(
+    paper_tester: &dyn PaperTestRunner,
+    structure_strategy: &Strategy,
+    day_scenario: &Scenario,
+    direction: TradeDirection,
+    objective: Objective,
+    cache: &BaselineCache,
+) -> f64 {
+    let key = (day_scenario.id.clone(), direction);
+    if let Some(v) = cache.lock().await.get(&key).copied() {
+        return v;
+    }
+    let score = match paper_tester
+        .run_random_baseline(structure_strategy, day_scenario, direction)
+        .await
+    {
+        Ok(metrics) => objective.oriented_value(&metrics),
+        Err(e) => {
+            tracing::warn!(error = %e, "random baseline run failed; edge metrics omitted this cycle");
+            f64::NAN
+        }
+    };
+    cache.lock().await.insert(key, score);
+    score
 }
 
 pub async fn run_cycle(
@@ -184,6 +227,10 @@ pub async fn run_cycle(
             .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
     };
 
+    // Memoizes the random-baseline objective score per (training window,
+    // direction) for the whole cycle, so the extra backtest runs at most once.
+    let baseline_cache: BaselineCache = BaselineCache::default();
+
     for parent_node in &parents {
         if is_cancelled() {
             break;
@@ -220,6 +267,7 @@ pub async fn run_cycle(
                 mutator,
                 judge,
                 paper_tester,
+                &baseline_cache,
                 &progress,
                 &mut findings_by_node,
                 dsr_prefix.as_deref(),
@@ -400,6 +448,7 @@ async fn process_parent_mutations<F>(
     mutator: &Mutator,
     judge: &Judge,
     paper_tester: &dyn PaperTestRunner,
+    baseline_cache: &BaselineCache,
     progress: &F,
     findings_by_node: &mut HashMap<ContentHash, Vec<Finding>>,
     dsr_prefix: Option<&str>,
@@ -688,6 +737,8 @@ where
             diff,
             cycle_config,
             paper_tester,
+            config.baseline_direction,
+            baseline_cache,
             &parent_day,
             &parent_untouched,
             min_improvement,
@@ -744,6 +795,9 @@ where
                     verdict: &verdict_str,
                     reason: reason_str,
                     rationale: Some(outcome.diff.rationale.as_str()),
+                    edge_over_random: gs.edge_over_random,
+                    parent_edge: gs.parent_edge,
+                    edge_delta: gs.edge_delta,
                 },
             )
             .await
@@ -906,6 +960,8 @@ async fn gate_and_classify<F>(
     diff: MutationDiff,
     cycle_config: &CycleConfig,
     paper_tester: &dyn PaperTestRunner,
+    baseline_direction: TradeDirection,
+    baseline_cache: &BaselineCache,
     parent_day: &MetricsSummary,
     parent_untouched: &MetricsSummary,
     min_improvement: f64,
@@ -1181,6 +1237,26 @@ where
             None
         }
     };
+    // Random-baseline edge metrics (informational; never gating). Memoized per
+    // (training window, direction) so the extra backtest runs at most once per
+    // cycle. Uses the parent's structure (risk sizing, filters) with random,
+    // direction-restricted decisions.
+    let baseline_score = random_baseline_score(
+        paper_tester,
+        parent_strategy,
+        &cycle_config.day_scenario,
+        baseline_direction,
+        obj,
+        baseline_cache,
+    )
+    .await;
+    let (edge_over_random, parent_edge, edge_delta) = if baseline_score.is_finite() {
+        let eor = child_day_score - baseline_score;
+        let pe = parent_day_score - baseline_score;
+        (Some(eor), Some(pe), Some(eor - pe))
+    } else {
+        (None, None, None)
+    };
     let gate_scores = Some(GateScores {
         parent_day_score,
         child_day_score,
@@ -1190,6 +1266,9 @@ where
         delta_day: child_day_score - parent_day_score,
         delta_holdout: child_holdout_score - parent_holdout_score,
         drawdown_ratio,
+        edge_over_random,
+        parent_edge,
+        edge_delta,
     });
 
     Ok(MutationOutcome {

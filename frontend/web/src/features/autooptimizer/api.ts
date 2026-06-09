@@ -13,7 +13,7 @@
 //   Mutator        → "Experiment writer"
 //   gate_verdict   displayed as "Accepted" / "Rejected" / "Suspect"
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
 
 // ─── Wire shapes ──────────────────────────────────────────────────────────────
@@ -84,6 +84,9 @@ export type StartRunCycleRequest = {
   day_end?: string | null;
   baseline_start?: string | null;
   baseline_end?: string | null;
+  /** Candidate experiments to generate per parent each cycle (1..=64).
+   * Omit for the configured `experiments_per_cycle` (default 5). */
+  experiments_per_cycle?: number | null;
 };
 
 export type StartRunCycleResponse = {
@@ -267,6 +270,46 @@ export async function cancelRunCycle(cycleId: string): Promise<StartRunCycleResp
     `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/cancel`,
     { method: "POST" },
   );
+}
+
+// ─── Cycle-level pause/resume (Control Tower S0 / O3) ─────────────────────────
+// NOTE: the mounted pause/resume surface is cycle-level
+// (`/api/autooptimizer/cycles/:cycle_id/{pause,resume}`). The older
+// `pauseSession`/`resumeSession` helpers below target an unmounted
+// `/sessions/:id/...` route and are dead — use these from the Active-tasks strip.
+
+/** Pause the in-flight optimizer cycle (suspends before the next candidate). */
+export async function pauseCycle(cycleId: string): Promise<StartRunCycleResponse> {
+  return apiFetch<StartRunCycleResponse>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/pause`,
+    { method: "POST" },
+  );
+}
+
+/** Resume a paused optimizer cycle. */
+export async function resumeCycle(cycleId: string): Promise<StartRunCycleResponse> {
+  return apiFetch<StartRunCycleResponse>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/resume`,
+    { method: "POST" },
+  );
+}
+
+/** useMutation hook: pause the in-flight cycle, then refresh status. */
+export function usePauseCycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cycleId: string) => pauseCycle(cycleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["optimizer/status"] }),
+  });
+}
+
+/** useMutation hook: resume the in-flight cycle, then refresh status. */
+export function useResumeCycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cycleId: string) => resumeCycle(cycleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["optimizer/status"] }),
+  });
 }
 
 // ─── Session-level control mutations (P4) ────────────────────────────────────
@@ -529,6 +572,10 @@ export interface StatsRow {
   suspect: number;
   dropped: number;
   best_delta_holdout: number | null;
+  /** Best candidate edge over the random baseline this cycle (child − random). */
+  best_edge_over_random?: number | null;
+  /** Best parent edge over the random baseline this cycle (parent − random). */
+  best_parent_edge?: number | null;
   cost_usd: number;
   cum_cost_usd: number;
 }
@@ -578,6 +625,9 @@ export interface SessionSummary {
 export interface StatusResponse {
   active_session: SessionSummary | null;
   last_event_seq: number;
+  /** Newest in-flight cycle id for the active session — target for the
+   *  Active-tasks pause/resume controls (S0 / O3). Absent when idle. */
+  active_cycle_id?: string | null;
 }
 
 /** Row in the recent-sessions list (GET /api/autooptimizer/sessions) */
@@ -588,7 +638,15 @@ export interface SessionListItem {
   mode: string;
   cycles_completed: number;
   kept_count: number;
+  /** Candidates demoted to "suspect" across the session (S0 / O1a). */
+  suspect_count?: number;
+  /** Σ realized cost across the session's cycles (S0 / O1c); undefined → "$?". */
   cost_usd?: number;
+  /** Newest cycle's honesty-check outcome (S0 / O1b); undefined → "—". */
+  honesty_passed?: boolean;
+  /** Newest cycle's accepted-lineage edge over the random baseline
+   * (parent − random); undefined → "—". > 0 = still beating random. */
+  latest_parent_edge?: number | null;
   finished_at?: string;
 }
 
@@ -633,6 +691,11 @@ export interface GateRecord {
   drawdown_ratio: number | null;
   verdict: string;
   reason: string | null;
+  /** Edge vs a fixed-seed random baseline (informational, never gating).
+   * Optional: absent on gate records written before migration 061. */
+  edge_over_random?: number | null;
+  parent_edge?: number | null;
+  edge_delta?: number | null;
 }
 
 /** A single finding emitted by the judge for an experiment. */

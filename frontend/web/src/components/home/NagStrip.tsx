@@ -78,7 +78,7 @@ export function NagStrip({ items }: { items: AttentionItem[] }) {
       data-testid="nag-strip"
       className="border-t border-border/50 pt-2"
     >
-      <div className="divide-y divide-border/30">
+      <div id="nag-strip-items" className="divide-y divide-border/30">
         {visible.map((item, i) => (
           <NagItem key={i} item={item} />
         ))}
@@ -87,6 +87,8 @@ export function NagStrip({ items }: { items: AttentionItem[] }) {
       {!showAll && overflow > 0 && (
         <button
           type="button"
+          aria-expanded={false}
+          aria-controls="nag-strip-items"
           onClick={() => setShowAll(true)}
           className="mt-1 text-[11px] text-muted-foreground/70 hover:text-muted-foreground transition-colors"
         >
@@ -97,6 +99,8 @@ export function NagStrip({ items }: { items: AttentionItem[] }) {
       {showAll && overflow > 0 && (
         <button
           type="button"
+          aria-expanded={true}
+          aria-controls="nag-strip-items"
           onClick={() => setShowAll(false)}
           className="mt-1 text-[11px] text-muted-foreground/70 hover:text-muted-foreground transition-colors"
         >

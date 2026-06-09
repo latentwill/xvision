@@ -47,6 +47,7 @@ pub mod parent_policy;
 pub mod preflight;
 pub mod program_view;
 pub mod progress;
+pub mod random_baseline;
 pub mod regime_results;
 pub mod run_lock;
 pub mod scenario_synthesis;
@@ -60,7 +61,10 @@ pub use evidence::{
     FindingRow, GateRecord, GateRecordRow,
 };
 pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult, SabotageVariant};
-pub use config::{AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig};
+pub use config::{
+    AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig,
+    TradeDirection,
+};
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use cycle::{run_cycle, CycleConfig, CycleResult};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};

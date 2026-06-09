@@ -359,7 +359,7 @@ async fn final_bar_uses_close_as_next_open_fallback() {
 /// they read. Mirrors `fresh_store` exactly otherwise.
 async fn fresh_store_with_pause() -> RunStore {
     let store = fresh_store().await;
-    sqlx::query(include_str!("../migrations/061_eval_run_paused.sql"))
+    sqlx::query(include_str!("../migrations/062_eval_run_paused.sql"))
         .execute(store.pool())
         .await
         .unwrap();

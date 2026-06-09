@@ -291,22 +291,23 @@ export function EvalRunDetailRoute() {
                       : "text-text",
               ].join(" ")}
             >
-              {fmtPct(detail.summary.total_return_pct)}
+              <NumPop value={fmtPct(detail.summary.total_return_pct)} />
               <span className="text-[16px] font-normal text-text-3 ml-2 tracking-wide">TOTAL RETURN</span>
             </h1>
 
             {/* Stat rail */}
             <div className="flex items-center gap-3 flex-wrap text-[11px] font-mono tabular-nums text-text-3 mb-4">
-              <span>SHARPE <span className="text-text-2 ml-1">{fmtNumber(detail.summary.sharpe)}</span></span>
+              <span>SHARPE <NumPop className="text-text-2 ml-1" value={fmtNumber(detail.summary.sharpe)} /></span>
               <span className="text-text-4">·</span>
               <span>
                 MAX DD{" "}
-                <span className={`ml-1 ${drawdownMetricTone(detail.summary.max_drawdown_pct) === "neg" ? "text-neg" : "text-text-2"}`}>
-                  {fmtPct(detail.summary.max_drawdown_pct)}
-                </span>
+                <NumPop
+                  className={`ml-1 ${drawdownMetricTone(detail.summary.max_drawdown_pct) === "neg" ? "text-neg" : "text-text-2"}`}
+                  value={fmtPct(detail.summary.max_drawdown_pct)}
+                />
               </span>
               <span className="text-text-4">·</span>
-              <span>COST <span className="text-text-2 ml-1">{formatSpendUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd || null))}</span></span>
+              <span>COST <NumPop className="text-text-2 ml-1" value={formatSpendUsd(displayCost(detail.summary, linkedAgentRun.data?.summary.total_cost_usd || null))} /></span>
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
@@ -754,6 +755,23 @@ function SummaryCard({
   );
 }
 
+/**
+ * Renders a live stat value with a subtle scale pop whenever it changes.
+ * The span is keyed on `value`, so React remounts it on each new value and the
+ * CSS-mount-only `xvn-num-pop` animation fires — but stays put across polls that
+ * return the same value. The global reduced-motion block collapses the pop.
+ */
+function NumPop({ value, className }: { value: string; className?: string }) {
+  return (
+    <span
+      key={value}
+      className={["xvn-num-pop", className].filter(Boolean).join(" ")}
+    >
+      {value}
+    </span>
+  );
+}
+
 function Stat({
   label,
   value,
@@ -781,7 +799,7 @@ function Stat({
         style={{ color, fontWeight: 500 }}
         title={titleValue}
       >
-        {value}
+        <NumPop value={value} />
       </div>
       {sub && <div className="text-[10px] font-mono text-text-3 mt-0.5">{sub}</div>}
     </div>

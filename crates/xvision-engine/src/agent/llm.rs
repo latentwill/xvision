@@ -1066,6 +1066,41 @@ pub fn openai_compat_request_body(req: &LlmRequest) -> serde_json::Value {
         }
     }
 
+    // Issue 3 (QA 2026-06-08): structured-output reinforcement as LATE context.
+    // OpenAI-compat providers receive the schema via `response_format` below, but
+    // some — notably Ollama — silently ignore or only soft-honor a `json_schema`
+    // response_format, so a model can still emit the wrong field (Qwen:
+    // `{"decision": ...}` instead of `{"action": ...}`), which fails the whole
+    // eval through the F-5 repair path. Inject the schema contract textually at
+    // the END of the conversation — the last thing the model reads before
+    // generating — so EVERY provider gets a strong, last-seen instruction to match
+    // the schema, independent of whether it honors `response_format`. (Anthropic
+    // injects the same contract into its system prompt in `anthropic_request_body`;
+    // here we place it as late context because a long tool-use transcript can push
+    // an early system instruction out of the model's effective attention.)
+    if let Some(schema) = &req.response_schema {
+        let contract = schema.prompt_contract();
+        let appended = messages
+            .last_mut()
+            .and_then(|m| m.get("content").and_then(|c| c.as_str()).map(str::to_string))
+            .map(|existing| (existing, contract.clone()));
+        match appended {
+            Some((existing, contract)) => {
+                let last = messages.last_mut().expect("last message exists (checked above)");
+                last["content"] = serde_json::Value::String(format!("{existing}{contract}"));
+            }
+            None => {
+                // No string-content message to append to (e.g. empty convo): add a
+                // trailing user turn carrying the contract so it is still the final
+                // instruction the model sees.
+                messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": contract.trim_start(),
+                }));
+            }
+        }
+    }
+
     let mut body = serde_json::json!({
         "model": req.model,
         "messages": messages,
@@ -1558,6 +1593,56 @@ mod max_tokens_body_tests {
             body.pointer("/response_format/type").and_then(|v| v.as_str()),
             Some("json_schema"),
             "response_schema takes precedence over force_json"
+        );
+    }
+
+    #[test]
+    fn openai_compat_appends_schema_contract_as_late_context() {
+        // Issue 3 (QA 2026-06-08): the schema must be reinforced as the LAST
+        // thing the model reads — not only via `response_format`, which Ollama
+        // soft-honors — so a model that would otherwise emit `{"decision":...}`
+        // is steered to the required `action` field. The contract is appended
+        // AFTER the existing message content (late context).
+        let mut req = req_with("qwen3-4b", None);
+        req.response_schema = Some(ResponseSchema::trader_output());
+        let body = openai_compat_request_body(&req);
+        let msgs = body["messages"].as_array().expect("messages array");
+        let content = msgs
+            .last()
+            .and_then(|m| m["content"].as_str())
+            .expect("string content on last message");
+        assert!(
+            content.starts_with("decide"),
+            "original message content must be preserved at the front: {content:?}"
+        );
+        assert!(
+            content.contains("You must respond with exactly one JSON object"),
+            "schema contract must be appended as late context: {content:?}"
+        );
+        assert!(
+            content.contains("action"),
+            "the appended schema must name the required `action` field: {content:?}"
+        );
+        // `response_format` is still emitted for providers that honor it.
+        assert_eq!(
+            body.pointer("/response_format/type").and_then(|v| v.as_str()),
+            Some("json_schema"),
+            "response_format json_schema must still accompany the late-context contract"
+        );
+    }
+
+    #[test]
+    fn openai_compat_no_schema_leaves_messages_unchanged() {
+        let req = req_with("qwen3-4b", None);
+        let body = openai_compat_request_body(&req);
+        let content = body["messages"]
+            .as_array()
+            .and_then(|a| a.last())
+            .and_then(|m| m["content"].as_str())
+            .expect("string content");
+        assert_eq!(
+            content, "decide",
+            "without a response_schema the message content must be untouched: {content:?}"
         );
     }
 

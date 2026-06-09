@@ -15,6 +15,9 @@ const gate: GateRecord = {
   drawdown_ratio: 0.88,
   verdict: "passed",
   reason: null,
+  edge_over_random: 0.35,
+  parent_edge: 0.1,
+  edge_delta: 0.25,
 };
 
 describe("GateScorecard", () => {

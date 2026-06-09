@@ -224,6 +224,7 @@ function LaunchStrip({
   const [strategyId, setStrategyId] = useState("");
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [budgetUsd, setBudgetUsd] = useState("");
+  const [experimentsPerCycle, setExperimentsPerCycle] = useState("");
   const [maxCycles, setMaxCycles] = useState("");
   const [totalBudgetUsd, setTotalBudgetUsd] = useState("");
   const [dayStart, setDayStart] = useState("");
@@ -256,6 +257,12 @@ function LaunchStrip({
       if (!Number.isFinite(n) || n <= 0) { setLaunchError("Total budget must be a positive USD amount"); return; }
       totalBudget = n;
     }
+    let expPerCycle: number | null = null;
+    if (experimentsPerCycle.trim() !== "") {
+      const n = parseInt(experimentsPerCycle, 10);
+      if (!Number.isFinite(n) || n < 1 || n > 64) { setLaunchError("Experiments per cycle must be between 1 and 64"); return; }
+      expPerCycle = n;
+    }
     const orNull = (s: string) => (s.trim() === "" ? null : s.trim());
     onStartLoop({
       strategy_id: trimmed,
@@ -268,6 +275,7 @@ function LaunchStrip({
       day_end: orNull(dayEnd),
       baseline_start: orNull(baselineStart),
       baseline_end: orNull(baselineEnd),
+      experiments_per_cycle: expPerCycle,
       maxCycles: maxC,
       totalBudgetUsd: totalBudget,
     });
@@ -315,6 +323,23 @@ function LaunchStrip({
         disabled={isRunning}
         placeholder="no cap"
         aria-label="Per-cycle budget cap in USD"
+        className={`${inp} w-full`}
+      />
+      <label htmlFor="optimizer-experiments" className="text-[12px] text-text-3 mt-1">
+        Experiments per cycle (1–64)
+      </label>
+      <input
+        id="optimizer-experiments"
+        type="number"
+        min="1"
+        max="64"
+        step="1"
+        inputMode="numeric"
+        value={experimentsPerCycle}
+        onChange={(e) => setExperimentsPerCycle(e.target.value)}
+        disabled={isRunning}
+        placeholder="config default (5)"
+        aria-label="Candidate experiments to generate per parent each cycle"
         className={`${inp} w-full`}
       />
         <div className="grid grid-cols-2 gap-2">
@@ -894,6 +919,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
         day_end: config.day_end,
         baseline_start: config.baseline_start,
         baseline_end: config.baseline_end,
+        experiments_per_cycle: config.experiments_per_cycle,
       });
       await queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
     } catch (err) {
@@ -943,6 +969,7 @@ export function LiveCycleView({ onTabChange, embedded = false, activeTab = "home
         day_end: l.day_end,
         baseline_start: l.baseline_start,
         baseline_end: l.baseline_end,
+        experiments_per_cycle: l.experiments_per_cycle,
       }).then(() => {
         void queryClient.invalidateQueries({ queryKey: autooptimizerKeys.lineage() });
       }).catch((err: unknown) => {
