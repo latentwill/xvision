@@ -2970,7 +2970,7 @@ impl Executor {
                 // reaches here and keeps its no-broker-call behavior. `equity`
                 // is recomputed below from the post-flatten book before the
                 // partial snapshot so the cancelled run records its settled NAV.
-                let closed = self
+                let flatten = self
                     .close_open_positions_on_cancel(
                         store,
                         run,
@@ -2982,7 +2982,12 @@ impl Executor {
                         &mut decision_idx,
                     )
                     .await;
-                if closed > 0 {
+                // Recompute equity on ANY settled close fill (full OR partial):
+                // a partial close still settles realized PnL on the book, so the
+                // cancelled run's partial metrics must use the refreshed NAV,
+                // not a stale pre-close value. Gating on the full-close count
+                // alone (`fully_closed > 0`) skipped this on a `flat_partial`.
+                if flatten.any_fill {
                     equity = book.equity(&std::collections::BTreeMap::new());
                     equity_curve.push(equity);
                 }
@@ -3015,7 +3020,7 @@ impl Executor {
             // inert → Ok(false)); a non-missing-column read error propagates
             // via `?` rather than silently skipping the flatten.
             if store.flatten_requested(&run.id).await? {
-                let closed = self
+                let flatten = self
                     .flatten_open_positions(
                         FlattenReason::Flatten,
                         store,
@@ -3028,7 +3033,11 @@ impl Executor {
                         &mut decision_idx,
                     )
                     .await;
-                if closed > 0 {
+                // Recompute equity on ANY settled close fill (full OR partial):
+                // a partial close settles realized PnL on the book, so the live
+                // run must continue from the refreshed NAV. Gating on the
+                // full-close count alone skipped this on a `flat_partial`.
+                if flatten.any_fill {
                     equity = book.equity(&std::collections::BTreeMap::new());
                     equity_curve.push(equity);
                 }
@@ -3650,10 +3659,11 @@ impl Executor {
 
     /// LIVE-only thin wrapper: flatten every open broker position before a
     /// cancelled run finishes. Delegates to [`flatten_open_positions`] with the
-    /// `Cancel` reason and returns the number of legs successfully closed; the
-    /// caller then `bail!`s to end the run as `Cancelled`. Behavior is
-    /// unchanged from the original A2 implementation — the close logic now lives
-    /// in the shared helper so the A3 one-shot flatten path can reuse it.
+    /// `Cancel` reason and returns the [`FlattenOutcome`] (legs fully closed +
+    /// whether any close fill landed); the caller recomputes equity on any fill
+    /// and then `bail!`s to end the run as `Cancelled`. Behavior is unchanged
+    /// from the original A2 implementation — the close logic now lives in the
+    /// shared helper so the A3 one-shot flatten path can reuse it.
     #[allow(clippy::too_many_arguments)]
     async fn close_open_positions_on_cancel(
         &self,
@@ -3665,7 +3675,7 @@ impl Executor {
         fill_sink: &mut RealBrokerFills,
         equity: f64,
         decision_idx: &mut u32,
-    ) -> usize {
+    ) -> FlattenOutcome {
         self.flatten_open_positions(
             FlattenReason::Cancel,
             store,
@@ -3713,9 +3723,14 @@ impl Executor {
     /// and `RealBrokerFills` additionally no-ops a zero-position flat. A flat
     /// book is a no-op (returns 0, no broker calls).
     ///
-    /// Returns the number of legs that produced a successful closing fill.
-    /// `decision_idx` is advanced once per recorded closing decision so the
-    /// `(run_id, decision_index)` PK never collides with the loop's rows.
+    /// Returns a [`FlattenOutcome`] distinguishing "any close fill landed on
+    /// the book" (`any_fill`, true for full OR partial closes) from "N legs
+    /// fully flattened" (`fully_closed`). Callers recompute equity whenever a
+    /// fill landed — a PARTIAL close settles realized PnL on the book just like
+    /// a full close, so the equity/equity_curve must be refreshed even when no
+    /// leg reached flat. `decision_idx` is advanced once per recorded closing
+    /// decision so the `(run_id, decision_index)` PK never collides with the
+    /// loop's rows.
     #[allow(clippy::too_many_arguments)]
     async fn flatten_open_positions(
         &self,
@@ -3728,10 +3743,10 @@ impl Executor {
         fill_sink: &mut RealBrokerFills,
         equity: f64,
         decision_idx: &mut u32,
-    ) -> usize {
+    ) -> FlattenOutcome {
         let open = book.open_legs();
         if open.is_empty() {
-            return 0;
+            return FlattenOutcome::default();
         }
         tracing::info!(
             target: "xvision_engine::live_executor",
@@ -3743,6 +3758,7 @@ impl Executor {
 
         let now = Utc::now();
         let mut closed = 0usize;
+        let mut any_fill = false;
         for (asset_sym, pos, entry, last_mark) in open {
             let asset = asset_sym.as_alpaca_pair();
             // Reference price: the leg's last mark (falls back to entry inside
@@ -3825,6 +3841,11 @@ impl Executor {
             let action_label = if fully_closed { "flat" } else { "flat_partial" };
 
             if fill.fill_price.is_some() {
+                // ANY close fill — full OR partial — settled realized PnL on
+                // the book above, so the caller must refresh equity. A partial
+                // close does not increment `closed` (no leg reached flat) but
+                // still flips `any_fill`.
+                any_fill = true;
                 if fully_closed {
                     closed += 1;
                 }
@@ -3949,8 +3970,30 @@ impl Executor {
         )
         .await;
 
-        closed
+        FlattenOutcome {
+            fully_closed: closed,
+            any_fill,
+        }
     }
+}
+
+/// Outcome of [`Executor::flatten_open_positions`]. Distinguishes "a close
+/// fill landed on the book" from "a leg reached flat" so callers refresh
+/// equity on ANY settled fill (full or partial), not only on a full flatten.
+///
+/// `any_fill` is true whenever at least one broker close fill was applied to
+/// the book — including a PARTIAL fill that left residual exposure (the
+/// `flat_partial` path), which still settles realized PnL. `fully_closed`
+/// counts only legs that reached flat. The A2 cancel-close wrapper exposes
+/// `fully_closed` as its leg count; both A2 and A3 callers recompute
+/// equity + push to the equity curve whenever `any_fill` is true.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct FlattenOutcome {
+    /// Number of legs that produced a FULL closing fill (reached flat).
+    fully_closed: usize,
+    /// True iff at least one broker close fill (full OR partial) was applied
+    /// to the book, so realized PnL changed and equity must be recomputed.
+    any_fill: bool,
 }
 
 /// Why the live executor is flattening open positions. Shapes the log /

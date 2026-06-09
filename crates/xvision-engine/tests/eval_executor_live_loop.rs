@@ -1185,6 +1185,176 @@ async fn live_cancel_close_rejection_retains_leg_and_warns_without_panicking() {
     );
 }
 
+/// Broker that fills the opening Buy fully, cancels the run, then on the
+/// cancel-close Sell reports a PARTIAL fill (`close_fill_size` < requested
+/// size). The book settles realized PnL on the partial close and retains the
+/// residual leg (recorded as `flat_partial`). Exercises the A2 cancel-close
+/// PARTIAL branch: the equity/equity_curve recompute must fire on ANY close
+/// fill (full OR partial), not only on a full flatten — otherwise the
+/// cancelled run's persisted partial metrics use stale equity that ignores the
+/// realized PnL from the partial close.
+struct PartialCloseOnCancelBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    /// Absolute units the broker actually fills on the close Sell. Must be
+    /// strictly less than the requested size to produce a partial close.
+    close_fill_size: f64,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+}
+
+impl PartialCloseOnCancelBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64, close_fill_size: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            close_fill_size,
+            cancel_hook: Mutex::new(None),
+        })
+    }
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for PartialCloseOnCancelBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        self.submitted.lock().unwrap().push(req.clone());
+        let is_buy = matches!(req.side, Side::Buy);
+        // On the opening Buy, cancel the run so the NEXT loop iteration fires
+        // the cancel-close path while a long is held.
+        if is_buy {
+            let hook = self.cancel_hook.lock().unwrap().clone();
+            if let Some((store, run_id)) = hook {
+                store
+                    .cancel_active(&run_id, "operator cancel mid-run")
+                    .await
+                    .unwrap();
+            }
+        }
+        // Buy fills fully at open price; the close Sell fills only PARTIALLY
+        // (reduced fill_size) so residual exposure remains -> flat_partial.
+        if is_buy {
+            Ok(OrderConfirmation {
+                broker_order_id: format!("recorded-{}", req.idempotency_key),
+                fill_price: Some(self.open_fill_price),
+                fill_size: req.size,
+                fee: None,
+            })
+        } else {
+            Ok(OrderConfirmation {
+                broker_order_id: format!("recorded-{}", req.idempotency_key),
+                fill_price: Some(self.close_fill_price),
+                fill_size: self.close_fill_size,
+                fee: None,
+            })
+        }
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_partial_close_recomputes_equity_from_realized_pnl() {
+    // Bar 1 opens a long (broker fills it fully and cancels the run). Bar 2's
+    // loop-top `is_terminal` check fires the A2 cancel-close path, which
+    // submits a Sell to flatten — but the broker only PARTIALLY fills the
+    // close (residual exposure remains -> `flat_partial`). The partial close
+    // still settles realized PnL on the book.
+    //
+    // REGRESSION: the cancel checkpoint must recompute `equity` + push to
+    // `equity_curve` whenever ANY close fill lands (full OR partial), not only
+    // when a leg fully flattens. With the old `closed > 0` gate a partial
+    // close left `closed == 0`, so the recompute was skipped and the persisted
+    // partial metrics used STALE equity (== initial, 0% return) that ignored
+    // the realized PnL. Assert the persisted metrics reflect the realized PnL.
+    let initial = 100_000.0;
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(initial).await;
+    // Open at 50_000, close higher at 51_000 -> positive realized PnL. Fill
+    // only a tiny sliver (0.001 units) on the close so it stays partial.
+    let broker = PartialCloseOnCancelBroker::new(50_000.0, 51_000.0, 0.001);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // Cancellation still terminates the run (Err on the cancel path).
+    assert!(result.is_err(), "a cancelled run must not complete");
+    assert!(
+        store.is_cancelled(&run.id).await.unwrap(),
+        "the run must end Cancelled",
+    );
+
+    // The broker saw the opening Buy then the cancel-close Sell.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected an opening Buy then a cancel-close Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[1].side, Side::Sell), "cancel flattens with a Sell");
+
+    // The close was PARTIAL: a `flat_partial` row (NOT a full `flat`) is
+    // recorded, carrying the realized PnL from the portion that settled.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let partial_row = decisions
+        .iter()
+        .find(|d| d.action == "flat_partial")
+        .expect("a flat_partial close row must be recorded on the partial cancel-close");
+    let realized = partial_row
+        .pnl_realized
+        .expect("a partial close still settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL even on a partial close, got {realized}",
+    );
+
+    // CRUX: the cancelled run's persisted PARTIAL metrics must reflect the
+    // realized PnL from the partial close — equity was recomputed after the
+    // partial fill, not left stale at the pre-close value. Stale equity would
+    // leave `total_return_pct == 0` (final equity == initial); the realized
+    // gain pushes it positive.
+    let persisted = store.get(&run.id).await.unwrap();
+    let metrics = persisted
+        .metrics
+        .expect("the cancelled run persists partial metrics");
+    assert!(
+        metrics.total_return_pct > 0.0,
+        "partial-close cancel metrics must reflect realized PnL (equity recomputed), \
+         got total_return_pct = {} (stale equity would be ~0)",
+        metrics.total_return_pct,
+    );
+}
+
 #[tokio::test]
 async fn live_loop_surfaces_broker_error_as_run_failure() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
