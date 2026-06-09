@@ -734,6 +734,54 @@ export function quickReplies(scope: ContextScope): string[] {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Tool policy CRUD — /api/chat-rail/tool-policy
+// Mirrors `xvision_engine::api::tool_policy` (EffectiveToolPolicy, KNOWN_TOOLS).
+
+export type ToolClass = "read" | "write" | "dangerous";
+
+export type EffectiveToolPolicy = {
+  tool_name: string;
+  class: ToolClass;
+  enabled: boolean;
+  auto_approve: boolean;
+  is_override: boolean;
+};
+
+export const toolPolicyKeys = {
+  all: () => ["tool-policy"] as const,
+  list: (scope: string) => ["tool-policy", scope] as const,
+};
+
+export function listToolPolicies(scope = "global"): Promise<EffectiveToolPolicy[]> {
+  return apiFetch<EffectiveToolPolicy[]>(
+    `/api/chat-rail/tool-policy/effective?scope=${encodeURIComponent(scope)}`,
+  );
+}
+
+export function setToolPolicy(
+  toolName: string,
+  policy: { enabled: boolean; auto_approve: boolean },
+  scope = "global",
+): Promise<void> {
+  return apiFetch<void>("/api/chat-rail/tool-policy", {
+    method: "PUT",
+    body: JSON.stringify({
+      tool_name: toolName,
+      enabled: policy.enabled,
+      auto_approve: policy.auto_approve,
+      scope,
+    }),
+  });
+}
+
+export function deleteToolPolicy(toolName: string, scope = "global"): Promise<void> {
+  return apiFetch<void>(
+    `/api/chat-rail/tool-policy?tool_name=${encodeURIComponent(toolName)}&scope=${encodeURIComponent(scope)}`,
+    { method: "DELETE" },
+  );
+}
+
 export function placeholder(scope: ContextScope): string {
   switch (scope.scope) {
     case "workspace":

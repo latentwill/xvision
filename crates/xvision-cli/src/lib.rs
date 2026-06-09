@@ -204,6 +204,8 @@ pub enum Command {
     Scenario(commands::scenario::ScenarioCmd),
     /// Manage registered LLM providers in config/default.toml.
     Provider(commands::provider::ProviderCmd),
+    /// Inspect and override the chat-rail tool policy (enabled / auto-approve per tool).
+    ToolPolicy(commands::tool_policy::ToolPolicyCmd),
     /// SQLite-cached historical bars: fetch / ls / rm / gc.
     Bars(commands::bars::BarsCmd),
     /// Apply pending migrations + seed, or report state with --dry-run.
@@ -325,6 +327,7 @@ impl Cli {
             Command::Marketplace(cmd) => commands::marketplace::run(cmd).await,
             Command::Scenario(cmd) => commands::scenario::run(cmd).await,
             Command::Provider(cmd) => commands::provider::run(cmd).await.map_err(Into::into),
+            Command::ToolPolicy(cmd) => commands::tool_policy::run(cmd).await.map_err(Into::into),
             Command::Bars(cmd) => commands::bars::run(cmd).await,
             Command::Migrate(cmd) => commands::migrate::run(cmd).await,
             Command::Agent(cmd) => commands::agent::run(cmd).await,

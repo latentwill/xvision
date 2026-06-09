@@ -21,6 +21,9 @@ import {
   getRunDefaults,
   startRunCycle,
   cancelRunCycle,
+  usePauseCycle,
+  useResumeCycle,
+  useOptimizerStatus,
   useLineageNodes,
   useCycleRuns,
   useCycleRun,
@@ -137,10 +140,16 @@ function LivePageHeader({
   const keptThisWeek = countKeptThisWeek(nodes);
   const totalExperiments = nodes.length;
   const activeLineages = countActiveLineages(nodes);
+  const status = useOptimizerStatus();
+  const sessionState = status?.active_session?.state ?? "idle";
+  const isPaused = sessionState === "paused";
   // F28: cancel an in-flight cycle (stops it before the next candidate).
   const cancelMutation = useMutation({ mutationFn: cancelRunCycle });
+  const pauseMutation = usePauseCycle();
+  const resumeMutation = useResumeCycle();
+  const isInFlight = isRunning || isPaused;
   const headline =
-    isRunning && activeCycleId
+    isInFlight && activeCycleId
       ? `Optimizer run in progress · ${activeCycleId}`
       : "No cycle running";
   return (
@@ -150,8 +159,8 @@ function LivePageHeader({
           <span className="uppercase tracking-[0.22em] text-[9.5px] text-text-3 font-medium">
             Optimizer
           </span>
-          <Pill tone={isRunning ? "gold" : "default"} animated={isRunning}>
-            {isRunning ? "Running" : "Idle"}
+          <Pill tone={isInFlight ? "gold" : "default"} animated={isRunning}>
+            {isPaused ? "Paused" : isRunning ? "Running" : "Idle"}
           </Pill>
         </div>
         <h1 className="text-2xl font-semibold tracking-[-0.025em] text-text">{headline}</h1>
@@ -160,7 +169,27 @@ function LivePageHeader({
         </p>
       </div>
       <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-        {isRunning && activeCycleId && (
+        {isInFlight && activeCycleId && !isPaused && (
+          <button
+            type="button"
+            onClick={() => pauseMutation.mutate(activeCycleId)}
+            disabled={pauseMutation.isPending}
+            className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:bg-surface-elev/40 disabled:opacity-50 transition-colors"
+          >
+            {pauseMutation.isPending ? "Pausing…" : "Pause"}
+          </button>
+        )}
+        {isPaused && activeCycleId && (
+          <button
+            type="button"
+            onClick={() => resumeMutation.mutate(activeCycleId)}
+            disabled={resumeMutation.isPending}
+            className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {resumeMutation.isPending ? "Resuming…" : "Resume"}
+          </button>
+        )}
+        {isInFlight && activeCycleId && (
           <button
             type="button"
             onClick={() => cancelMutation.mutate(activeCycleId)}

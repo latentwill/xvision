@@ -359,6 +359,32 @@ export function useCancelSession() {
   });
 }
 
+/** Pause an in-flight optimizer cycle at its next safe checkpoint. */
+export async function pauseCycle(cycleId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/pause`,
+    { method: "POST" },
+  );
+}
+
+/** Resume a paused optimizer cycle. */
+export async function resumeCycle(cycleId: string): Promise<void> {
+  await apiFetch<unknown>(
+    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/resume`,
+    { method: "POST" },
+  );
+}
+
+/** useMutation hook: pause cycle. */
+export function usePauseCycle() {
+  return useMutation({ mutationFn: (cycleId: string) => pauseCycle(cycleId) });
+}
+
+/** useMutation hook: resume cycle. */
+export function useResumeCycle() {
+  return useMutation({ mutationFn: (cycleId: string) => resumeCycle(cycleId) });
+}
+
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {
@@ -523,6 +549,21 @@ export function useSchedule() {
 export function useUpsertSchedule() {
   return useMutation({
     mutationFn: (req: UpsertScheduleRequest) => upsertSchedule(req),
+  });
+}
+
+export async function deleteSchedule(scheduleId: number): Promise<void> {
+  await apiFetch<void>(
+    `/api/autooptimizer/schedule/${encodeURIComponent(scheduleId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function useDeleteSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (scheduleId: number) => deleteSchedule(scheduleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["optimizer/schedule"] }),
   });
 }
 

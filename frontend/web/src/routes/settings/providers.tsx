@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ResponsiveListCard,
+  useListColumns,
   useListState,
   useListUrlState,
   type FilterDef,
@@ -186,11 +187,11 @@ const PROVIDER_KIND_FILTER: FilterDef = {
 };
 
 const PROVIDER_COLUMNS = [
-  { key: "name", label: "Name" },
-  { key: "kind", label: "Kind" },
-  { key: "base_url", label: "Base URL" },
-  { key: "key", label: "Key", align: "right" as const },
-  { key: "actions", label: "", align: "right" as const },
+  { key: "name",     label: "Name",     essential: true, estWidth: 180 },
+  { key: "kind",     label: "Kind",     priority: 3,     estWidth: 90  },
+  { key: "base_url", label: "Base URL", priority: 2,     estWidth: 200, align: "left" as const },
+  { key: "key",      label: "Key",      priority: 1,     estWidth: 100, align: "right" as const },
+  { key: "actions",  label: "",         essential: true, estWidth: 60,  align: "right" as const },
 ];
 
 export function SettingsProvidersRoute() {
@@ -240,6 +241,7 @@ export function SettingsProvidersRoute() {
     },
   });
   useListUrlState("settings-providers", list);
+  const columnState = useListColumns("settings-providers", PROVIDER_COLUMNS);
 
   return (
     <div className="space-y-5">
@@ -329,6 +331,7 @@ export function SettingsProvidersRoute() {
           clearAll: list.clearAll,
         }}
         columns={PROVIDER_COLUMNS}
+        columnState={columnState}
         rows={list.rows}
         loading={providersQuery.isPending}
         error={

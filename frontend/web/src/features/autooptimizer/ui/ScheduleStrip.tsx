@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSchedule, useUpsertSchedule, type UpsertScheduleRequest } from "../api";
+import { useDeleteSchedule, useSchedule, useUpsertSchedule, type UpsertScheduleRequest } from "../api";
 
 /**
  * ScheduleStrip — compact inline strip for the optimizer's scheduled-run config.
@@ -12,6 +12,7 @@ import { useSchedule, useUpsertSchedule, type UpsertScheduleRequest } from "../a
 export function ScheduleStrip() {
   const { data: schedule } = useSchedule();
   const { mutate: upsertSchedule, isPending } = useUpsertSchedule();
+  const { mutate: deleteSchedule, isPending: isDeleting } = useDeleteSchedule();
 
   const [open, setOpen] = useState(false);
   const [timeLocal, setTimeLocal] = useState("");
@@ -79,6 +80,16 @@ export function ScheduleStrip() {
             className="ml-auto rounded border border-border/60 px-2 py-0.5 text-[11px] text-text-2 hover:bg-surface-elev/40 transition-colors"
           >
             {open ? "Close" : "Edit"}
+          </button>
+
+          {/* Delete button */}
+          <button
+            type="button"
+            onClick={() => deleteSchedule(schedule.id)}
+            disabled={isPending || isDeleting}
+            className="rounded border border-danger/40 px-2 py-0.5 text-[11px] text-danger hover:bg-danger/[0.06] disabled:opacity-40 transition-colors"
+          >
+            {isDeleting ? "Removing…" : "Remove"}
           </button>
         </div>
       ) : (

@@ -410,6 +410,11 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/chat-rail/sessions", get(chat_rail::list_sessions))
         // Phase 2.3: read the persisted three-state tool-policy for a scope.
         .route("/api/chat-rail/tool-policy", get(chat_rail::get_tool_policy))
+        // Effective view — overrides merged with class defaults for all known tools.
+        .route(
+            "/api/chat-rail/tool-policy/effective",
+            get(chat_rail::get_tool_policy_effective),
+        )
         // Phase 2.4: read the per-scope focus.md file.
         .route("/api/chat-rail/focus", get(focus_route::get))
         // Phase 2.5: list a session's checkpoints (newest first).
@@ -676,10 +681,10 @@ fn mutating_router(state: AppState) -> Router {
             "/api/chat-rail/sessions/:id/mode",
             post(chat_rail::set_mode),
         )
-        // Phase 2.3: upsert one tool's three-state policy for a scope.
+        // Phase 2.3: upsert / delete one tool's three-state policy for a scope.
         .route(
             "/api/chat-rail/tool-policy",
-            put(chat_rail::put_tool_policy),
+            put(chat_rail::put_tool_policy).delete(chat_rail::delete_tool_policy),
         )
         // Phase 2.4: save the per-scope focus.md file.
         .route("/api/chat-rail/focus", put(focus_route::put))

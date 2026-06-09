@@ -15,11 +15,12 @@ import {
   useOptimizerStatus,
   useOptimizerStats,
   useSessionList,
-  usePauseSession,
-  useResumeSession,
+  usePauseCycle,
+  useResumeCycle,
   useCancelSession,
   type SessionListItem,
 } from "../api";
+import { useCycleEventStream } from "../hooks/useCycleEventStream";
 
 // ─── State pill helper ────────────────────────────────────────────────────────
 
@@ -84,8 +85,9 @@ function CommandBar({
   const isCancelling = state === "cancelling";
   const isActive = isRunning || isPaused || isCancelling;
 
-  const pauseMutation = usePauseSession();
-  const resumeMutation = useResumeSession();
+  const { activeCycleId } = useCycleEventStream();
+  const pauseMutation = usePauseCycle();
+  const resumeMutation = useResumeCycle();
   const cancelMutation = useCancelSession();
 
   return (
@@ -138,11 +140,11 @@ function CommandBar({
               {launcherOpen ? "Hide launcher" : "Launch run"}
             </button>
           )}
-          {isRunning && session && (
+          {isRunning && activeCycleId && (
             <>
               <button
                 type="button"
-                onClick={() => pauseMutation.mutate(session.session_id)}
+                onClick={() => pauseMutation.mutate(activeCycleId)}
                 disabled={pauseMutation.isPending}
                 className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:bg-surface-elev/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               >
@@ -158,11 +160,11 @@ function CommandBar({
               </button>
             </>
           )}
-          {isPaused && session && (
+          {isPaused && activeCycleId && (
             <>
               <button
                 type="button"
-                onClick={() => resumeMutation.mutate(session.session_id)}
+                onClick={() => resumeMutation.mutate(activeCycleId)}
                 disabled={resumeMutation.isPending}
                 className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
               >

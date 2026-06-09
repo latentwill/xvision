@@ -12,6 +12,7 @@ import {
 } from "@/components/primitives/useServerPagination";
 import {
   ResponsiveListCard,
+  useListColumns,
   useListState,
   useListUrlState,
   type FilterDef,
@@ -200,14 +201,15 @@ export function ScenariosRoute() {
   // column (migration 011) so operators can sort/scan recency at a
   // glance — also a QA item from the same session.
   const desktopColumns = [
-    { key: "name", label: "Name" },
-    { key: "market", label: "Market" },
-    { key: "window", label: "Window" },
-    { key: "created", label: "Created" },
-    { key: "source", label: "Source" },
-    { key: "tags", label: "Tags" },
-    { key: "actions", label: "" },
+    { key: "name",    label: "Name",    essential: true, estWidth: 200 },
+    { key: "market",  label: "Market",  priority: 4,     estWidth: 130 },
+    { key: "window",  label: "Window",  priority: 3,     estWidth: 110 },
+    { key: "created", label: "Created", priority: 1,     estWidth: 100 },
+    { key: "source",  label: "Source",  priority: 2,     estWidth: 100 },
+    { key: "tags",    label: "Tags",    priority: 0,     estWidth: 150 },
+    { key: "actions", label: "",        essential: true, estWidth: 60  },
   ];
+  const columnState = useListColumns("scenarios", desktopColumns);
 
   return (
     <>
@@ -231,6 +233,7 @@ export function ScenariosRoute() {
           clearAll: list.clearAll,
         }}
         columns={desktopColumns}
+        columnState={columnState}
         rows={list.rows}
         loading={q.isPending}
         error={

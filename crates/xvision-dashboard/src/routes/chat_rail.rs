@@ -34,9 +34,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use ulid::Ulid;
 
+use xvision_engine::api::tool_policy::KNOWN_TOOLS;
 use xvision_engine::chat_session::{
-    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope, SessionEventLog, ToolPolicy,
-    ToolPolicyRow, ToolPolicyStore, GLOBAL_SCOPE,
+    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope, SessionEventLog, ToolClass,
+    ToolPolicy, ToolPolicyRow, ToolPolicyStore, GLOBAL_SCOPE,
 };
 use xvision_engine::focus;
 use xvision_observability::{Actor as UnifiedActor, FocusEvent, UnifiedEvent, UnifiedPayload};
@@ -228,6 +229,91 @@ pub async fn put_tool_policy(
         enabled: req.enabled,
         auto_approve: req.auto_approve,
     }))
+}
+
+/// Query params for `DELETE /api/chat-rail/tool-policy`.
+#[derive(Debug, Deserialize)]
+pub struct DeleteToolPolicyQuery {
+    #[serde(default)]
+    pub scope: Option<String>,
+    pub tool_name: String,
+}
+
+/// Effective tool-policy row — override merged with class default.
+#[derive(Debug, Serialize)]
+pub struct EffectiveToolPolicyRow {
+    pub tool_name: &'static str,
+    pub class: &'static str,
+    pub enabled: bool,
+    pub auto_approve: bool,
+    pub is_override: bool,
+}
+
+/// `GET /api/chat-rail/tool-policy/effective?scope=` — full effective-policy
+/// list for all known tools (stored override if present, else class default).
+pub async fn get_tool_policy_effective(
+    State(state): State<AppState>,
+    Query(query): Query<ToolPolicyQuery>,
+) -> Result<Json<Vec<EffectiveToolPolicyRow>>, DashboardError> {
+    let scope = query.scope.as_deref().unwrap_or(GLOBAL_SCOPE);
+    let overrides = ToolPolicyStore::get_policies(&state.pool, scope)
+        .await
+        .map_err(DashboardError::Internal)?;
+    let override_map: std::collections::HashMap<&str, ToolPolicy> = overrides
+        .iter()
+        .map(|r| {
+            (
+                r.tool_name.as_str(),
+                ToolPolicy {
+                    enabled: r.enabled,
+                    auto_approve: r.auto_approve,
+                },
+            )
+        })
+        .collect();
+
+    let rows = KNOWN_TOOLS
+        .iter()
+        .map(|(name, class)| {
+            let default = ToolPolicy::default_for(*class);
+            let policy = override_map.get(*name).copied().unwrap_or(default);
+            let is_override = override_map.contains_key(name)
+                && (policy.enabled != default.enabled
+                    || policy.auto_approve != default.auto_approve);
+            EffectiveToolPolicyRow {
+                tool_name: name,
+                class: match class {
+                    ToolClass::Read => "read",
+                    ToolClass::Write => "write",
+                    ToolClass::Dangerous => "dangerous",
+                },
+                enabled: policy.enabled,
+                auto_approve: policy.auto_approve,
+                is_override,
+            }
+        })
+        .collect();
+    Ok(Json(rows))
+}
+
+/// `DELETE /api/chat-rail/tool-policy?tool_name=<name>[&scope=<scope>]` —
+/// remove a persisted override, reverting the tool to its class default.
+/// No-op if no override exists.
+pub async fn delete_tool_policy(
+    State(state): State<AppState>,
+    Query(query): Query<DeleteToolPolicyQuery>,
+) -> Result<StatusCode, DashboardError> {
+    if query.tool_name.trim().is_empty() {
+        return Err(DashboardError::Validation {
+            field: "tool_name".into(),
+            msg: "tool_name must not be empty".into(),
+        });
+    }
+    let scope = query.scope.as_deref().unwrap_or(GLOBAL_SCOPE);
+    ToolPolicyStore::delete_policy(&state.pool, scope, &query.tool_name)
+        .await
+        .map_err(DashboardError::Internal)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize)]

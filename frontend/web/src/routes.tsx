@@ -38,6 +38,7 @@ const SettingsDangerRoute = lazy(() => import("./routes/settings").then((m) => (
 const SettingsGeneralRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsGeneralRoute })));
 const SettingsProvidersRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsProvidersRoute })));
 const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsSkillsRoute })));
+const SettingsToolPolicyRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsToolPolicyRoute })));
 const SettingsWalletRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsWalletRoute })));
 const SettingsMarketplaceRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsMarketplaceRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
@@ -235,6 +236,7 @@ export const router = createBrowserRouter([
           { path: "skills", element: <Navigate to="/agents/skills" replace /> },
           { path: "wallet", element: page(<SettingsWalletRoute />) },
           { path: "marketplace", element: page(<SettingsMarketplaceRoute />) },
+          { path: "tool-policy", element: page(<SettingsToolPolicyRoute />) },
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },

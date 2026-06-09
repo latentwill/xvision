@@ -18,6 +18,7 @@ import { listStrategies, strategyKeys } from "@/api/strategies";
 import type { RunSummary } from "@/api/types.gen";
 import {
   ResponsiveListCard,
+  useListColumns,
   useListState,
   useListUrlState,
   type FilterDef,
@@ -628,11 +629,11 @@ const RUNS_STATUS_FILTER: FilterDef = {
 };
 
 const RUNS_DESKTOP_COLUMNS = [
-  { key: "run", label: "Run" },
-  { key: "strategy", label: "Strategy" },
-  { key: "mode", label: "Mode" },
-  { key: "status", label: "Status" },
-  { key: "completed", label: "Completed" },
+  { key: "run",       label: "Run",       essential: true, estWidth: 200 },
+  { key: "strategy",  label: "Strategy",  priority: 3,     estWidth: 160 },
+  { key: "mode",      label: "Mode",      priority: 2,     estWidth: 90  },
+  { key: "status",    label: "Status",    essential: true, estWidth: 100 },
+  { key: "completed", label: "Completed", priority: 1,     estWidth: 120 },
 ];
 
 function RunsTab({ scenarioId }: { scenarioId: string }) {
@@ -711,6 +712,7 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
     },
   });
   useListUrlState("scenario-runs", list);
+  const columnState = useListColumns("scenario-runs", RUNS_DESKTOP_COLUMNS);
 
   return (
     <div className="px-3 py-2">
@@ -728,6 +730,7 @@ function RunsTab({ scenarioId }: { scenarioId: string }) {
           clearAll: list.clearAll,
         }}
         columns={RUNS_DESKTOP_COLUMNS}
+        columnState={columnState}
         rows={list.rows}
         loading={runs.isPending}
         error={

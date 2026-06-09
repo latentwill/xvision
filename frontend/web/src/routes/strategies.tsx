@@ -12,6 +12,7 @@ import {
 } from "@/components/primitives/useServerPagination";
 import {
   ResponsiveListCard,
+  useListColumns,
   useListState,
   useListUrlState,
   type FilterDef,
@@ -269,14 +270,15 @@ function StrategiesListView() {
   // falls back to `null` on malformed legacy ids so the column
   // gracefully shows `—` rather than crashing the row.
   const desktopColumns = [
-    { key: "name", label: "Name" },
-    { key: "shape", label: "Shape" },
-    { key: "tags", label: "Tags" },
-    { key: "cadence", label: "Time frame" },
-    { key: "model", label: "Model" },
-    { key: "created", label: "Created" },
-    { key: "actions", label: "" },
+    { key: "name",    label: "Name",       essential: true, estWidth: 200 },
+    { key: "shape",   label: "Shape",      priority: 3,     estWidth: 110 },
+    { key: "tags",    label: "Tags",       priority: 2,     estWidth: 150 },
+    { key: "cadence", label: "Time frame", priority: 1,     estWidth: 100 },
+    { key: "model",   label: "Model",      priority: 2,     estWidth: 140 },
+    { key: "created", label: "Created",    priority: 0,     estWidth: 100 },
+    { key: "actions", label: "",           essential: true, estWidth: 60  },
   ];
+  const columnState = useListColumns("strategies", desktopColumns);
 
   return (
     <>
@@ -311,6 +313,7 @@ function StrategiesListView() {
           clearAll: list.clearAll,
         }}
         columns={desktopColumns}
+        columnState={columnState}
         rows={list.rows}
         loading={q.isPending}
         error={
