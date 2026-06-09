@@ -35,6 +35,25 @@ import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 ///      listing gate) is `Ownable` — the deploy-time admin is the platform
 ///      registrar, the same key that creates listings. The ERC-8004 feedback
 ///      path itself remains permissionless except for the per-listing gate.
+///
+///      TRUST MODEL (deliberate V2-testnet centralization — read before audit):
+///      This contract is NOT trust-minimized. The owner is an operator-held EOA
+///      (the platform registrar), and that key is intentionally privileged:
+///        (a) Admin can unilaterally tombstone ANY rater's feedback via
+///            {revokeFeedback} — not just its own entries — and can re-point or
+///            clear the `agentId → listingId` gate mapping at any time via
+///            {setListingForAgent}. A malicious or compromised owner can
+///            therefore censor honest feedback, or open/close the license gate
+///            on any agent at will. This is an accepted V2-testnet assumption,
+///            not a property to be hardened here; trust-minimizing it (timelock,
+///            multisig, per-rater self-custody of revocation) is deferred.
+///        (b) Ownership is intended to PERSIST. The owner is not meant to renounce.
+///            Renouncing ownership permanently freezes {setLicenseToken} (so the
+///            license token can never be wired if it was not set pre-renounce),
+///            {setListingForAgent} (gates can never be added, re-pointed, or
+///            cleared again), and admin-side {revokeFeedback}. Renounce only with
+///            full awareness that these admin operations become permanently
+///            unavailable.
 contract ReputationRegistry is Ownable {
     struct Feedback {
         address rater;
@@ -80,6 +99,7 @@ contract ReputationRegistry is Ownable {
     event ListingForAgentSet(uint256 indexed agentId, uint256 indexed listingId);
 
     error LicenseTokenAlreadySet();
+    error LicenseTokenNotSet();
     error ZeroAddress();
     error NotLicensed(uint256 agentId, uint256 listingId, address caller);
     error UnknownFeedback(uint256 agentId, uint256 index);
@@ -107,6 +127,15 @@ contract ReputationRegistry is Ownable {
     ///         agent; the registrar calls this when a strategy is listed
     ///         (agent = strategy = listing, AM3). Idempotent / re-pointable by
     ///         the admin (e.g. relisting). `listingId == 0` clears the gate.
+    /// @dev    TRUST MODEL: this is an unrestricted owner power. The platform
+    ///         registrar (an operator EOA) can point any agent's gate at any
+    ///         listing, re-point it, or clear it (`listingId == 0`) at any time,
+    ///         which silently flips that agent's feedback path between gated and
+    ///         permissionless. This centralization is intentional for the
+    ///         V2-testnet deployment and is NOT trust-minimized. Note also that
+    ///         renouncing ownership permanently disables this function, freezing
+    ///         every agent's gate in its last-set state (see the contract-level
+    ///         trust-model note).
     function setListingForAgent(uint256 agentId, uint256 listingId) external onlyOwner {
         _listingForAgent[agentId] = listingId;
         emit ListingForAgentSet(agentId, listingId);
@@ -148,6 +177,11 @@ contract ReputationRegistry is Ownable {
         // Checks: §3.6 license gate (only when a listing is registered).
         uint256 listingId = _listingForAgent[agentId];
         if (listingId != 0) {
+            // Fail closed, but legibly: a gate is active yet no license token is
+            // wired, so the gate cannot be satisfied by anyone. Revert with a
+            // typed error rather than calling `balanceOf` on the zero address
+            // (which would produce an opaque low-level revert).
+            if (address(_licenseToken) == address(0)) revert LicenseTokenNotSet();
             if (_licenseToken.balanceOf(msg.sender, listingId) == 0) {
                 revert NotLicensed(agentId, listingId, msg.sender);
             }
@@ -176,6 +210,14 @@ contract ReputationRegistry is Ownable {
     ///         submitter or the admin. History is preserved (append-only);
     ///         only a flag flips and {FeedbackRevoked} fires so off-chain
     ///         aggregation excludes the entry on next recompute.
+    /// @dev    TRUST MODEL: the admin branch is an unrestricted owner power —
+    ///         the platform registrar (an operator EOA) can tombstone ANY
+    ///         rater's feedback, not only its own, and so can unilaterally
+    ///         censor honest entries. This centralization is intentional for the
+    ///         V2-testnet deployment and is NOT trust-minimized. Renouncing
+    ///         ownership permanently disables the admin branch (see the
+    ///         contract-level trust-model note); the original submitter can
+    ///         always still revoke their own.
     function revokeFeedback(uint256 agentId, uint256 index) external {
         Feedback[] storage log = _feedback[agentId];
         if (index >= log.length) revert UnknownFeedback(agentId, index);
@@ -227,8 +269,12 @@ contract ReputationRegistry is Ownable {
     }
 
     /// @notice True if entry `index` for `agentId` has been revoked (§3.7).
+    /// @dev    Reverts {UnknownFeedback} for an out-of-range index (parity with
+    ///         {revokeFeedback}) rather than surfacing a raw array OOB panic.
     function isTombstoned(uint256 agentId, uint256 index) external view returns (bool) {
-        return _feedback[agentId][index].tombstoned;
+        Feedback[] storage log = _feedback[agentId];
+        if (index >= log.length) revert UnknownFeedback(agentId, index);
+        return log[index].tombstoned;
     }
 
     /// @notice Number of feedback entries posted for `agentId` (incl. tombstoned).

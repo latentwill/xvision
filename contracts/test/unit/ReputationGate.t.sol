@@ -144,6 +144,60 @@ contract ReputationGateTest is BaseTest {
         reputation.revokeFeedback(agentId, 0);
     }
 
+    /// isTombstoned of an out-of-range index reverts UnknownFeedback (M2 —
+    /// parity with revokeFeedback) rather than a raw array-OOB panic.
+    function test_isTombstoned_badIndex_reverts() public {
+        // No feedback posted for `agentId` yet → index 0 is out of range.
+        vm.expectRevert(abi.encodeWithSelector(ReputationRegistry.UnknownFeedback.selector, agentId, uint256(0)));
+        reputation.isTombstoned(agentId, 0);
+
+        // After one entry, index 1 is still out of range.
+        uint256 fid = _seedBuyerFeedback();
+        assertEq(fid, 0);
+        vm.expectRevert(abi.encodeWithSelector(ReputationRegistry.UnknownFeedback.selector, agentId, uint256(1)));
+        reputation.isTombstoned(agentId, 1);
+    }
+
+    // ---- fail-closed when gate active but license token unwired (M1) ---
+
+    /// A gated agent whose registry has NO license token wired must fail
+    /// CLOSED with a typed {LicenseTokenNotSet} error — not an opaque
+    /// low-level revert from calling balanceOf on the zero address.
+    function test_giveFeedback_gateActive_licenseTokenUnset_reverts() public {
+        // Fresh registry, admin == this, but setLicenseToken is never called.
+        ReputationRegistry rep = new ReputationRegistry(address(this));
+        assertEq(rep.licenseToken(), address(0), "license token deliberately unwired");
+
+        // Activate the gate for `agentId` -> a non-zero listing.
+        rep.setListingForAgent(agentId, listingId);
+
+        // Even a would-be license holder cannot satisfy a gate with no token.
+        vm.prank(buyer);
+        vm.expectRevert(ReputationRegistry.LicenseTokenNotSet.selector);
+        rep.giveFeedback(agentId, int128(1), 0, "tradingYield", "", "", "ipfs://z", keccak256("z"));
+
+        // Ungated agents on the same registry stay permissionless (no token read).
+        vm.prank(buyer);
+        uint256 fid = rep.giveFeedback(424242, int128(1), 6, "xvision", "", "", "ipfs://u", keccak256("u"));
+        assertEq(fid, 0);
+        assertEq(rep.getFeedbackCount(424242), 1);
+    }
+
+    // ---- sybil / self-rate gate (M3) -----------------------------------
+
+    /// The agent owner / seller holds the identity NFT but, with the default
+    /// soulbound license, never bought a license for their own listing — so
+    /// they are gated OUT of rating their own listing with {NotLicensed}.
+    function test_giveFeedback_sellerWithoutLicense_reverts() public {
+        // seller minted the lineage NFT and created the listing in setUp, but
+        // has purchased no license -> holds zero balance for listingId.
+        assertEq(license.balanceOf(seller, listingId), 0, "seller holds no license");
+
+        vm.prank(seller);
+        vm.expectRevert(abi.encodeWithSelector(ReputationRegistry.NotLicensed.selector, agentId, listingId, seller));
+        reputation.giveFeedback(agentId, int128(100), 0, "tradingYield", "", "", "ipfs://self", keccak256("self"));
+    }
+
     // ---- access control on wiring -------------------------------------
 
     function test_setListingForAgent_onlyOwner() public {
