@@ -165,6 +165,12 @@ impl IdentityClient {
         holds_license: bool,
         signer: &PrivateKeySigner,
     ) -> Result<(AttestationDecision, Option<TxHash>), IdentityError> {
+        // Registries are always present here: an `IdentityClient` embeds resolved
+        // addresses at construction. The pre-deploy no-op (`NotConfigured`) is
+        // enforced UPSTREAM — the engine only builds/calls the client when
+        // `RegistryAddresses::mantle_testnet()` is `Some` — so inside this method
+        // the gate collapses to license-only. The `NotConfigured` arm is still
+        // exercised by `decide_submission`'s engine-side callers + unit tests.
         let decision = decide_submission(Some(self.addresses_ref()), holds_license, verdict_value);
         match decision {
             AttestationDecision::Submit { value } => {

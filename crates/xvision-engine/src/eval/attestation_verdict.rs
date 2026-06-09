@@ -337,6 +337,18 @@ mod tests {
         assert_eq!(verdict(-2.0, -1.0).label, VerdictLabel::Rejects);
     }
 
+    #[test]
+    fn nonfinite_live_sharpe_fails_safe_to_rejects() {
+        // Defense-in-depth: a NaN/Inf live sharpe must never produce a
+        // non-Rejects on-chain verdict. All band comparisons are false for
+        // NaN, so the function falls through to the safest verdict (0).
+        // `sharpe_from_returns` already guards this, but pin the fail-safe
+        // here so a future reorder of the comparisons can't regress it.
+        assert_eq!(verdict(f64::NAN, 2.0).label, VerdictLabel::Rejects);
+        assert_eq!(verdict(f64::INFINITY, 2.0).label, VerdictLabel::Endorses);
+        assert_eq!(verdict(f64::NEG_INFINITY, 2.0).label, VerdictLabel::Rejects);
+    }
+
     // ---- monotonicity: better live never yields a worse verdict ----------
 
     #[test]
