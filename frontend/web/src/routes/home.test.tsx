@@ -239,24 +239,28 @@ describe("HomeRoute", () => {
       expect(document.querySelector('[data-testid="nag-strip"]')).not.toBeNull();
     });
 
+    const outcomeStrip = document.querySelector('[data-testid="home-outcome-strip"]');
     const activeTasksStrip = document.querySelector('[data-testid="active-tasks-strip"]');
     const criticalFindingsRow = document.querySelector('[data-testid="critical-findings-row"]');
     const strategyOutcomesSummary = document.querySelector('[data-testid="strategy-outcomes-summary"]');
     const nagStrip = document.querySelector('[data-testid="nag-strip"]');
 
+    expect(outcomeStrip).not.toBeNull();
     expect(activeTasksStrip).not.toBeNull();
     expect(criticalFindingsRow).not.toBeNull();
     expect(strategyOutcomesSummary).not.toBeNull();
     expect(nagStrip).not.toBeNull();
 
-    // Verify DOM order: NagStrip is last
+    // Verify DOM order: outcome strip first, NagStrip last
     const container = activeTasksStrip!.parentElement!;
     const children = Array.from(container.children);
+    const idxOutcomeStrip = children.indexOf(outcomeStrip as Element);
     const idxActive = children.indexOf(activeTasksStrip as Element);
     const idxCritical = children.indexOf(criticalFindingsRow as Element);
     const idxOutcomes = children.indexOf(strategyOutcomesSummary as Element);
     const idxNag = children.indexOf(nagStrip as Element);
 
+    expect(idxOutcomeStrip).toBeLessThan(idxActive);
     expect(idxActive).toBeLessThan(idxCritical);
     expect(idxCritical).toBeLessThan(idxOutcomes);
     expect(idxOutcomes).toBeLessThan(idxNag);

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
+import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
 import { ActiveTasksStrip } from "@/components/home/ActiveTasksStrip";
 import { evalKeys, listRuns } from "@/api/eval";
 import { chartKeys, getRunChart } from "@/api/chart";
@@ -76,6 +77,7 @@ export function HomeRoute() {
 
       <div className="space-y-5">
         <SafetyPauseBanner />
+        <HomeOutcomeStrip strategies={strategies.data ?? []} runs={runs.data ?? []} />
         <ActiveTasksStrip />
         <OptimizerDigestStrip />
         <CriticalFindingsRow runs={runs.data ?? []} />
