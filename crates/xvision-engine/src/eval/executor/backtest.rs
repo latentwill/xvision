@@ -4781,7 +4781,9 @@ mod live_shell_tests {
 #[cfg(test)]
 mod mark_to_market_tests {
     use crate::eval::executor::book::PortfolioBook;
-    use xvision_core::trading::AssetSymbol::Btc;
+    use xvision_core::trading::AssetSymbol;
+    #[allow(non_upper_case_globals)]
+    const Btc: AssetSymbol = AssetSymbol::Btc;
 
     #[test]
     fn mark_to_market_adds_to_win_count() {

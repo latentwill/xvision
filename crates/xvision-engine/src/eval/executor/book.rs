@@ -111,7 +111,11 @@ impl PortfolioBook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xvision_core::trading::AssetSymbol::{Btc, Eth};
+    use xvision_core::trading::AssetSymbol;
+    #[allow(non_upper_case_globals)]
+    const Btc: AssetSymbol = AssetSymbol::Btc;
+    #[allow(non_upper_case_globals)]
+    const Eth: AssetSymbol = AssetSymbol::Eth;
 
     #[test]
     fn equity_sums_pooled_realized_plus_per_asset_marks() {
