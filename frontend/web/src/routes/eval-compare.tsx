@@ -39,6 +39,10 @@ const CURVE_PALETTE = [
   { stroke: "var(--danger)", label: "danger" },
 ] as const;
 
+// Non-color identifier (A, B, C, …) so runs stay distinguishable without
+// relying on the palette color alone (colorblind accessibility).
+const runLetter = (i: number) => String.fromCharCode(65 + (Math.max(0, i) % 26));
+
 export function EvalCompareRoute() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -284,10 +288,12 @@ function MetricsTable({
               >
                 <td className="py-2.5 px-5">
                   <span
-                    className="inline-block w-2 h-2 rounded-full mr-2"
-                    style={{ background: color }}
-                    aria-hidden
-                  />
+                    className="mr-2 inline-flex h-4 w-4 items-center justify-center rounded-full border text-[9px] font-bold leading-none align-middle"
+                    style={{ borderColor: color, color }}
+                    aria-label={`Run ${runLetter(originalIdx)}`}
+                  >
+                    {runLetter(originalIdx)}
+                  </span>
                   <Link
                     to={`/eval-runs/${encodeURIComponent(r.id)}`}
                     className="text-text hover:underline"
@@ -391,10 +397,12 @@ function FindingsTable({
             >
               <td className="py-2.5 px-5">
                 <span
-                  className="inline-block w-2 h-2 rounded-full mr-2"
-                  style={{ background: color }}
-                  aria-hidden
-                />
+                  className="mr-2 inline-flex h-4 w-4 items-center justify-center rounded-full border text-[9px] font-bold leading-none align-middle"
+                  style={{ borderColor: color, color }}
+                  aria-label={`Run ${runLetter(idx)}`}
+                >
+                  {runLetter(idx)}
+                </span>
                 <Link
                   to={`/eval-runs/${encodeURIComponent(f.run_id)}`}
                   className="text-text hover:underline text-[12px]"

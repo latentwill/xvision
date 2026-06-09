@@ -563,16 +563,8 @@ function DesktopRow({
 }) {
   return (
     <tr
-      role="link"
-      tabIndex={0}
       onClick={() => onGo(row.id)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onGo(row.id);
-        }
-      }}
-      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
     >
       <td
         className="w-8 py-3 pl-5 pr-2"
@@ -592,9 +584,13 @@ function DesktopRow({
         />
       </td>
       <td className="px-3 py-3">
-        <div className="text-[11px] text-text-2">
+        <Link
+          to={`/eval-runs/${row.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="text-[11px] text-text-2 hover:underline"
+        >
           {evalRunDisambiguator(row, allRows)}
-        </div>
+        </Link>
         <div
           className="mt-0.5 font-mono text-[11px] text-text-3 break-all select-all"
           aria-label={`Run id ${row.id}`}
@@ -859,11 +855,14 @@ function StartEvalPanel({
           </div>
 
           <div>
-            <label className="block text-[12px] text-text-2 mb-1">
+            <label
+              htmlFor="eval-start-strategy"
+              className="block text-[12px] text-text-2 mb-1"
+            >
               Strategy
             </label>
             <select
-              aria-label="Strategy"
+              id="eval-start-strategy"
               value={agentId}
               onChange={(e) => {
                 setAgentId(e.target.value);
@@ -887,11 +886,14 @@ function StartEvalPanel({
           </div>
 
           <div>
-            <label className="block text-[12px] text-text-2 mb-1">
+            <label
+              htmlFor="eval-start-scenario"
+              className="block text-[12px] text-text-2 mb-1"
+            >
               Scenario
             </label>
             <select
-              aria-label="Scenario"
+              id="eval-start-scenario"
               value={scenarioId}
               onChange={(e) => {
                 setScenarioId(e.target.value);

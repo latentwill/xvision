@@ -401,3 +401,36 @@
     }
   }
 }
+
+/*
+ * Global keyboard focus ring. Kept at top level (outside @layer) so it beats
+ * Tailwind's layered `focus:outline-none` utilities in the cascade without
+ * needing !important (unlayered styles win over layered ones). Scoped to
+ * :focus-visible, so it only appears for keyboard / programmatic focus —
+ * mouse clicks stay clean and the existing `focus:border-*` input treatments
+ * are unaffected. The 2px offset lifts the ring into the surrounding surface
+ * so it stays visible even on accent-colored controls.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/*
+ * Global reduced-motion safeguard. Users who request reduced motion at the OS
+ * level get near-instant animations/transitions everywhere, including Tailwind
+ * `transition-*` / `animate-*` utilities and `active:scale-*` flashes. Kept at
+ * top level (outside @layer) so the !important resets reliably win the cascade.
+ * Component-scoped reduced-motion blocks above remain as explicit documentation
+ * of the loudest animations; this is the catch-all.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

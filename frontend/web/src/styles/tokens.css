@@ -9,6 +9,9 @@
  */
 
 :root {
+  /* Keyboard focus indicator — interactive chrome, tracks --accent so it
+     re-themes automatically (var() resolves --accent per active data-theme). */
+  --focus-ring: var(--accent);
   --bg: #070809;
   --surface-sidebar: #070809;
   --surface-card: #111318;

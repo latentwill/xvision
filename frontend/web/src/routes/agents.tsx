@@ -273,19 +273,17 @@ function DesktopRow({
   );
   return (
     <tr
-      role="link"
-      tabIndex={0}
       onClick={() => onGo(row.agent_id)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onGo(row.agent_id);
-        }
-      }}
-      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
     >
       <td className="px-5 py-3">
-        <div className="font-medium text-text">{row.name}</div>
+        <Link
+          to={`/agents/${encodeURIComponent(row.agent_id)}`}
+          onClick={(e) => e.stopPropagation()}
+          className="block font-medium text-text hover:underline"
+        >
+          {row.name}
+        </Link>
         {row.description ? (
           <div className="text-text-3 text-[12px] mt-0.5 line-clamp-1">
             {row.description}

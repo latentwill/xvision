@@ -176,6 +176,10 @@ export function ActivityFeed({ sessionId, maxRows = 200 }: ActivityFeedProps) {
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label="Optimizer activity"
         className="max-h-80 overflow-y-auto rounded-md border border-border bg-surface-card"
       >
         {rows.length === 0 ? (

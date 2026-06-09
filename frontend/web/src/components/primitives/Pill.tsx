@@ -14,20 +14,24 @@ const TONE_CLASSES: Record<Tone, string> = {
 export function Pill({
   tone = "default",
   animated = false,
+  disabled = false,
   children,
   className = "",
   ...rest
 }: {
   tone?: Tone;
   animated?: boolean;
+  disabled?: boolean;
   children: ReactNode;
 } & HTMLAttributes<HTMLSpanElement>) {
   const animatedClass = animated ? "xvn-pill-animated" : "";
+  const disabledClass = disabled ? "opacity-40 pointer-events-none" : "";
   const busy = animated ? { "aria-busy": true as const } : undefined;
   return (
     <span
       data-running={animated || undefined}
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[11px] tracking-wide whitespace-nowrap border ${TONE_CLASSES[tone]} ${animatedClass} ${className}`}
+      aria-disabled={disabled || undefined}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-[11px] tracking-wide whitespace-nowrap border ${TONE_CLASSES[tone]} ${animatedClass} ${disabledClass} ${className}`}
       {...busy}
       {...rest}
     >
