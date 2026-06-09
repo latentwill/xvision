@@ -38,6 +38,7 @@ use xvision_dspy::signatures::signature_for;
 use xvision_dspy::snapshot::{signature_hash, OptimizationSnapshot, SnapshotDemo};
 use xvision_dspy::{Capability as DspyCapability, OptimizerError};
 
+use xvision_engine::agents::AgentStore;
 use xvision_engine::api::optimize::{MemoryDemoOptimizeRequest, OptimizationGateRequest};
 use xvision_engine::api::{memory, optimize as memory_optimize, Actor, ApiContext};
 use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
@@ -514,7 +515,20 @@ async fn run_optimize(args: RunArgs) -> CliResult<()> {
     }
 
     // Open the store (exit 15 on DB failure).
-    let store = open_store(args.xvn_home.clone()).await?;
+    let ctx = open_api_context(args.xvn_home.clone(), XvnExit::OptPersistence).await?;
+    let store = OptimizationStore::new(ctx.db.clone());
+
+    // For capability=trader or filter, use the agent's actual slot system_prompt as
+    // the base instruction. The generic signature doc-comment is a placeholder;
+    // the strategy-specific content lives in the slot's system_prompt. Falls back
+    // to the signature instruction when the agent/slot isn't in the DB (e.g. tests).
+    let base_instruction = load_slot_prompt(cap, &args.agent, &args.slot, ctx.db.clone())
+        .await
+        .unwrap_or_else(|| {
+            signature_for(cap)
+                .map(|s| s.instruction().to_string())
+                .unwrap_or_default()
+        });
 
     // Persist the run header (the reproduction recipe).
     let optimizer_version = format!("dspy-rs-{}", env!("CARGO_PKG_VERSION"));
@@ -551,9 +565,6 @@ async fn run_optimize(args: RunArgs) -> CliResult<()> {
     // (seeded by rng_seed so the same inputs yield the same search), score each
     // deterministically, and select the winner. No network — this is the
     // DeterministicTestModel-equivalent path: a pure function of the inputs.
-    let base_instruction = signature_for(cap)
-        .map(|s| s.instruction().to_string())
-        .unwrap_or_default();
     let rounds = args.max_rounds.max(1);
     let mut best_index: i64 = 0;
     let mut best_score = f64::NEG_INFINITY;
@@ -1080,6 +1091,26 @@ fn read_manual_csv_ids(path: Option<&PathBuf>) -> CliResult<Option<Vec<String>>>
 // ---------------------------------------------------------------------------
 // shared helpers
 // ---------------------------------------------------------------------------
+
+/// Load the system_prompt of `slot_name` from agent `agent_id`.
+/// Returns `Some(prompt)` only for capabilities that benefit from prompt-level
+/// optimization (Trader, Filter) when the agent and slot both exist and the
+/// system_prompt is non-empty. Returns `None` for other capabilities or when
+/// the agent/slot is absent — the caller falls back to the signature instruction.
+async fn load_slot_prompt(
+    cap: DspyCapability,
+    agent_id: &str,
+    slot_name: &str,
+    pool: sqlx::SqlitePool,
+) -> Option<String> {
+    if !matches!(cap, DspyCapability::Trader | DspyCapability::Filter) {
+        return None;
+    }
+    let agent_store = AgentStore::new(pool);
+    let agent = agent_store.get(agent_id).await.ok()??;
+    let slot = agent.slots.into_iter().find(|s| s.name == slot_name)?;
+    (!slot.system_prompt.is_empty()).then_some(slot.system_prompt)
+}
 
 /// Open the optimization store against the resolved XVN home. Store open failure
 /// is a persistence failure (exit 15).

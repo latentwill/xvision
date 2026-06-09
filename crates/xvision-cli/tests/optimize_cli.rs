@@ -208,6 +208,89 @@ fn run_persists_and_is_inspectable_deterministically() {
     assert_eq!(code(&out), 0, "stderr: {}", String::from_utf8_lossy(&out.stderr));
 }
 
+/// When the agent exists in the DB and has a non-empty system_prompt on the
+/// target slot, the optimizer uses that prompt as the base instruction rather
+/// than the generic signature doc-comment. This is the core fix for the MIPRO
+/// wiring bug: the optimizer was mutating "You are a disciplined systematic
+/// trader…" (a thin wrapper) instead of the real strategy-specific prompt.
+#[test]
+fn trader_slot_prompt_used_as_base_instruction() {
+    let home = tempdir().unwrap();
+    let corpus = write_corpus(home.path());
+
+    // Create a real agent with a specific system_prompt. The slot name is "main"
+    // (fixed by `xvn agent create`). We'll optimize over that slot.
+    let strategy_prompt = "VWAP fade strategy: enter short when price is 0.8% above VWAP \
+                           and RSI > 68. Size 0.5× budget. Exit on VWAP touch or +2% adverse.";
+    let out = xvn(
+        &[
+            "agent",
+            "create",
+            "--name",
+            "vwap-fade-trader",
+            "--provider",
+            "mock",
+            "--model",
+            "mock",
+            "--system-prompt",
+            strategy_prompt,
+        ],
+        home.path(),
+    );
+    assert_eq!(code(&out), 0, "agent create failed: {}", String::from_utf8_lossy(&out.stderr));
+    let agent_json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("agent JSON");
+    let agent_id = agent_json["agent_id"].as_str().expect("agent_id");
+
+    let out = xvn(
+        &[
+            "optimize",
+            "run",
+            "--agent",
+            agent_id,
+            "--slot",
+            "main",
+            "--capability",
+            "trader",
+            "--corpus",
+            &corpus,
+            "--optimizer",
+            "mipro",
+            "--metric",
+            "delta_sharpe",
+            "--rng-seed",
+            "42",
+            "--max-rounds",
+            "2",
+            "--json",
+        ],
+        home.path(),
+    );
+    assert_eq!(code(&out), 0, "optimize run failed: {}", String::from_utf8_lossy(&out.stderr));
+    let run_json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("run JSON");
+    let run_id = run_json["run_id"].as_str().unwrap();
+
+    // Inspect the candidates: every instruction must be based on the real
+    // strategy prompt, NOT the generic "You are a disciplined systematic trader…"
+    let out = xvn(&["optimize", "inspect", "--run", run_id, "--json"], home.path());
+    assert_eq!(code(&out), 0, "inspect failed: {}", String::from_utf8_lossy(&out.stderr));
+    let insp: serde_json::Value = serde_json::from_slice(&out.stdout).expect("inspect JSON");
+    let candidates = insp["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 2, "expected 2 rounds");
+    for candidate in candidates {
+        let instruction = candidate["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("VWAP fade strategy"),
+            "candidate instruction must be based on the agent's real prompt, \
+             not the generic signature doc-comment. instruction={instruction}"
+        );
+        assert!(
+            !instruction.contains("You are a disciplined systematic trader"),
+            "generic placeholder must NOT appear when the slot has a real prompt. \
+             instruction={instruction}"
+        );
+    }
+}
+
 /// Determinism: same seed + same corpus ⇒ same selected candidate index +
 /// snapshot instruction (modulo the random snapshot id/run id).
 #[test]
