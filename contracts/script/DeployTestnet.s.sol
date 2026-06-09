@@ -62,7 +62,13 @@ contract DeployTestnet is Script {
         // 1-3. Immutable ERC-8004 registries (no proxy), via the factory so
         //      their addresses are deterministic too.
         d.identityRegistry = _via(factory, _salt("IdentityRegistry"), type(IdentityRegistry).creationCode);
-        d.reputationRegistry = _via(factory, _salt("ReputationRegistry"), type(ReputationRegistry).creationCode);
+        // ReputationRegistry now takes an `admin` (registrar) constructor arg for
+        // the §3.6 license-gate wiring — append it to the creation code.
+        d.reputationRegistry = _via(
+            factory,
+            _salt("ReputationRegistry"),
+            abi.encodePacked(type(ReputationRegistry).creationCode, abi.encode(operator))
+        );
         d.validationRegistry = _via(factory, _salt("ValidationRegistry"), type(ValidationRegistry).creationCode);
 
         // 5. LicenseToken (UUPS) — init(admin, uri). Minter set empty.
@@ -103,6 +109,10 @@ contract DeployTestnet is Script {
         LicenseToken(d.licenseToken).setAuthorized(d.marketplace, true);
         LicenseToken(d.licenseToken).setListingRegistry(d.listingRegistry);
         ListingRegistry(d.listingRegistry).setMarketplace(d.marketplace);
+        // §3.6: wire the LicenseToken into the ReputationRegistry so per-listing
+        // feedback gates can read `balanceOf`. Per-agent gates are registered at
+        // runtime by the operator when a strategy is listed (setListingForAgent).
+        ReputationRegistry(d.reputationRegistry).setLicenseToken(d.licenseToken);
 
         vm.stopBroadcast();
 

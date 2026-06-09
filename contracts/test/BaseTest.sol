@@ -34,9 +34,10 @@ abstract contract BaseTest is Test {
     uint16 internal constant INITIAL_FEE_BPS = 500; // 5%
 
     function setUp() public virtual {
-        // 1-3. Immutable ERC-8004 registries (no proxy).
+        // 1-3. Immutable ERC-8004 registries (no proxy). ReputationRegistry
+        // takes an admin (registrar) for the §3.6 license-gate wiring.
         identity = new IdentityRegistry();
-        reputation = new ReputationRegistry();
+        reputation = new ReputationRegistry(admin);
         validation = new ValidationRegistry();
 
         usdc = new MockUSDC();
@@ -77,6 +78,11 @@ abstract contract BaseTest is Test {
         license.setAuthorized(address(market), true);
         license.setListingRegistry(address(listings));
         listings.setMarketplace(address(market));
+
+        // Wire the LicenseToken into the ReputationRegistry so the §3.6
+        // license gate can read `balanceOf(client, listingId)`. Per-agent
+        // gate mappings (`setListingForAgent`) are registered per listing.
+        reputation.setLicenseToken(address(license));
     }
 
     // -----------------------------------------------------------------------
