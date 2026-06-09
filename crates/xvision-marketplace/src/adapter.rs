@@ -338,6 +338,19 @@ impl AnchorDriver for Erc8004MantleDriver {
     /// otherwise the direct `buy` path. The license token id is read from the
     /// `Sold(…)` event; by spec it equals `listing_id`.
     async fn buy_listing(&self, req: BuyRequest) -> Result<SaleReceipt, MarketplaceError> {
+        // Contract invariant (finding M-2): `buyWithAuthorization` reverts with
+        // `RecipientMustBePayer()` when `recipient != auth.from`. Fail fast in
+        // Rust — before any network/provider work — so we never build or send a
+        // tx the contract is guaranteed to revert.
+        if let Some(auth) = req.authorization.as_ref() {
+            if req.recipient != auth.from {
+                return Err(MarketplaceError::Contract(
+                    "buyWithAuthorization recipient must equal the authorization payer (auth.from)"
+                        .into(),
+                ));
+            }
+        }
+
         let marketplace = require_addr(self.addresses.marketplace, "marketplace address")?;
         let provider = self.wallet_provider().await?;
         let contract = IMarketplace::new(marketplace, &provider);
@@ -659,6 +672,94 @@ mod tests {
         );
         let err = d.revoke_listing(U256::from(1u64)).await.unwrap_err();
         assert!(matches!(err, MarketplaceError::NotConfigured(_)), "{err:?}");
+    }
+
+    // --- recipient == auth.from guard (contract finding M-2) ----------------
+
+    fn dummy_authorization(from: Address) -> TransferAuthorization {
+        TransferAuthorization {
+            from,
+            to: nonzero_addr(0x12), // marketplace
+            value: U256::from(15_000_000u64),
+            valid_after: U256::ZERO,
+            valid_before: U256::MAX,
+            nonce: keccak256(b"nonce"),
+            v: 27,
+            r: keccak256(b"r"),
+            s: keccak256(b"s"),
+        }
+    }
+
+    /// When an authorization is present, `recipient` must equal `auth.from`
+    /// (the contract reverts `RecipientMustBePayer()` otherwise). The driver
+    /// must reject this in Rust *before* touching the network — note the rpc
+    /// url is unroutable, so reaching `wallet_provider` would surface an `Rpc`
+    /// error instead of the `Contract` guard error we assert here.
+    #[tokio::test]
+    async fn buy_with_auth_recipient_mismatch_is_rejected_without_send() {
+        let payer = nonzero_addr(0xAA);
+        let other_recipient = nonzero_addr(0xBB);
+        assert_ne!(payer, other_recipient);
+
+        let d = Erc8004MantleDriver::with_signer(
+            configured_addresses(),
+            "http://127.0.0.1:1", // unroutable: any send/connect would fail loudly
+            31337,
+            test_signer(),
+        );
+
+        let err = d
+            .buy_listing(BuyRequest {
+                listing_id: U256::from(1u64),
+                recipient: other_recipient,
+                authorization: Some(dummy_authorization(payer)),
+            })
+            .await
+            .unwrap_err();
+
+        match err {
+            MarketplaceError::Contract(msg) => {
+                assert!(
+                    msg.contains("recipient must equal the authorization payer"),
+                    "unexpected message: {msg}"
+                );
+            }
+            other => panic!("expected Contract guard error, got {other:?}"),
+        }
+    }
+
+    /// Matching recipient/payer passes the Rust-side guard and proceeds to the
+    /// network layer; against an unroutable rpc that surfaces as an `Rpc` (or
+    /// `Contract`) error — crucially NOT the recipient-guard `Contract`
+    /// message, proving the guard let it through.
+    #[tokio::test]
+    async fn buy_with_auth_recipient_match_passes_guard() {
+        let payer = nonzero_addr(0xAA);
+
+        let d = Erc8004MantleDriver::with_signer(
+            configured_addresses(),
+            "http://127.0.0.1:1",
+            31337,
+            test_signer(),
+        );
+
+        let err = d
+            .buy_listing(BuyRequest {
+                listing_id: U256::from(1u64),
+                recipient: payer,
+                authorization: Some(dummy_authorization(payer)),
+            })
+            .await
+            .unwrap_err();
+
+        // Must have moved past the guard: the only Contract error allowed here
+        // is a downstream send/decode failure, never the recipient-guard text.
+        if let MarketplaceError::Contract(msg) = &err {
+            assert!(
+                !msg.contains("recipient must equal the authorization payer"),
+                "guard fired on a matching recipient: {msg}"
+            );
+        }
     }
 
     // --- price width guard --------------------------------------------------

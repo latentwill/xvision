@@ -4,6 +4,8 @@
 //! driver lands in V3 (direction doc §8.10); keeping storage behind this trait
 //! makes that swap mechanical (nav-doc open question C7).
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde::Deserialize;
 
@@ -13,6 +15,9 @@ use crate::error::MarketplaceError;
 const DEFAULT_PINATA_API: &str = "https://api.pinata.cloud";
 /// Default public gateway base (overridable for tests / dedicated gateways).
 const DEFAULT_GATEWAY: &str = "https://gateway.pinata.cloud";
+/// HTTP timeout for Pinata pin/gateway requests. Without it a hung connection
+/// to Pinata or the gateway would block a `put`/`get` future forever.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Content-addressed storage for listing metadata and sealed bundles.
 #[async_trait]
@@ -64,11 +69,19 @@ impl PinataDriver {
         } else {
             gateway
         };
+        // A configured timeout keeps a hung Pinata/gateway connection from
+        // blocking forever. The builder only fails on TLS/system-resource
+        // issues; fall back to the default client so construction stays
+        // infallible (the timeout is a robustness bound, not a hard invariant).
+        let client = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             jwt: jwt.into(),
             gateway: gateway.trim_end_matches('/').to_string(),
             api_base: api_base.into().trim_end_matches('/').to_string(),
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
