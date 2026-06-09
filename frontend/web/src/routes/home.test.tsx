@@ -273,11 +273,11 @@ describe("HomeRoute", () => {
     vi.mocked(useOptimizerStatus).mockReturnValue(undefined);
   });
 
-  // S1-W2: Topbar subtitle updated
-  it("shows cockpit subtitle in topbar", async () => {
+  // S1-W2: Topbar subtitle shows strategy count
+  it("shows strategy count subtitle in topbar", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
-    expect(screen.getByText(/cockpit/)).toBeInTheDocument();
+    expect(screen.getByText(/strategies/)).toBeInTheDocument();
   });
 
   // Reachability gate: the OptimizerDigestStrip must actually be MOUNTED on the

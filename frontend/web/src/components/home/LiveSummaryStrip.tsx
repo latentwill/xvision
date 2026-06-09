@@ -1,9 +1,9 @@
 // frontend/web/src/components/home/LiveSummaryStrip.tsx
 //
 // Compact home-page summary strip for live trading (spec §2.10). Replaces the
-// old per-run LiveStrategiesSection list — the full cockpit lives at /live only.
+// old per-run LiveStrategiesSection list — the full console lives at /live only.
 //
-// The strip gives an at-a-glance status and a single route into the cockpit:
+// The strip gives an at-a-glance status and a single route into the live page:
 //   - count of ACTIVE (running, not paused) live strategies
 //   - count of PAUSED strategies (shown only when > 0)
 //   - a "Go to Live Trading →" CTA to /live
@@ -14,7 +14,7 @@
 // chart fetch PER live run (see features/live/live-account.ts::dailyPnl), which
 // is over-fetching for a home strip. The spec qualifies the metric as
 // "(if available)" — it is not cheaply available here, so we omit it rather
-// than fake a number. PnL lives in the cockpit at /live.
+// than fake a number. PnL lives in the live page at /live.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -81,7 +81,7 @@ export function LiveSummaryStrip() {
         <span className="text-muted-foreground">No live strategies running.</span>
       )}
 
-      {/* CTA — always present. Routes to the cockpit when there's live
+      {/* CTA — always present. Routes to the live page when there's live
           activity to monitor, or to the strategies list to deploy one when
           there's nothing running yet. */}
       <Link

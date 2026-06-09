@@ -1,4 +1,4 @@
-// Live cockpit strategy strip (spec §2.4).
+// Live Trading strategy strip (spec §2.4).
 //
 // Fixed horizontal strip, always visible (does not scroll with the body).
 // Renders one pill per live-run, a column picker for the configurable

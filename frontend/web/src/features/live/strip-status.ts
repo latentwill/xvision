@@ -34,7 +34,7 @@ export function isLiveRun(run: AgentRunSummary): boolean {
 }
 
 /**
- * Pick the run the cockpit should auto-select when no `:id` is supplied:
+ * Pick the run that should auto-select when no `:id` is supplied:
  * the most recently STARTED live run. Falls back to the most recently
  * started run of any status when none are live (so the viewport still
  * has something to show). Returns null for an empty list.

@@ -1,4 +1,4 @@
-// Live cockpit active positions table (Task B-II / spec §2.6 — B4).
+// Live Trading active positions table (Task B-II / spec §2.6 — B4).
 //
 // Columns: Symbol, Entry price, Qty, Entry time, Current value, Unrealized
 // PnL, % gain/loss. Rows = current open positions (from

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
-import { LiveCockpit } from "./LiveCockpit";
+import { LiveConsole } from "./LiveConsole";
 
 // Mock the agent-runs API (list polling) so tests are isolated.
 vi.mock("@/api/agent-runs", async (importOriginal) => {
@@ -59,25 +59,25 @@ function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   };
 }
 
-function renderCockpit(path: string) {
+function renderConsole(path: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/live" element={<LiveCockpit />} />
-          <Route path="/live/:id" element={<CockpitWithParam />} />
+          <Route path="/live" element={<LiveConsole />} />
+          <Route path="/live/:id" element={<ConsoleWithParam />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-// Tiny adapter so the :id param flows into the cockpit, mirroring LiveRoute.
+// Tiny adapter so the :id param flows into the console, mirroring LiveRoute.
 import { useParams } from "react-router-dom";
-function CockpitWithParam() {
+function ConsoleWithParam() {
   const { id } = useParams();
-  return <LiveCockpit runId={id || undefined} />;
+  return <LiveConsole runId={id || undefined} />;
 }
 
 beforeEach(() => {
@@ -86,12 +86,12 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-describe("LiveCockpit", () => {
-  test("renders Live cockpit title + strategy strip", async () => {
+describe("LiveConsole", () => {
+  test("renders Live Trading title + strategy strip", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
-    renderCockpit("/live");
+    renderConsole("/live");
     await waitFor(() =>
-      expect(screen.getByText("Live cockpit")).toBeInTheDocument(),
+      expect(screen.getByText("Live Trading")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("strategy-strip")).toBeInTheDocument();
     expect(screen.getByText("Deploy strategy →")).toBeInTheDocument();
@@ -102,7 +102,7 @@ describe("LiveCockpit", () => {
       mkRun({ run_id: "old", started_at: "2026-06-09T08:00:00Z" }),
       mkRun({ run_id: "newest", started_at: "2026-06-09T12:00:00Z" }),
     ]);
-    renderCockpit("/live");
+    renderConsole("/live");
     await waitFor(() =>
       expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("newest"),
     );
@@ -113,7 +113,7 @@ describe("LiveCockpit", () => {
       mkRun({ run_id: "run_a", started_at: "2026-06-09T08:00:00Z" }),
       mkRun({ run_id: "run_b", started_at: "2026-06-09T12:00:00Z" }),
     ]);
-    renderCockpit("/live/run_a");
+    renderConsole("/live/run_a");
     await waitFor(() =>
       expect(screen.getByTestId("live-chart-stub")).toHaveTextContent("run_a"),
     );
@@ -122,7 +122,7 @@ describe("LiveCockpit", () => {
   test("wallet banner shown only when address is null", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
     mockAddress = null;
-    renderCockpit("/live");
+    renderConsole("/live");
     await waitFor(() =>
       expect(screen.getByTestId("wallet-banner")).toBeInTheDocument(),
     );
@@ -134,7 +134,7 @@ describe("LiveCockpit", () => {
   test("wallet banner hidden when connected", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
     mockAddress = "0xabc";
-    renderCockpit("/live");
+    renderConsole("/live");
     await waitFor(() =>
       expect(screen.getByTestId("strategy-strip")).toBeInTheDocument(),
     );
@@ -143,7 +143,7 @@ describe("LiveCockpit", () => {
 
   test("empty list shows no-deployments state", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([]);
-    renderCockpit("/live");
+    renderConsole("/live");
     await waitFor(() =>
       expect(
         screen.getByText(/No active live deployments/i),
@@ -153,7 +153,7 @@ describe("LiveCockpit", () => {
 
   test("B-II slot seam is present under the chart", async () => {
     vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
-    renderCockpit("/live");
+    renderConsole("/live");
     await waitFor(() =>
       expect(
         screen.getByTestId("live-stats-positions-slot"),
