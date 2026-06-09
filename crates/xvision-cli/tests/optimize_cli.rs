@@ -4,10 +4,10 @@
 //! discipline, the distinct failure-class exit codes, and the
 //! optimization-store persistence are exercised the way an operator hits them.
 //!
-//! NO NETWORK: every path uses the deterministic test-model-equivalent (the
-//! default model is `dummy`/`dummy`; `--live` is opt-in and a stub that fails
-//! with a provider error). Each test points `XVN_HOME` at a fresh tempdir so
-//! the store is created + migrated (migration 045) in isolation.
+//! NO NETWORK: tests that do not set up a real agent in the DB pass `--test-model`
+//! to use the dummy/dummy identity instead of resolving from the agent store.
+//! Each test points `XVN_HOME` at a fresh tempdir so the store is created +
+//! migrated in isolation.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -70,6 +70,7 @@ fn dry_run_validates_without_persisting() {
             "--rng-seed",
             "42",
             "--dry-run",
+            "--test-model",
             "--json",
         ],
         home.path(),
@@ -80,6 +81,7 @@ fn dry_run_validates_without_persisting() {
     assert_eq!(json["valid"], true);
     assert_eq!(json["corpus_demo_count"], 2);
     assert!(json["signature_hash"].as_str().unwrap().len() == 64);
+    assert_eq!(json["model_provider"], "dummy");
 }
 
 // --- success: a full run persists a run + candidates + snapshot -------------
@@ -109,6 +111,7 @@ fn run_persists_and_is_inspectable_deterministically() {
             "7",
             "--max-rounds",
             "3",
+            "--test-model",
             "--json",
         ],
         home.path(),
@@ -235,6 +238,7 @@ fn same_seed_yields_same_winner() {
                 "99",
                 "--max-rounds",
                 "5",
+                "--test-model",
                 "--json",
             ],
             home.path(),
@@ -274,6 +278,7 @@ fn missing_data_exit_10() {
             "delta_sharpe",
             "--rng-seed",
             "1",
+            "--test-model",
         ],
         home.path(),
     );
@@ -314,16 +319,16 @@ fn missing_capability_exit_11() {
 }
 
 #[test]
-fn provider_failure_exit_12() {
+fn missing_agent_exits_not_found() {
     let home = tempdir().unwrap();
     let corpus = write_corpus(home.path());
-    // --live is a stub in this wave → provider failure.
+    // Agent does not exist in the store → not-found (exit 4).
     let out = xvn(
         &[
             "optimize",
             "run",
             "--agent",
-            "01AGENT",
+            "01AGENT-DOES-NOT-EXIST",
             "--slot",
             "trader",
             "--capability",
@@ -336,11 +341,14 @@ fn provider_failure_exit_12() {
             "delta_sharpe",
             "--rng-seed",
             "1",
-            "--live",
         ],
         home.path(),
     );
-    assert_eq!(code(&out), 12, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(code(&out), 4, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("not found"),
+        "stderr should mention not found"
+    );
 }
 
 #[test]
@@ -432,6 +440,7 @@ fn persistence_failure_exit_15() {
             "delta_sharpe",
             "--rng-seed",
             "1",
+            "--test-model",
         ])
         .env("XVN_HOME", &file_home)
         .env_remove("OPENAI_API_KEY")

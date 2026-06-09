@@ -53,15 +53,18 @@ the success/inspect round-trip) runs with no network and no provider key, and a
 fixed `--rng-seed` makes the run reproducible: the same seed + inputs yields the
 same winning candidate (`same_seed_yields_same_winner`).
 
-Live provider runs are **opt-in only**: `xvn optimize run --live` is a stub in
-this wave and fails with a provider error (exit `12`). The default backend is
-the deterministic test model, so neither CI nor a casual `xvn optimize run` ever
-spends provider tokens.
+`xvn optimize run` resolves the agent's bound `provider`/`model` from the agent
+store and records it in the optimization run for provenance. Pass `--test-model`
+to skip resolution and use a `dummy/dummy` identity instead (CI / offline use).
 
 ```
-# default: deterministic, no network
+# default: uses the agent's bound provider+model
 xvn optimize run --agent … --slot … --capability trader \
   --corpus ./corpus.json --optimizer mipro --metric delta_sharpe --rng-seed 42 --json
+
+# CI / offline: skip agent lookup, use dummy/dummy
+xvn optimize run --agent … --slot … --capability trader \
+  --corpus ./corpus.json --optimizer mipro --metric delta_sharpe --rng-seed 42 --test-model --json
 ```
 
 ---
@@ -185,7 +188,7 @@ branch without parsing text:
 |---|---|---|
 | 10 | `OptMissingData` | Corpus query resolved to no usable training data. Use `xvn optimize explain-missing-data`. |
 | 11 | `OptMissingCapability` | Capability has no optimizer signature. |
-| 12 | `OptProvider` | Provider unreachable / unconfigured (includes the `--live` stub). |
+| 12 | `OptProvider` | Provider unreachable / unconfigured. |
 | 13 | `OptMetric` | Objective metric failed to evaluate (e.g. unknown metric). |
 | 14 | `OptValidation` | Bad capability/optimizer enum, missing corpus path, signature parse/validate error. |
 | 15 | `OptPersistence` | Store write failed (migration not applied, DB error). |

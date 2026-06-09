@@ -228,15 +228,15 @@ and maintain the migrated trajectory SQLite tables plus the frame blob store.
 Offline DSPy prompt/demonstration optimizer (Phase 3.6). Runs an optimization
 pass over a corpus for one agent slot/capability, persists the candidates and
 the winning snapshot to the optimization store, and lets you accept a snapshot
-as a **child agent** with a recorded lineage edge. The optimizer runs entirely
-offline against a deterministic, no-network model by default (`--live` is an
-opt-in stub in this wave). The engine and the slim runtime image carry **no
-DSPy dependency** — see [Optimizer](/docs?slug=optimizer) for the offline-only
-invariant.
+as a **child agent** with a recorded lineage edge. By default resolves the
+agent's bound `provider`/`model` from the store — pass `--test-model` to use
+`dummy/dummy` instead (CI / offline). The engine and the slim runtime image
+carry **no DSPy dependency** — see [Optimizer](/docs?slug=optimizer) for the
+offline-only invariant.
 
 | Verb | Effect |
 |---|---|
-| `run --agent <id> --slot <name> --capability <cap> --corpus <q\|path> --optimizer <opt> --metric <name> --rng-seed <n> [--max-rounds <n>] [--dry-run] [--live] [--json] [--xvn-home <path>]` | Run an optimization pass for one agent slot/capability. Persists `optimization_runs`/`candidates`/`demos`/`snapshots` rows unless `--dry-run`. |
+| `run --agent <id> --slot <name> --capability <cap> --corpus <q\|path> --optimizer <opt> --metric <name> --rng-seed <n> [--max-rounds <n>] [--dry-run] [--test-model] [--json] [--xvn-home <path>]` | Run an optimization pass for one agent slot/capability. Persists `optimization_runs`/`candidates`/`demos`/`snapshots` rows unless `--dry-run`. |
 | `inspect <run-id> [--json]` | Show a persisted run, its candidate table (instructions + metric values, `selected` flag), and snapshots. Exit `4` if the run id is unknown. |
 | `export-demos <snapshot-id\|demo-set> [--output <path>]` | Export a snapshot's (or demo set's) demonstrations as canonical content-addressed JSON. |
 | `import-demos <path>` | Import a demos JSON file into the content-addressed demo store. |
@@ -388,7 +388,7 @@ text:
 |---|---|---|
 | 10 | OptMissingData | The corpus query resolved to no usable training data. Use `xvn optimize explain-missing-data` for guidance. |
 | 11 | OptMissingCapability | The requested capability has no optimizer signature (typed `missing_capability_optimizer`). |
-| 12 | OptProvider | The model provider could not be reached / is not configured (includes the `--live` stub in this wave). |
+| 12 | OptProvider | The model provider could not be reached / is not configured. |
 | 13 | OptMetric | The objective metric failed to evaluate (e.g. unknown metric name). |
 | 14 | OptValidation | Input/signature validation failed — bad capability/optimizer enum, missing corpus path, signature parse/validate error. Also the **not-launchable** code for `xvn strategy diagnostics`. |
 | 15 | OptPersistence | The store write failed (migration not applied, DB error). |

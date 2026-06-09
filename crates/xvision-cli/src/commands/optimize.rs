@@ -4,8 +4,7 @@
 //! ## What this verb does
 //!
 //! `xvn optimize run` validates a corpus + capability, runs the offline
-//! optimizer (deterministically, against `xvision-dspy`'s `DeterministicTestModel`
-//! unless `--live` is opted in), and persists a run + candidate + snapshot +
+//! optimizer (deterministically), and persists a run + candidate + snapshot +
 //! (optionally) lineage row via [`xvision_engine::optimization`]. Sub-verbs
 //! inspect, export/import demos, accept a snapshot as a child agent, revert an
 //! acceptance, and explain why a corpus produced no data.
@@ -26,8 +25,8 @@
 //! * `14` validation failure — bad enum, missing corpus file, signature error.
 //! * `15` persistence failure — store write failed.
 //!
-//! No network in tests: the default model is the deterministic test model; the
-//! live provider is opt-in via `--live` (and is itself a stub in this wave).
+//! No network in tests: pass `--test-model` to skip agent model resolution and
+//! use the `dummy/dummy` identity instead (CI / offline use only).
 
 use std::path::PathBuf;
 
@@ -39,7 +38,7 @@ use xvision_dspy::snapshot::{signature_hash, OptimizationSnapshot, SnapshotDemo}
 use xvision_dspy::{Capability as DspyCapability, OptimizerError};
 
 use xvision_engine::api::optimize::{MemoryDemoOptimizeRequest, OptimizationGateRequest};
-use xvision_engine::api::{memory, optimize as memory_optimize, Actor, ApiContext};
+use xvision_engine::api::{agents as agents_api, memory, optimize as memory_optimize, Actor, ApiContext};
 use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
 
 use crate::exit::{CliError, CliResult, XvnExit};
@@ -145,10 +144,10 @@ struct RunArgs {
     /// Validate corpus + capability only; do NOT mutate the store.
     #[arg(long)]
     dry_run: bool,
-    /// Use the live provider backend (opt-in; a stub in this wave — fails with
-    /// a provider error). Default is the deterministic, no-network test model.
+    /// Use dummy/dummy as the model identity instead of resolving from the
+    /// agent's bound provider+model. For CI and offline testing only.
     #[arg(long)]
-    live: bool,
+    test_model: bool,
     /// Emit a single JSON object to stdout.
     #[arg(long)]
     json: bool,
@@ -425,6 +424,8 @@ struct DryRunReport {
     corpus_demo_count: usize,
     rng_seed: u64,
     signature_hash: String,
+    model_provider: String,
+    model_name: String,
     valid: bool,
 }
 
@@ -459,17 +460,45 @@ async fn run_optimize(args: RunArgs) -> CliResult<()> {
     // 3) corpus resolves (exit 14 on bad file).
     let corpus = resolve_corpus(&args.corpus)?;
 
-    // model identity. Live is a stub in this wave → provider error (exit 12).
-    if args.live {
-        return Err(CliError {
-            exit: XvnExit::OptProvider,
-            source: anyhow::anyhow!(
-                "live provider backend is a stub in this wave; omit --live to use \
-                 the deterministic test model"
-            ),
-        });
-    }
-    let (model_provider, model_name) = ("dummy".to_string(), "dummy".to_string());
+    // Resolve model identity from the agent's bound slot, unless --test-model
+    // skips the lookup for CI / offline use.
+    let (model_provider, model_name) = if args.test_model {
+        ("dummy".to_string(), "dummy".to_string())
+    } else {
+        let ctx = open_api_context(args.xvn_home.clone(), XvnExit::OptValidation).await?;
+        let agent = agents_api::get(&ctx, &args.agent).await.map_err(|e| match e {
+            xvision_engine::api::ApiError::NotFound(_) => CliError {
+                exit: XvnExit::NotFound,
+                source: anyhow::anyhow!(
+                    "agent `{}` not found; run `xvn agent list` to see available agents",
+                    args.agent
+                ),
+            },
+            other => CliError {
+                exit: XvnExit::OptValidation,
+                source: anyhow::anyhow!("resolve agent model binding: {other}"),
+            },
+        })?;
+        let slot = agent
+            .slots
+            .iter()
+            .find(|s| s.name == args.slot)
+            .ok_or_else(|| CliError {
+                exit: XvnExit::OptValidation,
+                source: anyhow::anyhow!(
+                    "agent `{}` has no slot named `{}`; available: {}",
+                    args.agent,
+                    args.slot,
+                    agent
+                        .slots
+                        .iter()
+                        .map(|s| s.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            })?;
+        (slot.provider.clone(), slot.model.clone())
+    };
 
     if args.dry_run {
         // Validate only — NO store mutation.
@@ -484,18 +513,22 @@ async fn run_optimize(args: RunArgs) -> CliResult<()> {
             corpus_demo_count: corpus.demos.len(),
             rng_seed: args.rng_seed,
             signature_hash: sig_hash,
+            model_provider: model_provider.clone(),
+            model_name: model_name.clone(),
             valid: true,
         };
         if args.json {
             print_json(&report)?;
         } else {
             eprintln!(
-                "dry-run OK — capability={} optimizer={} metric={} corpus_demos={} sig={}",
+                "dry-run OK — capability={} optimizer={} metric={} corpus_demos={} sig={} model={}/{}",
                 report.capability,
                 report.optimizer,
                 report.metric,
                 report.corpus_demo_count,
                 report.signature_hash,
+                report.model_provider,
+                report.model_name,
             );
         }
         return Ok(());
