@@ -52,6 +52,14 @@ These reports all inform the same product surface: how xvision should reason abo
 - Covers connectors, dashboards, backtesting, and production safety patterns.
 - Supports the infra side of xvision rather than the strategy side.
 
+
+### Degen Virtuals Arena Top-20 Agent Wallet Investigation
+
+- Investigates the current top-20 Degen Virtuals Arena agents using Degen APIs, Hyperliquid wallet data, Virtuals metadata, and a 20-agent 100x DeepSeek pass.
+- Preserves per-agent profiles, strategy/risk/sizing inferences, creator clues, and xvision implications.
+- Highlights Orderly/Hyperliquid asset implications such as HYPE, live-position reconciliation, and risk-adjusted agent ranking.
+- Full page: [Degen Virtuals Agent Investigation](/docs?slug=degen-virtuals-agent-investigation).
+
 ## Bottom line
 
 If a doc changes how xvision should *decide*, *evaluate*, or *execute* trading behavior, it belongs here.

@@ -143,15 +143,23 @@ path = "runbook.md"
 slug = "research-index"
 title = "Research Index"
 section = "Research"
-last_reviewed = "2026-05-28"
+last_reviewed = "2026-06-09"
 path = "research-index.md"
 
 [[page]]
 slug = "xvision"
 title = "XVision / Agentic Trading"
 section = "Research"
-last_reviewed = "2026-05-28"
+last_reviewed = "2026-06-09"
 path = "xvision.md"
+
+
+[[page]]
+slug = "degen-virtuals-agent-investigation"
+title = "Degen Virtuals Agent Investigation"
+section = "Research"
+last_reviewed = "2026-06-09"
+path = "degen-virtuals-agent-investigation.md"
 
 [[page]]
 slug = "growth-marketing"
