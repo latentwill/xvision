@@ -80,6 +80,10 @@ FROM chef AS builder
 ARG WITH_IDENTITY=0
 ARG BUILD_PROFILE=release
 
+# Fix expired keyring (same issue as runtime stage — see note there).
+ADD https://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb /tmp/debian-archive-keyring.deb
+RUN dpkg -i /tmp/debian-archive-keyring.deb && rm /tmp/debian-archive-keyring.deb
+
 # Build-time system deps (same set as the CLI-only Dockerfile).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         perl \
@@ -133,6 +137,11 @@ LABEL org.opencontainers.image.title="xvision (deploy)" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.revision="${GIT_SHA}" \
       org.opencontainers.image.created="${BUILD_TIME}"
+
+# debian-archive-keyring 2023.3 (shipped in bookworm-slim) expired 2026-06-03.
+# Install the 2025.1 keyring before apt-get update so signature checks pass.
+ADD https://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb /tmp/debian-archive-keyring.deb
+RUN dpkg -i /tmp/debian-archive-keyring.deb && rm /tmp/debian-archive-keyring.deb
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \

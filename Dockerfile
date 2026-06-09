@@ -18,6 +18,10 @@ FROM chef AS builder
 ARG WITH_IDENTITY=0
 ARG BUILD_PROFILE=release
 
+# Fix expired keyring before any apt-get update (see Dockerfile.deploy for details).
+ADD https://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb /tmp/debian-archive-keyring.deb
+RUN dpkg -i /tmp/debian-archive-keyring.deb && rm /tmp/debian-archive-keyring.deb
+
 # Build-time system deps:
 #   - perl + make → required by apca's vendored-openssl
 #   - libsqlite3-dev → sqlx links system libsqlite3
@@ -71,6 +75,9 @@ LABEL org.opencontainers.image.title="xvision" \
       org.opencontainers.image.description="xvision trading-pipeline CLI (xvn)" \
       org.opencontainers.image.source="https://github.com/latentwill/xvision" \
       org.opencontainers.image.licenses="Apache-2.0"
+
+ADD https://ftp.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb /tmp/debian-archive-keyring.deb
+RUN dpkg -i /tmp/debian-archive-keyring.deb && rm /tmp/debian-archive-keyring.deb
 
 # Runtime deps:
 #   - ca-certificates → TLS to Alpaca / Orderly / Mantle RPC
