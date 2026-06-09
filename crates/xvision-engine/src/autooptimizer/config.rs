@@ -13,6 +13,35 @@ fn default_dspy_pattern_cohort_threshold() -> usize {
     5
 }
 
+/// Trade-direction mode the optimizer's random baseline mirrors. A
+/// "no-intelligence" baseline for a LONG-only strategy must randomly pick
+/// between LONG and FLAT (never SHORT), otherwise it measures the wrong
+/// counterfactual. `Both` (default) admits long+short+flat. Set per optimizer
+/// run via autooptimizer.toml / the CLI; the optimizer agent chooses long,
+/// short, or both. (Lives on the run config, not the Strategy, so existing
+/// strategy JSON files are untouched.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeDirection {
+    Long,
+    Short,
+    #[default]
+    Both,
+}
+
+impl TradeDirection {
+    /// The `trader_output.action` values a no-intelligence random baseline may
+    /// emit for this direction. Always includes `"flat"` (the no-position
+    /// counterfactual).
+    pub fn baseline_actions(&self) -> &'static [&'static str] {
+        match self {
+            TradeDirection::Long => &["long_open", "flat"],
+            TradeDirection::Short => &["short_open", "flat"],
+            TradeDirection::Both => &["long_open", "short_open", "flat"],
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutoOptimizerConfig {
     pub min_improvement: f64,
@@ -48,6 +77,16 @@ pub struct AutoOptimizerConfig {
     /// Defaults to empty (back-compat: existing configs without this key are unchanged).
     #[serde(default)]
     pub regime_set: Vec<RegimeWindow>,
+
+    /// Trade-direction mode the random-baseline edge metric mirrors. The
+    /// per-cycle `edge_over_random` / `parent_edge` / `edge_delta` numbers
+    /// compare child/parent against a fixed-seed random agent that picks
+    /// uniformly from this direction's action set. `Both` (default) =
+    /// long+short+flat; `Long`/`Short` restrict it so a directional strategy is
+    /// measured against the right counterfactual. Informational only — never
+    /// gates promotion. Back-compat: absent from existing configs ⇒ `Both`.
+    #[serde(default)]
+    pub baseline_direction: TradeDirection,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +177,7 @@ impl Default for AutoOptimizerConfig {
             tournament_enabled: false,
             objective: crate::autooptimizer::gate::Objective::default(),
             regime_set: vec![],
+            baseline_direction: TradeDirection::Both,
         }
     }
 }

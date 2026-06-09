@@ -1452,6 +1452,9 @@ mod tests {
                 verdict: "passed",
                 reason: None,
                 rationale: Some("Raised stop-loss multiplier from 1.5 to 2.0"),
+                edge_over_random: Some(0.5),
+                parent_edge: Some(0.2),
+                edge_delta: Some(0.3),
             },
         )
         .await

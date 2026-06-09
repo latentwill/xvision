@@ -130,6 +130,13 @@ const MIGRATION_058_AUTOOPTIMIZER_EVIDENCE: &str =
 /// existence) so re-opening an already-initialized DB is a no-op.
 const MIGRATION_059_AUTOOPTIMIZER_SCHEDULES: &str =
     include_str!("../../migrations/059_autooptimizer_schedules.sql");
+/// Migration 061: random-baseline edge-metric columns on
+/// `autooptimizer_gate_records` (`edge_over_random`, `parent_edge`,
+/// `edge_delta`). Applied inside `migrate_autooptimizer_evidence`, guarded on
+/// the `edge_over_random` column's existence so re-opening an initialized DB is
+/// a no-op.
+const MIGRATION_061_AUTOOPTIMIZER_RANDOM_BASELINE: &str =
+    include_str!("../../migrations/061_autooptimizer_random_baseline.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -1735,6 +1742,15 @@ async fn migrate_autooptimizer_sessions(pool: &SqlitePool) -> ApiResult<()> {
 async fn migrate_autooptimizer_evidence(pool: &SqlitePool) -> ApiResult<()> {
     if !table_exists(pool, "autooptimizer_findings").await? {
         for stmt in split_sql_statements(MIGRATION_058_AUTOOPTIMIZER_EVIDENCE) {
+            sqlx::query(&stmt).execute(pool).await?;
+        }
+    }
+    // Migration 061: additive edge-metric columns. Guarded so re-opening an
+    // already-migrated DB is a no-op (SQLite has no ADD COLUMN IF NOT EXISTS).
+    if table_exists(pool, "autooptimizer_gate_records").await?
+        && !table_has_column(pool, "autooptimizer_gate_records", "edge_over_random").await?
+    {
+        for stmt in split_sql_statements(MIGRATION_061_AUTOOPTIMIZER_RANDOM_BASELINE) {
             sqlx::query(&stmt).execute(pool).await?;
         }
     }
