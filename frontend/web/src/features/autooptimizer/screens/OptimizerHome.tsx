@@ -10,6 +10,7 @@ import { FlywheelStrip } from "../ui/FlywheelStrip";
 import { ScheduleStrip } from "../ui/ScheduleStrip";
 import { ImprovementChart } from "../ui/ImprovementChart";
 import { OutcomeStackedChart } from "../ui/OutcomeStackedChart";
+import { EdgeVsRandomChart } from "../ui/EdgeVsRandomChart";
 import {
   useOptimizerStatus,
   useOptimizerStats,
@@ -298,6 +299,35 @@ function ImprovementChartsSection() {
       </div>
       <ImprovementChart rows={rows} />
       {showOutcome && <OutcomeStackedChart rows={rows} />}
+
+      <div className="border-t border-border pt-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-[13px] font-semibold tracking-tight text-text">Edge vs random</h3>
+            <p className="text-[11px] text-text-3 mt-0.5">
+              Score above a fixed-seed random agent per cycle — the noise floor is 0
+            </p>
+          </div>
+          <div className="flex items-center gap-3 text-[10px] text-text-3">
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-[2px] w-3" style={{ background: "var(--gold)" }} />
+              Parent
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-[2px] w-3" style={{ background: "#60a5fa" }} />
+              Candidate
+            </span>
+            <span className="flex items-center gap-1">
+              <span
+                className="inline-block h-0 w-3 border-t border-dashed"
+                style={{ borderColor: "var(--text-3)" }}
+              />
+              Random
+            </span>
+          </div>
+        </div>
+        <EdgeVsRandomChart rows={rows} />
+      </div>
     </div>
   );
 }
