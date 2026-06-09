@@ -40,7 +40,30 @@ use crate::alpaca::{AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, 
 /// Non-crypto symbols (e.g. a future `"AAPL"` equity) return `false` and
 /// take the legacy bracket + bidirectional code path.
 pub fn is_alpaca_crypto(asset: &str) -> bool {
-    AssetSymbol::from_str(asset).is_ok()
+    use xvision_core::asset_registry;
+    match AssetSymbol::from_str(asset) {
+        Ok(sym) => {
+            if asset_registry::is_alpaca_crypto(sym) {
+                return true;
+            }
+            // Handle compound forms like "BTCUSD" → try stripping "USDC"/"USD"
+            // suffix so callers passing Alpaca-style pairs without a slash still
+            // resolve correctly.
+            let upper = asset.trim().to_ascii_uppercase();
+            let base = upper
+                .strip_suffix("USDC")
+                .or_else(|| upper.strip_suffix("USD"));
+            if let Some(b) = base {
+                if !b.is_empty() {
+                    if let Ok(base_sym) = AssetSymbol::from_str(b) {
+                        return asset_registry::is_alpaca_crypto(base_sym);
+                    }
+                }
+            }
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 // ── Public types ─────────────────────────────────────────────────────────────

@@ -117,6 +117,45 @@ pub fn is_registry_loaded() -> bool {
     REGISTRY.get().is_some()
 }
 
+/// Returns `true` iff the asset is known to have Alpaca bar data and
+/// trading pair support. Falls back to the hardcoded 15-symbol legacy
+/// list when the registry has not been loaded (keeps unit tests that
+/// don't load a whitelist green).
+pub fn is_alpaca_crypto(asset: AssetSymbol) -> bool {
+    if let Some(entry) = lookup(asset) {
+        return matches!(entry.data_source, DataSource::Alpaca);
+    }
+    // Registry not loaded: check the legacy static set.
+    const LEGACY: &[AssetSymbol] = &[
+        AssetSymbol::Btc,  AssetSymbol::Eth,  AssetSymbol::Ltc,
+        AssetSymbol::Sol,  AssetSymbol::Avax, AssetSymbol::Link,
+        AssetSymbol::Aave, AssetSymbol::Uni,  AssetSymbol::Dot,
+        AssetSymbol::Doge, AssetSymbol::Shib, AssetSymbol::Matic,
+        AssetSymbol::Bch,  AssetSymbol::Usdt, AssetSymbol::Usdc,
+    ];
+    LEGACY.iter().any(|&s| s == asset)
+}
+
+/// Reverse lookup: map an Orderly perp symbol string to its `AssetSymbol`.
+/// When the registry is not loaded (or has no match), parses "PERP_{BASE}_USDC"
+/// → base.
+pub fn symbol_from_orderly(orderly_sym: &str) -> Option<AssetSymbol> {
+    // Registry path: scan for matching orderly_symbol.
+    if let Some(reg) = REGISTRY.get() {
+        if let Some(entry) = reg.values().find(|e| e.orderly_symbol.as_deref() == Some(orderly_sym)) {
+            return Some(entry.symbol);
+        }
+        // Registry loaded but no match → no known symbol for this market.
+        // Still try the pattern parse so callers get a symbol for any
+        // well-formed PERP_*_USDC string (the registry may be stale).
+    }
+    // Fallback: parse "PERP_{BASE}_USDC" pattern.
+    let base = orderly_sym.strip_prefix("PERP_")?.strip_suffix("_USDC")?;
+    if base.is_empty() { return None; }
+    if !base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { return None; }
+    intern_symbol(base).map(AssetSymbol::from_static)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +181,23 @@ mod tests {
     fn data_source_falls_back_to_alpaca_when_unregistered() {
         let novel = AssetSymbol::from_static("TESTONLY");
         assert_eq!(data_source(novel), DataSource::Alpaca);
+    }
+
+    #[test]
+    fn is_alpaca_crypto_fallback_accepts_legacy() {
+        // BTC is in the legacy list → true even when registry not loaded.
+        assert!(is_alpaca_crypto(AssetSymbol::Btc));
+        // HYPE is NOT in the legacy list → false when registry not loaded.
+        assert!(!is_alpaca_crypto(AssetSymbol::from_static("HYPE")));
+    }
+
+    #[test]
+    fn symbol_from_orderly_parses_perp_pattern() {
+        let btc = symbol_from_orderly("PERP_BTC_USDC").unwrap();
+        assert_eq!(btc, AssetSymbol::Btc);
+        let hype = symbol_from_orderly("PERP_HYPE_USDC").unwrap();
+        assert_eq!(hype.as_str(), "HYPE");
+        assert!(symbol_from_orderly("INVALID").is_none());
+        assert!(symbol_from_orderly("PERP__USDC").is_none()); // empty base
     }
 }

@@ -61,31 +61,12 @@ use crate::executor::{ExecutionReceipt, Executor, ExecutorError};
 
 const ORDERLY_MAINNET_BASE: &str = "https://api-evm.orderly.org";
 
-/// Orderly perp markets we currently route to. Each entry is
-/// `(AssetSymbol, "PERP_<X>_USDC")`. Pulled from Orderly's Mantle EVM
-/// gateway listings as of 2026-05-22. Adding new markets here is the
-/// single point of expansion — `orderly_symbol_for` and
-/// `asset_symbol_from_orderly` both drive off this table.
-///
-/// Refreshing this list against Orderly's live `GET /v1/public/info`
-/// is tracked as F44 in FOLLOWUPS.md.
-const ORDERLY_SUPPORTED: &[(AssetSymbol, &str)] = &[
-    (AssetSymbol::Btc, "PERP_BTC_USDC"),
-    (AssetSymbol::Eth, "PERP_ETH_USDC"),
-    (AssetSymbol::Sol, "PERP_SOL_USDC"),
-    (AssetSymbol::Avax, "PERP_AVAX_USDC"),
-    (AssetSymbol::Doge, "PERP_DOGE_USDC"),
-    (AssetSymbol::Link, "PERP_LINK_USDC"),
-];
-
-/// Map an `AssetSymbol` to its Orderly perp symbol. Returns
-/// `ExecutorError::NotActionable` if Orderly does not list the asset on
-/// its Mantle EVM gateway — the same shape used by `submit` for any
-/// other unactionable decision.
-pub fn orderly_symbol_for(asset: AssetSymbol) -> Result<&'static str, ExecutorError> {
-    ORDERLY_SUPPORTED
-        .iter()
-        .find_map(|(a, sym)| if *a == asset { Some(*sym) } else { None })
+/// Map an `AssetSymbol` to its Orderly perp symbol. Uses the process-global
+/// asset registry when loaded, with a `"PERP_{TICKER}_USDC"` fallback for
+/// unregistered symbols. Returns `NotActionable` only when the registry is
+/// loaded and explicitly marks the asset as having no Orderly symbol.
+pub fn orderly_symbol_for(asset: AssetSymbol) -> Result<String, ExecutorError> {
+    xvision_core::asset_registry::orderly_symbol(asset)
         .ok_or_else(|| {
             ExecutorError::NotActionable(format!(
                 "Orderly does not list {} on its Mantle EVM gateway",
@@ -95,13 +76,11 @@ pub fn orderly_symbol_for(asset: AssetSymbol) -> Result<&'static str, ExecutorEr
 }
 
 /// Inverse helper: map an Orderly market string back to its
-/// `AssetSymbol`. Returns `None` for unknown / delisted markets so
-/// callers (position scans, receipt parsing) can filter them out
-/// without crashing.
+/// `AssetSymbol`. Returns `None` only for strings that don't match the
+/// `PERP_{BASE}_USDC` pattern (e.g. empty string, non-PERP prefix).
+/// When the registry is loaded, a registry lookup is attempted first.
 pub fn asset_symbol_from_orderly(symbol: &str) -> Option<AssetSymbol> {
-    ORDERLY_SUPPORTED
-        .iter()
-        .find_map(|(a, sym)| if *sym == symbol { Some(*a) } else { None })
+    xvision_core::asset_registry::symbol_from_orderly(symbol)
 }
 
 // ── Credentials ──────────────────────────────────────────────────────────────
@@ -553,8 +532,8 @@ impl OrderlyApi for ReqwestOrderlyApi {
 // ── OrderlyExecutor ──────────────────────────────────────────────────────────
 
 /// Orderly Network perpetuals executor. Routes per `TraderDecision.asset`
-/// across the Mantle EVM gateway's perp markets (see
-/// [`ORDERLY_SUPPORTED`]).
+/// across the Mantle EVM gateway's perp markets via the asset registry
+/// with a `PERP_{TICKER}_USDC` fallback.
 ///
 /// Generic over `OrderlyApi` so tests can inject a mock.
 pub struct OrderlyExecutor<A = ReqwestOrderlyApi> {
@@ -725,7 +704,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         // 6. Place entry order (client_order_id = cycle_id for idempotency).
         let entry = self
             .api
-            .create_order(symbol, side, qty, Some(td.cycle_id.to_string()), None)
+            .create_order(&symbol, side, qty, Some(td.cycle_id.to_string()), None)
             .await?;
 
         // 7. Poll for fill.
@@ -753,7 +732,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             let _ = self
                 .api
                 .create_algo_order(
-                    symbol,
+                    &symbol,
                     AlgoKind::TakeProfitMarket,
                     close_side,
                     fill_qty,
@@ -766,7 +745,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             let _ = self
                 .api
                 .create_algo_order(
-                    symbol,
+                    &symbol,
                     AlgoKind::StopMarket,
                     close_side,
                     fill_qty,
@@ -843,7 +822,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
         let order = self
             .api
             .create_order(
-                symbol,
+                &symbol,
                 close_side,
                 qty,
                 Some(format!("close-{}", Uuid::new_v4())),
@@ -1083,6 +1062,18 @@ mod tests {
                 take_profit_pct: 5.0,
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
                 asset: AssetSymbol::Btc,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             },
         }
     }
@@ -1212,6 +1203,18 @@ mod tests {
                 take_profit_pct: 4.0,
                 trader_summary: "Vetoed test decision — should not reach executor.".into(),
                 asset: AssetSymbol::Btc,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };
@@ -1404,10 +1407,20 @@ mod tests {
     // ── Multi-asset expansion (2026-05-22) ────────────────────────────────────
 
     #[test]
-    fn orderly_symbol_mapping_round_trips_supported_set() {
-        for (asset, sym) in ORDERLY_SUPPORTED {
+    fn orderly_symbol_mapping_round_trips_legacy_symbols() {
+        // Verify that the core legacy symbols round-trip correctly via the
+        // fallback (registry not loaded in unit tests).
+        let cases: &[(AssetSymbol, &str)] = &[
+            (AssetSymbol::Btc, "PERP_BTC_USDC"),
+            (AssetSymbol::Eth, "PERP_ETH_USDC"),
+            (AssetSymbol::Sol, "PERP_SOL_USDC"),
+            (AssetSymbol::Avax, "PERP_AVAX_USDC"),
+            (AssetSymbol::Doge, "PERP_DOGE_USDC"),
+            (AssetSymbol::Link, "PERP_LINK_USDC"),
+        ];
+        for (asset, sym) in cases {
             assert_eq!(
-                orderly_symbol_for(*asset).unwrap_or("ERR"),
+                orderly_symbol_for(*asset).unwrap_or_else(|_| "ERR".to_string()),
                 *sym,
                 "forward mapping for {asset:?}",
             );
@@ -1420,23 +1433,41 @@ mod tests {
     }
 
     #[test]
-    fn orderly_symbol_for_rejects_unsupported_asset() {
-        // SHIB is in the Alpaca whitelist but Orderly does not list it.
-        let err = orderly_symbol_for(AssetSymbol::Shib).expect_err("unsupported must error");
-        match err {
-            ExecutorError::NotActionable(msg) => {
-                assert!(msg.contains("Orderly"), "msg should name Orderly: {msg}");
-                assert!(msg.contains("SHIB"), "msg should name the asset: {msg}");
-            }
-            other => panic!("expected NotActionable, got {other:?}"),
-        }
+    fn orderly_symbol_for_uses_fallback_for_unregistered_symbol() {
+        // Unregistered symbol (registry not loaded) → fallback generates PERP_{SYM}_USDC.
+        let sym = AssetSymbol::from_static("TESTCOIN");
+        assert_eq!(orderly_symbol_for(sym).unwrap(), "PERP_TESTCOIN_USDC");
     }
 
     #[test]
-    fn asset_symbol_from_orderly_returns_none_for_unknown_market() {
-        assert_eq!(asset_symbol_from_orderly("PERP_XRP_USDC"), None);
+    fn orderly_symbol_for_resolves_new_symbols_via_fallback() {
+        // HYPE is not in the legacy list but the fallback generates a symbol.
+        assert_eq!(
+            orderly_symbol_for(AssetSymbol::from_static("HYPE")).unwrap(),
+            "PERP_HYPE_USDC"
+        );
+        // Legacy symbols still work unchanged.
+        assert_eq!(orderly_symbol_for(AssetSymbol::Btc).unwrap(), "PERP_BTC_USDC");
+        assert_eq!(orderly_symbol_for(AssetSymbol::Eth).unwrap(), "PERP_ETH_USDC");
+        assert_eq!(orderly_symbol_for(AssetSymbol::Sol).unwrap(), "PERP_SOL_USDC");
+    }
+
+    #[test]
+    fn asset_symbol_from_orderly_parses_new_symbols() {
+        let hype = asset_symbol_from_orderly("PERP_HYPE_USDC").unwrap();
+        assert_eq!(hype.as_str(), "HYPE");
+        let btc = asset_symbol_from_orderly("PERP_BTC_USDC").unwrap();
+        assert_eq!(btc, AssetSymbol::Btc);
+    }
+
+    #[test]
+    fn asset_symbol_from_orderly_returns_none_for_malformed_strings() {
+        // Empty string — no pattern match.
         assert_eq!(asset_symbol_from_orderly(""), None);
+        // Wrong format — not a PERP_*_USDC string.
         assert_eq!(asset_symbol_from_orderly("BTC/USD"), None);
+        // Empty base — PERP__USDC is rejected.
+        assert_eq!(asset_symbol_from_orderly("PERP__USDC"), None);
     }
 
     /// `submit_routes_per_decision_asset`: when the decision names ETH, the
@@ -1468,6 +1499,18 @@ mod tests {
                 take_profit_pct: 5.0,
                 trader_summary: "Long ETH 1000bps confirming range break with 2:1 R:R.".into(),
                 asset: AssetSymbol::Eth,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             },
         };
 
@@ -1485,74 +1528,67 @@ mod tests {
         );
     }
 
-    /// Decisions targeting assets Orderly doesn't list must reject at the
-    /// boundary with `NotActionable`, not crash and not fall through.
+    /// With the registry fallback, `orderly_symbol_for` generates a
+    /// `PERP_{SYM}_USDC` string for any asset when the registry is not loaded.
+    /// This replaces the old "rejects unsupported asset" test — that behaviour
+    /// is now gated by the registry (W4 scope: a registry entry with
+    /// `orderly_symbol = None` will still reject).
     #[tokio::test]
-    async fn submit_rejects_orderly_unsupported_asset() {
-        // PanicApi: any call panics — the test only passes if submit
-        // short-circuits before touching the network.
-        struct PanicApi;
+    async fn submit_uses_fallback_symbol_for_unregistered_asset() {
+        let cycle_id = Uuid::new_v4();
+        let entry_order = fixture_create_order_result(9999);
+        let get_order = fixture_filled_order(9999, Some(&cycle_id.to_string()));
 
-        #[async_trait]
-        impl OrderlyApi for PanicApi {
-            async fn create_order(
-                &self,
-                _: &str,
-                _: OrderSide,
-                _: f64,
-                _: Option<String>,
-                _: Option<bool>,
-            ) -> Result<OrderlyOrder, ExecutorError> {
-                panic!("create_order must not run for an unsupported asset");
-            }
-            async fn create_algo_order(
-                &self,
-                _: &str,
-                _: AlgoKind,
-                _: OrderSide,
-                _: f64,
-                _: f64,
-                _: Option<String>,
-                _: Option<bool>,
-            ) -> Result<u64, ExecutorError> {
-                panic!("create_algo_order must not run for an unsupported asset");
-            }
-            async fn get_order(&self, _: u64) -> Result<OrderlyOrder, ExecutorError> {
-                panic!("get_order must not run for an unsupported asset");
-            }
-            async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError> {
-                panic!("get_account must not run for an unsupported asset");
-            }
-            async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
-                panic!("get_positions must not run for an unsupported asset");
-            }
-        }
+        let api = MockOrderlyApi::new(
+            fixture_account(),
+            // provide a SHIB position so mark price is known
+            vec![fixture_position("PERP_SHIB_USDC", 0.0, 0.000015, 0.000015)],
+            entry_order,
+            get_order,
+        );
+        let captured = api.captured_create.clone();
 
-        let executor = OrderlyExecutor::with_api(PanicApi);
+        let executor = OrderlyExecutor::with_api(api);
         let decision = RiskDecision::Approved {
             decision: TraderDecision {
-                cycle_id: Uuid::new_v4(),
+                cycle_id,
                 action: Action::Buy,
                 size_bps: 500,
                 direction: Direction::Long,
                 stop_loss_pct: 2.0,
                 take_profit_pct: 5.0,
-                trader_summary: "SHIB long — Orderly does not list this.".into(),
+                trader_summary: "SHIB long via registry fallback path.".into(),
                 asset: AssetSymbol::Shib,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             },
         };
 
-        let err = executor
+        let receipt = executor
             .submit(&decision)
             .await
-            .expect_err("unsupported asset must reject");
-        match err {
-            ExecutorError::NotActionable(msg) => {
-                assert!(msg.contains("SHIB"), "msg should name the asset: {msg}");
-                assert!(msg.contains("Orderly"), "msg should name Orderly: {msg}");
-            }
-            other => panic!("expected NotActionable, got {other:?}"),
-        }
+            .expect("fallback path must succeed when registry not loaded");
+        assert_eq!(receipt.asset, AssetSymbol::Shib);
+
+        let req = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("create_order must have been called");
+        assert_eq!(
+            req.symbol, "PERP_SHIB_USDC",
+            "fallback must generate PERP_SHIB_USDC"
+        );
     }
 
     /// `close_position(ETH)` must look up the ETH position by
@@ -1587,55 +1623,28 @@ mod tests {
     }
 
     /// Closing an asset Orderly doesn't list returns `NotActionable`
-    /// rather than a confused zero-fill receipt.
+    /// With the registry fallback, `close_position` generates a PERP symbol
+    /// for any asset and proceeds to call `get_positions`. When there is no
+    /// open position it returns a zero-fill receipt rather than an error.
+    /// This replaces the old "rejects unsupported close" test — the rejection
+    /// now requires the registry to mark `orderly_symbol = None` (W4 scope).
     #[tokio::test]
-    async fn close_position_rejects_orderly_unsupported_asset() {
-        struct PanicApi;
-        #[async_trait]
-        impl OrderlyApi for PanicApi {
-            async fn create_order(
-                &self,
-                _: &str,
-                _: OrderSide,
-                _: f64,
-                _: Option<String>,
-                _: Option<bool>,
-            ) -> Result<OrderlyOrder, ExecutorError> {
-                panic!("must not call create_order");
-            }
-            async fn create_algo_order(
-                &self,
-                _: &str,
-                _: AlgoKind,
-                _: OrderSide,
-                _: f64,
-                _: f64,
-                _: Option<String>,
-                _: Option<bool>,
-            ) -> Result<u64, ExecutorError> {
-                panic!("must not call create_algo_order");
-            }
-            async fn get_order(&self, _: u64) -> Result<OrderlyOrder, ExecutorError> {
-                panic!("must not call get_order");
-            }
-            async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError> {
-                panic!("must not call get_account");
-            }
-            async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
-                panic!("must not call get_positions");
-            }
-        }
+    async fn close_position_uses_fallback_and_returns_zero_fill_when_no_position() {
+        let filler = fixture_filled_order(1, None);
+        let api = MockOrderlyApi::new(fixture_account(), vec![], filler.clone(), filler);
+        let executor = OrderlyExecutor::with_api(api);
 
-        let executor = OrderlyExecutor::with_api(PanicApi);
-        let err = executor
+        let receipt = executor
             .close_position(AssetSymbol::Shib)
             .await
-            .expect_err("unsupported close must reject");
-        assert!(matches!(err, ExecutorError::NotActionable(_)));
+            .expect("close_position(SHIB) must succeed via fallback when no position is open");
+        assert_eq!(receipt.filled_size_bps, 0);
+        assert_eq!(receipt.note.as_deref(), Some("no open position"));
     }
 
     /// `portfolio()` must map an ETH position back to `AssetSymbol::Eth`
     /// via the inverse helper, not silently drop it because it isn't BTC.
+    /// Markets with unparseable symbol strings must be filtered out.
     #[tokio::test]
     async fn portfolio_maps_eth_position_to_asset_symbol_eth() {
         let api = MockOrderlyApi::new(
@@ -1643,8 +1652,10 @@ mod tests {
             vec![
                 fixture_position("PERP_ETH_USDC", 2.0, 3_500.0, 3_550.0),
                 fixture_position("PERP_BTC_USDC", 0.05, 70_000.0, 71_000.0),
-                // unknown market — must be filtered, not blow up the mapping
+                // Well-formed PERP_*_USDC → XRP is now parsed by the fallback
                 fixture_position("PERP_XRP_USDC", 100.0, 2.0, 2.1),
+                // Malformed symbol — must be filtered, not blow up the mapping
+                fixture_position("SPOT_ETH_USDC", 0.1, 3_500.0, 3_550.0),
             ],
             fixture_create_order_result(1),
             fixture_filled_order(1, None),
@@ -1654,10 +1665,11 @@ mod tests {
 
         assert!(state.open_positions.contains_key(&AssetSymbol::Eth));
         assert!(state.open_positions.contains_key(&AssetSymbol::Btc));
+        assert!(state.open_positions.contains_key(&AssetSymbol::from_static("XRP")));
         assert_eq!(
             state.open_positions.len(),
-            2,
-            "unknown markets must be filtered out, not crash the map"
+            3,
+            "PERP_*_USDC markets resolve via fallback; only truly malformed symbols are filtered"
         );
     }
 
