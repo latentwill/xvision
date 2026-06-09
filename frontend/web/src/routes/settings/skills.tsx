@@ -26,6 +26,7 @@ import {
 } from "@/api/skills";
 import {
   ResponsiveListCard,
+  useListColumns,
   useListState,
   useListUrlState,
   type FilterDef,
@@ -69,10 +70,10 @@ const KIND_FILTER: FilterDef = {
 };
 
 const DESKTOP_COLUMNS = [
-  { key: "name", label: "Name" },
-  { key: "kind", label: "Kind" },
-  { key: "description", label: "Description" },
-  { key: "actions", label: "", align: "right" as const },
+  { key: "name",        label: "Name",        essential: true, estWidth: 180 },
+  { key: "kind",        label: "Kind",        priority: 3,     estWidth: 90  },
+  { key: "description", label: "Description", priority: 1,     estWidth: 260 },
+  { key: "actions",     label: "",            essential: true, estWidth: 60,  align: "right" as const },
 ];
 
 function kindBadgeColor(kind: SkillKind): MListRowBadgeColor {
@@ -128,6 +129,7 @@ export function SettingsSkillsRoute() {
     },
   });
   useListUrlState("settings-skills", list);
+  const columnState = useListColumns("settings-skills", DESKTOP_COLUMNS);
 
   return (
     <div>
@@ -176,6 +178,7 @@ export function SettingsSkillsRoute() {
           clearAll: list.clearAll,
         }}
         columns={DESKTOP_COLUMNS}
+        columnState={columnState}
         rows={list.rows}
         loading={q.isPending}
         error={

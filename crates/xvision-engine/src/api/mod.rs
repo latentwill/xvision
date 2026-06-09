@@ -45,6 +45,7 @@ pub mod search;
 pub mod settings;
 pub mod skills;
 pub mod strategy;
+pub mod tool_policy;
 pub mod tools;
 
 /// Migrations baked into the binary at compile time. Order matters —

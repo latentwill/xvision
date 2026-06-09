@@ -26,6 +26,7 @@ import {
 } from "@/components/primitives/useServerPagination";
 import {
   ResponsiveListCard,
+  useListColumns,
   useListState,
   useListUrlState,
   type FilterDef,
@@ -147,14 +148,15 @@ export function AgentsRoute() {
   // through. Placed BEFORE `Updated` so the natural reading order
   // is "created → last touched".
   const desktopColumns = [
-    { key: "name", label: "Name" },
-    { key: "status", label: "Status" },
-    { key: "tools", label: "Tools" },
-    { key: "slots", label: "Slots" },
-    { key: "skills", label: "Skills" },
-    { key: "created", label: "Created" },
-    { key: "updated", label: "Updated" },
+    { key: "name",    label: "Name",    essential: true, estWidth: 200 },
+    { key: "status",  label: "Status",  priority: 4,     estWidth: 80  },
+    { key: "tools",   label: "Tools",   priority: 2,     estWidth: 120 },
+    { key: "slots",   label: "Slots",   priority: 3,     estWidth: 80  },
+    { key: "skills",  label: "Skills",  priority: 1,     estWidth: 120 },
+    { key: "created", label: "Created", priority: 0,     estWidth: 100 },
+    { key: "updated", label: "Updated", priority: 0,     estWidth: 100 },
   ];
+  const columnState = useListColumns("agents", desktopColumns);
 
   return (
     <>
@@ -192,6 +194,7 @@ export function AgentsRoute() {
           clearAll: list.clearAll,
         }}
         columns={desktopColumns}
+        columnState={columnState}
         rows={list.rows}
         loading={q.isPending}
         error={
