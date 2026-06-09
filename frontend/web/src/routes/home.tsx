@@ -11,7 +11,7 @@ import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { OptimizerDigestStrip } from "@/components/home/OptimizerDigestStrip";
 import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
-import { StrategyOutcomesList } from "@/components/home/StrategyOutcomesList";
+import { StrategyOutcomesSummary } from "@/components/home/StrategyOutcomesSummary";
 import { NagStrip } from "@/components/home/NagStrip";
 import type { AttentionItem } from "@/components/home/NagStrip";
 import type {
@@ -79,7 +79,7 @@ export function HomeRoute() {
         <ActiveTasksStrip />
         <OptimizerDigestStrip />
         <CriticalFindingsRow runs={runs.data ?? []} />
-        <StrategyOutcomesList strategies={strategies.data ?? []} runs={runs.data ?? []} />
+        <StrategyOutcomesSummary strategies={strategies.data ?? []} runs={runs.data ?? []} />
         <NagStrip items={attentionItems} />
       </div>
     </>
