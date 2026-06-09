@@ -3722,8 +3722,20 @@ impl Executor {
             book.set_position(asset_sym, fill.new_pos, fill.new_entry);
             book.add_realized(fill.realized_pnl);
 
+            // A close that did NOT take the position to ~flat is a PARTIAL
+            // fill: the broker reported a fill, but residual exposure remains
+            // open. Use the same epsilon convention the book/loop use to
+            // distinguish "flat" from "still holding". A partial must not be
+            // labeled `flat` (it isn't), must not count toward `closed`, and
+            // leaves the (reduced) leg in the book so the residual exposure
+            // stays visible in the finished run.
+            let fully_closed = fill.new_pos.abs() <= f64::EPSILON;
+            let action_label = if fully_closed { "flat" } else { "flat_partial" };
+
             if fill.fill_price.is_some() {
-                closed += 1;
+                if fully_closed {
+                    closed += 1;
+                }
                 self.emit(ProgressEvent::FillRecorded {
                     run_id: run.id.clone(),
                     side: fill_side_for_action("flat", pos).into(),
@@ -3733,17 +3745,51 @@ impl Executor {
                 });
             }
 
+            // For a partial, surface the residual exposure as a run-level warn
+            // note (mirrors the rejection branch's "exposure may remain open"
+            // signal) so the cancelled run's ledger is honest about it.
+            if !fully_closed {
+                tracing::warn!(
+                    target: "xvision_engine::live_executor",
+                    run_id = %run.id,
+                    asset = %asset,
+                    residual_pos = fill.new_pos,
+                    "live cancel: close only PARTIALLY filled; residual exposure remains open"
+                );
+                let _ = store
+                    .record_supervisor_note(
+                        &run.id,
+                        "executor",
+                        "warn",
+                        &format!(
+                            "cancel-close for {asset} only partially filled (residual position {:.8}) — exposure remains open at the broker",
+                            fill.new_pos
+                        ),
+                    )
+                    .await;
+            }
+
             // Record the closing decision row + chart event so the cancelled
             // run's ledger settles consistently with a strategy-driven flat.
+            // A partial is recorded as `flat_partial` (distinct from a full
+            // `flat`) with the realized PnL on the portion that DID close.
             let decision_row = DecisionRow {
                 run_id: run.id.clone(),
                 decision_index: *decision_idx,
                 timestamp: now,
                 asset: asset.clone(),
-                action: "flat".to_string(),
+                action: action_label.to_string(),
                 conviction: None,
-                justification: Some("cancel: flatten open position".to_string()),
-                reasoning: Some("cancel: flatten open position".to_string()),
+                justification: Some(if fully_closed {
+                    "cancel: flatten open position".to_string()
+                } else {
+                    "cancel: partial flatten (residual exposure remains)".to_string()
+                }),
+                reasoning: Some(if fully_closed {
+                    "cancel: flatten open position".to_string()
+                } else {
+                    "cancel: partial flatten (residual exposure remains)".to_string()
+                }),
                 order_size: fill.fill_size,
                 fill_price: fill.fill_price,
                 fill_size: fill.fill_size,

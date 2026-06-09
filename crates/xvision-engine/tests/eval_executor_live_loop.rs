@@ -794,6 +794,210 @@ async fn live_cancel_closes_open_positions_through_the_broker() {
     );
 }
 
+/// Per-asset variant of [`CancelAfterOpenBroker`]: records every order with
+/// its asset + side, opens both legs, and cancels the run on the FIRST Buy so
+/// the next loop iteration fires the cancel-close path while BOTH assets hold
+/// an open long. Used by the multi-asset cancel test to prove BOTH legs are
+/// flattened in one cancel.
+struct PerAssetCancelAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_by_asset: std::collections::HashMap<String, f64>,
+    close_fill_by_asset: std::collections::HashMap<String, f64>,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+    cancelled: Mutex<bool>,
+    /// Cancel only AFTER this many distinct assets have opened a long, so both
+    /// legs are held when the cancel-close path fires (cancelling on the first
+    /// Buy would short-circuit the loop before the second asset opens).
+    cancel_after_open_assets: usize,
+    opened_assets: Mutex<std::collections::BTreeSet<String>>,
+}
+
+impl PerAssetCancelAfterOpenBroker {
+    fn new(opens: &[(&str, f64)], closes: &[(&str, f64)], cancel_after_open_assets: usize) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_by_asset: opens.iter().map(|(a, p)| ((*a).to_string(), *p)).collect(),
+            close_fill_by_asset: closes.iter().map(|(a, p)| ((*a).to_string(), *p)).collect(),
+            cancel_hook: Mutex::new(None),
+            cancelled: Mutex::new(false),
+            cancel_after_open_assets,
+            opened_assets: Mutex::new(std::collections::BTreeSet::new()),
+        })
+    }
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for PerAssetCancelAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // Cancel the run exactly once, only AFTER `cancel_after_open_assets`
+        // distinct assets have opened a long. Cancelling on the first Buy
+        // would short-circuit the loop before the second asset's bar is
+        // processed; waiting until both legs are open guarantees the
+        // cancel-close path has two legs to flatten.
+        if is_buy {
+            let distinct_opened = {
+                let mut opened = self.opened_assets.lock().unwrap();
+                opened.insert(req.asset.clone());
+                opened.len()
+            };
+            if distinct_opened >= self.cancel_after_open_assets {
+                let already = {
+                    let mut c = self.cancelled.lock().unwrap();
+                    let was = *c;
+                    *c = true;
+                    was
+                };
+                if !already {
+                    let hook = self.cancel_hook.lock().unwrap().clone();
+                    if let Some((store, run_id)) = hook {
+                        store
+                            .cancel_active(&run_id, "operator cancel mid-run")
+                            .await
+                            .unwrap();
+                    }
+                }
+            }
+        }
+        let table = if is_buy {
+            &self.open_fill_by_asset
+        } else {
+            &self.close_fill_by_asset
+        };
+        let fill_price = table.get(&req.asset).copied().unwrap_or(1.0);
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_closes_open_positions_in_both_assets() {
+    // Two assets (BTC + ETH), one opening bar each. Both legs open long, then
+    // the run is cancelled mid-run. The next loop-top `is_terminal` check must
+    // fire the A2 cancel-close path and flatten BOTH legs in one pass:
+    //   - the broker receives two opening Buys then two closing Sells (one per
+    //     asset);
+    //   - two `flat` decision rows are recorded (one per asset);
+    //   - each close's size matches the held position (the open size).
+    let (store, strategy, scenario, mut run, _dir) = multi_asset_live_fixtures(100_000.0).await;
+    let broker = PerAssetCancelAfterOpenBroker::new(
+        &[("BTC/USD", 50_000.0), ("ETH/USD", 3_000.0)],
+        &[("BTC/USD", 51_000.0), ("ETH/USD", 3_100.0)],
+        2,
+    );
+    broker.arm(store.clone(), run.id.clone());
+
+    let multi = MultiLiveStream::new(vec![
+        (
+            AssetSymbol::Btc,
+            live_stream_for(
+                "BTC/USD",
+                vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)],
+            ),
+        ),
+        (
+            AssetSymbol::Eth,
+            live_stream_for(
+                "ETH/USD",
+                vec![market_bar_at(60, 3_000.0), market_bar_at(120, 3_050.0)],
+            ),
+        ),
+    ]);
+
+    let executor = Executor::live(
+        &multi_asset_live_config(),
+        broker.clone(),
+        multi,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // Cancellation still terminates the run.
+    assert!(result.is_err(), "a cancelled run must not complete");
+    assert!(
+        store.is_cancelled(&run.id).await.unwrap(),
+        "the run must end Cancelled",
+    );
+
+    // Group the broker orders by asset; each asset must have exactly ONE Buy
+    // (the open) and ONE Sell (the cancel-close flatten).
+    let submitted = broker.submitted();
+    let buys: Vec<&OrderRequest> = submitted.iter().filter(|o| matches!(o.side, Side::Buy)).collect();
+    let sells: Vec<&OrderRequest> = submitted.iter().filter(|o| matches!(o.side, Side::Sell)).collect();
+    assert_eq!(buys.len(), 2, "both assets opened a long (two Buys), got {submitted:?}");
+    assert_eq!(
+        sells.len(),
+        2,
+        "the cancel must flatten BOTH legs (two closing Sells), got {submitted:?}",
+    );
+
+    let buy_assets: std::collections::BTreeSet<&str> = buys.iter().map(|o| o.asset.as_str()).collect();
+    let sell_assets: std::collections::BTreeSet<&str> = sells.iter().map(|o| o.asset.as_str()).collect();
+    assert!(buy_assets.contains("BTC/USD") && buy_assets.contains("ETH/USD"));
+    assert!(
+        sell_assets.contains("BTC/USD") && sell_assets.contains("ETH/USD"),
+        "both BTC and ETH must be flattened on cancel, got sells for {sell_assets:?}",
+    );
+
+    // Each close must flatten EXACTLY the held position: the Sell size equals
+    // the matching Buy size for that asset.
+    for asset in ["BTC/USD", "ETH/USD"] {
+        let buy = buys.iter().find(|o| o.asset == asset).unwrap();
+        let sell = sells.iter().find(|o| o.asset == asset).unwrap();
+        assert!(
+            (buy.size - sell.size).abs() < 1e-9,
+            "{asset}: close size {} must match the held open size {}",
+            sell.size,
+            buy.size,
+        );
+    }
+
+    // TWO `flat` decision rows recorded — one per asset.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let flats: Vec<_> = decisions.iter().filter(|d| d.action == "flat").collect();
+    assert_eq!(
+        flats.len(),
+        2,
+        "two flat close rows (one per asset) must be recorded on cancel, got {:?}",
+        decisions.iter().map(|d| (&d.asset, &d.action)).collect::<Vec<_>>(),
+    );
+    let flat_assets: std::collections::BTreeSet<&str> = flats.iter().map(|d| d.asset.as_str()).collect();
+    assert!(
+        flat_assets.contains("BTC/USD") && flat_assets.contains("ETH/USD"),
+        "a flat row must exist for BOTH assets, got {flat_assets:?}",
+    );
+}
+
 #[tokio::test]
 async fn live_cancel_with_flat_book_makes_no_broker_calls() {
     // Cancel BEFORE any bar opens a position -> the book is flat, so the A2
@@ -838,6 +1042,146 @@ async fn live_cancel_with_flat_book_makes_no_broker_calls() {
     assert!(
         decisions.iter().all(|d| d.action != "flat"),
         "no close decision rows when the book is already flat",
+    );
+}
+
+/// Broker that fills the opening Buy normally, then REJECTS the cancel-close
+/// Sell with an error. Exercises the A2 cancel-close rejection branch: the
+/// close fails, the leg must remain open (exposure visible), a warn note is
+/// recorded, and the run still ends Cancelled — without panicking.
+struct RejectCloseBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    cancel_hook: Mutex<Option<(RunStore, String)>>,
+}
+
+impl RejectCloseBroker {
+    fn new(open_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            cancel_hook: Mutex::new(None),
+        })
+    }
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.cancel_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for RejectCloseBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        if is_buy {
+            // Fill the open, and cancel the run so the next loop iteration
+            // fires the cancel-close path while a long is held.
+            let hook = self.cancel_hook.lock().unwrap().clone();
+            if let Some((store, run_id)) = hook {
+                store
+                    .cancel_active(&run_id, "operator cancel mid-run")
+                    .await
+                    .unwrap();
+            }
+            Ok(OrderConfirmation {
+                broker_order_id: format!("recorded-{}", req.idempotency_key),
+                fill_price: Some(self.open_fill_price),
+                fill_size: req.size,
+                fee: None,
+            })
+        } else {
+            // REJECT the closing Sell — the broker refuses to flatten.
+            Err(anyhow::anyhow!(
+                "alpaca create_order: order rejected by exchange"
+            ))
+        }
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_cancel_close_rejection_retains_leg_and_warns_without_panicking() {
+    // Bar 1 opens a long (broker fills it and cancels the run). Bar 2's
+    // loop-top `is_terminal` check fires the A2 cancel-close path, which
+    // submits a Sell to flatten — but the broker REJECTS the close. The core
+    // safety guarantee: the executor must NOT panic, must leave the leg
+    // RETAINED (no `flat` close row, no successful closing fill), must record
+    // a `warn` supervisor note, and the run must still end Cancelled.
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RejectCloseBroker::new(50_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    // Must not panic; the run returns an Err on the cancel path.
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    assert!(result.is_err(), "a cancelled run must not complete");
+    // The run still ends Cancelled despite the failed close.
+    assert!(
+        store.is_cancelled(&run.id).await.unwrap(),
+        "the run must end Cancelled even when the cancel-close was rejected",
+    );
+
+    // The broker saw the opening Buy AND the attempted closing Sell (which it
+    // rejected). The Sell reaching the broker proves the flatten was tried.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "expected an opening Buy then a (rejected) close Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "the cancel-close must attempt a Sell",
+    );
+
+    // The leg is RETAINED: the rejected close did NOT settle, so NO `flat`
+    // close decision row exists (the exposure remains open). A successful
+    // close would have recorded one.
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.iter().all(|d| d.action != "flat" && d.action != "flat_partial"),
+        "a rejected close must NOT record a flat/partial close row (leg retained), got {:?}",
+        decisions.iter().map(|d| (&d.asset, &d.action)).collect::<Vec<_>>(),
+    );
+
+    // A `warn` supervisor note flags the dangling exposure.
+    let notes = store.read_supervisor_notes(&run.id).await.unwrap();
+    let warn = notes.iter().find(|(_role, severity, content)| {
+        severity == "warn" && content.contains("BTC/USD") && content.contains("may remain open")
+    });
+    assert!(
+        warn.is_some(),
+        "a warn supervisor note must flag the un-flattened exposure, got notes {notes:?}",
     );
 }
 
