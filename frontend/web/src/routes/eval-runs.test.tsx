@@ -291,6 +291,8 @@ describe("EvalRunsRoute", () => {
     auto_fire_review: false,
     review_model: null,
     max_annotations_per_review: 8,
+    paused: false,
+    paused_at: null,
       },
     ]);
 
@@ -329,6 +331,8 @@ describe("EvalRunsRoute", () => {
     auto_fire_review: false,
     review_model: null,
     max_annotations_per_review: 8,
+    paused: false,
+    paused_at: null,
       },
     ]);
 
@@ -525,6 +529,8 @@ describe("EvalRunsRoute", () => {
     auto_fire_review: false,
     review_model: null,
     max_annotations_per_review: 8,
+    paused: false,
+    paused_at: null,
     });
 
     renderRoute();
@@ -859,6 +865,8 @@ describe("EvalRunsRoute", () => {
     auto_fire_review: false,
     review_model: null,
     max_annotations_per_review: 8,
+    paused: false,
+    paused_at: null,
       },
     ]);
 
@@ -906,6 +914,8 @@ describe("EvalRunsRoute", () => {
         auto_fire_review: false,
         review_model: null,
         max_annotations_per_review: 8,
+        paused: false,
+        paused_at: null,
       },
     ]);
 
@@ -948,6 +958,8 @@ describe("EvalRunsRoute", () => {
         auto_fire_review: false,
         review_model: null,
         max_annotations_per_review: 8,
+        paused: false,
+        paused_at: null,
       },
     ]);
 
@@ -993,6 +1005,8 @@ describe("EvalRunsRoute", () => {
     auto_fire_review: false,
     review_model: null,
     max_annotations_per_review: 8,
+    paused: false,
+    paused_at: null,
       },
     ]);
 

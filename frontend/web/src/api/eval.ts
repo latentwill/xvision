@@ -147,6 +147,63 @@ export function cancelRun(id: string): Promise<RunSummary> {
     });
 }
 
+/// Pause a live run's broker submits without stopping the run loop.
+/// Hits `POST /api/eval/runs/:id/pause`; the returned `RunSummary` has
+/// `paused: true` + a fresh `paused_at`. Mirrors `cancelRun` / `pauseSafety`.
+export function pauseRun(id: string): Promise<RunSummary> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.pause.start");
+  return apiFetch<RunSummary>(
+    `/api/eval/runs/${encodeURIComponent(id)}/pause`,
+    {
+      method: "POST",
+    },
+  )
+    .then((run) => {
+      trace.info("eval.pause.ok", {
+        paused: run.paused,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.pause.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+/// Resume a paused live run. Hits `POST /api/eval/runs/:id/resume`; the
+/// returned `RunSummary` has `paused: false`. Mirrors `pauseRun`.
+export function resumeRun(id: string): Promise<RunSummary> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.resume.start");
+  return apiFetch<RunSummary>(
+    `/api/eval/runs/${encodeURIComponent(id)}/resume`,
+    {
+      method: "POST",
+    },
+  )
+    .then((run) => {
+      trace.info("eval.resume.ok", {
+        paused: run.paused,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.resume.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
 /// Re-queue a failed eval run with the same inputs as the source.
 /// Resolves to the `RunDetail` of the freshly-queued run (or the
 /// existing in-flight retry if one was already queued/running for the

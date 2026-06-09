@@ -273,6 +273,19 @@ export type AgentRunSummary = {
    * Absent on runs that completed cleanly or are not in replay mode.
    */
   recovery_reason?: string | null;
+  /**
+   * Per-run pause flag (eval `RunSummary.paused`, migration 061). When the
+   * agent-run summary endpoint joins the eval run record it is populated;
+   * absent on runs/endpoints that don't carry it yet. The Live cockpit
+   * strip reads it to derive PAUSED vs ACTIVE. B-III wires the
+   * pause/resume transport that flips it.
+   */
+  paused?: boolean;
+  /**
+   * RFC3339 timestamp of the most recent pause; `null`/absent when never
+   * paused or after resume. Mirrors `RunSummary.paused_at`.
+   */
+  paused_at?: string | null;
 };
 
 export type AgentRunDetail = {
