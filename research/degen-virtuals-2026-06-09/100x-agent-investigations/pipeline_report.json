@@ -1,0 +1,420 @@
+{
+  "pipeline": {
+    "elapsed_sec": 111.91114068031311,
+    "phases": 1,
+    "total_tasks": 20,
+    "tasks_by_status": {
+      "success": 20
+    },
+    "model": "deepseek-chat",
+    "max_agents": 20
+  },
+  "cost": {
+    "elapsed_sec": 111.91170954704285,
+    "total_cost_usd": 0.08701826,
+    "budget_limit_usd": 6.0,
+    "budget_pct_used": 1.4503043333333334,
+    "total_requests": 21,
+    "agents": {
+      "agent-agent_01_958": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00345477,
+        "avg_latency_ms": 33335.6370049878,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_02_1168": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00233769,
+        "avg_latency_ms": 27388.649835949764,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_03_1138": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00317072,
+        "avg_latency_ms": 34435.09199901018,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_04_1147": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00317419,
+        "avg_latency_ms": 32424.082190031186,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_05_1129": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00342693,
+        "avg_latency_ms": 35723.93976297462,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_06_1119": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00274963,
+        "avg_latency_ms": 29994.70374401426,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_07_1085": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00326207,
+        "avg_latency_ms": 34689.65467601083,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_08_998": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00249646,
+        "avg_latency_ms": 25854.251787008252,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_09_862": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.0020545,
+        "avg_latency_ms": 24742.680274008308,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_10_1142": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.0030885,
+        "avg_latency_ms": 32171.143282030243,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_11_873": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00387541,
+        "avg_latency_ms": 36404.326219984796,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_12_1074": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00249864,
+        "avg_latency_ms": 25960.521964007057,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_13_779": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00230246,
+        "avg_latency_ms": 23545.854174008127,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_14_1078": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00290014,
+        "avg_latency_ms": 31610.672743001487,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_15_992": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00234248,
+        "avg_latency_ms": 26343.431629997212,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_16_1104": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00224286,
+        "avg_latency_ms": 24483.54719800409,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_17_1134": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00301673,
+        "avg_latency_ms": 32781.578429974616,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_18_875": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00308067,
+        "avg_latency_ms": 32835.75974800624,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_19_395": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00211714,
+        "avg_latency_ms": 24156.64194902638,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-agent_20_1044": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00315201,
+        "avg_latency_ms": 35461.92261297256,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "synth-phase-1": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.03027426,
+        "avg_latency_ms": 75425.86020502495,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      }
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "agent_01_958",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 11047,
+      "cost_usd": 0.00345477,
+      "latency_ms": 33335.6370049878,
+      "error": ""
+    },
+    {
+      "task_id": "agent_02_1168",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 8283,
+      "cost_usd": 0.00233769,
+      "latency_ms": 27388.649835949764,
+      "error": ""
+    },
+    {
+      "task_id": "agent_03_1138",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 10965,
+      "cost_usd": 0.00317072,
+      "latency_ms": 34435.09199901018,
+      "error": ""
+    },
+    {
+      "task_id": "agent_04_1147",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 10568,
+      "cost_usd": 0.00317419,
+      "latency_ms": 32424.082190031186,
+      "error": ""
+    },
+    {
+      "task_id": "agent_05_1129",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 11634,
+      "cost_usd": 0.00342693,
+      "latency_ms": 35723.93976297462,
+      "error": ""
+    },
+    {
+      "task_id": "agent_06_1119",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 9312,
+      "cost_usd": 0.00274963,
+      "latency_ms": 29994.70374401426,
+      "error": ""
+    },
+    {
+      "task_id": "agent_07_1085",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 10760,
+      "cost_usd": 0.00326207,
+      "latency_ms": 34689.65467601083,
+      "error": ""
+    },
+    {
+      "task_id": "agent_08_998",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 7827,
+      "cost_usd": 0.00249646,
+      "latency_ms": 25854.251787008252,
+      "error": ""
+    },
+    {
+      "task_id": "agent_09_862",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 7457,
+      "cost_usd": 0.0020545,
+      "latency_ms": 24742.680274008308,
+      "error": ""
+    },
+    {
+      "task_id": "agent_10_1142",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 10657,
+      "cost_usd": 0.0030885,
+      "latency_ms": 32171.143282030243,
+      "error": ""
+    },
+    {
+      "task_id": "agent_11_873",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 12234,
+      "cost_usd": 0.00387541,
+      "latency_ms": 36404.326219984796,
+      "error": ""
+    },
+    {
+      "task_id": "agent_12_1074",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 7826,
+      "cost_usd": 0.00249864,
+      "latency_ms": 25960.521964007057,
+      "error": ""
+    },
+    {
+      "task_id": "agent_13_779",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 7218,
+      "cost_usd": 0.00230246,
+      "latency_ms": 23545.854174008127,
+      "error": ""
+    },
+    {
+      "task_id": "agent_14_1078",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 9771,
+      "cost_usd": 0.00290014,
+      "latency_ms": 31610.672743001487,
+      "error": ""
+    },
+    {
+      "task_id": "agent_15_992",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 8191,
+      "cost_usd": 0.00234248,
+      "latency_ms": 26343.431629997212,
+      "error": ""
+    },
+    {
+      "task_id": "agent_16_1104",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 7767,
+      "cost_usd": 0.00224286,
+      "latency_ms": 24483.54719800409,
+      "error": ""
+    },
+    {
+      "task_id": "agent_17_1134",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 10084,
+      "cost_usd": 0.00301673,
+      "latency_ms": 32781.578429974616,
+      "error": ""
+    },
+    {
+      "task_id": "agent_18_875",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 10522,
+      "cost_usd": 0.00308067,
+      "latency_ms": 32835.75974800624,
+      "error": ""
+    },
+    {
+      "task_id": "agent_19_395",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 7150,
+      "cost_usd": 0.00211714,
+      "latency_ms": 24156.64194902638,
+      "error": ""
+    },
+    {
+      "task_id": "agent_20_1044",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Investigate this Degen Virtuals Arena trading agent from the provided official Degen API + Hyperliqu",
+      "result_length": 10716,
+      "cost_usd": 0.00315201,
+      "latency_ms": 35461.92261297256,
+      "error": ""
+    }
+  ],
+  "phases": [
+    {
+      "phase_num": 1,
+      "tasks_count": 20,
+      "has_synthesis": true,
+      "synthesis_length": 26822
+    }
+  ]
+}
