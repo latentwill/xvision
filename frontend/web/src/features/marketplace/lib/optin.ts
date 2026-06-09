@@ -23,7 +23,21 @@ function refreshSnapshot() {
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  // Real cross-tab sync: a write in another tab fires a `storage` event here,
+  // letting us refresh the snapshot and notify subscribers without waiting for
+  // an unrelated re-render. Guarded for non-DOM (SSR/test) environments.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === MARKETPLACE_OPTIN_KEY || e.key === null) refreshSnapshot();
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("storage", onStorage);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("storage", onStorage);
+    }
+  };
 }
 
 function getSnapshot() {
