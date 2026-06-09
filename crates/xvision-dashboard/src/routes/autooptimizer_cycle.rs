@@ -59,6 +59,10 @@ pub struct StartCycleBody {
     pub day_end: Option<chrono::NaiveDate>,
     pub baseline_start: Option<chrono::NaiveDate>,
     pub baseline_end: Option<chrono::NaiveDate>,
+    /// Candidate experiments to generate per parent this cycle (1..=64).
+    /// Overrides `experiments_per_cycle` from autooptimizer.toml; omit for the
+    /// configured value. Mirrors the CLI `--experiments-per-cycle`.
+    pub experiments_per_cycle: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -113,6 +117,9 @@ pub async fn start_cycle(
     }
     if let Some(d) = body.baseline_end {
         cfg.baseline_untouched_window.end = d;
+    }
+    if let Some(n) = body.experiments_per_cycle {
+        cfg.experiments_per_cycle = n;
     }
     cfg.validate().map_err(|e| DashboardError::Validation {
         field: "window".into(),
@@ -633,7 +640,7 @@ pub(super) fn build_cycle_config(
         } else {
             explicit_parent_hashes.len()
         },
-        mutations_per_parent: 1,
+        mutations_per_parent: cfg.experiments_per_cycle as usize,
         sabotage_seed: 42,
         judge_provider: judge.provider.clone(),
         judge_model: judge.model.clone(),

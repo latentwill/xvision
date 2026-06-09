@@ -84,6 +84,9 @@ export type StartRunCycleRequest = {
   day_end?: string | null;
   baseline_start?: string | null;
   baseline_end?: string | null;
+  /** Candidate experiments to generate per parent each cycle (1..=64).
+   * Omit for the configured `experiments_per_cycle` (default 5). */
+  experiments_per_cycle?: number | null;
 };
 
 export type StartRunCycleResponse = {
