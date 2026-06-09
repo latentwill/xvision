@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
 import {
   useLineageNode,
@@ -59,6 +59,12 @@ export function ExperimentDetail() {
                 <p className="mt-1 font-mono text-[11px] text-text-3">
                   parent {node.parent_hash ? node.parent_hash.slice(0, 10) : "— (root)"} · cycle {node.cycle_id ?? "—"}
                 </p>
+                <Link
+                  to={`/optimizer/strategy/${encodeURIComponent(node.bundle_hash)}`}
+                  className="mt-2 inline-block text-[11px] text-brand underline hover:opacity-80"
+                >
+                  View strategy →
+                </Link>
               </div>
             </section>
 
