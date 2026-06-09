@@ -190,7 +190,7 @@ export function ActivityFeed({ sessionId, maxRows = 200 }: ActivityFeedProps) {
               {rows.map((row) => (
                 <tr
                   key={row.id}
-                  className="border-b border-border/50 last:border-0 hover:bg-surface-elev/40"
+                  className="xvn-flash-in border-b border-border/50 last:border-0 hover:bg-surface-elev/40"
                 >
                   <td className="pl-3 pr-2 py-1.5 font-mono text-text-3 whitespace-nowrap w-24">
                     {formatTime(row.time)}

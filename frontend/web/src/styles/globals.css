@@ -102,6 +102,25 @@
     animation-delay: 320ms;
   }
 
+  /* Newly-arrived feed-row entrance flash. A brief gold-tint background that
+     fades to transparent, signalling a freshly-streamed SSE event. Like
+     xvn-row-in, CSS animations fire only on element mount and feed rows carry
+     stable keys, so existing rows never re-flash on re-render — only the
+     just-appended row plays. No fill-mode, so the background reverts to the
+     cascade afterwards (transparent base + hover stay intact). The global
+     reduced-motion block collapses it. */
+  @keyframes xvn-flash-in {
+    from {
+      background-color: var(--gold-bg-strong);
+    }
+    to {
+      background-color: transparent;
+    }
+  }
+  .xvn-flash-in {
+    animation: xvn-flash-in var(--duration-slow) var(--ease-out);
+  }
+
   .input {
     @apply w-full bg-surface-elev border border-border rounded px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-text-3;
   }
