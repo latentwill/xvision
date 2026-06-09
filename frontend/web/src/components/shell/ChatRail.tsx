@@ -109,6 +109,11 @@ const CONTEXT_MODE_LABEL: Record<RailContextMode, string> = {
   workspace: "Whole workspace",
 };
 
+function shortModelName(model: string): string {
+  const lastSlash = model.lastIndexOf("/");
+  return lastSlash >= 0 ? model.slice(lastSlash + 1) : model;
+}
+
 function describeRailModelSource(
   rows: ProviderRow[],
   defaultModel: string | null,
@@ -117,13 +122,14 @@ function describeRailModelSource(
 ): string {
   if (!provider || !model) return "No chat model selected.";
   const row = rows.find((r) => r.name === provider);
+  const short = shortModelName(model);
   if (row?.is_default && defaultModel === model) {
-    return `Workspace default: ${provider} / ${model}`;
+    return `Workspace default: ${provider} / ${short}`;
   }
   if (row?.is_default && !defaultModel) {
-    return `Workspace default provider: ${provider} / ${model}`;
+    return `Workspace default: ${provider}`;
   }
-  return `Selected chat model: ${provider} / ${model}`;
+  return `${provider} / ${short}`;
 }
 
 export type ChatRailProps = {
