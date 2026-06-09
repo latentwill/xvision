@@ -1818,8 +1818,13 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let params_override: Option<Value> = row
         .try_get::<Option<String>, _>("params_override_json")
         .context("read params_override_json")?
-        .map(|s| serde_json::from_str::<Value>(&s).context("deserialize params_override"))
-        .transpose()?;
+        .and_then(|s| match serde_json::from_str::<Value>(&s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!(error = %e, "row_to_run: params_override_json failed to deserialize; treating as null");
+                None
+            }
+        });
 
     let metrics: Option<MetricsSummary> = row
         .try_get::<Option<String>, _>("metrics_json")
