@@ -346,6 +346,10 @@ impl IdentityClient {
     /// Encodes `outcome` as JSON, computes keccak256 of that JSON, and calls
     /// `giveFeedback` on the ReputationRegistry.  The P&L value is encoded as
     /// `realized_pnl_usd * 1e6` (6 decimal places, i128).
+    ///
+    /// Uses the default per-trade tags `tag1="xvision"`, `tag2=cycle_id`. The
+    /// §3.6 attestation path uses [`Self::post_reputation_tagged`] to set
+    /// `tag1=tradingYield`, `tag2=month` instead.
     pub async fn post_reputation(
         &self,
         agent: TokenId,
@@ -353,10 +357,37 @@ impl IdentityClient {
         outcome: TradeOutcome,
         signer: &PrivateKeySigner,
     ) -> Result<TxHash, IdentityError> {
+        let tag2 = cycle_id.to_string();
+        self.post_reputation_tagged(agent, cycle_id, outcome, "xvision", &tag2, signer)
+            .await
+    }
+
+    /// Post a reputation update with explicit ERC-8004 `tag1`/`tag2`.
+    ///
+    /// This is the tag-parameterized core shared by [`Self::post_reputation`]
+    /// (per-trade outcomes) and the §3.6 attestation bridge
+    /// (`tag1="tradingYield"`, `tag2="month"`; see
+    /// [`crate::attestation::submit_attestation`]).
+    ///
+    /// Encodes `outcome` as JSON, computes keccak256 of that JSON, and calls
+    /// `giveFeedback` on the ReputationRegistry. The `value` field is encoded
+    /// as `realized_pnl_usd * 1e6` (6 decimal places, i128) — for attestation
+    /// posts the verdict value (100/50/0) is carried in `realized_pnl_usd`.
+    pub async fn post_reputation_tagged(
+        &self,
+        agent: TokenId,
+        cycle_id: Uuid,
+        outcome: TradeOutcome,
+        tag1: &str,
+        tag2: &str,
+        signer: &PrivateKeySigner,
+    ) -> Result<TxHash, IdentityError> {
         info!(
             chain_id = self.chain_id,
             %agent,
             %cycle_id,
+            tag1,
+            tag2,
             "posting reputation update"
         );
 
@@ -379,8 +410,8 @@ impl IdentityClient {
                 agent.0,
                 value_raw,
                 6u8,
-                "xvision".to_string(),
-                cycle_id.to_string(),
+                tag1.to_string(),
+                tag2.to_string(),
                 String::new(),
                 feedback_json,
                 feedback_hash,
@@ -395,6 +426,18 @@ impl IdentityClient {
         let tx_hash = TxHash(receipt.transaction_hash);
         debug!(%tx_hash, "reputation posted");
         Ok(tx_hash)
+    }
+
+    /// Borrow the underlying read provider (for view calls like
+    /// `balanceOf`).  Used by the attestation bridge's license check.
+    pub(crate) fn provider_ref(&self) -> &DynProvider {
+        &self.provider
+    }
+
+    /// Borrow the configured registry addresses.  Used by the attestation
+    /// bridge's deploy-gate check.
+    pub(crate) fn addresses_ref(&self) -> &RegistryAddresses {
+        &self.addresses
     }
 
     /// Read all reputation entries for an agent from the ReputationRegistry.
