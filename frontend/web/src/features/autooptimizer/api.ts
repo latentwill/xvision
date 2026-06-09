@@ -633,10 +633,11 @@ export interface GateRecord {
   drawdown_ratio: number | null;
   verdict: string;
   reason: string | null;
-  /** Edge vs a fixed-seed random baseline (informational, never gating). */
-  edge_over_random: number | null;
-  parent_edge: number | null;
-  edge_delta: number | null;
+  /** Edge vs a fixed-seed random baseline (informational, never gating).
+   * Optional: absent on gate records written before migration 061. */
+  edge_over_random?: number | null;
+  parent_edge?: number | null;
+  edge_delta?: number | null;
 }
 
 /** A single finding emitted by the judge for an experiment. */
