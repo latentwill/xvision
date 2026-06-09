@@ -79,6 +79,8 @@
 // 59. POST   /api/optimize/memory-demos               flywheel::optimize_memory_demos
 // 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
+// 61. POST  /api/assets/refresh               assets_refresh::refresh
+//
 // READ-ONLY routes (GET, GET SSE) — no require_auth layer:
 //
 //  R1.  GET  /api/health
@@ -169,7 +171,9 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, assets as assets_route, autooptimizer as autooptimizer_route,
+    agent_runs, agents, assets as assets_route,
+    assets_refresh as assets_refresh_route,
+    autooptimizer as autooptimizer_route,
     autooptimizer_cycle, bars, charts_annotated,
     charts_dashboards, charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
     diagnostics as diagnostics_route, docs,
@@ -686,6 +690,13 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/chat-rail/checkpoints/:cid/restore",
             post(checkpoints_route::restore),
+        )
+        // ── Assets: on-demand Orderly market refresh (R64 / W8) ─────────
+        // R64. POST /api/assets/refresh — fetch live Orderly perp markets,
+        // regenerate config/whitelist.toml, report result.
+        .route(
+            "/api/assets/refresh",
+            post(assets_refresh_route::refresh),
         )
         // ── Apply require_auth middleware to ALL mutating routes ───────────
         .route_layer(axum::middleware::from_fn_with_state(
