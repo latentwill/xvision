@@ -187,6 +187,13 @@ pub struct Run {
     /// rows persist it in `eval_runs.live_config_json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_config: Option<LiveConfig>,
+    /// A1 per-run (per-run) pause flag. When `true`, the live executor skips
+    /// the broker submit for each cycle but keeps iterating the run — an
+    /// ADDITIVE skip alongside the global `SafetyManager` pause. Resume
+    /// clears it. Persisted in `eval_runs.paused` (migration 061); pre-061
+    /// rows read back as `false`.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 impl Run {
@@ -214,6 +221,7 @@ impl Run {
             review_model: None,
             max_annotations_per_review: Some(8),
             live_config: None,
+            paused: false,
         }
     }
 

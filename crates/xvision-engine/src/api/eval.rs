@@ -166,6 +166,11 @@ pub struct RunSummary {
     pub review_model: Option<ReviewModel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_annotations_per_review: Option<u32>,
+    /// A1 per-run pause flag. `true` ⇒ the live executor is skipping broker
+    /// submits for this run's cycles (additive to the global safety pause)
+    /// while it keeps iterating. Defaults to `false` for pre-061 runs.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -454,6 +459,59 @@ pub async fn cancel(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
         ctx,
         "eval",
         "cancel",
+        Some(run_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+/// A1 per-run pause: set the run's `paused` flag to `true`.
+///
+/// Additive to the global `SafetyManager` pause — a paused run keeps
+/// iterating but submits no broker orders for the affected cycles. It does
+/// NOT terminate the run. Idempotent (re-pausing is a no-op). Returns the
+/// refreshed `Run`. Errors `NotFound` for an unknown run id.
+pub async fn pause(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
+    set_paused_inner(ctx, run_id, true, "pause").await
+}
+
+/// A1 per-run pause: clear the run's `paused` flag (resume trading).
+///
+/// Counterpart to [`pause`]. Idempotent. Returns the refreshed `Run`.
+/// Errors `NotFound` for an unknown run id.
+pub async fn resume(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
+    set_paused_inner(ctx, run_id, false, "resume").await
+}
+
+/// Shared body for [`pause`]/[`resume`]: flips `eval_runs.paused`, audits the
+/// op (mirroring `cancel`), and returns the refreshed run.
+async fn set_paused_inner(ctx: &ApiContext, run_id: &str, paused: bool, action: &str) -> ApiResult<Run> {
+    let started = Instant::now();
+    let store = RunStore::new(ctx.db.clone());
+    let result = async {
+        // Surface NotFound for an unknown id before attempting the write.
+        let run = get_inner(ctx, run_id).await?;
+        store
+            .set_paused(run_id, paused)
+            .await
+            .map_err(|e| ApiError::Internal(format!("{action} run: {e}")))?;
+        // Re-read so the returned Run reflects the new flag.
+        let _ = run;
+        get_inner(ctx, run_id).await
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        action,
         Some(run_id),
         None,
         outcome,
@@ -4079,6 +4137,7 @@ fn summarise(run: Run) -> RunSummary {
         auto_fire_review: run.auto_fire_review,
         review_model: run.review_model,
         max_annotations_per_review: run.max_annotations_per_review,
+        paused: run.paused,
     }
 }
 

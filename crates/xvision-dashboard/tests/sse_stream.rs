@@ -155,6 +155,7 @@ async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
         review_model: None,
         max_annotations_per_review: Some(8),
         live_config: None,
+        paused: false,
     };
     store.create(&run).await.expect("insert test run");
     store

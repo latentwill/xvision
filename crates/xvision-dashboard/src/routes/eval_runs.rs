@@ -197,6 +197,37 @@ pub async fn cancel_run(
     Ok(Json(eval::summarise_run(run)))
 }
 
+/// `POST /api/eval/runs/:id/pause` — set the per-run `paused` flag.
+///
+/// A1: an ADDITIVE per-run gate alongside the global `POST /api/safety/pause`.
+/// A paused run keeps iterating but submits no broker orders for the affected
+/// cycles — it does NOT terminate. Mirrors `cancel_run`'s shape: returns the
+/// refreshed `RunSummary` and shares the same auth surface as the global
+/// safety routes. Idempotent.
+pub async fn pause_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RunSummary>, DashboardError> {
+    let run = eval::pause(&state.api_context(), &id).await?;
+    // The pause flag doesn't change `status`, but invalidate the burst-poll
+    // cache so the next detail read reflects the new `paused` value promptly.
+    state.eval_run_cache_invalidate(&id);
+    Ok(Json(eval::summarise_run(run)))
+}
+
+/// `POST /api/eval/runs/:id/resume` — clear the per-run `paused` flag.
+///
+/// Counterpart to [`pause_run`]. Idempotent. Returns the refreshed
+/// `RunSummary`.
+pub async fn resume_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RunSummary>, DashboardError> {
+    let run = eval::resume(&state.api_context(), &id).await?;
+    state.eval_run_cache_invalidate(&id);
+    Ok(Json(eval::summarise_run(run)))
+}
+
 /// `POST /api/eval/runs/:id/retry` — enqueue a fresh run that clones the
 /// source's `(agent_id, scenario_id, mode, params_override)` inputs.
 ///

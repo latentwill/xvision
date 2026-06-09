@@ -130,6 +130,14 @@ const MIGRATION_058_AUTOOPTIMIZER_EVIDENCE: &str =
 /// existence) so re-opening an already-initialized DB is a no-op.
 const MIGRATION_059_AUTOOPTIMIZER_SCHEDULES: &str =
     include_str!("../../migrations/059_autooptimizer_schedules.sql");
+/// Migration 061: per-run (per-run) pause flag on `eval_runs`.
+/// Adds `paused` (BOOLEAN NOT NULL DEFAULT 0) and `paused_at` (nullable
+/// RFC3339 timestamp). The live executor honors `paused` as an ADDITIVE
+/// per-cycle broker-submit skip alongside the global SafetyManager pause —
+/// a paused run keeps iterating but submits no orders. Applied via
+/// `migrate_eval_run_paused` (guarded on the `paused` column existing) so
+/// re-opening an already-initialized DB is a no-op.
+const MIGRATION_061_EVAL_RUN_PAUSED: &str = include_str!("../../migrations/061_eval_run_paused.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -415,6 +423,7 @@ impl ApiContext {
         migrate_autooptimizer_sessions(&pool).await?;
         migrate_autooptimizer_evidence(&pool).await?;
         migrate_autooptimizer_schedules(&pool).await?;
+        migrate_eval_run_paused(&pool).await?;
         // P1-W2: crash recovery — mark any in-flight sessions as failed.
         crate::autooptimizer::session::mark_interrupted_sessions(&pool)
             .await
@@ -1210,6 +1219,17 @@ async fn migrate_eval_runs_venue_label(pool: &SqlitePool) -> ApiResult<()> {
         sqlx::query(MIGRATION_031_EVAL_RUNS_VENUE_LABEL)
             .execute(pool)
             .await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 061 (A1 per-run pause): adds `paused` + `paused_at`
+/// columns to `eval_runs`. Gated on the `paused` column's absence so a
+/// re-open is a no-op. Both columns are added in a single multi-statement
+/// query, so guarding on `paused` alone covers `paused_at` too.
+async fn migrate_eval_run_paused(pool: &SqlitePool) -> ApiResult<()> {
+    if !table_has_column(pool, "eval_runs", "paused").await? {
+        sqlx::query(MIGRATION_061_EVAL_RUN_PAUSED).execute(pool).await?;
     }
     Ok(())
 }

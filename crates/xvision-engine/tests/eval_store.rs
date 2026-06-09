@@ -301,3 +301,50 @@ async fn record_and_read_equity_curve_in_timestamp_order() {
     assert_eq!(curve[1].1, 10_500.0);
     assert_eq!(curve[2].1, 11_000.0);
 }
+
+// ── A1: per-run (per-run) pause ───────────────────────────────────────────
+
+#[tokio::test]
+async fn fresh_run_defaults_to_not_paused() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+    let back = store.get(&id).await.unwrap();
+    assert!(!back.paused, "a freshly created run must default to not-paused");
+    assert!(
+        !store.is_paused(&id).await.unwrap(),
+        "is_paused must report false for a fresh run"
+    );
+}
+
+#[tokio::test]
+async fn set_paused_round_trips_through_get_and_is_paused() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    store.set_paused(&id, true).await.unwrap();
+    let back = store.get(&id).await.unwrap();
+    assert!(
+        back.paused,
+        "get must reflect paused = true after set_paused(true)"
+    );
+    assert!(
+        store.is_paused(&id).await.unwrap(),
+        "is_paused must report true after set_paused(true)"
+    );
+
+    // Resume clears it.
+    store.set_paused(&id, false).await.unwrap();
+    let back = store.get(&id).await.unwrap();
+    assert!(
+        !back.paused,
+        "get must reflect paused = false after set_paused(false)"
+    );
+    assert!(
+        !store.is_paused(&id).await.unwrap(),
+        "is_paused must report false after set_paused(false)"
+    );
+}

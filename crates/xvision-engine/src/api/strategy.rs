@@ -2312,6 +2312,7 @@ mod tests {
             review_model: None,
             max_annotations_per_review: Some(8),
             live_config: None,
+            paused: false,
         }
     }
 

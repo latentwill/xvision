@@ -2089,7 +2089,15 @@ impl Executor {
                 // A broker-rejected order also skips simulate_fill: the order is
                 // treated as if it never existed (fail-honest — the strategy sees
                 // the decision in the trace but no fill in outcomes).
-                let fill: FillRecord = if applied_action == "hold" || broker_rejected {
+                //
+                // A1 per-run pause: when the run is paused (an ADDITIVE per-run
+                // gate alongside the global SafetyManager pause), skip the fill
+                // submit for this cycle and emit a no-op fill — the run keeps
+                // iterating (decisions still record), it just doesn't trade.
+                // Re-read per cycle so a pause issued mid-run via
+                // `POST /api/eval/runs/:id/pause` takes effect on the next cycle.
+                let run_paused = store.is_paused(&run.id).await.unwrap_or(false);
+                let fill: FillRecord = if applied_action == "hold" || broker_rejected || run_paused {
                     FillRecord {
                         new_pos: pre_fill_position,
                         new_entry: pre_fill_entry,
@@ -3393,7 +3401,14 @@ impl Executor {
         // as `want_flat` and would CLOSE the position. The backtest path
         // guards this identically (`if applied_action == "hold" { no-op }`
         // before calling the sink), so we mirror it here.
-        let fill: FillRecord = if applied_action == "hold" {
+        //
+        // A1 per-run pause: when the run is paused (an ADDITIVE per-run gate
+        // alongside the global SafetyManager pause), skip the broker submit
+        // for this cycle and emit a no-op fill so the live run keeps iterating
+        // without placing an order. Re-read per cycle so a pause issued
+        // mid-run via `POST /api/eval/runs/:id/pause` is honored next cycle.
+        let run_paused = store.is_paused(&run.id).await.unwrap_or(false);
+        let fill: FillRecord = if applied_action == "hold" || run_paused {
             FillRecord {
                 new_pos: pre_fill_position,
                 new_entry: pre_fill_entry,

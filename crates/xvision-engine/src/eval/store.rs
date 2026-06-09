@@ -144,6 +144,11 @@ impl RunStore {
             RunMode::Backtest => Some(run.scenario_id.as_str()),
         };
 
+        // NOTE: `paused` (migration 061) is intentionally NOT written here.
+        // A run is never *created* paused — pausing is a later UPDATE via
+        // `set_paused`. Omitting the column lets `create` work against an
+        // older schema that predates 061 (the column's DB DEFAULT 0 applies
+        // when it exists), keeping the prior binary's tables forward-usable.
         sqlx::query(
             "INSERT INTO eval_runs \
              (id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status, \
@@ -297,6 +302,62 @@ impl RunStore {
         Ok(self.status(id).await?.is_terminal())
     }
 
+    /// A1 per-run pause: set (or clear) the `paused` flag on a run.
+    ///
+    /// `paused = true` records `paused_at` = now (RFC3339); `paused = false`
+    /// (resume) clears it back to NULL. This is an ADDITIVE per-run gate that
+    /// the live executor honors ALONGSIDE the global `SafetyManager` pause —
+    /// a paused run keeps iterating but submits no broker orders for the
+    /// affected cycles. It does NOT change `status` and never terminates the
+    /// run. Idempotent: re-pausing/re-resuming is a harmless no-op write.
+    /// Errors if the run id is unknown.
+    pub async fn set_paused(&self, id: &str, paused: bool) -> Result<()> {
+        let paused_at = if paused {
+            Some(Utc::now().to_rfc3339())
+        } else {
+            None
+        };
+        let res = sqlx::query("UPDATE eval_runs SET paused = ?, paused_at = ? WHERE id = ?")
+            .bind(if paused { 1_i64 } else { 0_i64 })
+            .bind(paused_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("set_paused: run '{id}'"))?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("set_paused: no run with id '{id}'");
+        }
+        Ok(())
+    }
+
+    /// A1 per-run pause: read the current `paused` flag for a run.
+    ///
+    /// Called per-cycle by the executor loop (cheap single-column read,
+    /// mirroring the existing `is_cancelled` / `is_terminal` checkpoints) so
+    /// a pause issued mid-run via `POST /api/eval/runs/:id/pause` is honored
+    /// on the next cycle.
+    ///
+    /// Tolerant of a pre-061 schema: if the `paused` column does not exist
+    /// (an older DB, or a test store that didn't apply migration 061), the
+    /// query fails and we treat the run as not-paused rather than erroring —
+    /// the feature is simply inert until the column is present. Returns
+    /// `Ok(false)` for an unknown run id as well.
+    pub async fn is_paused(&self, id: &str) -> Result<bool> {
+        let row = match sqlx::query("SELECT paused FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(row) => row,
+            // Missing column (pre-061) or other read error → inert (not paused).
+            Err(_) => return Ok(false),
+        };
+        let paused = row
+            .map(|r| r.try_get::<i64, _>("paused").unwrap_or(0) != 0)
+            .unwrap_or(false);
+        Ok(paused)
+    }
+
     pub async fn status(&self, id: &str) -> Result<RunStatus> {
         let row = sqlx::query("SELECT status FROM eval_runs WHERE id = ?")
             .bind(id)
@@ -434,7 +495,14 @@ impl RunStore {
         .await
         .context("select eval_runs by id")?
         .ok_or_else(|| anyhow::anyhow!("run not found: {id}"))?;
-        row_to_run(&row)
+        let mut run = row_to_run(&row)?;
+        // Overlay the A1 per-run pause flag (migration 061). The shared SELECT
+        // above does not project `paused` so `row_to_run` stays usable against
+        // pre-061 schemas; `is_paused` is tolerant of the column's absence and
+        // returns false there. This keeps `RunStore::get` — and the
+        // pause/resume route response built from it — reflecting the live flag.
+        run.paused = self.is_paused(id).await.unwrap_or(false);
+        Ok(run)
     }
 
     /// Read just the `agents_agent_id` (long-lived workspace agent ULID)
@@ -1715,6 +1783,12 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         review_model,
         max_annotations_per_review,
         live_config,
+        // `paused` (migration 061) is NOT projected by the shared SELECTs so
+        // that `row_to_run` stays usable against pre-061 schemas. Callers that
+        // need the live flag (`RunStore::get`) overlay it via `is_paused`
+        // after building the Run; everywhere else the harmless `false`
+        // default applies.
+        paused: false,
     })
 }
 
