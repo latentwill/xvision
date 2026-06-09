@@ -145,7 +145,7 @@ async fn mutator_refuses_to_re_emit_an_already_tried_candidate() {
 
     // First cycle (empty history): the fixed candidate is accepted.
     let first = mutator
-        .propose(&base, &cfg, None, 1, None, &Default::default())
+        .propose(&base, &cfg, None, 1, None, &Default::default(), None)
         .await
         .expect("first proposal succeeds");
     let tried = candidate_hash(&base, &first);
@@ -153,7 +153,7 @@ async fn mutator_refuses_to_re_emit_an_already_tried_candidate() {
     // Second cycle, same parent, that candidate now in history → must NOT be
     // re-emitted; with a model that only ever returns it, propose fails.
     let avoid: std::collections::HashSet<ContentHash> = [tried].into_iter().collect();
-    let second = mutator.propose(&base, &cfg, None, 2, None, &avoid).await;
+    let second = mutator.propose(&base, &cfg, None, 2, None, &avoid, None).await;
     assert!(
         second.is_err(),
         "F32: a candidate already evaluated on this parent must never be re-emitted; \
@@ -181,11 +181,11 @@ async fn seed_directed_focus_targets_different_params() {
     // are the first two mechanical keys; risk.* follow). Different seed ⇒
     // different focus directive ⇒ materially different prompt.
     mutator
-        .propose(&base, &cfg, None, 0, None, &Default::default())
+        .propose(&base, &cfg, None, 0, None, &Default::default(), None)
         .await
         .unwrap();
     mutator
-        .propose(&base, &cfg, None, 1, None, &Default::default())
+        .propose(&base, &cfg, None, 1, None, &Default::default(), None)
         .await
         .unwrap();
 

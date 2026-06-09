@@ -2138,6 +2138,7 @@ async fn propose(
             exploration_seed,
             None,
             &std::collections::HashSet::new(),
+            None,
         )
         .await
 }
