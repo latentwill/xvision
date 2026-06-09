@@ -113,7 +113,13 @@ export function GateScorecard({ gate_record }: { gate_record: GateRecord | null 
     delta_day,
     delta_holdout,
     drawdown_ratio,
+    edge_over_random,
+    parent_edge,
+    edge_delta,
   } = gate_record;
+
+  const hasEdge =
+    edge_over_random != null || parent_edge != null || edge_delta != null;
 
   return (
     <div className="rounded-md border border-border bg-surface-card p-5 space-y-4">
@@ -144,6 +150,31 @@ export function GateScorecard({ gate_record }: { gate_record: GateRecord | null 
           </div>
         )}
       </div>
+      {/* Edge vs a fixed-seed random baseline (informational — never gates).
+          edge_over_random = candidate − random; parent_edge = parent − random;
+          edge_delta = how much the candidate gained on random vs the parent. */}
+      {hasEdge && (
+        <div className="flex flex-wrap items-center gap-4 border-t border-border-soft pt-3">
+          <span className="text-[10px] uppercase tracking-wider text-text-3">
+            Edge vs random
+          </span>
+          <div className="flex items-center gap-1.5" title="Candidate score minus the random-baseline score">
+            <span className="text-[10px] text-text-3">Candidate</span>
+            <span className="font-mono text-[11px] text-text-2">{formatDelta(edge_over_random)}</span>
+          </div>
+          <div className="flex items-center gap-1.5" title="Parent score minus the random-baseline score">
+            <span className="text-[10px] text-text-3">Parent</span>
+            <span className="font-mono text-[11px] text-text-2">{formatDelta(parent_edge)}</span>
+          </div>
+          <div
+            className="flex items-center gap-1.5"
+            title="Edge the candidate gained on random relative to the parent (candidate edge − parent edge)"
+          >
+            <span className="text-[10px] text-text-3">Δ</span>
+            <span className="font-mono text-[11px] text-text-2">{formatDelta(edge_delta)}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

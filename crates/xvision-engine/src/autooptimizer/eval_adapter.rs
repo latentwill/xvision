@@ -41,6 +41,20 @@ pub trait PaperTestRunner: Send + Sync {
     ) -> Result<MetricsSummary> {
         self.run(strategy, scenario).await
     }
+
+    /// Run a fixed-seed RANDOM "no-intelligence" trader with the SAME strategy
+    /// structure (risk sizing, filters) over `scenario`, picking each decision
+    /// uniformly from `direction`'s action set. Used to compute the optimizer's
+    /// `edge_over_random` metric. The default impl is unsupported (test stubs
+    /// fall back to `Err`, which the cycle treats as "no baseline" → edges 0).
+    async fn run_random_baseline(
+        &self,
+        _strategy: &Strategy,
+        _scenario: &Scenario,
+        _direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<MetricsSummary> {
+        anyhow::bail!("random baseline not supported by this PaperTestRunner")
+    }
 }
 
 pub struct BacktestPaperTester {
@@ -82,6 +96,20 @@ impl BacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
     ) -> Result<MetricsSummary> {
+        self.run_inner_with_dispatch(strategy, scenario, canary, None).await
+    }
+
+    /// Like [`run_inner`] but allows overriding the LLM dispatch — used to run
+    /// the random baseline through the identical backtest path with a
+    /// `RandomBaselineDispatch` instead of the real model dispatch.
+    async fn run_inner_with_dispatch(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        canary: Option<&str>,
+        dispatch_override: Option<Arc<dyn LlmDispatch>>,
+    ) -> Result<MetricsSummary> {
+        let dispatch = dispatch_override.unwrap_or_else(|| Arc::clone(&self.dispatch));
         let mut executor = match self.injected_bars.as_ref() {
             Some(bars) => Executor::with_bars(bars.clone()),
             None => Executor::new(),
@@ -107,7 +135,7 @@ impl BacktestPaperTester {
                 strategy,
                 scenario,
                 &agent_slots,
-                Arc::clone(&self.dispatch),
+                Arc::clone(&dispatch),
                 Arc::clone(&self.tools),
                 &self.store,
             )
@@ -128,6 +156,26 @@ impl PaperTestRunner for BacktestPaperTester {
         sabotage_variant: &str,
     ) -> Result<MetricsSummary> {
         self.run_inner(strategy, scenario, Some(sabotage_variant)).await
+    }
+
+    async fn run_random_baseline(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<MetricsSummary> {
+        let actions = direction
+            .baseline_actions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(
+            crate::autooptimizer::random_baseline::RandomBaselineDispatch::new(
+                crate::autooptimizer::random_baseline::RANDOM_BASELINE_SEED,
+                actions,
+            ),
+        );
+        self.run_inner_with_dispatch(strategy, scenario, None, Some(dispatch)).await
     }
 }
 
@@ -168,6 +216,16 @@ impl CachedBacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
     ) -> Result<MetricsSummary> {
+        self.run_inner_with_dispatch(strategy, scenario, canary, None).await
+    }
+
+    async fn run_inner_with_dispatch(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        canary: Option<&str>,
+        dispatch_override: Option<Arc<dyn LlmDispatch>>,
+    ) -> Result<MetricsSummary> {
         ensure_scenario_persisted(&self.ctx, scenario).await?;
         let executor = build_cached_backtest_executor(&self.ctx, strategy, scenario, canary).await?;
         let store = RunStore::new(self.ctx.db.clone());
@@ -180,7 +238,7 @@ impl CachedBacktestPaperTester {
         store
             .ensure_agent_run_baseline(&run.id, self.ctx.obs_config.retention.mode.as_db_str())
             .await?;
-        let dispatch: Arc<dyn LlmDispatch> = self.dispatch.clone();
+        let dispatch: Arc<dyn LlmDispatch> = dispatch_override.unwrap_or_else(|| self.dispatch.clone());
         // Resolve the candidate strategy's agent slots (trader model/prompt
         // binding). The production CLI/dashboard optimizer adapter previously
         // passed `&[]` here, which is why a real `run-cycle` failed at
@@ -215,6 +273,26 @@ impl PaperTestRunner for CachedBacktestPaperTester {
         sabotage_variant: &str,
     ) -> Result<MetricsSummary> {
         self.run_inner(strategy, scenario, Some(sabotage_variant)).await
+    }
+
+    async fn run_random_baseline(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<MetricsSummary> {
+        let actions = direction
+            .baseline_actions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(
+            crate::autooptimizer::random_baseline::RandomBaselineDispatch::new(
+                crate::autooptimizer::random_baseline::RANDOM_BASELINE_SEED,
+                actions,
+            ),
+        );
+        self.run_inner_with_dispatch(strategy, scenario, None, Some(dispatch)).await
     }
 }
 
@@ -340,6 +418,17 @@ impl PaperTestRunner for BudgetCappedPaperTester {
     ) -> Result<MetricsSummary> {
         self.run_budgeted(strategy, scenario, Some(sabotage_variant))
             .await
+    }
+
+    async fn run_random_baseline(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<MetricsSummary> {
+        // The random baseline spends zero tokens, so the budget cap is moot —
+        // forward straight to the inner tester so the real backtest path runs.
+        self.inner.run_random_baseline(strategy, scenario, direction).await
     }
 }
 
