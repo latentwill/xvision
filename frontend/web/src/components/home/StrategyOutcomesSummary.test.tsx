@@ -132,6 +132,16 @@ describe("StrategyOutcomesSummary", () => {
     expect(link).toHaveAttribute("href", "/strategies");
   });
 
+  it("prompts to create a strategy when none are configured", () => {
+    renderSummary([], []);
+
+    expect(screen.getByText(/no strategies configured/i)).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /create one/i });
+    expect(link).toHaveAttribute("href", "/strategies");
+    // Must NOT prompt an eval when there is nothing to evaluate yet.
+    expect(screen.queryByText(/no completed evals yet/i)).toBeNull();
+  });
+
   it("does not render a strategy in both the strongest and weakest sections", () => {
     const strategies = [makeStrategy("s1", "Alpha"), makeStrategy("s2", "Bravo")];
     const runs = [

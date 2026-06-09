@@ -158,10 +158,37 @@ function SummarySection({
   );
 }
 
+function SummaryHeader() {
+  return (
+    <div className="mb-3 flex items-baseline gap-2">
+      <h2 className="text-sm font-semibold tracking-tight">Strategy outcomes</h2>
+      <span className="text-xs text-muted-foreground">
+        · latest completed evals
+      </span>
+    </div>
+  );
+}
+
 export function StrategyOutcomesSummary({
   strategies,
   runs,
 }: StrategyOutcomesSummaryProps) {
+  // No strategies at all → direct the operator to create one first. Prompting
+  // an eval here would be a dead end (there is nothing to evaluate yet).
+  if (strategies.length === 0) {
+    return (
+      <section data-testid="strategy-outcomes-summary">
+        <SummaryHeader />
+        <p className="px-1 text-[13px] text-muted-foreground">
+          No strategies configured.{" "}
+          <Link to="/strategies" className="text-primary hover:underline">
+            Create one →
+          </Link>
+        </p>
+      </section>
+    );
+  }
+
   const evaluated = evaluatedStrategies(strategies, runs);
 
   // Strongest: highest return, Sharpe as tie-break.
@@ -193,14 +220,7 @@ export function StrategyOutcomesSummary({
 
   return (
     <section data-testid="strategy-outcomes-summary">
-      <div className="mb-3 flex items-baseline gap-2">
-        <h2 className="text-sm font-semibold tracking-tight">
-          Strategy outcomes
-        </h2>
-        <span className="text-xs text-muted-foreground">
-          · latest completed evals
-        </span>
-      </div>
+      <SummaryHeader />
 
       {evaluated.length === 0 ? (
         <p className="px-1 text-[13px] text-muted-foreground">
