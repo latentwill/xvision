@@ -22,12 +22,15 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
+import { evalKeys, getRun } from "@/api/eval";
 import { useRunStream } from "@/components/chart/use-run-stream";
 import { LiveChartV2Container } from "@/components/chart/v2/surfaces/LiveChartV2Container";
 import { Topbar } from "@/components/shell/Topbar";
 import { useWallet } from "@/features/marketplace/lib/wallet";
 import { useTraceDock } from "@/stores/trace-dock";
 
+import { LiveAccountStrip } from "./LiveAccountStrip";
+import { LivePositionsTable } from "./LivePositionsTable";
 import { StrategyStrip } from "./StrategyStrip";
 import { WalletBanner } from "./WalletBanner";
 import { loadStripMetric, saveStripMetric, type StripMetricId } from "./strip-metrics";
@@ -78,14 +81,37 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
       .setActiveRun(selectedId || null, selectedId ? "live" : "post-hoc");
   }, [selectedId]);
 
-  // One SSE for the selected run drives its pill's connection dot. Other
-  // pills get a lightweight derived status (see StrategyStrip) so we don't
-  // open an EventSource per pill. The chart owns its own stream.
-  const { status: selectedConnStatus } = useRunStream(selectedId ?? "");
+  // ONE SSE per selected run, lifted here and shared by (a) the pill's
+  // connection dot, (b) the account stat strip + positions table, and (c) the
+  // chart container (via the `stream` prop, so it opens no EventSource of its
+  // own). Other pills get a lightweight derived status (see StrategyStrip) so
+  // we don't open an EventSource per pill. This collapses B-I's duplicate
+  // stream (cockpit dot + chart each opened their own for the same run).
+  const stream = useRunStream(selectedId ?? "");
+  const selectedConnStatus = stream.status;
+
+  // Decision rows for the selected run drive the open-position derivations
+  // (unrealized PnL + the positions table). Reuses the eval run-detail fetch
+  // path (`getRun` → RunDetail.decisions, keyed by `evalKeys.run`) so we share
+  // its cache with the run-detail page — no new endpoint. Decisions are
+  // fetched (not streamed); poll while the run is live.
+  const decisionsQuery = useQuery({
+    queryKey: evalKeys.run(selectedId ?? ""),
+    queryFn: () => getRun(selectedId!),
+    enabled: !!selectedId,
+    refetchInterval: 10_000,
+  });
+  const decisions = useMemo(
+    () => decisionsQuery.data?.decisions ?? [],
+    [decisionsQuery.data],
+  );
 
   const onSelect = (id: string) => {
     setUserPicked(id);
-    // When deep-linked at /live/:id, navigate to keep the URL in sync.
+    // Only deep-linked `/live/:id` mounts keep the URL in sync with the
+    // selection (re-navigating to the new id). On the bare `/live` route the
+    // selection is tracked in component state (`userPicked`) and the URL is
+    // intentionally left untouched.
     if (runId) navigate(`/live/${id}`);
   };
 
@@ -116,16 +142,21 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
       {/* §2.6 Viewport */}
       {selectedId ? (
         <section data-testid="live-viewport" className="space-y-5">
-          <LiveChartV2Container runId={selectedId} />
+          {/* Chart consumes the lifted stream (no second EventSource). */}
+          <LiveChartV2Container runId={selectedId} stream={stream} />
 
           {/*
-            B-II SLOT — account stat strip + active positions table go here,
-            full-width inline (NO right-side box). B-II renders:
-              <LiveAccountStrip runId={selectedId} />
-              <LivePositionsTable runId={selectedId} />
-            Keep this as a single full-width column under the chart.
+            B-II — account stat strip + active positions table, full-width
+            inline (NO right-side box). Both consume the lifted stream + the
+            shared decisions fetch.
           */}
-          <section data-testid="live-stats-positions-slot" aria-hidden />
+          <section
+            data-testid="live-stats-positions-slot"
+            className="space-y-5"
+          >
+            <LiveAccountStrip data={stream.data} decisions={decisions} />
+            <LivePositionsTable data={stream.data} decisions={decisions} />
+          </section>
         </section>
       ) : (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
