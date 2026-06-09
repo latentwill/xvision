@@ -5,6 +5,7 @@ import {
   OPTIMISTIC_PATCH,
   patchRunInList,
   reconcileFromRunSummary,
+  restoreRunInList,
 } from "./transport-cache";
 
 function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
@@ -94,6 +95,33 @@ describe("patchRunInList", () => {
     const list = [mkRun({ run_id: "a", status: "running" })];
     const next = patchRunInList(list, "a", OPTIMISTIC_PATCH.stop);
     expect(next?.[0]?.status).toBe("cancelled");
+  });
+});
+
+describe("restoreRunInList", () => {
+  test("restores only the failing run, leaving a concurrent run's optimistic patch intact", () => {
+    const priorB = mkRun({ run_id: "b", paused: false });
+    // Live cache: B has a failing optimistic pause; A has a concurrent
+    // optimistic pause that must NOT be reverted by B's rollback.
+    const live = [
+      mkRun({ run_id: "a", paused: true }),
+      mkRun({ run_id: "b", paused: true }),
+    ];
+    const next = restoreRunInList(live, "b", priorB);
+    expect(next).not.toBe(live);
+    expect(next?.find((r) => r.run_id === "a")?.paused).toBe(true);
+    expect(next?.find((r) => r.run_id === "b")?.paused).toBe(false);
+  });
+  test("returns same ref when the run is absent (nothing to restore)", () => {
+    const list = [mkRun({ run_id: "a" })];
+    expect(restoreRunInList(list, "zzz", mkRun({ run_id: "zzz" }))).toBe(list);
+  });
+  test("undefined priorRow is a no-op (run wasn't cached at mutate time)", () => {
+    const list = [mkRun({ run_id: "a", paused: true })];
+    expect(restoreRunInList(list, "a", undefined)).toBe(list);
+  });
+  test("undefined cache is a safe no-op", () => {
+    expect(restoreRunInList(undefined, "a", mkRun({ run_id: "a" }))).toBeUndefined();
   });
 });
 

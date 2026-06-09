@@ -56,6 +56,31 @@ export function patchRunInList(
 }
 
 /**
+ * Restore a single run's row to a prior snapshot, returning a NEW array if the
+ * run is present. Used for error rollback: instead of clobbering the whole
+ * cached list (which would wipe a CONCURRENT optimistic patch on a different
+ * run), we re-apply only the failing run's pre-mutation row. If `priorRow` is
+ * `undefined` (the run wasn't in the cache when the mutation fired), the list
+ * is returned untouched — there is nothing to restore. Non-matching rows are
+ * left as-is so other runs' in-flight optimistic patches survive.
+ */
+export function restoreRunInList(
+  list: AgentRunSummary[] | undefined,
+  runId: string,
+  priorRow: AgentRunSummary | undefined,
+): AgentRunSummary[] | undefined {
+  if (!list) return list;
+  if (priorRow === undefined) return list;
+  let changed = false;
+  const next = list.map((r) => {
+    if (r.run_id !== runId) return r;
+    changed = true;
+    return priorRow;
+  });
+  return changed ? next : list;
+}
+
+/**
  * Reconcile a cached `AgentRunSummary` from the authoritative eval
  * `RunSummary` the mutation returned. The eval row is the source of truth for
  * `status` / `paused` / `flatten_requested`; everything else on the agent-run

@@ -16,7 +16,7 @@
 // are inline expanders rendered by `TransportControls` under the pill. This
 // hook just tracks which expander is open per run + pending/error state.
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { agentRunKeys } from "@/api/agent-runs";
@@ -28,8 +28,18 @@ import {
   OPTIMISTIC_PATCH,
   patchRunInList,
   reconcileFromRunSummary,
+  restoreRunInList,
   type TransportAction,
 } from "./transport-cache";
+
+/**
+ * Mutation context carried from `onMutate` to `onError`. We snapshot ONLY the
+ * failing run's prior row (not the whole list) so rollback re-applies just that
+ * row, leaving any concurrent optimistic patch on a different run intact.
+ */
+interface TransportMutationContext {
+  priorRow: AgentRunSummary | undefined;
+}
 
 /** Per-run inline-expander state surfaced to the pill. */
 export interface TransportUiState {
@@ -78,6 +88,16 @@ export function useTransport(walletDisabled: boolean) {
   const queryClient = useQueryClient();
   const [ui, setUi] = useState<Record<string, TransportUiState>>({});
 
+  // Fix 2: synchronous per-run lock. The `busy` UI flag flips via async
+  // setState (and the DOM `disabled` only follows the next render), so two
+  // sub-frame clicks could both pass the closure-captured `state.busy` guard
+  // and double-fire a NON-idempotent action (double broker close / double
+  // cancel). This ref is checked-and-set synchronously, before `mutate`, so
+  // the second click in the same frame is rejected. Multiple runs share one
+  // mutation, so `mutation.isPending` can't disambiguate per run — a per-run
+  // set is required. Cleared in `onSettled`.
+  const inFlight = useRef<Set<string>>(new Set());
+
   const patchUi = useCallback(
     (runId: string, patch: Partial<TransportUiState>) => {
       setUi((prev) => ({
@@ -95,7 +115,8 @@ export function useTransport(walletDisabled: boolean) {
   const mutation = useMutation<
     RunSummary,
     unknown,
-    { runId: string; action: TransportAction }
+    { runId: string; action: TransportAction },
+    TransportMutationContext
   >({
     mutationFn: ({ runId, action }) => {
       switch (action) {
@@ -112,39 +133,70 @@ export function useTransport(walletDisabled: boolean) {
     onMutate: async ({ runId, action }) => {
       // Cancel in-flight list refetches so the poll can't clobber our patch.
       await queryClient.cancelQueries({ queryKey: listKey });
-      const snapshot = queryClient.getQueryData<AgentRunSummary[]>(listKey);
-      queryClient.setQueryData<AgentRunSummary[] | undefined>(listKey, (cur) =>
-        patchRunInList(cur, runId, OPTIMISTIC_PATCH[action]),
+      // Fix 1: snapshot ONLY the failing run's prior row, not the whole list.
+      // Restoring the whole array on error would wipe a concurrent optimistic
+      // patch on a DIFFERENT run that is still in flight.
+      const cur = queryClient.getQueryData<AgentRunSummary[]>(listKey);
+      const priorRow = cur?.find((r) => r.run_id === runId);
+      queryClient.setQueryData<AgentRunSummary[] | undefined>(listKey, (c) =>
+        patchRunInList(c, runId, OPTIMISTIC_PATCH[action]),
       );
       patchUi(runId, { busy: true, error: null });
-      return { snapshot };
+      return { priorRow };
     },
     onSuccess: (authoritative) => {
       // The eval RunSummary is the authority — reconcile the cache from it.
       queryClient.setQueryData<AgentRunSummary[] | undefined>(listKey, (cur) =>
         reconcileFromRunSummary(cur, authoritative),
       );
+      // Fix 3: drive `flattenPending` off the reconciled authority. If the
+      // server reports the flatten is no longer requested (executor cleared
+      // it), clear the pill's "Flattening…" badge so it can't stick.
+      if (!authoritative.flatten_requested) {
+        patchUi(authoritative.id, { flattenPending: false });
+      }
     },
     onError: (err, { runId }, ctx) => {
-      // Revert the optimistic patch to the pre-mutation snapshot.
-      const snapshot = (ctx as { snapshot?: AgentRunSummary[] } | undefined)
-        ?.snapshot;
-      if (snapshot !== undefined) {
-        queryClient.setQueryData(listKey, snapshot);
-      }
+      // Fix 1: re-apply ONLY the failing run's pre-mutation row, leaving other
+      // runs' concurrent optimistic patches untouched.
+      queryClient.setQueryData<AgentRunSummary[] | undefined>(listKey, (cur) =>
+        restoreRunInList(cur, runId, ctx?.priorRow),
+      );
       patchUi(runId, { error: errMsg(err), flattenPending: false });
     },
     onSettled: (_data, _err, { runId }) => {
+      // Fix 2: release the synchronous per-run lock.
+      inFlight.current.delete(runId);
       patchUi(runId, { busy: false });
       // Reconcile against the server on the next poll.
       void queryClient.invalidateQueries({ queryKey: listKey });
     },
   });
 
+  // Fix 2: synchronously claim the per-run lock. Returns false if a mutation
+  // for this run is already in flight (so the caller must not fire again).
+  const tryLock = useCallback((runId: string): boolean => {
+    if (inFlight.current.has(runId)) return false;
+    inFlight.current.add(runId);
+    return true;
+  }, []);
+
   const transportFor = useCallback(
     (run: AgentRunSummary): RunTransport => {
       const runId = run.run_id;
-      const state = ui[runId] ?? EMPTY_UI;
+      const stored = ui[runId] ?? EMPTY_UI;
+      // Fix 3: derive "flattening…" from the authoritative cache. The UI flag
+      // is set optimistically on click, but the executor clears
+      // `flatten_requested` server-side once positions are closed. Once the
+      // reconciled run reports `flatten_requested === false`, drop the badge
+      // even if the sticky UI flag is still set — so it can't linger past a
+      // completed flatten (e.g. when the user never hits Resume). We never
+      // force it true here: the optimistic flag drives the pre-reconcile
+      // window, and the poll only ever turns it off.
+      const state: TransportUiState =
+        stored.flattenPending && run.flatten_requested === false
+          ? { ...stored, flattenPending: false }
+          : stored;
       // Wallet gate: omit handlers so the buttons stay disabled placeholders
       // (the strip already shows "Connect wallet to act").
       if (walletDisabled) {
@@ -153,14 +205,14 @@ export function useTransport(walletDisabled: boolean) {
       return {
         ...state,
         onPause: () => {
-          if (state.busy) return;
+          if (!tryLock(runId)) return;
           mutation.mutate(
             { runId, action: "pause" },
             { onSuccess: () => patchUi(runId, { pausedExpanderOpen: true }) },
           );
         },
         onResume: () => {
-          if (state.busy) return;
+          if (!tryLock(runId)) return;
           // Resuming clears any open paused expander + flatten-pending badge.
           mutation.mutate(
             { runId, action: "resume" },
@@ -176,14 +228,14 @@ export function useTransport(walletDisabled: boolean) {
         onStop: () => patchUi(runId, { stopConfirmOpen: true, error: null }),
         onStopCancel: () => patchUi(runId, { stopConfirmOpen: false }),
         onStopConfirm: () => {
-          if (state.busy) return;
+          if (!tryLock(runId)) return;
           mutation.mutate(
             { runId, action: "stop" },
             { onSuccess: () => patchUi(runId, { stopConfirmOpen: false }) },
           );
         },
         onFlatten: () => {
-          if (state.busy) return;
+          if (!tryLock(runId)) return;
           // Mark pending immediately; the run stays paused (expander stays
           // open showing "flattening…").
           patchUi(runId, { flattenPending: true });
@@ -192,7 +244,7 @@ export function useTransport(walletDisabled: boolean) {
         onKeepOpen: () => patchUi(runId, { pausedExpanderOpen: false }),
       };
     },
-    [ui, walletDisabled, mutation, patchUi],
+    [ui, walletDisabled, mutation, patchUi, tryLock],
   );
 
   return transportFor;

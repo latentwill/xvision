@@ -182,4 +182,139 @@ describe("useTransport optimistic cache", () => {
     act(() => result.current(mkRun()).onPause());
     expect(pauseRun).not.toHaveBeenCalled();
   });
+
+  // Fix 1: cross-run rollback must not clobber a concurrent run's patch.
+  test("a failed mutation on run X reverts only X, preserving run Y's concurrent optimistic patch", async () => {
+    const runX = mkRun({ run_id: "X" });
+    const runY = mkRun({ run_id: "Y" });
+    qc.setQueryData(agentRunKeys.list(), [runX, runY]);
+
+    // X's pause will reject; Y's pause will resolve. Hold both pending so the
+    // patches are concurrently live, then reject X.
+    let rejectX!: (e: unknown) => void;
+    let resolveY!: (v: RunSummary) => void;
+    vi.mocked(pauseRun).mockImplementation((id: string) => {
+      if (id === "X") return new Promise<RunSummary>((_, rej) => (rejectX = rej));
+      return new Promise<RunSummary>((res) => (resolveY = res));
+    });
+
+    const { result } = renderHook(() => useTransport(false), { wrapper });
+
+    act(() => result.current(runX).onPause());
+    act(() => result.current(runY).onPause());
+
+    // Both optimistic patches land.
+    await waitFor(() => {
+      expect(byId("X")?.paused).toBe(true);
+      expect(byId("Y")?.paused).toBe(true);
+    });
+
+    // X fails → its row reverts to prior (paused undefined) but Y survives.
+    await act(async () => {
+      rejectX(new Error("X boom"));
+    });
+    await waitFor(() => expect(byId("X")?.paused).toBeUndefined());
+    expect(byId("Y")?.paused).toBe(true);
+
+    // Y still resolves cleanly afterwards.
+    await act(async () => {
+      resolveY(mkEval({ id: "Y", paused: true }));
+    });
+    expect(byId("Y")?.paused).toBe(true);
+  });
+
+  // Fix 2: synchronous double-click must fire the action exactly once.
+  test("firing stop twice synchronously results in exactly one cancelRun call", async () => {
+    vi.mocked(cancelRun).mockResolvedValue(mkEval({ status: "cancelled" }));
+    const { result } = renderHook(() => useTransport(false), { wrapper });
+
+    act(() => {
+      // Two sub-frame clicks in the SAME tick — the closure-captured `busy`
+      // is still false for both; only the synchronous lock can dedupe.
+      const t = result.current(mkRun());
+      t.onStopConfirm();
+      t.onStopConfirm();
+    });
+
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledTimes(1));
+    expect(cancelRun).toHaveBeenCalledWith("run_1");
+  });
+
+  test("firing flatten twice synchronously results in exactly one flattenRun call", async () => {
+    vi.mocked(flattenRun).mockResolvedValue(
+      mkEval({ paused: true, flatten_requested: true }),
+    );
+    const { result } = renderHook(() => useTransport(false), { wrapper });
+
+    act(() => {
+      const t = result.current(mkRun());
+      t.onFlatten();
+      t.onFlatten();
+    });
+
+    await waitFor(() => expect(flattenRun).toHaveBeenCalledTimes(1));
+  });
+
+  test("after the lock releases on settle, the same run can act again", async () => {
+    vi.mocked(pauseRun).mockResolvedValue(mkEval({ paused: true }));
+    vi.mocked(resumeRun).mockResolvedValue(mkEval({ paused: false }));
+    const { result } = renderHook(() => useTransport(false), { wrapper });
+
+    await act(async () => {
+      result.current(mkRun()).onPause();
+    });
+    await waitFor(() => expect(pauseRun).toHaveBeenCalledTimes(1));
+
+    // Lock released in onSettled → a subsequent action on the same run fires.
+    await act(async () => {
+      result.current(mkRun({ paused: true })).onResume();
+    });
+    await waitFor(() => expect(resumeRun).toHaveBeenCalledTimes(1));
+  });
+
+  // Fix 3: flattenPending clears when the cache reports flatten_requested:false.
+  test("flattenPending clears once the server reports flatten no longer requested", async () => {
+    // Server returns flatten ALREADY reconciled to not-requested → onSuccess
+    // clears the badge directly.
+    vi.mocked(flattenRun).mockResolvedValue(
+      mkEval({ paused: true, flatten_requested: false }),
+    );
+    const { result } = renderHook(() => useTransport(false), { wrapper });
+
+    await act(async () => {
+      result.current(mkRun()).onFlatten();
+    });
+    await waitFor(() =>
+      expect(result.current(mkRun()).flattenPending).toBe(false),
+    );
+  });
+
+  test("flattenPending is derived off cache: a poll with flatten_requested:false drops the badge", async () => {
+    // Server still reports flatten_requested:true on the mutation response, so
+    // the optimistic pending badge stays. A later poll flips the cached row to
+    // flatten_requested:false → the derived state drops the badge even though
+    // the sticky UI flag was never explicitly cleared.
+    vi.mocked(flattenRun).mockResolvedValue(
+      mkEval({ paused: true, flatten_requested: true }),
+    );
+    const { result } = renderHook(() => useTransport(false), { wrapper });
+
+    await act(async () => {
+      result.current(mkRun()).onFlatten();
+    });
+    await waitFor(() =>
+      expect(result.current(mkRun({ flatten_requested: true })).flattenPending).toBe(
+        true,
+      ),
+    );
+
+    // Next poll: the run's cached flatten_requested is now false.
+    expect(
+      result.current(mkRun({ flatten_requested: false })).flattenPending,
+    ).toBe(false);
+  });
 });
+
+function byId(id: string): AgentRunSummary | undefined {
+  return listInCache()?.find((r) => r.run_id === id);
+}
