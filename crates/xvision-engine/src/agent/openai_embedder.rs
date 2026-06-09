@@ -141,12 +141,10 @@ mod tests {
     fn with_model_threads_model_into_id() {
         // id() now reflects the actual model so the store keeps embeddings
         // from different models in separate vector spaces.
-        let e = OpenAiEmbedder::new("https://api.openai.com/v1", "test-key")
-            .with_model("nomic-embed-text");
+        let e = OpenAiEmbedder::new("https://api.openai.com/v1", "test-key").with_model("nomic-embed-text");
         assert_eq!(e.id(), "openaicompat:nomic-embed-text");
 
-        let e2 = OpenAiEmbedder::new("http://localhost:11434/v1", "")
-            .with_model("qwen3-embedding");
+        let e2 = OpenAiEmbedder::new("http://localhost:11434/v1", "").with_model("qwen3-embedding");
         assert_eq!(e2.id(), "openaicompat:qwen3-embedding");
     }
 
@@ -155,8 +153,7 @@ mod tests {
         // A no-auth local server (Ollama) must NOT receive an Authorization
         // header — an empty bearer can confuse some servers. Construct the
         // request and assert the header is absent.
-        let e = OpenAiEmbedder::new("http://localhost:11434/v1", "")
-            .with_model("nomic-embed-text");
+        let e = OpenAiEmbedder::new("http://localhost:11434/v1", "").with_model("nomic-embed-text");
         let req = e.build_embeddings_request("hello").build().unwrap();
         assert!(
             req.headers().get(reqwest::header::AUTHORIZATION).is_none(),
@@ -166,8 +163,8 @@ mod tests {
 
     #[test]
     fn attaches_auth_header_when_key_present() {
-        let e = OpenAiEmbedder::new("https://api.openai.com/v1", "sk-live")
-            .with_model("text-embedding-3-small");
+        let e =
+            OpenAiEmbedder::new("https://api.openai.com/v1", "sk-live").with_model("text-embedding-3-small");
         let req = e.build_embeddings_request("hello").build().unwrap();
         let auth = req
             .headers()

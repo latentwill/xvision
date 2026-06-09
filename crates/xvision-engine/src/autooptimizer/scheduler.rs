@@ -32,14 +32,12 @@ pub struct OptimizerSchedule {
 // ---------------------------------------------------------------------------
 
 async fn load_enabled_schedules(pool: &SqlitePool) -> Result<Vec<OptimizerSchedule>> {
-    Ok(
-        sqlx::query_as::<_, OptimizerSchedule>(
-            "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
+    Ok(sqlx::query_as::<_, OptimizerSchedule>(
+        "SELECT id, enabled, time_local, strategy_id, config_json, last_run_at, next_run_at \
              FROM autooptimizer_schedules WHERE enabled = 1",
-        )
-        .fetch_all(pool)
-        .await?,
     )
+    .fetch_all(pool)
+    .await?)
 }
 
 // ---------------------------------------------------------------------------
@@ -98,34 +96,19 @@ where
             // session_id so the event is attributable without an active session.
             let session_key = format!("sched-{}", sched.id);
             let payload = serde_json::json!({ "reason": "session_active" }).to_string();
-            super::events_store::append_event(
-                pool,
-                &session_key,
-                None,
-                "schedule_skipped",
-                &payload,
-            )
-            .await?;
+            super::events_store::append_event(pool, &session_key, None, "schedule_skipped", &payload).await?;
         } else {
             // Fire: create a new session.
-            super::session::create_session(
-                pool,
-                &sched.strategy_id,
-                &sched.config_json,
-                "once",
-                None,
-            )
-            .await?;
+            super::session::create_session(pool, &sched.strategy_id, &sched.config_json, "once", None)
+                .await?;
         }
 
         // Stamp last_run_at regardless of whether we fired or skipped.
-        sqlx::query(
-            "UPDATE autooptimizer_schedules SET last_run_at = ? WHERE id = ?",
-        )
-        .bind(&now_ts)
-        .bind(sched.id)
-        .execute(pool)
-        .await?;
+        sqlx::query("UPDATE autooptimizer_schedules SET last_run_at = ? WHERE id = ?")
+            .bind(&now_ts)
+            .bind(sched.id)
+            .execute(pool)
+            .await?;
     }
 
     Ok(())
@@ -152,10 +135,7 @@ mod tests {
 
     /// Build an in-memory SQLite pool with the tables needed by the scheduler.
     async fn open_pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new()
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
+        let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await.unwrap();
 
         // Migration 059: autooptimizer_schedules
         sqlx::query(
@@ -296,11 +276,10 @@ mod tests {
         tick_schedules_with_clock(&pool, || (9, 0, 0)).await.unwrap();
 
         // A session should have been created.
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(count, 1, "expected one session to be created");
 
         // Verify strategy_id and mode.
@@ -337,11 +316,10 @@ mod tests {
         tick_schedules_with_clock(&pool, || (10, 0, 5)).await.unwrap();
 
         // Session count should still be 1 (no new session created).
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(count, 1, "no new session should have been created");
 
         // A schedule_skipped event should exist.
@@ -353,11 +331,12 @@ mod tests {
         assert_eq!(event_count, 1, "expected one schedule_skipped event");
 
         // Verify the event payload contains reason="session_active".
-        let payload: String =
-            sqlx::query_scalar("SELECT payload_json FROM autooptimizer_events WHERE kind = 'schedule_skipped'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let payload: String = sqlx::query_scalar(
+            "SELECT payload_json FROM autooptimizer_events WHERE kind = 'schedule_skipped'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert!(
             payload.contains("session_active"),
             "payload should contain reason=session_active, got: {payload}"
@@ -381,11 +360,10 @@ mod tests {
 
         tick_schedules_with_clock(&pool, || (11, 0, 0)).await.unwrap();
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(count, 0, "disabled schedule should not fire");
     }
 
@@ -399,11 +377,10 @@ mod tests {
         // Clock is at 14:00:00 — not due.
         tick_schedules_with_clock(&pool, || (14, 0, 0)).await.unwrap();
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_session_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(count, 0, "not-due schedule should not fire");
     }
 }

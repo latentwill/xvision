@@ -103,21 +103,43 @@ pub async fn list_agent_runs(
 ) -> Result<Json<ListAgentRunsResponse>, DashboardError> {
     // Query only the columns needed for the summary; avoid loading heavy
     // JSON blobs (skills_json, mcp_servers_json) on the list surface.
-    let rows: Vec<(String, String, Option<String>, Option<String>, String, String, String, Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as(
-            "SELECT id, objective, strategy_id, eval_run_id, status, retention_mode, \
+    let rows: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT id, objective, strategy_id, eval_run_id, status, retention_mode, \
              started_at, finished_at, sidecar_version, error \
              FROM agent_runs \
              ORDER BY started_at DESC",
-        )
-        .fetch_all(&state.pool)
-        .await
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_agent_runs: {e}")))?;
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_agent_runs: {e}")))?;
 
     // Parse rows into summary structs. Skip rows with unparseable timestamps
     // (shouldn't happen — recorder always writes valid RFC 3339) with a warning.
     let mut summaries: Vec<AgentRunSummary> = Vec::with_capacity(rows.len());
-    for (id, objective, strategy_id, eval_run_id, status, retention_mode, started_at_str, finished_at_str, sidecar_version, error) in rows {
+    for (
+        id,
+        objective,
+        strategy_id,
+        eval_run_id,
+        status,
+        retention_mode,
+        started_at_str,
+        finished_at_str,
+        sidecar_version,
+        error,
+    ) in rows
+    {
         let started_at = match started_at_str.parse::<DateTime<Utc>>() {
             Ok(ts) => ts,
             Err(e) => {
@@ -147,7 +169,10 @@ pub async fn list_agent_runs(
     // Apply optional status filter.
     let filtered: Vec<AgentRunSummary> = if let Some(status_param) = &params.status {
         let allowed: HashSet<&str> = status_param.split(',').map(str::trim).collect();
-        summaries.into_iter().filter(|s| allowed.contains(s.status.as_str())).collect()
+        summaries
+            .into_iter()
+            .filter(|s| allowed.contains(s.status.as_str()))
+            .collect()
     } else {
         summaries
     };
@@ -475,12 +500,7 @@ mod tests {
     }
 
     /// Seed one `agent_runs` row directly into the pool.
-    async fn seed_run(
-        pool: &sqlx::SqlitePool,
-        id: &str,
-        status: &str,
-        started_at: &str,
-    ) {
+    async fn seed_run(pool: &sqlx::SqlitePool, id: &str, status: &str, started_at: &str) {
         sqlx::query(
             "INSERT INTO agent_runs \
              (id, objective, status, started_at, retention_mode) \
@@ -537,7 +557,13 @@ mod tests {
         let (state, _tmp) = fresh_state().await;
         seed_run(&state.pool, "run-running-1", "running", "2026-01-01T00:00:00Z").await;
         seed_run(&state.pool, "run-queued-1", "queued", "2026-01-02T00:00:00Z").await;
-        seed_run(&state.pool, "run-completed-1", "completed", "2026-01-03T00:00:00Z").await;
+        seed_run(
+            &state.pool,
+            "run-completed-1",
+            "completed",
+            "2026-01-03T00:00:00Z",
+        )
+        .await;
 
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let resp = server.get("/api/agent-runs?status=running").await;

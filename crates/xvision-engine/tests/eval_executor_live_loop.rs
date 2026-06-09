@@ -103,11 +103,7 @@ fn live_stream_for(asset: &str, bars: Vec<MarketBar>) -> LiveStream {
 
 /// Build a [`LiveStream`] with historical warmup bars and websocket live
 /// bars. Warmup must seed history only; it must not produce decisions.
-fn live_stream_with_warmup_for(
-    asset: &str,
-    warmup: Vec<MarketBar>,
-    bars: Vec<MarketBar>,
-) -> LiveStream {
+fn live_stream_with_warmup_for(asset: &str, warmup: Vec<MarketBar>, bars: Vec<MarketBar>) -> LiveStream {
     let ws_items: Vec<LiveBarItem> = bars.into_iter().map(LiveBarItem::Bar).collect();
     let ws = client().subscription_from_stream(BarGranularity::Minute1, stream::iter(ws_items));
     let poll = AlpacaLivePoll::new(Arc::new(EmptyFetcher), asset.into(), BarGranularity::Minute1)
@@ -730,8 +726,7 @@ async fn live_cancel_closes_open_positions_through_the_broker() {
     // and observable on the closing decision row.
     let broker = CancelAfterOpenBroker::new(50_000.0, 51_000.0);
     broker.arm(store.clone(), run.id.clone());
-    let stream =
-        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
 
     let executor = Executor::live(
         &live_config(),
@@ -953,8 +948,15 @@ async fn live_cancel_closes_open_positions_in_both_assets() {
     // (the open) and ONE Sell (the cancel-close flatten).
     let submitted = broker.submitted();
     let buys: Vec<&OrderRequest> = submitted.iter().filter(|o| matches!(o.side, Side::Buy)).collect();
-    let sells: Vec<&OrderRequest> = submitted.iter().filter(|o| matches!(o.side, Side::Sell)).collect();
-    assert_eq!(buys.len(), 2, "both assets opened a long (two Buys), got {submitted:?}");
+    let sells: Vec<&OrderRequest> = submitted
+        .iter()
+        .filter(|o| matches!(o.side, Side::Sell))
+        .collect();
+    assert_eq!(
+        buys.len(),
+        2,
+        "both assets opened a long (two Buys), got {submitted:?}"
+    );
     assert_eq!(
         sells.len(),
         2,
@@ -989,7 +991,10 @@ async fn live_cancel_closes_open_positions_in_both_assets() {
         flats.len(),
         2,
         "two flat close rows (one per asset) must be recorded on cancel, got {:?}",
-        decisions.iter().map(|d| (&d.asset, &d.action)).collect::<Vec<_>>(),
+        decisions
+            .iter()
+            .map(|d| (&d.asset, &d.action))
+            .collect::<Vec<_>>(),
     );
     let flat_assets: std::collections::BTreeSet<&str> = flats.iter().map(|d| d.asset.as_str()).collect();
     assert!(
@@ -1005,8 +1010,7 @@ async fn live_cancel_with_flat_book_makes_no_broker_calls() {
     // This is the regression guard for the existing flat-cancel behavior.
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = CancelAfterOpenBroker::new(50_000.0, 51_000.0);
-    let stream =
-        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
 
     // Cancel up front; no position is ever opened.
     store.begin_running(&run.id).await.unwrap();
@@ -1094,9 +1098,7 @@ impl BrokerSurface for RejectCloseBroker {
             })
         } else {
             // REJECT the closing Sell — the broker refuses to flatten.
-            Err(anyhow::anyhow!(
-                "alpaca create_order: order rejected by exchange"
-            ))
+            Err(anyhow::anyhow!("alpaca create_order: order rejected by exchange"))
         }
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
@@ -1118,8 +1120,7 @@ async fn live_cancel_close_rejection_retains_leg_and_warns_without_panicking() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = RejectCloseBroker::new(50_000.0);
     broker.arm(store.clone(), run.id.clone());
-    let stream =
-        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
 
     let executor = Executor::live(
         &live_config(),
@@ -1169,9 +1170,14 @@ async fn live_cancel_close_rejection_retains_leg_and_warns_without_panicking() {
     // close would have recorded one.
     let decisions = store.read_decisions(&run.id).await.unwrap();
     assert!(
-        decisions.iter().all(|d| d.action != "flat" && d.action != "flat_partial"),
+        decisions
+            .iter()
+            .all(|d| d.action != "flat" && d.action != "flat_partial"),
         "a rejected close must NOT record a flat/partial close row (leg retained), got {:?}",
-        decisions.iter().map(|d| (&d.asset, &d.action)).collect::<Vec<_>>(),
+        decisions
+            .iter()
+            .map(|d| (&d.asset, &d.action))
+            .collect::<Vec<_>>(),
     );
 
     // A `warn` supervisor note flags the dangling exposure.
@@ -1283,8 +1289,7 @@ async fn live_cancel_partial_close_recomputes_equity_from_realized_pnl() {
     // only a tiny sliver (0.001 units) on the close so it stays partial.
     let broker = PartialCloseOnCancelBroker::new(50_000.0, 51_000.0, 0.001);
     broker.arm(store.clone(), run.id.clone());
-    let stream =
-        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
 
     let executor = Executor::live(
         &live_config(),
@@ -1321,7 +1326,10 @@ async fn live_cancel_partial_close_recomputes_equity_from_realized_pnl() {
         2,
         "expected an opening Buy then a cancel-close Sell, got {submitted:?}",
     );
-    assert!(matches!(submitted[1].side, Side::Sell), "cancel flattens with a Sell");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "cancel flattens with a Sell"
+    );
 
     // The close was PARTIAL: a `flat_partial` row (NOT a full `flat`) is
     // recorded, carrying the realized PnL from the portion that settled.
@@ -1750,8 +1758,7 @@ async fn live_flatten_closes_open_position_and_keeps_running() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = FlattenAfterOpenBroker::new(50_000.0, 51_000.0);
     broker.arm(store.clone(), run.id.clone());
-    let stream =
-        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
 
     let executor = Executor::live(
         &live_config(),
@@ -1850,8 +1857,7 @@ async fn live_flatten_on_a_flat_book_makes_no_broker_calls() {
     // A2's `live_cancel_with_flat_book_makes_no_broker_calls`.
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = RecordingBroker::new(50_000.0);
-    let stream =
-        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
 
     // Request a flatten BEFORE the run starts. The book is flat (no position
     // opened yet) and the dispatch only ever holds, so the flatten checkpoint
@@ -2002,8 +2008,7 @@ async fn live_flatten_while_paused_still_closes_position_and_stays_paused() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = PauseFlattenAfterOpenBroker::new(50_000.0, 51_000.0);
     broker.arm(store.clone(), run.id.clone());
-    let stream =
-        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
 
     let executor = Executor::live(
         &live_config(),

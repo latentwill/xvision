@@ -60,9 +60,7 @@ async fn fetch_node_score(node: &LineageNode, _field: &ScoreField, pool: &sqlx::
         // No attribution row (root nodes, pre-attribution candidates): fall back
         // to diversity_score then the hash-proxy so insertion order doesn't
         // silently dominate.
-        _ => {
-            node.diversity_score.unwrap_or_else(|| hash_proxy_score(node))
-        }
+        _ => node.diversity_score.unwrap_or_else(|| hash_proxy_score(node)),
     }
 }
 
@@ -225,8 +223,13 @@ mod tests {
             .expect("record_outcome child — higher score");
 
         // TopK{k:1} must pick the node with the HIGHER delta_sharpe.
-        let policy = ParentPolicy::TopK { k: 1, score_field: ScoreField::Sharpe };
-        let result = select_parents(&policy, &lineage, 1, 42).await.expect("select_parents");
+        let policy = ParentPolicy::TopK {
+            k: 1,
+            score_field: ScoreField::Sharpe,
+        };
+        let result = select_parents(&policy, &lineage, 1, 42)
+            .await
+            .expect("select_parents");
 
         assert_eq!(result.len(), 1, "expected exactly 1 parent selected");
         assert_eq!(

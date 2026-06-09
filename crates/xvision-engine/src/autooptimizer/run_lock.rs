@@ -169,7 +169,9 @@ mod tests {
         ));
         // A fresh cycle takes over the stale lock.
         assert!(matches!(
-            try_acquire(&pool, "fresh-cycle", "dashboard", Utc::now()).await.unwrap(),
+            try_acquire(&pool, "fresh-cycle", "dashboard", Utc::now())
+                .await
+                .unwrap(),
             Acquire::Acquired
         ));
     }

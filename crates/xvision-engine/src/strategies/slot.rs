@@ -52,7 +52,10 @@ impl LLMSlot {
     /// F31: a slot with no binding is *unbound* — it must not silently derive
     /// a model from `attested_with` provenance.
     pub fn has_model_binding(&self) -> bool {
-        self.model.as_deref().map(str::trim).is_some_and(|m| !m.is_empty())
+        self.model
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|m| !m.is_empty())
     }
 
     /// Canonical label for API/UI surfaces.

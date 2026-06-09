@@ -248,7 +248,11 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
                     format!(
                         "Filter operator path '{}' requires a positive {}; got {:?}.",
                         edit.path,
-                        if suffix == "within_pct" { "number" } else { "integer" },
+                        if suffix == "within_pct" {
+                            "number"
+                        } else {
+                            "integer"
+                        },
                         edit.after,
                     ),
                     format!("filter[{i}].after"),
@@ -424,7 +428,10 @@ mod tests {
                 after: after.into(),
             }],
             params: vec![],
-            tools: ToolDiff { added: vec![], removed: vec![] },
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
             filter: vec![],
             rationale: "test".into(),
         }
@@ -476,7 +483,10 @@ mod tests {
             kind: MutationKind::Filter,
             prose: vec![],
             params: vec![],
-            tools: ToolDiff { added: vec![], removed: vec![] },
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
             filter: edits,
             rationale: "test filter mutation".into(),
         }
@@ -490,7 +500,10 @@ mod tests {
             before: serde_json::json!(25.0),
             after: serde_json::json!(28.0),
         }]);
-        assert!(validate_mutation_diff(&diff, &base).is_ok(), "valid filter edit must be accepted");
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "valid filter edit must be accepted"
+        );
     }
 
     #[test]

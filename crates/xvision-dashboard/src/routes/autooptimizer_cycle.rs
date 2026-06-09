@@ -529,10 +529,7 @@ pub(super) async fn build_autooptimizer_dispatch(
     } else {
         std::env::var(&entry.api_key_env).map_err(|_| DashboardError::Validation {
             field: "provider".into(),
-            msg: format!(
-                "env var '{}' unset for provider '{provider}'",
-                entry.api_key_env
-            ),
+            msg: format!("env var '{}' unset for provider '{provider}'", entry.api_key_env),
         })?
     };
     Ok(match entry.kind {
@@ -769,7 +766,10 @@ mod tests {
             .expect_err("disabled model should fail");
         let msg = format!("{err}");
         assert!(msg.contains("gemma4:26b-mlx"), "error should name model: {msg}");
-        assert!(msg.contains("enabled_models"), "error should name allowlist: {msg}");
+        assert!(
+            msg.contains("enabled_models"),
+            "error should name allowlist: {msg}"
+        );
     }
 
     #[test]
@@ -786,13 +786,12 @@ mod tests {
     #[test]
     fn test_pause_flag_lifecycle() {
         use std::collections::HashMap;
-        use std::sync::{Arc, Mutex};
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
 
         // Manually replicate the pause registry logic (mirrors AppState internals)
         // so we can test it without a full DB bootstrap.
-        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
 
         let register = |id: &str| -> Arc<AtomicBool> {
             let flag = Arc::new(AtomicBool::new(false));
@@ -800,21 +799,34 @@ mod tests {
             flag
         };
         let request_pause = |id: &str| -> bool {
-            pauses.lock().unwrap().get(id).map(|f| {
-                f.store(true, Ordering::Relaxed);
-                true
-            }).unwrap_or(false)
+            pauses
+                .lock()
+                .unwrap()
+                .get(id)
+                .map(|f| {
+                    f.store(true, Ordering::Relaxed);
+                    true
+                })
+                .unwrap_or(false)
         };
         let is_paused = |id: &str| -> bool {
-            pauses.lock().unwrap().get(id)
+            pauses
+                .lock()
+                .unwrap()
+                .get(id)
                 .map(|f| f.load(Ordering::Relaxed))
                 .unwrap_or(false)
         };
         let request_resume = |id: &str| -> bool {
-            pauses.lock().unwrap().get(id).map(|f| {
-                f.store(false, Ordering::Relaxed);
-                true
-            }).unwrap_or(false)
+            pauses
+                .lock()
+                .unwrap()
+                .get(id)
+                .map(|f| {
+                    f.store(false, Ordering::Relaxed);
+                    true
+                })
+                .unwrap_or(false)
         };
         let deregister = |id: &str| {
             pauses.lock().unwrap().remove(id);
@@ -849,32 +861,60 @@ mod tests {
     #[test]
     fn test_cancel_clears_pause_flag() {
         use std::collections::HashMap;
-        use std::sync::{Arc, Mutex};
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
 
-        let cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
 
         let cycle = "cycle-002";
 
         // Register both flags.
         let cancel_flag = Arc::new(AtomicBool::new(false));
-        cancels.lock().unwrap().insert(cycle.to_string(), Arc::clone(&cancel_flag));
+        cancels
+            .lock()
+            .unwrap()
+            .insert(cycle.to_string(), Arc::clone(&cancel_flag));
         let pause_flag = Arc::new(AtomicBool::new(false));
-        pauses.lock().unwrap().insert(cycle.to_string(), Arc::clone(&pause_flag));
+        pauses
+            .lock()
+            .unwrap()
+            .insert(cycle.to_string(), Arc::clone(&pause_flag));
 
         // Pause the cycle.
-        pauses.lock().unwrap().get(cycle).unwrap().store(true, Ordering::Relaxed);
-        assert!(pause_flag.load(Ordering::Relaxed), "cycle is paused before cancel");
+        pauses
+            .lock()
+            .unwrap()
+            .get(cycle)
+            .unwrap()
+            .store(true, Ordering::Relaxed);
+        assert!(
+            pause_flag.load(Ordering::Relaxed),
+            "cycle is paused before cancel"
+        );
 
         // Simulate cancel_cycle: set cancel + clear pause.
-        cancels.lock().unwrap().get(cycle).unwrap().store(true, Ordering::Relaxed);
-        pauses.lock().unwrap().get(cycle).unwrap().store(false, Ordering::Relaxed);
+        cancels
+            .lock()
+            .unwrap()
+            .get(cycle)
+            .unwrap()
+            .store(true, Ordering::Relaxed);
+        pauses
+            .lock()
+            .unwrap()
+            .get(cycle)
+            .unwrap()
+            .store(false, Ordering::Relaxed);
 
-        assert!(cancel_flag.load(Ordering::Relaxed), "cancel flag is set after cancel");
-        assert!(!pause_flag.load(Ordering::Relaxed), "pause flag is cleared after cancel");
+        assert!(
+            cancel_flag.load(Ordering::Relaxed),
+            "cancel flag is set after cancel"
+        );
+        assert!(
+            !pause_flag.load(Ordering::Relaxed),
+            "pause flag is cleared after cancel"
+        );
     }
 
     /// P4: pause returns 409 (not-running) when no pause flag is registered
@@ -883,39 +923,52 @@ mod tests {
     #[test]
     fn test_pause_route_409_when_not_in_flight() {
         use std::collections::HashMap;
-        use std::sync::{Arc, Mutex};
         use std::sync::atomic::AtomicBool;
+        use std::sync::{Arc, Mutex};
 
-        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
 
         // No flag registered for this cycle_id.
         let cycle = "cycle-finished";
-        let found = pauses.lock().unwrap().get(cycle)
-            .map(|f| { f.store(true, std::sync::atomic::Ordering::Relaxed); true })
+        let found = pauses
+            .lock()
+            .unwrap()
+            .get(cycle)
+            .map(|f| {
+                f.store(true, std::sync::atomic::Ordering::Relaxed);
+                true
+            })
             .unwrap_or(false);
 
         // Route would return Conflict when found == false.
-        assert!(!found, "pause on non-in-flight cycle returns false (triggers 409)");
+        assert!(
+            !found,
+            "pause on non-in-flight cycle returns false (triggers 409)"
+        );
     }
 
     /// P4: resume returns 409 (not paused) when the pause flag is not set.
     #[test]
     fn test_resume_route_409_not_paused() {
         use std::collections::HashMap;
-        use std::sync::{Arc, Mutex};
         use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
 
-        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pauses: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
 
         let cycle = "cycle-running";
 
         // Register with pause=false (cycle is running, not paused).
         let flag = Arc::new(AtomicBool::new(false));
-        pauses.lock().unwrap().insert(cycle.to_string(), Arc::clone(&flag));
+        pauses
+            .lock()
+            .unwrap()
+            .insert(cycle.to_string(), Arc::clone(&flag));
 
-        let is_paused = pauses.lock().unwrap().get(cycle)
+        let is_paused = pauses
+            .lock()
+            .unwrap()
+            .get(cycle)
             .map(|f| f.load(Ordering::Relaxed))
             .unwrap_or(false);
 
@@ -1048,9 +1101,7 @@ pub async fn delete_schedule(
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!(e)))?;
 
     if result.rows_affected() == 0 {
-        return Err(DashboardError::NotFound(format!(
-            "no schedule with id {id}"
-        )));
+        return Err(DashboardError::NotFound(format!("no schedule with id {id}")));
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1061,10 +1112,7 @@ mod schedule_tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn open_pool() -> sqlx::SqlitePool {
-        let pool = SqlitePoolOptions::new()
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
+        let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await.unwrap();
 
         // Migration 059
         sqlx::query(
@@ -1140,11 +1188,12 @@ mod schedule_tests {
         assert_eq!(count, 1, "upsert should keep exactly one row per strategy_id");
 
         // Verify the time was updated to the second value.
-        let time: String =
-            sqlx::query_scalar("SELECT time_local FROM autooptimizer_schedules WHERE strategy_id = 'strat-1'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let time: String = sqlx::query_scalar(
+            "SELECT time_local FROM autooptimizer_schedules WHERE strategy_id = 'strat-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(time, "14:30", "upsert should update time_local to latest value");
     }
 

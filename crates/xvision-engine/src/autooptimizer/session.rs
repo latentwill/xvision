@@ -11,8 +11,8 @@
 //! ```
 
 use std::future::Future;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -102,12 +102,11 @@ pub async fn transition_state(
     new_state: &str,
     error: Option<&str>,
 ) -> Result<()> {
-    let current: String = sqlx::query_scalar(
-        "SELECT state FROM autooptimizer_session_state WHERE session_id = ?",
-    )
-    .bind(session_id)
-    .fetch_one(pool)
-    .await?;
+    let current: String =
+        sqlx::query_scalar("SELECT state FROM autooptimizer_session_state WHERE session_id = ?")
+            .bind(session_id)
+            .fetch_one(pool)
+            .await?;
 
     anyhow::ensure!(
         is_legal_transition(&current, new_state),
@@ -176,11 +175,7 @@ pub async fn get_active_session(pool: &SqlitePool) -> Result<Option<OptimizerSes
 }
 
 /// Increment `cycles_completed` and the appropriate outcome counter.
-pub async fn increment_cycle_completed(
-    pool: &SqlitePool,
-    session_id: &str,
-    outcome: &str,
-) -> Result<()> {
+pub async fn increment_cycle_completed(pool: &SqlitePool, session_id: &str, outcome: &str) -> Result<()> {
     let col = match outcome {
         "kept" => "kept_count",
         "suspect" => "suspect_count",
@@ -344,7 +339,9 @@ mod tests {
     #[tokio::test]
     async fn test_legal_transitions() {
         let pool = test_pool().await;
-        let sid = create_session(&pool, "strat-1", "{}", "once", Some(5)).await.unwrap();
+        let sid = create_session(&pool, "strat-1", "{}", "once", Some(5))
+            .await
+            .unwrap();
 
         // running -> paused
         transition_state(&pool, &sid, "paused", None).await.unwrap();
@@ -356,13 +353,12 @@ mod tests {
         transition_state(&pool, &sid, "finished", None).await.unwrap();
 
         // finished_at should now be set
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(row.state, "finished");
         assert!(row.finished_at.is_some(), "finished_at must be set");
@@ -375,7 +371,9 @@ mod tests {
     #[tokio::test]
     async fn test_illegal_transition() {
         let pool = test_pool().await;
-        let sid = create_session(&pool, "strat-1", "{}", "once", None).await.unwrap();
+        let sid = create_session(&pool, "strat-1", "{}", "once", None)
+            .await
+            .unwrap();
 
         // Drive to finished first.
         transition_state(&pool, &sid, "finished", None).await.unwrap();
@@ -446,14 +444,18 @@ mod tests {
         mark_interrupted_sessions(&pool).await.unwrap();
 
         // Verify non-terminal rows were converted.
-        for id in ["01SESS_RUNNING", "01SESS_PAUSED", "01SESS_CANCEL", "01SESS_QUEUED"] {
-            let row: OptimizerSession = sqlx::query_as(
-                "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-            )
-            .bind(id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        for id in [
+            "01SESS_RUNNING",
+            "01SESS_PAUSED",
+            "01SESS_CANCEL",
+            "01SESS_QUEUED",
+        ] {
+            let row: OptimizerSession =
+                sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
             assert_eq!(row.state, "failed", "{id} should be 'failed'");
             assert_eq!(
                 row.error.as_deref(),
@@ -468,13 +470,12 @@ mod tests {
             ("01SESS_CANCELLED", "cancelled"),
             ("01SESS_FAILED", "failed"),
         ] {
-            let row: OptimizerSession = sqlx::query_as(
-                "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-            )
-            .bind(id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+            let row: OptimizerSession =
+                sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
             assert_eq!(row.state, expected_state, "{id} state must not change");
         }
     }
@@ -492,7 +493,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_active_session_returns_running() {
         let pool = test_pool().await;
-        let sid = create_session(&pool, "strat-2", "{}", "once", None).await.unwrap();
+        let sid = create_session(&pool, "strat-2", "{}", "once", None)
+            .await
+            .unwrap();
 
         let active = get_active_session(&pool).await.unwrap();
         assert!(active.is_some(), "should return Some for running session");
@@ -502,7 +505,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_active_session_returns_paused() {
         let pool = test_pool().await;
-        let sid = create_session(&pool, "strat-3", "{}", "once", None).await.unwrap();
+        let sid = create_session(&pool, "strat-3", "{}", "once", None)
+            .await
+            .unwrap();
 
         // running -> paused
         transition_state(&pool, &sid, "paused", None).await.unwrap();
@@ -515,7 +520,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_active_session_none_after_finished() {
         let pool = test_pool().await;
-        let sid = create_session(&pool, "strat-4", "{}", "once", None).await.unwrap();
+        let sid = create_session(&pool, "strat-4", "{}", "once", None)
+            .await
+            .unwrap();
         transition_state(&pool, &sid, "finished", None).await.unwrap();
 
         let active = get_active_session(&pool).await.unwrap();
@@ -537,13 +544,12 @@ mod tests {
         increment_cycle_completed(&pool, &sid, "dropped").await.unwrap();
         increment_cycle_completed(&pool, &sid, "dropped").await.unwrap();
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(row.cycles_completed, 4);
         assert_eq!(row.kept_count, 1);
@@ -557,19 +563,20 @@ mod tests {
     #[tokio::test]
     async fn test_cancelling_path() {
         let pool = test_pool().await;
-        let sid = create_session(&pool, "strat-6", "{}", "once", None).await.unwrap();
+        let sid = create_session(&pool, "strat-6", "{}", "once", None)
+            .await
+            .unwrap();
 
         // running -> cancelling -> cancelled
         transition_state(&pool, &sid, "cancelling", None).await.unwrap();
         transition_state(&pool, &sid, "cancelled", None).await.unwrap();
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(row.state, "cancelled");
         assert!(row.finished_at.is_some(), "cancelled must have finished_at");
@@ -633,15 +640,18 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(call_count.load(Ordering::Relaxed), 1, "once mode must run exactly 1 cycle");
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            1,
+            "once mode must run exactly 1 cycle"
+        );
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.state, "finished");
         assert_eq!(row.cycles_completed, 1);
         assert_eq!(row.kept_count, 1);
@@ -682,15 +692,18 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(call_count.load(Ordering::Relaxed), 3, "n_experiments=3 must run exactly 3 cycles");
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            3,
+            "n_experiments=3 must run exactly 3 cycles"
+        );
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.state, "finished");
         assert_eq!(row.cycles_completed, 3);
     }
@@ -739,17 +752,22 @@ mod tests {
         .unwrap();
 
         let calls = call_count.load(Ordering::Relaxed);
-        assert!(calls >= 3, "must run at least 3 cycles before budget exceeded (got {calls})");
+        assert!(
+            calls >= 3,
+            "must run at least 3 cycles before budget exceeded (got {calls})"
+        );
         // Should not have run a 4th cycle since budget was exceeded after cycle 3.
-        assert_eq!(calls, 3, "must stop exactly at cycle 3 when cum_cost >= budget (got {calls})");
+        assert_eq!(
+            calls, 3,
+            "must stop exactly at cycle 3 when cum_cost >= budget (got {calls})"
+        );
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.state, "finished");
     }
 
@@ -789,15 +807,18 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(call_count.load(Ordering::Relaxed), 0, "pre-cancelled session must not run any cycles");
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            0,
+            "pre-cancelled session must not run any cycles"
+        );
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.state, "cancelled");
     }
 
@@ -844,15 +865,18 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(call_count.load(Ordering::Relaxed), 1, "pause/resume must still run the 1 cycle");
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            1,
+            "pause/resume must still run the 1 cycle"
+        );
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.state, "finished");
     }
 
@@ -900,15 +924,18 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(call_count.load(Ordering::Relaxed), 1, "floor stop must trigger after first cycle reports floor-exceeded");
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            1,
+            "floor stop must trigger after first cycle reports floor-exceeded"
+        );
 
-        let row: OptimizerSession = sqlx::query_as(
-            "SELECT * FROM autooptimizer_session_state WHERE session_id = ?",
-        )
-        .bind(&sid)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(row.state, "finished");
     }
 

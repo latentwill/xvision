@@ -100,9 +100,7 @@ pub fn decide_submission(
     if !holds_license {
         return AttestationDecision::NoLicense;
     }
-    AttestationDecision::Submit {
-        value: verdict_value,
-    }
+    AttestationDecision::Submit { value: verdict_value }
 }
 
 /// Build the [`TradeOutcome`] payload that carries a §3.6 attestation verdict

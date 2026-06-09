@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use xvision_engine::agent::embedder_choice::{resolve_embedder_choice, EmbedderChoice, EmbedderEnv};
 use xvision_engine::api::settings::providers::EffectiveProvider;
 
-use xvision_memory::store::MemoryStore;
 use xvision_engine::agent::memory_recorder::{MemoryRecorder, RecallResult};
+use xvision_memory::store::MemoryStore;
 use xvision_memory::types::MemoryMode;
 
 use std::sync::Arc;
@@ -138,9 +138,7 @@ fn openai_api_key_env_path() {
     let choice = resolve_embedder_choice(&env, &[]);
     match choice {
         EmbedderChoice::OpenAiCompat {
-            base_url,
-            api_key,
-            ..
+            base_url, api_key, ..
         } => {
             assert_eq!(base_url, "https://api.openai.com/v1");
             assert_eq!(api_key, "sk-env");

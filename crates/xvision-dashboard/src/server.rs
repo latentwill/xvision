@@ -176,7 +176,9 @@ use crate::routes::{
     health::health,
     memory as memory_route, optimizations as optimizations_route, safety as safety_route, scenarios,
     search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, tools as tools_route, version::version, wizard,
+    strategies_folder as strategies_folder_route, tools as tools_route,
+    version::version,
+    wizard,
 };
 use crate::state::AppState;
 use xvision_engine::api::eval as api_eval;
@@ -789,9 +791,7 @@ pub async fn serve(
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
-                if let Err(e) =
-                    xvision_engine::autooptimizer::scheduler::tick_schedules(&ticker_pool).await
-                {
+                if let Err(e) = xvision_engine::autooptimizer::scheduler::tick_schedules(&ticker_pool).await {
                     tracing::warn!(
                         error = %e,
                         "autooptimizer schedule ticker error",

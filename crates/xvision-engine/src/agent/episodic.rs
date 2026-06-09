@@ -439,7 +439,13 @@ mod tests {
     #[test]
     fn single_observation_returned_by_query() {
         let mut store = EpisodicStore::new(10);
-        let obs = make_obs(1, IndicatorSnapshot { rsi: Some(60.0), ..Default::default() });
+        let obs = make_obs(
+            1,
+            IndicatorSnapshot {
+                rsi: Some(60.0),
+                ..Default::default()
+            },
+        );
         store.push(obs.clone());
         let result = store.query([0.2, 0.0, 0.0, 0.0], 1);
         assert_eq!(result.len(), 1);
@@ -452,9 +458,21 @@ mod tests {
     fn highest_similarity_observation_is_first() {
         let mut store = EpisodicStore::new(10);
         // obs A: rsi=70 → fv[0] ≈ +0.4; strongly aligned with query [1,0,0,0]
-        let obs_a = make_obs(1, IndicatorSnapshot { rsi: Some(70.0), ..Default::default() });
+        let obs_a = make_obs(
+            1,
+            IndicatorSnapshot {
+                rsi: Some(70.0),
+                ..Default::default()
+            },
+        );
         // obs B: rsi=30 → fv[0] ≈ -0.4; anti-aligned with query [1,0,0,0]
-        let obs_b = make_obs(2, IndicatorSnapshot { rsi: Some(30.0), ..Default::default() });
+        let obs_b = make_obs(
+            2,
+            IndicatorSnapshot {
+                rsi: Some(30.0),
+                ..Default::default()
+            },
+        );
         store.push(obs_a);
         store.push(obs_b);
 
@@ -497,8 +515,7 @@ mod tests {
         assert_eq!(entries.len(), 3);
         // Each entry must round-trip to a valid EpisodicObservation.
         for entry in entries {
-            let _obs: EpisodicObservation =
-                serde_json::from_value(entry.clone()).expect("must deserialize");
+            let _obs: EpisodicObservation = serde_json::from_value(entry.clone()).expect("must deserialize");
         }
     }
 

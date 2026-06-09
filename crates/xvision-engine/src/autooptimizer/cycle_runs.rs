@@ -479,8 +479,16 @@ mod tests {
             &[RegimeResultRow {
                 regime_label: "bull_2024".to_string(),
                 side: RegimeSide::Bull,
-                metrics_day: MetricsSummary { sharpe: 1.2, total_return_pct: 10.0, ..Default::default() },
-                metrics_untouched: MetricsSummary { sharpe: 0.5, total_return_pct: 3.0, ..Default::default() },
+                metrics_day: MetricsSummary {
+                    sharpe: 1.2,
+                    total_return_pct: 10.0,
+                    ..Default::default()
+                },
+                metrics_untouched: MetricsSummary {
+                    sharpe: 0.5,
+                    total_return_pct: 3.0,
+                    ..Default::default()
+                },
                 delta_sharpe: 0.7,
                 verdict: "pass".to_string(),
             }],
@@ -490,16 +498,20 @@ mod tests {
         .expect("insert regime_results");
 
         // --- list_cycle_runs ---
-        let summaries = list_cycle_runs(&pool, 10, 0)
-            .await
-            .expect("list_cycle_runs");
+        let summaries = list_cycle_runs(&pool, 10, 0).await.expect("list_cycle_runs");
         assert_eq!(summaries.len(), 1, "expected one cycle summary");
         let s = &summaries[0];
         assert_eq!(s.cycle_id, cycle_id);
         assert_eq!(s.node_count, 3);
         assert_eq!(s.active_count, 1, "active_count");
-        assert_eq!(s.suspect_count, 1, "suspect_count must be 1 (quarantined != rejected)");
-        assert_eq!(s.rejected_count, 1, "rejected_count must be 1 (not folded with suspect)");
+        assert_eq!(
+            s.suspect_count, 1,
+            "suspect_count must be 1 (quarantined != rejected)"
+        );
+        assert_eq!(
+            s.rejected_count, 1,
+            "rejected_count must be 1 (not folded with suspect)"
+        );
 
         // --- get_cycle_run ---
         let detail = get_cycle_run(&pool, cycle_id)
@@ -516,7 +528,11 @@ mod tests {
             .iter()
             .find(|n| n.node.bundle_hash.to_hex() == hash_quarantined)
             .expect("suspect node in detail");
-        assert_eq!(suspect_node.regime_results.len(), 1, "suspect node regime_results round-trip");
+        assert_eq!(
+            suspect_node.regime_results.len(),
+            1,
+            "suspect node regime_results round-trip"
+        );
         assert_eq!(suspect_node.regime_results[0].regime_label, "bull_2024");
         assert_eq!(suspect_node.regime_results[0].verdict, "pass");
 

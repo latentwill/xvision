@@ -14,9 +14,7 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 
 use crate::error::MarketplaceError;
-use xvision_identity::contracts::{
-    IEvalAttestationRegistry, IListingRegistry, IMarketplace,
-};
+use xvision_identity::contracts::{IEvalAttestationRegistry, IListingRegistry, IMarketplace};
 use xvision_identity::MarketplaceAddresses;
 
 /// Inputs to `publish_listing` → `ListingRegistry.createListing`.
@@ -251,9 +249,7 @@ impl Erc8004MantleDriver {
 
     /// Build a wallet-backed alloy provider for the held signer, or return
     /// [`MarketplaceError::NotConfigured`] if no signer was supplied.
-    async fn wallet_provider(
-        &self,
-    ) -> Result<impl alloy::providers::Provider + Clone, MarketplaceError> {
+    async fn wallet_provider(&self) -> Result<impl alloy::providers::Provider + Clone, MarketplaceError> {
         let signer = self
             .signer
             .as_ref()
@@ -345,8 +341,7 @@ impl AnchorDriver for Erc8004MantleDriver {
         if let Some(auth) = req.authorization.as_ref() {
             if req.recipient != auth.from {
                 return Err(MarketplaceError::Contract(
-                    "buyWithAuthorization recipient must equal the authorization payer (auth.from)"
-                        .into(),
+                    "buyWithAuthorization recipient must equal the authorization payer (auth.from)".into(),
                 ));
             }
         }
@@ -613,24 +608,16 @@ mod tests {
 
     #[tokio::test]
     async fn publish_with_zero_addresses_is_not_configured() {
-        let d = Erc8004MantleDriver::with_signer(
-            zero_addresses(),
-            "http://127.0.0.1:8545",
-            31337,
-            test_signer(),
-        );
+        let d =
+            Erc8004MantleDriver::with_signer(zero_addresses(), "http://127.0.0.1:8545", 31337, test_signer());
         let err = d.publish_listing(publish_req()).await.unwrap_err();
         assert!(matches!(err, MarketplaceError::NotConfigured(_)), "{err:?}");
     }
 
     #[tokio::test]
     async fn buy_with_zero_addresses_is_not_configured() {
-        let d = Erc8004MantleDriver::with_signer(
-            zero_addresses(),
-            "http://127.0.0.1:8545",
-            31337,
-            test_signer(),
-        );
+        let d =
+            Erc8004MantleDriver::with_signer(zero_addresses(), "http://127.0.0.1:8545", 31337, test_signer());
         let err = d
             .buy_listing(BuyRequest {
                 listing_id: U256::from(1u64),
@@ -644,12 +631,8 @@ mod tests {
 
     #[tokio::test]
     async fn attest_with_zero_addresses_is_not_configured() {
-        let d = Erc8004MantleDriver::with_signer(
-            zero_addresses(),
-            "http://127.0.0.1:8545",
-            31337,
-            test_signer(),
-        );
+        let d =
+            Erc8004MantleDriver::with_signer(zero_addresses(), "http://127.0.0.1:8545", 31337, test_signer());
         let err = d
             .attest_eval(AttestRequest {
                 listing_id: U256::from(1u64),
@@ -664,12 +647,8 @@ mod tests {
 
     #[tokio::test]
     async fn revoke_with_zero_addresses_is_not_configured() {
-        let d = Erc8004MantleDriver::with_signer(
-            zero_addresses(),
-            "http://127.0.0.1:8545",
-            31337,
-            test_signer(),
-        );
+        let d =
+            Erc8004MantleDriver::with_signer(zero_addresses(), "http://127.0.0.1:8545", 31337, test_signer());
         let err = d.revoke_listing(U256::from(1u64)).await.unwrap_err();
         assert!(matches!(err, MarketplaceError::NotConfigured(_)), "{err:?}");
     }
@@ -820,12 +799,7 @@ mod tests {
             usdc: parse("XVN_USDC"),
             platform_agent_token_id: 0,
         };
-        let d = Erc8004MantleDriver::with_signer(
-            addresses,
-            "http://127.0.0.1:8545",
-            31337,
-            test_signer(),
-        );
+        let d = Erc8004MantleDriver::with_signer(addresses, "http://127.0.0.1:8545", 31337, test_signer());
 
         let lref = d.publish_listing(publish_req()).await.expect("publish");
         let receipt = d

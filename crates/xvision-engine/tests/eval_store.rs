@@ -463,10 +463,7 @@ async fn request_and_clear_flatten_round_trip() {
 async fn request_flatten_unknown_run_errors() {
     let (store, _db_dir, _scenario_id) = store_with_migration().await;
     let res = store.request_flatten("no-such-run").await;
-    assert!(
-        res.is_err(),
-        "request_flatten must error for an unknown run id"
-    );
+    assert!(res.is_err(), "request_flatten must error for an unknown run id");
 }
 
 /// Mirrors the `is_paused` transient-error contract: a non-missing-column

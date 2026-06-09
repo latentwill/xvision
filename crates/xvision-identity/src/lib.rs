@@ -41,8 +41,7 @@ pub mod genart;
 pub mod manifest;
 
 pub use attestation::{
-    build_attestation_outcome, decide_submission, AttestationDecision, TAG1_TRADING_YIELD,
-    TAG2_MONTH,
+    build_attestation_outcome, decide_submission, AttestationDecision, TAG1_TRADING_YIELD, TAG2_MONTH,
 };
 pub use client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
 pub use contracts::MarketplaceAddresses;

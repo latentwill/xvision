@@ -193,10 +193,7 @@ async fn set_status_is_idempotent_on_already_rejected() {
 async fn set_status_returns_false_for_absent_hash() {
     let store = fresh_store().await;
     let absent = ContentHash::of_bytes(b"never-inserted-retire");
-    let updated = store
-        .set_status(&absent, LineageStatus::Rejected)
-        .await
-        .unwrap();
+    let updated = store.set_status(&absent, LineageStatus::Rejected).await.unwrap();
     assert!(
         !updated,
         "retiring a non-existent node reports no row was updated (→ 404 at the route)"

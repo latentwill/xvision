@@ -251,5 +251,8 @@ async fn ollama_no_auth_provider_api_key_set_is_true() {
     let eff = &effective[0];
     assert!(eff.has_key, "effective has_key must match api_key_set");
     assert_eq!(eff.has_key, row.api_key_set, "parity: has_key == api_key_set");
-    assert!(eff.launchable, "Ollama with a model in enabled_models must be launchable");
+    assert!(
+        eff.launchable,
+        "Ollama with a model in enabled_models must be launchable"
+    );
 }

@@ -18,8 +18,8 @@ use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
 use crate::autooptimizer::eval_adapter::PaperTestRunner;
-use crate::autooptimizer::gate::{aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective};
 use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
+use crate::autooptimizer::gate::{aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective};
 use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -118,8 +118,7 @@ struct GateScores {
 /// Per-cycle memoization of the random-baseline objective score, keyed by
 /// (day-scenario id, direction). The baseline depends only on the training
 /// window + direction, so it is computed once and reused for every candidate.
-type BaselineCache =
-    tokio::sync::Mutex<std::collections::HashMap<(String, TradeDirection), f64>>;
+type BaselineCache = tokio::sync::Mutex<std::collections::HashMap<(String, TradeDirection), f64>>;
 
 /// Compute (memoized) the random-baseline objective score for `day_scenario`
 /// under `direction`, using `structure_strategy` for risk sizing / filters.
@@ -239,7 +238,10 @@ pub async fn run_cycle(
         // polling every 1s until the flag is cleared (resume) or the cycle is
         // cancelled. This is the outer per-parent boundary; the inner per-mutation
         // boundary in `process_parent_mutations` does the same check.
-        while pause.as_ref().is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed)) {
+        while pause
+            .as_ref()
+            .is_some_and(|p| p.load(std::sync::atomic::Ordering::Relaxed))
+        {
             if is_cancelled() {
                 break;
             }
@@ -357,7 +359,11 @@ pub async fn run_cycle(
 /// backtested — there is no gating to sanity-check, and running the canary evals
 /// is pure waste (run-7 finding). Returns `true` iff at least one candidate was
 /// gated (kept or rejected) this cycle.
-fn honesty_check_warranted(active: &[LineageNode], suspect: &[LineageNode], rejected: &[LineageNode]) -> bool {
+fn honesty_check_warranted(
+    active: &[LineageNode],
+    suspect: &[LineageNode],
+    rejected: &[LineageNode],
+) -> bool {
     !active.is_empty() || !suspect.is_empty() || !rejected.is_empty()
 }
 
@@ -759,7 +765,8 @@ where
         // and returns the *resolved* status (which may be Active when the
         // collision-guard preserves an existing active node).  Emit the SSE event
         // and route the result bucket from the resolved status, not outcome.status.
-        let (node, resolved_status) = build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
+        let (node, resolved_status) =
+            build_and_insert_node(pool, strategy_blob_store, &outcome, parent_node, cycle_id).await?;
         let outcome_str = match &resolved_status {
             LineageStatus::Active => "kept",
             LineageStatus::Quarantined => "suspect",
@@ -892,13 +899,9 @@ where
                     // P2-W2: persist each finding to autooptimizer_findings so the
                     // GET /findings/:hash endpoint can return real data. Best-effort.
                     let judge_model = format!("{}/{}", judge.provider, judge.model);
-                    if let Err(e) = persist_finding(
-                        pool,
-                        &outcome.child_hash.to_hex(),
-                        f,
-                        Some(judge_model.as_str()),
-                    )
-                    .await
+                    if let Err(e) =
+                        persist_finding(pool, &outcome.child_hash.to_hex(), f, Some(judge_model.as_str()))
+                            .await
                     {
                         tracing::warn!(
                             cycle_id,
@@ -985,8 +988,7 @@ where
         // Build (day, baseline) scenario pairs for every regime window.
         let mut regime_inputs: Vec<RegimeEvalInput> = Vec::with_capacity(cycle_config.regime_set.len());
         for rw in &cycle_config.regime_set {
-            let (regime_day_scen, regime_baseline_scen) =
-                build_regime_scenario_pair(cycle_config, rw)?;
+            let (regime_day_scen, regime_baseline_scen) = build_regime_scenario_pair(cycle_config, rw)?;
             // EvalDayWindow phase for each regime.
             progress(CycleProgressEvent::PhaseStarted {
                 session_id: String::new(),
@@ -1287,16 +1289,16 @@ where
 
 /// Build a (day, baseline) `Scenario` pair for a regime window, cloned and
 /// date-patched from the cycle's base `day_scenario`.
-fn build_regime_scenario_pair(
-    cycle_config: &CycleConfig,
-    rw: &RegimeWindow,
-) -> Result<(Scenario, Scenario)> {
-    use chrono::{NaiveDate, TimeZone, Utc};
+fn build_regime_scenario_pair(cycle_config: &CycleConfig, rw: &RegimeWindow) -> Result<(Scenario, Scenario)> {
     use crate::eval::scenario::{BarCachePolicy, RefreshPolicy, TimeWindow};
+    use chrono::{NaiveDate, TimeZone, Utc};
 
     let parse_date = |s: &str| -> Result<chrono::DateTime<Utc>> {
-        let nd: NaiveDate = s.parse().map_err(|e| anyhow::anyhow!("parse date '{}': {}", s, e))?;
-        let midnight = nd.and_hms_opt(0, 0, 0)
+        let nd: NaiveDate = s
+            .parse()
+            .map_err(|e| anyhow::anyhow!("parse date '{}': {}", s, e))?;
+        let midnight = nd
+            .and_hms_opt(0, 0, 0)
             .ok_or_else(|| anyhow::anyhow!("could not construct midnight for date '{}'", s))?;
         Ok(Utc.from_utc_datetime(&midnight))
     };
@@ -1316,7 +1318,10 @@ fn build_regime_scenario_pair(
     // Day scenario: clone the cycle's base day_scenario, patch window + cache key.
     let mut day_scen = cycle_config.day_scenario.clone();
     day_scen.id = Ulid::new().to_string();
-    day_scen.time_window = TimeWindow { start: day_start, end: day_end };
+    day_scen.time_window = TimeWindow {
+        start: day_start,
+        end: day_end,
+    };
     day_scen.bar_cache_policy = BarCachePolicy {
         cache_key: format!(
             "regime-{}-day-{}-{}",
@@ -1331,7 +1336,10 @@ fn build_regime_scenario_pair(
     // Baseline scenario: clone the day scenario above, patch window + cache key.
     let mut base_scen = day_scen.clone();
     base_scen.id = Ulid::new().to_string();
-    base_scen.time_window = TimeWindow { start: base_start, end: base_end };
+    base_scen.time_window = TimeWindow {
+        start: base_start,
+        end: base_end,
+    };
     base_scen.bar_cache_policy = BarCachePolicy {
         cache_key: format!(
             "regime-{}-base-{}-{}",
@@ -1437,9 +1445,19 @@ async fn build_and_insert_node(
         .execute(&mut *tx)
         .await
         .context("insert lineage_node (tx)")?;
-        insert_regime_results(&mut tx, &outcome.child_hash.to_hex(), &outcome.regime_rows, &created_at)
-            .await
-            .with_context(|| format!("failed to persist regime results for {}", outcome.child_hash.to_hex()))?;
+        insert_regime_results(
+            &mut tx,
+            &outcome.child_hash.to_hex(),
+            &outcome.regime_rows,
+            &created_at,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "failed to persist regime results for {}",
+                outcome.child_hash.to_hex()
+            )
+        })?;
         tx.commit().await.context("commit node+regime tx")?;
     } else {
         store.insert(&node).await?;
@@ -1617,9 +1635,18 @@ mod tests {
     #[test]
     fn honesty_check_runs_when_a_candidate_was_gated() {
         let kept = vec![active_node()];
-        assert!(honesty_check_warranted(&kept, &[], &[]), "a kept candidate warrants the check");
-        assert!(honesty_check_warranted(&[], &kept, &[]), "a suspect candidate warrants the check");
-        assert!(honesty_check_warranted(&[], &[], &kept), "a rejected candidate warrants the check");
+        assert!(
+            honesty_check_warranted(&kept, &[], &[]),
+            "a kept candidate warrants the check"
+        );
+        assert!(
+            honesty_check_warranted(&[], &kept, &[]),
+            "a suspect candidate warrants the check"
+        );
+        assert!(
+            honesty_check_warranted(&[], &[], &kept),
+            "a rejected candidate warrants the check"
+        );
     }
 
     /// Fix 1: the collision-guard predicate must return true for both Rejected
@@ -1679,12 +1706,22 @@ mod tests {
 
         let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, Objective::Sharpe);
 
-        assert_eq!(status, LineageStatus::Quarantined, "expected Quarantined (Suspect)");
+        assert_eq!(
+            status,
+            LineageStatus::Quarantined,
+            "expected Quarantined (Suspect)"
+        );
         assert_eq!(rows.len(), 2, "expected exactly 2 regime rows");
 
         // Rows come back in input order.
-        let bull_row = rows.iter().find(|r| r.regime_label == "bull_2024").expect("bull row missing");
-        let bear_row = rows.iter().find(|r| r.regime_label == "bear_2022").expect("bear row missing");
+        let bull_row = rows
+            .iter()
+            .find(|r| r.regime_label == "bull_2024")
+            .expect("bull row missing");
+        let bear_row = rows
+            .iter()
+            .find(|r| r.regime_label == "bear_2022")
+            .expect("bear row missing");
 
         assert!(matches!(bull_row.side, RegimeSide::Bull));
         assert_eq!(bull_row.verdict, "passed");

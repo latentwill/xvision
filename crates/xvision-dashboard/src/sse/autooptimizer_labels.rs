@@ -196,7 +196,10 @@ mod tests {
         assert_eq!(display_label(&phase_started()), "Phase started");
         assert_eq!(display_label(&phase_finished()), "Phase finished");
         assert_eq!(display_label(&session_state_changed()), "Run state changed");
-        assert_eq!(display_label(&flywheel_compiled()), "Findings compiled into prompt pattern");
+        assert_eq!(
+            display_label(&flywheel_compiled()),
+            "Findings compiled into prompt pattern"
+        );
     }
 
     #[test]

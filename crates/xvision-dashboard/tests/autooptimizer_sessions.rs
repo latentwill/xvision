@@ -34,10 +34,10 @@ async fn test_status_idle() {
 /// test_status_active: insert a running session, GET /status returns session summary.
 #[tokio::test]
 async fn test_status_active() {
-    use xvision_dashboard::AppState;
-    use xvision_dashboard::server::build_router;
     use axum_test::TestServer;
     use tempfile::TempDir;
+    use xvision_dashboard::server::build_router;
+    use xvision_dashboard::AppState;
 
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -85,10 +85,10 @@ async fn test_status_active() {
 /// and a DB record exists.
 #[tokio::test]
 async fn test_start_session_creates_record() {
-    use xvision_dashboard::AppState;
-    use xvision_dashboard::server::build_router;
     use axum_test::TestServer;
     use tempfile::TempDir;
+    use xvision_dashboard::server::build_router;
+    use xvision_dashboard::AppState;
 
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -124,10 +124,10 @@ async fn test_start_session_creates_record() {
 /// returns 409.
 #[tokio::test]
 async fn test_start_session_409_when_active() {
-    use xvision_dashboard::AppState;
-    use xvision_dashboard::server::build_router;
     use axum_test::TestServer;
     use tempfile::TempDir;
+    use xvision_dashboard::server::build_router;
+    use xvision_dashboard::AppState;
 
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -135,15 +135,9 @@ async fn test_start_session_409_when_active() {
         .expect("init dashboard state");
 
     // Pre-insert a running session.
-    xvision_engine::autooptimizer::session::create_session(
-        &state.pool,
-        "existing-strat",
-        "{}",
-        "once",
-        None,
-    )
-    .await
-    .expect("create pre-existing session");
+    xvision_engine::autooptimizer::session::create_session(&state.pool, "existing-strat", "{}", "once", None)
+        .await
+        .expect("create pre-existing session");
 
     let server = TestServer::new(build_router(state)).unwrap();
     let body = serde_json::json!({
@@ -164,10 +158,10 @@ async fn test_start_session_409_when_active() {
 /// them in created_at desc order.
 #[tokio::test]
 async fn test_list_sessions_newest_first() {
-    use xvision_dashboard::AppState;
-    use xvision_dashboard::server::build_router;
     use axum_test::TestServer;
     use tempfile::TempDir;
+    use xvision_dashboard::server::build_router;
+    use xvision_dashboard::AppState;
 
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -222,10 +216,10 @@ async fn test_session_detail_404() {
 /// test_session_detail_returns_record: GET /sessions/:id returns the record.
 #[tokio::test]
 async fn test_session_detail_returns_record() {
-    use xvision_dashboard::AppState;
-    use xvision_dashboard::server::build_router;
     use axum_test::TestServer;
     use tempfile::TempDir;
+    use xvision_dashboard::server::build_router;
+    use xvision_dashboard::AppState;
 
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -269,11 +263,7 @@ async fn test_run_cycle_compat_returns_session_id() {
     // what matters is the route exists.
     let body = serde_json::json!({});
     let res = server.post("/api/autooptimizer/run-cycle").json(&body).await;
-    assert_ne!(
-        res.status_code(),
-        404,
-        "run-cycle route must exist (not 404)"
-    );
+    assert_ne!(res.status_code(), 404, "run-cycle route must exist (not 404)");
 }
 
 // ---------------------------------------------------------------------------
@@ -300,10 +290,10 @@ async fn test_cancel_cycle_compat_404() {
 #[tokio::test]
 async fn test_sse_replay() {
     use std::time::Duration;
-    use tokio::time::timeout;
-    use xvision_dashboard::AppState;
-    use xvision_dashboard::server::build_router;
     use tempfile::TempDir;
+    use tokio::time::timeout;
+    use xvision_dashboard::server::build_router;
+    use xvision_dashboard::AppState;
 
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
@@ -312,15 +302,10 @@ async fn test_sse_replay() {
     let pool = state.pool.clone();
 
     // Create a session to attach events to.
-    let session_id = xvision_engine::autooptimizer::session::create_session(
-        &pool,
-        "strat-sse",
-        "{}",
-        "once",
-        None,
-    )
-    .await
-    .expect("create session");
+    let session_id =
+        xvision_engine::autooptimizer::session::create_session(&pool, "strat-sse", "{}", "once", None)
+            .await
+            .expect("create session");
 
     // Insert 5 events using the events_store helper. They will get seq 1-5.
     for i in 1..=5usize {

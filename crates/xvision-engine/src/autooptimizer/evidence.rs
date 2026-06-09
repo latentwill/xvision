@@ -263,7 +263,9 @@ mod tests {
             .await
             .expect("open in-memory pool");
         ensure_lineage_schema(&pool).await.expect("ensure_lineage_schema");
-        ensure_evidence_schema(&pool).await.expect("ensure_evidence_schema");
+        ensure_evidence_schema(&pool)
+            .await
+            .expect("ensure_evidence_schema");
         pool
     }
 
@@ -335,9 +337,7 @@ mod tests {
     #[tokio::test]
     async fn test_findings_empty_for_unknown_hash() {
         let pool = open_pool().await;
-        let rows = load_findings(&pool, "unknown_hash")
-            .await
-            .expect("load_findings");
+        let rows = load_findings(&pool, "unknown_hash").await.expect("load_findings");
         assert!(rows.is_empty());
     }
 

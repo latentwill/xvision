@@ -1754,8 +1754,7 @@ async fn run_validate(args: ValidateArgs) -> CliResult<()> {
     let warmup_warnings: Vec<String> = if let Some(filter) = &strategy.filter {
         let cadence = strategy.manifest.decision_cadence_minutes;
         if cadence > 0 {
-            let duration_minutes = (scenario.time_window.end - scenario.time_window.start)
-                .num_minutes();
+            let duration_minutes = (scenario.time_window.end - scenario.time_window.start).num_minutes();
             xvision_filters::check_filter_warmup(filter, cadence, duration_minutes)
                 .into_iter()
                 .map(|w| w.message)

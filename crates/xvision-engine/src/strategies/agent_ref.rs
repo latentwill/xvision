@@ -282,8 +282,14 @@ mod tests {
             model_override: None,
         };
         let s = serde_json::to_string(&r).unwrap();
-        assert!(!s.contains("prompt_override"), "absent override must be omitted: {s}");
-        assert!(!s.contains("model_override"), "absent override must be omitted: {s}");
+        assert!(
+            !s.contains("prompt_override"),
+            "absent override must be omitted: {s}"
+        );
+        assert!(
+            !s.contains("model_override"),
+            "absent override must be omitted: {s}"
+        );
     }
 
     #[test]
@@ -305,7 +311,8 @@ mod tests {
         // Strategies written before this field exists must still load.
         let r: AgentRef = serde_json::from_value(json!({
             "agent_id": "01HZAGENT", "role": "trader"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(r.prompt_override, None);
         assert_eq!(r.model_override, None);
     }

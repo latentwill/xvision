@@ -227,9 +227,9 @@ impl RegistryAddresses {
     ///
     /// Set the env vars to inject real Sepolia addresses without a code change.
     pub fn mantle_testnet() -> Option<Self> {
-        let id_str  = std::env::var("MANTLE_TESTNET_IDENTITY_REGISTRY").ok()?;
+        let id_str = std::env::var("MANTLE_TESTNET_IDENTITY_REGISTRY").ok()?;
         let rep_str = std::env::var("MANTLE_TESTNET_REPUTATION_REGISTRY").ok()?;
-        let id_addr:  Address = id_str.parse().ok()?;
+        let id_addr: Address = id_str.parse().ok()?;
         let rep_addr: Address = rep_str.parse().ok()?;
         Some(Self::custom(id_addr, rep_addr))
     }
@@ -665,7 +665,7 @@ mod tests {
     #[test]
     fn mantle_testnet_reads_env_vars() {
         let _guard = MANTLE_TESTNET_ENV_MUTEX.lock().unwrap();
-        let id_hex  = "0x3EF48069B23f4717c0510cAa29a7bbB17a29D7a0";
+        let id_hex = "0x3EF48069B23f4717c0510cAa29a7bbB17a29D7a0";
         let rep_hex = "0xf64230e90748602AE3392952b3E249d81dd83ef1";
         // SAFETY: test binary is single-process; mutex ensures exclusive access;
         // removal happens before the mutex is released.
@@ -680,7 +680,7 @@ mod tests {
         }
         drop(_guard);
         let addrs = result.expect("Some when both env vars set to valid addresses");
-        let expected_id:  Address = id_hex.parse().unwrap();
+        let expected_id: Address = id_hex.parse().unwrap();
         let expected_rep: Address = rep_hex.parse().unwrap();
         assert_eq!(addrs.identity_registry, expected_id);
         assert_eq!(addrs.reputation_registry, expected_rep);
@@ -750,15 +750,8 @@ mod tests {
             // `realized_pnl_usd` in the payload is incidental for the raw path;
             // pick a non-matching number to prove it isn't what's encoded.
             let outcome = sample_outcome(verdict as f64);
-            let args = GiveFeedbackArgs::raw(
-                &agent,
-                &outcome,
-                verdict,
-                0,
-                TAG1_TEST,
-                TAG2_TEST,
-            )
-            .expect("build raw args");
+            let args = GiveFeedbackArgs::raw(&agent, &outcome, verdict, 0, TAG1_TEST, TAG2_TEST)
+                .expect("build raw args");
 
             assert_eq!(args.value, verdict, "raw value must be the verdict score");
             assert_eq!(args.value_decimals, 0, "raw value_decimals must be 0");
@@ -777,8 +770,7 @@ mod tests {
         let agent = TokenId(U256::from(7u64));
         // Dollar PnL path is UNCHANGED: 12.34 USD -> 12_340_000 @ 6 decimals.
         let outcome = sample_outcome(12.34);
-        let args =
-            GiveFeedbackArgs::from_outcome(&agent, &outcome, "xvision", "cycle").expect("build");
+        let args = GiveFeedbackArgs::from_outcome(&agent, &outcome, "xvision", "cycle").expect("build");
         assert_eq!(args.value, 12_340_000, "PnL must scale by 1e6");
         assert_eq!(args.value_decimals, 6, "PnL value_decimals must stay 6");
     }
@@ -865,7 +857,7 @@ mod tests {
 
         // Deterministic addresses produced by DeployTestnet.s.sol via CREATE2 factory
         // when deployed from anvil account 0 on chain 31337.
-        let identity:   Address = "0x3EF48069B23f4717c0510cAa29a7bbB17a29D7a0".parse().unwrap();
+        let identity: Address = "0x3EF48069B23f4717c0510cAa29a7bbB17a29D7a0".parse().unwrap();
         let reputation: Address = "0xf64230e90748602AE3392952b3E249d81dd83ef1".parse().unwrap();
         let addrs = RegistryAddresses::custom(identity, reputation);
 

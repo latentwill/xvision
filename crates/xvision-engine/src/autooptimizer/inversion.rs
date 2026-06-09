@@ -31,7 +31,10 @@ mod tests {
                 after: "new prompt text".into(),
             }],
             params: vec![],
-            tools: ToolDiff { added: vec![], removed: vec![] },
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
             filter: vec![],
             rationale: "test inversion".into(),
         }
@@ -89,16 +92,26 @@ mod tests {
                 after: "NEW PROMPT".into(),
             }],
             params: vec![],
-            tools: ToolDiff { added: vec![], removed: vec![] },
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
             filter: vec![],
             rationale: "t".into(),
         };
         normalize_prose_baseline(&mut forward, &parent);
-        assert_eq!(forward.prose[0].before, "PARENT PROMPT", "before normalized to parent override");
+        assert_eq!(
+            forward.prose[0].before, "PARENT PROMPT",
+            "before normalized to parent override"
+        );
 
         let reverse = invert_mutation(&forward);
         let reverse_child = reverse.apply_to(&parent);
-        let trader = reverse_child.agents.iter().find(|a| a.canonical_role() == "trader").unwrap();
+        let trader = reverse_child
+            .agents
+            .iter()
+            .find(|a| a.canonical_role() == "trader")
+            .unwrap();
         assert_eq!(
             trader.prompt_override.as_deref(),
             Some("PARENT PROMPT"),

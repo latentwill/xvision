@@ -49,8 +49,8 @@ pub mod watchdog;
 pub use attestation::{EvalAttestation, TokensUsed};
 pub use attestation_engine::{maybe_attest, AttestationTrigger};
 pub use attestation_verdict::{
-    should_fire, verdict, window_sharpe, Verdict, VerdictLabel, ATTESTATION_TRADE_WINDOW,
-    TAG1_TRADING_YIELD, TAG2_MONTH,
+    should_fire, verdict, window_sharpe, Verdict, VerdictLabel, ATTESTATION_TRADE_WINDOW, TAG1_TRADING_YIELD,
+    TAG2_MONTH,
 };
 pub use broker_rules::{
     rule_set_for_asset_class, AlpacaCryptoRules, AlpacaEquityRules, AlpacaEquityViolationKind, BrokerRuleSet,

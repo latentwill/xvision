@@ -18,7 +18,9 @@
 //! — both endpoints must lie in `[0, 100]`).
 
 use crate::errors::ValidationError;
-use crate::types::{Condition, ConditionItem, ConditionTree, Filter, IndicatorName, IndicatorRef, Operand, Operator};
+use crate::types::{
+    Condition, ConditionItem, ConditionTree, Filter, IndicatorName, IndicatorRef, Operand, Operator,
+};
 
 /// Validate a `Filter`. Returns on the **first** rule violation; rules
 /// are checked in spec-table order so the most semantically-meaningful
@@ -55,12 +57,7 @@ pub fn validate(filter: &Filter) -> Result<(), ValidationError> {
                 validate_condition(cond, &path)?;
             }
             ConditionItem::Group(group) => {
-                let group_path = format!(
-                    "/conditions/{}/{}/{}",
-                    variant,
-                    outer_idx,
-                    group.variant_name()
-                );
+                let group_path = format!("/conditions/{}/{}/{}", variant, outer_idx, group.variant_name());
                 if group.is_empty() {
                     return Err(ValidationError::EmptyTree {
                         path: group_path.clone(),

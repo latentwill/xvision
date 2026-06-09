@@ -67,17 +67,12 @@ pub async fn record_outcome(pool: &SqlitePool, bundle_hash: &ContentHash, delta_
 ///
 /// Used by `parent_policy::select_parents` to rank active leaves by the real
 /// gate-verified metric rather than a hash-proxy stub.
-pub async fn read_node_delta_sharpe(
-    pool: &SqlitePool,
-    bundle_hash: &ContentHash,
-) -> Result<Option<f64>> {
-    let row = sqlx::query(
-        "SELECT delta_sharpe FROM mutator_attribution WHERE bundle_hash = ?",
-    )
-    .bind(bundle_hash.to_hex())
-    .fetch_optional(pool)
-    .await
-    .context("read_node_delta_sharpe")?;
+pub async fn read_node_delta_sharpe(pool: &SqlitePool, bundle_hash: &ContentHash) -> Result<Option<f64>> {
+    let row = sqlx::query("SELECT delta_sharpe FROM mutator_attribution WHERE bundle_hash = ?")
+        .bind(bundle_hash.to_hex())
+        .fetch_optional(pool)
+        .await
+        .context("read_node_delta_sharpe")?;
     Ok(row.and_then(|r| r.try_get::<Option<f64>, _>("delta_sharpe").ok().flatten()))
 }
 

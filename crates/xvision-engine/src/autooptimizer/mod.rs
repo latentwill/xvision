@@ -23,18 +23,17 @@
 
 pub mod blob_store;
 pub mod canary;
-pub mod scheduler;
 pub mod config;
 pub mod content_hash;
 pub mod cycle;
-pub mod evidence;
 pub mod cycle_loosen;
 pub mod cycle_runs;
 pub mod diversity;
-pub mod events_store;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
 pub mod eval_adapter;
+pub mod events_store;
+pub mod evidence;
 pub mod gate;
 pub mod inversion;
 pub mod judge;
@@ -51,19 +50,15 @@ pub mod random_baseline;
 pub mod regime_results;
 pub mod run_lock;
 pub mod scenario_synthesis;
+pub mod scheduler;
 pub mod session;
 pub mod tournament;
 pub mod validator;
 
 pub use blob_store::BlobStore;
-pub use evidence::{
-    ensure_evidence_schema, load_findings, load_gate_record, persist_finding, persist_gate_record,
-    FindingRow, GateRecord, GateRecordRow,
-};
 pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult, SabotageVariant};
 pub use config::{
-    AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig,
-    TradeDirection,
+    AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig, TradeDirection,
 };
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
 pub use cycle::{run_cycle, CycleConfig, CycleResult};
@@ -73,9 +68,13 @@ pub use cycle_runs::{
     NodeProvenance,
 };
 pub use diversity::{compute_diversity_score, diversity_decay_for_cycle, record_embedding};
-pub use events_store::{append_event, prune_old_events};
 pub use eval_adapter::{
     BacktestPaperTester, BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
+};
+pub use events_store::{append_event, prune_old_events};
+pub use evidence::{
+    ensure_evidence_schema, load_findings, load_gate_record, persist_finding, persist_gate_record,
+    FindingRow, GateRecord, GateRecordRow,
 };
 pub use gate::{evaluate, GateInput, GateVerdict};
 pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};

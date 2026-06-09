@@ -55,10 +55,7 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn open_test_pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new()
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
+        let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await.unwrap();
         // Create the tables from migration 057.
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS autooptimizer_session_state (
@@ -121,12 +118,24 @@ mod tests {
     async fn test_append_event() {
         let pool = open_test_pool().await;
 
-        append_event(&pool, "sess-1", Some("cycle-1"), "phase_started", r#"{"type":"phase_started"}"#)
-            .await
-            .unwrap();
-        append_event(&pool, "sess-1", None, "cycle_finished", r#"{"type":"cycle_finished"}"#)
-            .await
-            .unwrap();
+        append_event(
+            &pool,
+            "sess-1",
+            Some("cycle-1"),
+            "phase_started",
+            r#"{"type":"phase_started"}"#,
+        )
+        .await
+        .unwrap();
+        append_event(
+            &pool,
+            "sess-1",
+            None,
+            "cycle_finished",
+            r#"{"type":"cycle_finished"}"#,
+        )
+        .await
+        .unwrap();
 
         let rows: Vec<(i64, String, Option<String>, String)> =
             sqlx::query_as("SELECT seq, session_id, cycle_id, kind FROM autooptimizer_events ORDER BY seq")
@@ -177,7 +186,10 @@ mod tests {
             .await
             .unwrap();
         // 5 oldest sessions should have their events pruned; 50 remain.
-        assert_eq!(after, 50, "prune should retain events for only 50 most-recent sessions");
+        assert_eq!(
+            after, 50,
+            "prune should retain events for only 50 most-recent sessions"
+        );
 
         // Verify the oldest session (session-000) was pruned.
         let old_count: i64 =

@@ -141,10 +141,13 @@ impl AppState {
     /// cycle with that id was found and signalled.
     pub fn autooptimizer_request_cancel(&self, cycle_id: &str) -> bool {
         match self.autooptimizer_cancels.lock() {
-            Ok(map) => map.get(cycle_id).map(|f| {
-                f.store(true, std::sync::atomic::Ordering::Relaxed);
-                true
-            }).unwrap_or(false),
+            Ok(map) => map
+                .get(cycle_id)
+                .map(|f| {
+                    f.store(true, std::sync::atomic::Ordering::Relaxed);
+                    true
+                })
+                .unwrap_or(false),
             Err(_) => false,
         }
     }
@@ -171,10 +174,13 @@ impl AppState {
     /// cycle with that id was found and signalled.
     pub fn autooptimizer_request_pause(&self, cycle_id: &str) -> bool {
         match self.autooptimizer_pauses.lock() {
-            Ok(map) => map.get(cycle_id).map(|f| {
-                f.store(true, std::sync::atomic::Ordering::Relaxed);
-                true
-            }).unwrap_or(false),
+            Ok(map) => map
+                .get(cycle_id)
+                .map(|f| {
+                    f.store(true, std::sync::atomic::Ordering::Relaxed);
+                    true
+                })
+                .unwrap_or(false),
             Err(_) => false,
         }
     }
@@ -183,10 +189,13 @@ impl AppState {
     /// a paused cycle with that id was found and cleared.
     pub fn autooptimizer_request_resume(&self, cycle_id: &str) -> bool {
         match self.autooptimizer_pauses.lock() {
-            Ok(map) => map.get(cycle_id).map(|f| {
-                f.store(false, std::sync::atomic::Ordering::Relaxed);
-                true
-            }).unwrap_or(false),
+            Ok(map) => map
+                .get(cycle_id)
+                .map(|f| {
+                    f.store(false, std::sync::atomic::Ordering::Relaxed);
+                    true
+                })
+                .unwrap_or(false),
             Err(_) => false,
         }
     }
@@ -195,7 +204,10 @@ impl AppState {
     /// cycle is at a pause checkpoint or in the middle of suspending).
     pub fn autooptimizer_is_paused(&self, cycle_id: &str) -> bool {
         match self.autooptimizer_pauses.lock() {
-            Ok(map) => map.get(cycle_id).map(|f| f.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false),
+            Ok(map) => map
+                .get(cycle_id)
+                .map(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or(false),
             Err(_) => false,
         }
     }
@@ -358,8 +370,7 @@ impl AppState {
     /// `XVN_OPTIMIZER_MEMORY` wins when set; otherwise the config snapshot
     /// (`optimizer_enabled`, default ON). Cheap — no per-request file I/O.
     pub fn optimizer_memory_enabled(&self) -> bool {
-        Self::env_memory_override("XVN_OPTIMIZER_MEMORY")
-            .unwrap_or(self.memory_config.optimizer_enabled)
+        Self::env_memory_override("XVN_OPTIMIZER_MEMORY").unwrap_or(self.memory_config.optimizer_enabled)
     }
 
     /// Build an `ApiContext` for one HTTP request. The dashboard always
