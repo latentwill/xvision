@@ -424,7 +424,7 @@ function DesktopRow({
   return (
     <tr
       key={row.agent_id}
-      className="border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
+      className="xvn-row-in border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
     >
       <td className="px-3 py-3 text-text">
         <Link

@@ -52,6 +52,56 @@
   .tnum {
     font-variant-numeric: tabular-nums;
   }
+
+  /* List-row entrance. Subtle fade + lift, used across the list routes with a
+     per-row animation-delay (capped) for a stagger. CSS animations only fire
+     on mount, and rows carry stable keys, so existing rows do NOT re-animate
+     on data polling — only newly-inserted rows play. The global reduced-motion
+     block collapses it. */
+  @keyframes xvn-row-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .xvn-row-in {
+    animation: xvn-row-in var(--duration-base) var(--ease-out) both;
+  }
+  /* Capped stagger by row position (min(i, 8) * 40ms). nth-child is re-evaluated
+     on render, but animation-delay only matters at animation start, so shifting
+     positions on insert never replays a finished row. */
+  .xvn-row-in:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .xvn-row-in:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .xvn-row-in:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .xvn-row-in:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .xvn-row-in:nth-child(5) {
+    animation-delay: 160ms;
+  }
+  .xvn-row-in:nth-child(6) {
+    animation-delay: 200ms;
+  }
+  .xvn-row-in:nth-child(7) {
+    animation-delay: 240ms;
+  }
+  .xvn-row-in:nth-child(8) {
+    animation-delay: 280ms;
+  }
+  .xvn-row-in:nth-child(n + 9) {
+    animation-delay: 320ms;
+  }
+
   .input {
     @apply w-full bg-surface-elev border border-border rounded px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-text-3;
   }

@@ -564,7 +564,7 @@ function DesktopRow({
   return (
     <tr
       onClick={() => onGo(row.id)}
-      className="cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
+      className="xvn-row-in cursor-pointer border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover focus-within:bg-surface-hover"
     >
       <td
         className="w-8 py-3 pl-5 pr-2"
