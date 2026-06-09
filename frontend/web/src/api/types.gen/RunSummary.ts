@@ -32,4 +32,12 @@ paused: boolean,
  * `safety_state.paused_at` is surfaced on the global safety status. Track
  * B (cockpit) reads this to show "paused since …".
  */
-paused_at: string | null, };
+paused_at: string | null, 
+/**
+ * A3 one-shot "flatten positions" request flag (`eval_runs.flatten_requested`,
+ * migration 062). `true` ⇒ the live executor will close ALL open broker
+ * positions on its next cycle and then clear the flag, WITHOUT terminating
+ * the run. The cockpit (spec §2.7) reads this to show a pending-flatten
+ * state. Defaults to `false` for pre-062 runs.
+ */
+flatten_requested: boolean, };

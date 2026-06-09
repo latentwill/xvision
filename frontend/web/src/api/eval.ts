@@ -204,6 +204,38 @@ export function resumeRun(id: string): Promise<RunSummary> {
     });
 }
 
+/// Request a one-shot "flatten positions" for a live run: close ALL open
+/// broker positions on the next cycle WITHOUT terminating the run. Hits
+/// `POST /api/eval/runs/:id/flatten`; the returned `RunSummary` has
+/// `flatten_requested: true` (cleared by the executor once it acts). Mirrors
+/// `pauseRun` / `cancelRun`. The cockpit fires this from the [Flatten
+/// positions] inline action after a pause (spec §2.7).
+export function flattenRun(id: string): Promise<RunSummary> {
+  const trace = createTrace("eval", { run_id: id });
+  const started = performance.now();
+  trace.info("eval.flatten.start");
+  return apiFetch<RunSummary>(
+    `/api/eval/runs/${encodeURIComponent(id)}/flatten`,
+    {
+      method: "POST",
+    },
+  )
+    .then((run) => {
+      trace.info("eval.flatten.ok", {
+        flatten_requested: run.flatten_requested,
+        duration_ms: durationSince(started),
+      });
+      return run;
+    })
+    .catch((err) => {
+      trace.error("eval.flatten.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
 /// Re-queue a failed eval run with the same inputs as the source.
 /// Resolves to the `RunDetail` of the freshly-queued run (or the
 /// existing in-flight retry if one was already queued/running for the

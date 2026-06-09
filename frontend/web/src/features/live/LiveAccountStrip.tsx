@@ -8,7 +8,7 @@
 
 import { useMemo } from "react";
 
-import type { ChartBar, RunChartPayload } from "@/api/types.gen";
+import type { RunChartPayload } from "@/api/types.gen";
 
 import {
   currentEquity,
@@ -17,50 +17,16 @@ import {
   latestCloseByAsset,
   unrealizedPnl,
 } from "./live-account";
+import {
+  DASH,
+  barsByAsset,
+  fmtPctSigned,
+  fmtUsdPlain,
+  fmtUsdSigned,
+  pnlTone,
+} from "./live-format";
 import { derivePositionsByDecision } from "@/features/decisions/positions";
 import type { DecisionRowDto } from "@/api/types.gen";
-
-const DASH = "—";
-
-function pnlTone(n: number | null): string {
-  if (n == null || n === 0) return "text-text";
-  return n > 0 ? "text-gold" : "text-danger";
-}
-
-function fmtUsdSigned(n: number | null): string {
-  if (n == null) return DASH;
-  if (n === 0) return "$0.00";
-  const abs = Math.abs(n).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return n > 0 ? `+$${abs}` : `−$${abs}`;
-}
-
-function fmtUsdPlain(n: number | null): string {
-  if (n == null) return DASH;
-  return `$${n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function fmtPctSigned(n: number | null): string {
-  if (n == null) return DASH;
-  const abs = Math.abs(n).toFixed(2);
-  const sign = n > 0 ? "+" : n < 0 ? "−" : "";
-  return `${sign}${abs}%`;
-}
-
-/**
- * Build the per-asset bar map the derivations expect. The live stream is
- * single-asset per run today (`payload.asset` + `payload.bars`), but the
- * derivation helpers take a map so multi-asset runs slot in later without a
- * shape change here.
- */
-function barsByAsset(payload: RunChartPayload): Map<string, ChartBar[]> {
-  return new Map([[payload.asset, payload.bars]]);
-}
 
 export interface LiveAccountStripProps {
   /** Lifted live stream payload (shared with the chart + positions table). */

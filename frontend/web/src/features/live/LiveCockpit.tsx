@@ -35,6 +35,7 @@ import { StrategyStrip } from "./StrategyStrip";
 import { WalletBanner } from "./WalletBanner";
 import { loadStripMetric, saveStripMetric, type StripMetricId } from "./strip-metrics";
 import { pickDefaultRun } from "./strip-status";
+import { useTransport } from "./useTransport";
 
 export interface LiveCockpitProps {
   /** From `/live/:id`. When set, this run is preselected. */
@@ -45,6 +46,11 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
   const navigate = useNavigate();
   const { address } = useWallet();
   const walletDisabled = address === null;
+
+  // B-III transport: pause/resume/flatten/stop with optimistic cache updates
+  // against `agentRunKeys.list()`. The factory hands each pill its run's
+  // handlers + inline-expander UI state.
+  const transportFor = useTransport(walletDisabled);
 
   const runsQuery = useQuery({
     queryKey: agentRunKeys.list(),
@@ -131,9 +137,7 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
         onMetricChange={onMetricChange}
         selectedConnStatus={selectedConnStatus}
         walletDisabled={walletDisabled}
-        // B-III SEAM: supply `transportFor={(run) => ({ onPause, onResume,
-        // onStop })}` to wire pause/resume/stop. Omitted here ⇒ pills render
-        // the transport buttons as disabled placeholders.
+        transportFor={transportFor}
       />
 
       {/* §2.5 Wallet banner — only when wallet not connected. Never hides data. */}

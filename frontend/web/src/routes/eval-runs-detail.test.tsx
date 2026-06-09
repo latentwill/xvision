@@ -196,6 +196,7 @@ function detail(overrides: Partial<RunDetail> = {}): RunDetail {
       max_annotations_per_review: 8,
       paused: false,
       paused_at: null,
+      flatten_requested: false,
     },
     decisions: [],
     equity_curve: [],

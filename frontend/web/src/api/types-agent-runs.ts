@@ -286,6 +286,15 @@ export type AgentRunSummary = {
    * paused or after resume. Mirrors `RunSummary.paused_at`.
    */
   paused_at?: string | null;
+  /**
+   * One-shot "flatten positions" request flag (eval `RunSummary.flatten_requested`,
+   * migration 062). `true` ⇒ the live executor will close all open broker
+   * positions on its next cycle and clear the flag, WITHOUT terminating the
+   * run. Absent on runs/endpoints that don't carry it yet. The Live cockpit
+   * (spec §2.7) reads it to show the pending-flatten state; B-III's transport
+   * flips it via the [Flatten positions] inline action.
+   */
+  flatten_requested?: boolean;
 };
 
 export type AgentRunDetail = {

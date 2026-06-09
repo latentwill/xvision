@@ -14,6 +14,7 @@ import {
   STRIP_METRIC_OPTIONS,
   type StripMetricId,
 } from "./strip-metrics";
+import type { RunTransport } from "./useTransport";
 
 export interface StrategyStripProps {
   runs: AgentRunSummary[];
@@ -24,13 +25,10 @@ export interface StrategyStripProps {
   /** Real SSE status of the currently-selected run's chart stream. */
   selectedConnStatus: LiveStatus;
   walletDisabled: boolean;
-  // B-III transport seam — factory so each pill gets its run's handlers.
-  // Omitted in B-I ⇒ pills render disabled transport placeholders.
-  transportFor?: (run: AgentRunSummary) => {
-    onPause?: () => void;
-    onResume?: () => void;
-    onStop?: () => void;
-  };
+  // B-III transport seam — factory so each pill gets its run's handlers +
+  // inline-expander UI state. Omitted ⇒ pills render disabled transport
+  // placeholders (B-I behavior).
+  transportFor?: (run: AgentRunSummary) => RunTransport;
 }
 
 export function StrategyStrip({
@@ -62,7 +60,6 @@ export function StrategyStrip({
           ) : (
             runs.map((run) => {
               const isSelected = run.run_id === selectedId;
-              const t = transportFor?.(run) ?? {};
               return (
                 <StrategyPill
                   key={run.run_id}
@@ -81,9 +78,7 @@ export function StrategyStrip({
                   }
                   onSelect={() => onSelect(run.run_id)}
                   walletDisabled={walletDisabled}
-                  onPause={t.onPause}
-                  onResume={t.onResume}
-                  onStop={t.onStop}
+                  transport={transportFor?.(run)}
                 />
               );
             })

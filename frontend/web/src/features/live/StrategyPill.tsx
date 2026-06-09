@@ -11,6 +11,7 @@ import { ConnectionDot } from "./ConnectionDot";
 import { TransportControls } from "./TransportControls";
 import { computeStripMetric, type StripMetricId } from "./strip-metrics";
 import { deriveStripStatus, type StripStatus } from "./strip-status";
+import type { RunTransport } from "./useTransport";
 
 const STATUS_STYLE: Record<StripStatus, string> = {
   ACTIVE: "bg-info/15 text-info",
@@ -32,10 +33,9 @@ export interface StrategyPillProps {
   connStatus: LiveStatus;
   onSelect: () => void;
   walletDisabled: boolean;
-  // B-III transport seam — omitted in B-I so buttons render disabled.
-  onPause?: () => void;
-  onResume?: () => void;
-  onStop?: () => void;
+  // B-III transport seam — handlers + inline-expander UI state. Omitted ⇒
+  // buttons render as disabled placeholders (B-I behavior).
+  transport?: RunTransport;
 }
 
 export function StrategyPill({
@@ -45,13 +45,21 @@ export function StrategyPill({
   connStatus,
   onSelect,
   walletDisabled,
-  onPause,
-  onResume,
-  onStop,
+  transport,
 }: StrategyPillProps) {
   const status = deriveStripStatus(run);
   const name = run.objective || run.strategy_id || run.run_id.slice(0, 8);
   const m = computeStripMetric(metric, run);
+
+  // Keep the transport area visible (not hover-gated) whenever an inline
+  // expander or error is showing, so the confirm/flatten flow doesn't vanish
+  // when the pointer leaves the pill.
+  const expanderActive =
+    !!transport &&
+    (transport.pausedExpanderOpen ||
+      transport.stopConfirmOpen ||
+      transport.flattenPending ||
+      !!transport.error);
 
   return (
     <div
@@ -68,36 +76,59 @@ export function StrategyPill({
       }}
       data-selected={selected || undefined}
       className={[
-        "group flex shrink-0 items-center gap-2.5 rounded-lg border px-3 py-2",
+        "group flex shrink-0 flex-col gap-1.5 rounded-lg border px-3 py-2",
         "cursor-pointer text-[13px] transition-colors focus:outline-none",
         selected
           ? "border-gold/45 bg-gold/10"
           : "border-border bg-surface hover:bg-surface-hover focus:bg-surface-hover",
       ].join(" ")}
     >
-      <ConnectionDot status={connStatus} />
-      <span className="max-w-[160px] truncate font-medium text-text">{name}</span>
-      <span
-        className={`shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-semibold tracking-wide ${STATUS_STYLE[status]}`}
+      <div className="flex items-center gap-2.5">
+        <ConnectionDot status={connStatus} />
+        <span className="max-w-[160px] truncate font-medium text-text">
+          {name}
+        </span>
+        <span
+          className={`shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-semibold tracking-wide ${STATUS_STYLE[status]}`}
+        >
+          {status}
+        </span>
+        <span
+          className={`shrink-0 font-mono text-[12.5px] tabular-nums ${METRIC_TONE[m.tone]}`}
+          title={m.derived ? undefined : "Not available yet"}
+        >
+          {m.text}
+        </span>
+      </div>
+      {/*
+        Transport controls. Buttons reveal on hover/focus; the inline
+        confirm/flatten expanders force the area visible (`expanderActive`)
+        so the flow doesn't vanish when the pointer leaves the pill. No
+        popups — everything renders within the pill's own box.
+      */}
+      <div
+        className={[
+          expanderActive ? "flex" : "hidden group-hover:flex group-focus-within:flex",
+        ].join(" ")}
       >
-        {status}
-      </span>
-      <span
-        className={`shrink-0 font-mono text-[12.5px] tabular-nums ${METRIC_TONE[m.tone]}`}
-        title={m.derived ? undefined : "Not available yet"}
-      >
-        {m.text}
-      </span>
-      {/* Transport controls — reveal on hover/focus, disabled in B-I. */}
-      <span className="ml-0.5 hidden group-hover:flex group-focus-within:flex">
         <TransportControls
           status={status}
           walletDisabled={walletDisabled}
-          onPause={onPause}
-          onResume={onResume}
-          onStop={onStop}
+          onPause={transport?.onPause}
+          onResume={transport?.onResume}
+          onStop={transport?.onStop}
+          onStopConfirm={transport?.onStopConfirm}
+          onStopCancel={transport?.onStopCancel}
+          onFlatten={transport?.onFlatten}
+          onKeepOpen={transport?.onKeepOpen}
+          pausedExpanderOpen={transport?.pausedExpanderOpen}
+          flattenPending={transport?.flattenPending}
+          stopConfirmOpen={transport?.stopConfirmOpen}
+          error={transport?.error}
+          busy={transport?.busy}
+          confirmWord={name}
         />
-      </span>
+      </div>
     </div>
   );
 }

@@ -8,41 +8,17 @@
 
 import { useMemo } from "react";
 
-import type { ChartBar, DecisionRowDto, RunChartPayload } from "@/api/types.gen";
+import type { DecisionRowDto, RunChartPayload } from "@/api/types.gen";
 
 import { buildPositionRows, latestCloseByAsset, type PositionRow } from "./live-account";
-
-const DASH = "—";
-
-function pnlTone(n: number | null): string {
-  if (n == null || n === 0) return "text-text";
-  return n > 0 ? "text-gold" : "text-danger";
-}
-
-function fmtUsdSigned(n: number | null): string {
-  if (n == null) return DASH;
-  if (n === 0) return "$0.00";
-  const abs = Math.abs(n).toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return n > 0 ? `+$${abs}` : `−$${abs}`;
-}
-
-function fmtUsdPlain(n: number | null): string {
-  if (n == null) return DASH;
-  return `$${n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function fmtPctSigned(n: number | null): string {
-  if (n == null) return DASH;
-  const abs = Math.abs(n).toFixed(2);
-  const sign = n > 0 ? "+" : n < 0 ? "−" : "";
-  return `${sign}${abs}%`;
-}
+import {
+  DASH,
+  barsByAsset,
+  fmtPctSigned,
+  fmtUsdPlain,
+  fmtUsdSigned,
+  pnlTone,
+} from "./live-format";
 
 function fmtQty(n: number): string {
   // Crypto sizes can be fractional; show up to 6 sig places without trailing
@@ -61,10 +37,6 @@ function fmtEntryTime(iso: string | null): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function barsByAsset(payload: RunChartPayload): Map<string, ChartBar[]> {
-  return new Map([[payload.asset, payload.bars]]);
 }
 
 export interface LivePositionsTableProps {
