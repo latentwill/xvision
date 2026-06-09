@@ -5,7 +5,7 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
@@ -30,7 +30,7 @@ contract Marketplace is
     Initializable,
     OwnableUpgradeable,
     PausableUpgradeable,
-    ReentrancyGuard,
+    ReentrancyGuardUpgradeable,
     UUPSUpgradeable,
     IMarketplace
 {
@@ -46,16 +46,31 @@ contract Marketplace is
     address private _feeRecipient;
     uint16 private _protocolFeeBps;
 
-    /// @dev Storage gap (surface spec §7.5). Five slots used above
-    ///      (`_feeRecipient` + `_protocolFeeBps` pack into one, plus
-    ///      ReentrancyGuard's `_status` slot).
-    uint256[45] private __gap;
+    /// @dev Storage gap (surface spec §7.5). This contract reserves 50 total
+    ///      sequential storage slots (slots 0..49). Only Marketplace's OWN vars
+    ///      sit in sequential storage now: `_listingRegistry`, `_licenseToken`,
+    ///      `_usdc`, and `_feeRecipient`+`_protocolFeeBps` (which pack into one
+    ///      slot) — 4 slots, occupying slots 0..3. The inherited OZ upgradeable
+    ///      bases (Ownable, Pausable, ReentrancyGuard, UUPS) all use ERC-7201
+    ///      namespaced storage and consume ZERO sequential slots. (Previously
+    ///      the NON-upgradeable ReentrancyGuard reserved a sequential `_status`
+    ///      slot at slot 0, so the gap was [45] after 5 used slots; switching to
+    ///      ReentrancyGuardUpgradeable frees that slot, so the gap grows to [46]
+    ///      to keep the total reserved at 50.)
+    uint256[46] private __gap;
 
     error ListingRevoked(uint256 listingId);
     error FeeTooHigh(uint16 bps);
     error ZeroAddress();
     error BadAuthorizationTarget(address to);
     error BadAuthorizationValue(uint256 value, uint96 price);
+    /// @dev M-2: on the x402 path the license recipient must be the EIP-3009
+    ///      payer (`auth.from`), so a facilitator cannot redirect the soulbound
+    ///      license away from the account that paid.
+    error RecipientMustBePayer();
+    /// @dev L-1: a free (priceUSDC == 0) listing mints at most one license per
+    ///      recipient.
+    error AlreadyOwnsFreeLicense();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -78,6 +93,7 @@ contract Marketplace is
 
         __Ownable_init(admin);
         __Pausable_init();
+        __ReentrancyGuard_init();
 
         _listingRegistry = IListingRegistry(listingRegistry_);
         _licenseToken = ILicenseToken(licenseToken_);
@@ -123,6 +139,14 @@ contract Marketplace is
         whenNotPaused
         returns (uint256 licenseTokenId)
     {
+        // M-2: bind the license to the payer. The EIP-3009 authorization is
+        // signed over (from, to, value, validAfter, validBefore, nonce) — the
+        // license `recipient` is NOT part of that signed message, so a
+        // facilitator/front-runner could otherwise submit the buyer's signed
+        // auth while redirecting the soulbound license to themselves. Require
+        // the recipient to be the payer (`auth.from`).
+        if (recipient != auth.from) revert RecipientMustBePayer();
+
         IListingRegistry.Listing memory l = _loadActive(listingId);
 
         if (auth.value != l.priceUSDC) revert BadAuthorizationValue(auth.value, l.priceUSDC);
@@ -165,6 +189,14 @@ contract Marketplace is
 
         // tokenId == listingId (surface spec §3.3). Mint last.
         licenseTokenId = l.listingId;
+
+        // L-1: free listings (priceUSDC == 0) are capped at one license per
+        // recipient — without a payment to throttle them, anyone could mint
+        // unlimited units. Paid listings are unaffected (re-purchase allowed).
+        if (l.priceUSDC == 0 && _licenseToken.balanceOf(recipient, licenseTokenId) != 0) {
+            revert AlreadyOwnsFreeLicense();
+        }
+
         _licenseToken.authorizedMint(recipient, licenseTokenId, 1);
 
         // payerKind: v1 PLACEHOLDER — mirrors purchasePath. Exact derivation
