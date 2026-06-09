@@ -855,11 +855,14 @@ function StartEvalPanel({
           </div>
 
           <div>
-            <label className="block text-[12px] text-text-2 mb-1">
+            <label
+              htmlFor="eval-start-strategy"
+              className="block text-[12px] text-text-2 mb-1"
+            >
               Strategy
             </label>
             <select
-              aria-label="Strategy"
+              id="eval-start-strategy"
               value={agentId}
               onChange={(e) => {
                 setAgentId(e.target.value);
@@ -883,11 +886,14 @@ function StartEvalPanel({
           </div>
 
           <div>
-            <label className="block text-[12px] text-text-2 mb-1">
+            <label
+              htmlFor="eval-start-scenario"
+              className="block text-[12px] text-text-2 mb-1"
+            >
               Scenario
             </label>
             <select
-              aria-label="Scenario"
+              id="eval-start-scenario"
               value={scenarioId}
               onChange={(e) => {
                 setScenarioId(e.target.value);
