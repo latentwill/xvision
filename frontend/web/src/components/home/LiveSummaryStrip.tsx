@@ -50,7 +50,6 @@ export function LiveSummaryStrip() {
       <span className="font-semibold tracking-tight text-foreground">
         Live trading
       </span>
-      <span className="text-xs text-muted-foreground">· Real money</span>
 
       {/* Body: counts or empty state */}
       {isPending ? (

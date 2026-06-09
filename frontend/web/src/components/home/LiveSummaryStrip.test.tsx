@@ -118,7 +118,7 @@ describe("LiveSummaryStrip", () => {
     expect(screen.getByTestId("live-summary-loading")).toBeInTheDocument();
   });
 
-  it("ALWAYS renders the strip + 'Live trading'/'Real money' label, even when empty", async () => {
+  it("ALWAYS renders the strip + 'Live trading' label, even when empty", async () => {
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([]);
 
     renderStrip();
@@ -126,6 +126,6 @@ describe("LiveSummaryStrip", () => {
     await screen.findByText(/no live strategies running/i);
     expect(screen.getByTestId("live-summary-strip")).toBeInTheDocument();
     expect(screen.getByText(/live trading/i)).toBeInTheDocument();
-    expect(screen.getByText(/real money/i)).toBeInTheDocument();
+    expect(screen.queryByText(/real money/i)).toBeNull();
   });
 });
