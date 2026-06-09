@@ -1,0 +1,97 @@
+{
+  "pipeline": {
+    "elapsed_sec": 66.27514123916626,
+    "phases": 1,
+    "total_tasks": 3,
+    "tasks_by_status": {
+      "success": 3
+    },
+    "model": "deepseek-chat",
+    "max_agents": 6
+  },
+  "cost": {
+    "elapsed_sec": 66.27528524398804,
+    "total_cost_usd": 0.0165896,
+    "budget_limit_usd": 4.0,
+    "budget_pct_used": 0.41474,
+    "total_requests": 4,
+    "agents": {
+      "agent-fan-01": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00309067,
+        "avg_latency_ms": 34361.19680298725,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-02": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00250169,
+        "avg_latency_ms": 29271.01110899821,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "agent-fan-03": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00345173,
+        "avg_latency_ms": 40342.381075024605,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      },
+      "synth-phase-1": {
+        "requests_total": 1,
+        "requests_success": 1,
+        "requests_failed": 0,
+        "total_cost_usd": 0.00754551,
+        "avg_latency_ms": 25869.902034988627,
+        "cache_hit_rate": 0.0,
+        "circuit_open": false
+      }
+    }
+  },
+  "tasks": [
+    {
+      "task_id": "fan-01",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Research online courses that teach people how to use AI broadly: ChatGPT/Claude productivity, AI for",
+      "result_length": 12514,
+      "cost_usd": 0.00309067,
+      "latency_ms": 34361.19680298725,
+      "error": ""
+    },
+    {
+      "task_id": "fan-02",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Research online courses that teach people how to use AI broadly: ChatGPT/Claude productivity, AI for",
+      "result_length": 10868,
+      "cost_usd": 0.00250169,
+      "latency_ms": 29271.01110899821,
+      "error": ""
+    },
+    {
+      "task_id": "fan-03",
+      "phase": 1,
+      "status": "success",
+      "prompt_preview": "Research online courses that teach people how to use AI broadly: ChatGPT/Claude productivity, AI for",
+      "result_length": 14629,
+      "cost_usd": 0.00345173,
+      "latency_ms": 40342.381075024605,
+      "error": ""
+    }
+  ],
+  "phases": [
+    {
+      "phase_num": 1,
+      "tasks_count": 3,
+      "has_synthesis": true,
+      "synthesis_length": 13200
+    }
+  ]
+}
