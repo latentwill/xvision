@@ -475,6 +475,7 @@ mod tests {
             live_config: None,
             paused: false,
             paused_at: None,
+            flatten_requested: false,
         };
 
         // Two upserts in a row — second must not error and must not

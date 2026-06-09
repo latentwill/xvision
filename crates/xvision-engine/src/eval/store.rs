@@ -378,6 +378,77 @@ impl RunStore {
         Ok((paused, paused_at))
     }
 
+    /// A3 one-shot flatten: set the run's `flatten_requested` flag to `true`.
+    ///
+    /// Mirrors [`set_paused`] in shape. This is an ADDITIVE per-run, one-shot
+    /// REQUEST honored by the live executor ALONGSIDE the A1 `paused` flag: on
+    /// the next live cycle the executor closes ALL open broker positions (the
+    /// same close path A2 uses on cancel) and then [`clear_flatten`]s the flag.
+    /// It does NOT change `status` and never terminates the run. Idempotent
+    /// (re-requesting is a harmless no-op write). Errors if the run id is
+    /// unknown.
+    pub async fn request_flatten(&self, id: &str) -> Result<()> {
+        self.set_flatten_requested(id, true).await
+    }
+
+    /// A3 one-shot flatten: clear the run's `flatten_requested` flag.
+    ///
+    /// Called by the executor immediately after it has flattened (so the
+    /// request is honored exactly once — the run keeps iterating without
+    /// re-flattening every subsequent cycle). Idempotent. Errors if the run id
+    /// is unknown.
+    pub async fn clear_flatten(&self, id: &str) -> Result<()> {
+        self.set_flatten_requested(id, false).await
+    }
+
+    /// Shared body for [`request_flatten`]/[`clear_flatten`]: flips
+    /// `eval_runs.flatten_requested`. Mirrors [`set_paused`]'s write shape.
+    async fn set_flatten_requested(&self, id: &str, requested: bool) -> Result<()> {
+        let res = sqlx::query("UPDATE eval_runs SET flatten_requested = ? WHERE id = ?")
+            .bind(if requested { 1_i64 } else { 0_i64 })
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("set_flatten_requested: run '{id}'"))?;
+        if res.rows_affected() == 0 {
+            anyhow::bail!("set_flatten_requested: no run with id '{id}'");
+        }
+        Ok(())
+    }
+
+    /// A3 one-shot flatten: read the current `flatten_requested` flag for a run.
+    ///
+    /// Called per-cycle by the live executor loop (a cheap single-column read,
+    /// mirroring the [`is_paused`] checkpoint) so a flatten issued mid-run via
+    /// `POST /api/eval/runs/:id/flatten` is honored on the next cycle.
+    ///
+    /// Shares the missing-column tolerance [`paused_state`] uses: a pre-062
+    /// schema (or a test store that skipped migration 062) where the column is
+    /// absent returns `Ok(false)` (the feature is simply inert); any OTHER
+    /// sqlx error (lock contention, pool exhaustion, I/O) is PROPAGATED rather
+    /// than swallowed, so a live caller never reads "no flatten requested" off
+    /// a transient failure. Returns `Ok(false)` for an unknown run id.
+    pub async fn flatten_requested(&self, id: &str) -> Result<bool> {
+        let row = match sqlx::query("SELECT flatten_requested FROM eval_runs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(row) => row,
+            // Missing column (pre-062) → inert: the feature isn't present yet.
+            // Any OTHER sqlx error is propagated (see `paused_state`).
+            Err(e) if is_missing_column_error(&e) => return Ok(false),
+            Err(e) => {
+                return Err(anyhow::Error::new(e).context(format!("flatten_requested: run '{id}'")))
+            }
+        };
+        let Some(row) = row else {
+            // Unknown run id.
+            return Ok(false);
+        };
+        Ok(row.try_get::<i64, _>("flatten_requested").unwrap_or(0) != 0)
+    }
+
     pub async fn status(&self, id: &str) -> Result<RunStatus> {
         let row = sqlx::query("SELECT status FROM eval_runs WHERE id = ?")
             .bind(id)
@@ -528,6 +599,12 @@ impl RunStore {
         let (paused, paused_at) = self.paused_state(id).await.unwrap_or((false, None));
         run.paused = paused;
         run.paused_at = paused_at;
+        // Overlay the A3 one-shot flatten request flag (migration 062), same
+        // pattern as the pause overlay above: not projected by the shared
+        // SELECT (so `row_to_run` stays pre-062-safe), tolerant of the column's
+        // absence, and read errors collapse to the not-requested default on the
+        // GET path (the live executor reads `flatten_requested` directly).
+        run.flatten_requested = self.flatten_requested(id).await.unwrap_or(false);
         Ok(run)
     }
 
@@ -1821,13 +1898,15 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         review_model,
         max_annotations_per_review,
         live_config,
-        // `paused` / `paused_at` (migration 061) are NOT projected by the
-        // shared SELECTs so that `row_to_run` stays usable against pre-061
-        // schemas. Callers that need the live flag (`RunStore::get`) overlay
-        // them via `paused_state` after building the Run; everywhere else the
+        // `paused` / `paused_at` (migration 061) and `flatten_requested`
+        // (migration 062) are NOT projected by the shared SELECTs so that
+        // `row_to_run` stays usable against pre-061/062 schemas. Callers that
+        // need the live flags (`RunStore::get`) overlay them via `paused_state`
+        // / `flatten_requested` after building the Run; everywhere else the
         // harmless defaults apply.
         paused: false,
         paused_at: None,
+        flatten_requested: false,
     })
 }
 

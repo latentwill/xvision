@@ -498,6 +498,7 @@ fn mutating_router(state: AppState) -> Router {
         .route("/api/eval/runs/:id/cancel", post(eval_runs::cancel_run))
         .route("/api/eval/runs/:id/pause", post(eval_runs::pause_run))
         .route("/api/eval/runs/:id/resume", post(eval_runs::resume_run))
+        .route("/api/eval/runs/:id/flatten", post(eval_runs::flatten_run))
         .route("/api/eval/runs/:id/retry", post(eval_runs::retry_run))
         // ── Eval review ───────────────────────────────────────────────────
         .route("/api/eval/runs/:id/review", post(eval_review::generate))

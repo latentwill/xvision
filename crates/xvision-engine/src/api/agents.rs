@@ -668,6 +668,7 @@ mod tests {
             live_config: None,
             paused: false,
             paused_at: None,
+            flatten_requested: false,
         }
     }
 

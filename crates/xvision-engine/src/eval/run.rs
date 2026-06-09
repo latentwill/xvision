@@ -200,6 +200,15 @@ pub struct Run {
     /// default applies everywhere else (and on pre-061 rows).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_at: Option<String>,
+    /// A3 one-shot "flatten positions" request flag. When `true`, the live
+    /// executor closes ALL open broker positions on its next cycle (the same
+    /// close path A2 uses on cancel) and then clears the flag — WITHOUT
+    /// terminating the run. Persisted in `eval_runs.flatten_requested`
+    /// (migration 062); pre-062 rows read back as `false`. Overlaid by
+    /// `RunStore::get` alongside `paused`; the harmless `false` default applies
+    /// everywhere else.
+    #[serde(default)]
+    pub flatten_requested: bool,
 }
 
 impl Run {
@@ -229,6 +238,7 @@ impl Run {
             live_config: None,
             paused: false,
             paused_at: None,
+            flatten_requested: false,
         }
     }
 

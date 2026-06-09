@@ -177,6 +177,13 @@ pub struct RunSummary {
     /// B (cockpit) reads this to show "paused since …".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused_at: Option<String>,
+    /// A3 one-shot "flatten positions" request flag (`eval_runs.flatten_requested`,
+    /// migration 062). `true` ⇒ the live executor will close ALL open broker
+    /// positions on its next cycle and then clear the flag, WITHOUT terminating
+    /// the run. The cockpit (spec §2.7) reads this to show a pending-flatten
+    /// state. Defaults to `false` for pre-062 runs.
+    #[serde(default)]
+    pub flatten_requested: bool,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -490,6 +497,51 @@ pub async fn pause(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
 /// Errors `NotFound` for an unknown run id.
 pub async fn resume(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
     set_paused_inner(ctx, run_id, false, "resume").await
+}
+
+/// A3 one-shot flatten: request that the live executor close ALL open broker
+/// positions on its next cycle, WITHOUT terminating the run (spec §2.7's
+/// cockpit [Flatten positions] action). Sets `eval_runs.flatten_requested`;
+/// the executor flattens then clears the flag (one-shot) and keeps the run
+/// running (it typically stays paused). Additive to A1 pause / A2 cancel and
+/// shares their audit + error surface. Idempotent (re-requesting before the
+/// executor consumes the flag is a no-op). Returns the refreshed `Run`. Errors
+/// `NotFound` for an unknown run id.
+pub async fn flatten(ctx: &ApiContext, run_id: &str) -> ApiResult<Run> {
+    let started = Instant::now();
+    let store = RunStore::new(ctx.db.clone());
+    let result = async {
+        // `request_flatten` bails with "no run with id" when the id is unknown;
+        // map that to NotFound (mirroring `set_paused_inner`) so we surface the
+        // right status without a redundant pre-write existence round-trip.
+        store.request_flatten(run_id).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("no run with id") {
+                ApiError::NotFound(format!("run '{run_id}'"))
+            } else {
+                ApiError::Internal(format!("flatten run: {e}"))
+            }
+        })?;
+        // Re-read so the returned Run reflects the request.
+        get_inner(ctx, run_id).await
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "eval",
+        "flatten",
+        Some(run_id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
 }
 
 /// Shared body for [`pause`]/[`resume`]: flips `eval_runs.paused`, audits the
@@ -4149,6 +4201,7 @@ fn summarise(run: Run) -> RunSummary {
         max_annotations_per_review: run.max_annotations_per_review,
         paused: run.paused,
         paused_at: run.paused_at,
+        flatten_requested: run.flatten_requested,
     }
 }
 

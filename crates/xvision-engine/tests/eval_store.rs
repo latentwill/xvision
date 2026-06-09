@@ -413,3 +413,80 @@ async fn is_paused_propagates_transient_error_and_live_gate_fails_closed() {
         "live gate must fail CLOSED (paused = true) when the pause state can't be read"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A3: one-shot flatten request flag
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fresh_run_defaults_to_no_flatten_requested() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+    assert!(
+        !store.flatten_requested(&id).await.unwrap(),
+        "flatten_requested must report false for a fresh run"
+    );
+}
+
+#[tokio::test]
+async fn request_and_clear_flatten_round_trip() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    store.request_flatten(&id).await.unwrap();
+    assert!(
+        store.flatten_requested(&id).await.unwrap(),
+        "flatten_requested must report true after request_flatten"
+    );
+
+    // Idempotent re-request is a harmless no-op.
+    store.request_flatten(&id).await.unwrap();
+    assert!(store.flatten_requested(&id).await.unwrap());
+
+    // Clearing (one-shot consumption) flips it back to false.
+    store.clear_flatten(&id).await.unwrap();
+    assert!(
+        !store.flatten_requested(&id).await.unwrap(),
+        "flatten_requested must report false after clear_flatten"
+    );
+
+    // Idempotent re-clear.
+    store.clear_flatten(&id).await.unwrap();
+    assert!(!store.flatten_requested(&id).await.unwrap());
+}
+
+#[tokio::test]
+async fn request_flatten_unknown_run_errors() {
+    let (store, _db_dir, _scenario_id) = store_with_migration().await;
+    let res = store.request_flatten("no-such-run").await;
+    assert!(
+        res.is_err(),
+        "request_flatten must error for an unknown run id"
+    );
+}
+
+/// Mirrors the `is_paused` transient-error contract: a non-missing-column
+/// read error in `flatten_requested` must PROPAGATE, not be swallowed as
+/// `Ok(false)`. The live executor reads `flatten_requested(...).await?` so a
+/// propagated error surfaces; it is never mistaken for "no flatten requested".
+#[tokio::test]
+async fn flatten_requested_propagates_transient_error() {
+    let (store, _db_dir, scenario_id) = store_with_migration().await;
+    let run = fresh_run(&scenario_id, RunMode::Backtest);
+    let id = run.id.clone();
+    store.create(&run).await.unwrap();
+
+    // Close the pool out from under the store → `sqlx::Error::PoolClosed`,
+    // which `is_missing_column_error` rejects, so the error must propagate.
+    store.pool().close().await;
+
+    let res = store.flatten_requested(&id).await;
+    assert!(
+        res.is_err(),
+        "a transient (non-missing-column) read error must PROPAGATE, not be swallowed as Ok(false)"
+    );
+}

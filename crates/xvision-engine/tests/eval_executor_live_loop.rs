@@ -1480,3 +1480,254 @@ async fn multi_asset_fanout_continues_when_one_substream_ends_early() {
     assert_eq!(btc_decisions, 1, "BTC decided once before its stream closed");
     assert_eq!(eth_decisions, 3, "ETH kept deciding after BTC closed");
 }
+
+// ---------------------------------------------------------------------------
+// A3: one-shot "flatten positions" (flatten now, keep running)
+// ---------------------------------------------------------------------------
+
+/// Echoes `hold` on every cycle (the run never opens a position). Used by the
+/// flat-book flatten no-op test.
+fn hold_dispatch() -> Arc<dyn LlmDispatch> {
+    Arc::new(MockDispatch::echo(
+        r#"{"action":"hold","conviction":0.5,"justification":"live-loop-test-hold"}"#,
+    ))
+}
+
+/// Broker that opens a long on its FIRST (Buy) submit and, on that SAME submit,
+/// requests a one-shot flatten on `run_id` via a captured store handle (exactly
+/// once — armed flag flips off so later Buys don't re-request). The NEXT loop
+/// iteration's A3 flatten checkpoint then fires while a long is held, submitting
+/// a Sell to flatten — recorded here as the second order — WITHOUT terminating
+/// the run. Mirrors `CancelAfterOpenBroker` but requests a flatten instead of a
+/// cancel.
+struct FlattenAfterOpenBroker {
+    submitted: Mutex<Vec<OrderRequest>>,
+    open_fill_price: f64,
+    close_fill_price: f64,
+    flatten_hook: Mutex<Option<(RunStore, String)>>,
+    requested: Mutex<bool>,
+}
+
+impl FlattenAfterOpenBroker {
+    fn new(open_fill_price: f64, close_fill_price: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            open_fill_price,
+            close_fill_price,
+            flatten_hook: Mutex::new(None),
+            requested: Mutex::new(false),
+        })
+    }
+    /// Arm the flatten hook so the first Buy requests a flatten on `run_id`.
+    fn arm(&self, store: RunStore, run_id: String) {
+        *self.flatten_hook.lock().unwrap() = Some((store, run_id));
+    }
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for FlattenAfterOpenBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let is_buy = matches!(req.side, Side::Buy);
+        self.submitted.lock().unwrap().push(req.clone());
+        // On the FIRST opening Buy, request a one-shot flatten so the NEXT loop
+        // iteration sees `flatten_requested` while holding an open position.
+        // Request exactly once so the reopen-after-flatten Buy doesn't re-arm.
+        if is_buy {
+            let already = {
+                let mut r = self.requested.lock().unwrap();
+                let was = *r;
+                *r = true;
+                was
+            };
+            if !already {
+                let hook = self.flatten_hook.lock().unwrap().clone();
+                if let Some((store, run_id)) = hook {
+                    store.request_flatten(&run_id).await.unwrap();
+                }
+            }
+        }
+        let fill_price = if is_buy {
+            self.open_fill_price
+        } else {
+            self.close_fill_price
+        };
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recorded-{}", req.idempotency_key),
+            fill_price: Some(fill_price),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+}
+
+#[tokio::test]
+async fn live_flatten_closes_open_position_and_keeps_running() {
+    // Bar 1 opens a long (and the broker requests a one-shot flatten on that
+    // submit). Bar 2's loop-top A3 flatten checkpoint fires while a long is
+    // held -> the shared close path submits a Sell to flatten the position
+    // through the broker, records a `flat` decision row, CLEARS the flag, and
+    // CONTINUES the run (the loop does NOT bail). The run then keeps deciding
+    // (bar 2's long_open reopens) and exits cleanly on stream end (Ok).
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = FlattenAfterOpenBroker::new(50_000.0, 51_000.0);
+    broker.arm(store.clone(), run.id.clone());
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_500.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    // CRUCIAL: the run KEEPS RUNNING — a flatten does NOT terminate it. The
+    // run completes normally on stream end (Ok), unlike the cancel path which
+    // ends Err.
+    assert!(
+        result.is_ok(),
+        "a flatten must NOT terminate the run; it should complete on stream end, got {result:?}",
+    );
+    assert!(
+        !store.is_cancelled(&run.id).await.unwrap(),
+        "a flatten must not cancel the run",
+    );
+
+    // The one-shot flag was cleared by the executor after flattening.
+    assert!(
+        !store.flatten_requested(&run.id).await.unwrap(),
+        "the executor must clear flatten_requested after flattening (one-shot)",
+    );
+
+    // The broker saw the opening Buy, then the flatten-driven Sell that closed
+    // the position. (Because the run keeps running, bar-2's long_open reopens
+    // afterwards — a third Buy — proving the loop is still alive.)
+    let submitted = broker.submitted();
+    assert!(
+        submitted.len() >= 2,
+        "expected at least an opening Buy then a flatten Sell, got {submitted:?}",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy), "bar-1 opens long");
+    assert!(
+        matches!(submitted[1].side, Side::Sell),
+        "flatten must close the long with a Sell, got {:?}",
+        submitted[1].side,
+    );
+    // The run kept running and reopened after the flatten (loop is alive).
+    assert!(
+        submitted.len() >= 3 && matches!(submitted[2].side, Side::Buy),
+        "the run must keep running after flatten (bar-2 reopens with a Buy), got {submitted:?}",
+    );
+
+    // A `flat` closing decision row was recorded with the realized PnL from the
+    // broker-reported close (50_000 -> 51_000 on the open units).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let close_row = decisions
+        .iter()
+        .find(|d| d.action == "flat")
+        .expect("a flat close decision must be recorded on flatten");
+    assert_eq!(
+        close_row.fill_price,
+        Some(51_000.0),
+        "close fill price comes from the broker's reported close price",
+    );
+    let realized = close_row.pnl_realized.expect("close settles realized PnL");
+    assert!(
+        realized > 0.0,
+        "long 50_000 -> 51_000 must realize positive PnL, got {realized}",
+    );
+    // The flatten decision's justification is `flatten:`-prefixed (distinct
+    // from the cancel path's `cancel:` prefix).
+    assert!(
+        close_row
+            .justification
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("flatten:"),
+        "flatten decision must carry a flatten:-prefixed justification, got {:?}",
+        close_row.justification,
+    );
+}
+
+#[tokio::test]
+async fn live_flatten_on_a_flat_book_makes_no_broker_calls() {
+    // A flatten requested while the book holds NO positions must be a no-op:
+    // the flatten checkpoint sees an empty book, submits nothing to the broker,
+    // clears the flag, and the run keeps running. Regression guard mirroring
+    // A2's `live_cancel_with_flat_book_makes_no_broker_calls`.
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_000.0);
+    let stream =
+        single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
+
+    // Request a flatten BEFORE the run starts. The book is flat (no position
+    // opened yet) and the dispatch only ever holds, so the flatten checkpoint
+    // must never reach the broker.
+    store.begin_running(&run.id).await.unwrap();
+    store.request_flatten(&run.id).await.unwrap();
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let result = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            hold_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "a flatten on a flat book must be a no-op and the run completes on stream end, got {result:?}",
+    );
+    assert!(
+        broker.submitted().is_empty(),
+        "no orders should reach the broker: the book was flat and the dispatch only holds, got {:?}",
+        broker.submitted(),
+    );
+    // The flag was still cleared (one-shot consumption even with nothing to do).
+    assert!(
+        !store.flatten_requested(&run.id).await.unwrap(),
+        "flatten_requested must be cleared even when the book was already flat",
+    );
+    // No `flat` decision row was recorded (nothing was closed).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert!(
+        decisions.iter().all(|d| d.action != "flat"),
+        "no flat decision row should be recorded for a flat-book flatten",
+    );
+}

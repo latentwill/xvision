@@ -228,6 +228,26 @@ pub async fn resume_run(
     Ok(Json(eval::summarise_run(run)))
 }
 
+/// `POST /api/eval/runs/:id/flatten` — request a one-shot "flatten positions".
+///
+/// A3: the cockpit's [Flatten positions] action (spec §2.7). Sets the run's
+/// `flatten_requested` flag so the live executor closes ALL open broker
+/// positions on its next cycle WITHOUT terminating the run — the run keeps
+/// running (typically still paused). Additive to [`pause_run`] / [`cancel_run`]
+/// and shares their auth surface. Idempotent. Returns the refreshed
+/// `RunSummary`.
+pub async fn flatten_run(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RunSummary>, DashboardError> {
+    let run = eval::flatten(&state.api_context(), &id).await?;
+    // The flatten request doesn't change `status`, but invalidate the
+    // burst-poll cache so the next detail read reflects the new
+    // `flatten_requested` value promptly (mirrors `pause_run`).
+    state.eval_run_cache_invalidate(&id);
+    Ok(Json(eval::summarise_run(run)))
+}
+
 /// `POST /api/eval/runs/:id/retry` — enqueue a fresh run that clones the
 /// source's `(agent_id, scenario_id, mode, params_override)` inputs.
 ///

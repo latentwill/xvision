@@ -157,6 +157,7 @@ async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
         live_config: None,
         paused: false,
         paused_at: None,
+        flatten_requested: false,
     };
     store.create(&run).await.expect("insert test run");
     store
