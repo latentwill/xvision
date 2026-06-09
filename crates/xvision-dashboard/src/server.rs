@@ -562,6 +562,19 @@ fn mutating_router(state: AppState) -> Router {
             "/api/autooptimizer/cycles/:cycle_id/resume",
             post(autooptimizer_cycle::resume_cycle),
         )
+        // Strategy Inspector endpoints (unified optimizer plan).
+        .route(
+            "/api/optimizer/strategy/:hash",
+            axum::routing::get(autooptimizer_cycle::get_optimizer_strategy_blob),
+        )
+        .route(
+            "/api/optimizer/strategy/:hash/diff/origin",
+            axum::routing::get(autooptimizer_cycle::get_strategy_origin_diff),
+        )
+        .route(
+            "/api/optimizer/strategy/:hash/promote",
+            axum::routing::post(autooptimizer_cycle::promote_strategy),
+        )
         // F29: retire a cycle-produced candidate (move its lineage node to
         // Rejected) — dashboard parity for `xvn optimizer retire`.
         .route(
