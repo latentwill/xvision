@@ -458,8 +458,8 @@ impl IndicatorEngine {
                 Instance::Dmi(_) => key.period * 2 + 1,
                 Instance::Roc(_) => key.period + 1,
                 Instance::Macd(_) => 35,
-                Instance::Stoch(_) => key.period + 3,
-                Instance::StochRsi(_) => key.period * 2 + 3,
+                Instance::Stoch(_) => key.period + 2,
+                Instance::StochRsi(_) => key.period * 2 + 2,
                 Instance::Cci(_) => key.period,
                 Instance::Mfi(_) => key.period + 1,
                 Instance::Ichimoku(_) => 52,
@@ -1790,6 +1790,49 @@ mod tests {
         let e = IndicatorEngine::new([&r1, &r2]);
         // RSI 14 needs 14 deltas → 15 bars. SMA 5 needs 5. Max is 15.
         assert_eq!(e.warmup_bars(), 15);
+    }
+
+    #[test]
+    fn stoch_d_first_value_on_period_plus_2() {
+        // StochD = 3-bar SMA of K. K is available once highs/lows window is
+        // full (period bars). d_sma then needs 2 more K values → period + 2.
+        let r = IndicatorRef::periodic(IndicatorName::StochD, 2);
+        let mut e = IndicatorEngine::new([&r]);
+        assert_eq!(e.warmup_bars(), 4);
+        let bars = (0..3).map(|i| {
+            let f = i as f64;
+            Bar::with_volume(f, f + 1.0, f, f + 0.5, 1.0)
+        });
+        for b in bars {
+            assert_eq!(e.value(&r), None);
+            e.push(&b);
+        }
+        // 3rd push completes period(2)+2=4 — but we haven't pushed a 4th bar yet
+        assert_eq!(e.value(&r), None);
+        e.push(&Bar::with_volume(3.0, 4.0, 3.0, 3.5, 1.0));
+        assert!(
+            e.value(&r).is_some(),
+            "StochD should have a value after period+2 bars"
+        );
+    }
+
+    #[test]
+    fn stochrsi_d_first_value_on_2x_period_plus_2() {
+        // StochRsiD = 3-bar SMA of StochRsiK.
+        // RSI warmup = period+1, rsi_window warmup = period more bars,
+        // d_sma warmup = 2 more K values → 2*period + 2 total.
+        let r = IndicatorRef::periodic(IndicatorName::StochRsiD, 2);
+        let mut e = IndicatorEngine::new([&r]);
+        assert_eq!(e.warmup_bars(), 6);
+        for i in 0..5u32 {
+            assert_eq!(e.value(&r), None, "should be None before bar {}", i + 1);
+            e.push(&Bar::new(0.0, (i as f64) + 1.0, 0.0, (i as f64) + 1.0));
+        }
+        e.push(&Bar::new(0.0, 6.0, 0.0, 6.0));
+        assert!(
+            e.value(&r).is_some(),
+            "StochRsiD should have a value after 2*period+2 bars"
+        );
     }
 
     #[test]

@@ -36,8 +36,8 @@ use ulid::Ulid;
 
 use xvision_engine::api::tool_policy::KNOWN_TOOLS;
 use xvision_engine::chat_session::{
-    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope, SessionEventLog, ToolClass,
-    ToolPolicy, ToolPolicyRow, ToolPolicyStore, GLOBAL_SCOPE,
+    ChatMessage, ChatSessionStore, ChatSessionSummary, ContextScope, SessionEventLog, ToolClass, ToolPolicy,
+    ToolPolicyRow, ToolPolicyStore, GLOBAL_SCOPE,
 };
 use xvision_engine::focus;
 use xvision_observability::{Actor as UnifiedActor, FocusEvent, UnifiedEvent, UnifiedPayload};
@@ -278,8 +278,7 @@ pub async fn get_tool_policy_effective(
             let default = ToolPolicy::default_for(*class);
             let policy = override_map.get(*name).copied().unwrap_or(default);
             let is_override = override_map.contains_key(name)
-                && (policy.enabled != default.enabled
-                    || policy.auto_approve != default.auto_approve);
+                && (policy.enabled != default.enabled || policy.auto_approve != default.auto_approve);
             EffectiveToolPolicyRow {
                 tool_name: name,
                 class: match class {

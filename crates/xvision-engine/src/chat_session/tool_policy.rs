@@ -256,14 +256,12 @@ impl ToolPolicyStore {
     /// Remove a persisted override, reverting the tool to its class default.
     /// No-op if no override exists for the given scope + tool_name.
     pub async fn delete_policy(pool: &SqlitePool, user_scope: &str, tool_name: &str) -> Result<()> {
-        sqlx::query(
-            "DELETE FROM tool_policies WHERE user_scope = ?1 AND tool_name = ?2",
-        )
-        .bind(user_scope)
-        .bind(tool_name)
-        .execute(pool)
-        .await
-        .context("delete tool_policies row")?;
+        sqlx::query("DELETE FROM tool_policies WHERE user_scope = ?1 AND tool_name = ?2")
+            .bind(user_scope)
+            .bind(tool_name)
+            .execute(pool)
+            .await
+            .context("delete tool_policies row")?;
         Ok(())
     }
 }

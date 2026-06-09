@@ -5,9 +5,7 @@
 //! defaults) for the CLI and any future caller that doesn't go through HTTP.
 
 use crate::api::{ApiContext, ApiResult};
-use crate::chat_session::tool_policy::{
-    classify, ToolClass, ToolPolicy, ToolPolicyRow, ToolPolicyStore,
-};
+use crate::chat_session::tool_policy::{classify, ToolClass, ToolPolicy, ToolPolicyRow, ToolPolicyStore};
 
 /// Canonical list of known chat-authoring tool names, mirroring the `classify`
 /// match arms in `tool_policy.rs`. Kept here so both the CLI and the settings
@@ -56,10 +54,7 @@ pub struct EffectiveToolPolicy {
 
 /// Return the effective policy for every known tool: persisted override if
 /// present, else the class default. Result is in KNOWN_TOOLS order.
-pub async fn list_effective(
-    ctx: &ApiContext,
-    scope: &str,
-) -> ApiResult<Vec<EffectiveToolPolicy>> {
+pub async fn list_effective(ctx: &ApiContext, scope: &str) -> ApiResult<Vec<EffectiveToolPolicy>> {
     let overrides = ToolPolicyStore::get_policies(&ctx.db, scope).await?;
     let override_map: std::collections::HashMap<&str, ToolPolicy> = overrides
         .iter()
@@ -80,8 +75,7 @@ pub async fn list_effective(
             let default = ToolPolicy::default_for(*class);
             let policy = override_map.get(name).copied().unwrap_or(default);
             let is_override = override_map.contains_key(name)
-                && (policy.enabled != default.enabled
-                    || policy.auto_approve != default.auto_approve);
+                && (policy.enabled != default.enabled || policy.auto_approve != default.auto_approve);
             EffectiveToolPolicy {
                 tool_name: name.to_string(),
                 class: match class {
@@ -124,11 +118,7 @@ pub async fn reset_policy(ctx: &ApiContext, scope: &str, tool_name: &str) -> Api
 }
 
 /// Convenience: resolve the effective policy for a single tool (for `show`).
-pub async fn get_effective(
-    ctx: &ApiContext,
-    scope: &str,
-    tool_name: &str,
-) -> ApiResult<EffectiveToolPolicy> {
+pub async fn get_effective(ctx: &ApiContext, scope: &str, tool_name: &str) -> ApiResult<EffectiveToolPolicy> {
     let policy = ToolPolicyStore::effective(&ctx.db, scope, tool_name).await?;
     let class = classify(tool_name);
     let default = ToolPolicy::default_for(class);
