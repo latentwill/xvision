@@ -384,7 +384,7 @@ function NewStrategyButton({
       disabled={pending}
       onClick={onClick}
       className={[
-        "inline-flex w-full items-center justify-center gap-2 rounded bg-gold font-medium text-bg transition-colors hover:bg-gold-soft disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto active:scale-[0.96]",
+        "inline-flex w-full items-center justify-center gap-2 rounded bg-gold font-medium text-bg transition-colors hover:bg-gold-soft disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto motion-safe:active:scale-[0.96]",
         compact ? "px-3 py-1.5 text-[12px]" : "px-3.5 py-1.5 text-[13px]",
       ].join(" ")}
     >

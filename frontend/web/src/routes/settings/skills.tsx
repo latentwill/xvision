@@ -416,7 +416,7 @@ function SkillForm({
           type="button"
           onClick={onSubmit}
           disabled={m.isPending}
-          className="px-3 py-1.5 rounded text-[12px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-50 active:scale-[0.96]"
+          className="px-3 py-1.5 rounded text-[12px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-50 motion-safe:active:scale-[0.96]"
         >
           {m.isPending ? "Saving…" : mode === "create" ? "Create skill" : "Save"}
         </button>

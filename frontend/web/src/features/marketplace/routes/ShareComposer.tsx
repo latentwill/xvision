@@ -174,7 +174,7 @@ export function ShareComposer({ share }: { share: ShareComposerData }) {
           href={twitterHref}
           target="_blank"
           rel="noreferrer"
-          className="mt-2.5 w-full bg-gold text-black font-mono text-[12.5px] font-semibold rounded py-2 flex items-center justify-center hover:opacity-90 active:scale-[0.96]"
+          className="mt-2.5 w-full bg-gold text-black font-mono text-[12.5px] font-semibold rounded py-2 flex items-center justify-center hover:opacity-90 motion-safe:active:scale-[0.96]"
         >
           Post to X
         </a>

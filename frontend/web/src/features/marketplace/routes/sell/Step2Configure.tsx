@@ -134,7 +134,7 @@ export function Step2Configure({
         <button
           onClick={onNext}
           disabled={!allPass}
-          className={`px-4 py-2 rounded-md text-[13px] font-medium active:scale-[0.96] ${
+          className={`px-4 py-2 rounded-md text-[13px] font-medium motion-safe:active:scale-[0.96] ${
             allPass
               ? "bg-gold text-black hover:bg-gold/90"
               : "bg-surface-elev border border-border text-text-3 cursor-not-allowed"

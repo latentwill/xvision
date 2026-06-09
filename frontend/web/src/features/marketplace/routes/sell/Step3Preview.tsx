@@ -71,7 +71,7 @@ export function Step3Preview({
         <button
           onClick={onMint}
           disabled={mintDisabled}
-          className={`px-4 py-2 rounded-md text-[13px] font-medium flex items-center gap-2 active:scale-[0.96] ${
+          className={`px-4 py-2 rounded-md text-[13px] font-medium flex items-center gap-2 motion-safe:active:scale-[0.96] ${
             mintDisabled
               ? "bg-surface-elev border border-border text-text-3 cursor-not-allowed"
               : "bg-gold text-black hover:bg-gold/90"

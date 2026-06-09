@@ -464,7 +464,7 @@ export function LineageRoute() {
                   : navigate("/settings/wallet")
               }
               disabled={buyMutation.isPending}
-              className="mt-3 w-full py-2.5 rounded bg-gold text-[#001A0A] text-[13.5px] font-bold tracking-[0.01em] disabled:opacity-60 hover:opacity-90 transition-opacity active:scale-[0.96]"
+              className="mt-3 w-full py-2.5 rounded bg-gold text-[#001A0A] text-[13.5px] font-bold tracking-[0.01em] disabled:opacity-60 hover:opacity-90 transition-opacity motion-safe:active:scale-[0.96]"
             >
               {buyMutation.isPending
                 ? "Buying…"
