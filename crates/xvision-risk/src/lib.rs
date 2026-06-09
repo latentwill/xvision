@@ -303,6 +303,7 @@ pub(crate) mod tests_common {
 
     use crate::context::RiskEvalContext;
     use crate::whitelist::{AssetEntry, Whitelist};
+    use xvision_core::asset_registry::DataSource;
 
     pub fn make_decision(
         action: Action,
@@ -442,7 +443,8 @@ pub(crate) mod tests_common {
                 sym,
                 AssetEntry {
                     enabled: true,
-                    cluster: sym.as_str().to_ascii_lowercase(),
+                    category: sym.as_str().to_ascii_lowercase(),
+                    data: DataSource::Alpaca,
                     venues: BTreeMap::new(),
                 },
             );

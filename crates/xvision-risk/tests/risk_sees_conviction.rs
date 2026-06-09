@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use chrono::Utc;
 use uuid::Uuid;
 use xvision_core::{Action, AssetSymbol, Direction, PortfolioState, RiskDecision, TraderDecision};
+use xvision_core::asset_registry::DataSource;
 use xvision_risk::{
     config::{Limits, RiskConfig, Stops},
     context::RiskEvalContext,
@@ -26,7 +27,8 @@ fn whitelist_btc_only() -> Whitelist {
         AssetSymbol::Btc,
         AssetEntry {
             enabled: true,
-            cluster: "btc".into(),
+            category: "btc".into(),
+            data: DataSource::Alpaca,
             venues: BTreeMap::new(),
         },
     );

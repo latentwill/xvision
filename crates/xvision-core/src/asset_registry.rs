@@ -53,7 +53,8 @@ pub struct RegistryEntry {
     pub data_source: DataSource,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DataSource {
     /// Alpaca bar data available for backtesting.
     Alpaca,
@@ -107,6 +108,13 @@ pub fn data_source(asset: AssetSymbol) -> DataSource {
 /// Returns `true` iff the asset has Alpaca bar data available.
 pub fn has_alpaca_data(asset: AssetSymbol) -> bool {
     matches!(data_source(asset), DataSource::Alpaca)
+}
+
+/// Returns `true` if the process-global registry has been populated.
+/// Used by callers that need to fall back to static data when loading
+/// a whitelist is not part of the test/execution context.
+pub fn is_registry_loaded() -> bool {
+    REGISTRY.get().is_some()
 }
 
 #[cfg(test)]

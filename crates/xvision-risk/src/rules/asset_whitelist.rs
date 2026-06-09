@@ -28,6 +28,7 @@ mod tests {
     use crate::tests_common::{flat_portfolio, make_ctx, make_decision, test_whitelist};
     use crate::whitelist::AssetEntry;
     use std::collections::BTreeMap;
+    use xvision_core::asset_registry::DataSource;
     use xvision_core::{Action, AssetSymbol, Direction};
 
     fn rule() -> AssetWhitelist {
@@ -63,7 +64,8 @@ mod tests {
             AssetSymbol::Eth,
             AssetEntry {
                 enabled: false,
-                cluster: "eth".into(),
+                category: "eth".into(),
+                data: DataSource::Alpaca,
                 venues: BTreeMap::new(),
             },
         );
