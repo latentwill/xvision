@@ -2698,7 +2698,7 @@ impl Executor {
         let cadence_minutes = strategy.manifest.decision_cadence_minutes;
         let strategy_return_pct = total_return_pct(initial, equity);
 
-        // Compute the four automatic baselines over the same cadence-gated bar
+        // Compute the five automatic baselines over the same cadence-gated bar
         // slice the strategy saw. `decision_bars` was populated by the loop
         // above — one push per cadence-gate pass, matching the strategy's
         // iteration exactly.
@@ -4891,7 +4891,7 @@ fn build_baselines_report(
     strategy_return_pct: f64,
 ) -> BaselinesReport {
     let computed =
-        bar_baselines::compute_baselines(bars, initial_equity, cadence_minutes, strategy_return_pct);
+        bar_baselines::compute_baselines(bars, initial_equity, cadence_minutes, strategy_return_pct, 42);
     BaselinesReport {
         buy_hold: BaselineMetrics {
             return_pct: computed.buy_hold.return_pct,
@@ -4909,11 +4909,16 @@ fn build_baselines_report(
             return_pct: computed.simple_mean_reversion.return_pct,
             sharpe: computed.simple_mean_reversion.sharpe,
         },
+        random_direction: BaselineMetrics {
+            return_pct: computed.random_direction.return_pct,
+            sharpe: computed.random_direction.sharpe,
+        },
         relative_to: BaselineRelative {
             buy_hold: computed.relative_to.buy_hold,
             always_flat: computed.relative_to.always_flat,
             simple_trend: computed.relative_to.simple_trend,
             simple_mean_reversion: computed.relative_to.simple_mean_reversion,
+            random_direction: computed.relative_to.random_direction,
         },
     }
 }
