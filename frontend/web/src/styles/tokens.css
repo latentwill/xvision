@@ -79,6 +79,7 @@
   --warn: #ffb020;
   --danger: #ff4d4d;
   --info: #5fa8ff;
+  --violet: #a78bfa;
 }
 
 [data-theme="light"] {
@@ -108,4 +109,5 @@
   --warn: #b45309;
   --danger: #d92d20;
   --info: #1d6fd6;
+  --violet: #7c3aed;
 }

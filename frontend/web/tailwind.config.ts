@@ -1,5 +1,22 @@
 import type { Config } from "tailwindcss";
 
+// Wrap a CSS variable so Tailwind opacity modifiers (border-gold/40, bg-gold/10,
+// etc.) actually generate CSS. Without this, Tailwind v3 silently drops the
+// opacity modifier for CSS-variable-based colors, leaving border-color at
+// Tailwind's preflight default (#e5e7eb — near-white), which looks like a
+// bright white outline on dark backgrounds.
+function cv(variable: string) {
+  return ({ opacityValue }: { opacityValue?: string }) => {
+    if (opacityValue !== undefined) {
+      const pct = Math.round(parseFloat(opacityValue) * 100);
+      if (!isNaN(pct)) {
+        return `color-mix(in srgb, var(${variable}) ${pct}%, transparent)`;
+      }
+    }
+    return `var(${variable})`;
+  };
+}
+
 // Signal theme — tokens live in src/styles/tokens.css; this config maps
 // Tailwind utilities onto those CSS variables so components can use either.
 export default {
@@ -7,30 +24,33 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "var(--bg)",
-        "surface-sidebar": "var(--surface-sidebar)",
-        "surface-card": "var(--surface-card)",
-        "surface-elev": "var(--surface-elev)",
-        "surface-panel": "var(--surface-panel)",
-        "surface-hover": "var(--surface-hover)",
+        bg: cv("--bg"),
+        "surface-sidebar": cv("--surface-sidebar"),
+        "surface-card": cv("--surface-card"),
+        "surface-elev": cv("--surface-elev"),
+        "surface-panel": cv("--surface-panel"),
+        "surface-hover": cv("--surface-hover"),
 
-        border: "var(--border)",
-        "border-strong": "var(--border-strong)",
-        "border-soft": "var(--border-soft)",
+        border: cv("--border"),
+        "border-strong": cv("--border-strong"),
+        "border-soft": cv("--border-soft"),
 
-        text: "var(--text)",
-        "text-2": "var(--text-2)",
-        "text-3": "var(--text-3)",
-        "text-4": "var(--text-4)",
+        text: cv("--text"),
+        "text-2": cv("--text-2"),
+        "text-3": cv("--text-3"),
+        "text-4": cv("--text-4"),
 
-        accent: "var(--accent)",
-        "on-accent": "var(--on-accent)",
+        accent: cv("--accent"),
+        "on-accent": cv("--on-accent"),
 
-        gold: "var(--gold)",
-        "gold-soft": "var(--gold-soft)",
-        warn: "var(--warn)",
-        danger: "var(--danger)",
-        info: "var(--info)",
+        gold: cv("--gold"),
+        "gold-soft": cv("--gold-soft"),
+        "gold-bg": cv("--gold-bg"),
+        "gold-bg-strong": cv("--gold-bg-strong"),
+        warn: cv("--warn"),
+        danger: cv("--danger"),
+        info: cv("--info"),
+        violet: cv("--violet"),
       },
       fontFamily: {
         // `serif` retained as a Tailwind utility name for compatibility with
