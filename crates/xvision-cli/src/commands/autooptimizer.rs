@@ -184,6 +184,14 @@ pub struct RunCycleArgs {
     /// autooptimizer.toml.
     #[arg(long, value_name = "METRIC")]
     pub objective: Option<String>,
+    /// Number of candidate experiments to generate per parent this cycle
+    /// (1..=64). Overrides `experiments_per_cycle` in autooptimizer.toml.
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Candidate experiments per parent this cycle (1..=64; overrides config)"
+    )]
+    pub experiments_per_cycle: Option<u32>,
 }
 
 #[derive(Args, Debug)]
@@ -1195,6 +1203,9 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             ))
         })?;
     }
+    if let Some(n) = args.experiments_per_cycle {
+        cfg.experiments_per_cycle = n;
+    }
     // Re-validate so an inverted/overlapping window from the flags fails
     // fast with a clear message instead of deep in scenario synthesis.
     cfg.validate().map_err(|e| {
@@ -1397,7 +1408,7 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         } else {
             explicit_parent_hashes.len()
         },
-        mutations_per_parent: 1,
+        mutations_per_parent: cfg.experiments_per_cycle as usize,
         sabotage_seed: 42,
         judge_provider: binding.provider.clone(),
         judge_model: binding.model.clone(),

@@ -13,6 +13,13 @@ fn default_dspy_pattern_cohort_threshold() -> usize {
     5
 }
 
+/// Default candidate experiments per parent per cycle. Was a hard-coded `1`
+/// (one experiment/cycle, nothing to compare); 5 gives the optimizer a real
+/// candidate pool by default.
+fn default_experiments_per_cycle() -> u32 {
+    5
+}
+
 /// Trade-direction mode the optimizer's random baseline mirrors. A
 /// "no-intelligence" baseline for a LONG-only strategy must randomly pick
 /// between LONG and FLAT (never SHORT), otherwise it measures the wrong
@@ -52,6 +59,14 @@ pub struct AutoOptimizerConfig {
     pub mutator: MutatorConfig,
     #[serde(default = "default_allowed_mutation_kinds")]
     pub allowed_mutation_kinds: Vec<String>,
+    /// Number of candidate experiments the optimizer generates per parent each
+    /// cycle (`CycleConfig.mutations_per_parent`). Bumped from the old hard-coded
+    /// `1` so a cycle gives the optimizer a real candidate pool to compare;
+    /// operators can override per run via the CLI `--experiments-per-cycle` flag
+    /// or the dashboard run form. Validated to `1..=64`. Back-compat: absent from
+    /// existing autooptimizer.toml ⇒ the default.
+    #[serde(default = "default_experiments_per_cycle")]
+    pub experiments_per_cycle: u32,
     #[serde(default)]
     pub lineage_root: Option<PathBuf>,
     /// Enable DSPy flywheel: write judge findings as Observations and
@@ -171,6 +186,7 @@ impl Default for AutoOptimizerConfig {
                 max_retries: 2,
             },
             allowed_mutation_kinds: default_allowed_mutation_kinds(),
+            experiments_per_cycle: default_experiments_per_cycle(),
             lineage_root: None,
             dspy_enabled: false,
             dspy_pattern_cohort_threshold: default_dspy_pattern_cohort_threshold(),
@@ -290,6 +306,12 @@ impl AutoOptimizerConfig {
                 self.mutator.max_retries,
             );
         }
+        if self.experiments_per_cycle < 1 || self.experiments_per_cycle > 64 {
+            bail!(
+                "experiments_per_cycle must be between 1 and 64 (got {})",
+                self.experiments_per_cycle,
+            );
+        }
         if self.mutator.model.is_empty() {
             bail!("mutator model must not be empty");
         }
@@ -324,6 +346,24 @@ mod tests {
             day: ScenarioWindow { start: day_start.to_string(), end: day_end.to_string() },
             baseline: ScenarioWindow { start: base_start.to_string(), end: base_end.to_string() },
         }
+    }
+
+    #[test]
+    fn experiments_per_cycle_defaults_to_five() {
+        // The old hard-coded behavior was 1 experiment/cycle; the default is now 5.
+        assert_eq!(AutoOptimizerConfig::default().experiments_per_cycle, 5);
+        assert_eq!(default_experiments_per_cycle(), 5);
+    }
+
+    #[test]
+    fn validate_rejects_out_of_range_experiments_per_cycle() {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.experiments_per_cycle = 0;
+        assert!(cfg.validate().is_err(), "0 experiments must be rejected");
+        cfg.experiments_per_cycle = 65;
+        assert!(cfg.validate().is_err(), "65 (>64) must be rejected");
+        cfg.experiments_per_cycle = 5;
+        assert!(cfg.validate().is_ok(), "5 is in range");
     }
 
     #[test]
