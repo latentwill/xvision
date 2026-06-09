@@ -317,3 +317,12 @@ All agent-doable code up to the manual deploy wall is **DONE, reviewed (spec + c
 | AM7 verified ABI pinning under `crates/xvision-identity/abi/v1/` | post-deploy + verify | §6 deploy |
 | Audit Lows deferred to V4: renounce-bricks/`Ownable2Step`, permissionless `XvnDeployer` CREATE2 gating, install + run `slither`/`slither-check-upgradeability` | mainnet trust-model hardening | V4 (multisig/timelock prep) |
 | Pre-existing `decisions_count` 30/100-bar test failures (`supervisor_notes` missing in a minimal harness) | pre-existing on base; not introduced here | a test-harness fix |
+
+### Reachability pass (2026-06-09)
+
+A reachability audit traced every new capability from its entry point. **Reachable end-to-end:** A1/A2/A3 (pause/resume/cancel-flatten/flatten — routes registered in `dashboard/.../server.rs`, executor honor points in `backtest.rs`, cockpit `useTransport`); the `/live` cockpit components (data-wired); C8 marketplace (opt-in-gated nav + routes + fixture buy CTA). **Intentionally orphaned-pending-wiring (NOT accidental dead code):**
+
+- **C6 attestation engine (`maybe_attest`) is not called by the live loop yet.** Two real blockers beyond the documented seams: (1) the verdict needs `listed_sharpe`, which has **no source until the marketplace data seam (C7) lands**; (2) the on-chain submit lives in `xvision-identity`, which is **not a dependency of `xvision-engine`** — wiring it requires a deliberate dependency decision, not just a function call. Until both exist, force-wiring an always-inert `maybe_attest` call into the critical 4000-line live loop would add risk for zero behavior. Hook point when ready: `backtest.rs` ~`run_inner_live` fill-recognition site (add `realized_pnl` to `LiveDecisionOutcome`, accumulate a rolling returns buffer, call `maybe_attest`).
+- **`Erc8004MantleDriver` / `PinataDriver` / identity `submit_attestation`/`holds_license`/`post_reputation`** have no non-test callers — deploy-gated (need deployed contracts/addresses/JWT/signer). The CLI `marketplace.rs::driver()` deliberately blocks `MARKETPLACE_DRIVER=onchain` (message corrected 2026-06-09 to stop pointing at a non-existent MCP/dashboard path).
+
+**Discoverability:** the `/live` cockpit has no left-nav (`Sidebar.tsx`) entry — reachable only via deep-link and the home `LiveSummaryStrip` link. Adding a nav entry is a product decision (main framed live trading as "not enabled in this build"; `VenueLabel::Live` is OFF / no real money), tracked separately.
