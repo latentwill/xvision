@@ -572,6 +572,10 @@ export interface StatsRow {
   suspect: number;
   dropped: number;
   best_delta_holdout: number | null;
+  /** Best candidate edge over the random baseline this cycle (child − random). */
+  best_edge_over_random?: number | null;
+  /** Best parent edge over the random baseline this cycle (parent − random). */
+  best_parent_edge?: number | null;
   cost_usd: number;
   cum_cost_usd: number;
 }
@@ -640,6 +644,9 @@ export interface SessionListItem {
   cost_usd?: number;
   /** Newest cycle's honesty-check outcome (S0 / O1b); undefined → "—". */
   honesty_passed?: boolean;
+  /** Newest cycle's accepted-lineage edge over the random baseline
+   * (parent − random); undefined → "—". > 0 = still beating random. */
+  latest_parent_edge?: number | null;
   finished_at?: string;
 }
 

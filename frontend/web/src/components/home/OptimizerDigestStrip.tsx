@@ -41,6 +41,12 @@ export function OptimizerDigestStrip() {
         ? "Honesty check ✓"
         : "Honesty check ✗ failed";
 
+  // Newest cycle's lineage edge over the random baseline (S0). undefined → "—".
+  // > 0 means the accepted lineage still beats a no-intelligence random agent.
+  const edge = session.latest_parent_edge;
+  const edgeLabel =
+    edge == null ? "Edge vs random —" : `Edge vs random ${edge >= 0 ? "+" : ""}${edge.toFixed(2)}`;
+
   return (
     <div
       data-testid="optimizer-digest-strip"
@@ -56,6 +62,15 @@ export function OptimizerDigestStrip() {
           }
         >
           {honestyLabel}
+        </span>{" "}
+        ·{" "}
+        <span
+          className={
+            edge != null && edge < 0 ? "text-amber-600 dark:text-amber-400" : undefined
+          }
+          title="Newest cycle's accepted-lineage edge over a fixed-seed random agent (parent − random)"
+        >
+          {edgeLabel}
         </span>{" "}
         · {costLabel}
       </span>

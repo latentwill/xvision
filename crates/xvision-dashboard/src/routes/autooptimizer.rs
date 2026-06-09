@@ -228,6 +228,13 @@ pub struct SessionListRow {
     /// cycle in the session has an honesty-check row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub honesty_passed: Option<bool>,
+    /// The most-recent cycle's accepted-lineage edge over the random baseline
+    /// (`parent_score - random_baseline_score`) for this session. A live health
+    /// glance: > 0 = the lineage still beats a no-intelligence random agent;
+    /// trending toward 0 = decaying toward noise. `None` (renders "—") when no
+    /// cycle has an edge record yet (pre-061 or no baseline run).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_parent_edge: Option<f64>,
 }
 
 /// GET /api/autooptimizer/sessions
@@ -258,6 +265,9 @@ pub async fn list_sessions(
     let has_events = table_exists(&state.pool, "autooptimizer_events").await?;
     let has_cost = has_events && table_exists(&state.pool, "cycle_cost").await?;
     let has_honesty = has_events && table_exists(&state.pool, "cycle_honesty_checks").await?;
+    let has_edge = has_events
+        && table_exists(&state.pool, "autooptimizer_gate_records").await?
+        && table_exists(&state.pool, "lineage_nodes").await?;
 
     let mut rows = Vec::with_capacity(sessions.len());
     for session in sessions {
@@ -271,10 +281,16 @@ pub async fn list_sessions(
         } else {
             None
         };
+        let latest_parent_edge = if has_edge {
+            session_latest_parent_edge(&state.pool, &session.session_id).await?
+        } else {
+            None
+        };
         rows.push(SessionListRow {
             session,
             cost_usd,
             honesty_passed,
+            latest_parent_edge,
         });
     }
 
@@ -337,6 +353,31 @@ async fn session_latest_honesty(
     .await
     .map_err(|e| DashboardError::Internal(e.into()))?;
     Ok(passed.map(|p| p != 0))
+}
+
+/// The most-recent cycle's accepted-lineage edge over the random baseline for
+/// this session: `autooptimizer_gate_records.parent_edge` for the newest
+/// lineage node belonging to one of the session's cycles. `None` when no such
+/// record carries an edge value (pre-061 or no baseline run). Gate records key
+/// on `bundle_hash`; `lineage_nodes` maps that to a `cycle_id`.
+async fn session_latest_parent_edge(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+) -> Result<Option<f64>, DashboardError> {
+    let edge: Option<f64> = sqlx::query_scalar(
+        "SELECT agr.parent_edge FROM autooptimizer_gate_records agr \
+         JOIN lineage_nodes ln ON ln.bundle_hash = agr.bundle_hash \
+         WHERE agr.parent_edge IS NOT NULL \
+           AND ln.cycle_id IN ( \
+              SELECT DISTINCT cycle_id FROM autooptimizer_events \
+              WHERE session_id = ? AND cycle_id IS NOT NULL ) \
+         ORDER BY ln.created_at DESC LIMIT 1",
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))?;
+    Ok(edge)
 }
 
 /// GET /api/autooptimizer/sessions/:id
@@ -1152,6 +1193,13 @@ pub struct StatsRow {
     /// Maximum gate holdout delta across this cycle's nodes. Null when the
     /// cycle has no autooptimizer_gate_records rows.
     pub best_delta_holdout: Option<f64>,
+    /// Best (max) candidate edge over the random baseline across this cycle's
+    /// gate records — `child_score - random_baseline_score`. Null pre-061.
+    pub best_edge_over_random: Option<f64>,
+    /// Best (max) parent edge over the random baseline this cycle —
+    /// `parent_score - random_baseline_score`. Tracks lineage health across
+    /// generations (drifting toward 0 = decaying toward noise). Null pre-061.
+    pub best_parent_edge: Option<f64>,
     /// Per-cycle realized cost in USD (null when not metered).
     pub cost_usd: Option<f64>,
     /// Monotonically accumulating running sum of cost_usd ordered by ts.
@@ -1297,6 +1345,8 @@ async fn load_stats_rows(
                SUM(CASE WHEN ln.status = 'rejected'    THEN 1 ELSE 0 END) AS dropped, \
                MIN(ln.created_at) AS ts, \
                MAX(agr.delta_holdout) AS best_delta_holdout, \
+               MAX(agr.edge_over_random) AS best_edge_over_random, \
+               MAX(agr.parent_edge) AS best_parent_edge, \
                cc.cost_usd AS cost_usd, \
                MIN(ae.session_id) AS session_id \
         FROM lineage_nodes ln \
@@ -1372,6 +1422,9 @@ async fn load_stats_rows(
             .try_get("ts")
             .map_err(|e| DashboardError::Internal(e.into()))?;
         let best_delta_holdout: Option<f64> = row.try_get("best_delta_holdout").ok().flatten();
+        let best_edge_over_random: Option<f64> =
+            row.try_get("best_edge_over_random").ok().flatten();
+        let best_parent_edge: Option<f64> = row.try_get("best_parent_edge").ok().flatten();
         let cost_usd: Option<f64> = row.try_get("cost_usd").ok().flatten();
         let session_id: Option<String> = row.try_get("session_id").ok().flatten();
 
@@ -1392,6 +1445,8 @@ async fn load_stats_rows(
             suspect,
             dropped,
             best_delta_holdout,
+            best_edge_over_random,
+            best_parent_edge,
             cost_usd,
             cum_cost_usd,
         });
