@@ -137,6 +137,53 @@ fn fail_drawdown_case() {
     );
 }
 
+/// B16: when the day delta fails, the reason must STILL surface the
+/// baseline-untouched-score (holdout) number so a near-miss on holdout is not
+/// invisible. Day delta = 0.05 < 0.1 (fail); untouched delta = 0.3 >= 0.1 (pass).
+#[test]
+fn fail_day_also_reports_holdout() {
+    let i = make_input(1.0, 1.05, 0.8, 1.1, -10.0, -10.0, -8.0, -8.0, 0.1);
+    let GateVerdict::Fail { reason } = evaluate(&i) else {
+        panic!("expected Fail, got Pass");
+    };
+    assert!(
+        reason.contains("today's score"),
+        "expected 'today's score' in reason, got: {reason}"
+    );
+    assert!(
+        reason.contains("baseline-untouched-score"),
+        "expected 'baseline-untouched-score' in reason even though holdout passed, got: {reason}"
+    );
+    assert!(
+        !reason.contains('\n'),
+        "reason must not contain newlines, got: {reason}"
+    );
+}
+
+/// B16: multiple failing conditions are ALL reported. Day delta fails AND
+/// drawdown blows up; reason names both.
+#[test]
+fn fail_reports_all_failing_conditions() {
+    // day delta 0.05 < 0.1 (fail), untouched delta 0.3 (pass),
+    // child day drawdown -16.5% > 1.5 × 10% = 15% (drawdown fail).
+    let i = make_input(1.0, 1.05, 0.8, 1.1, -10.0, -16.5, -8.0, -8.0, 0.1);
+    let GateVerdict::Fail { reason } = evaluate(&i) else {
+        panic!("expected Fail, got Pass");
+    };
+    assert!(
+        reason.contains("today's score"),
+        "expected 'today's score' in reason, got: {reason}"
+    );
+    assert!(
+        reason.contains("drawdown"),
+        "expected 'drawdown' in reason, got: {reason}"
+    );
+    assert!(
+        !reason.contains('\n'),
+        "reason must not contain newlines, got: {reason}"
+    );
+}
+
 /// Sharpe delta exactly at min_improvement must pass (CMP_EPS tolerance protects the boundary).
 #[test]
 fn pass_at_exact_threshold() {
