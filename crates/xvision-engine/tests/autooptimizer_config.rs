@@ -156,7 +156,7 @@ max_retries = 11
     // day_window narrowed to ~92 days (under MAX_WINDOW_DAYS) so validate()
     // reaches the max_retries check rather than bailing on the window span.
     let toml = toml.replace("start = \"2024-01-01\"", "start = \"2025-06-01\"");
-    let f = write_temp(toml);
+    let f = write_temp(&toml);
     let cfg = AutoOptimizerConfig::from_path(f.path()).expect("should parse");
     let err = cfg
         .validate()
