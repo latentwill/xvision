@@ -13,6 +13,7 @@ import {
   deriveStripStatus,
   isLiveRun,
   isStaleRun,
+  livenessCounts,
   pickDefaultRun,
 } from "./strip-status";
 
@@ -163,6 +164,38 @@ describe("classifyRunLiveness", () => {
   });
   test("terminal -> done", () => {
     expect(classifyRunLiveness(mkLiveRun({ status: "completed" }))).toBe("done");
+  });
+});
+
+describe("livenessCounts", () => {
+  test("splits live into active/paused and counts paper + stale; done excluded", () => {
+    const counts = livenessCounts([
+      mkLiveRun({ run_id: "live-a" }),
+      mkLiveRun({ run_id: "live-b", paused: true }),
+      mkRun({ run_id: "paper", status: "running" }),
+      mkRun({
+        run_id: "stale",
+        status: "running",
+        eval_mode: "live",
+        eval_run_status: "failed",
+      }),
+      mkLiveRun({ run_id: "done", status: "completed" }),
+    ]);
+    expect(counts).toEqual({
+      liveActive: 1,
+      livePaused: 1,
+      paper: 1,
+      stale: 1,
+    });
+  });
+
+  test("empty population -> all zeros", () => {
+    expect(livenessCounts([])).toEqual({
+      liveActive: 0,
+      livePaused: 0,
+      paper: 0,
+      stale: 0,
+    });
   });
 });
 

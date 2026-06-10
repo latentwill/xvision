@@ -99,6 +99,43 @@ export function deriveStripStatus(run: AgentRunSummary): StripStatus {
   return "ACTIVE";
 }
 
+/** Honest aggregate counts over a non-terminal agent-run population. `live`
+ * splits into `liveActive`/`livePaused` via the per-run pause flag. The home
+ * Pulse band and LiveSummaryStrip both consume this so the numbers can never
+ * diverge. */
+export interface LivenessCounts {
+  liveActive: number;
+  livePaused: number;
+  paper: number;
+  stale: number;
+}
+
+export function livenessCounts(runs: AgentRunSummary[]): LivenessCounts {
+  const counts: LivenessCounts = {
+    liveActive: 0,
+    livePaused: 0,
+    paper: 0,
+    stale: 0,
+  };
+  for (const run of runs) {
+    switch (classifyRunLiveness(run)) {
+      case "live":
+        if (deriveStripStatus(run) === "PAUSED") counts.livePaused += 1;
+        else counts.liveActive += 1;
+        break;
+      case "paper":
+        counts.paper += 1;
+        break;
+      case "stale":
+        counts.stale += 1;
+        break;
+      case "done":
+        break;
+    }
+  }
+  return counts;
+}
+
 /**
  * Pick the run the cockpit should auto-select when no `:id` is supplied:
  * the most recently STARTED live-money run. Falls back to the most

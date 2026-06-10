@@ -143,6 +143,74 @@
     animation: xvn-num-pop var(--duration-base) var(--ease-out);
   }
 
+  /* ── Home dashboard bento (2026-06-10 redesign) ────────────────────────────
+     Card entrance for the orchestrated home load. Mount-only animation +
+     stable keys, so data polling never replays it; consumers stagger via an
+     inline animation-delay. Collapsed by the global reduced-motion block. */
+  @keyframes xvn-card-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .xvn-card-in {
+    animation: xvn-card-in var(--duration-slow) var(--ease-out) both;
+  }
+
+  /* Subtle accent wash for hero/panel surfaces. Token-derived (gold + info
+     at low opacity) so it re-themes with light mode automatically. */
+  .xvn-panel-wash {
+    background-image:
+      radial-gradient(
+        120% 90% at 0% 0%,
+        color-mix(in srgb, var(--gold) 7%, transparent),
+        transparent 55%
+      ),
+      radial-gradient(
+        90% 70% at 100% 0%,
+        color-mix(in srgb, var(--info) 5%, transparent),
+        transparent 60%
+      );
+  }
+
+  /* Faint CSS-only grain overlay (hero band atmosphere). SVG feTurbulence
+     noise tile at very low opacity; pointer-events disabled so it never
+     intercepts clicks. Pair with a `relative` container. */
+  .xvn-grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    background-size: 160px 160px;
+  }
+
+  /* Glow ring for the genuinely-live execution chip. Reads currentColor so
+     the gold tone (and light-theme accent) carries through. */
+  .xvn-live-glow {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, currentColor 36%, transparent),
+      0 0 14px color-mix(in srgb, currentColor 26%, transparent);
+  }
+
+  /* Hover reward for home bento cards: border lifts toward the accent and
+     the surface brightens a touch. Transition collapses under
+     prefers-reduced-motion via the global safeguard. */
+  .xvn-card-hover {
+    transition:
+      border-color var(--duration-base) var(--ease-out),
+      box-shadow var(--duration-base) var(--ease-out);
+  }
+  .xvn-card-hover:hover {
+    border-color: color-mix(in srgb, var(--gold) 28%, var(--border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold) 10%, transparent);
+  }
+
   .input {
     @apply w-full bg-surface-elev border border-border rounded px-2.5 py-1.5 text-[13px] text-text placeholder:text-text-3 focus:outline-none focus:border-text-3;
   }

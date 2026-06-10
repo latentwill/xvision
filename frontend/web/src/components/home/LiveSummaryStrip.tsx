@@ -64,10 +64,10 @@ export function LiveSummaryStrip() {
     <section
       aria-label="live-summary-strip"
       data-testid="live-summary-strip"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-l-2 border-info/60 py-2 pl-4 text-sm"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-2.5 text-[13px]"
     >
       {/* Label */}
-      <span className="font-semibold tracking-tight text-foreground">
+      <span className="text-[12px] font-medium text-text">
         Live trading
       </span>
 
@@ -75,44 +75,44 @@ export function LiveSummaryStrip() {
       {isPending ? (
         <span
           data-testid="live-summary-loading"
-          className="text-xs text-muted-foreground"
+          className="text-[12px] text-text-4"
           aria-label="Loading live trading status"
         >
           Loading…
         </span>
       ) : hasAny ? (
-        <span className="flex items-center gap-x-2 text-muted-foreground">
+        <span className="flex items-center gap-x-2 text-[12px] text-text-3">
           {hasLive && (
-            <span data-testid="live-count" className="text-foreground">
-              <span className="font-semibold tabular-nums text-info">
+            <span data-testid="live-count" className="text-text-2">
+              <span className="font-mono font-semibold tabular-nums text-info">
                 {activeCount}
               </span>{" "}
               live
             </span>
           )}
           {pausedCount > 0 && (
-            <span data-testid="paused-count" className="text-foreground">
-              <span className="font-semibold tabular-nums text-warn">
+            <span data-testid="paused-count" className="text-text-2">
+              <span className="font-mono font-semibold tabular-nums text-warn">
                 {pausedCount}
               </span>{" "}
               paused
             </span>
           )}
           {paperCount > 0 && (
-            <span data-testid="paper-count" className="text-foreground">
-              <span className="font-semibold tabular-nums">{paperCount}</span>{" "}
+            <span data-testid="paper-count" className="text-text-2">
+              <span className="font-mono font-semibold tabular-nums">{paperCount}</span>{" "}
               paper
             </span>
           )}
           {staleCount > 0 && (
-            <span data-testid="stale-count">
-              <span className="font-semibold tabular-nums">{staleCount}</span>{" "}
+            <span data-testid="stale-count" className="text-text-3">
+              <span className="font-mono font-semibold tabular-nums">{staleCount}</span>{" "}
               stale
             </span>
           )}
         </span>
       ) : (
-        <span className="text-muted-foreground">No live strategies running.</span>
+        <span className="text-[12px] text-text-3">No live strategies running.</span>
       )}
 
       {/* CTA — always present. Routes to the cockpit when there's activity
@@ -120,7 +120,7 @@ export function LiveSummaryStrip() {
           strategies list to deploy one when there's nothing running yet. */}
       <Link
         to={hasAny ? "/live" : "/strategies"}
-        className="ml-auto shrink-0 text-xs underline-offset-2 hover:underline"
+        className="ml-auto shrink-0 text-[12px] text-text-3 hover:text-text underline-offset-2 hover:underline"
       >
         {hasLive ? "Go to Live Trading →" : hasAny ? "View runs →" : "Deploy a strategy →"}
       </Link>
