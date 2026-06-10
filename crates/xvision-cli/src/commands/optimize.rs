@@ -138,7 +138,9 @@ pub struct MutateOnceArgs {
     /// Blob storage directory.
     #[arg(long)]
     pub blob_dir: Option<PathBuf>,
-    /// Use mock LLM dispatch (for tests and offline use).
+    /// Use mock LLM dispatch for ALL AI calls (paper-test, experiment writer,
+    /// judge). No API keys required. All AI responses are canned/deterministic.
+    /// For smoke-testing cycle wiring only — results have no signal value.
     #[arg(long)]
     pub mock: bool,
     /// Unix socket path of the dashboard IPC bridge (AR-3).
@@ -161,7 +163,9 @@ pub struct RunCycleArgs {
     /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
     #[arg(long)]
     pub db: Option<PathBuf>,
-    /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
+    /// Use mock LLM dispatch for ALL AI calls (paper-test, experiment writer,
+    /// judge). No API keys required. All AI responses are canned/deterministic.
+    /// For smoke-testing cycle wiring only — results have no signal value.
     #[arg(long)]
     pub mock: bool,
     /// Cycle/session id to use for this optimizer cycle. Generated when omitted.
@@ -772,6 +776,25 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let meter: Arc<std::sync::Mutex<CycleMeter>> = Arc::new(std::sync::Mutex::new(CycleMeter::default()));
 
     let metering_catalogs = load_metering_catalogs(&xvn_home, &binding.provider).await;
+
+    // B2: --budget gates on spent_usd, which stays 0 for providers with no
+    // pricing catalog. Fail fast so the operator isn't surprised by a cycle
+    // that runs forever (until_budget) or silently ignores the cap (run-cycle).
+    if let Some(budget) = args.budget {
+        if metering_catalogs.is_empty() {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--budget ${budget:.4} requires a provider with catalog pricing, but provider \
+                 '{}' has no cached pricing catalog ($XVN_HOME/catalogs/{}.json). Cost \
+                 tracking is unavailable — use --mode once or --mode n_experiments to bound \
+                 cycle count, or run `xvn provider catalog fetch --name {}` to populate the \
+                 catalog if supported.",
+                binding.provider,
+                binding.provider,
+                binding.provider,
+            )));
+        }
+    }
+
     let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
         Arc::clone(&raw_dispatch),
         metering_catalogs,
@@ -891,9 +914,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     }
     if args.mock {
         eprintln!(
-            "mock mode: paper-test metrics are synthetic (deterministic stub). This is a \
-             smoke test of the cycle wiring — it does not perform real backtests and may not \
-             appear as a completed run in `xvn optimizer ls`."
+            "mock mode: ALL AI calls (paper-test, experiment writer, judge) use a canned \
+             deterministic stub — no API keys required. This is a smoke test of cycle wiring \
+             only; results have no signal value and may not appear in `xvn optimizer ls`."
         );
     }
     let dspy_ctx = if cfg.dspy_enabled {
@@ -1909,6 +1932,7 @@ async fn propose(
             cfg,
             None,
             exploration_seed,
+            0, // mutation_idx: single-mutation call site, no kind rotation needed
             None,
             &std::collections::HashSet::new(),
             None,

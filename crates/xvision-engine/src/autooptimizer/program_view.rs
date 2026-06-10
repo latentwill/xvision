@@ -32,10 +32,7 @@ pub fn to_markdown(strategy: &Strategy) -> String {
 ///
 /// `from_markdown` ignores any text outside ````json` fences, so the
 /// annotation is invisible to the round-trip parser.
-pub fn to_markdown_with_resolved_prompts(
-    strategy: &Strategy,
-    resolved: &HashMap<String, String>,
-) -> String {
+pub fn to_markdown_with_resolved_prompts(strategy: &Strategy, resolved: &HashMap<String, String>) -> String {
     let mut out = format!("# Strategy {}\n\n", strategy.manifest.display_name);
     out.push_str(&render_json_section("Manifest", &strategy.manifest));
     out.push_str(&render_agents_section_with_prompts(&strategy.agents, resolved));
@@ -44,6 +41,14 @@ pub fn to_markdown_with_resolved_prompts(
         &strategy.mechanical_params,
     ));
     out.push_str(&render_json_section("Risk config", &strategy.risk));
+    // Render the filter so the experiment writer sees its current values in the
+    // main program view (not only via the separate filter-paths list). This
+    // closes the markdown rendering gap that caused stale_filter_baseline
+    // rejections when the LLM inferred wrong `before` values. from_markdown
+    // ignores this section and clones base.filter, so the round-trip is unaffected.
+    if let Some(ref filter) = strategy.filter {
+        out.push_str(&render_json_section("Filter", filter));
+    }
     out
 }
 
@@ -88,10 +93,7 @@ fn render_json_section<T: Serialize>(header: &str, value: &T) -> String {
     format!("## {header}\n```json\n{json}\n```\n\n")
 }
 
-fn render_agents_section_with_prompts(
-    agents: &[AgentRef],
-    resolved: &HashMap<String, String>,
-) -> String {
+fn render_agents_section_with_prompts(agents: &[AgentRef], resolved: &HashMap<String, String>) -> String {
     let mut out = String::from("## Agents\n\n");
     let limit = agents.len().min(256);
     for agent in agents.iter().take(limit) {
@@ -103,10 +105,7 @@ fn render_agents_section_with_prompts(
         if agent.prompt_override.is_none() {
             if let Some(prompt) = resolved.get(&agent.agent_id) {
                 if !prompt.is_empty() {
-                    out.push_str(&format!(
-                        "\nCurrent system prompt:\n{}\n",
-                        prompt.trim()
-                    ));
+                    out.push_str(&format!("\nCurrent system prompt:\n{}\n", prompt.trim()));
                 }
             }
         }
