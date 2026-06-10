@@ -20,8 +20,7 @@ use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 use xvision_engine::autooptimizer::{
-    gate::GateVerdict, lineage::ensure_lineage_schema, ContentHash, LineageNode, LineageStatus,
-    LineageStore,
+    gate::GateVerdict, lineage::ensure_lineage_schema, ContentHash, LineageNode, LineageStatus, LineageStore,
 };
 use xvision_engine::eval::{
     run::{Run, RunMode},
@@ -159,9 +158,7 @@ async fn lineage_membership_marks_strategy_optimizer_origin() {
         .expect("bundle_hash")
         .to_string();
 
-    ensure_lineage_schema(&state.pool)
-        .await
-        .expect("lineage schema");
+    ensure_lineage_schema(&state.pool).await.expect("lineage schema");
     let lineage = LineageStore::new(state.pool.clone());
     lineage
         .insert(&LineageNode {

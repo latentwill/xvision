@@ -488,8 +488,7 @@ async fn apply_eval_coverage(ctx: &ApiContext, out: &mut [StrategySummary]) -> A
         let hashes: Vec<&String> = out.iter().filter_map(|s| s.bundle_hash.as_ref()).collect();
         for chunk in hashes.chunks(COVERAGE_KEY_CHUNK) {
             let placeholders = vec!["?"; chunk.len()].join(",");
-            let sql =
-                format!("SELECT bundle_hash FROM lineage_nodes WHERE bundle_hash IN ({placeholders})");
+            let sql = format!("SELECT bundle_hash FROM lineage_nodes WHERE bundle_hash IN ({placeholders})");
             let mut query = sqlx::query_scalar::<_, String>(&sql);
             for hash in chunk {
                 query = query.bind(hash.as_str());
