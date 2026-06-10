@@ -32,8 +32,10 @@ admin                   = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V2: ope
 # bridged USDC (0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9), which supports
 # EIP-3009 natively — the mainnet path is unaffected.
 # The Marketplace proxy points at this token since the 2026-06-10 UUPS upgrade
-# (impl 0x934453DE61f0AE3CF6692A9916E623c103153C5B adds `setUsdc`; called via
-# upgradeToAndCall — see script/UpgradeMarketplaceSetUsdc.s.sol and the deploy
-# runbook §2 addendum). Old-token allowances/balances did not carry over.
+# (`setUsdc` via upgradeToAndCall — see script/UpgradeMarketplaceSetUsdc.s.sol
+# and the deploy runbook addendum). Two same-source impls were deployed by
+# parallel runs; the LIVE impl slot is 0x1FE13b656d9571798F7B3074f54eaFBfDc88bC44.
+# Verified with an on-chain approve+buy of listing 1 (license #1 minted).
+# Old-token allowances/balances did not carry over.
 address  = "0x68aA91F73f359035875759E1d4C4949A27c84C88"
 decimals = 6

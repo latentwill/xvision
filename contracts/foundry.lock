@@ -1,0 +1,17 @@
+{
+  "../.claude/skills/byreal": {
+    "rev": "00175eca4393187c74b55454100159eb449fc831"
+  },
+  "../.claude/skills/mantle": {
+    "rev": "0189aeabb5b83a98d051547ef0177da67b32fa5b"
+  },
+  "lib/forge-std": {
+    "rev": "b3bc8b154382a75d0b0ef22d7fd4a0a5f0feee0e"
+  },
+  "lib/openzeppelin-contracts": {
+    "rev": "dbb6104ce834628e473d2173bbc9d47f81a9eec3"
+  },
+  "lib/openzeppelin-contracts-upgradeable": {
+    "rev": "723f8cab09cdae1aca9ec9cc1cfa040c2d4b06c1"
+  }
+}
