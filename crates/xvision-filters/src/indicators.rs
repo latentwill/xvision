@@ -19,6 +19,22 @@
 //!   = `period + 1` bars (first true range needs a prior close).
 //! * **ATR%** — `100 * ATR / close`. Warmup matches ATR.
 //! * **Close** — `close[t]`, no warmup.
+//! * **RVOL** — `volume[t] / SMA(volume, period)`. Time-of-day aware: bars are
+//!   bucketed by `hour*60+minute`; the SMA uses the last `period` bars in the
+//!   same time slot. Warmup = `period` bars in the slot. Before the slot is warm
+//!   the indicator falls back to a cross-bar rolling SMA over all bars pushed so
+//!   far (same `period`), so a value is always available once `period` total bars
+//!   have been seen regardless of time-of-day distribution.
+//! * **VolumeZscore** — z-score of `volume[t]` relative to the last `period`
+//!   volumes. Warmup = `period` bars.
+//! * **ROC** — `100 * (close[t] - close[t-period]) / close[t-period]`.
+//!   Warmup = `period + 1` bars (needs a bar `period` steps back).
+//! * **Donchian / Highest / Lowest** — upper/lower are the max/min of the
+//!   `period` bars BEFORE bar `t` (pre-push snapshot). This ensures
+//!   `close crossed_above donchian_upper_N` is not structurally impossible.
+//!   Warmup = `period + 1` bars (window must be full before the snapshot is
+//!   taken). WilliamsR shares the `DonchianState` struct but uses the
+//!   post-push window (current bar included); its warmup remains `period`.
 //!
 //! All warmups are inclusive: a `period=14` EMA produces its first value
 //! on the 14th `push` call (1-based), i.e. after 14 closes have been
@@ -407,7 +423,7 @@ impl IndicatorEngine {
                 IndicatorName::KeltnerLower => s.lower(),
                 _ => None,
             },
-            Instance::WilliamsR(s) => match (s.upper(), s.lower(), self.last_close) {
+            Instance::WilliamsR(s) => match (s.current_upper(), s.current_lower(), self.last_close) {
                 (Some(hh), Some(ll), Some(close)) if (hh - ll).abs() > f64::EPSILON => {
                     Some(-100.0 * (hh - close) / (hh - ll))
                 }
@@ -428,19 +444,22 @@ impl IndicatorEngine {
                 | Instance::Ema(_)
                 | Instance::Wma(_)
                 | Instance::Bollinger(_)
-                | Instance::Donchian(_)
                 | Instance::Vwap(_)
                 | Instance::VolumeSma(_)
                 | Instance::Rvol(_)
                 | Instance::VolumeZscore(_)
                 | Instance::WilliamsR(_) => key.period,
+                // Donchian/Highest/Lowest snapshot the window BEFORE the
+                // current bar is pushed (committed_upper/lower), so they
+                // need one extra bar to produce their first valid value.
+                Instance::Donchian(_) => key.period + 1,
                 Instance::OpeningRange(_) => 0,
                 Instance::Rsi(_) | Instance::Atr(_) | Instance::AtrPct(_) => key.period + 1,
                 Instance::Dmi(_) => key.period * 2 + 1,
                 Instance::Roc(_) => key.period + 1,
                 Instance::Macd(_) => 35,
-                Instance::Stoch(_) => key.period + 3,
-                Instance::StochRsi(_) => key.period * 2 + 3,
+                Instance::Stoch(_) => key.period + 2,
+                Instance::StochRsi(_) => key.period * 2 + 2,
                 Instance::Cci(_) => key.period,
                 Instance::Mfi(_) => key.period + 1,
                 Instance::Ichimoku(_) => 52,
@@ -1244,6 +1263,13 @@ impl BollingerState {
 struct DonchianState {
     highs: WindowState,
     lows: WindowState,
+    // Snapshot of max/min taken BEFORE the most-recently pushed bar was
+    // incorporated into the window.  upper()/lower() return these committed
+    // values so that `close crossed_above donchian_upper_N` is not
+    // structurally impossible (current high >= current close always, so a
+    // post-push max can never be exceeded by the same bar's close).
+    committed_upper: Option<f64>,
+    committed_lower: Option<f64>,
 }
 
 impl DonchianState {
@@ -1251,24 +1277,41 @@ impl DonchianState {
         Self {
             highs: WindowState::new(period),
             lows: WindowState::new(period),
+            committed_upper: None,
+            committed_lower: None,
         }
     }
 
     fn push(&mut self, high: f64, low: f64) {
+        self.committed_upper = self.highs.max();
+        self.committed_lower = self.lows.min();
         self.highs.push(high);
         self.lows.push(low);
     }
 
+    /// Pre-push upper band — the breakout level in place before bar T arrived.
     fn upper(&self) -> Option<f64> {
-        self.highs.max()
+        self.committed_upper
     }
 
+    /// Pre-push lower band.
     fn lower(&self) -> Option<f64> {
-        self.lows.min()
+        self.committed_lower
     }
 
     fn middle(&self) -> Option<f64> {
         Some((self.upper()? + self.lower()?) / 2.0)
+    }
+
+    /// Post-push upper band including the current bar's high.  WilliamsR
+    /// conventionally includes the current bar in its lookback window.
+    fn current_upper(&self) -> Option<f64> {
+        self.highs.max()
+    }
+
+    /// Post-push lower band including the current bar's low.
+    fn current_lower(&self) -> Option<f64> {
+        self.lows.min()
     }
 }
 
@@ -1505,31 +1548,37 @@ impl RvolState {
     }
 
     fn push(&mut self, volume: f64, timestamp: Option<DateTime<Utc>>) {
+        // Always keep rolling warm — used as fallback when a TOD slot hasn't
+        // accumulated `period` bars yet, and as the primary path when timestamps
+        // are absent.
+        self.rolling.push(volume);
+        let rolling_rvol = self
+            .rolling
+            .value()
+            .and_then(|avg| (avg.abs() > f64::EPSILON).then_some(volume / avg));
+
         if let Some(ts) = timestamp {
             let slot = (ts.hour() * 60 + ts.minute()) as u16;
             let entry = self
                 .by_slot
                 .entry(slot)
-                .or_insert_with(|| (VecDeque::with_capacity(self.period), 0.0));
+                .or_insert_with(|| (VecDeque::with_capacity(self.period + 1), 0.0));
             let (window, sum) = entry;
-            self.value = if window.len() == self.period && sum.abs() > f64::EPSILON {
-                Some(volume / (*sum / self.period as f64))
-            } else {
-                None
-            };
             window.push_back(volume);
             *sum += volume;
             if window.len() > self.period {
                 *sum -= window.pop_front().unwrap_or(0.0);
             }
+            self.value = if window.len() == self.period && sum.abs() > f64::EPSILON {
+                Some(volume / (*sum / self.period as f64))
+            } else {
+                // TOD slot not yet warm; fall back to rolling SMA.
+                rolling_rvol
+            };
             return;
         }
 
-        self.value = self
-            .rolling
-            .value()
-            .and_then(|avg| (avg.abs() > f64::EPSILON).then_some(volume / avg));
-        self.rolling.push(volume);
+        self.value = rolling_rvol;
     }
 
     fn value(&self) -> Option<f64> {
@@ -1741,6 +1790,49 @@ mod tests {
         let e = IndicatorEngine::new([&r1, &r2]);
         // RSI 14 needs 14 deltas → 15 bars. SMA 5 needs 5. Max is 15.
         assert_eq!(e.warmup_bars(), 15);
+    }
+
+    #[test]
+    fn stoch_d_first_value_on_period_plus_2() {
+        // StochD = 3-bar SMA of K. K is available once highs/lows window is
+        // full (period bars). d_sma then needs 2 more K values → period + 2.
+        let r = IndicatorRef::periodic(IndicatorName::StochD, 2);
+        let mut e = IndicatorEngine::new([&r]);
+        assert_eq!(e.warmup_bars(), 4);
+        let bars = (0..3).map(|i| {
+            let f = i as f64;
+            Bar::with_volume(f, f + 1.0, f, f + 0.5, 1.0)
+        });
+        for b in bars {
+            assert_eq!(e.value(&r), None);
+            e.push(&b);
+        }
+        // 3rd push completes period(2)+2=4 — but we haven't pushed a 4th bar yet
+        assert_eq!(e.value(&r), None);
+        e.push(&Bar::with_volume(3.0, 4.0, 3.0, 3.5, 1.0));
+        assert!(
+            e.value(&r).is_some(),
+            "StochD should have a value after period+2 bars"
+        );
+    }
+
+    #[test]
+    fn stochrsi_d_first_value_on_2x_period_plus_2() {
+        // StochRsiD = 3-bar SMA of StochRsiK.
+        // RSI warmup = period+1, rsi_window warmup = period more bars,
+        // d_sma warmup = 2 more K values → 2*period + 2 total.
+        let r = IndicatorRef::periodic(IndicatorName::StochRsiD, 2);
+        let mut e = IndicatorEngine::new([&r]);
+        assert_eq!(e.warmup_bars(), 6);
+        for i in 0..5u32 {
+            assert_eq!(e.value(&r), None, "should be None before bar {}", i + 1);
+            e.push(&Bar::new(0.0, (i as f64) + 1.0, 0.0, (i as f64) + 1.0));
+        }
+        e.push(&Bar::new(0.0, 6.0, 0.0, 6.0));
+        assert!(
+            e.value(&r).is_some(),
+            "StochRsiD should have a value after 2*period+2 bars"
+        );
     }
 
     #[test]

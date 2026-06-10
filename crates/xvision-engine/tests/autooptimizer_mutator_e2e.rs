@@ -123,7 +123,16 @@ async fn propose_returns_ok_on_first_valid_response() {
     };
 
     let result = mutator
-        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .propose(
+            &base,
+            &default_config(),
+            None,
+            42,
+            0,
+            None,
+            &Default::default(),
+            None,
+        )
         .await;
 
     assert!(result.is_ok(), "expected Ok but got: {:?}", result);
@@ -146,7 +155,16 @@ async fn propose_retries_on_invalid_response_succeeds_on_retry() {
     };
 
     let result = mutator
-        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .propose(
+            &base,
+            &default_config(),
+            None,
+            42,
+            0,
+            None,
+            &Default::default(),
+            None,
+        )
         .await;
 
     assert!(
@@ -172,7 +190,16 @@ async fn propose_returns_err_after_max_retries() {
     };
 
     let result = mutator
-        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .propose(
+            &base,
+            &default_config(),
+            None,
+            42,
+            0,
+            None,
+            &Default::default(),
+            None,
+        )
         .await;
 
     assert!(result.is_err(), "expected Err after exhausting retries");
@@ -204,7 +231,16 @@ async fn propose_includes_validation_errors_in_retry_prompt() {
     };
 
     let result = mutator
-        .propose(&base, &default_config(), None, 42, None, &Default::default())
+        .propose(
+            &base,
+            &default_config(),
+            None,
+            42,
+            0,
+            None,
+            &Default::default(),
+            None,
+        )
         .await;
     assert!(result.is_ok(), "expected Ok on retry: {:?}", result);
 

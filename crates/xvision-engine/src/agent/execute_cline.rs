@@ -35,6 +35,7 @@
 //!   against the recorded one and surface divergence as a typed error.
 
 use crate::agent::llm::{ContentBlock, LlmResponse, ResponseSchema, StopReason};
+use crate::eval::executor::trader_output::extract_first_json_object;
 use crate::strategies::slot::LLMSlot;
 use std::sync::Arc;
 use xvision_agent_client::provider_map::{map_provider, ProviderMapError};
@@ -600,42 +601,78 @@ async fn try_nodecision_recovery(
         return step;
     }
 
-    if step.output_text.trim_start().starts_with('{')
-        && serde_json::from_str::<serde_json::Value>(&step.output_text).is_ok()
-    {
-        tracing::info!(
-            event = "nodecision_recovery_succeeded",
-            run_id = %run_id,
-            role = %role,
-            method = "output_text_parse",
-        );
-        step.decision_json = Some(step.output_text.clone());
-        return step;
+    // Method 1: scan output_text for a JSON object, stripping <think> blocks first.
+    // Reasoning models (deepseek-r1, Fino1, etc.) emit chain-of-thought prose or
+    // <think>…</think> wrappers before — or instead of — a submit_decision call.
+    // Stripping think blocks prevents false-positive {…} matches inside reasoning traces.
+    let cleaned = strip_think_blocks(&step.output_text);
+    if let Some(json_str) = extract_first_json_object(&cleaned) {
+        if serde_json::from_str::<serde_json::Value>(&json_str).is_ok() {
+            tracing::info!(
+                event = "nodecision_recovery_succeeded",
+                run_id = %run_id,
+                role = %role,
+                method = "output_text_json_scan",
+            );
+            step.decision_json = Some(json_str);
+            return step;
+        }
     }
 
+    // Method 2: repair step — request raw JSON output with no tool-call dependency.
+    // Phrased as a direct JSON request so models that don't support function-calling
+    // can comply (the previous "Call submit_decision" instruction was silently ignored
+    // by CoT-style models).
     let repair = client
         .step(StepParams {
             run_id: run_id.to_string(),
-            prompt: "You completed without calling submit_decision. \
-                Call submit_decision now with your decision as a JSON argument \
-                — do not output prose."
+            prompt: "Output only a JSON object with your trading decision — no prose, no markdown:\n\
+                {\"action\": \"buy|sell|hold\", \"conviction\": 0.0-1.0, \"justification\": \"reason\"}"
                 .to_string(),
         })
         .await;
 
     if let Ok(repair_step) = repair {
-        if repair_step.decision_json.is_some() {
+        // Accept either a tool call or raw JSON in output_text from the repair step.
+        let found = repair_step.decision_json.or_else(|| {
+            let c = strip_think_blocks(&repair_step.output_text);
+            extract_first_json_object(&c).filter(|j| serde_json::from_str::<serde_json::Value>(j).is_ok())
+        });
+        if found.is_some() {
             tracing::info!(
                 event = "nodecision_recovery_succeeded",
                 run_id = %run_id,
                 role = %role,
                 method = "repair_step",
             );
-            step.decision_json = repair_step.decision_json;
+            step.decision_json = found;
         }
     }
 
     step
+}
+
+/// Strip `<think>…</think>` blocks from model output (case-insensitive).
+/// Called before JSON extraction so reasoning traces don't shadow the decision object.
+fn strip_think_blocks(s: &str) -> String {
+    let mut result = s.to_string();
+    loop {
+        let lower = result.to_ascii_lowercase();
+        let Some(start) = lower.find("<think>") else { break };
+        let after_open = start + "<think>".len();
+        match lower[after_open..].find("</think>") {
+            Some(rel) => {
+                let end = after_open + rel + "</think>".len();
+                result = format!("{}{}", &result[..start], result[end..].trim_start());
+            }
+            None => {
+                // Unclosed <think> — strip everything from the tag to end of string.
+                result = result[..start].trim_end().to_string();
+                break;
+            }
+        }
+    }
+    result.trim().to_string()
 }
 
 /// Read the recorded frames for this slot's first step, validate they are

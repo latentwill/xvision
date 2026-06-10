@@ -369,6 +369,18 @@ mod tests {
                 take_profit_pct: 4.0,
                 trader_summary: "FuturePeekBaseline: reads beyond current bar.".into(),
                 asset: snapshot.asset,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             })
         }
     }
@@ -462,6 +474,18 @@ mod tests {
                     take_profit_pct: 4.0,
                     trader_summary: "ExactBarCount fires when len matches.".into(),
                     asset: snapshot.asset,
+                    trailing_stop_pct: None,
+                    breakeven_trigger_pct: None,
+                    breakeven_offset_pct: None,
+                    fade_sl_bars: None,
+                    fade_sl_start_pct: None,
+                    fade_sl_end_pct: None,
+                    max_bars_held: None,
+                    sl_atr_mult: None,
+                    tp_atr_mult: None,
+                    tp1_pct: None,
+                    tp1_close_fraction: None,
+                    tp2_pct: None,
                 })
             } else {
                 None
@@ -567,6 +591,18 @@ mod tests {
                     take_profit_pct: 4.0,
                     trader_summary: "CurrentBarClose fires when close matches target.".into(),
                     asset: snapshot.asset,
+                    trailing_stop_pct: None,
+                    breakeven_trigger_pct: None,
+                    breakeven_offset_pct: None,
+                    fade_sl_bars: None,
+                    fade_sl_start_pct: None,
+                    fade_sl_end_pct: None,
+                    max_bars_held: None,
+                    sl_atr_mult: None,
+                    tp_atr_mult: None,
+                    tp1_pct: None,
+                    tp1_close_fraction: None,
+                    tp2_pct: None,
                 })
             } else {
                 None

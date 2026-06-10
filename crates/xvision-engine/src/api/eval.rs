@@ -2946,6 +2946,7 @@ async fn run_inner(
     enrich_with_inference_cost(ctx, &store, &mut finalized, &scenario).await;
 
     api_search::upsert_run(ctx, &finalized).await;
+    fire_chain_attestation_after_finalize(&finalized);
 
     // Postprocess: drive the findings extractor against the finalized run,
     // persist + index any findings. Best-effort — extractor failures
@@ -3921,6 +3922,7 @@ async fn execute_in_background(
     enrich_with_inference_cost(&ctx, &store, &mut finalized, &scenario).await;
 
     api_search::upsert_run(&ctx, &finalized).await;
+    fire_chain_attestation_after_finalize(&finalized);
     if let Some(em) = obs_emitter.as_ref() {
         em.emit_run_finished(xvision_observability::RunStatus::Completed, None)
             .await;
@@ -3972,6 +3974,17 @@ async fn route_mark_failed(ctx: &ApiContext, store: &RunStore, run_id: &str, err
         }
     }
 }
+
+#[cfg(feature = "chain-attest")]
+fn fire_chain_attestation_after_finalize(run: &Run) {
+    let finalized = run.clone();
+    tokio::spawn(async move {
+        crate::eval::chain_attestation::fire_chain_attestation(&finalized).await;
+    });
+}
+
+#[cfg(not(feature = "chain-attest"))]
+fn fire_chain_attestation_after_finalize(_run: &Run) {}
 
 /// Sweep any `Queued` or `Running` rows from a previous process and
 /// transition them to `Failed`. Background tasks die with the dashboard

@@ -15,6 +15,7 @@ import type {
   BrokersReport,
   Catalog,
   FactoryResetReport,
+  IdentityReport,
   MemoryReport,
   MemoryStatus,
   ObservabilityReport,
@@ -61,6 +62,12 @@ export const settingsKeys = {
   providerCatalog: (name: string) =>
     [...settingsKeys.all, "providers", name, "catalog"] as const,
 };
+
+// ─── Identity (on-chain NFT snapshot) ─────────────────────────────────────
+
+export function getIdentity(): Promise<IdentityReport> {
+  return apiFetch<IdentityReport>("/api/settings/identity");
+}
 
 // ─── Observability (trace retention) ──────────────────────────────────────
 

@@ -1,10 +1,10 @@
 //! Pure-function baselines over a raw OHLCV bar slice.
 //!
-//! These four baselines operate on the same `Vec<Ohlcv>` the backtest
+//! These five baselines operate on the same `Vec<Ohlcv>` the backtest
 //! executor receives — no LLM calls, no market snapshots, no A/B harness.
 //! They exist to give the eval report a relative performance context:
-//! "did the strategy beat buy-and-hold, flat, simple trend, and simple
-//! mean-reversion on the same bars?"
+//! "did the strategy beat buy-and-hold, flat, simple trend, simple
+//! mean-reversion, and random direction on the same bars?"
 //!
 //! ## Baseline definitions
 //!
@@ -30,6 +30,8 @@
 //! "no-signal → flat" treatment, which matches industry convention for
 //! indicator-based strategies.
 
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use xvision_core::market::Ohlcv;
 
@@ -61,13 +63,15 @@ pub struct BaselineResult {
     pub sharpe: f64,
 }
 
-/// All four baselines and the strategy's return delta versus each.
+/// All five baselines and the strategy's return delta versus each.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaselinesReport {
     pub buy_hold: BaselineResult,
     pub always_flat: BaselineResult,
     pub simple_trend: BaselineResult,
     pub simple_mean_reversion: BaselineResult,
+    /// Coin-flip long/short at 100 bps per bar, seeded for reproducibility.
+    pub random_direction: BaselineResult,
     /// strategy_return_pct − baseline_return_pct for each baseline.
     /// Positive = strategy beat the baseline on raw return.
     pub relative_to: RelativeTo,
@@ -80,6 +84,7 @@ pub struct RelativeTo {
     pub always_flat: f64,
     pub simple_trend: f64,
     pub simple_mean_reversion: f64,
+    pub random_direction: f64,
 }
 
 // ── Computation entry point ───────────────────────────────────────────────────
@@ -99,11 +104,15 @@ pub struct RelativeTo {
 ///
 /// `strategy_return_pct` is the strategy's final `total_return_pct` from the
 /// main run, used only to compute `relative_to` deltas.
+///
+/// `rng_seed` controls the `RandomDirection` coin-flip sequence. Pass a fixed
+/// value (e.g. `42`) for reproducible results across identical bar slices.
 pub fn compute_baselines(
     bars: &[Ohlcv],
     initial_equity: f64,
     cadence_minutes: u32,
     strategy_return_pct: f64,
+    rng_seed: u64,
 ) -> BaselinesReport {
     let periods_per_year = annualization_periods_per_year(cadence_minutes);
 
@@ -114,12 +123,14 @@ pub fn compute_baselines(
     };
     let simple_trend = baseline_simple_trend(bars, initial_equity, periods_per_year);
     let simple_mean_rev = baseline_simple_mean_reversion(bars, initial_equity, periods_per_year);
+    let random_dir = baseline_random_direction(bars, initial_equity, periods_per_year, rng_seed);
 
     let relative_to = RelativeTo {
         buy_hold: strategy_return_pct - buy_hold.return_pct,
         always_flat: strategy_return_pct - always_flat.return_pct,
         simple_trend: strategy_return_pct - simple_trend.return_pct,
         simple_mean_reversion: strategy_return_pct - simple_mean_rev.return_pct,
+        random_direction: strategy_return_pct - random_dir.return_pct,
     };
 
     BaselinesReport {
@@ -127,6 +138,7 @@ pub fn compute_baselines(
         always_flat,
         simple_trend,
         simple_mean_reversion: simple_mean_rev,
+        random_direction: random_dir,
         relative_to,
     }
 }
@@ -327,6 +339,69 @@ fn baseline_simple_mean_reversion(
     BaselineResult { return_pct, sharpe }
 }
 
+/// `random_direction`: fair coin-flip between long (+100 bps) and short
+/// (-100 bps) on each bar. Seeded for deterministic backtests. Matches the
+/// `RandomDirection` algorithm in `crates/xvision-eval/src/baselines/random_direction.rs`
+/// but operates on a bare bar slice rather than `MarketSnapshot`.
+///
+/// Position sizing: 100% of current equity per bar entry, unwound at the
+/// next bar's close when the signal flips. Flat at bar 0 until the first
+/// coin-flip result.
+fn baseline_random_direction(
+    bars: &[Ohlcv],
+    initial_equity: f64,
+    periods_per_year: f64,
+    rng_seed: u64,
+) -> BaselineResult {
+    if bars.is_empty() {
+        return zero_result();
+    }
+    let mut rng = StdRng::seed_from_u64(rng_seed);
+
+    // +1.0 = long, -1.0 = short
+    let mut direction: f64 = 0.0;
+    let mut entry_price: f64 = 0.0;
+    let mut equity = initial_equity;
+    let mut equity_curve: Vec<f64> = vec![initial_equity];
+
+    for bar in bars {
+        let go_long: bool = rng.gen();
+        let target_dir: f64 = if go_long { 1.0 } else { -1.0 };
+
+        if target_dir != direction {
+            // Close prior position.
+            if direction != 0.0 && entry_price > 0.0 {
+                let units = equity / entry_price;
+                equity += units * (bar.open - entry_price) * direction;
+            }
+            direction = target_dir;
+            entry_price = bar.open;
+        }
+
+        // Mark to market at close.
+        let marked = if direction != 0.0 && entry_price > 0.0 {
+            let units = equity / entry_price;
+            equity + units * (bar.close - entry_price) * direction
+        } else {
+            equity
+        };
+        equity_curve.push(marked);
+    }
+
+    // Close any open position at last bar's close.
+    if direction != 0.0 && entry_price > 0.0 {
+        if let Some(last) = bars.last() {
+            let units = equity / entry_price;
+            equity += units * (last.close - entry_price) * direction;
+        }
+    }
+
+    let return_pct = total_return_pct(initial_equity, equity);
+    let returns = equity_to_returns(&equity_curve);
+    let sharpe = sharpe_from_returns(&returns, periods_per_year);
+    BaselineResult { return_pct, sharpe }
+}
+
 // ── Metric helpers (mirrors engine/eval/metrics.rs exactly) ──────────────────
 // These are intentionally kept in sync with the canonical engine formulas.
 // Any change to the engine formulas should be reflected here.
@@ -469,7 +544,7 @@ mod tests {
     #[test]
     fn compute_baselines_always_flat_is_zero() {
         let bars: Vec<Ohlcv> = (0..30).map(|i| bar(100.0 + i as f64)).collect();
-        let report = compute_baselines(&bars, 10_000.0, 60, 5.0);
+        let report = compute_baselines(&bars, 10_000.0, 60, 5.0, 42);
         assert_eq!(report.always_flat.return_pct, 0.0);
         assert_eq!(report.always_flat.sharpe, 0.0);
     }
@@ -567,7 +642,7 @@ mod tests {
         // strategy returned 5%, buy_hold is derived from the bars.
         // relative_to.buy_hold = 5.0 - buy_hold.return_pct
         let bars: Vec<Ohlcv> = (0..30).map(|i| bar(100.0 + i as f64)).collect();
-        let report = compute_baselines(&bars, 10_000.0, 60, 5.0);
+        let report = compute_baselines(&bars, 10_000.0, 60, 5.0, 42);
         let expected_delta = 5.0 - report.buy_hold.return_pct;
         assert!(
             (report.relative_to.buy_hold - expected_delta).abs() < 1e-9,
@@ -584,7 +659,7 @@ mod tests {
         // always_flat returns 0 → relative_to.always_flat == strategy_return_pct
         let bars: Vec<Ohlcv> = (0..30).map(|_| bar(100.0)).collect();
         let strategy_ret = -2.32;
-        let report = compute_baselines(&bars, 10_000.0, 60, strategy_ret);
+        let report = compute_baselines(&bars, 10_000.0, 60, strategy_ret, 42);
         assert!(
             (report.relative_to.always_flat - strategy_ret).abs() < 1e-9,
             "relative_to.always_flat should equal strategy return {strategy_ret}, got {:.6}",

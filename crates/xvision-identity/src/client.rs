@@ -85,7 +85,7 @@ sol! {
             string  calldata endpoint,
             string  calldata feedbackURI,
             bytes32 feedbackHash
-        ) external;
+        ) external returns (uint256 feedbackId);
 
         function getFeedback(uint256 agentId, uint256 index)
             external view
@@ -250,6 +250,13 @@ pub struct TokenId(pub U256);
 impl std::fmt::Display for TokenId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl TokenId {
+    /// Construct a token id from a raw u64 token number.
+    pub fn from_u64(n: u64) -> Self {
+        Self(U256::from(n))
     }
 }
 

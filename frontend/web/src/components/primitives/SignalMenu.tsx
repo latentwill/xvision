@@ -491,6 +491,11 @@ export function SignalCheckboxMenu({
 // ─── SignalModelPickerMenu ────────────────────────────────────────────────────
 // Filterable model picker grouped by provider with context window display.
 
+function shortModelId(model: string): string {
+  const lastSlash = model.lastIndexOf("/");
+  return lastSlash >= 0 ? model.slice(lastSlash + 1) : model;
+}
+
 export interface ModelOption {
   provider: string;
   model: string;
@@ -532,7 +537,7 @@ export function SignalModelPickerMenu({
   const filterRef = useRef<HTMLInputElement>(null);
 
   const selectedLabel =
-    provider && model ? `${model}` : placeholder;
+    provider && model ? shortModelId(model) : placeholder;
 
   // Focus filter input when menu opens
   useEffect(() => {
@@ -568,11 +573,11 @@ export function SignalModelPickerMenu({
         disabled={loading}
         onClick={toggle}
         className={[
-          "inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors whitespace-nowrap hover:border-text-3 disabled:opacity-50",
+          "inline-flex items-center gap-1.5 h-8 px-2.5 bg-surface-elev border border-border rounded-sm text-text text-[12.5px] cursor-pointer transition-colors overflow-hidden min-w-0 whitespace-nowrap hover:border-text-3 disabled:opacity-50",
           className ?? "",
         ].join(" ")}
       >
-        <span className="flex-1 text-left font-mono text-[12px]">
+        <span className="flex-1 min-w-0 text-left font-mono text-[12px] truncate">
           {loading ? "Loading…" : selectedLabel}
         </span>
         <Icon name="chevR" size={11} className="text-text-3" />

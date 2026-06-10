@@ -21,6 +21,7 @@ xvision-filters       = { path = "../xvision-filters" }
 xvision-memory        = { path = "../xvision-memory" }
 xvision-observability = { path = "../xvision-observability" }
 xvision-risk          = { path = "../xvision-risk" }
+xvision-identity      = { path = "../xvision-identity", optional = true }
 
 reqwest     = { workspace = true }
 
@@ -68,6 +69,7 @@ uuid               = { workspace = true }
 
 [features]
 default   = []
+chain-attest = ["dep:xvision-identity"]
 # Emit TypeScript types for every API request/response to
 # `frontend/web/src/api/types.gen/`. Run via `cargo xtask gen-types` (Plan 1
 # Task 4) or directly with `cargo test --features ts-export --tests`.

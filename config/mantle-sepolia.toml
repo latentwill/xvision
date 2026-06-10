@@ -9,20 +9,20 @@ chain_id = 5003
 rpc_url  = "https://rpc.sepolia.mantle.xyz"
 
 [erc8004]
-identity_registry   = "0x0000000000000000000000000000000000000000"
-reputation_registry = "0x0000000000000000000000000000000000000000"
-validation_registry = "0x0000000000000000000000000000000000000000"
+identity_registry   = "0x1DE1ccb2bBB5e1dE856BA096698b1A97f4484Fe4"
+reputation_registry = "0xbb8A920d6d342a4FcF3929D91668cfbbfb14d2D8"
+validation_registry = "0xFAeeBF70aE0B351100a8Ba3244dDf8792bEff84F"
 
 [marketplace]
-xvn_deployer            = "0x0000000000000000000000000000000000000000" # CREATE2 factory (nonce-0 EOA)
-listing_registry        = "0x0000000000000000000000000000000000000000" # UUPS proxy
-marketplace             = "0x0000000000000000000000000000000000000000" # UUPS proxy
-license_token           = "0x0000000000000000000000000000000000000000" # UUPS proxy
-eval_attestation        = "0x0000000000000000000000000000000000000000" # UUPS proxy
+xvn_deployer            = "0x3a8A5557A33a67eF3c6Dd1400d60eC270e24F8FB" # CREATE2 factory (nonce-0 EOA)
+listing_registry        = "0x64b5ae5B91CB2846e7dA8cE883f2023b98E2cD22" # UUPS proxy
+marketplace             = "0x4b9450642f2b3Da248e90b4FEBaA8eCA87E78cE8" # UUPS proxy
+license_token           = "0xF72BB0526FCdDee8E1c0b56c2DF21C95FE51F978" # UUPS proxy
+eval_attestation        = "0x205Ce1c3e43b2a4671b49a1Ff426AE8De90ABDf6" # UUPS proxy
 platform_agent_token_id = 0                                            # IdentityRegistry NFT minted in deploy step 9
-fee_recipient           = "0x0000000000000000000000000000000000000000" # V2: operator EOA
-admin                   = "0x0000000000000000000000000000000000000000" # V2: operator EOA
+fee_recipient           = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V2: operator EOA
+admin                   = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V2: operator EOA
 
 [marketplace.usdc]
-address  = "0x0000000000000000000000000000000000000000" # USDC.e on Mantle Sepolia
+address  = "0xAcab8129E2cE587fD203FD770ec9ECAFA2C88080" # USDC.e on Mantle Sepolia
 decimals = 6

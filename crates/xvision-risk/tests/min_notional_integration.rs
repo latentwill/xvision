@@ -18,6 +18,7 @@ use xvision_core::{
     Action, AssetSymbol, Direction, OpenPosition, PortfolioState, RiskDecision, TraderDecision, VetoReason,
 };
 
+use xvision_core::asset_registry::DataSource;
 use xvision_risk::config::{Limits, RiskConfig, Stops, VenueLimits};
 use xvision_risk::whitelist::{AssetEntry, Whitelist};
 use xvision_risk::{RiskEvalContext, RiskLayer, RiskRule, RuleVerdict};
@@ -28,7 +29,8 @@ fn whitelist_with_btc_and_eth_enabled() -> Whitelist {
         AssetSymbol::Btc,
         AssetEntry {
             enabled: true,
-            cluster: "btc".into(),
+            category: "btc".into(),
+            data: DataSource::Alpaca,
             venues: BTreeMap::new(),
         },
     );
@@ -36,7 +38,8 @@ fn whitelist_with_btc_and_eth_enabled() -> Whitelist {
         AssetSymbol::Eth,
         AssetEntry {
             enabled: true,
-            cluster: "eth".into(),
+            category: "eth".into(),
+            data: DataSource::Alpaca,
             venues: BTreeMap::new(),
         },
     );
@@ -63,7 +66,6 @@ fn risk_config(paper_min: f64, live_min: f64) -> RiskConfig {
             max_total_exposure_pct: 100.0,
             max_open_positions: 5,
             max_daily_loss_pct: 5.0,
-            max_correlation_cluster: 2,
         },
         stops: Stops {
             stop_loss_required: true,

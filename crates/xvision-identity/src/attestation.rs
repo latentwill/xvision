@@ -47,6 +47,7 @@
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use chrono::Utc;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
@@ -198,6 +199,31 @@ impl IdentityClient {
             }
             other => Ok((other, None)),
         }
+    }
+
+    /// Submit an attestation using a hex-encoded private key.
+    ///
+    /// Convenience wrapper around [`submit_attestation`] so callers outside
+    /// `xvision-identity` (e.g. `xvision-engine::eval::chain_attestation`) need
+    /// no direct `alloy` dependency.
+    pub async fn submit_attestation_with_key(
+        &self,
+        agent_token_id: u64,
+        cycle_id: Uuid,
+        verdict_value: u8,
+        holds_license: bool,
+        private_key_hex: &str,
+    ) -> Result<(AttestationDecision, Option<TxHash>), IdentityError> {
+        let signer = PrivateKeySigner::from_str(private_key_hex.trim_start_matches("0x"))
+            .map_err(|e| IdentityError::Signer(e.to_string()))?;
+        self.submit_attestation(
+            TokenId::from_u64(agent_token_id),
+            cycle_id,
+            verdict_value,
+            holds_license,
+            &signer,
+        )
+        .await
     }
 }
 

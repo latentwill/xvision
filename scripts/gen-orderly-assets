@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""
+Generate config/whitelist.toml by merging the Orderly snapshot with legacy Alpaca assets.
+
+Usage: python3 scripts/gen-orderly-assets [--snapshot PATH] [--out PATH]
+Default snapshot: crates/xvision-risk/tests/fixtures/orderly_info_snapshot.json
+Default output:  config/whitelist.toml
+"""
+
+import json
+import sys
+import argparse
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).parent
+REPO_ROOT = SCRIPT_DIR.parent
+
+DEFAULT_SNAPSHOT = REPO_ROOT / "crates/xvision-risk/tests/fixtures/orderly_info_snapshot.json"
+DEFAULT_OUT = REPO_ROOT / "config/whitelist.toml"
+
+# Naming rules for broker-suffixed symbols
+BROKER_SUFFIXES = {
+    "mythos": "MYTHOS",
+    "arthur": "ARTHUR",
+}
+
+def parse_orderly_symbol(raw: str) -> tuple[str, str]:
+    """
+    Parse 'PERP_BTC_USDC' -> ('BTC', 'PERP_BTC_USDC')
+    Parse 'PERP_SPY_USDC_mythos' -> ('SPY_MYTHOS', 'PERP_SPY_USDC_mythos')
+    Parse 'PERP_NATGAS_USDC_arthur' -> ('NATGAS_ARTHUR', 'PERP_NATGAS_USDC_arthur')
+    Returns (base_symbol, exact_orderly_symbol).
+    """
+    # Check for broker suffix: ends with _mythos or _arthur etc.
+    lower = raw.lower()
+    broker_suffix = None
+    for suffix, label in BROKER_SUFFIXES.items():
+        if lower.endswith("_" + suffix):
+            broker_suffix = label
+            break
+
+    if broker_suffix:
+        # Strip trailing _suffix
+        stripped = raw[:raw.lower().rfind("_" + broker_suffix.lower())]
+        # Now stripped is like 'PERP_SPY_USDC' — parse the base
+        base = stripped.removeprefix("PERP_").removesuffix("_USDC")
+        return f"{base}_{broker_suffix}", raw
+
+    # Standard: PERP_{BASE}_USDC
+    base = raw.removeprefix("PERP_").removesuffix("_USDC")
+    return base, raw
+
+# Category assignment rules
+MEME_COINS = {
+    "1000BONK", "1000PEPE", "1000SHIB", "FARTCOIN", "GOAT", "PUMP", "USELESS",
+    "WIF", "TRUMP", "BIRB", "PEPE", "BASED", "EDGE", "USELESS",
+}
+RWA_COINS = {
+    "PAXG", "XAU", "XAG", "CL", "NATGAS_ARTHUR",
+}
+EQUITY_COINS = {
+    "NVDA", "TSLA", "GOOGL", "SNDK_MYTHOS", "SOXL_MYTHOS",
+}
+INDEX_COINS = {
+    "SPX500", "SPX", "NAS100", "SPY_MYTHOS", "QQQ_MYTHOS", "EWY_MYTHOS",
+}
+STABLE_COINS = {
+    "USDT", "USDC", "STBL",
+}
+
+def assign_category(base: str) -> str:
+    if base in MEME_COINS:
+        return "meme"
+    if base in RWA_COINS:
+        return "rwa"
+    if base in EQUITY_COINS:
+        return "equity"
+    if base in INDEX_COINS:
+        return "index"
+    if base in STABLE_COINS:
+        return "stable"
+    # Broker-suffixed that aren't already categorized
+    if base.endswith("_MYTHOS") or base.endswith("_ARTHUR"):
+        return "rwa"
+    return "crypto"
+
+# Legacy Alpaca-only assets (not in Orderly snapshot, preserve as-is)
+LEGACY_ALPACA_ONLY = {
+    "SHIB":  {"alpaca": "SHIB/USD",  "category": "meme",   "enabled": True},
+    "MATIC": {"alpaca": "MATIC/USD", "category": "crypto",  "enabled": True},
+    "USDT":  {"alpaca": "USDT/USD",  "category": "stable",  "enabled": True},
+    "USDC":  {"alpaca": "USDC/USD",  "category": "stable",  "enabled": True},
+}
+
+# Overlapping legacy assets: both Alpaca and Orderly
+LEGACY_ALPACA_PAIRS = {
+    "BTC":  "BTC/USD",
+    "ETH":  "ETH/USD",
+    "LTC":  "LTC/USD",
+    "SOL":  "SOL/USD",
+    "AVAX": "AVAX/USD",
+    "LINK": "LINK/USD",
+    "AAVE": "AAVE/USD",
+    "UNI":  "UNI/USD",
+    "DOT":  "DOT/USD",
+    "DOGE": "DOGE/USD",
+    "BCH":  "BCH/USD",
+}
+
+def generate(snapshot_path: Path, out_path: Path):
+    symbols = json.loads(snapshot_path.read_text())
+
+    # Parse all Orderly symbols
+    orderly_map = {}  # base → exact_orderly_symbol
+    seen_bases = set()
+    for raw in symbols:
+        base, exact = parse_orderly_symbol(raw)
+        if base in seen_bases:
+            print(f"WARNING: duplicate base '{base}' from '{raw}'", file=sys.stderr)
+        seen_bases.add(base)
+        orderly_map[base] = exact
+
+    # Build merged entries
+    entries = []
+
+    # 1. Legacy Alpaca-only (not in Orderly)
+    for base, meta in LEGACY_ALPACA_ONLY.items():
+        if base not in orderly_map:  # Confirm it's really absent
+            entries.append({
+                "symbol": base,
+                "enabled": meta["enabled"],
+                "category": meta["category"],
+                "data": "alpaca",
+                "venues": {"alpaca": meta["alpaca"]},
+            })
+
+    # 2. Orderly symbols — merged with legacy Alpaca where they overlap
+    for base, orderly_sym in sorted(orderly_map.items()):
+        alpaca_pair = LEGACY_ALPACA_PAIRS.get(base)
+        category = assign_category(base)
+        data = "alpaca" if alpaca_pair else "orderly-only"
+        venues = {}
+        if alpaca_pair:
+            venues["alpaca"] = alpaca_pair
+        venues["orderly"] = orderly_sym
+        entries.append({
+            "symbol": base,
+            "enabled": True,
+            "category": category,
+            "data": data,
+            "venues": venues,
+        })
+
+    # Sort: alpaca-data first, then by symbol name
+    entries.sort(key=lambda e: (0 if e["data"] == "alpaca" else 1, e["symbol"]))
+
+    # Generate TOML
+    lines = [
+        "# Tradeable assets and per-venue symbol mappings.",
+        "# Generated by scripts/gen-orderly-assets — do not edit by hand.",
+        "# Regenerate: python3 scripts/gen-orderly-assets",
+        "",
+    ]
+    for e in entries:
+        lines.append("[[assets]]")
+        lines.append(f'symbol   = "{e["symbol"]}"')
+        lines.append(f'enabled  = {"true" if e["enabled"] else "false"}')
+        lines.append(f'category = "{e["category"]}"')
+        lines.append(f'data     = "{e["data"]}"')
+        if e["venues"]:
+            lines.append("[assets.venues]")
+            for k, v in e["venues"].items():
+                lines.append(f'{k}  = "{v}"')
+        lines.append("")
+
+    out_path.write_text("\n".join(lines))
+    print(f"Wrote {len(entries)} assets to {out_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--snapshot", type=Path, default=DEFAULT_SNAPSHOT)
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    args = parser.parse_args()
+    generate(args.snapshot, args.out)
+
+
+if __name__ == "__main__":
+    main()

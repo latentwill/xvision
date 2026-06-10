@@ -19,14 +19,36 @@ pub enum ProgramViewError {
 }
 
 pub fn to_markdown(strategy: &Strategy) -> String {
+    to_markdown_with_resolved_prompts(strategy, &HashMap::new())
+}
+
+/// Like `to_markdown`, but annotates each agent's section with its resolved
+/// system prompt when `prompt_override` is absent. The Mutator sees the real
+/// trading logic so it can improve it rather than inventing from scratch.
+///
+/// `resolved`: maps `agent_id → system_prompt`. Agents not in the map, or
+/// those whose `prompt_override` is already set, are rendered without the
+/// annotation (the override text is already in the JSON block).
+///
+/// `from_markdown` ignores any text outside ````json` fences, so the
+/// annotation is invisible to the round-trip parser.
+pub fn to_markdown_with_resolved_prompts(strategy: &Strategy, resolved: &HashMap<String, String>) -> String {
     let mut out = format!("# Strategy {}\n\n", strategy.manifest.display_name);
     out.push_str(&render_json_section("Manifest", &strategy.manifest));
-    out.push_str(&render_agents_section(&strategy.agents));
+    out.push_str(&render_agents_section_with_prompts(&strategy.agents, resolved));
     out.push_str(&render_json_section(
         "Mechanical params",
         &strategy.mechanical_params,
     ));
     out.push_str(&render_json_section("Risk config", &strategy.risk));
+    // Render the filter so the experiment writer sees its current values in the
+    // main program view (not only via the separate filter-paths list). This
+    // closes the markdown rendering gap that caused stale_filter_baseline
+    // rejections when the LLM inferred wrong `before` values. from_markdown
+    // ignores this section and clones base.filter, so the round-trip is unaffected.
+    if let Some(ref filter) = strategy.filter {
+        out.push_str(&render_json_section("Filter", filter));
+    }
     out
 }
 
@@ -71,12 +93,23 @@ fn render_json_section<T: Serialize>(header: &str, value: &T) -> String {
     format!("## {header}\n```json\n{json}\n```\n\n")
 }
 
-fn render_agents_section(agents: &[AgentRef]) -> String {
+fn render_agents_section_with_prompts(agents: &[AgentRef], resolved: &HashMap<String, String>) -> String {
     let mut out = String::from("## Agents\n\n");
     let limit = agents.len().min(256);
     for agent in agents.iter().take(limit) {
         let json = serde_json::to_string_pretty(agent).unwrap_or_default();
-        out.push_str(&format!("### {}\n```json\n{json}\n```\n\n", agent.role));
+        out.push_str(&format!("### {}\n```json\n{json}\n```\n", agent.role));
+        // When there's no per-strategy override, include the resolved library
+        // prompt so the experiment writer can improve it rather than invent
+        // wholesale. Text outside the JSON fence is ignored by from_markdown.
+        if agent.prompt_override.is_none() {
+            if let Some(prompt) = resolved.get(&agent.agent_id) {
+                if !prompt.is_empty() {
+                    out.push_str(&format!("\nCurrent system prompt:\n{}\n", prompt.trim()));
+                }
+            }
+        }
+        out.push('\n');
     }
     out
 }

@@ -41,6 +41,7 @@ const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => (
 const SettingsToolPolicyRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsToolPolicyRoute })));
 const SettingsWalletRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsWalletRoute })));
 const SettingsMarketplaceRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsMarketplaceRoute })));
+const SettingsIdentityRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsIdentityRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
 const ChartLabLayout = lazy(() => import("./routes/chart-lab").then((m) => ({ default: m.ChartLabLayout })));
 const ChartLabOverview = lazy(() => import("./routes/chart-lab/ChartLabOverview").then((m) => ({ default: m.ChartLabOverview })));
@@ -62,6 +63,11 @@ const OptimizerHome = lazy(() => import("./features/autooptimizer/screens/Optimi
 const OptimizerCycle = lazy(() => import("./features/autooptimizer/screens/CycleDetail").then((m) => ({ default: m.CycleDetail })));
 const OptimizerExperiment = lazy(() => import("./features/autooptimizer/screens/ExperimentDetail").then((m) => ({ default: m.ExperimentDetail })));
 const OptimizerRunDetail = lazy(() => import("./features/autooptimizer/screens/RunDetail").then((m) => ({ default: m.RunDetail })));
+const OptimizerStrategyInspector = lazy(() =>
+  import("./features/autooptimizer/screens/StrategyInspector").then((m) => ({
+    default: m.StrategyInspector,
+  }))
+);
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
@@ -219,6 +225,7 @@ export const router = createBrowserRouter([
           { path: "cycle/:cycleId", element: page(<OptimizerCycle />) },
           { path: "experiment/:hash", element: page(<OptimizerExperiment />) },
           { path: "run/:sessionId", element: page(<OptimizerRunRoute />) },
+          { path: "strategy/:hash", element: page(<OptimizerStrategyInspector />) },
         ],
       },
       // Legacy deep-links (bookmarks, old SSE/diff URLs) → new optimizer surface.
@@ -237,6 +244,7 @@ export const router = createBrowserRouter([
           { path: "wallet", element: page(<SettingsWalletRoute />) },
           { path: "marketplace", element: page(<SettingsMarketplaceRoute />) },
           { path: "tool-policy", element: page(<SettingsToolPolicyRoute />) },
+          { path: "identity", element: page(<SettingsIdentityRoute />) },
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },

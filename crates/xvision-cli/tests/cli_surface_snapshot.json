@@ -2,36 +2,6 @@
   "commands": [
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--arms",
-        "--asset",
-        "--bars",
-        "--cycles",
-        "--fee-bps",
-        "--from",
-        "--granularity",
-        "--help",
-        "--horizon-hours",
-        "--initial-nav-usd",
-        "--intern",
-        "--intern-model",
-        "--output",
-        "--record",
-        "--replay",
-        "--step-hours",
-        "--to",
-        "--trader-api-key-env",
-        "--trader-base-url",
-        "--trader-model"
-      ],
-      "mutates": false,
-      "path": [
-        "ab-compare"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help"
@@ -1416,16 +1386,6 @@
       "mutates": false,
       "path": [
         "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "ab-compare"
       ]
     },
     {

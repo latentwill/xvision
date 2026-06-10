@@ -552,6 +552,39 @@ where
         .map(|kids| kids.into_iter().map(|n| n.bundle_hash).collect())
         .unwrap_or_default();
 
+    // Resolve each agent's real system_prompt so the experiment writer sees
+    // the actual trading logic rather than just an agent_id reference. Only
+    // agents whose prompt_override is None need resolution — if an override is
+    // already set, it's visible in the AgentRef JSON block. Best-effort: a DB
+    // miss (agent not found) just leaves that agent un-annotated, which is
+    // no worse than the previous behaviour.
+    let resolved_agent_prompts: HashMap<String, String> = {
+        let agent_store = crate::agents::AgentStore::new(pool.clone());
+        let mut map = HashMap::new();
+        for agent_ref in &parent_strategy.agents {
+            if agent_ref.prompt_override.is_none() {
+                match agent_store.get(&agent_ref.agent_id).await {
+                    Ok(Some(agent)) => {
+                        if let Some(slot) = agent.slots.first() {
+                            if !slot.system_prompt.is_empty() {
+                                map.insert(agent_ref.agent_id.clone(), slot.system_prompt.clone());
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            agent_id = %agent_ref.agent_id,
+                            error = %e,
+                            "failed to resolve agent prompt for mutator context (best-effort, ignoring)"
+                        );
+                    }
+                }
+            }
+        }
+        map
+    };
+
     for mutation_idx in 0..cycle_config.mutations_per_parent {
         // F28: stop launching further candidates once the operator cancels.
         if cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed)) {
@@ -594,7 +627,10 @@ where
         let diff_result: Option<crate::autooptimizer::mutator::MutationDiff> = if config.tournament_enabled {
             use crate::autooptimizer::tournament::TournamentRunner;
             let runner = TournamentRunner::from_mutator(mutator);
-            match runner.run_tournament(parent_strategy, config).await {
+            match runner
+                .run_tournament(parent_strategy, config, Some(&resolved_agent_prompts))
+                .await
+            {
                 Ok(r) if r.incumbent_wins => {
                     no_candidate_count += 1;
                     progress(CycleProgressEvent::PhaseFinished {
@@ -639,8 +675,10 @@ where
                     config,
                     dsr_prefix,
                     exploration_seed,
+                    mutation_idx,
                     mutation_memory_context.as_deref(),
                     &avoid,
+                    Some(&resolved_agent_prompts),
                 )
                 .await
             {

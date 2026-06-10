@@ -140,7 +140,7 @@ function CommandBar({
               {launcherOpen ? "Hide launcher" : "Launch run"}
             </button>
           )}
-          {isRunning && activeCycleId && (
+          {isRunning && session && activeCycleId && (
             <>
               <button
                 type="button"
@@ -160,7 +160,7 @@ function CommandBar({
               </button>
             </>
           )}
-          {isPaused && activeCycleId && (
+          {isPaused && session && activeCycleId && (
             <>
               <button
                 type="button"

@@ -8,6 +8,7 @@ import { Link } from "react-router-dom";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
 import type { LiveStatus } from "@/components/chart/use-run-stream";
 import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
+import type { NamedStrategy } from "@/lib/run-display";
 import { StrategyPill } from "./StrategyPill";
 import { isLiveRun } from "./strip-status";
 import {
@@ -25,6 +26,7 @@ export interface StrategyStripProps {
   /** Real SSE status of the currently-selected run's chart stream. */
   selectedConnStatus: LiveStatus;
   walletDisabled: boolean;
+  strategies?: NamedStrategy[];
   // B-III transport seam — factory so each pill gets its run's handlers +
   // inline-expander UI state. Omitted ⇒ pills render disabled transport
   // placeholders (B-I behavior).
@@ -39,6 +41,7 @@ export function StrategyStrip({
   onMetricChange,
   selectedConnStatus,
   walletDisabled,
+  strategies,
   transportFor,
 }: StrategyStripProps) {
   const metricOptions = STRIP_METRIC_OPTIONS.map((o) => ({
@@ -66,6 +69,7 @@ export function StrategyStrip({
                   run={run}
                   selected={isSelected}
                   metric={metric}
+                  strategies={strategies}
                   // Selected pill reflects the real chart stream status;
                   // others get a lightweight derived status so we don't
                   // open an EventSource per pill.

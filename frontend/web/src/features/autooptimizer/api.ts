@@ -359,32 +359,6 @@ export function useCancelSession() {
   });
 }
 
-/** Pause an in-flight optimizer cycle at its next safe checkpoint. */
-export async function pauseCycle(cycleId: string): Promise<void> {
-  await apiFetch<unknown>(
-    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/pause`,
-    { method: "POST" },
-  );
-}
-
-/** Resume a paused optimizer cycle. */
-export async function resumeCycle(cycleId: string): Promise<void> {
-  await apiFetch<unknown>(
-    `/api/autooptimizer/cycles/${encodeURIComponent(cycleId)}/resume`,
-    { method: "POST" },
-  );
-}
-
-/** useMutation hook: pause cycle. */
-export function usePauseCycle() {
-  return useMutation({ mutationFn: (cycleId: string) => pauseCycle(cycleId) });
-}
-
-/** useMutation hook: resume cycle. */
-export function useResumeCycle() {
-  return useMutation({ mutationFn: (cycleId: string) => resumeCycle(cycleId) });
-}
-
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 export const autooptimizerKeys = {
@@ -774,6 +748,42 @@ export function useExperimentDetail(hash: string) {
     // Fail gracefully — the endpoint may not exist yet in older backend versions.
     retry: false,
   });
+}
+
+// ─── Strategy Inspector types (unified optimizer plan) ───────────────────────
+
+export interface StrategyDiff {
+  prose: Array<{ agent_role: string; before: string; after: string }>;
+  params: Array<{ key: string; before: unknown; after: unknown }>;
+  tools: { added: string[]; removed: string[] };
+  filter: Array<{ path: string; before: unknown; after: unknown }>;
+}
+
+export interface OriginDiffResponse {
+  origin_hash: string;
+  diff: StrategyDiff;
+}
+
+async function getOriginDiff(hash: string): Promise<OriginDiffResponse> {
+  return apiFetch<OriginDiffResponse>(
+    `/api/optimizer/strategy/${encodeURIComponent(hash)}/diff/origin`,
+  );
+}
+
+export function useOriginDiff(hash: string | null | undefined) {
+  return useQuery({
+    queryKey: [...autooptimizerKeys.all, "origin-diff", hash ?? ""] as const,
+    queryFn: () => getOriginDiff(hash!),
+    enabled: !!hash,
+    staleTime: 60_000,
+  });
+}
+
+export async function promoteStrategy(hash: string): Promise<{ strategy_id: string }> {
+  return apiFetch<{ strategy_id: string }>(
+    `/api/optimizer/strategy/${encodeURIComponent(hash)}/promote`,
+    { method: "POST" },
+  );
 }
 
 // ─── Operator label helpers ───────────────────────────────────────────────────

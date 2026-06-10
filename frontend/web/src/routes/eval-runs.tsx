@@ -334,8 +334,8 @@ export function EvalRunsRoute() {
     { key: "strategy", label: "Strategy",                essential: true,  estWidth: 160 },
     { key: "scenario", label: "Scenario",                essential: true,  estWidth: 150 },
     { key: "status",   label: "Status",                  essential: true,  estWidth: 100 },
-    { key: "return",   label: "Return",  align: "right" as const, priority: 6, estWidth: 90 },
-    { key: "sharpe",   label: "Sharpe",  align: "right" as const, priority: 5, estWidth: 90 },
+    { key: "return",   label: "Return",  align: "right" as const, essential: true, estWidth: 90 },
+    { key: "sharpe",   label: "Sharpe",  align: "right" as const, essential: true, estWidth: 90 },
     { key: "drawdown", label: "Max DD",  align: "right" as const, priority: 4, estWidth: 90 },
     { key: "mode",     label: "Mode",                    priority: 3,      estWidth: 90 },
     { key: "tokens",   label: "Tokens",  align: "right" as const, priority: 2, estWidth: 80 },
@@ -610,9 +610,13 @@ function DesktopRow({
       <td className="px-3 py-3 text-text-2">
         {displayScenarioName(row.scenario_id, scenarios)}
       </td>
-      <td className="px-3 py-3 text-text-2">{row.mode}</td>
       <td className="px-3 py-3">
         <StatusPill status={row.status} />
+      </td>
+      <td
+        className={`px-3 py-3 text-right font-mono ${signedToneClass(row.total_return_pct)}`}
+      >
+        {fmtPct(row.total_return_pct)}
       </td>
       <td
         className={`px-3 py-3 text-right font-mono ${signedToneClass(row.sharpe)}`}
@@ -624,11 +628,7 @@ function DesktopRow({
       >
         {fmtPct(row.max_drawdown_pct)}
       </td>
-      <td
-        className={`px-3 py-3 text-right font-mono ${signedToneClass(row.total_return_pct)}`}
-      >
-        {fmtPct(row.total_return_pct)}
-      </td>
+      <td className="px-3 py-3 text-text-2">{row.mode}</td>
       <td className="px-3 py-3 text-right font-mono">{fmtTokens(row)}</td>
       <td className="px-3 py-3 text-right font-mono">
         {fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}

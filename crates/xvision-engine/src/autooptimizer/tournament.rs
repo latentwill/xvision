@@ -75,6 +75,7 @@ impl TournamentRunner {
         &self,
         parent: &Strategy,
         config: &AutoOptimizerConfig,
+        resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<TournamentCandidate>> {
         let incumbent = TournamentCandidate {
             kind: CandidateKind::Incumbent,
@@ -84,8 +85,8 @@ impl TournamentRunner {
         let adversarial_sys = system_section(ADVERSARIAL_PROMPT);
         let synthesis_sys = system_section(SYNTHESIS_PROMPT);
         let (adv_diff, syn_diff) = tokio::try_join!(
-            self.propose_diff(parent, config, &adversarial_sys),
-            self.propose_diff(parent, config, &synthesis_sys),
+            self.propose_diff(parent, config, &adversarial_sys, resolved_agent_prompts),
+            self.propose_diff(parent, config, &synthesis_sys, resolved_agent_prompts),
         )?;
         let adv_strategy = apply_params(parent, &adv_diff);
         let syn_strategy = apply_params(parent, &syn_diff);
@@ -109,8 +110,11 @@ impl TournamentRunner {
         parent: &Strategy,
         config: &AutoOptimizerConfig,
         system_prompt: &str,
+        resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<MutationDiff> {
-        let program_md = program_view::to_markdown(parent);
+        let empty_map = std::collections::HashMap::new();
+        let resolved = resolved_agent_prompts.unwrap_or(&empty_map);
+        let program_md = program_view::to_markdown_with_resolved_prompts(parent, resolved);
         let mut last_err: Option<String> = None;
         let max_attempts = self.max_retries.saturating_add(1);
         assert!(max_attempts >= 1, "max_attempts must be at least 1");
@@ -206,8 +210,11 @@ impl TournamentRunner {
         &self,
         parent: &Strategy,
         config: &AutoOptimizerConfig,
+        resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<TournamentResult> {
-        let candidates = self.generate_candidates(parent, config).await?;
+        let candidates = self
+            .generate_candidates(parent, config, resolved_agent_prompts)
+            .await?;
         assert_eq!(candidates.len(), CANDIDATE_COUNT);
         let votes = self.borda_vote(&candidates).await?;
         let borda_scores = Self::tally(&votes);
@@ -472,7 +479,10 @@ mod tests {
         ]);
         let runner = make_runner(dispatch);
         let strategy = stub_strategy();
-        let candidates = runner.generate_candidates(&strategy, &config).await.unwrap();
+        let candidates = runner
+            .generate_candidates(&strategy, &config, None)
+            .await
+            .unwrap();
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].kind, CandidateKind::Incumbent);
         assert_eq!(candidates[1].kind, CandidateKind::Adversarial);
@@ -510,7 +520,7 @@ mod tests {
         ]);
         let runner = make_runner(dispatch);
         let strategy = stub_strategy();
-        let result = runner.run_tournament(&strategy, &config).await.unwrap();
+        let result = runner.run_tournament(&strategy, &config, None).await.unwrap();
         assert!(
             result.incumbent_wins,
             "incumbent should win when ranked first by all judges"

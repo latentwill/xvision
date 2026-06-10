@@ -130,10 +130,6 @@ impl RiskLayer {
             Box::new(MaxOpenPositions {
                 max: config.limits.max_open_positions,
             }),
-            Box::new(CorrelationCluster {
-                max: config.limits.max_correlation_cluster,
-                whitelist: whitelist.clone(),
-            }),
         ];
 
         if let Some(v) = venue_id {
@@ -307,6 +303,7 @@ pub(crate) mod tests_common {
 
     use crate::context::RiskEvalContext;
     use crate::whitelist::{AssetEntry, Whitelist};
+    use xvision_core::asset_registry::DataSource;
 
     pub fn make_decision(
         action: Action,
@@ -446,7 +443,8 @@ pub(crate) mod tests_common {
                 sym,
                 AssetEntry {
                     enabled: true,
-                    cluster: sym.as_str().to_ascii_lowercase(),
+                    category: sym.as_str().to_ascii_lowercase(),
+                    data: DataSource::Alpaca,
                     venues: BTreeMap::new(),
                 },
             );
@@ -480,7 +478,6 @@ pub(crate) mod tests_common {
                 max_total_exposure_pct: 100.0,
                 max_open_positions: 5,
                 max_daily_loss_pct: 5.0,
-                max_correlation_cluster: 2,
             },
             stops: Stops {
                 stop_loss_required: true,

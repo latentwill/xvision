@@ -18,11 +18,27 @@ import type {
   CredentialRef,
 } from "@/api/types.gen";
 
+// ── Market refresh types ──────────────────────────────────────────────────
+
+interface RefreshResult {
+  symbols_found: number;
+  whitelist_path: string;
+  registry_reloaded: boolean;
+  message: string;
+}
+
+type RefreshState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "done"; result: RefreshResult }
+  | { status: "error"; message: string };
+
 const TABS = [
   { to: "general", label: "General" },
   { to: "providers", label: "Providers" },
   { to: "brokers", label: "Brokers" },
   { to: "wallet", label: "Wallet" },
+  { to: "identity", label: "Identity" },
   { to: "marketplace", label: "Marketplace" },
   { to: "tool-policy", label: "Tool policy" },
   { to: "danger", label: "Danger zone" },
@@ -72,6 +88,7 @@ export function SettingsBrokersRoute() {
         <div className="space-y-5">
           <AlpacaBrokerCard entry={data.alpaca} />
           <BrokerCard entry={data.orderly} />
+          <MarketsRefreshCard />
         </div>
       )}
     </FetchStates>
@@ -83,6 +100,80 @@ export { SettingsSkillsRoute } from "./skills";
 export { SettingsToolPolicyRoute } from "./tool-policy";
 export { SettingsWalletRoute } from "./wallet";
 export { SettingsMarketplaceRoute } from "./marketplace";
+export { SettingsIdentityRoute } from "./identity";
+
+// ────────────────────────────────────────────────────────────────────────────
+// Markets refresh card
+
+function MarketsRefreshCard() {
+  const [state, setState] = useState<RefreshState>({ status: "idle" });
+
+  const handleRefresh = async () => {
+    setState({ status: "loading" });
+    try {
+      const res = await fetch("/api/assets/refresh", { method: "POST" });
+      if (!res.ok) {
+        const body = await res.text().catch(() => res.statusText);
+        throw new Error(`${res.status} ${body}`);
+      }
+      const result: RefreshResult = await res.json();
+      setState({ status: "done", result });
+    } catch (e) {
+      setState({ status: "error", message: String(e) });
+    }
+  };
+
+  const isLoading = state.status === "loading";
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <h3 className="m-0 font-sans font-medium text-[20px] tracking-tight">
+            Markets
+          </h3>
+          <p className="m-0 mt-1 text-text-3 text-[12px] leading-snug max-w-lg">
+            Fetch current perpetual markets from Orderly Network and update the
+            asset registry file on disk.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isLoading}
+          className="shrink-0 px-3 py-1.5 rounded text-[13px] font-medium border border-border text-text hover:border-text-3 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {isLoading ? "Refreshing…" : "Refresh markets"}
+        </button>
+      </div>
+
+      {state.status === "done" && (
+        <div className="px-3 py-2 bg-surface-elev border border-border rounded text-[12px] space-y-1">
+          <div className="text-info font-medium">
+            {state.result.symbols_found} markets fetched
+          </div>
+          <div className="text-text-2">
+            Saved to{" "}
+            <code className="font-mono text-[11px] text-text">
+              {state.result.whitelist_path}
+            </code>
+          </div>
+          {!state.result.registry_reloaded && (
+            <div className="text-text-3 text-[11px]">
+              Restart xvn to apply the new market list.
+            </div>
+          )}
+        </div>
+      )}
+
+      {state.status === "error" && (
+        <div className="px-3 py-2 bg-surface-elev border border-border rounded text-[12px]">
+          <span className="text-danger font-mono">{state.message}</span>
+        </div>
+      )}
+    </Card>
+  );
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // helpers

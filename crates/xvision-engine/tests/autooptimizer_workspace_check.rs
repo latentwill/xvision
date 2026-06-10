@@ -120,8 +120,10 @@ async fn run_chain(pool: &sqlx::SqlitePool) -> ContentHash {
             &AutoOptimizerConfig::default(),
             None,
             42,
+            0,
             None,
             &Default::default(),
+            None,
         )
         .await
         .expect("propose must succeed with valid diff JSON");

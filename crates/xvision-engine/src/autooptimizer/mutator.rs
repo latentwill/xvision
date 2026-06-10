@@ -129,28 +129,28 @@ pub enum MutationKind {
 ///   `path = "conditions.0.rhs.numeric"`, `before = 25.0`, `after = 28.0`
 ///   `path = "conditions.0.op.within_pct"`, `before = 1.5`, `after = 2.0`
 ///   `path = "cooldown_bars"`, `before = 3`, `after = 6`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FilterEdit {
     pub path: String,
     pub before: serde_json::Value,
     pub after: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProseEdit {
     pub agent_role: String,
     pub before: String,
     pub after: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ParamChange {
     pub key: String,
     pub before: serde_json::Value,
     pub after: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolDiff {
     pub added: Vec<String>,
     pub removed: Vec<String>,
@@ -178,6 +178,148 @@ pub fn empty_mutation() -> MutationDiff {
         },
         filter: Vec::new(),
         rationale: String::new(),
+    }
+}
+
+/// Structural diff between two strategies computed by field comparison (not
+/// LLM). Used by the Strategy Inspector UI's "diff from originating strategy"
+/// panel to show what changed between a parent and its lineage descendant.
+///
+/// Mirrors [`MutationDiff`]'s shape but carries no `kind` or `rationale` —
+/// those are LLM-proposal concepts. `StrategyDiff` is a pure data product.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StrategyDiff {
+    pub prose: Vec<ProseEdit>,
+    pub params: Vec<ParamChange>,
+    pub tools: ToolDiff,
+    pub filter: Vec<FilterEdit>,
+}
+
+/// Compute a [`StrategyDiff`] by comparing strategy `a` (the originating /
+/// parent) with strategy `b` (the descendant).
+///
+/// - **Prose**: walks `b.agents`; for each role present in both strategies,
+///   emits a [`ProseEdit`] when `prompt_override` differs (treating `None` as
+///   `""`).
+/// - **Params**: flat-diffs scalar values in `mechanical_params`; keys only in
+///   `b` are emitted with `before: null`.
+/// - **Tools**: always returns an empty [`ToolDiff`] — tools are managed at
+///   the agent level, not the strategy level.
+/// - **Filter**: recursively diffs numeric leaf values in the serialised filter
+///   JSON; non-numeric leaves and structural differences are ignored.
+pub fn strategy_diff(a: &Strategy, b: &Strategy) -> StrategyDiff {
+    // ── Prose ──────────────────────────────────────────────────────────────
+    let mut prose: Vec<ProseEdit> = Vec::new();
+    for agent_b in &b.agents {
+        let role_b = agent_b.canonical_role();
+        let before_str = a
+            .agents
+            .iter()
+            .find(|ag| ag.canonical_role() == role_b)
+            .and_then(|ag| ag.prompt_override.as_deref())
+            .unwrap_or("")
+            .to_string();
+        let after_str = agent_b.prompt_override.as_deref().unwrap_or("").to_string();
+        if before_str != after_str {
+            prose.push(ProseEdit {
+                agent_role: role_b,
+                before: before_str,
+                after: after_str,
+            });
+        }
+    }
+
+    // ── Params ─────────────────────────────────────────────────────────────
+    let mut params: Vec<ParamChange> = Vec::new();
+    if let Some(b_obj) = b.mechanical_params.as_object() {
+        for (key, val_b) in b_obj {
+            // Only diff scalar leaves (skip nested objects/arrays).
+            if val_b.is_object() || val_b.is_array() {
+                continue;
+            }
+            let val_a = a
+                .mechanical_params
+                .get(key)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            if val_a != *val_b {
+                params.push(ParamChange {
+                    key: key.clone(),
+                    before: val_a,
+                    after: val_b.clone(),
+                });
+            }
+        }
+    }
+
+    // ── Tools ──────────────────────────────────────────────────────────────
+    // Tools are agent-level, not strategy-level; always empty here.
+    let tools = ToolDiff {
+        added: Vec::new(),
+        removed: Vec::new(),
+    };
+
+    // ── Filter ─────────────────────────────────────────────────────────────
+    let mut filter: Vec<FilterEdit> = Vec::new();
+    let val_a = match &a.filter {
+        Some(f) => serde_json::to_value(f).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    };
+    let val_b = match &b.filter {
+        Some(f) => serde_json::to_value(f).unwrap_or(serde_json::Value::Null),
+        None => serde_json::Value::Null,
+    };
+    diff_filter_values(&val_a, &val_b, "", &mut filter);
+
+    StrategyDiff {
+        prose,
+        params,
+        tools,
+        filter,
+    }
+}
+
+/// Recursively walk two JSON values and emit a [`FilterEdit`] for every
+/// differing `Number` leaf, addressed by a dotted `path`. Objects are
+/// walked key-by-key; arrays are walked index-by-index. Non-numeric
+/// leaves and structural differences (one side is an object, the other
+/// is a scalar) are silently skipped — the function is a best-effort
+/// numeric diff, not a full structural JSON differ.
+fn diff_filter_values(a: &serde_json::Value, b: &serde_json::Value, path: &str, out: &mut Vec<FilterEdit>) {
+    match (a, b) {
+        (serde_json::Value::Object(map_a), serde_json::Value::Object(map_b)) => {
+            for (key, val_b) in map_b {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                let val_a = map_a.get(key).cloned().unwrap_or(serde_json::Value::Null);
+                diff_filter_values(&val_a, val_b, &child_path, out);
+            }
+        }
+        (serde_json::Value::Array(arr_a), serde_json::Value::Array(arr_b)) => {
+            for (i, val_b) in arr_b.iter().enumerate() {
+                let child_path = if path.is_empty() {
+                    i.to_string()
+                } else {
+                    format!("{path}.{i}")
+                };
+                let val_a = arr_a.get(i).cloned().unwrap_or(serde_json::Value::Null);
+                diff_filter_values(&val_a, val_b, &child_path, out);
+            }
+        }
+        (val_a, val_b) if val_b.is_number() => {
+            if val_a != val_b {
+                out.push(FilterEdit {
+                    path: path.to_string(),
+                    before: val_a.clone(),
+                    after: val_b.clone(),
+                });
+            }
+        }
+        // Non-numeric leaf or mismatched types — skip.
+        _ => {}
     }
 }
 
@@ -677,10 +819,19 @@ impl Mutator {
         config: &AutoOptimizerConfig,
         dsr_prefix: Option<&str>,
         exploration_seed: u64,
+        // Position of this writer within the cycle's mutations_per_parent loop
+        // (0-based). Used to rotate the focus KIND across writers so every kind
+        // is explored within a single cycle rather than leaving kind selection to
+        // hash chance. The exploration_seed still varies the specific target within
+        // the selected kind.
+        mutation_idx: usize,
         memory_context: Option<&str>,
         avoid: &std::collections::HashSet<ContentHash>,
+        resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
     ) -> anyhow::Result<MutationDiff> {
-        let program_md = program_view::to_markdown(base);
+        let empty_map = std::collections::HashMap::new();
+        let resolved = resolved_agent_prompts.unwrap_or(&empty_map);
+        let program_md = program_view::to_markdown_with_resolved_prompts(base, resolved);
         let mut last_errors: Option<Vec<ValidationError>> = None;
         let max_attempts = self.max_retries.saturating_add(1);
 
@@ -730,6 +881,7 @@ impl Mutator {
                 &filter_paths,
                 last_errors.as_deref(),
                 attempt_seed,
+                mutation_idx,
                 memory_context,
                 avoid.len(),
                 &prose_roles,
@@ -885,6 +1037,12 @@ fn build_user_payload(
     filter_paths: &[(String, serde_json::Value)],
     previous_errors: Option<&[ValidationError]>,
     exploration_seed: u64,
+    // Position of this writer in the outer mutations_per_parent loop (0-based).
+    // Drives balanced kind rotation across the cycle's N concurrent writers so
+    // every applicable kind gets a dedicated slot rather than competing via hash
+    // modulo (which can cluster). `exploration_seed` still diversifies the
+    // specific target chosen within the selected kind.
+    mutation_idx: usize,
     memory_context: Option<&str>,
     avoid_count: usize,
     // Issues 1/2 (QA 2026-06-08): the agent roles that can carry a
@@ -946,23 +1104,25 @@ fn build_user_payload(
     // real model (e.g. gemini-flash-lite) ignores — it collapses the constrained
     // experiment space to the single most obvious tweak every cycle, so repeat
     // cycles re-derived the byte-identical candidate and never explored. Instead,
-    // use the exploration seed to NAME a concrete focus the writer must experiment
-    // on. Different cycles ⇒ different seed ⇒ different focus ⇒ a materially
-    // different prompt ⇒ a different candidate, even from a fully deterministic
-    // model. (Pairs with the hard `already_tried` reject in `propose`, which
-    // guarantees a previously-seen candidate is never re-emitted.)
+    // NAME a concrete focus the writer must experiment on. (Pairs with the hard
+    // `already_tried` reject in `propose`, which guarantees a previously-seen
+    // candidate is never re-emitted.)
     //
     // Issues 1/2 (QA 2026-06-08): the focus must rotate across the applicable
     // mutation KINDS, not just param keys. The previous version only ever named a
     // `risk.*` param whenever `param` was allowed (the default), so a weak
     // experiment-writer was steered onto the numeric risk lever every single
     // cycle — prose (prompt) and filter levers were never focused and so never
-    // exercised (QA: gemma mutated only risk.* across all 7 cycles). Build one
-    // focus group per applicable, focusable kind in a fixed priority order, pick
-    // the KIND by `seed % n_kinds` (balanced kind-level rotation, independent of
-    // how many param keys exist), then pick a concrete target within that kind by
-    // `seed / n_kinds`. This guarantees prose and filter each get focused on a
-    // fixed cadence rather than losing every cycle to the 6 risk.* keys.
+    // exercised (QA: gemma mutated only risk.* across all 7 cycles).
+    //
+    // KIND rotation via mutation_idx (writer position in the outer
+    // mutations_per_parent loop): writer 0 → kinds[0], writer 1 → kinds[1], etc.,
+    // cycling through all applicable kinds. This guarantees that within a single
+    // cycle of N writers, every kind gets proportional coverage regardless of hash
+    // values. The exploration_seed then picks the SPECIFIC TARGET within the
+    // selected kind (which param key, which filter path, which agent role) — so
+    // different cycles land on different concrete levers even for the same writer
+    // position.
     let mut focus_groups: Vec<(&str, Vec<String>)> = Vec::new();
     if allowed_kinds.iter().any(|k| k == "prose") && !prose_roles.is_empty() {
         focus_groups.push(("prose", prose_roles.to_vec()));
@@ -980,8 +1140,8 @@ fn build_user_payload(
         )
     } else {
         let n_kinds = focus_groups.len();
-        let (kind, targets) = &focus_groups[(exploration_seed as usize) % n_kinds];
-        let target = &targets[((exploration_seed as usize) / n_kinds) % targets.len()];
+        let (kind, targets) = &focus_groups[mutation_idx % n_kinds];
+        let target = &targets[(exploration_seed as usize) % targets.len()];
         match *kind {
             "prose" => format!(
                 "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
@@ -1270,7 +1430,18 @@ mod tests {
         let keys = vec!["risk.max_leverage".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![];
         let ctx = "param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)";
-        let with = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some(ctx), 0, &[]);
+        let with = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            Some(ctx),
+            0,
+            &[],
+        );
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
             "memory section header missing: {with}"
@@ -1283,7 +1454,7 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0, &[]);
+        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[]);
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1293,7 +1464,18 @@ mod tests {
             "F32 exploration section must remain when no memory: {without}"
         );
 
-        let empty = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some("   "), 0, &[]);
+        let empty = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            Some("   "),
+            0,
+            &[],
+        );
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
@@ -1308,7 +1490,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, None, 0, &[]);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[]);
         assert!(
             payload.contains("Tunable filter paths"),
             "filter section header must be present: {payload}"
@@ -1331,6 +1513,7 @@ mod tests {
             &filter_paths,
             None,
             5,
+            0,
             None,
             0,
             &[],
@@ -1355,7 +1538,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0, &[]);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[]);
 
         // Param key list and risk.* references must be absent.
         assert!(
@@ -1402,6 +1585,7 @@ mod tests {
                 &filter_paths,
                 None,
                 seed,
+                seed as usize,
                 None,
                 0,
                 &prose_roles,
@@ -1434,7 +1618,18 @@ mod tests {
         let keys = vec!["risk.max_leverage".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![];
         for seed in 0..4u64 {
-            let p = build_user_payload("prog", &kinds, &keys, &filter_paths, None, seed, None, 0, &[]);
+            let p = build_user_payload(
+                "prog",
+                &kinds,
+                &keys,
+                &filter_paths,
+                None,
+                seed,
+                seed as usize,
+                None,
+                0,
+                &[],
+            );
             assert!(
                 !p.contains("agent's system prompt"),
                 "prose must not be focused when no agent roles are available (seed {seed}): {p}"
@@ -1747,6 +1942,43 @@ mod tests {
     }
 
     #[test]
+    fn strategy_diff_detects_prose_change() {
+        let mut a = fixture_strategy();
+        a.agents[0].prompt_override = Some("buy low".to_string());
+        let mut b = a.clone();
+        b.agents[0].prompt_override = Some("sell high".to_string());
+        let diff = strategy_diff(&a, &b);
+        assert_eq!(diff.prose.len(), 1);
+        assert_eq!(diff.prose[0].before, "buy low");
+        assert_eq!(diff.prose[0].after, "sell high");
+        assert!(diff.params.is_empty());
+    }
+
+    #[test]
+    fn strategy_diff_detects_param_change() {
+        let mut a = fixture_strategy();
+        a.mechanical_params = serde_json::json!({ "rsi_period": 14 });
+        let mut b = a.clone();
+        b.mechanical_params = serde_json::json!({ "rsi_period": 21 });
+        let diff = strategy_diff(&a, &b);
+        assert_eq!(diff.params.len(), 1);
+        assert_eq!(diff.params[0].key, "rsi_period");
+        assert_eq!(diff.params[0].before, serde_json::json!(14));
+        assert_eq!(diff.params[0].after, serde_json::json!(21));
+    }
+
+    #[test]
+    fn strategy_diff_identical_strategies_empty() {
+        let s = fixture_strategy();
+        let diff = strategy_diff(&s, &s);
+        assert!(diff.prose.is_empty());
+        assert!(diff.params.is_empty());
+        assert!(diff.tools.added.is_empty());
+        assert!(diff.tools.removed.is_empty());
+        assert!(diff.filter.is_empty());
+    }
+
+    #[test]
     fn retry_rotates_focus_param_across_attempts() {
         // F32 (run-7): successive retry attempts must use a different focus param
         // so the exploration directive names a different key each attempt. With
@@ -1765,6 +1997,7 @@ mod tests {
             &filter_paths,
             None,
             base_seed.wrapping_add(0),
+            0,
             None,
             0,
             &[],
@@ -1776,6 +2009,7 @@ mod tests {
             &filter_paths,
             None,
             base_seed.wrapping_add(1),
+            0,
             None,
             0,
             &[],

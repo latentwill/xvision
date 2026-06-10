@@ -277,7 +277,7 @@ pub struct BaselineMetrics {
     pub sharpe: f64,
 }
 
-/// Strategy outperformance (return_pct delta) versus each of the four baselines.
+/// Strategy outperformance (return_pct delta) versus each of the five baselines.
 /// Positive = the strategy beat the baseline on raw total return.
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
@@ -290,9 +290,10 @@ pub struct BaselineRelative {
     pub always_flat: f64,
     pub simple_trend: f64,
     pub simple_mean_reversion: f64,
+    pub random_direction: f64,
 }
 
-/// All four automatic baselines computed over the same bar slice the strategy
+/// All five automatic baselines computed over the same bar slice the strategy
 /// saw, plus the per-baseline return delta (`strategy_return_pct −
 /// baseline_return_pct`).
 ///
@@ -310,6 +311,8 @@ pub struct BaselinesReport {
     pub always_flat: BaselineMetrics,
     pub simple_trend: BaselineMetrics,
     pub simple_mean_reversion: BaselineMetrics,
+    /// Coin-flip long/short at 100 bps per bar, seeded for reproducibility.
+    pub random_direction: BaselineMetrics,
     /// `strategy_return_pct − baseline_return_pct` for each baseline.
     pub relative_to: BaselineRelative,
 }
