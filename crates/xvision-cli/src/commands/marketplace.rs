@@ -12,11 +12,29 @@ use xvision_marketplace::{
 
 use crate::exit::{CliError, CliResult};
 
+/// Driver selection (env): by default all verbs run against the in-memory
+/// mock driver. Set `MARKETPLACE_DRIVER=onchain` to write to the deployed
+/// Mantle contracts instead (see `--help` for the full env contract).
 #[derive(Args, Debug)]
+#[command(after_help = ONCHAIN_ENV_HELP)]
 pub struct MarketplaceCmd {
     #[command(subcommand)]
     action: MarketplaceAction,
 }
+
+/// Env contract for `MARKETPLACE_DRIVER=onchain`, shown in `--help`.
+const ONCHAIN_ENV_HELP: &str = "\
+Onchain driver (MARKETPLACE_DRIVER=onchain):
+  MANTLE_PRIVATE_KEY     signer key (hex). Retrieve from 1Password, never paste:
+                           MANTLE_PRIVATE_KEY=$(op read \"op://Olympus/XVN Wallet/private key\")
+  XVN_LISTING_REGISTRY   ListingRegistry proxy address (required)
+  XVN_EVAL_ATTESTATION   EvalAttestationRegistry proxy address (required for attest)
+  XVN_MANTLE_RPC_URL     RPC endpoint (default https://rpc.sepolia.mantle.xyz)
+  XVN_MANTLE_CHAIN_ID    chain id (default 5003, Mantle Sepolia)
+
+Deployed Mantle Sepolia addresses live in config/mantle-sepolia.toml.
+`publish` and `attest` are live onchain; `buy` is pending the EIP-3009
+USDC test token and stays mock-only for now.";
 
 #[derive(Subcommand, Debug)]
 enum MarketplaceAction {
@@ -88,11 +106,18 @@ fn fixture_path() -> CliResult<PathBuf> {
     Ok(home.join("marketplace").join("listings.json"))
 }
 
+/// Whether the operator selected the real on-chain driver via env.
+fn onchain_selected() -> bool {
+    std::env::var("MARKETPLACE_DRIVER").as_deref() == Ok("onchain")
+}
+
 fn driver() -> CliResult<Box<dyn AnchorDriver>> {
-    if std::env::var("MARKETPLACE_DRIVER").as_deref() == Ok("onchain") {
+    if onchain_selected() {
         let key_hex = std::env::var("MANTLE_PRIVATE_KEY").map_err(|_| {
             CliError::usage(anyhow::anyhow!(
-                "MARKETPLACE_DRIVER=onchain requires MANTLE_PRIVATE_KEY to be set"
+                "MARKETPLACE_DRIVER=onchain requires MANTLE_PRIVATE_KEY to be set \
+                 (hex signer key; retrieve via \
+                 MANTLE_PRIVATE_KEY=$(op read \"op://Olympus/XVN Wallet/private key\"))"
             ))
         })?;
         let addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
@@ -196,6 +221,13 @@ async fn publish(agent_id: &str, price: f64, manifest_path: &PathBuf) -> CliResu
 }
 
 async fn buy(listing_id: u64, buyer: &str) -> CliResult<()> {
+    if onchain_selected() {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "onchain buy is not yet available — pending the EIP-3009 USDC test \
+             token (x402 transferWithAuthorization flow). Unset MARKETPLACE_DRIVER \
+             to use the mock driver; `publish` and `attest` are live onchain."
+        )));
+    }
     let recipient = parse_address(buyer)?;
     let req = BuyRequest {
         listing_id: U256::from(listing_id),
