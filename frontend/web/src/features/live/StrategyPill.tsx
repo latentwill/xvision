@@ -18,6 +18,9 @@ const STATUS_STYLE: Record<StripStatus, string> = {
   ACTIVE: "bg-info/15 text-info",
   PAUSED: "bg-warn/15 text-warn",
   STOPPED: "bg-surface-elev text-text-3",
+  // Orphaned recorder row (parent eval run terminal) — render muted like a
+  // dead run, never with the live/info treatment.
+  STALE: "bg-surface-elev text-text-3",
 };
 
 const METRIC_TONE: Record<"pos" | "neg" | "neutral", string> = {

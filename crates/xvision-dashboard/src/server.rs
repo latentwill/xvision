@@ -792,6 +792,23 @@ pub async fn serve(
         ),
     }
 
+    // Same sweep for the child `agent_runs` ledger: recorder tasks die with
+    // the daemon too, and rows stuck in `running` make the Live cockpit
+    // count phantom "live" strategies (xvision-9pi).
+    match agent_runs::interrupt_orphan_agent_runs(&state.pool).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            target: "xvision::dashboard",
+            interrupted = n,
+            "swept orphan agent runs at startup",
+        ),
+        Err(e) => tracing::warn!(
+            target: "xvision::dashboard",
+            error = %e,
+            "failed to sweep orphan agent runs at startup",
+        ),
+    }
+
     if let Err(e) = state.recover_cli_jobs().await {
         tracing::warn!(
             target: "xvision::dashboard",

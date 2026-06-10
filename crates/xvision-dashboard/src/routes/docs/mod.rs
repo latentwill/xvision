@@ -104,7 +104,6 @@ mod tests {
                 "runbook",
                 "research-index",
                 "xvision",
-                "degen-virtuals-agent-investigation",
                 "growth-marketing",
                 "ai-courses",
                 "frontier-image-training",

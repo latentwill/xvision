@@ -79,6 +79,45 @@ pub struct StrategySummary {
     /// Execution mode as a snake_case string (e.g. `"per_asset"`, `"portfolio"`).
     #[serde(default)]
     pub execution_mode: String,
+    /// blake3 hex hash of the strategy bundle's canonical JSON — the id
+    /// older CLI-launched eval runs carry in `eval_runs.agent_id` (migration
+    /// 014 renamed `strategy_bundle_hash` → `agent_id` without changing the
+    /// value), and the key of autooptimizer `lineage_nodes`. `None` only if
+    /// the bundle fails to serialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub bundle_hash: Option<String>,
+    /// `optimizer` when this strategy's bundle hash appears in the
+    /// autooptimizer lineage (`lineage_nodes`) — such strategies are
+    /// evaluated inside optimizer cycles and the dashboard must not nag
+    /// about them missing direct eval runs. `user` otherwise.
+    #[serde(default)]
+    pub origin: StrategyOrigin,
+    /// True when at least one COMPLETED eval run references this strategy —
+    /// keyed by workspace ULID or by bundle hash — over the FULL `eval_runs`
+    /// table (not a page of it).
+    #[serde(default)]
+    pub evaluated: bool,
+    /// `completed_at` (RFC3339) of the most recent completed eval run
+    /// referencing this strategy. Absent when `evaluated` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub last_eval_completed_at: Option<String>,
+}
+
+/// Where a strategy came from: hand-authored (`user`) or minted by the
+/// autooptimizer (`optimizer`, i.e. its bundle hash is a lineage node).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StrategyOrigin {
+    #[default]
+    User,
+    Optimizer,
 }
 
 fn default_strategy_summary_activation_mode() -> ActivationMode {
@@ -354,6 +393,12 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
         let model = model_summary(&inventory.models);
         let tags = strategy_tags(&strategy);
         let execution_mode = execution_mode_string(&strategy.manifest.execution_mode);
+        // Same hash the autooptimizer mints for lineage nodes and the CLI
+        // stamps into `eval_runs.agent_id`: blake3 over the bundle's
+        // canonical JSON.
+        let bundle_hash = serde_json::to_value(&strategy)
+            .ok()
+            .map(|v| crate::autooptimizer::ContentHash::of_json(&v).to_hex());
         out.push(StrategySummary {
             agent_id: strategy.manifest.id.clone(),
             display_name: strategy.manifest.display_name.clone(),
@@ -370,9 +415,114 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             activation_mode: strategy.activation_mode,
             asset_universe: strategy.manifest.asset_universe.clone(),
             execution_mode,
+            bundle_hash,
+            origin: StrategyOrigin::User,
+            evaluated: false,
+            last_eval_completed_at: None,
         });
     }
+    apply_eval_coverage(ctx, &mut out).await?;
     Ok(out)
+}
+
+/// SQLite bind-parameter chunk size for the `IN (...)` coverage queries.
+/// Well under the engine's parameter limit even on older SQLite builds.
+const COVERAGE_KEY_CHUNK: usize = 400;
+
+/// Fill `evaluated` / `last_eval_completed_at` / `origin` on a hydrated
+/// summary page from the full `eval_runs` table and the autooptimizer
+/// lineage (beads xvision-eb5).
+///
+/// An eval run references a strategy through either id shape stored in
+/// `eval_runs.agent_id`: the workspace ULID (dashboard-launched runs) or the
+/// bundle hash (CLI-launched runs). Both are matched here, server-side, so
+/// the dashboard never undercounts coverage from a truncated runs page.
+async fn apply_eval_coverage(ctx: &ApiContext, out: &mut [StrategySummary]) -> ApiResult<()> {
+    if out.is_empty() {
+        return Ok(());
+    }
+
+    let mut keys: Vec<String> = Vec::with_capacity(out.len() * 2);
+    for summary in out.iter() {
+        keys.push(summary.agent_id.clone());
+        if let Some(hash) = &summary.bundle_hash {
+            keys.push(hash.clone());
+        }
+    }
+
+    // key (ULID or hash) → most recent completed_at among COMPLETED runs.
+    // MAX over RFC3339 text is chronologically correct (lexicographic).
+    let mut latest_by_key: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for chunk in keys.chunks(COVERAGE_KEY_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT agent_id, MAX(completed_at) FROM eval_runs \
+             WHERE status = 'completed' AND agent_id IN ({placeholders}) \
+             GROUP BY agent_id"
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+        for key in chunk {
+            query = query.bind(key);
+        }
+        let rows = query
+            .fetch_all(&ctx.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("eval coverage query: {e}")))?;
+        for (key, latest) in rows {
+            latest_by_key.insert(key, latest);
+        }
+    }
+
+    // Bundle hashes that are autooptimizer lineage nodes ⇒ optimizer origin.
+    // The lineage schema is created lazily by the optimizer; a workspace
+    // that has never run it simply has no optimizer-origin strategies.
+    let mut lineage_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let lineage_table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lineage_nodes'",
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("lineage table check: {e}")))?;
+    if lineage_table_exists > 0 {
+        let hashes: Vec<&String> = out.iter().filter_map(|s| s.bundle_hash.as_ref()).collect();
+        for chunk in hashes.chunks(COVERAGE_KEY_CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql =
+                format!("SELECT bundle_hash FROM lineage_nodes WHERE bundle_hash IN ({placeholders})");
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for hash in chunk {
+                query = query.bind(hash.as_str());
+            }
+            let rows = query
+                .fetch_all(&ctx.db)
+                .await
+                .map_err(|e| ApiError::Internal(format!("lineage origin query: {e}")))?;
+            lineage_hashes.extend(rows);
+        }
+    }
+
+    for summary in out.iter_mut() {
+        let by_ulid = latest_by_key.get(&summary.agent_id);
+        let by_hash = summary
+            .bundle_hash
+            .as_ref()
+            .and_then(|hash| latest_by_key.get(hash));
+        summary.evaluated = by_ulid.is_some() || by_hash.is_some();
+        summary.last_eval_completed_at = [by_ulid, by_hash]
+            .into_iter()
+            .flatten()
+            .filter_map(|latest| latest.clone())
+            .max();
+        if summary
+            .bundle_hash
+            .as_ref()
+            .is_some_and(|hash| lineage_hashes.contains(hash))
+        {
+            summary.origin = StrategyOrigin::Optimizer;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]

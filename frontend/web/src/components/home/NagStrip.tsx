@@ -19,9 +19,9 @@ export type AttentionItem = {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 const TONE_DOT: Record<AttentionItem["tone"], string> = {
-  warn: "bg-amber-400",
-  danger: "bg-red-500",
-  info: "bg-blue-400",
+  warn: "bg-warn",
+  danger: "bg-danger",
+  info: "bg-info",
 };
 
 // ─── sub-components ──────────────────────────────────────────────────────────
@@ -37,11 +37,11 @@ function NagItem({ item }: { item: AttentionItem }) {
       />
 
       <div className="min-w-0 flex-1">
-        <span className="text-[12px] font-medium text-muted-foreground">
+        <span className="text-[12px] font-medium text-text-3">
           {item.title}
         </span>
         {item.detail && (
-          <span className="ml-1 text-[11px] text-muted-foreground/70 truncate">
+          <span className="ml-1 text-[11px] text-text-4 truncate">
             — {item.detail}
           </span>
         )}
@@ -50,7 +50,7 @@ function NagItem({ item }: { item: AttentionItem }) {
             {" "}
             <Link
               to={item.link.to}
-              className="text-[11px] text-muted-foreground/90 underline underline-offset-2 hover:text-foreground transition-colors"
+              className="text-[11px] text-text-3 underline underline-offset-2 hover:text-text transition-colors"
             >
               {item.link.label}
             </Link>
@@ -74,11 +74,8 @@ export function NagStrip({ items }: { items: AttentionItem[] }) {
   const visible = showAll ? items : items.slice(0, VISIBLE_COUNT);
 
   return (
-    <section
-      data-testid="nag-strip"
-      className="border-t border-border/50 pt-2"
-    >
-      <div id="nag-strip-items" className="divide-y divide-border/30">
+    <section data-testid="nag-strip" className="px-5 py-2">
+      <div id="nag-strip-items" className="divide-y divide-border-soft/60">
         {visible.map((item, i) => (
           <NagItem key={i} item={item} />
         ))}
@@ -90,7 +87,7 @@ export function NagStrip({ items }: { items: AttentionItem[] }) {
           aria-expanded={false}
           aria-controls="nag-strip-items"
           onClick={() => setShowAll(true)}
-          className="mt-1 text-[11px] text-muted-foreground/70 hover:text-muted-foreground transition-colors"
+          className="mt-1 text-[11px] text-text-4 hover:text-text-3 transition-colors"
         >
           + {overflow} more
         </button>
@@ -102,7 +99,7 @@ export function NagStrip({ items }: { items: AttentionItem[] }) {
           aria-expanded={true}
           aria-controls="nag-strip-items"
           onClick={() => setShowAll(false)}
-          className="mt-1 text-[11px] text-muted-foreground/70 hover:text-muted-foreground transition-colors"
+          className="mt-1 text-[11px] text-text-4 hover:text-text-3 transition-colors"
         >
           show less
         </button>

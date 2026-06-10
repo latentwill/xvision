@@ -8,12 +8,17 @@ import { StrategyOutcomesSummary } from "./StrategyOutcomesSummary";
 
 // ─── Fixture helpers (mirror StrategyOutcomesList.test.tsx) ──────────────────
 
-function makeStrategy(id: string, name: string): StrategyListItem {
+function makeStrategy(
+  id: string,
+  name: string,
+  overrides: Partial<StrategyListItem> = {},
+): StrategyListItem {
   return {
     agent_id: id,
     display_name: name,
     template: "default",
     decision_cadence_minutes: 60,
+    ...overrides,
   };
 }
 
@@ -105,7 +110,7 @@ describe("StrategyOutcomesSummary", () => {
     expect(screen.queryByText("Echo")).toBeNull();
   });
 
-  it("shows no-eval count without rendering every no-eval strategy", () => {
+  it("shows awaiting-first-eval count without rendering every no-eval strategy", () => {
     const strategies = Array.from({ length: 10 }, (_, i) =>
       makeStrategy(`s${i + 1}`, `Strategy ${i + 1}`),
     );
@@ -116,10 +121,49 @@ describe("StrategyOutcomesSummary", () => {
 
     renderSummary(strategies, runs);
 
-    expect(
-      screen.getByText("8 strategies have no completed evals yet"),
-    ).toBeInTheDocument();
+    const link = screen.getByRole("link", {
+      name: "8 user strategies awaiting first eval",
+    });
+    expect(link).toHaveAttribute("href", "/eval-runs");
     expect(screen.queryByText("Strategy 10")).toBeNull();
+  });
+
+  it("segments optimizer-generated strategies out of the awaiting count", () => {
+    const strategies = [
+      makeStrategy("s1", "Alpha"),
+      makeStrategy("s2", "Bravo"), // user, never evaluated
+      makeStrategy("s3", "Charlie", { origin: "optimizer" }),
+      makeStrategy("s4", "Delta", { origin: "optimizer" }),
+    ];
+    const runs = [makeRun("r1", "s1", { total_return_pct: 7, sharpe: 1.2 })];
+
+    renderSummary(strategies, runs);
+
+    expect(
+      screen.getByRole("link", { name: "1 user strategy awaiting first eval" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("2 optimizer-generated (evaluated in lineage)"),
+    ).toBeInTheDocument();
+  });
+
+  it("counts hash-only CLI runs via bundle_hash and server-side evaluated flags", () => {
+    const hash =
+      "a472499597277873fc0a9018084098fceecd4ffc903329aac889c7e2cf3a36bc";
+    const strategies = [
+      makeStrategy("s1", "Alpha", { bundle_hash: hash }), // CLI run keyed by hash
+      makeStrategy("s2", "Bravo", { evaluated: true }), // evals outside this page
+      makeStrategy("s3", "Charlie"), // genuinely unevaluated
+    ];
+    const runs = [makeRun("r1", hash, { total_return_pct: 4, sharpe: 1.1 })];
+
+    renderSummary(strategies, runs);
+
+    // Only Charlie is awaiting; Alpha matched by hash, Bravo by server flag.
+    expect(
+      screen.getByRole("link", { name: "1 user strategy awaiting first eval" }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("summary-row-s1")).toBeInTheDocument();
   });
 
   it("renders the headings and the link to the full strategies surface", () => {
