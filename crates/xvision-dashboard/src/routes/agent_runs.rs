@@ -83,24 +83,27 @@ pub struct AgentRunSummary {
     /// Per-run pause flag from the parent eval run (`eval_runs.paused`,
     /// migration 062). `None` without a parent.
     pub paused: Option<bool>,
-    /// THE live-money discriminator: `true` iff the parent eval run has
-    /// `mode = 'live'` AND that eval run is non-terminal (queued/running).
+    /// THE live-money discriminator: `true` iff the child agent run is
+    /// non-terminal AND the parent eval run has `mode = 'live'` AND that
+    /// eval run is non-terminal (queued/running).
     /// Anything else — backtests, orphaned children of finished live runs,
     /// runs with no parent — is `false`. This is the only signal the
     /// dashboard may treat as "real money is moving right now".
     pub is_live_money: bool,
 }
 
-/// Liveness rule, kept in one place: live money ⇔ parent eval run is
-/// `mode = live` AND its status is non-terminal. Unknown/unparseable
-/// mode or status values are conservatively NOT live.
-fn derive_is_live_money(eval_mode: Option<&str>, eval_status: Option<&str>) -> bool {
+/// Liveness rule, kept in one place: live money ⇔ child agent run is
+/// non-terminal AND parent eval run is `mode = live` AND parent status is
+/// non-terminal. Unknown/unparseable mode or status values are conservatively
+/// NOT live.
+fn derive_is_live_money(agent_status: &str, eval_mode: Option<&str>, eval_status: Option<&str>) -> bool {
+    let agent_non_terminal = matches!(agent_status, "queued" | "running");
     let is_live_mode = eval_mode.and_then(RunMode::parse) == Some(RunMode::Live);
-    let is_non_terminal = eval_status
+    let eval_non_terminal = eval_status
         .and_then(EvalRunStatus::parse)
         .map(|s| !s.is_terminal())
         .unwrap_or(false);
-    is_live_mode && is_non_terminal
+    agent_non_terminal && is_live_mode && eval_non_terminal
 }
 
 /// Query-string parameters for `GET /api/agent-runs`.
@@ -197,7 +200,7 @@ pub async fn list_agent_runs(
             }).ok()
         });
         let is_live_money =
-            derive_is_live_money(eval_mode_raw.as_deref(), eval_run_status.as_deref());
+            derive_is_live_money(&status, eval_mode_raw.as_deref(), eval_run_status.as_deref());
         // Normalize the mode (legacy 'paper' → "backtest"); unknown values
         // surface as None rather than leaking raw DB strings to the UI.
         let eval_mode = eval_mode_raw
@@ -765,7 +768,14 @@ mod tests {
     async fn list_marks_child_of_nonterminal_live_eval_run_as_live_money() {
         let (state, _tmp) = fresh_state().await;
         seed_eval_run(&state.pool, "ev-live", "live", "running").await;
-        seed_child_run(&state.pool, "ar-live", "ev-live", "running", "2026-06-01T00:00:00Z").await;
+        seed_child_run(
+            &state.pool,
+            "ar-live",
+            "ev-live",
+            "running",
+            "2026-06-01T00:00:00Z",
+        )
+        .await;
 
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
@@ -776,12 +786,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn list_demotes_terminal_child_of_nonterminal_live_eval_run() {
+        let (state, _tmp) = fresh_state().await;
+        seed_eval_run(&state.pool, "ev-live", "live", "running").await;
+        seed_child_run(
+            &state.pool,
+            "ar-completed",
+            "ev-live",
+            "completed",
+            "2026-06-01T00:00:00Z",
+        )
+        .await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let v: serde_json::Value = server.get("/api/agent-runs").await.json();
+        let run = &v["runs"][0];
+        assert_eq!(run["eval_mode"].as_str(), Some("live"));
+        assert_eq!(run["eval_run_status"].as_str(), Some("running"));
+        assert_eq!(run["is_live_money"].as_bool(), Some(false));
+    }
+
+    #[tokio::test]
     async fn list_demotes_orphan_child_of_terminal_live_eval_run() {
         let (state, _tmp) = fresh_state().await;
         // The xvision-9pi shape: agent run stuck in `running`, but its
         // parent live eval run finished long ago. NOT live money.
         seed_eval_run(&state.pool, "ev-done", "live", "failed").await;
-        seed_child_run(&state.pool, "ar-stale", "ev-done", "running", "2026-06-01T00:00:00Z").await;
+        seed_child_run(
+            &state.pool,
+            "ar-stale",
+            "ev-done",
+            "running",
+            "2026-06-01T00:00:00Z",
+        )
+        .await;
 
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
@@ -798,7 +836,14 @@ mod tests {
         seed_child_run(&state.pool, "ar-bt", "ev-bt", "running", "2026-06-01T00:00:00Z").await;
         // Legacy 'paper' mode rows normalize to "backtest" on read.
         seed_eval_run(&state.pool, "ev-paper", "paper", "running").await;
-        seed_child_run(&state.pool, "ar-paper", "ev-paper", "running", "2026-06-02T00:00:00Z").await;
+        seed_child_run(
+            &state.pool,
+            "ar-paper",
+            "ev-paper",
+            "running",
+            "2026-06-02T00:00:00Z",
+        )
+        .await;
 
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
@@ -819,7 +864,14 @@ mod tests {
             .execute(&state.pool)
             .await
             .unwrap();
-        seed_child_run(&state.pool, "ar-p", "ev-paused", "running", "2026-06-01T00:00:00Z").await;
+        seed_child_run(
+            &state.pool,
+            "ar-p",
+            "ev-paused",
+            "running",
+            "2026-06-01T00:00:00Z",
+        )
+        .await;
 
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
         let v: serde_json::Value = server.get("/api/agent-runs").await.json();
@@ -833,20 +885,39 @@ mod tests {
     #[test]
     fn derive_is_live_money_rule() {
         // live + non-terminal ⇒ live money
-        assert!(derive_is_live_money(Some("live"), Some("running")));
-        assert!(derive_is_live_money(Some("live"), Some("queued")));
+        assert!(derive_is_live_money("running", Some("live"), Some("running")));
+        assert!(derive_is_live_money("queued", Some("live"), Some("queued")));
+        // terminal child ⇒ not, even while parent live eval is still running
+        assert!(!derive_is_live_money("completed", Some("live"), Some("running")));
+        assert!(!derive_is_live_money("failed", Some("live"), Some("running")));
+        assert!(!derive_is_live_money(
+            "interrupted",
+            Some("live"),
+            Some("running")
+        ));
+        assert!(!derive_is_live_money("cancelled", Some("live"), Some("running")));
+        assert!(!derive_is_live_money(
+            "agent_failure",
+            Some("live"),
+            Some("running")
+        ));
         // live + terminal ⇒ not
-        assert!(!derive_is_live_money(Some("live"), Some("completed")));
-        assert!(!derive_is_live_money(Some("live"), Some("failed")));
-        assert!(!derive_is_live_money(Some("live"), Some("cancelled")));
+        assert!(!derive_is_live_money("running", Some("live"), Some("completed")));
+        assert!(!derive_is_live_money("running", Some("live"), Some("failed")));
+        assert!(!derive_is_live_money("running", Some("live"), Some("cancelled")));
         // backtest / legacy paper ⇒ never
-        assert!(!derive_is_live_money(Some("backtest"), Some("running")));
-        assert!(!derive_is_live_money(Some("paper"), Some("running")));
+        assert!(!derive_is_live_money(
+            "running",
+            Some("backtest"),
+            Some("running")
+        ));
+        assert!(!derive_is_live_money("running", Some("paper"), Some("running")));
         // no parent / unknown values ⇒ conservatively not live
-        assert!(!derive_is_live_money(None, None));
-        assert!(!derive_is_live_money(Some("live"), None));
-        assert!(!derive_is_live_money(Some("live"), Some("bogus")));
-        assert!(!derive_is_live_money(Some("bogus"), Some("running")));
+        assert!(!derive_is_live_money("running", None, None));
+        assert!(!derive_is_live_money("running", Some("live"), None));
+        assert!(!derive_is_live_money("running", Some("live"), Some("bogus")));
+        assert!(!derive_is_live_money("running", Some("bogus"), Some("running")));
+        assert!(!derive_is_live_money("bogus", Some("live"), Some("running")));
     }
 
     // ── Test 8: startup orphan sweep ─────────────────────────────────────────
@@ -869,12 +940,11 @@ mod tests {
         let swept = interrupt_orphan_agent_runs(&state.pool).await.expect("sweep");
         assert_eq!(swept, 2);
 
-        let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-            "SELECT id, status, finished_at, error FROM agent_runs ORDER BY id",
-        )
-        .fetch_all(&state.pool)
-        .await
-        .unwrap();
+        let rows: Vec<(String, String, Option<String>, Option<String>)> =
+            sqlx::query_as("SELECT id, status, finished_at, error FROM agent_runs ORDER BY id")
+                .fetch_all(&state.pool)
+                .await
+                .unwrap();
         for (id, status, finished_at, error) in &rows {
             match id.as_str() {
                 "done" => assert_eq!(status, "completed"),
@@ -886,11 +956,10 @@ mod tests {
             }
         }
 
-        let (span_status,): (String,) =
-            sqlx::query_as("SELECT status FROM spans WHERE id = 'sp-1'")
-                .fetch_one(&state.pool)
-                .await
-                .unwrap();
+        let (span_status,): (String,) = sqlx::query_as("SELECT status FROM spans WHERE id = 'sp-1'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
         assert_eq!(span_status, "interrupted");
 
         // Idempotent — second call sweeps nothing.
