@@ -901,21 +901,13 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store for dspy: {e}")))?;
         let bridge: std::sync::Arc<dyn xvision_engine::autooptimizer::dspy_bridge::DspyBridge> =
-            if cfg.gepa_enabled {
-                std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
-                    dispatch: std::sync::Arc::clone(&metered_dispatch),
-                    model: cfg.mutator.model.clone(),
-                    provider: cfg.mutator.provider.clone(),
-                    candidates: cfg.gepa_candidates,
-                    generations: cfg.gepa_generations,
-                })
-            } else {
-                std::sync::Arc::new(xvision_engine::autooptimizer::dspy_bridge::LiveDspyBridge {
-                    dispatch: std::sync::Arc::clone(&metered_dispatch),
-                    model: cfg.mutator.model.clone(),
-                    provider: cfg.mutator.provider.clone(),
-                })
-            };
+            std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
+                dispatch: std::sync::Arc::clone(&metered_dispatch),
+                model: cfg.mutator.model.clone(),
+                provider: cfg.mutator.provider.clone(),
+                candidates: cfg.gepa_candidates,
+                generations: cfg.gepa_generations,
+            });
         Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
             store,
             bridge,
