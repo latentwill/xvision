@@ -23,9 +23,14 @@ pub const OPTIMIZER_SCENARIO_TAG: &str = "source:autooptimizer";
 ///
 /// `synthesize_baseline_untouched_scenario` derives the holdout window from
 /// the scenario this returns, so the two windows always share venue settings.
-pub fn synthesize_optimizer_day_scenario(day_window: &DayWindow, created_by: &str) -> Scenario {
+pub fn synthesize_optimizer_day_scenario(
+    day_window: &DayWindow,
+    cadence_minutes: u32,
+    created_by: &str,
+) -> Scenario {
     let start = Utc.from_utc_datetime(&day_window.start.and_hms_opt(0, 0, 0).expect("valid midnight"));
     let end = Utc.from_utc_datetime(&day_window.end.and_hms_opt(0, 0, 0).expect("valid midnight"));
+    let granularity = granularity_for_cadence(cadence_minutes);
     Scenario {
         id: format!("ec-day-{}", Ulid::new()),
         parent_scenario_id: None,
@@ -37,7 +42,7 @@ pub fn synthesize_optimizer_day_scenario(day_window: &DayWindow, created_by: &st
         asset_class: AssetClass::Crypto,
         quote_currency: QuoteCurrency::Usd,
         time_window: TimeWindow { start, end },
-        granularity: BarGranularity::Hour1,
+        granularity,
         timezone: "UTC".into(),
         calendar: CalendarRef::Continuous24x7,
         data_source: DataSource::AlpacaHistorical {
@@ -66,7 +71,14 @@ pub fn synthesize_optimizer_day_scenario(day_window: &DayWindow, created_by: &st
         replay_mode: ReplayMode::Continuous,
         capital: Capital::default(),
         bar_cache_policy: BarCachePolicy {
-            cache_key: format!("ec-day-{}-{}", day_window.start, day_window.end),
+            // B9: encode granularity in the cache key so 1h-cached bars are never
+            // served for a 15m (or other) cadence strategy and vice-versa.
+            cache_key: format!(
+                "ec-day-{}-{}-{}",
+                day_window.start,
+                day_window.end,
+                granularity.canonical()
+            ),
             refresh_policy: RefreshPolicy::NeverRefresh,
             data_fetched_at: None,
         },
@@ -138,8 +150,119 @@ pub fn synthesize_baseline_untouched_scenario(
     Ok(synthesized)
 }
 
+/// B9: map a strategy's `decision_cadence_minutes` to the bar granularity the
+/// optimizer should evaluate it at. Sub-hour cadences become minute bars;
+/// 60 → 1h; clean hour multiples → N-hour bars; anything else falls back to 1h
+/// so we never construct an unsupported granularity. Previously the optimizer
+/// hardcoded 1h, so 15m strategies were silently evaluated at 1h and the cadence
+/// gate (60 % 15 == 0) mis-fired.
+pub fn granularity_for_cadence(cadence_minutes: u32) -> BarGranularity {
+    use crate::eval::scenario::BarGranularity as BG;
+    use xvision_data::alpaca::BarGranularityUnit;
+
+    if cadence_minutes == 0 {
+        return BG::Hour1;
+    }
+    if cadence_minutes < 60 {
+        // Minute bars support 1..=59. cadence < 60 always fits in u8.
+        return BG::new(cadence_minutes as u8, BarGranularityUnit::Minute).unwrap_or(BG::Hour1);
+    }
+    if cadence_minutes == 60 {
+        return BG::Hour1;
+    }
+    if cadence_minutes % 60 == 0 {
+        let hours = cadence_minutes / 60;
+        if hours <= u8::MAX as u32 {
+            if let Ok(g) = BG::new(hours as u8, BarGranularityUnit::Hour) {
+                return g;
+            }
+        }
+    }
+    BG::Hour1
+}
+
 fn push_optimizer_scenario_tag(tags: &mut Vec<String>) {
     if !tags.iter().any(|t| t == OPTIMIZER_SCENARIO_TAG) {
         tags.push(OPTIMIZER_SCENARIO_TAG.into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn day_window() -> DayWindow {
+        DayWindow {
+            start: NaiveDate::from_ymd_opt(2025, 1, 1).unwrap(),
+            end: NaiveDate::from_ymd_opt(2025, 4, 1).unwrap(),
+        }
+    }
+
+    fn baseline_window() -> BaselineUntouchedWindow {
+        BaselineUntouchedWindow {
+            start: NaiveDate::from_ymd_opt(2025, 4, 1).unwrap(),
+            end: NaiveDate::from_ymd_opt(2025, 5, 1).unwrap(),
+        }
+    }
+
+    #[test]
+    fn granularity_for_cadence_maps_sub_hour_to_minutes() {
+        assert_eq!(granularity_for_cadence(15), BarGranularity::Minute15);
+        assert_eq!(granularity_for_cadence(5), BarGranularity::Minute5);
+        assert_eq!(granularity_for_cadence(1), BarGranularity::Minute1);
+    }
+
+    #[test]
+    fn granularity_for_cadence_maps_60_to_hour1() {
+        assert_eq!(granularity_for_cadence(60), BarGranularity::Hour1);
+    }
+
+    #[test]
+    fn granularity_for_cadence_maps_hour_multiples() {
+        use xvision_data::alpaca::BarGranularityUnit;
+        assert_eq!(
+            granularity_for_cadence(120),
+            BarGranularity::new(2, BarGranularityUnit::Hour).unwrap()
+        );
+        assert_eq!(granularity_for_cadence(240), BarGranularity::Hour4);
+    }
+
+    #[test]
+    fn granularity_for_cadence_falls_back_to_hour1() {
+        // 0 is degenerate; 90 is not a clean hour multiple and >59 so not minutes.
+        assert_eq!(granularity_for_cadence(0), BarGranularity::Hour1);
+        assert_eq!(granularity_for_cadence(90), BarGranularity::Hour1);
+    }
+
+    #[test]
+    fn day_scenario_uses_cadence_granularity_15m() {
+        let s = synthesize_optimizer_day_scenario(&day_window(), 15, "test");
+        assert_eq!(s.granularity, BarGranularity::Minute15);
+        // B9: cache key must encode granularity so 1h-cached bars are not served for 15m.
+        assert!(
+            s.bar_cache_policy.cache_key.contains("15m"),
+            "cache_key must encode granularity, got {}",
+            s.bar_cache_policy.cache_key
+        );
+    }
+
+    #[test]
+    fn day_scenario_uses_cadence_granularity_60m() {
+        let s = synthesize_optimizer_day_scenario(&day_window(), 60, "test");
+        assert_eq!(s.granularity, BarGranularity::Hour1);
+    }
+
+    #[test]
+    fn day_scenario_uses_cadence_granularity_240m() {
+        let s = synthesize_optimizer_day_scenario(&day_window(), 240, "test");
+        assert_eq!(s.granularity, BarGranularity::Hour4);
+    }
+
+    #[test]
+    fn baseline_inherits_cadence_granularity() {
+        let day = synthesize_optimizer_day_scenario(&day_window(), 15, "test");
+        let baseline = synthesize_baseline_untouched_scenario(&day, &baseline_window()).unwrap();
+        assert_eq!(baseline.granularity, BarGranularity::Minute15);
     }
 }
