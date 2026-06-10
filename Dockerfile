@@ -40,7 +40,7 @@ COPY --from=planner /xvision/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_IDENTITY" = "1" ]; then \
-        cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json --workspace ; \
+        cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json --workspace --features xvision-engine/chain-attest ; \
     else \
         cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json ; \
     fi
@@ -54,7 +54,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_IDENTITY" = "1" ]; then \
-        cargo build --profile "$BUILD_PROFILE" --workspace --bin xvn ; \
+        cargo build --profile "$BUILD_PROFILE" --workspace --bin xvn --features xvision-engine/chain-attest ; \
     else \
         cargo build --profile "$BUILD_PROFILE" --bin xvn ; \
     fi && \

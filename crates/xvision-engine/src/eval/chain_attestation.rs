@@ -24,8 +24,8 @@
 use uuid::Uuid;
 use xvision_identity::{client::RegistryAddresses, IdentityClient};
 
-use crate::eval::run::Run;
 use crate::eval::attestation_verdict::verdict;
+use crate::eval::run::Run;
 
 const RPC_URL: &str = "https://rpc.sepolia.mantle.xyz";
 const CHAIN_ID: u64 = 5003;
@@ -67,11 +67,7 @@ pub async fn fire_chain_attestation(run: &Run) {
 
     // §3.6 verdict from finalized Sharpe. listed_sharpe = 0.0 (see module doc).
     // MetricsSummary.sharpe is f64 (not Option<f64>), so use .map not .and_then.
-    let live_sharpe = run
-        .metrics
-        .as_ref()
-        .map(|m| m.sharpe)
-        .unwrap_or(0.0);
+    let live_sharpe = run.metrics.as_ref().map(|m| m.sharpe).unwrap_or(0.0);
     let v = verdict(live_sharpe, 0.0);
 
     // Deterministic UUID from the ULID run_id so the reputation entry is

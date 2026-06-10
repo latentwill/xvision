@@ -8168,6 +8168,7 @@ dependencies = [
  "xvision-eval",
  "xvision-execution",
  "xvision-filters",
+ "xvision-identity",
  "xvision-memory",
  "xvision-observability",
  "xvision-risk",
