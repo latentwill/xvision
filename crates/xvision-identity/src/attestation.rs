@@ -46,8 +46,8 @@
 
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
-use std::str::FromStr;
 use chrono::Utc;
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
