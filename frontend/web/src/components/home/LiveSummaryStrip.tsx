@@ -1,10 +1,10 @@
 // frontend/web/src/components/home/LiveSummaryStrip.tsx
 //
 // Compact home-page summary strip for live trading (spec §2.10). Replaces the
-// old per-run LiveStrategiesSection list — the full cockpit lives at /live only.
+// old per-run LiveStrategiesSection list — the full console lives at /live only.
 //
 // The strip gives an at-a-glance HONEST status and a single route into the
-// cockpit (xvision-9pi — "live" means live money):
+// live page (xvision-9pi — "live" means live money):
 //   - count of ACTIVE live-money strategies (parent eval run mode=live,
 //     non-terminal; the backend `is_live_money` discriminator)
 //   - count of PAUSED live-money strategies (shown only when > 0)
@@ -19,7 +19,7 @@
 // chart fetch PER live run (see features/live/live-account.ts::dailyPnl), which
 // is over-fetching for a home strip. The spec qualifies the metric as
 // "(if available)" — it is not cheaply available here, so we omit it rather
-// than fake a number. PnL lives in the cockpit at /live.
+// than fake a number. PnL lives in the live page at /live.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -41,7 +41,7 @@ export function LiveSummaryStrip() {
   // all derived from `queued`/`running` agent runs, and the default
   // newest-20-of-any-status window would undercount once terminal runs
   // crowd the head of the ledger. Params live in the query key so this
-  // cache entry never collides with the cockpit's unfiltered list.
+  // cache entry never collides with the live page's unfiltered list.
   const listParams = { status: "running,queued", limit: 100 } as const;
   const { data, isPending } = useQuery({
     queryKey: agentRunKeys.list(listParams),
@@ -115,7 +115,7 @@ export function LiveSummaryStrip() {
         <span className="text-[12px] text-text-3">No live strategies running.</span>
       )}
 
-      {/* CTA — always present. Routes to the cockpit when there's activity
+      {/* CTA — always present. Routes to the live page when there's activity
           to monitor (live, paper, or stale rows to clean up), or to the
           strategies list to deploy one when there's nothing running yet. */}
       <Link

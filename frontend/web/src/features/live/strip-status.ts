@@ -10,7 +10,7 @@ import type { AgentRunSummary, RunStatus } from "@/api/types-agent-runs";
 
 export type StripStatus = "ACTIVE" | "PAUSED" | "STOPPED" | "STALE";
 
-/** Coarse liveness class for honest home/cockpit counts. */
+/** Coarse liveness class for honest home/live page counts. */
 export type RunLiveness = "live" | "paper" | "stale" | "done";
 
 // Statuses that mean the agent run itself is no longer running (terminal).
@@ -137,7 +137,7 @@ export function livenessCounts(runs: AgentRunSummary[]): LivenessCounts {
 }
 
 /**
- * Pick the run the cockpit should auto-select when no `:id` is supplied:
+ * Pick the run the live page should auto-select when no `:id` is supplied:
  * the most recently STARTED live-money run. Falls back to the most
  * recently started paper (non-terminal, non-stale) run, then to the most
  * recently started run of any status (so the viewport still has something

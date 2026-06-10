@@ -276,7 +276,7 @@ export type AgentRunSummary = {
   /**
    * Per-run pause flag (eval `RunSummary.paused`, migration 061). When the
    * agent-run summary endpoint joins the eval run record it is populated;
-   * absent on runs/endpoints that don't carry it yet. The Live cockpit
+   * absent on runs/endpoints that don't carry it yet. The Live Trading page
    * strip reads it to derive PAUSED vs ACTIVE. B-III wires the
    * pause/resume transport that flips it.
    */
@@ -311,7 +311,7 @@ export type AgentRunSummary = {
    * One-shot "flatten positions" request flag (eval `RunSummary.flatten_requested`,
    * migration 062). `true` ⇒ the live executor will close all open broker
    * positions on its next cycle and clear the flag, WITHOUT terminating the
-   * run. Absent on runs/endpoints that don't carry it yet. The Live cockpit
+   * run. Absent on runs/endpoints that don't carry it yet. The Live Trading page
    * (spec §2.7) reads it to show the pending-flatten state; B-III's transport
    * flips it via the [Flatten positions] inline action.
    */

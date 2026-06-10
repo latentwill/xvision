@@ -4,7 +4,7 @@
 //   amber  — reconnecting | snapshot (transient / initial)
 //   red    — closed (terminal / dropped)
 //
-// The cockpit owns ONE real `useRunStream` (for the selected run's chart)
+// The live page owns ONE real `useRunStream` (for the selected run's chart)
 // and passes its `LiveStatus` to the selected pill. Non-selected pills get
 // a lightweight derived status (live ⇒ snapshot/amber, terminal ⇒ closed)
 // so we don't open an EventSource per pill.

@@ -1,11 +1,11 @@
-// Live cockpit wallet banner (spec §2.5).
+// Live Trading wallet banner (spec §2.5).
 //
 // Shown ONLY when the user's wallet is not connected
 // (`useWallet().address === null`). Full-width strip below the strategy
 // strip and above the viewport. It does NOT hide strategy data — only
 // trading actions are disabled (the strip's transport placeholders render
 // disabled with a "Connect wallet to act" tooltip; that gating lives in
-// the cockpit/TransportControls, not here).
+// the live page/TransportControls, not here).
 //
 // This is a SEPARATE component from `SafetyPauseBanner` — do not reuse it.
 // No popup: connecting routes to the wallet settings page.

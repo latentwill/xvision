@@ -1,4 +1,4 @@
-// Live cockpit account-stat + positions-table derivations (Task B-II, spec §2.6).
+// Live Trading account-stat + positions-table derivations (Task B-II, spec §2.6).
 //
 // All derivation logic is pure and unit-tested (live-account.test.ts) so the
 // React components (LiveAccountStrip / LivePositionsTable) stay thin. The data

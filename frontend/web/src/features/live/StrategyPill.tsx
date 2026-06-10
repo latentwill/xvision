@@ -1,4 +1,4 @@
-// A single strategy pill in the Live cockpit strip (spec §2.4).
+// A single strategy pill in the Live Trading strip (spec §2.4).
 //
 // Shows: strategy name · status pill (ACTIVE/PAUSED/STOPPED) · one
 // configurable metric (color-coded) · SSE connection dot. Clicking the

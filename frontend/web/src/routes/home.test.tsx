@@ -236,11 +236,11 @@ describe("HomeRoute", () => {
     ).not.toBeNull();
   });
 
-  // S1-W2: Topbar subtitle updated
-  it("shows cockpit subtitle in topbar", async () => {
+  // S1-W2: Topbar subtitle shows strategy count
+  it("shows strategy count subtitle in topbar", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
-    expect(screen.getByText(/cockpit/)).toBeInTheDocument();
+    expect(screen.getByText("0 strategies")).toBeInTheDocument();
   });
 
   // Reachability gate: the optimizer last-run digest must actually be MOUNTED

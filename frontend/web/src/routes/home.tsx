@@ -81,7 +81,7 @@ export function HomeRoute() {
     <>
       <Topbar
         title="Dashboard"
-        sub={`cockpit · ${strategyCount} strategies`}
+        sub={`${strategyCount} strategies`}
       />
 
       <div className="space-y-5">

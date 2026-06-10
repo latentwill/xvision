@@ -1,4 +1,4 @@
-// Live Trading cockpit shell (spec §2.3–§2.6).
+// Live Trading shell (spec §2.3–§2.6).
 //
 // Layout (top → bottom, full width, single center column — NO right-side
 // box; the chat rail owns the right edge per the repo layout rule):
@@ -39,12 +39,12 @@ import { loadStripMetric, saveStripMetric, type StripMetricId } from "./strip-me
 import { pickDefaultRun } from "./strip-status";
 import { useTransport } from "./useTransport";
 
-export interface LiveCockpitProps {
+export interface LiveConsoleProps {
   /** From `/live/:id`. When set, this run is preselected. */
   runId?: string;
 }
 
-export function LiveCockpit({ runId }: LiveCockpitProps) {
+export function LiveConsole({ runId }: LiveConsoleProps) {
   const navigate = useNavigate();
   const { address } = useWallet();
   const walletDisabled = address === null;
@@ -100,7 +100,7 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
   // chart container (via the `stream` prop, so it opens no EventSource of its
   // own). Other pills get a lightweight derived status (see StrategyStrip) so
   // we don't open an EventSource per pill. This collapses B-I's duplicate
-  // stream (cockpit dot + chart each opened their own for the same run).
+  // stream (connection dot + chart each opened their own for the same run).
   const stream = useRunStream(selectedId ?? "");
   const selectedConnStatus = stream.status;
 
@@ -138,7 +138,10 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
 
   return (
     <>
-      <Topbar title="Live cockpit" sub={topbarSub} />
+      <Topbar
+        title="Live Trading"
+        sub={topbarSub}
+      />
 
       {/* §2.4 Strategy strip — fixed, always visible. */}
       <StrategyStrip
