@@ -94,14 +94,21 @@ use std::sync::Mutex;
 
 struct RecordingBroker {
     submitted: Mutex<Vec<OrderRequest>>,
-    fill_price: f64,
+    /// Per-order fill prices, consumed front-to-back; the LAST price is
+    /// sticky (reused for every order past the end of the queue).
+    fill_prices: Mutex<Vec<f64>>,
 }
 
 impl RecordingBroker {
     fn new(fill_price: f64) -> Arc<Self> {
+        Self::with_prices(vec![fill_price])
+    }
+    /// Broker whose Nth order fills at `prices[N]` (last price sticky).
+    fn with_prices(prices: Vec<f64>) -> Arc<Self> {
+        assert!(!prices.is_empty(), "need at least one fill price");
         Arc::new(Self {
             submitted: Mutex::new(Vec::new()),
-            fill_price,
+            fill_prices: Mutex::new(prices),
         })
     }
     fn submitted(&self) -> Vec<OrderRequest> {
@@ -113,9 +120,17 @@ impl RecordingBroker {
 impl BrokerSurface for RecordingBroker {
     async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
         self.submitted.lock().unwrap().push(req.clone());
+        let fill_price = {
+            let mut prices = self.fill_prices.lock().unwrap();
+            if prices.len() > 1 {
+                prices.remove(0)
+            } else {
+                prices[0]
+            }
+        };
         Ok(OrderConfirmation {
             broker_order_id: format!("recorded-{}", req.idempotency_key),
-            fill_price: Some(self.fill_price),
+            fill_price: Some(fill_price),
             fill_size: req.size,
             fee: None,
         })
@@ -236,6 +251,46 @@ fn long_open_dispatch() -> Arc<dyn LlmDispatch> {
     ))
 }
 
+/// One canned text response per decision; the LAST response is sticky.
+fn action_sequence_dispatch(actions: &[&str]) -> Arc<dyn LlmDispatch> {
+    use xvision_engine::agent::llm::{ContentBlock, LlmResponse, StopReason};
+    let responses = actions
+        .iter()
+        .map(|action| LlmResponse {
+            content: vec![ContentBlock::Text {
+                text: format!(r#"{{"action":"{action}","conviction":0.9,"justification":"scripted"}}"#),
+            }],
+            stop_reason: StopReason::EndTurn,
+            input_tokens: 1,
+            output_tokens: 1,
+        })
+        .collect();
+    Arc::new(MockDispatch::sequence(responses))
+}
+
+/// Single-asset strategy (BTC) tuned for the daily-loss-kill veto:
+/// `daily_loss_kill_pct = 0.05` (5% of starting capital), generous
+/// per-trade sizing so a single losing round-trip breaches the kill
+/// threshold, and `max_concurrent_positions = 0` (disabled) so the test
+/// isolates the daily-loss check.
+fn one_asset_strategy_daily_kill() -> Strategy {
+    let mut strategy = two_asset_strategy_max1();
+    strategy.manifest.id = "01TESTLIVERISKVETO0000002".into();
+    strategy.manifest.asset_universe = vec!["BTC/USD".into()];
+    strategy.risk.max_concurrent_positions = 0; // disabled — isolate daily-loss
+    strategy.risk.daily_loss_kill_pct = 0.05; // 5% of 100k = 5_000 USD
+    strategy.risk.risk_pct_per_trade = 0.10; // 10k notional @ 50k = 0.2 units
+    strategy
+}
+
+fn one_asset_live_config() -> LiveConfig {
+    let mut cfg = two_asset_live_config();
+    cfg.strategy_id = "01TESTLIVERISKVETO0000002".into();
+    cfg.assets.truncate(1); // BTC only
+    cfg.display_name = "live daily-loss-kill test".into();
+    cfg
+}
+
 // ---------------------------------------------------------------------------
 // Test
 // ---------------------------------------------------------------------------
@@ -335,5 +390,114 @@ async fn live_max_concurrent_positions_veto_blocks_second_open() {
     );
 
     // Suppress unused-variable warning for the dir guard.
+    drop(dir);
+}
+
+/// With `daily_loss_kill_pct = 0.05` on 100k starting capital (kill
+/// threshold: 5_000 USD realized loss per UTC day), a scripted live run:
+///
+///   1. bar t=60  — `long_open`, fills at 50_000 (0.2 units, 10k notional);
+///   2. bar t=120 — `flat`, fills at 20_000 → realized PnL = -6_000,
+///      breaching the 5_000 daily kill threshold;
+///   3. bar t=180 — `long_open` again (same UTC day) → VETOED by the
+///      daily-loss kill, rewritten to `hold`.
+///
+/// Evidence:
+///   - the broker receives exactly TWO orders (the open + the close);
+///   - a `supervisor_notes` row records reason `daily_loss_kill`;
+///   - the third decision row records the trader's action (`long_open`)
+///     but has no fill price (no order was placed).
+#[tokio::test]
+async fn live_daily_loss_kill_veto_blocks_open_after_breach() {
+    let (store, dir) = fresh_store().await;
+    let strategy = one_asset_strategy_daily_kill();
+    let scenario = live_scenario(100_000.0);
+    let cfg = one_asset_live_config();
+
+    let mut run = Run::new_queued(strategy.manifest.id.clone(), String::new(), RunMode::Live);
+    run.live_config = Some(cfg.clone());
+    store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
+
+    // First order (the open) fills at 50_000; second (the close) at
+    // 20_000 → realized = 0.2 * (20_000 - 50_000) = -6_000.
+    let broker = RecordingBroker::with_prices(vec![50_000.0, 20_000.0]);
+
+    // All three bars fall on the same UTC day (1970-01-01), so the
+    // daily-loss accumulator never resets between decisions.
+    let btc_stream = live_stream_for(
+        "BTC/USD",
+        vec![
+            market_bar_at(60, 50_000.0),
+            market_bar_at(120, 20_000.0),
+            market_bar_at(180, 20_000.0),
+        ],
+    );
+    let multi = MultiLiveStream::new(vec![(AssetSymbol::Btc, btc_stream)]);
+
+    let executor = Executor::live(
+        &cfg,
+        broker.clone(),
+        multi,
+        WallClock::with_now_fn(|| ts(180)),
+        None,
+    )
+    .expect("live executor builds");
+
+    let _metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            action_sequence_dispatch(&["long_open", "flat", "long_open"]),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    // 1. Exactly two broker orders: the open and the loss-realizing close.
+    //    The third decision's long_open was vetoed and never reached the
+    //    broker.
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "after the daily-loss kill breach, the third long_open must be vetoed \
+         and never reach the broker (got {submitted:?})"
+    );
+
+    // 2. A supervisor note with reason "daily_loss_kill" was recorded for
+    //    the vetoed open.
+    let notes = store.read_supervisor_notes(&run.id).await.unwrap();
+    let veto_note = notes.iter().find(|(role, severity, content)| {
+        role == "risk" && severity == "warn" && content.contains("daily_loss_kill")
+    });
+    assert!(
+        veto_note.is_some(),
+        "a supervisor note with role=risk, severity=warn, reason=daily_loss_kill \
+         must be recorded for the vetoed open; got notes={notes:?}"
+    );
+
+    // 3. The third decision row (index 2) was persisted with the trader's
+    //    original action but no fill (the order was rewritten to hold).
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let vetoed = decisions
+        .iter()
+        .find(|d| d.decision_index == 2)
+        .expect("the third decision row must be persisted");
+    assert_eq!(
+        vetoed.action, "long_open",
+        "the decision row records the trader's ORIGINAL action"
+    );
+    assert_eq!(
+        vetoed.fill_price, None,
+        "vetoed open must not produce a fill (fill_price must be None)"
+    );
+
     drop(dir);
 }
