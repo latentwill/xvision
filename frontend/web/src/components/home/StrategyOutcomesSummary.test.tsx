@@ -135,6 +135,20 @@ describe("StrategyOutcomesSummary", () => {
     expect(link).toHaveAttribute("href", "/strategies");
   });
 
+  it("joins runs to strategies via agent_id when strategy metadata is absent", () => {
+    // The list endpoint never enriches run.strategy — without the agent_id
+    // fallback the dashboard claimed "no completed evals yet" while showing a
+    // nonzero completed-eval count right above.
+    const strategies = [makeStrategy("s1", "Alpha")];
+    const run = makeRun("r1", "s1", { total_return_pct: 9, sharpe: 1.3 });
+    run.strategy = null;
+
+    renderSummary(strategies, [run]);
+
+    expect(screen.getByTestId("summary-row-s1")).toBeInTheDocument();
+    expect(screen.queryByText(/no completed evals yet/i)).toBeNull();
+  });
+
   it("prompts to create a strategy when none are configured", () => {
     renderSummary([], []);
 

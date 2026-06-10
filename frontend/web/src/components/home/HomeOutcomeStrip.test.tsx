@@ -93,8 +93,18 @@ describe("latestCompletedRunsByStrategy", () => {
     expect(s1?.id).toBe("r2");
   });
 
-  it("skips runs with no strategy id", () => {
-    const orphan = makeRun("r1", "s1");
+  it("falls back to agent_id when the summary has no strategy metadata", () => {
+    // /api/eval/runs (list) never enriches run.strategy — only the detail
+    // endpoint does. agent_id carries the same strategy id on the wire.
+    const unenriched = makeRun("r1", "s1");
+    unenriched.strategy = null;
+    const latest = latestCompletedRunsByStrategy([unenriched]);
+    expect(latest).toHaveLength(1);
+    expect(latest[0]?.id).toBe("r1");
+  });
+
+  it("skips runs with neither strategy metadata nor agent_id", () => {
+    const orphan = makeRun("r1", "");
     orphan.strategy = null;
     expect(latestCompletedRunsByStrategy([orphan])).toHaveLength(0);
   });

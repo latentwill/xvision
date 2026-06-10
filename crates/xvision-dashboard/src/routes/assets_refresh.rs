@@ -53,9 +53,7 @@ fn parse_orderly_symbol(raw: &str) -> Option<(String, String)> {
         let tail = format!("_{}", suffix);
         if lower.ends_with(&tail) {
             let stripped = &raw[..raw.len() - tail.len()];
-            let base = stripped
-                .strip_prefix("PERP_")?
-                .strip_suffix("_USDC")?;
+            let base = stripped.strip_prefix("PERP_")?.strip_suffix("_USDC")?;
             if base.is_empty() {
                 return None;
             }
@@ -71,12 +69,19 @@ fn parse_orderly_symbol(raw: &str) -> Option<(String, String)> {
 }
 
 const MEME_COINS: &[&str] = &[
-    "1000BONK", "1000PEPE", "1000SHIB", "FARTCOIN", "GOAT", "PUMP", "USELESS",
-    "WIF", "TRUMP", "BIRB", "PEPE", "BASED", "EDGE",
+    "1000BONK", "1000PEPE", "1000SHIB", "FARTCOIN", "GOAT", "PUMP", "USELESS", "WIF", "TRUMP", "BIRB",
+    "PEPE", "BASED", "EDGE",
 ];
 const RWA_COINS: &[&str] = &["PAXG", "XAU", "XAG", "CL", "NATGAS_ARTHUR"];
 const EQUITY_COINS: &[&str] = &["NVDA", "TSLA", "GOOGL", "SNDK_MYTHOS", "SOXL_MYTHOS"];
-const INDEX_COINS: &[&str] = &["SPX500", "SPX", "NAS100", "SPY_MYTHOS", "QQQ_MYTHOS", "EWY_MYTHOS"];
+const INDEX_COINS: &[&str] = &[
+    "SPX500",
+    "SPX",
+    "NAS100",
+    "SPY_MYTHOS",
+    "QQQ_MYTHOS",
+    "EWY_MYTHOS",
+];
 const STABLE_COINS: &[&str] = &["USDT", "USDC", "STBL"];
 
 fn assign_category(base: &str) -> &'static str {
@@ -174,7 +179,11 @@ fn generate_whitelist_toml(symbols: &[String]) -> (Vec<WhitelistEntry>, String) 
     for (base, orderly_sym) in &orderly_map {
         let alpaca_pair = alpaca_pairs.get(base.as_str()).copied();
         let category = assign_category(base);
-        let data = if alpaca_pair.is_some() { "alpaca" } else { "orderly-only" };
+        let data = if alpaca_pair.is_some() {
+            "alpaca"
+        } else {
+            "orderly-only"
+        };
         let mut venues = BTreeMap::new();
         if let Some(pair) = alpaca_pair {
             venues.insert("alpaca".to_string(), pair.to_string());
@@ -227,9 +236,7 @@ fn generate_whitelist_toml(symbols: &[String]) -> (Vec<WhitelistEntry>, String) 
 
 const ORDERLY_PUBLIC_INFO_URL: &str = "https://api-evm.orderly.org/v1/public/info";
 
-pub async fn refresh(
-    State(state): State<AppState>,
-) -> Result<Json<RefreshResult>, DashboardError> {
+pub async fn refresh(State(state): State<AppState>) -> Result<Json<RefreshResult>, DashboardError> {
     // 1. Fetch live Orderly market data
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -255,12 +262,7 @@ pub async fn refresh(
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("Orderly JSON parse: {e}")))?;
 
-    let symbols: Vec<String> = info
-        .data
-        .rows
-        .into_iter()
-        .map(|r| r.symbol)
-        .collect();
+    let symbols: Vec<String> = info.data.rows.into_iter().map(|r| r.symbol).collect();
 
     let symbols_found = symbols.len();
 
@@ -289,8 +291,6 @@ pub async fn refresh(
         symbols_found,
         whitelist_path: whitelist_path.to_string_lossy().into_owned(),
         registry_reloaded: false,
-        message: format!(
-            "{symbols_found} markets written to whitelist. Restart xvn to apply."
-        ),
+        message: format!("{symbols_found} markets written to whitelist. Restart xvn to apply."),
     }))
 }

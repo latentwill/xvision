@@ -171,11 +171,9 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, assets as assets_route,
-    assets_refresh as assets_refresh_route,
-    autooptimizer as autooptimizer_route,
-    autooptimizer_cycle, bars, charts_annotated,
-    charts_dashboards, charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
+    agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
+    autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
+    charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,

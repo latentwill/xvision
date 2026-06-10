@@ -51,7 +51,11 @@ pub struct NullDspyBridge;
 
 #[async_trait]
 impl DspyBridge for NullDspyBridge {
-    async fn compile(&self, _namespace: &str, _observations: &[(String, String)]) -> anyhow::Result<CompileResult> {
+    async fn compile(
+        &self,
+        _namespace: &str,
+        _observations: &[(String, String)],
+    ) -> anyhow::Result<CompileResult> {
         Ok(CompileResult::empty("null"))
     }
 }
@@ -68,7 +72,11 @@ pub struct LiveDspyBridge {
 
 #[async_trait]
 impl DspyBridge for LiveDspyBridge {
-    async fn compile(&self, _namespace: &str, observations: &[(String, String)]) -> anyhow::Result<CompileResult> {
+    async fn compile(
+        &self,
+        _namespace: &str,
+        observations: &[(String, String)],
+    ) -> anyhow::Result<CompileResult> {
         if observations.is_empty() {
             return Ok(CompileResult::empty("live_summarizer"));
         }
@@ -137,7 +145,10 @@ mod tests {
             provider: "test".to_string(),
         };
         let result = bridge.compile("ns", &[]).await.unwrap();
-        assert!(result.instruction.is_empty(), "empty observations must return empty instruction");
+        assert!(
+            result.instruction.is_empty(),
+            "empty observations must return empty instruction"
+        );
     }
 
     #[tokio::test]
@@ -150,8 +161,14 @@ mod tests {
             provider: "test".to_string(),
         };
         let obs = vec![
-            ("obs1".to_string(), "J01: raised threshold improved Sharpe".to_string()),
-            ("obs2".to_string(), "J02: low conviction led to noise trades".to_string()),
+            (
+                "obs1".to_string(),
+                "J01: raised threshold improved Sharpe".to_string(),
+            ),
+            (
+                "obs2".to_string(),
+                "J02: low conviction led to noise trades".to_string(),
+            ),
         ];
         let result = bridge.compile("autooptimizer:dspy", &obs).await.unwrap();
         assert_eq!(result.instruction, expected);
@@ -162,7 +179,10 @@ mod tests {
     #[tokio::test]
     async fn null_bridge_returns_empty() {
         let bridge = NullDspyBridge;
-        let result = bridge.compile("ns", &[("id1".to_string(), "text1".to_string())]).await.unwrap();
+        let result = bridge
+            .compile("ns", &[("id1".to_string(), "text1".to_string())])
+            .await
+            .unwrap();
         assert!(result.instruction.is_empty());
         assert_eq!(result.optimizer_name, "null");
     }

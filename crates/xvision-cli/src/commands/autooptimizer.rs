@@ -21,7 +21,9 @@ use xvision_engine::autooptimizer::cycle_runs::{
     get_cycle_run, list_cycle_runs, CycleRunDetail, CycleRunSummary,
 };
 use xvision_engine::autooptimizer::gate::GateVerdict;
-use xvision_engine::autooptimizer::lineage::{ensure_lineage_schema, LineageNode, LineageStatus, LineageStore};
+use xvision_engine::autooptimizer::lineage::{
+    ensure_lineage_schema, LineageNode, LineageStatus, LineageStore,
+};
 use xvision_memory::embedder::Embedder;
 
 use crate::exit::{CliError, CliResult, XvnExit};

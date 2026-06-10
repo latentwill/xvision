@@ -48,7 +48,12 @@ function memoryStatus(overrides: Partial<MemoryStatus> = {}): MemoryStatus {
     embedder_id: "openai:text-embedding-3-small",
     embedder_source: "openai-compat",
     grace_days: 7,
-    namespaces: [{ namespace: "chat", live_observations: 12n }],
+    // ts-rs types this as bigint, but JSON.parse delivers a plain number at
+    // runtime — the fixture must match the wire reality, not the type
+    // (regression: a 0n accumulator over numbers crashed /settings/general).
+    namespaces: [
+      { namespace: "chat", live_observations: 12 as unknown as bigint },
+    ],
     ...overrides,
   };
 }
@@ -152,6 +157,21 @@ describe("MemorySettingsCard", () => {
     expect(
       await findByText(/openai:text-embedding-3-small/),
     ).toBeInTheDocument();
+  });
+
+  it("sums live observations from plain-number JSON without throwing", async () => {
+    // Regression: the wire payload carries numbers (despite the bigint type),
+    // and a BigInt accumulator crashed the whole /settings/general route.
+    vi.mocked(settingsApi.getMemoryStatus).mockResolvedValue(
+      memoryStatus({
+        namespaces: [
+          { namespace: "chat", live_observations: 7 as unknown as bigint },
+          { namespace: "optimizer", live_observations: 5 as unknown as bigint },
+        ],
+      }),
+    );
+    const { findByText } = renderCard();
+    expect(await findByText("12")).toBeInTheDocument();
   });
 
   it("renders the embedding-model picker with curated options when source is not off", async () => {

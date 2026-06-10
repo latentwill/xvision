@@ -675,6 +675,7 @@ where
                     config,
                     dsr_prefix,
                     exploration_seed,
+                    mutation_idx,
                     mutation_memory_context.as_deref(),
                     &avoid,
                     Some(&resolved_agent_prompts),

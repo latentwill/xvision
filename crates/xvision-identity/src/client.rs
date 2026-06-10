@@ -85,7 +85,7 @@ sol! {
             string  calldata endpoint,
             string  calldata feedbackURI,
             bytes32 feedbackHash
-        ) external;
+        ) external returns (uint256 feedbackId);
 
         function getFeedback(uint256 agentId, uint256 index)
             external view
