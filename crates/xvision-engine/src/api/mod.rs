@@ -20,6 +20,7 @@ use xvision_core::config::AlpacaData;
 use xvision_data::alpaca::AlpacaBarsFetcher;
 
 pub mod agents;
+pub mod assets;
 pub mod audit;
 pub mod autooptimizer;
 /// `xvn model bakeoff` orchestrator. File lives at

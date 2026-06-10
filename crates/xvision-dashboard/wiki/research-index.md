@@ -4,7 +4,6 @@ This page is the landing zone for the 2026-05-29 research drop under `/opt/olymp
 
 ## Categories
 
-- [Degen Virtuals Agent Investigation](/docs?slug=degen-virtuals-agent-investigation) — wallet-level investigation of the Degen Virtuals Arena top-20 agents, including Hyperliquid behavior, source artifacts, and strategy-archetype synthesis.
 - [XVision / Agentic Trading](/docs?slug=xvision) — trading strategy, platform landscape, Optimizer, DSPy, Cline SDK, and Rust infrastructure.
 - [Growth / Marketing](/docs?slug=growth-marketing) — SaaS growth, architecture-firm GTM, Meta Ads for agencies, and Meta Ads for info products.
 - [AI Courses](/docs?slug=ai-courses) — OpenClaw / Hermes / Claude Code course positioning and curriculum opportunity.

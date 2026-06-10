@@ -39,12 +39,19 @@ fn alpaca_symbol_for(asset: AssetSymbol) -> String {
     asset.as_alpaca_pair()
 }
 
-/// Parse an Alpaca-side symbol string back to an `AssetSymbol`. Accepts the
-/// pair form (`"BTC/USD"`), the concatenated form (`"BTCUSD"`), and the bare
-/// short code (`"BTC"`) for every whitelisted asset. Delegates to
-/// `AssetSymbol`'s `FromStr` impl.
+/// Parse an Alpaca-side symbol string back to an `AssetSymbol`. Returns
+/// `Some` only for symbols that have Alpaca crypto data support (registry
+/// check, or legacy static list when the registry is not loaded). Rejects
+/// orderly-only symbols so that Alpaca portfolio parsing never creates
+/// positions for assets that xvision hasn't marked as Alpaca-tradeable.
 fn asset_symbol_from_alpaca(sym: &str) -> Option<AssetSymbol> {
-    sym.parse().ok()
+    use xvision_core::asset_registry;
+    let parsed: AssetSymbol = sym.parse().ok()?;
+    if asset_registry::is_alpaca_crypto(parsed) {
+        Some(parsed)
+    } else {
+        None
+    }
 }
 
 // ── Internal HTTP abstraction ────────────────────────────────────────────────
@@ -748,6 +755,18 @@ mod tests {
                 take_profit_pct: 5.0,
                 trader_summary: "Long entry on confirmed range break with 2:1 R:R.".into(),
                 asset: AssetSymbol::Btc,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             },
         }
     }
@@ -762,9 +781,16 @@ mod tests {
 
     #[test]
     fn alpaca_symbol_mapping_rejects_unsupported_crypto_symbols() {
+        // XRP is not in the Alpaca static whitelist; when the registry is not
+        // loaded (unit-test context), the legacy fallback list is used and XRP
+        // is absent → None.
         assert_eq!(asset_symbol_from_alpaca("XRP/USD"), None);
-        let err = AssetSymbol::from_str("XRP").unwrap_err();
-        assert!(err.contains("Alpaca crypto whitelist"));
+        // `AssetSymbol::from_str` is permissive (accepts any valid [A-Z0-9_]+);
+        // it does not enforce Alpaca-whitelist membership. XRP parses fine as a
+        // symbol — it just has no Alpaca data source attached.
+        let xrp = AssetSymbol::from_str("XRP");
+        assert!(xrp.is_ok(), "from_str should accept XRP as a valid symbol");
+        assert_eq!(xrp.unwrap().as_str(), "XRP");
     }
 
     // ── Test 1: submit_buy_with_bracket ──────────────────────────────────────
@@ -846,6 +872,18 @@ mod tests {
                 take_profit_pct: 5.0,
                 trader_summary: "Long ETH on confirmed range break with 2:1 R:R.".into(),
                 asset: AssetSymbol::Eth,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             },
         };
         executor.submit(&decision).await.expect("submit should succeed");
@@ -896,6 +934,18 @@ mod tests {
                 take_profit_pct: 4.0,
                 trader_summary: "Vetoed test decision — should not reach executor.".into(),
                 asset: AssetSymbol::Btc,
+                trailing_stop_pct: None,
+                breakeven_trigger_pct: None,
+                breakeven_offset_pct: None,
+                fade_sl_bars: None,
+                fade_sl_start_pct: None,
+                fade_sl_end_pct: None,
+                max_bars_held: None,
+                sl_atr_mult: None,
+                tp_atr_mult: None,
+                tp1_pct: None,
+                tp1_close_fraction: None,
+                tp2_pct: None,
             },
             reason: VetoReason::DailyLossCircuitBreaker,
         };

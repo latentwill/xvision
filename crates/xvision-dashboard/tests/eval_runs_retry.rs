@@ -102,7 +102,7 @@ sqlite_url = "sqlite://x.db"
                 bar_history_limit: None,
                 memory_mode: xvision_memory::types::MemoryMode::default(),
                 noop_skip: None,
-                allowed_tools: Vec::new(),
+                allowed_tools: vec!["submit_decision".into()],
                 delta_briefing: None,
             }],
             scope_strategy_id: None,

@@ -79,6 +79,8 @@
 // 59. POST   /api/optimize/memory-demos               flywheel::optimize_memory_demos
 // 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
+// 61. POST  /api/assets/refresh               assets_refresh::refresh
+//
 // READ-ONLY routes (GET, GET SSE) — no require_auth layer:
 //
 //  R1.  GET  /api/health
@@ -144,6 +146,7 @@
 //  R60. GET  /api/autooptimizer/blob/:hash
 //  R61. GET  /api/autooptimizer/flywheel
 //  R62. GET  /api/autooptimizer/stats    (P3-W1 per-cycle aggregates)
+//  R63. GET  /api/assets
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -168,7 +171,10 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated,
+    agent_runs, agents, assets as assets_route,
+    assets_refresh as assets_refresh_route,
+    autooptimizer as autooptimizer_route,
+    autooptimizer_cycle, bars, charts_annotated,
     charts_dashboards, charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
@@ -206,6 +212,7 @@ fn readonly_router(state: AppState) -> Router {
             "/api/agents/:id/diagnostics",
             get(diagnostics_route::agent),
         )
+        .route("/api/assets", get(assets_route::list))
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))
@@ -555,6 +562,19 @@ fn mutating_router(state: AppState) -> Router {
             "/api/autooptimizer/cycles/:cycle_id/resume",
             post(autooptimizer_cycle::resume_cycle),
         )
+        // Strategy Inspector endpoints (unified optimizer plan).
+        .route(
+            "/api/optimizer/strategy/:hash",
+            axum::routing::get(autooptimizer_cycle::get_optimizer_strategy_blob),
+        )
+        .route(
+            "/api/optimizer/strategy/:hash/diff/origin",
+            axum::routing::get(autooptimizer_cycle::get_strategy_origin_diff),
+        )
+        .route(
+            "/api/optimizer/strategy/:hash/promote",
+            axum::routing::post(autooptimizer_cycle::promote_strategy),
+        )
         // F29: retire a cycle-produced candidate (move its lineage node to
         // Rejected) — dashboard parity for `xvn optimizer retire`.
         .route(
@@ -693,6 +713,13 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/chat-rail/checkpoints/:cid/restore",
             post(checkpoints_route::restore),
+        )
+        // ── Assets: on-demand Orderly market refresh (R64 / W8) ─────────
+        // R64. POST /api/assets/refresh — fetch live Orderly perp markets,
+        // regenerate config/whitelist.toml, report result.
+        .route(
+            "/api/assets/refresh",
+            post(assets_refresh_route::refresh),
         )
         // ── Apply require_auth middleware to ALL mutating routes ───────────
         .route_layer(axum::middleware::from_fn_with_state(

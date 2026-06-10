@@ -750,6 +750,42 @@ export function useExperimentDetail(hash: string) {
   });
 }
 
+// ─── Strategy Inspector types (unified optimizer plan) ───────────────────────
+
+export interface StrategyDiff {
+  prose: Array<{ agent_role: string; before: string; after: string }>;
+  params: Array<{ key: string; before: unknown; after: unknown }>;
+  tools: { added: string[]; removed: string[] };
+  filter: Array<{ path: string; before: unknown; after: unknown }>;
+}
+
+export interface OriginDiffResponse {
+  origin_hash: string;
+  diff: StrategyDiff;
+}
+
+async function getOriginDiff(hash: string): Promise<OriginDiffResponse> {
+  return apiFetch<OriginDiffResponse>(
+    `/api/optimizer/strategy/${encodeURIComponent(hash)}/diff/origin`,
+  );
+}
+
+export function useOriginDiff(hash: string | null | undefined) {
+  return useQuery({
+    queryKey: [...autooptimizerKeys.all, "origin-diff", hash ?? ""] as const,
+    queryFn: () => getOriginDiff(hash!),
+    enabled: !!hash,
+    staleTime: 60_000,
+  });
+}
+
+export async function promoteStrategy(hash: string): Promise<{ strategy_id: string }> {
+  return apiFetch<{ strategy_id: string }>(
+    `/api/optimizer/strategy/${encodeURIComponent(hash)}/promote`,
+    { method: "POST" },
+  );
+}
+
 // ─── Operator label helpers ───────────────────────────────────────────────────
 
 /** Map developer status string to operator-facing label (terminology lock). */

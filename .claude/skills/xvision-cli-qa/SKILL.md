@@ -229,33 +229,25 @@ Watch for:
 - `agent inspect --diagnostics` failing non-zero just because a capability is
   incomplete (state-only; it must exit 0 for a resolved agent)
 
-### Offline optimizer (`xvn optimize`)
-- `GET /api/optimizations?agent=&slot=` — list runs; slot filter narrows
-- `GET /api/optimizations/:id` — run detail: candidate table, snapshot, lineage;
-  unknown id ⇒ 404; a FAILED run still returns its partial candidates
-- `POST /api/optimizations/:id/accept` — mint a child agent from a snapshot
-- `POST /api/optimizations/:id/revert` — clear accept flag + lineage edge
+### Optimizer CLI (`xvn optimize`)
 
-CLI peers:
-- `xvn optimize run --agent … --slot … --capability … --corpus … --optimizer … --metric … --rng-seed … [--dry-run] [--json]`
-- `xvn optimize inspect / export-demos / import-demos / accept-as-child-agent / revert-accepted / explain-missing-data`
+> `xvn optimizer` is **deprecated** and delegates to `xvn optimize`. QA the `xvn optimize` surface directly.
+
+CLI surface:
+- `xvn optimize run --strategy <id> [--cycles N] [--mock]`
+- `xvn optimize run-cycle [--strategy <id>] [--mock] [--session-id ...] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]`
+- `xvn optimize mutate-once --parent-bundle-hash <hex> [--config PATH] [--cycle-id ID] [--dry-run] [--db PATH] [--blob-dir PATH] [--mock]`
+- `xvn optimize demo [--fixture PATH] [-v]`
+- `xvn optimize inspect <run-id> [--json]`
 
 Watch for:
-- **accept-without-holdout** succeeding — a snapshot whose winner was selected
-  on train-only data (no holdout split) MUST be refused at accept time
-- accept using a snapshot from a **different run** succeeding (must be rejected)
-- accept **mutating the parent** agent — it must clone + leave the parent intact
-- `revert` not clearing both the accept flag AND the lineage edge
-- same `--rng-seed` + inputs producing a different winning candidate
-  (runs must be reproducible-from-inputs)
-- **engine/dashboard pulling DSPy** — `cargo tree -p xvision-engine` /
-  `-p xvision-dashboard` must show no `dspy-rs`/`xvision-dspy`/`rig-core`; the
-  store surfaces snapshots/demos as opaque JSON, accept swaps a plain
-  instruction string only
-- exit-code drift across the failure classes (10 missing-data, 11
-  missing-capability, 12 provider, 13 metric, 14 validation, 15 persistence,
-  4 not-found); `--live` is a stub and must fail with 12, not 0
-- `--dry-run` mutating the store (it must validate only)
+- **`xvn optimizer` not printing a deprecation warning** — every `xvn optimizer` sub-command must emit a deprecation notice before delegating
+- **`xvn optimizer` sub-commands not delegating correctly** — `run-cycle`, `mutate-once`, `demo`, `inspect`, `ls`, `gate`, `activate`, `retire`, `lineage` must all delegate to the `xvn optimize` equivalents
+- **removed sub-commands still responding** — `memory-demos`, `memory-demos-gate`, `accept-as-child-agent`, `revert-accepted`, `export-demos`, `import-demos`, `explain-missing-data` must return a not-found / unrecognized-subcommand error, not silently succeed
+- `xvn optimize run` without `--strategy` — strategy ID is required; must fail with a clear error
+- `--dry-run` on `mutate-once` mutating the store (it must validate only)
+- **mock mode** (`--mock`) writing real state to the DB or blob dir
+- `xvn optimize inspect` returning 404 for an unknown run-id (must not panic or return 0)
 
 ### Chat rail (unified stream + safety)
 - `GET /api/chat-rail/sessions/:id/stream?after_seq=<n>` — replay past the
@@ -324,12 +316,9 @@ Watch for:
 - a no-agent rules-only strategy is presented as a broken/missing-agent eval,
   or a broken/missing-agent strategy is excused as rules-only without an
   explicit mechanical-mode declaration
-- `xvn optimize accept-as-child-agent` succeeds on a train-only snapshot (no
-  holdout) or mutates the parent agent
-- `xvn optimize` exit code does not match the failure class (e.g. unknown
-  metric returns 5 instead of 13)
-- `xvn optimize` or the optimizations route drags `dspy-rs`/`rig-core` into the
-  engine or dashboard build
+- `xvn optimizer` sub-commands not printing a deprecation notice before delegating to `xvn optimize`
+- `xvn optimize run` accepting a call without `--strategy` (strategy ID is required)
+- removed sub-commands (`memory-demos`, `accept-as-child-agent`, `export-demos`, `import-demos`, `explain-missing-data`) responding with exit 0 instead of a not-found error
 - a chat-rail write tool runs in research mode, or a spoofed client mode
   bypasses the persisted-mode enforcement
 

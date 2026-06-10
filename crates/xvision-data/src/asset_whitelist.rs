@@ -87,6 +87,21 @@ pub const ALPACA_CRYPTO_WHITELIST: &[AlpacaCryptoAsset] = &[
 ];
 
 pub fn is_alpaca_crypto_supported(symbol: &str) -> bool {
+    use std::str::FromStr;
+    use xvision_core::{asset_registry, AssetSymbol};
+    // If the process-global registry is loaded (i.e. the whitelist has been
+    // read at startup), prefer the authoritative registry data. This covers
+    // assets that the whitelist marks `data = "orderly-only"` as well as any
+    // future additions that the static ALPACA_CRYPTO_WHITELIST doesn't know
+    // about.
+    if asset_registry::is_registry_loaded() {
+        if let Ok(sym) = AssetSymbol::from_str(symbol) {
+            return asset_registry::has_alpaca_data(sym);
+        }
+        return false;
+    }
+    // Fallback: hardcoded static list used in unit tests that don't load a
+    // whitelist config.
     alpaca_crypto_asset(symbol).is_some()
 }
 

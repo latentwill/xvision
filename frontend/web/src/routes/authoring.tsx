@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
-import { ALPACA_ASSETS, toVenuePair } from "@/lib/assets";
+import { toVenuePair } from "@/lib/assets";
+import { useAlpacaAssets } from "@/api/assets";
 import {
   addStrategyAgent,
   deleteStrategy,
@@ -1274,6 +1275,9 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
   const [timeframeMinutes, setTimeframeMinutes] = useState(m.decision_cadence_minutes);
   const [savedFlash, setSavedFlash] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  // Fetch the live asset list from /api/assets (Alpaca-only for the backtest
+  // chip editor). Falls back gracefully to an empty array while loading.
+  const alpacaAssets = useAlpacaAssets();
 
   useEffect(() => {
     setDisplayName(m.display_name);
@@ -1292,9 +1296,11 @@ function ManifestCard({ strategy }: { strategy: Strategy }) {
     setAssetUniverse((prev) => (prev.includes(pair) ? prev : [...prev, pair]));
   }
 
-  const addableTickers = ALPACA_ASSETS.filter(
-    (t) => !assetUniverse.includes(toVenuePair(t)),
-  );
+  // Build addable tickers from the live API list (Alpaca assets only).
+  // Excludes any ticker whose venue pair is already in assetUniverse.
+  const addableTickers = alpacaAssets.data
+    .map((a) => a.symbol)
+    .filter((t) => !assetUniverse.includes(toVenuePair(t)));
 
   const patch = useMutation({
     mutationFn: () => {

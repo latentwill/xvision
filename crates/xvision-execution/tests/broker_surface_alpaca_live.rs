@@ -39,8 +39,18 @@ fn alpaca_paper_surface_accepts_unlocked_crypto_symbols() {
 
 #[test]
 fn alpaca_paper_surface_rejects_unsupported_crypto_symbols() {
-    let err = AssetSymbol::from_str("XRP").unwrap_err();
-    assert!(err.contains("not in the Alpaca crypto whitelist"));
+    // `AssetSymbol::from_str` is permissive — it interns any valid [A-Z0-9_]+
+    // symbol. XRP parses successfully; the whitelist/data-source check is at
+    // a higher layer (asset_registry::is_alpaca_crypto). Verify the parse
+    // succeeds and the symbol carries the correct ticker.
+    let xrp = AssetSymbol::from_str("XRP").expect("from_str must accept XRP");
+    assert_eq!(xrp.as_str(), "XRP");
+    // is_alpaca_crypto returns false when the registry is not loaded (unit
+    // test without whitelist config) — XRP is not in the legacy static list.
+    assert!(
+        !xvision_core::asset_registry::is_alpaca_crypto(xrp),
+        "XRP must not be flagged as Alpaca-tradeable in unit-test context (registry not loaded)"
+    );
 }
 
 #[tokio::test]

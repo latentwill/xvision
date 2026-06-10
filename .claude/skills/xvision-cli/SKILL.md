@@ -41,9 +41,9 @@ switch to `xvision-dev`.
 - `agent get <id>` — fetch one agent record from the workspace agent library (shape matches the `agents[]` slot in `EvalRunExport`).
 - `agent inspect <id> --diagnostics` — per-capability readiness for one agent (prompt / model / tools / runtime / optimizable). State-only; exits 0 for a resolved agent.
 - `strategy diagnostics <id>` — whole-strategy launch readiness; exits **14** (`OptValidation`) when not launchable, listing each unmet required capability with a typed reason.
-- `optimizer` — **operator "Optimizer"** (codename autooptimizer): offline memory-Observation → candidate-Pattern distillation + strategy-mutation flywheel; `run / run-cycle / mutate-once / gate / activate / retire / lineage / inspect / ls / demo`. Offline-only, never on the eval/live path. **Distinct from `optimize`** (see disambiguation below). Operate it via the `xvision/autooptimizer-ops` skill.
+- `optimize` — **canonical Optimizer CLI** (codename autooptimizer): offline strategy-mutation flywheel. Sub-commands: `run --strategy <id> [--cycles N] [--mock]` (full optimizer cycle against a strategy), `run-cycle [--strategy <id>] [--mock] [--session-id ...] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]`, `mutate-once --parent-bundle-hash <hex> [--config PATH] [--cycle-id ID] [--dry-run] [--db PATH] [--blob-dir PATH] [--mock]`, `demo [--fixture PATH] [-v]`, `inspect <run-id> [--json]`. Offline-only, never on the eval/live path. **Distinct from the deprecated `optimizer`** (see disambiguation below). Operate it via the `xvision/autooptimizer-ops` skill.
+- `optimizer` — **DEPRECATED.** All sub-commands (`run-cycle`, `mutate-once`, `demo`, `run`, `ls`, `inspect`, `gate`, `activate`, `retire`, `lineage`) print deprecation notices and delegate to `xvn optimize`. Use `xvn optimize` instead. Kept for backwards compatibility only.
 - `flywheel` — observability over memory + Optimizer activity (velocity / health cards).
-- `optimize` — offline **DSPy** prompt/demo optimizer for one agent slot: `run / inspect / export-demos / import-demos / accept-as-child-agent / revert-accepted / explain-missing-data`. Deterministic, no-network by default; distinct exit codes 10–15 per failure class. Not the same verb as `optimizer`.
 - `obs retention` / `obs janitor` — agent-run retention policy + TTL/max-bytes sweep.
 - `run inspect <run_id>` — materialize `xvn_run.json` + `xvn_report.md` for a finished agent run from the SQLite ledger.
 - `intern` / `trader` / `risk` — preview prompts or run one pipeline stage in isolation.
@@ -202,16 +202,15 @@ pick → batch → compare in one call.
 | Compare 2+ **completed eval runs** (by `run_id`) — metrics, equity, findings | `xvn eval compare <run_a> <run_b> [--markdown --sort sharpe]` |
 | Compare every run in a finished batch | `xvn eval compare --batch <batch_id> --markdown` |
 
-### "optimize" — `xvn optimizer` vs `xvn optimize`
+### "optimize" — `xvn optimize` (canonical) vs `xvn optimizer` (deprecated)
 
 | Verb | What it is | Operates on | Skill |
 |---|---|---|---|
-| `xvn optimizer` | **Operator "Optimizer"** (codename autooptimizer): offline flywheel that distills memory Observations into candidate Patterns and mutates strategies, then `gate` → `activate`/`retire` with lineage | Patterns / strategies across the flywheel | `xvision/autooptimizer-ops`; health via `xvision/flywheel-ops` |
-| `xvn optimize` | **Offline DSPy tuner** for one agent slot (`trader`/`filter`): optimizes prompt + demonstrations, accept winner as a child agent | one agent's prompt + demos | this skill, §"Offline DSPy optimizer" |
+| `xvn optimize` | **Canonical Optimizer CLI** (codename autooptimizer): offline flywheel that mutates strategies via `run-cycle` / `mutate-once` / `demo` / `inspect` | Patterns / strategies across the flywheel | `xvision/autooptimizer-ops`; health via `xvision/flywheel-ops` |
+| `xvn optimizer` | **DEPRECATED** — all sub-commands delegate to `xvn optimize` with a deprecation warning. Use `xvn optimize` instead | same as above (via delegation) | same, but use `xvn optimize` |
 
-Both are **offline-only** and never run on the live or eval path. They are not
-interchangeable: `optimizer` (autooptimizer) works across the
-Pattern/strategy flywheel; `optimize` (DSPy) tunes a single agent slot.
+Both are **offline-only** and never run on the live or eval path. `xvn optimizer`
+continues to work (it delegates), but new scripts and docs should use `xvn optimize`.
 
 ## Inline deterministic Filter DSL
 
@@ -252,40 +251,44 @@ Compare surfaces:
 - CLI and JSON keep ids as the addressing primitive, but labels prefer
   `strategy_name` from the strategy manifest when available.
 
-## Offline DSPy optimizer (`xvn optimize`)
+## Optimizer CLI (`xvn optimize`)
 
-> Not to be confused with `xvn optimizer` (the autooptimizer flywheel — see the
-> disambiguation section above and the `xvision/autooptimizer-ops` skill).
+> `xvn optimizer` is **deprecated** and delegates here. Use `xvn optimize` directly.
+> See the `xvision/autooptimizer-ops` skill for the full operator workflow.
 
-Tune an agent slot's prompt + demonstrations **offline**, then accept the
-winner as a child agent. Authoring/research only — never on the eval or live
-path. The DSPy stack is offline-only: it never enters the engine or the slim
-runtime image (`xvision-dspy` is excluded from `default-members`).
+Run the strategy-mutation flywheel **offline** — never on the eval or live path.
 
-- Optimizable capabilities today: `trader`, `filter` (they have DSPy
-  signatures). `critic` / `router` / `decision_grader` / `intern` /
-  `chat_authoring` are not — `--capability` on a non-optimizable one fails with
-  exit **11**.
-- Default backend is a deterministic, no-network model; `--rng-seed` makes a
-  run reproducible. `--live` is an opt-in stub in this wave (fails exit 12).
-- Accept is **holdout-disciplined**: a snapshot selected on train-only data
-  (no holdout split) is refused at accept time.
+Sub-commands:
+
+- `run --strategy <id> [--cycles N] [--mock]` — run the full optimizer cycle against a strategy (strategy ID is required)
+- `run-cycle [--strategy <id>] [--mock] [--session-id ...] [--budget N] [--provider P] [--model M] [--day-start DATE] [--day-end DATE] [--baseline-start DATE] [--baseline-end DATE] [--objective METRIC] [--experiments-per-cycle N]` — full optimizer cycle (strategy optional for backwards compat)
+- `mutate-once --parent-bundle-hash <hex> [--config PATH] [--cycle-id ID] [--dry-run] [--db PATH] [--blob-dir PATH] [--mock]` — single mutation proposal
+- `demo [--fixture PATH] [-v]` — replay a saved cycle from a fixture file
+- `inspect <run-id> [--json]` — inspect a persisted optimization run
 
 ```bash
-# offline tune (deterministic; persists candidates + winning snapshot)
-xvn optimize run --agent <id> --slot trader --capability trader \
-  --corpus ./corpus.json --optimizer mipro --metric delta_sharpe \
-  --rng-seed 42 --json
-xvn optimize run … --dry-run            # validate corpus + capability, no write
-xvn optimize inspect <run-id> --json    # candidate table + snapshots
-xvn optimize accept-as-child-agent <snapshot-id>   # mint child + lineage edge
-xvn optimize revert-accepted <snapshot-id>         # unwind
-xvn optimize explain-missing-data <corpus>         # why exit 10
+# Run the full optimizer cycle against a strategy
+xvn optimize run --strategy <strategy_id> --cycles 3
+
+# Run a single optimizer cycle (fine-grained control)
+xvn optimize run-cycle --strategy <strategy_id> \
+  --budget 100 --provider openrouter --model kimi-k2 \
+  --objective sharpe --experiments-per-cycle 5
+
+# Propose one mutation without running the full cycle
+xvn optimize mutate-once --parent-bundle-hash <hex> --dry-run
+
+# Replay a saved fixture for debugging / demos
+xvn optimize demo --fixture fixtures/optimizer-cycle.json -v
+
+# Inspect a persisted optimization run
+xvn optimize inspect <run-id> --json
 ```
 
-Exit codes: 10 missing-data · 11 missing-capability · 12 provider · 13 metric ·
-14 validation · 15 persistence · 4 not-found. Full surface in
-[`references/cli.md`](references/cli.md) and `/docs?slug=optimizer`.
+Note: `memory-demos`, `memory-demos-gate`, `accept-as-child-agent`,
+`revert-accepted`, `export-demos`, `import-demos`, and `explain-missing-data`
+have been **removed** from `xvn optimize`. Those sub-commands no longer exist.
+Full surface in [`references/cli.md`](references/cli.md).
 
 ## Capability diagnostics (launch readiness)
 
@@ -436,5 +439,4 @@ Atomic strategy creation does NOT attach the submit_decision tool. The strategy 
 
 *Skills owner: whichever track ships a new `xvn` verb, Filter DSL
 surface, or operator-visible strategy/eval workflow is responsible for
-updating this file in the same PR. Last refresh: 2026-06-08 (wake_when_in_position
-docs, eval chain process-group kill pattern, agent tools-attach reminder).*
+updating this file in the same PR. Last refresh: 2026-06-10 (optimizer CLI migration: xvn optimize is canonical, xvn optimizer is deprecated).*

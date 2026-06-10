@@ -1108,6 +1108,152 @@ pub async fn delete_schedule(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ── Strategy Inspector endpoints (unified optimizer plan) ────────────────────
+
+/// GET /api/optimizer/strategy/:hash
+/// Returns the strategy JSON from the blob store by content hash.
+pub async fn get_optimizer_strategy_blob(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<serde_json::Value>, DashboardError> {
+    let content_hash = ContentHash::from_hex(&hash)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("invalid hash {hash}: {e}")))?;
+    let blob_dir = state.xvn_home.join("lineage").join("blobs");
+    let blobs = BlobStore::new(blob_dir);
+    let json = blobs
+        .get_json(&content_hash)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("strategy {hash} not in blob store")))?;
+    Ok(Json(json))
+}
+
+#[derive(Serialize)]
+pub struct OriginDiffResponse {
+    pub origin_hash: String,
+    pub diff: xvision_engine::autooptimizer::mutator::StrategyDiff,
+}
+
+/// GET /api/optimizer/strategy/:hash/diff/origin
+/// Walks the lineage chain back to the root node, computes a structural diff.
+pub async fn get_strategy_origin_diff(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<OriginDiffResponse>, DashboardError> {
+    let blob_dir = state.xvn_home.join("lineage").join("blobs");
+    let blobs = BlobStore::new(blob_dir);
+    let lineage = LineageStore::new(state.pool.clone());
+
+    // Walk the lineage chain back to root (node with no parent).
+    let mut origin_hash_hex = hash.clone();
+    let mut current_hex = hash.clone();
+    let mut depth = 0u32;
+    loop {
+        if depth > 1000 {
+            break; // safety valve against cycles
+        }
+        let current_ch = ContentHash::from_hex(&current_hex)
+            .map_err(|e| DashboardError::Internal(anyhow::anyhow!("bad hash in chain: {e}")))?;
+        let node = lineage
+            .get(&current_ch)
+            .await
+            .map_err(|e| DashboardError::Internal(anyhow::anyhow!("lineage lookup: {e}")))?;
+        match node {
+            None => break, // not in lineage — treat current as root
+            Some(n) => match n.parent_hash {
+                None => {
+                    origin_hash_hex = current_hex.clone();
+                    break;
+                }
+                Some(ph) => {
+                    origin_hash_hex = current_hex.clone();
+                    current_hex = ph.to_hex();
+                    depth += 1;
+                }
+            },
+        }
+    }
+
+    let origin_ch = ContentHash::from_hex(&origin_hash_hex)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("bad origin hash: {e}")))?;
+    let current_ch = ContentHash::from_hex(&hash)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("bad current hash: {e}")))?;
+
+    let origin_json = blobs
+        .get_json(&origin_ch)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("origin blob {origin_hash_hex} not found")))?;
+    let current_json = blobs
+        .get_json(&current_ch)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("strategy blob {hash} not found")))?;
+
+    // Deserialize and compute structural diff.
+    let origin_strategy: Strategy = serde_json::from_value(origin_json)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("deserialize origin strategy: {e}")))?;
+    let current_strategy: Strategy = serde_json::from_value(current_json)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("deserialize current strategy: {e}")))?;
+
+    let diff = xvision_engine::autooptimizer::mutator::strategy_diff(&origin_strategy, &current_strategy);
+
+    Ok(Json(OriginDiffResponse {
+        origin_hash: origin_hash_hex,
+        diff,
+    }))
+}
+
+#[derive(Serialize)]
+pub struct PromoteStrategyResponse {
+    pub strategy_id: String,
+}
+
+/// POST /api/optimizer/strategy/:hash/promote
+/// Saves a blob-store strategy to the filesystem strategies folder.
+/// Idempotent: if a strategy with this candidate_id already exists, returns its id.
+pub async fn promote_strategy(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<Json<PromoteStrategyResponse>, DashboardError> {
+    let content_hash = ContentHash::from_hex(&hash)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("invalid hash {hash}: {e}")))?;
+    let blob_dir = state.xvn_home.join("lineage").join("blobs");
+    let blobs = BlobStore::new(blob_dir);
+    let strategy_json = blobs
+        .get_json(&content_hash)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("strategy {hash} not in blob store")))?;
+
+    let mut strategy: Strategy = serde_json::from_value(strategy_json)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("deserialize strategy: {e}")))?;
+
+    // Stable candidate id from the first 8 chars of the hash.
+    let hash_prefix = &hash[..hash.len().min(8)];
+    let candidate_id = format!("opt-{hash_prefix}");
+    let display_name = format!("optimizer-candidate-{hash_prefix}");
+
+    let store_dir = strategy_store_dir(&state.xvn_home);
+    let store = FilesystemStore::new(store_dir);
+
+    // Idempotency: return existing id if already promoted.
+    if store.load(&candidate_id).await.is_ok() {
+        return Ok(Json(PromoteStrategyResponse {
+            strategy_id: candidate_id,
+        }));
+    }
+
+    // Stamp the strategy with the candidate id and display name.
+    strategy.manifest.id = candidate_id.clone();
+    strategy.manifest.display_name = display_name;
+
+    store
+        .save(&strategy)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("save promoted strategy: {e}")))?;
+
+    Ok(Json(PromoteStrategyResponse {
+        strategy_id: candidate_id,
+    }))
+}
+
 #[cfg(test)]
 mod schedule_tests {
     use super::*;

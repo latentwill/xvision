@@ -48,7 +48,9 @@ mod tests {
 
     #[test]
     fn rejects_unparseable_universe_symbol() {
-        let err = active_assets(&["NOTACOIN".into()], None).unwrap_err();
-        assert!(err.to_string().contains("NOTACOIN"));
+        // Format-invalid symbol (contains '!'): from_str rejects it regardless
+        // of registry contents.
+        let err = active_assets(&["FOO!BAR".into()], None).unwrap_err();
+        assert!(err.to_string().contains("invalid characters"));
     }
 }
