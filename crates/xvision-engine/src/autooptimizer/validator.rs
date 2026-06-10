@@ -261,20 +261,14 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
             }
         }
 
-        // Stale baseline: `before` must match the live value (numeric-tolerant so
-        // an int vs float representation — 25 vs 25.0 — isn't a false reject).
-        // The reverse mutation uses `before`, so a stale baseline would make the
-        // inversion-pair check compare against the wrong filter (codex P2).
-        if !filter_values_equal(&edit.before, current) {
-            errors.push(ValidationError::with_path(
-                "stale_filter_baseline",
-                format!(
-                    "Filter path '{}' baseline is stale: 'before' ({:?}) must match the current value ({:?}).",
-                    edit.path, edit.before, current,
-                ),
-                format!("filter[{i}].before"),
-            ));
-        }
+        // B4: NO stale-baseline reject. A wrong `before` is not fatal — the live
+        // filter value is authoritative. `apply` writes `after` (never `before`),
+        // and the inversion path corrects `before` to the parent's live value via
+        // `inversion::normalize_filter_baseline`. A nullable field skipped from the
+        // markdown program view made the writer guess a wrong `before`, and the old
+        // hard reject discarded otherwise-valid candidates and wasted attempts.
+        // `current` is still used above to reject unknown paths.
+        let _ = current;
     }
 
     // Whole-filter validation (codex P2): even when every edit is individually
@@ -302,7 +296,7 @@ fn validate_filter_edits(edits: &[FilterEdit], base: &Strategy, errors: &mut Vec
 
 /// u32-window parameterized operators (encode their parameter in the DSL token,
 /// e.g. `above_for_3`). The filter parser requires the parameter to be > 0.
-const FILTER_U32_WINDOW_OPS: &[&str] = &[
+pub(crate) const FILTER_U32_WINDOW_OPS: &[&str] = &[
     "above_for",
     "below_for",
     "crossed_above",
@@ -339,16 +333,6 @@ fn is_positive_integer(v: &serde_json::Value) -> bool {
         return f >= 1.0 && f.fract() == 0.0;
     }
     false
-}
-
-/// Numeric-tolerant equality for filter baseline comparison: two JSON numbers
-/// compare by their f64 value (so `25` == `25.0`); otherwise fall back to
-/// structural equality (handles `null` == `null` for `max_wakeups_per_day`).
-fn filter_values_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
-    match (a.as_f64(), b.as_f64()) {
-        (Some(x), Some(y)) => x == y,
-        _ => a == b,
-    }
 }
 
 fn is_valid_tool_name(name: &str) -> bool {
@@ -585,20 +569,22 @@ mod tests {
     }
 
     #[test]
-    fn filter_edit_stale_baseline_rejected() {
-        // codex P2: `before` must match the live value, else the reverse
-        // mutation inverts against the wrong baseline. ADX is 25.0; before=20.0
-        // is stale.
+    fn filter_edit_stale_baseline_accepted() {
+        // B4: a wrong `before` must NOT be a fatal reject. The live filter value is
+        // authoritative (apply uses `after`, never `before`; the inversion path
+        // normalizes `before` to the parent's live value via
+        // `normalize_filter_baseline`). A skipped nullable field made the writer
+        // guess a wrong `before` and the old hard-reject wasted valid candidates.
+        // ADX is 25.0; before=20.0 is stale but `after` is valid → ACCEPTED.
         let base = fixture_filter_strategy();
         let diff = filter_diff(vec![FilterEdit {
             path: "conditions.0.rhs.numeric".to_string(),
             before: serde_json::json!(20.0), // wrong — live value is 25.0
             after: serde_json::json!(28.0),
         }]);
-        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
         assert!(
-            errs.iter().any(|e| e.code == "stale_filter_baseline"),
-            "stale before must produce stale_filter_baseline: {errs:?}"
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "a stale `before` with a valid `after` must now be accepted (B4)"
         );
     }
 
