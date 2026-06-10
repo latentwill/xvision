@@ -54,7 +54,8 @@ function evaluatedStrategies(
   const byStrategyId = new Map<string, { latest: RunSummary; count: number }>();
   for (const run of runs) {
     if (run.status !== "completed") continue;
-    const sid = run.strategy?.id;
+    // The list endpoint doesn't enrich run.strategy; agent_id is the same id.
+    const sid = run.strategy?.id ?? run.agent_id;
     if (!sid) continue;
     const entry = byStrategyId.get(sid);
     if (!entry) {

@@ -15,12 +15,15 @@ export interface HomeOutcomeStripProps {
   runs: RunSummary[];
 }
 
-// Most-recent completed run per strategy (join key: run.strategy.id).
+// Most-recent completed run per strategy. Join key: run.strategy.id when the
+// server enriched the summary, falling back to run.agent_id — the list
+// endpoint (/api/eval/runs) does not enrich, so without the fallback the
+// strip renders "—" while completed runs exist.
 export function latestCompletedRunsByStrategy(runs: RunSummary[]): RunSummary[] {
   const byStrategy = new Map<string, RunSummary>();
   for (const run of runs) {
     if (run.status !== "completed") continue;
-    const strategyId = run.strategy?.id;
+    const strategyId = run.strategy?.id ?? run.agent_id;
     if (!strategyId) continue;
     const existing = byStrategy.get(strategyId);
     const currentCompletedAt = run.completed_at ?? "";
