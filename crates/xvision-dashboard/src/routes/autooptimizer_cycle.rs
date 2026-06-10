@@ -1128,9 +1128,7 @@ pub async fn get_optimizer_strategy_blob(
 #[derive(Serialize)]
 pub struct OriginDiffResponse {
     pub origin_hash: String,
-    /// Structural diff between origin strategy and current strategy.
-    /// TODO: replace serde_json::Value with StrategyDiff once engine task merges.
-    pub diff: serde_json::Value,
+    pub diff: xvision_engine::autooptimizer::mutator::StrategyDiff,
 }
 
 /// GET /api/optimizer/strategy/:hash/diff/origin
@@ -1178,12 +1176,14 @@ pub async fn get_strategy_origin_diff(
     let current_ch = ContentHash::from_hex(&hash)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("bad current hash: {e}")))?;
 
-    let origin_json = blobs.get_json(&origin_ch).await.map_err(|_| {
-        DashboardError::NotFound(format!("origin blob {origin_hash_hex} not found"))
-    })?;
-    let current_json = blobs.get_json(&current_ch).await.map_err(|_| {
-        DashboardError::NotFound(format!("strategy blob {hash} not found"))
-    })?;
+    let origin_json = blobs
+        .get_json(&origin_ch)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("origin blob {origin_hash_hex} not found")))?;
+    let current_json = blobs
+        .get_json(&current_ch)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("strategy blob {hash} not found")))?;
 
     // Deserialize and compute structural diff.
     let origin_strategy: Strategy = serde_json::from_value(origin_json)
@@ -1191,17 +1191,11 @@ pub async fn get_strategy_origin_diff(
     let current_strategy: Strategy = serde_json::from_value(current_json)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("deserialize current strategy: {e}")))?;
 
-    // TODO: replace stub with strategy_diff(&origin_strategy, &current_strategy) once
-    //       xvision_engine::autooptimizer::mutator::strategy_diff is exported (engine task).
-    let diff_json = serde_json::json!({
-        "origin_id": origin_strategy.manifest.id,
-        "current_id": current_strategy.manifest.id,
-        "_note": "stub diff — replace with strategy_diff() when engine task lands"
-    });
+    let diff = xvision_engine::autooptimizer::mutator::strategy_diff(&origin_strategy, &current_strategy);
 
     Ok(Json(OriginDiffResponse {
         origin_hash: origin_hash_hex,
-        diff: diff_json,
+        diff,
     }))
 }
 
@@ -1221,9 +1215,10 @@ pub async fn promote_strategy(
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("invalid hash {hash}: {e}")))?;
     let blob_dir = state.xvn_home.join("lineage").join("blobs");
     let blobs = BlobStore::new(blob_dir);
-    let strategy_json = blobs.get_json(&content_hash).await.map_err(|_| {
-        DashboardError::NotFound(format!("strategy {hash} not in blob store"))
-    })?;
+    let strategy_json = blobs
+        .get_json(&content_hash)
+        .await
+        .map_err(|_| DashboardError::NotFound(format!("strategy {hash} not in blob store")))?;
 
     let mut strategy: Strategy = serde_json::from_value(strategy_json)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("deserialize strategy: {e}")))?;
@@ -1238,18 +1233,23 @@ pub async fn promote_strategy(
 
     // Idempotency: return existing id if already promoted.
     if store.load(&candidate_id).await.is_ok() {
-        return Ok(Json(PromoteStrategyResponse { strategy_id: candidate_id }));
+        return Ok(Json(PromoteStrategyResponse {
+            strategy_id: candidate_id,
+        }));
     }
 
     // Stamp the strategy with the candidate id and display name.
     strategy.manifest.id = candidate_id.clone();
     strategy.manifest.display_name = display_name;
 
-    store.save(&strategy).await.map_err(|e| {
-        DashboardError::Internal(anyhow::anyhow!("save promoted strategy: {e}"))
-    })?;
+    store
+        .save(&strategy)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("save promoted strategy: {e}")))?;
 
-    Ok(Json(PromoteStrategyResponse { strategy_id: candidate_id }))
+    Ok(Json(PromoteStrategyResponse {
+        strategy_id: candidate_id,
+    }))
 }
 
 #[cfg(test)]
