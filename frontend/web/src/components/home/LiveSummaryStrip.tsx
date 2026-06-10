@@ -3,9 +3,14 @@
 // Compact home-page summary strip for live trading (spec §2.10). Replaces the
 // old per-run LiveStrategiesSection list — the full cockpit lives at /live only.
 //
-// The strip gives an at-a-glance status and a single route into the cockpit:
-//   - count of ACTIVE (running, not paused) live strategies
-//   - count of PAUSED strategies (shown only when > 0)
+// The strip gives an at-a-glance HONEST status and a single route into the
+// cockpit (xvision-9pi — "live" means live money):
+//   - count of ACTIVE live-money strategies (parent eval run mode=live,
+//     non-terminal; the backend `is_live_money` discriminator)
+//   - count of PAUSED live-money strategies (shown only when > 0)
+//   - count of paper/sim runs (running, but not live money; only when > 0)
+//   - count of stale orphans (agent runs stuck in `running` whose parent
+//     eval run is terminal; only when > 0 — rendered muted, never as live)
 //   - a "Go to Live Trading →" CTA to /live
 //
 // Aggregate daily PnL is intentionally NOT shown here. The home aggregate
@@ -20,7 +25,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
-import { deriveStripStatus, isLiveRun } from "@/features/live/strip-status";
+import {
+  classifyRunLiveness,
+  deriveStripStatus,
+  isLiveRun,
+} from "@/features/live/strip-status";
 
 /**
  * Live-trading summary strip — always visible, never returns null (matches the
@@ -28,17 +37,28 @@ import { deriveStripStatus, isLiveRun } from "@/features/live/strip-status";
  * newly-deployed strategies appear without a manual refresh.
  */
 export function LiveSummaryStrip() {
+  // Scope the query to the non-terminal population: live/paper/stale are
+  // all derived from `queued`/`running` agent runs, and the default
+  // newest-20-of-any-status window would undercount once terminal runs
+  // crowd the head of the ledger. Params live in the query key so this
+  // cache entry never collides with the cockpit's unfiltered list.
+  const listParams = { status: "running,queued", limit: 100 } as const;
   const { data, isPending } = useQuery({
-    queryKey: agentRunKeys.list(),
-    queryFn: () => listAgentRuns(),
+    queryKey: agentRunKeys.list(listParams),
+    queryFn: () => listAgentRuns(listParams),
     refetchInterval: 10_000,
   });
 
   const runs = data ?? [];
+  // Live = live money ONLY (backend is_live_money + non-terminal parent).
   const live = runs.filter(isLiveRun);
   const activeCount = live.filter((r) => deriveStripStatus(r) === "ACTIVE").length;
   const pausedCount = live.filter((r) => deriveStripStatus(r) === "PAUSED").length;
+  // Honest companions: running-but-not-live-money, and stale orphans.
+  const paperCount = runs.filter((r) => classifyRunLiveness(r) === "paper").length;
+  const staleCount = runs.filter((r) => classifyRunLiveness(r) === "stale").length;
   const hasLive = live.length > 0;
+  const hasAny = hasLive || paperCount > 0 || staleCount > 0;
 
   return (
     <section
@@ -60,20 +80,34 @@ export function LiveSummaryStrip() {
         >
           Loading…
         </span>
-      ) : hasLive ? (
+      ) : hasAny ? (
         <span className="flex items-center gap-x-2 text-muted-foreground">
-          <span className="text-foreground">
-            <span className="font-semibold tabular-nums text-info">
-              {activeCount}
-            </span>{" "}
-            active
-          </span>
+          {hasLive && (
+            <span data-testid="live-count" className="text-foreground">
+              <span className="font-semibold tabular-nums text-info">
+                {activeCount}
+              </span>{" "}
+              live
+            </span>
+          )}
           {pausedCount > 0 && (
-            <span className="text-foreground">
+            <span data-testid="paused-count" className="text-foreground">
               <span className="font-semibold tabular-nums text-warn">
                 {pausedCount}
               </span>{" "}
               paused
+            </span>
+          )}
+          {paperCount > 0 && (
+            <span data-testid="paper-count" className="text-foreground">
+              <span className="font-semibold tabular-nums">{paperCount}</span>{" "}
+              paper
+            </span>
+          )}
+          {staleCount > 0 && (
+            <span data-testid="stale-count">
+              <span className="font-semibold tabular-nums">{staleCount}</span>{" "}
+              stale
             </span>
           )}
         </span>
@@ -81,14 +115,14 @@ export function LiveSummaryStrip() {
         <span className="text-muted-foreground">No live strategies running.</span>
       )}
 
-      {/* CTA — always present. Routes to the cockpit when there's live
-          activity to monitor, or to the strategies list to deploy one when
-          there's nothing running yet. */}
+      {/* CTA — always present. Routes to the cockpit when there's activity
+          to monitor (live, paper, or stale rows to clean up), or to the
+          strategies list to deploy one when there's nothing running yet. */}
       <Link
-        to={hasLive ? "/live" : "/strategies"}
+        to={hasAny ? "/live" : "/strategies"}
         className="ml-auto shrink-0 text-xs underline-offset-2 hover:underline"
       >
-        {hasLive ? "Go to Live Trading →" : "Deploy a strategy →"}
+        {hasLive ? "Go to Live Trading →" : hasAny ? "View runs →" : "Deploy a strategy →"}
       </Link>
     </section>
   );

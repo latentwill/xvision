@@ -9,6 +9,10 @@
 import { Link } from "react-router-dom";
 import type { RunSummary } from "@/api/types.gen";
 import type { StrategyListItem } from "@/api/strategies";
+import {
+  coverageCounts,
+  strategyEvalCoverage,
+} from "@/features/strategies/coverage";
 
 export interface StrategyOutcomesSummaryProps {
   strategies: StrategyListItem[];
@@ -45,34 +49,22 @@ function isPassing(run: RunSummary): boolean {
   );
 }
 
-// Group completed runs by strategy (join key: strategy.agent_id === run.strategy.id),
-// keeping the most-recent completed run and the completed count per strategy.
+// Strategies with at least one completed run visible in the supplied runs
+// page (the only ones we can render metrics for). The full evaluated/origin
+// accounting — including hash-keyed CLI runs and server-side eval flags —
+// lives in `strategyEvalCoverage`.
 function evaluatedStrategies(
   strategies: StrategyListItem[],
   runs: RunSummary[],
 ): EvaluatedStrategy[] {
-  const byStrategyId = new Map<string, { latest: RunSummary; count: number }>();
-  for (const run of runs) {
-    if (run.status !== "completed") continue;
-    // The list endpoint doesn't enrich run.strategy; agent_id is the same id.
-    const sid = run.strategy?.id ?? run.agent_id;
-    if (!sid) continue;
-    const entry = byStrategyId.get(sid);
-    if (!entry) {
-      byStrategyId.set(sid, { latest: run, count: 1 });
-    } else {
-      entry.count += 1;
-      const incoming = run.completed_at ?? "";
-      const existing = entry.latest.completed_at ?? "";
-      if (incoming.localeCompare(existing) > 0) entry.latest = run;
-    }
-  }
-
   const out: EvaluatedStrategy[] = [];
-  for (const strategy of strategies) {
-    const entry = byStrategyId.get(strategy.agent_id);
-    if (!entry) continue;
-    out.push({ strategy, latest: entry.latest, completedCount: entry.count });
+  for (const item of strategyEvalCoverage(strategies, runs)) {
+    if (item.latestRun === null) continue;
+    out.push({
+      strategy: item.strategy,
+      latest: item.latestRun,
+      completedCount: item.completedRunCount,
+    });
   }
   return out;
 }
@@ -214,10 +206,15 @@ export function StrategyOutcomesSummary({
     })
     .slice(0, MAX_PER_SECTION);
 
-  const noEvalCount = strategies.length - evaluated.length;
-  const noEvalText = `${noEvalCount} ${
-    noEvalCount === 1 ? "strategy has" : "strategies have"
-  } no completed evals yet`;
+  // Segmented coverage line (replaces the old "N strategies have no
+  // completed evals yet" nag): user strategies genuinely awaiting a first
+  // eval are actionable (link to /eval-runs); optimizer-generated strategies
+  // are evaluated inside optimizer cycles and are informational only.
+  const counts = coverageCounts(strategyEvalCoverage(strategies, runs));
+  const awaitingText = `${counts.userAwaitingFirstEval} user ${
+    counts.userAwaitingFirstEval === 1 ? "strategy" : "strategies"
+  } awaiting first eval`;
+  const lineageText = `${counts.optimizerLineage} optimizer-generated (evaluated in lineage)`;
 
   return (
     <section data-testid="strategy-outcomes-summary">
@@ -242,13 +239,24 @@ export function StrategyOutcomesSummary({
       )}
 
       <div className="mt-3 flex items-center justify-between gap-3 text-[12px]">
-        {noEvalCount > 0 ? (
-          <Link
-            to="/eval-runs"
-            className="text-muted-foreground hover:text-foreground hover:underline"
+        {counts.userAwaitingFirstEval > 0 || counts.optimizerLineage > 0 ? (
+          <span
+            data-testid="eval-coverage-line"
+            className="text-muted-foreground"
           >
-            {noEvalText}
-          </Link>
+            {counts.userAwaitingFirstEval > 0 ? (
+              <Link
+                to="/eval-runs"
+                className="hover:text-foreground hover:underline"
+              >
+                {awaitingText}
+              </Link>
+            ) : null}
+            {counts.userAwaitingFirstEval > 0 && counts.optimizerLineage > 0
+              ? " · "
+              : null}
+            {counts.optimizerLineage > 0 ? <span>{lineageText}</span> : null}
+          </span>
         ) : (
           <span />
         )}

@@ -46,6 +46,8 @@ use xvision_observability::{
     ExportError, MemoryRecallEvent,
 };
 
+use xvision_engine::eval::run::{RunMode, RunStatus as EvalRunStatus};
+
 use crate::error::DashboardError;
 use crate::sse::agent_run_sse;
 use crate::state::AppState;
@@ -53,8 +55,9 @@ use crate::state::AppState;
 // ─── List endpoint types ─────────────────────────────────────────────────────
 
 /// Slim summary shape for a single agent run, used by `GET /api/agent-runs`.
-/// Contains the run-level columns from the `agent_runs` table — no nested
-/// span/model_call detail — so the list query is cheap.
+/// Contains the run-level columns from the `agent_runs` table plus a cheap
+/// LEFT JOIN onto the parent `eval_runs` row (mode / status / paused) — no
+/// nested span/model_call detail — so the list query stays one statement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRunSummary {
     pub run_id: String,
@@ -67,6 +70,37 @@ pub struct AgentRunSummary {
     pub finished_at: Option<DateTime<Utc>>,
     pub sidecar_version: Option<String>,
     pub error: Option<String>,
+    /// Mode of the parent eval run, normalized to `"backtest" | "live"`
+    /// (legacy `'paper'` rows read back as `"backtest"`, mirroring
+    /// `RunMode::parse`). `None` when the agent run has no parent eval run
+    /// or the parent row is missing/unparseable.
+    pub eval_mode: Option<String>,
+    /// Raw status of the parent eval run
+    /// (`queued|running|completed|failed|cancelled`). `None` without a
+    /// parent. The frontend uses this to demote agent runs stuck in
+    /// `running` whose parent eval run is already terminal ("stale").
+    pub eval_run_status: Option<String>,
+    /// Per-run pause flag from the parent eval run (`eval_runs.paused`,
+    /// migration 062). `None` without a parent.
+    pub paused: Option<bool>,
+    /// THE live-money discriminator: `true` iff the parent eval run has
+    /// `mode = 'live'` AND that eval run is non-terminal (queued/running).
+    /// Anything else — backtests, orphaned children of finished live runs,
+    /// runs with no parent — is `false`. This is the only signal the
+    /// dashboard may treat as "real money is moving right now".
+    pub is_live_money: bool,
+}
+
+/// Liveness rule, kept in one place: live money ⇔ parent eval run is
+/// `mode = live` AND its status is non-terminal. Unknown/unparseable
+/// mode or status values are conservatively NOT live.
+fn derive_is_live_money(eval_mode: Option<&str>, eval_status: Option<&str>) -> bool {
+    let is_live_mode = eval_mode.and_then(RunMode::parse) == Some(RunMode::Live);
+    let is_non_terminal = eval_status
+        .and_then(EvalRunStatus::parse)
+        .map(|s| !s.is_terminal())
+        .unwrap_or(false);
+    is_live_mode && is_non_terminal
 }
 
 /// Query-string parameters for `GET /api/agent-runs`.
@@ -102,7 +136,9 @@ pub async fn list_agent_runs(
     Query(params): Query<ListAgentRunsParams>,
 ) -> Result<Json<ListAgentRunsResponse>, DashboardError> {
     // Query only the columns needed for the summary; avoid loading heavy
-    // JSON blobs (skills_json, mcp_servers_json) on the list surface.
+    // JSON blobs (skills_json, mcp_servers_json) on the list surface. The
+    // LEFT JOIN onto `eval_runs` is index-covered (PK lookup per row) and
+    // supplies the live-money discriminator + parent status.
     let rows: Vec<(
         String,
         String,
@@ -114,11 +150,16 @@ pub async fn list_agent_runs(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<bool>,
     )> = sqlx::query_as(
-        "SELECT id, objective, strategy_id, eval_run_id, status, retention_mode, \
-             started_at, finished_at, sidecar_version, error \
-             FROM agent_runs \
-             ORDER BY started_at DESC",
+        "SELECT ar.id, ar.objective, ar.strategy_id, ar.eval_run_id, ar.status, \
+             ar.retention_mode, ar.started_at, ar.finished_at, ar.sidecar_version, \
+             ar.error, er.mode, er.status, er.paused \
+             FROM agent_runs ar \
+             LEFT JOIN eval_runs er ON er.id = ar.eval_run_id \
+             ORDER BY ar.started_at DESC",
     )
     .fetch_all(&state.pool)
     .await
@@ -138,6 +179,9 @@ pub async fn list_agent_runs(
         finished_at_str,
         sidecar_version,
         error,
+        eval_mode_raw,
+        eval_run_status,
+        paused,
     ) in rows
     {
         let started_at = match started_at_str.parse::<DateTime<Utc>>() {
@@ -152,6 +196,14 @@ pub async fn list_agent_runs(
                 tracing::warn!(run_id = %id, error = %e, "list_agent_runs: unparseable finished_at — treating as null");
             }).ok()
         });
+        let is_live_money =
+            derive_is_live_money(eval_mode_raw.as_deref(), eval_run_status.as_deref());
+        // Normalize the mode (legacy 'paper' → "backtest"); unknown values
+        // surface as None rather than leaking raw DB strings to the UI.
+        let eval_mode = eval_mode_raw
+            .as_deref()
+            .and_then(RunMode::parse)
+            .map(|m| m.as_str().to_owned());
         summaries.push(AgentRunSummary {
             run_id: id,
             objective,
@@ -163,6 +215,10 @@ pub async fn list_agent_runs(
             finished_at,
             sidecar_version,
             error,
+            eval_mode,
+            eval_run_status,
+            paused,
+            is_live_money,
         });
     }
 
@@ -477,6 +533,39 @@ pub async fn get_blob(
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
 
+/// One-shot startup sweep mirroring `api_eval::fail_orphan_runs` for the
+/// `agent_runs` ledger: flip rows left in `queued`/`running` by a previous
+/// process to `interrupted` (and close their still-open spans). Background
+/// recorders die with the daemon, so without this sweep orphaned child rows
+/// of long-terminal eval runs sit in `running` forever and the Live cockpit
+/// counts them as active. Returns the number of agent_runs rows updated.
+///
+/// Same accepted tradeoff as the eval-runs boot sweep: any writer process
+/// other than this daemon (none today) would be swept too.
+pub async fn interrupt_orphan_agent_runs(pool: &sqlx::SqlitePool) -> anyhow::Result<u64> {
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await?;
+    // Close open spans on the stuck runs first (while they still match).
+    sqlx::query(
+        "UPDATE spans SET status = 'interrupted' \
+         WHERE ended_at IS NULL \
+           AND run_id IN (SELECT id FROM agent_runs WHERE status IN ('queued', 'running'))",
+    )
+    .execute(&mut *tx)
+    .await?;
+    let res = sqlx::query(
+        "UPDATE agent_runs \
+         SET status = 'interrupted', finished_at = ?, \
+             error = COALESCE(error, 'daemon restarted before agent run finished') \
+         WHERE status IN ('queued', 'running')",
+    )
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(res.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,6 +602,45 @@ mod tests {
         .execute(pool)
         .await
         .expect("seed agent_runs row");
+    }
+
+    /// Seed one parent `eval_runs` row. `scenario_id` stays NULL — allowed
+    /// since the migration-038 rebuild (scenario-less Live runs) and avoids
+    /// having to seed a `scenarios` row for the FK.
+    async fn seed_eval_run(pool: &sqlx::SqlitePool, id: &str, mode: &str, status: &str) {
+        sqlx::query(
+            "INSERT INTO eval_runs \
+             (id, agent_id, scenario_id, mode, status, started_at) \
+             VALUES (?, 'bundle-hash', NULL, ?, ?, '2026-01-01T00:00:00Z')",
+        )
+        .bind(id)
+        .bind(mode)
+        .bind(status)
+        .execute(pool)
+        .await
+        .expect("seed eval_runs row");
+    }
+
+    /// Seed an agent run linked to `eval_run_id`.
+    async fn seed_child_run(
+        pool: &sqlx::SqlitePool,
+        id: &str,
+        eval_run_id: &str,
+        status: &str,
+        started_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO agent_runs \
+             (id, objective, eval_run_id, status, started_at, retention_mode) \
+             VALUES (?, 'eval run', ?, ?, ?, 'full_debug')",
+        )
+        .bind(id)
+        .bind(eval_run_id)
+        .bind(status)
+        .bind(started_at)
+        .execute(pool)
+        .await
+        .expect("seed linked agent_runs row");
     }
 
     // ── Test 1: empty — no agent_runs rows ───────────────────────────────────
@@ -623,5 +751,150 @@ mod tests {
         assert!(run.get("error").is_some(), "missing error");
         // Top-level envelope
         assert!(v.get("total").is_some(), "missing total");
+        // Live-money discriminator fields must always be present (null /
+        // false when there is no parent eval run).
+        assert!(run.get("eval_mode").is_some(), "missing eval_mode");
+        assert!(run.get("eval_run_status").is_some(), "missing eval_run_status");
+        assert!(run.get("paused").is_some(), "missing paused");
+        assert_eq!(run["is_live_money"].as_bool(), Some(false));
+    }
+
+    // ── Test 6: live-money discriminator from parent eval run ────────────────
+
+    #[tokio::test]
+    async fn list_marks_child_of_nonterminal_live_eval_run_as_live_money() {
+        let (state, _tmp) = fresh_state().await;
+        seed_eval_run(&state.pool, "ev-live", "live", "running").await;
+        seed_child_run(&state.pool, "ar-live", "ev-live", "running", "2026-06-01T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let v: serde_json::Value = server.get("/api/agent-runs").await.json();
+        let run = &v["runs"][0];
+        assert_eq!(run["eval_mode"].as_str(), Some("live"));
+        assert_eq!(run["eval_run_status"].as_str(), Some("running"));
+        assert_eq!(run["is_live_money"].as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn list_demotes_orphan_child_of_terminal_live_eval_run() {
+        let (state, _tmp) = fresh_state().await;
+        // The xvision-9pi shape: agent run stuck in `running`, but its
+        // parent live eval run finished long ago. NOT live money.
+        seed_eval_run(&state.pool, "ev-done", "live", "failed").await;
+        seed_child_run(&state.pool, "ar-stale", "ev-done", "running", "2026-06-01T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let v: serde_json::Value = server.get("/api/agent-runs").await.json();
+        let run = &v["runs"][0];
+        assert_eq!(run["eval_mode"].as_str(), Some("live"));
+        assert_eq!(run["eval_run_status"].as_str(), Some("failed"));
+        assert_eq!(run["is_live_money"].as_bool(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn list_backtest_children_are_never_live_money() {
+        let (state, _tmp) = fresh_state().await;
+        seed_eval_run(&state.pool, "ev-bt", "backtest", "running").await;
+        seed_child_run(&state.pool, "ar-bt", "ev-bt", "running", "2026-06-01T00:00:00Z").await;
+        // Legacy 'paper' mode rows normalize to "backtest" on read.
+        seed_eval_run(&state.pool, "ev-paper", "paper", "running").await;
+        seed_child_run(&state.pool, "ar-paper", "ev-paper", "running", "2026-06-02T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let v: serde_json::Value = server.get("/api/agent-runs").await.json();
+        let runs = v["runs"].as_array().unwrap();
+        // newest-first: ar-paper then ar-bt
+        assert_eq!(runs[0]["run_id"].as_str(), Some("ar-paper"));
+        assert_eq!(runs[0]["eval_mode"].as_str(), Some("backtest"));
+        assert_eq!(runs[0]["is_live_money"].as_bool(), Some(false));
+        assert_eq!(runs[1]["eval_mode"].as_str(), Some("backtest"));
+        assert_eq!(runs[1]["is_live_money"].as_bool(), Some(false));
+    }
+
+    #[tokio::test]
+    async fn list_passes_through_parent_paused_flag() {
+        let (state, _tmp) = fresh_state().await;
+        seed_eval_run(&state.pool, "ev-paused", "live", "running").await;
+        sqlx::query("UPDATE eval_runs SET paused = 1 WHERE id = 'ev-paused'")
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        seed_child_run(&state.pool, "ar-p", "ev-paused", "running", "2026-06-01T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let v: serde_json::Value = server.get("/api/agent-runs").await.json();
+        let run = &v["runs"][0];
+        assert_eq!(run["paused"].as_bool(), Some(true));
+        assert_eq!(run["is_live_money"].as_bool(), Some(true));
+    }
+
+    // ── Test 7: derive_is_live_money unit table ──────────────────────────────
+
+    #[test]
+    fn derive_is_live_money_rule() {
+        // live + non-terminal ⇒ live money
+        assert!(derive_is_live_money(Some("live"), Some("running")));
+        assert!(derive_is_live_money(Some("live"), Some("queued")));
+        // live + terminal ⇒ not
+        assert!(!derive_is_live_money(Some("live"), Some("completed")));
+        assert!(!derive_is_live_money(Some("live"), Some("failed")));
+        assert!(!derive_is_live_money(Some("live"), Some("cancelled")));
+        // backtest / legacy paper ⇒ never
+        assert!(!derive_is_live_money(Some("backtest"), Some("running")));
+        assert!(!derive_is_live_money(Some("paper"), Some("running")));
+        // no parent / unknown values ⇒ conservatively not live
+        assert!(!derive_is_live_money(None, None));
+        assert!(!derive_is_live_money(Some("live"), None));
+        assert!(!derive_is_live_money(Some("live"), Some("bogus")));
+        assert!(!derive_is_live_money(Some("bogus"), Some("running")));
+    }
+
+    // ── Test 8: startup orphan sweep ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn interrupt_orphan_agent_runs_sweeps_nonterminal_rows_only() {
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "stuck-running", "running", "2026-06-01T00:00:00Z").await;
+        seed_run(&state.pool, "stuck-queued", "queued", "2026-06-01T01:00:00Z").await;
+        seed_run(&state.pool, "done", "completed", "2026-06-01T02:00:00Z").await;
+        // Open span on the stuck run should be closed too.
+        sqlx::query(
+            "INSERT INTO spans (id, run_id, kind, name, status, started_at) \
+             VALUES ('sp-1', 'stuck-running', 'agent.run', 'root', 'ok', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        let swept = interrupt_orphan_agent_runs(&state.pool).await.expect("sweep");
+        assert_eq!(swept, 2);
+
+        let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT id, status, finished_at, error FROM agent_runs ORDER BY id",
+        )
+        .fetch_all(&state.pool)
+        .await
+        .unwrap();
+        for (id, status, finished_at, error) in &rows {
+            match id.as_str() {
+                "done" => assert_eq!(status, "completed"),
+                _ => {
+                    assert_eq!(status, "interrupted", "run {id} not interrupted");
+                    assert!(finished_at.is_some(), "run {id} missing finished_at");
+                    assert!(error.is_some(), "run {id} missing error");
+                }
+            }
+        }
+
+        let (span_status,): (String,) =
+            sqlx::query_as("SELECT status FROM spans WHERE id = 'sp-1'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(span_status, "interrupted");
+
+        // Idempotent — second call sweeps nothing.
+        let swept_again = interrupt_orphan_agent_runs(&state.pool).await.expect("sweep");
+        assert_eq!(swept_again, 0);
     }
 }

@@ -43,7 +43,8 @@ const MOCK_BY_ID: Record<string, AgentRunDetail> = {
 
 export const agentRunKeys = {
   all: ["agent-runs"] as const,
-  list: (params?: { status?: string }) => [...agentRunKeys.all, "list", params] as const,
+  list: (params?: { status?: string; limit?: number }) =>
+    [...agentRunKeys.all, "list", params] as const,
   run: (id: string) => [...agentRunKeys.all, "run", id] as const,
 };
 

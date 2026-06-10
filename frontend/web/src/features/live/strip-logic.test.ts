@@ -9,8 +9,10 @@ import {
   STRIP_METRIC_STORAGE_KEY,
 } from "./strip-metrics";
 import {
+  classifyRunLiveness,
   deriveStripStatus,
   isLiveRun,
+  isStaleRun,
   pickDefaultRun,
 } from "./strip-status";
 
@@ -37,18 +39,28 @@ function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
   };
 }
 
+/** A genuinely-live-money run: backend says so AND the parent is non-terminal. */
+function mkLiveRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
+  return mkRun({
+    is_live_money: true,
+    eval_mode: "live",
+    eval_run_status: "running",
+    ...over,
+  });
+}
+
 describe("deriveStripStatus", () => {
   test("running + not paused -> ACTIVE", () => {
-    expect(deriveStripStatus(mkRun({ status: "running" }))).toBe("ACTIVE");
+    expect(deriveStripStatus(mkLiveRun({ status: "running" }))).toBe("ACTIVE");
   });
   test("running + paused -> PAUSED", () => {
-    expect(deriveStripStatus(mkRun({ status: "running", paused: true }))).toBe(
-      "PAUSED",
-    );
+    expect(
+      deriveStripStatus(mkLiveRun({ status: "running", paused: true })),
+    ).toBe("PAUSED");
   });
   test("cancelled -> STOPPED (even if paused flag stale)", () => {
     expect(
-      deriveStripStatus(mkRun({ status: "cancelled", paused: true })),
+      deriveStripStatus(mkLiveRun({ status: "cancelled", paused: true })),
     ).toBe("STOPPED");
   });
   test("each terminal status -> STOPPED", () => {
@@ -59,16 +71,98 @@ describe("deriveStripStatus", () => {
       "interrupted",
       "agent_failure",
     ] as const) {
-      expect(deriveStripStatus(mkRun({ status: s }))).toBe("STOPPED");
+      expect(deriveStripStatus(mkLiveRun({ status: s }))).toBe("STOPPED");
     }
+  });
+  test("running but parent eval run terminal -> STALE, never ACTIVE", () => {
+    for (const parent of ["completed", "failed", "cancelled"] as const) {
+      expect(
+        deriveStripStatus(
+          mkRun({
+            status: "running",
+            is_live_money: false,
+            eval_mode: "live",
+            eval_run_status: parent,
+          }),
+        ),
+      ).toBe("STALE");
+    }
+  });
+  test("stale wins over paused (orphan with stale paused flag)", () => {
+    expect(
+      deriveStripStatus(
+        mkRun({
+          status: "running",
+          paused: true,
+          eval_run_status: "failed",
+        }),
+      ),
+    ).toBe("STALE");
   });
 });
 
-describe("isLiveRun", () => {
-  test("running/queued are live; terminal are not", () => {
-    expect(isLiveRun(mkRun({ status: "running" }))).toBe(true);
-    expect(isLiveRun(mkRun({ status: "queued" }))).toBe(true);
-    expect(isLiveRun(mkRun({ status: "completed" }))).toBe(false);
+describe("isLiveRun (live money)", () => {
+  test("requires the backend live-money signal", () => {
+    // Non-terminal but NOT live money (backtest child / no parent) -> false.
+    expect(isLiveRun(mkRun({ status: "running" }))).toBe(false);
+    expect(isLiveRun(mkRun({ status: "queued" }))).toBe(false);
+    // Live money + non-terminal -> true.
+    expect(isLiveRun(mkLiveRun({ status: "running" }))).toBe(true);
+    expect(isLiveRun(mkLiveRun({ status: "queued" }))).toBe(true);
+  });
+  test("terminal runs are never live", () => {
+    expect(isLiveRun(mkLiveRun({ status: "completed" }))).toBe(false);
+    expect(isLiveRun(mkLiveRun({ status: "interrupted" }))).toBe(false);
+  });
+  test("defensive: live-money flag with terminal parent is NOT live", () => {
+    expect(
+      isLiveRun(
+        mkLiveRun({ is_live_money: true, eval_run_status: "completed" }),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("isStaleRun", () => {
+  test("running agent run whose parent eval run is terminal -> stale", () => {
+    expect(
+      isStaleRun(mkRun({ status: "running", eval_run_status: "failed" })),
+    ).toBe(true);
+  });
+  test("terminal agent run is never stale (it is just done)", () => {
+    expect(
+      isStaleRun(mkRun({ status: "interrupted", eval_run_status: "failed" })),
+    ).toBe(false);
+  });
+  test("running with non-terminal or absent parent -> not stale", () => {
+    expect(
+      isStaleRun(mkRun({ status: "running", eval_run_status: "running" })),
+    ).toBe(false);
+    expect(isStaleRun(mkRun({ status: "running" }))).toBe(false);
+  });
+});
+
+describe("classifyRunLiveness", () => {
+  test("live money + non-terminal parent -> live", () => {
+    expect(classifyRunLiveness(mkLiveRun())).toBe("live");
+  });
+  test("non-terminal without live-money signal -> paper", () => {
+    expect(classifyRunLiveness(mkRun({ status: "running" }))).toBe("paper");
+    expect(
+      classifyRunLiveness(
+        mkRun({ status: "running", eval_mode: "backtest", eval_run_status: "running" }),
+      ),
+    ).toBe("paper");
+  });
+  test("orphaned running child of a terminal eval run -> stale", () => {
+    expect(
+      classifyRunLiveness(
+        mkRun({ status: "running", eval_mode: "live", eval_run_status: "failed" }),
+      ),
+    ).toBe("stale");
+  });
+  test("terminal -> done", () => {
+    expect(classifyRunLiveness(mkLiveRun({ status: "completed" }))).toBe("done");
   });
 });
 
@@ -76,26 +170,52 @@ describe("pickDefaultRun", () => {
   test("empty list -> null", () => {
     expect(pickDefaultRun([])).toBeNull();
   });
-  test("picks most recently started LIVE run", () => {
-    const a = mkRun({ run_id: "a", started_at: "2026-06-09T09:00:00Z" });
-    const b = mkRun({ run_id: "b", started_at: "2026-06-09T11:00:00Z" });
-    const c = mkRun({ run_id: "c", started_at: "2026-06-09T10:00:00Z" });
+  test("picks most recently started LIVE-MONEY run", () => {
+    const a = mkLiveRun({ run_id: "a", started_at: "2026-06-09T09:00:00Z" });
+    const b = mkLiveRun({ run_id: "b", started_at: "2026-06-09T11:00:00Z" });
+    const c = mkLiveRun({ run_id: "c", started_at: "2026-06-09T10:00:00Z" });
     expect(pickDefaultRun([a, b, c])?.run_id).toBe("b");
   });
-  test("prefers a live run over a more-recent terminal run", () => {
-    const live = mkRun({
+  test("prefers a live-money run over a more-recent paper run", () => {
+    const live = mkLiveRun({
+      run_id: "live",
+      started_at: "2026-06-09T09:00:00Z",
+    });
+    const paper = mkRun({
+      run_id: "paper",
+      status: "running",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    expect(pickDefaultRun([paper, live])?.run_id).toBe("live");
+  });
+  test("prefers a live-money run over a more-recent terminal run", () => {
+    const live = mkLiveRun({
       run_id: "live",
       status: "running",
       started_at: "2026-06-09T09:00:00Z",
     });
-    const recentDone = mkRun({
+    const recentDone = mkLiveRun({
       run_id: "done",
       status: "completed",
       started_at: "2026-06-09T12:00:00Z",
     });
     expect(pickDefaultRun([recentDone, live])?.run_id).toBe("live");
   });
-  test("falls back to most-recent terminal when none live", () => {
+  test("never auto-selects a stale orphan over a paper run", () => {
+    const stale = mkRun({
+      run_id: "stale",
+      status: "running",
+      eval_run_status: "failed",
+      started_at: "2026-06-09T12:00:00Z",
+    });
+    const paper = mkRun({
+      run_id: "paper",
+      status: "running",
+      started_at: "2026-06-09T09:00:00Z",
+    });
+    expect(pickDefaultRun([stale, paper])?.run_id).toBe("paper");
+  });
+  test("falls back to most-recent run of any status when none live", () => {
     const older = mkRun({
       run_id: "older",
       status: "completed",
