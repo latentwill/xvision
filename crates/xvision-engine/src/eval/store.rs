@@ -1793,21 +1793,33 @@ fn is_missing_column_error(e: &sqlx::Error) -> bool {
     }
 }
 
+/// Parse a timestamp stored by SQLite, accepting RFC3339 (`"2026-06-09T00:58:16Z"`) and
+/// the bare format SQLite uses when no explicit affinity is set (`"2026-06-09 00:58:16"`).
+fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    // Bare SQLite datetime: "YYYY-MM-DD HH:MM:SS" — treat as UTC.
+    let naive = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .with_context(|| format!("unrecognised timestamp format: {s:?}"))?;
+    Ok(naive.and_utc())
+}
+
 fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let started_at_str: String = row.try_get("started_at").context("read started_at")?;
-    let started_at = DateTime::parse_from_rfc3339(&started_at_str)
-        .with_context(|| format!("parse started_at {started_at_str:?}"))?
-        .with_timezone(&Utc);
+    let started_at =
+        parse_ts(&started_at_str).with_context(|| format!("parse started_at {started_at_str:?}"))?;
 
     let completed_at: Option<DateTime<Utc>> = row
         .try_get::<Option<String>, _>("completed_at")
         .context("read completed_at")?
-        .map(|s| {
-            DateTime::parse_from_rfc3339(&s)
-                .map(|t| t.with_timezone(&Utc))
-                .with_context(|| format!("parse completed_at {s:?}"))
-        })
-        .transpose()?;
+        .and_then(|s| match parse_ts(&s) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::warn!(error = %e, "row_to_run: completed_at failed to parse; treating as null");
+                None
+            }
+        });
 
     let mode_str: String = row.try_get("mode").context("read mode")?;
     let mode = RunMode::parse(&mode_str).ok_or_else(|| anyhow::anyhow!("unknown RunMode {mode_str:?}"))?;
