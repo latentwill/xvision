@@ -136,7 +136,9 @@ contract MockUSDC3009 {
         _requireValidAuthorization(from, nonce, validAfter, validBefore);
         _requireValidSignature(
             from,
-            keccak256(abi.encode(TRANSFER_WITH_AUTHORIZATION_TYPEHASH, from, to, value, validAfter, validBefore, nonce)),
+            keccak256(
+                abi.encode(TRANSFER_WITH_AUTHORIZATION_TYPEHASH, from, to, value, validAfter, validBefore, nonce)
+            ),
             v,
             r,
             s
@@ -191,7 +193,9 @@ contract MockUSDC3009 {
 
     function _buildDomainSeparator() private view returns (bytes32) {
         return keccak256(
-            abi.encode(_EIP712_DOMAIN_TYPEHASH, keccak256(bytes(name)), keccak256(bytes("1")), block.chainid, address(this))
+            abi.encode(
+                _EIP712_DOMAIN_TYPEHASH, keccak256(bytes(name)), keccak256(bytes("1")), block.chainid, address(this)
+            )
         );
     }
 
