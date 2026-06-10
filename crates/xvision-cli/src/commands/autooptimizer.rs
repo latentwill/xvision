@@ -1456,21 +1456,34 @@ async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         );
     }
     // DSPy in-loop bridge: when `dspy_enabled = true`, open the memory store
-    // and construct a `DspyContext` with a `LiveDspyBridge` so the flywheel
-    // can call the LLM to distill judge findings into an improved instruction
-    // prefix on subsequent cycles.  Keyed separately from the mutator-memory
-    // recorder (`opt_mem`) so the two write paths don't interfere.
+    // and construct a `DspyContext` with either `GepaBridge` (when `gepa_enabled`)
+    // or `LiveDspyBridge` (simple one-shot summarizer). Keyed separately from the
+    // mutator-memory recorder (`opt_mem`) so the two write paths don't interfere.
     let dspy_ctx = if cfg.dspy_enabled {
         let store = memory::open_default_store()
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store for dspy: {e}")))?;
+        let bridge: std::sync::Arc<dyn xvision_engine::autooptimizer::dspy_bridge::DspyBridge> =
+            if cfg.gepa_enabled {
+                std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
+                    dispatch: std::sync::Arc::clone(&metered_dispatch),
+                    model: cfg.mutator.model.clone(),
+                    provider: cfg.mutator.provider.clone(),
+                    candidates: cfg.gepa_candidates,
+                    generations: cfg.gepa_generations,
+                })
+            } else {
+                std::sync::Arc::new(xvision_engine::autooptimizer::dspy_bridge::LiveDspyBridge {
+                    dispatch: std::sync::Arc::clone(&metered_dispatch),
+                    model: cfg.mutator.model.clone(),
+                    provider: cfg.mutator.provider.clone(),
+                })
+            };
         Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
             store,
-            bridge: std::sync::Arc::new(xvision_engine::autooptimizer::dspy_bridge::LiveDspyBridge {
-                dispatch: std::sync::Arc::clone(&metered_dispatch),
-                model: cfg.mutator.model.clone(),
-            }),
+            bridge,
             namespace: "autooptimizer:dspy".to_string(),
+            pool: pool.clone(),
         })
     } else {
         None

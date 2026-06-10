@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use sqlx::SqlitePool;
 use ulid::Ulid;
 use xvision_memory::store::MemoryStore;
 use xvision_memory::types::{MemoryItem, Tier};
@@ -8,6 +9,7 @@ use xvision_memory::types::{MemoryItem, Tier};
 use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::dspy_bridge::DspyBridge;
 use crate::autooptimizer::judge::Finding;
+use crate::autooptimizer::pattern_snapshot::{PatternSnapshot, PatternSnapshotStore};
 
 const EMBEDDER_ID: &str = "autooptimizer-static-v1";
 
@@ -84,22 +86,49 @@ async fn persist_compiled_pattern(
     store.upsert_pattern(&item, EMBEDDER_ID).await
 }
 
-/// Returns `true` when a compile actually ran and a pattern was persisted;
-/// `false` when the observation count was below the threshold.
+/// Returns the snapshot id when a compile ran and a pattern was persisted;
+/// `None` when the observation count was below the threshold.
 async fn maybe_trigger_compile(
-    store: &MemoryStore,
+    mem_store: &MemoryStore,
+    xvn_pool: &SqlitePool,
     bridge: &dyn DspyBridge,
     namespace: &str,
     threshold: usize,
-) -> anyhow::Result<bool> {
-    let count = store.count_live_observations(namespace).await?;
+) -> anyhow::Result<Option<String>> {
+    let count = mem_store.count_live_observations(namespace).await?;
     if count < threshold as u64 {
-        return Ok(false);
+        return Ok(None);
     }
-    let texts = store.list_live_observation_texts(namespace, threshold).await?;
-    let instruction = bridge.compile(namespace, &texts).await?;
-    persist_compiled_pattern(store, namespace, &instruction).await?;
-    Ok(true)
+    let observations = mem_store.list_live_observations(namespace, threshold).await?;
+    let result = bridge.compile(namespace, &observations).await?;
+    persist_compiled_pattern(mem_store, namespace, &result.instruction).await?;
+
+    if result.instruction.is_empty() {
+        return Ok(None);
+    }
+
+    // Find the prior snapshot for this namespace to link the DAG parent_id.
+    let snap_store = PatternSnapshotStore::new(xvn_pool.clone());
+    let parent_id = snap_store
+        .latest_for_namespace(namespace)
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.id);
+
+    let snapshot = PatternSnapshot::new(
+        namespace,
+        &result.instruction,
+        result.demos,
+        "delta_sharpe",
+        &result.optimizer_name,
+        result.provenance,
+        result.rng_seed,
+        parent_id,
+    );
+    let snapshot_id = snapshot.id.clone();
+    snap_store.insert(&snapshot).await?;
+    Ok(Some(snapshot_id))
 }
 
 /// Carrier for DSPy flywheel state threaded through the optimizer cycle.
@@ -107,15 +136,16 @@ pub struct DspyContext {
     pub store: Arc<MemoryStore>,
     pub bridge: Arc<dyn DspyBridge>,
     pub namespace: String,
+    pub pool: SqlitePool,
 }
 
 /// Called after judge findings are emitted for an active child node.
 /// Writes findings as Observations and triggers a DSPy compile when the
 /// cohort threshold is reached. Skipped entirely when `dspy_enabled=false`.
 ///
-/// Returns the pattern_id string (the ULID of the persisted pattern) if a
-/// compile ran this call; returns `None` if dspy is disabled, the context is
-/// absent, or the observation count is still below the threshold.
+/// Returns the snapshot id (ULID) if a compile ran this call; returns `None`
+/// if dspy is disabled, the context is absent, or the observation count is
+/// still below the threshold.
 pub async fn handle_cycle_dspy(
     config: &AutoOptimizerConfig,
     ctx: Option<&DspyContext>,
@@ -129,19 +159,15 @@ pub async fn handle_cycle_dspy(
         return Ok(None);
     };
     write_cycle_findings(&ctx.store, &ctx.namespace, findings, cycle_id).await?;
-    let compiled = maybe_trigger_compile(
+    let snapshot_id = maybe_trigger_compile(
         &ctx.store,
+        &ctx.pool,
         ctx.bridge.as_ref(),
         &ctx.namespace,
         config.dspy_pattern_cohort_threshold,
     )
     .await?;
-    if compiled {
-        // Return a synthetic pattern_id (ULID) so the caller can emit FlywheelCompiled.
-        Ok(Some(ulid::Ulid::new().to_string()))
-    } else {
-        Ok(None)
-    }
+    Ok(snapshot_id)
 }
 
 #[cfg(test)]
@@ -149,9 +175,12 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
+    use crate::autooptimizer::dspy_bridge::CompileResult;
     use crate::autooptimizer::judge::FindingSeverity;
+    use crate::autooptimizer::pattern_snapshot::Provenance;
 
     struct RecordingBridge {
         called: Arc<Mutex<bool>>,
@@ -159,9 +188,22 @@ mod tests {
 
     #[async_trait]
     impl DspyBridge for RecordingBridge {
-        async fn compile(&self, _ns: &str, _texts: &[String]) -> anyhow::Result<String> {
+        async fn compile(&self, _ns: &str, obs: &[(String, String)]) -> anyhow::Result<CompileResult> {
             *self.called.lock().expect("mutex poisoned") = true;
-            Ok("compiled instruction from recording bridge".to_string())
+            Ok(CompileResult {
+                instruction: "compiled instruction from recording bridge".to_string(),
+                provenance: Provenance::new("test", "model"),
+                demos: obs
+                    .iter()
+                    .map(|(id, text)| crate::autooptimizer::pattern_snapshot::SnapshotDemo {
+                        observation_id: id.clone(),
+                        text: text.clone(),
+                        score: None,
+                    })
+                    .collect(),
+                optimizer_name: "recording".to_string(),
+                rng_seed: 0,
+            })
         }
     }
 
@@ -182,6 +224,34 @@ mod tests {
         }
     }
 
+    async fn fresh_xvn_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE autooptimizer_pattern_snapshots (
+                id TEXT PRIMARY KEY,
+                namespace TEXT NOT NULL,
+                instruction TEXT NOT NULL,
+                demos_json TEXT NOT NULL,
+                signature_hash TEXT NOT NULL,
+                metric_name TEXT NOT NULL,
+                optimizer_name TEXT NOT NULL,
+                optimizer_version TEXT NOT NULL,
+                provenance_json TEXT NOT NULL,
+                rng_seed INTEGER NOT NULL DEFAULT 0,
+                parent_id TEXT,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
     #[tokio::test]
     async fn dspy_disabled_skips_compilation() {
         let store = Arc::new(MemoryStore::open_in_memory().await.unwrap());
@@ -189,10 +259,12 @@ mod tests {
         let bridge = Arc::new(RecordingBridge {
             called: Arc::clone(&called),
         });
+        let pool = fresh_xvn_pool().await;
         let ctx = DspyContext {
             store: Arc::clone(&store),
             bridge,
             namespace: "test:disabled".to_string(),
+            pool,
         };
         let config = make_config(false, 1);
         let findings = vec![make_finding("c1"), make_finding("c2")];
@@ -216,10 +288,12 @@ mod tests {
         let bridge = Arc::new(RecordingBridge {
             called: Arc::clone(&called),
         });
+        let pool = fresh_xvn_pool().await;
         let ctx = DspyContext {
             store: Arc::clone(&store),
             bridge,
             namespace: "test:enabled".to_string(),
+            pool: pool.clone(),
         };
         let threshold = 3;
         let config = make_config(true, threshold);
@@ -235,10 +309,11 @@ mod tests {
 
         // one more finding pushes us to threshold: bridge must fire
         let last_finding = vec![make_finding("final")];
-        handle_cycle_dspy(&config, Some(&ctx), &last_finding, "cycle-2")
+        let snap_id = handle_cycle_dspy(&config, Some(&ctx), &last_finding, "cycle-2")
             .await
             .unwrap();
         assert!(*called.lock().unwrap(), "bridge must be called at threshold");
+        assert!(snap_id.is_some(), "compile must return a snapshot id");
 
         // compiled instruction was persisted as a Pattern
         let prefix = query_dsr_prefix(&store, "test:enabled").await.unwrap();
@@ -246,6 +321,15 @@ mod tests {
         assert!(
             prefix.unwrap().contains("compiled instruction"),
             "prefix must contain the bridge-returned instruction"
+        );
+
+        // snapshot must be in xvn.db
+        let snap_store = PatternSnapshotStore::new(pool);
+        let snap = snap_store.latest_for_namespace("test:enabled").await.unwrap();
+        assert!(snap.is_some(), "snapshot must be persisted to xvn.db");
+        assert!(
+            snap.unwrap().instruction.contains("compiled instruction"),
+            "persisted snapshot instruction must match bridge output"
         );
     }
 }

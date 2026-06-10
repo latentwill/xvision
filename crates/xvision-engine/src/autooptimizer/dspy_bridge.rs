@@ -3,6 +3,31 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
+use crate::autooptimizer::pattern_snapshot::{Provenance, SnapshotDemo};
+
+/// The structured result returned by every `DspyBridge::compile` call. Carries
+/// the compiled instruction along with provenance (for cost tracking) and the
+/// demo pool (for snapshot lineage).
+#[derive(Debug, Clone)]
+pub struct CompileResult {
+    pub instruction: String,
+    pub provenance: Provenance,
+    pub demos: Vec<SnapshotDemo>,
+    pub optimizer_name: String,
+    pub rng_seed: u64,
+}
+
+impl CompileResult {
+    pub fn empty(optimizer_name: impl Into<String>) -> Self {
+        Self {
+            instruction: String::new(),
+            provenance: Provenance::default(),
+            demos: vec![],
+            optimizer_name: optimizer_name.into(),
+            rng_seed: 0,
+        }
+    }
+}
 
 /// Offline DSPy compilation bridge. The engine never depends on xvision-dspy
 /// directly; callers that wire up the flywheel supply a concrete implementation.
@@ -10,9 +35,14 @@ use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
 #[async_trait]
 pub trait DspyBridge: Send + Sync {
     /// Compile a DSR (Demonstrate-Search-Retrieve) instruction from a cohort
-    /// of observation texts. Returns the compiled instruction string to be
-    /// persisted as a Pattern and injected into future mutator prompts.
-    async fn compile(&self, namespace: &str, observation_texts: &[String]) -> anyhow::Result<String>;
+    /// of observations. Each observation is an `(id, text)` pair where `id` is
+    /// the `memory_items.id` used for snapshot lineage. Returns a `CompileResult`
+    /// containing the compiled instruction, provenance, and scored demos.
+    async fn compile(
+        &self,
+        namespace: &str,
+        observations: &[(String, String)],
+    ) -> anyhow::Result<CompileResult>;
 }
 
 /// No-op bridge used when `dspy_enabled = false` or in tests that don't need
@@ -21,31 +51,31 @@ pub struct NullDspyBridge;
 
 #[async_trait]
 impl DspyBridge for NullDspyBridge {
-    async fn compile(&self, _namespace: &str, _observation_texts: &[String]) -> anyhow::Result<String> {
-        Ok(String::new())
+    async fn compile(&self, _namespace: &str, _observations: &[(String, String)]) -> anyhow::Result<CompileResult> {
+        Ok(CompileResult::empty("null"))
     }
 }
 
-/// Live DSPy bridge: synthesizes an improved DSR (Demonstrate-Search-Retrieve)
-/// instruction from a cohort of optimizer-cycle observation texts by reflecting
-/// over them with a real LLM (the same `LlmDispatch` the mutator uses). The
+/// Live DSPy bridge: synthesizes an improved DSR instruction from a cohort of
+/// optimizer-cycle observations by reflecting over them with a real LLM. The
 /// returned instruction is persisted as a `Pattern` and prepended to the
 /// mutator's system prompt on subsequent cycles.
 pub struct LiveDspyBridge {
     pub dispatch: Arc<dyn LlmDispatch + Send + Sync>,
     pub model: String,
+    pub provider: String,
 }
 
 #[async_trait]
 impl DspyBridge for LiveDspyBridge {
-    async fn compile(&self, _namespace: &str, observation_texts: &[String]) -> anyhow::Result<String> {
-        if observation_texts.is_empty() {
-            return Ok(String::new());
+    async fn compile(&self, _namespace: &str, observations: &[(String, String)]) -> anyhow::Result<CompileResult> {
+        if observations.is_empty() {
+            return Ok(CompileResult::empty("live_summarizer"));
         }
-        let joined = observation_texts
+        let joined = observations
             .iter()
             .enumerate()
-            .map(|(i, t)| format!("{}. {}", i + 1, t.trim()))
+            .map(|(i, (_id, t))| format!("{}. {}", i + 1, t.trim()))
             .collect::<Vec<_>>()
             .join("\n");
         let system_prompt = "You are a prompt optimizer for an automated trading-strategy \
@@ -69,8 +99,25 @@ impl DspyBridge for LiveDspyBridge {
             cache_control: None,
             force_json: false,
         };
+        let mut provenance = Provenance::new(&self.provider, &self.model);
         let resp = self.dispatch.complete(req).await?;
-        Ok(resp.text().trim().to_string())
+        provenance.record_usage(resp.input_tokens, resp.output_tokens);
+        let instruction = resp.text().trim().to_string();
+        let demos = observations
+            .iter()
+            .map(|(id, text)| SnapshotDemo {
+                observation_id: id.clone(),
+                text: text.clone(),
+                score: None,
+            })
+            .collect();
+        Ok(CompileResult {
+            instruction,
+            provenance,
+            demos,
+            optimizer_name: "live_summarizer".to_string(),
+            rng_seed: 0,
+        })
     }
 }
 
@@ -87,9 +134,10 @@ mod tests {
         let bridge = LiveDspyBridge {
             dispatch,
             model: "test-model".to_string(),
+            provider: "test".to_string(),
         };
         let result = bridge.compile("ns", &[]).await.unwrap();
-        assert!(result.is_empty(), "empty observations must return empty string");
+        assert!(result.instruction.is_empty(), "empty observations must return empty instruction");
     }
 
     #[tokio::test]
@@ -99,12 +147,23 @@ mod tests {
         let bridge = LiveDspyBridge {
             dispatch,
             model: "test-model".to_string(),
+            provider: "test".to_string(),
         };
         let obs = vec![
-            "J01: raised threshold improved Sharpe".to_string(),
-            "J02: low conviction led to noise trades".to_string(),
+            ("obs1".to_string(), "J01: raised threshold improved Sharpe".to_string()),
+            ("obs2".to_string(), "J02: low conviction led to noise trades".to_string()),
         ];
         let result = bridge.compile("autooptimizer:dspy", &obs).await.unwrap();
-        assert_eq!(result, expected);
+        assert_eq!(result.instruction, expected);
+        assert_eq!(result.demos.len(), 2);
+        assert_eq!(result.optimizer_name, "live_summarizer");
+    }
+
+    #[tokio::test]
+    async fn null_bridge_returns_empty() {
+        let bridge = NullDspyBridge;
+        let result = bridge.compile("ns", &[("id1".to_string(), "text1".to_string())]).await.unwrap();
+        assert!(result.instruction.is_empty());
+        assert_eq!(result.optimizer_name, "null");
     }
 }
