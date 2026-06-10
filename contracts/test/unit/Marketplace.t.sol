@@ -348,4 +348,23 @@ contract MarketplaceTest is BaseTest {
         market.setFeeRecipient(nr);
         assertEq(market.feeRecipient(), nr);
     }
+
+    function test_setUsdc() public {
+        address nt = makeAddr("newUsdc");
+        vm.expectEmit(address(market));
+        emit IMarketplace.UsdcChanged(address(usdc), nt);
+        market.setUsdc(nt);
+        assertEq(market.usdc(), nt);
+    }
+
+    function test_setUsdc_revert_zeroAddress() public {
+        vm.expectRevert(Marketplace.ZeroAddress.selector);
+        market.setUsdc(address(0));
+    }
+
+    function test_setUsdc_onlyOwner() public {
+        vm.prank(makeAddr("intruder"));
+        vm.expectRevert(); // OwnableUnauthorizedAccount
+        market.setUsdc(makeAddr("newUsdc"));
+    }
 }

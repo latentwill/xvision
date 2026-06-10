@@ -167,3 +167,31 @@ trustee" TBD), **timelock** wired, fee-recipient set, testnet→mainnet **migrat
 decided, and the **Alpaca-live cutover** (`VenueLabel::Live`) decision made. **Real money = V4.**
 The 2026-06-09 contract security audit (OZ + Trail-of-Bits skills) found no Critical/High; the
 deferred Lows above are the mainnet-hardening checklist.
+
+---
+
+## Addendum 2026-06-10 — USDC re-point (UUPS upgrade, executed)
+
+The original deploy initialized the Marketplace with a community mock USDC that
+has **no EIP-3009 support** (research confirmed no EIP-3009 USDC exists on
+Mantle Sepolia at all; Mantle MAINNET bridged USDC supports it natively). To
+keep the x402 path demoable:
+
+1. `MockUSDC3009` (full EIP-3009 + `faucet()`, cap 10,000e6/call) deployed at
+   [`0x68aA91F73f359035875759E1d4C4949A27c84C88`](https://sepolia.mantlescan.xyz/address/0x68AA91f73F359035875759e1d4C4949A27c84c88)
+   (PR #898, Sourcify exact_match).
+2. `Marketplace.setUsdc` added (onlyOwner, `UsdcChanged` event, storage layout
+   untouched) and the proxy upgraded atomically:
+   - New impl: [`0x1FE13b656d9571798F7B3074f54eaFBfDc88bC44`](https://sepolia.mantlescan.xyz/address/0x1fe13b656d9571798f7b3074f54eafbfdc88bc44)
+     (deploy tx `0xb18c3d04…bbfe2`)
+   - `upgradeToAndCall(newImpl, setUsdc(0x68aA…4c88))`:
+     [`0x7b990ce1…a9c83`](https://sepolia.mantlescan.xyz/tx/0x7b990ce18eb24cae6e2c28ff7d48963949a03be0af66349daab02aa4b01a9c83)
+   - Script: `contracts/script/UpgradeMarketplaceSetUsdc.s.sol` (chain-5003 guarded).
+3. Verified live: `usdc()` returns the new token; end-to-end on-chain smoke —
+   `faucet` → `approve` → `buy(listing 1)` minted license #1
+   ([buy tx](https://sepolia.mantlescan.xyz/tx/0x16c7cbda65fc882e3090d52a153950429f8a8facdac5dd53d6e5943b6a102964)).
+
+Caveat: listing prices are token-unit-denominated; old-token balances/allowances
+do not carry over (irrelevant on testnet — no prior sales). §2.3's EIP-3009
+probe is now resolved: **x402 works on Sepolia via MockUSDC3009; mainnet uses
+real bridged USDC unmodified.**

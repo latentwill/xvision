@@ -246,6 +246,19 @@ contract Marketplace is
         emit FeeRecipientChanged(old, newRecipient);
     }
 
+    /// @inheritdoc IMarketplace
+    /// @dev V2 testnet escape hatch: re-points the sale currency (added to swap
+    ///      the non-EIP-3009 community mock for MockUSDC3009 on Mantle Sepolia,
+    ///      so the x402 path is exercisable). Listing prices are denominated in
+    ///      token units — old-token allowances and balances do not carry over
+    ///      across a swap. V4/mainnet: governed like every other setter.
+    function setUsdc(address newUsdc) external override onlyOwner {
+        if (newUsdc == address(0)) revert ZeroAddress();
+        address old = _usdc;
+        _usdc = newUsdc;
+        emit UsdcChanged(old, newUsdc);
+    }
+
     /// @notice Emergency stop for both buy paths. V2: operator EOA; V4: governed.
     ///         Pause cannot mint, burn, transfer, or change fees.
     function pause() external onlyOwner {
