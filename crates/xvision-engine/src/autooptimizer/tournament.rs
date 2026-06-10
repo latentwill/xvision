@@ -479,7 +479,10 @@ mod tests {
         ]);
         let runner = make_runner(dispatch);
         let strategy = stub_strategy();
-        let candidates = runner.generate_candidates(&strategy, &config, None).await.unwrap();
+        let candidates = runner
+            .generate_candidates(&strategy, &config, None)
+            .await
+            .unwrap();
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].kind, CandidateKind::Incumbent);
         assert_eq!(candidates[1].kind, CandidateKind::Adversarial);

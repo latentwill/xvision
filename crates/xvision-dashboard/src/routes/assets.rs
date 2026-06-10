@@ -12,8 +12,6 @@ use crate::state::AppState;
 ///
 /// Reads from the in-memory `asset_registry::REGISTRY` loaded at startup —
 /// no DB query required. Returns `[]` before the whitelist is loaded.
-pub async fn list(
-    State(_state): State<AppState>,
-) -> Result<Json<Vec<AssetInfo>>, DashboardError> {
+pub async fn list(State(_state): State<AppState>) -> Result<Json<Vec<AssetInfo>>, DashboardError> {
     Ok(Json(list_assets()))
 }

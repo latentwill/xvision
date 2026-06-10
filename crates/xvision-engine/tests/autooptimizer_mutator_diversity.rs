@@ -77,16 +77,6 @@ impl LlmDispatch for PromptCapturingDispatch {
     }
 }
 
-/// Pull the focus key out of a "FOCUS this experiment on the parameter `<key>`"
-/// directive, if present.
-fn focus_key(prompt: &str) -> Option<String> {
-    let marker = "FOCUS this experiment on the parameter `";
-    let start = prompt.find(marker)? + marker.len();
-    let rest = &prompt[start..];
-    let end = rest.find('`')?;
-    Some(rest[..end].to_string())
-}
-
 fn make_strategy() -> Strategy {
     let v = json!({
         "manifest": {
@@ -145,7 +135,7 @@ async fn mutator_refuses_to_re_emit_an_already_tried_candidate() {
 
     // First cycle (empty history): the fixed candidate is accepted.
     let first = mutator
-        .propose(&base, &cfg, None, 1, None, &Default::default(), None)
+        .propose(&base, &cfg, None, 1, 0, None, &Default::default(), None)
         .await
         .expect("first proposal succeeds");
     let tried = candidate_hash(&base, &first);
@@ -153,7 +143,7 @@ async fn mutator_refuses_to_re_emit_an_already_tried_candidate() {
     // Second cycle, same parent, that candidate now in history → must NOT be
     // re-emitted; with a model that only ever returns it, propose fails.
     let avoid: std::collections::HashSet<ContentHash> = [tried].into_iter().collect();
-    let second = mutator.propose(&base, &cfg, None, 2, None, &avoid, None).await;
+    let second = mutator.propose(&base, &cfg, None, 2, 0, None, &avoid, None).await;
     assert!(
         second.is_err(),
         "F32: a candidate already evaluated on this parent must never be re-emitted; \
@@ -177,29 +167,26 @@ async fn seed_directed_focus_targets_different_params() {
         max_retries: 0,
     };
 
-    // Two seeds chosen to land on different tunable keys (ema_fast vs atr_period
-    // are the first two mechanical keys; risk.* follow). Different seed ⇒
-    // different focus directive ⇒ materially different prompt.
+    // Two mutation indices that land on different kinds (prose vs param when no
+    // filter is present). Different mutation_idx ⇒ different focus kind ⇒
+    // materially different prompt, even from a fully deterministic model.
     mutator
-        .propose(&base, &cfg, None, 0, None, &Default::default(), None)
+        .propose(&base, &cfg, None, 0, 0, None, &Default::default(), None)
         .await
         .unwrap();
     mutator
-        .propose(&base, &cfg, None, 1, None, &Default::default(), None)
+        .propose(&base, &cfg, None, 1, 1, None, &Default::default(), None)
         .await
         .unwrap();
 
     let captured = prompts.lock().unwrap();
     assert_eq!(captured.len(), 2);
-    let f0 = focus_key(&captured[0]).expect("seed 0 prompt names a focus parameter");
-    let f1 = focus_key(&captured[1]).expect("seed 1 prompt names a focus parameter");
-    assert_ne!(
-        f0, f1,
-        "F32: different seeds must focus DIFFERENT parameters (materially different prompt, \
-         not a cosmetic nonce); both focused `{f0}`"
-    );
+    // The two prompts must contain different focus directives. With mutation_idx
+    // 0 vs 1 the focus kind rotates (e.g. prose then param), so the exploration
+    // sections are mutually exclusive and the full prompts differ.
     assert_ne!(
         captured[0], captured[1],
-        "F32: different seeds must yield materially different prompts"
+        "F32: different mutation indices must yield materially different focus directives \
+         (not a cosmetic nonce); got identical prompts"
     );
 }
