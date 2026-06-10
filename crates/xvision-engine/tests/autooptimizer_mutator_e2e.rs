@@ -267,3 +267,49 @@ async fn propose_includes_validation_errors_in_retry_prompt() {
         "retry prompt must include the failing param key; got: {user_text}"
     );
 }
+
+#[tokio::test]
+async fn propose_sends_constrained_mutation_diff_response_schema() {
+    // B3: the mutator must request a constrained `mutation_diff` JSON schema so
+    // OpenAI-compat dispatchers (Ollama) emit grammar-constrained JSON instead of
+    // an unconstrained json_object — without it ~40% of responses fail to parse.
+    let base = make_strategy();
+    let spy = Arc::new(SpyDispatch::new(vec![SpyDispatch::text_response(
+        valid_diff_json(),
+    )]));
+    let mutator = Mutator {
+        provider: "test".into(),
+        model: "test-model".into(),
+        dispatch: spy.clone() as Arc<dyn LlmDispatch + Send + Sync>,
+        max_retries: 2,
+    };
+
+    let result = mutator
+        .propose(
+            &base,
+            &default_config(),
+            None,
+            42,
+            0,
+            None,
+            &Default::default(),
+            None,
+        )
+        .await;
+    assert!(result.is_ok(), "expected Ok: {:?}", result);
+
+    let captured = spy.captured.lock().unwrap();
+    let schema = captured[0]
+        .response_schema
+        .as_ref()
+        .expect("mutator request must carry a response_schema (B3)");
+    assert_eq!(
+        schema.name, "mutation_diff",
+        "response schema must be named mutation_diff"
+    );
+    assert!(
+        schema.schema.pointer("/properties/kind").is_some(),
+        "mutation_diff schema must enumerate the `kind` property: {:?}",
+        schema.schema
+    );
+}
