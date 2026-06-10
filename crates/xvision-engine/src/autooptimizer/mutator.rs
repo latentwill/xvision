@@ -832,8 +832,11 @@ impl Mutator {
         exploration_seed: u64,
         memory_context: Option<&str>,
         avoid: &std::collections::HashSet<ContentHash>,
+        resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
     ) -> anyhow::Result<MutationDiff> {
-        let program_md = program_view::to_markdown(base);
+        let empty_map = std::collections::HashMap::new();
+        let resolved = resolved_agent_prompts.unwrap_or(&empty_map);
+        let program_md = program_view::to_markdown_with_resolved_prompts(base, resolved);
         let mut last_errors: Option<Vec<ValidationError>> = None;
         let max_attempts = self.max_retries.saturating_add(1);
 

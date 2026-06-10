@@ -31,6 +31,8 @@ pub mod cycle_runs;
 pub mod diversity;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
+pub mod gepa;
+pub mod pattern_snapshot;
 pub mod eval_adapter;
 pub mod events_store;
 pub mod evidence;

@@ -13,6 +13,14 @@ fn default_dspy_pattern_cohort_threshold() -> usize {
     5
 }
 
+fn default_gepa_candidates() -> usize {
+    3
+}
+
+fn default_gepa_generations() -> usize {
+    2
+}
+
 /// Default candidate experiments per parent per cycle. Was a hard-coded `1`
 /// (one experiment/cycle, nothing to compare); 5 gives the optimizer a real
 /// candidate pool by default.
@@ -102,6 +110,22 @@ pub struct AutoOptimizerConfig {
     /// gates promotion. Back-compat: absent from existing configs ⇒ `Both`.
     #[serde(default)]
     pub baseline_direction: TradeDirection,
+
+    /// Use the GEPA reflection+proposal algorithm instead of the single-call
+    /// `LiveDspyBridge` summarizer. Requires `dspy_enabled = true`. When false,
+    /// the simpler one-shot summarizer runs. Default: false.
+    #[serde(default)]
+    pub gepa_enabled: bool,
+
+    /// Number of candidate instructions GEPA generates per generation.
+    /// Each candidate is proposed independently and scored. Default: 3.
+    #[serde(default = "default_gepa_candidates")]
+    pub gepa_candidates: usize,
+
+    /// Number of reflection→proposal generations the GEPA loop runs.
+    /// More generations improve quality at the cost of more LLM calls. Default: 2.
+    #[serde(default = "default_gepa_generations")]
+    pub gepa_generations: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +218,9 @@ impl Default for AutoOptimizerConfig {
             objective: crate::autooptimizer::gate::Objective::default(),
             regime_set: vec![],
             baseline_direction: TradeDirection::Both,
+            gepa_enabled: false,
+            gepa_candidates: default_gepa_candidates(),
+            gepa_generations: default_gepa_generations(),
         }
     }
 }

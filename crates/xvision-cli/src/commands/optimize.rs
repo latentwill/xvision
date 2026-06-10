@@ -9,7 +9,7 @@
 //! * **run** / **run-cycle** — run the full optimizer cycle against a strategy.
 //! * **mutate-once** — propose one experiment, gate it, and commit to lineage.
 //! * **demo** — replay a saved optimizer cycle from a fixture (no API keys).
-//! * **inspect** — show a persisted DSPy optimization run, its candidates, and snapshots.
+//! * **inspect** — show a persisted optimization run, its candidates, and snapshots.
 //! * **memory-demos** — compile an Observation demo pool into a child agent prompt prefix.
 //! * **memory-demos-gate** — record dev/holdout gate results for a memory-demo optimization.
 //! * **export-demos** / **import-demos** — export/import demo sets.
@@ -73,13 +73,9 @@ use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 use xvision_memory::embedder::Embedder;
 
-use xvision_dspy::signatures::signature_for;
-use xvision_dspy::snapshot::{signature_hash, OptimizationSnapshot, SnapshotDemo};
-use xvision_dspy::{Capability as DspyCapability, OptimizerError};
-
 use xvision_engine::api::optimize::{MemoryDemoOptimizeRequest, OptimizationGateRequest};
 use xvision_engine::api::{agents as agents_api, optimize as memory_optimize};
-use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
+use xvision_engine::optimization::OptimizationStore;
 
 use crate::exit::{CliError, CliResult, XvnExit};
 use crate::io::print_json;
@@ -95,17 +91,16 @@ pub struct OptimizeCmd {
 
 #[derive(Subcommand, Debug)]
 enum OptimizeAction {
-    /// Run the full optimizer cycle against a strategy.
-    /// Requires --strategy; use run-cycle for the legacy no-strategy-id path.
-    Run(RunCycleArgs),
+    /// Deprecated DSPy optimizer entry point.
+    Run(RunArgs),
     /// Run the full optimizer cycle (same as run; --strategy is optional).
     RunCycle(RunCycleArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
     /// Replay a saved optimizer cycle from a fixture (no API keys required).
     Demo(DemoArgs),
-    /// Show a persisted DSPy optimization run, its candidates, and snapshots.
-    Inspect(DspyInspectArgs),
+    /// Show a persisted optimization run, its candidates, and snapshots.
+    Inspect(InspectArgs),
     /// Compile an Observation demo pool into a child agent prompt prefix.
     MemoryDemos(MemoryDemosArgs),
     /// Record dev/holdout gate results for a memory-demo optimization.
@@ -242,7 +237,7 @@ pub struct DemoArgs {
 // ── DSPy Inspect args ─────────────────────────────────────────────────────────
 
 #[derive(Args, Debug)]
-struct DspyInspectArgs {
+struct InspectArgs {
     /// Optimization run id.
     #[arg(long)]
     run: String,
@@ -273,7 +268,8 @@ impl OptimizerKind {
     }
 }
 
-/// Capability flag mirror. Maps to `xvision_dspy::Capability` for validation.
+/// Capability flag preserved for CLI compatibility with the deprecated
+/// `xvn optimize run` surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "snake_case")]
 enum CapabilityArg {
@@ -285,15 +281,65 @@ enum CapabilityArg {
 }
 
 impl CapabilityArg {
-    fn to_dspy(self) -> DspyCapability {
+    fn as_key(self) -> &'static str {
         match self {
-            CapabilityArg::Trader => DspyCapability::Trader,
-            CapabilityArg::Filter => DspyCapability::Filter,
-            CapabilityArg::DecisionGrader => DspyCapability::DecisionGrader,
-            CapabilityArg::Intern => DspyCapability::Intern,
-            CapabilityArg::ChatAuthoring => DspyCapability::ChatAuthoring,
+            CapabilityArg::Trader => "trader",
+            CapabilityArg::Filter => "filter",
+            CapabilityArg::DecisionGrader => "decision_grader",
+            CapabilityArg::Intern => "intern",
+            CapabilityArg::ChatAuthoring => "chat_authoring",
         }
     }
+}
+
+/// Demo exemplar for the corpus JSON format (inputs/outputs maps).
+/// Preserved as a local type so demo export/import files remain readable after
+/// the old optimizer crate is removed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshotDemo {
+    pub inputs: serde_json::Map<String, serde_json::Value>,
+    pub outputs: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Args, Debug)]
+struct RunArgs {
+    /// Agent template id being optimized (pre-mint local ULID).
+    #[arg(long)]
+    agent: String,
+    /// Slot/role name within the agent (free text).
+    #[arg(long)]
+    slot: String,
+    /// Capability the slot fulfils.
+    #[arg(long, value_enum)]
+    capability: CapabilityArg,
+    /// Corpus: a saved-query string, or a path to a corpus JSON file.
+    #[arg(long)]
+    corpus: String,
+    /// Optimizer search algorithm.
+    #[arg(long, value_enum)]
+    optimizer: OptimizerKind,
+    /// Objective metric name (e.g. delta_sharpe, grader_score).
+    #[arg(long)]
+    metric: String,
+    /// Maximum optimizer rounds.
+    #[arg(long, default_value_t = 4)]
+    max_rounds: u32,
+    /// RNG seed for demo sampling / search order.
+    #[arg(long)]
+    rng_seed: u64,
+    /// Validate corpus + capability only; do NOT mutate the store.
+    #[arg(long)]
+    dry_run: bool,
+    /// Use dummy/dummy as the model identity instead of resolving from the
+    /// agent's bound provider+model. For CI and offline testing only.
+    #[arg(long)]
+    test_model: bool,
+    /// Emit a single JSON object to stdout.
+    #[arg(long)]
+    json: bool,
+    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
+    #[arg(long)]
+    xvn_home: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -450,20 +496,11 @@ struct MemoryDemosGateArgs {
 
 pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
     match cmd.action {
-        OptimizeAction::Run(args) => {
-            // Enforce --strategy is required for `xvn optimize run`
-            if args.strategy.is_none() {
-                return Err(CliError::usage(anyhow::anyhow!(
-                    "`xvn optimize run` requires --strategy <id>. Use `xvn optimize run-cycle` \
-                     if you need to run without a specific strategy id."
-                )));
-            }
-            run_cycle_cmd(args).await
-        }
+        OptimizeAction::Run(args) => run_optimize(args).await,
         OptimizeAction::RunCycle(args) => run_cycle_cmd(args).await,
         OptimizeAction::MutateOnce(args) => run_mutate_once(args).await,
         OptimizeAction::Demo(args) => run_demo_cmd(args).await,
-        OptimizeAction::Inspect(args) => dspy_inspect(args).await,
+        OptimizeAction::Inspect(args) => inspect(args).await,
         OptimizeAction::MemoryDemos(args) => run_memory_demos(args).await,
         OptimizeAction::MemoryDemosGate(args) => run_memory_demos_gate(args).await,
         OptimizeAction::ExportDemos(args) => export_demos(args).await,
@@ -472,6 +509,16 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         OptimizeAction::RevertAccepted(args) => revert(args).await,
         OptimizeAction::ExplainMissingData(args) => explain_missing_data(args),
     }
+}
+
+async fn run_optimize(_args: RunArgs) -> CliResult<()> {
+    Err(CliError {
+        exit: XvnExit::OptMissingCapability,
+        source: anyhow::anyhow!(
+            "`xvn optimize run` is deprecated — the DSPy MIPRO optimizer has been removed. \
+             Use `xvn optimizer run-cycle` to run the AutoOptimizer instead."
+        ),
+    })
 }
 
 // ── mutate-once ───────────────────────────────────────────────────────────────
@@ -853,13 +900,27 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         let store = memory::open_default_store()
             .await
             .map_err(|e| CliError::upstream(anyhow::anyhow!("open memory store for dspy: {e}")))?;
+        let bridge: std::sync::Arc<dyn xvision_engine::autooptimizer::dspy_bridge::DspyBridge> =
+            if cfg.gepa_enabled {
+                std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
+                    dispatch: std::sync::Arc::clone(&metered_dispatch),
+                    model: cfg.mutator.model.clone(),
+                    provider: cfg.mutator.provider.clone(),
+                    candidates: cfg.gepa_candidates,
+                    generations: cfg.gepa_generations,
+                })
+            } else {
+                std::sync::Arc::new(xvision_engine::autooptimizer::dspy_bridge::LiveDspyBridge {
+                    dispatch: std::sync::Arc::clone(&metered_dispatch),
+                    model: cfg.mutator.model.clone(),
+                    provider: cfg.mutator.provider.clone(),
+                })
+            };
         Some(xvision_engine::autooptimizer::dspy_flywheel::DspyContext {
             store,
-            bridge: std::sync::Arc::new(xvision_engine::autooptimizer::dspy_bridge::LiveDspyBridge {
-                dispatch: std::sync::Arc::clone(&metered_dispatch),
-                model: cfg.mutator.model.clone(),
-            }),
+            bridge,
             namespace: "autooptimizer:dspy".to_string(),
+            pool: pool.clone(),
         })
     } else {
         None
@@ -1055,26 +1116,26 @@ async fn ipc_send_event(stream: &mut Option<tokio::net::UnixStream>, ev: CyclePr
     let _ = s.write_all(line.as_bytes()).await;
 }
 
-// ── DSPy inspect ─────────────────────────────────────────────────────────────
+// ── inspect ─────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
-struct DspyInspectReport {
+struct InspectReport {
     run: xvision_engine::optimization::OptimizationRun,
     reproduction_recipe: xvision_engine::optimization::ReproductionRecipe,
     candidates: Vec<xvision_engine::optimization::OptimizationCandidate>,
     snapshots: Vec<xvision_engine::optimization::OptimizationSnapshotRow>,
 }
 
-async fn dspy_inspect(args: DspyInspectArgs) -> CliResult<()> {
-    let store = open_dspy_store(args.xvn_home.clone()).await?;
-    let run = store.get_run(&args.run).await.map_err(dspy_not_found_err)?;
+async fn inspect(args: InspectArgs) -> CliResult<()> {
+    let store = open_store(args.xvn_home.clone()).await?;
+    let run = store.get_run(&args.run).await.map_err(not_found_err)?;
     let recipe = store
         .reproduction_recipe(&args.run)
         .await
-        .map_err(dspy_not_found_err)?;
-    let candidates = store.list_candidates(&args.run).await.map_err(dspy_persistence_err)?;
-    let snapshots = store.list_snapshots(&args.run).await.map_err(dspy_persistence_err)?;
-    let report = DspyInspectReport {
+        .map_err(not_found_err)?;
+    let candidates = store.list_candidates(&args.run).await.map_err(persistence_err)?;
+    let snapshots = store.list_snapshots(&args.run).await.map_err(persistence_err)?;
+    let report = InspectReport {
         run,
         reproduction_recipe: recipe,
         candidates,
@@ -1106,13 +1167,13 @@ async fn dspy_inspect(args: DspyInspectArgs) -> CliResult<()> {
     Ok(())
 }
 
-// ── DSPy export-demos / import-demos ─────────────────────────────────────────
+// ── export-demos / import-demos ─────────────────────────────────────────
 
 async fn export_demos(args: ExportDemosArgs) -> CliResult<()> {
-    let store = open_dspy_store(args.xvn_home.clone()).await?;
+    let store = open_store(args.xvn_home.clone()).await?;
     let demo_set = match (args.snapshot, args.demo_set) {
         (Some(snap_id), _) => {
-            let snap = store.get_snapshot(&snap_id).await.map_err(dspy_not_found_err)?;
+            let snap = store.get_snapshot(&snap_id).await.map_err(not_found_err)?;
             snap.demo_set.ok_or_else(|| CliError {
                 exit: XvnExit::OptValidation,
                 source: anyhow::anyhow!("snapshot {snap_id} has no demo set"),
@@ -1126,7 +1187,7 @@ async fn export_demos(args: ExportDemosArgs) -> CliResult<()> {
             })
         }
     };
-    let payload = store.get_demo_set(&demo_set).await.map_err(dspy_not_found_err)?;
+    let payload = store.get_demo_set(&demo_set).await.map_err(not_found_err)?;
     println!("{payload}");
     Ok(())
 }
@@ -1153,8 +1214,8 @@ async fn import_demos(args: ImportDemosArgs) -> CliResult<()> {
         exit: XvnExit::OptValidation,
         source: anyhow::anyhow!("serialize demos: {e}"),
     })?;
-    let store = open_dspy_store(args.xvn_home.clone()).await?;
-    let demo_set = store.put_demo_set(&canonical).await.map_err(dspy_persistence_err)?;
+    let store = open_store(args.xvn_home.clone()).await?;
+    let demo_set = store.put_demo_set(&canonical).await.map_err(persistence_err)?;
     let report = ImportReport {
         demo_set,
         demo_count: demos.len(),
@@ -1182,13 +1243,13 @@ struct AcceptReport {
 }
 
 async fn accept(args: AcceptArgs) -> CliResult<()> {
-    let store = open_dspy_store(args.xvn_home.clone()).await?;
-    let snap = store.get_snapshot(&args.snapshot).await.map_err(dspy_not_found_err)?;
-    let run = store.get_run(&snap.run_id).await.map_err(dspy_not_found_err)?;
+    let store = open_store(args.xvn_home.clone()).await?;
+    let snap = store.get_snapshot(&args.snapshot).await.map_err(not_found_err)?;
+    let run = store.get_run(&snap.run_id).await.map_err(not_found_err)?;
     store
         .set_snapshot_accepted(&args.snapshot, true)
         .await
-        .map_err(dspy_persistence_err)?;
+        .map_err(persistence_err)?;
     let edge = store
         .add_lineage(&args.child_agent, &run.agent_id, &run.id)
         .await
@@ -1197,7 +1258,7 @@ async fn accept(args: AcceptArgs) -> CliResult<()> {
                 exit: XvnExit::Conflict,
                 source: anyhow::anyhow!("{m}"),
             },
-            other => dspy_persistence_err(other),
+            other => persistence_err(other),
         })?;
     let report = AcceptReport {
         snapshot_id: args.snapshot,
@@ -1225,15 +1286,15 @@ struct RevertReport {
 }
 
 async fn revert(args: RevertArgs) -> CliResult<()> {
-    let store = open_dspy_store(args.xvn_home.clone()).await?;
+    let store = open_store(args.xvn_home.clone()).await?;
     store
         .set_snapshot_accepted(&args.snapshot, false)
         .await
-        .map_err(dspy_not_found_err)?;
+        .map_err(not_found_err)?;
     store
         .delete_lineage_for_child(&args.child_agent)
         .await
-        .map_err(dspy_not_found_err)?;
+        .map_err(not_found_err)?;
     let report = RevertReport {
         snapshot_id: args.snapshot,
         child_agent_id: args.child_agent,
@@ -1850,6 +1911,7 @@ async fn propose(
             exploration_seed,
             None,
             &std::collections::HashSet::new(),
+            None,
         )
         .await
 }
@@ -1928,9 +1990,9 @@ fn default_blob_dir() -> PathBuf {
     }
 }
 
-// ── DSPy store helpers ────────────────────────────────────────────────────────
+// ── store helpers ────────────────────────────────────────────────────────
 
-async fn open_dspy_store(xvn_home: Option<PathBuf>) -> CliResult<OptimizationStore> {
+async fn open_store(xvn_home: Option<PathBuf>) -> CliResult<OptimizationStore> {
     let ctx = open_api_context(xvn_home, XvnExit::OptPersistence).await?;
     Ok(OptimizationStore::new(ctx.db))
 }
@@ -1951,20 +2013,20 @@ async fn open_api_context(xvn_home: Option<PathBuf>, exit: XvnExit) -> CliResult
         })
 }
 
-fn dspy_persistence_err(e: xvision_engine::api::ApiError) -> CliError {
+fn persistence_err(e: xvision_engine::api::ApiError) -> CliError {
     CliError {
         exit: XvnExit::OptPersistence,
         source: anyhow::anyhow!("store error: {e}"),
     }
 }
 
-fn dspy_not_found_err(e: xvision_engine::api::ApiError) -> CliError {
+fn not_found_err(e: xvision_engine::api::ApiError) -> CliError {
     match e {
         xvision_engine::api::ApiError::NotFound(m) => CliError {
             exit: XvnExit::NotFound,
             source: anyhow::anyhow!("{m}"),
         },
-        other => dspy_persistence_err(other),
+        other => persistence_err(other),
     }
 }
 

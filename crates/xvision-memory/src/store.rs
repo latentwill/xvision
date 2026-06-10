@@ -619,6 +619,27 @@ impl MemoryStore {
         Ok(rows.into_iter().map(|(t,)| t).collect())
     }
 
+    /// Return (id, text) pairs for up to `limit` live Observations in a namespace,
+    /// ordered by most recently created first. Used by the GEPA bridge to record
+    /// which observations fed into a compile pass for snapshot lineage.
+    pub async fn list_live_observations(
+        &self,
+        namespace: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        assert!(limit <= 1024, "limit exceeds bound");
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, text FROM memory_items \
+             WHERE namespace = ? AND tier = 'observation' AND forgotten_at IS NULL \
+             ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(namespace)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
     /// Count rows tagged forgotten in a namespace. Used by the engine
     /// API to surface the "N restorable items" hint and by tests.
     pub async fn count_forgotten(&self, namespace: &str) -> anyhow::Result<u64> {

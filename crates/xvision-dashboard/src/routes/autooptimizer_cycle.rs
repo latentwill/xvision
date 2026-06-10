@@ -299,8 +299,10 @@ pub async fn start_cycle(
                 bridge: std::sync::Arc::new(LiveDspyBridge {
                     dispatch: std::sync::Arc::clone(&metered_mutator),
                     model: cfg.mutator.model.clone(),
+                    provider: cfg.mutator.provider.clone(),
                 }),
                 namespace: "autooptimizer:dspy".to_string(),
+                pool: pool.clone(),
             }),
             Err(e) => {
                 tracing::warn!(error = %e, "dspy_enabled but could not open memory store; skipping DSPy context");
