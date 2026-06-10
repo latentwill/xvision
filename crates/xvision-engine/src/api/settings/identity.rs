@@ -66,9 +66,7 @@ pub async fn get(ctx: &ApiContext) -> ApiResult<IdentityReport> {
         .ok()
         .and_then(|s| s.parse().ok());
 
-    let identity_registry: Option<String> = env::var("XVN_IDENTITY_REGISTRY")
-        .ok()
-        .filter(|v| !v.is_empty());
+    let identity_registry: Option<String> = env::var("XVN_IDENTITY_REGISTRY").ok().filter(|v| !v.is_empty());
 
     // `last_attestation_tx` — the chain-attest module (T1.3) is fire-and-forget
     // and does not yet persist the tx hash back to SQLite. Querying

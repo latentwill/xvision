@@ -3562,12 +3562,8 @@ impl Executor {
                             "original": applied_action.as_str(),
                             "applied": "hold",
                         });
-                        obs.emit_engine_event(
-                            "risk_veto",
-                            None,
-                            Some(payload.to_string()),
-                        )
-                        .await;
+                        obs.emit_engine_event("risk_veto", None, Some(payload.to_string()))
+                            .await;
                     }
                     "hold".to_string()
                 } else {

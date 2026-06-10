@@ -313,13 +313,9 @@ async fn live_max_concurrent_positions_veto_blocks_second_open() {
     // 2. A supervisor note with reason "max_concurrent_positions" was
     //    recorded for the vetoed ETH open.
     let notes = store.read_supervisor_notes(&run.id).await.unwrap();
-    let veto_note = notes
-        .iter()
-        .find(|(role, severity, content)| {
-            role == "risk"
-                && severity == "warn"
-                && content.contains("max_concurrent_positions")
-        });
+    let veto_note = notes.iter().find(|(role, severity, content)| {
+        role == "risk" && severity == "warn" && content.contains("max_concurrent_positions")
+    });
     assert!(
         veto_note.is_some(),
         "a supervisor note with role=risk, severity=warn, reason=max_concurrent_positions \
