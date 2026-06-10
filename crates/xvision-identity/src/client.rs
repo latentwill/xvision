@@ -253,6 +253,13 @@ impl std::fmt::Display for TokenId {
     }
 }
 
+impl TokenId {
+    /// Construct a token id from a raw u64 token number.
+    pub fn from_u64(n: u64) -> Self {
+        Self(U256::from(n))
+    }
+}
+
 /// Transaction hash from a state-mutating call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TxHash(pub B256);

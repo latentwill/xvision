@@ -14,6 +14,8 @@ pub mod batch_store;
 pub mod behavior;
 pub mod broker_rules;
 pub mod candle_integrity;
+#[cfg(feature = "chain-attest")]
+pub mod chain_attestation;
 pub mod compare;
 pub mod concurrency;
 pub mod cost;

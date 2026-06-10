@@ -41,6 +41,7 @@ const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => (
 const SettingsToolPolicyRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsToolPolicyRoute })));
 const SettingsWalletRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsWalletRoute })));
 const SettingsMarketplaceRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsMarketplaceRoute })));
+const SettingsIdentityRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsIdentityRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
 const ChartLabLayout = lazy(() => import("./routes/chart-lab").then((m) => ({ default: m.ChartLabLayout })));
 const ChartLabOverview = lazy(() => import("./routes/chart-lab/ChartLabOverview").then((m) => ({ default: m.ChartLabOverview })));
@@ -243,6 +244,7 @@ export const router = createBrowserRouter([
           { path: "wallet", element: page(<SettingsWalletRoute />) },
           { path: "marketplace", element: page(<SettingsMarketplaceRoute />) },
           { path: "tool-policy", element: page(<SettingsToolPolicyRoute />) },
+          { path: "identity", element: page(<SettingsIdentityRoute />) },
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },

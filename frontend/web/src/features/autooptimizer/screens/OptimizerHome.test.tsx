@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../test-utils";
 import { OptimizerHome } from "./OptimizerHome";
 import * as apiModule from "../api";
+import * as cycleEventStreamModule from "../hooks/useCycleEventStream";
 
 // ─── ScheduleStrip module mock — keep OptimizerHome tests focused ─────────────
 // ScheduleStrip has its own test file; here we just confirm it renders dynamically.
@@ -57,6 +58,15 @@ const defaultStatsMock = () =>
     isError: false,
   } as unknown as ReturnType<typeof apiModule.useOptimizerStats>);
 
+// Default cycle event stream mock — no active cycle
+const defaultCycleEventStreamMock = () =>
+  vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+    events: [],
+    connected: false,
+    isRunning: false,
+    activeCycleId: null,
+  });
+
 afterEach(() => vi.restoreAllMocks());
 
 // Suppress EventSource errors in jsdom
@@ -69,6 +79,7 @@ beforeEach(() => {
   }));
   defaultFlywheelMock();
   defaultStatsMock();
+  defaultCycleEventStreamMock();
 });
 
 describe("OptimizerHome — status hero", () => {
@@ -110,6 +121,13 @@ describe("OptimizerHome — status hero", () => {
       isLoading: false,
       isError: false,
     } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    // activeCycleId must be set for Pause/Cancel buttons to render
+    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+      events: [],
+      connected: true,
+      isRunning: true,
+      activeCycleId: "cycle_RUNNING",
+    });
 
     renderWithProviders(<OptimizerHome />);
 
@@ -336,15 +354,15 @@ function mockMutations() {
   const resumeMutateMock = vi.fn();
   const cancelMutateMock = vi.fn();
 
-  vi.spyOn(apiModule, "usePauseSession").mockReturnValue({
+  vi.spyOn(apiModule, "usePauseCycle").mockReturnValue({
     mutate: pauseMutateMock,
     isPending: false,
-  } as unknown as ReturnType<typeof apiModule.usePauseSession>);
+  } as unknown as ReturnType<typeof apiModule.usePauseCycle>);
 
-  vi.spyOn(apiModule, "useResumeSession").mockReturnValue({
+  vi.spyOn(apiModule, "useResumeCycle").mockReturnValue({
     mutate: resumeMutateMock,
     isPending: false,
-  } as unknown as ReturnType<typeof apiModule.useResumeSession>);
+  } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
 
   vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
     mutate: cancelMutateMock,
@@ -353,6 +371,8 @@ function mockMutations() {
 
   return { pauseMutateMock, resumeMutateMock, cancelMutateMock };
 }
+
+const ACTIVE_CYCLE_ID = "cycle_ABCDEFGH";
 
 const runningSessionStatus = {
   active_session: {
@@ -390,6 +410,12 @@ describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
       isLoading: false,
       isError: false,
     } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+      events: [],
+      connected: true,
+      isRunning: true,
+      activeCycleId: ACTIVE_CYCLE_ID,
+    });
     return mockMutations();
   }
 
@@ -400,6 +426,12 @@ describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
       isLoading: false,
       isError: false,
     } as unknown as ReturnType<typeof apiModule.useSessionList>);
+    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+      events: [],
+      connected: true,
+      isRunning: false,
+      activeCycleId: ACTIVE_CYCLE_ID,
+    });
     return mockMutations();
   }
 
@@ -501,13 +533,13 @@ describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
     expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
   });
 
-  it("Pause button calls usePauseSession mutate with sessionId when running", async () => {
+  it("Pause button calls usePauseCycle mutate with cycleId when running", async () => {
     const { pauseMutateMock } = setupRunning();
     const user = userEvent.setup();
     renderWithProviders(<OptimizerHome />);
     const pauseBtn = await screen.findByRole("button", { name: /pause/i });
     await user.click(pauseBtn);
-    expect(pauseMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+    expect(pauseMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
   });
 
   it("Cancel button calls useCancelSession mutate with sessionId when running", async () => {
@@ -519,13 +551,13 @@ describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
     expect(cancelMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
   });
 
-  it("Resume button calls useResumeSession mutate with sessionId when paused", async () => {
+  it("Resume button calls useResumeCycle mutate with cycleId when paused", async () => {
     const { resumeMutateMock } = setupPaused();
     const user = userEvent.setup();
     renderWithProviders(<OptimizerHome />);
     const resumeBtn = await screen.findByRole("button", { name: /resume/i });
     await user.click(resumeBtn);
-    expect(resumeMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+    expect(resumeMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
   });
 
   it("Cancel button calls useCancelSession mutate with sessionId when paused", async () => {
@@ -544,14 +576,20 @@ describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
       isLoading: false,
       isError: false,
     } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    vi.spyOn(apiModule, "usePauseSession").mockReturnValue({
+    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+      events: [],
+      connected: true,
+      isRunning: true,
+      activeCycleId: ACTIVE_CYCLE_ID,
+    });
+    vi.spyOn(apiModule, "usePauseCycle").mockReturnValue({
       mutate: vi.fn(),
       isPending: true,
-    } as unknown as ReturnType<typeof apiModule.usePauseSession>);
-    vi.spyOn(apiModule, "useResumeSession").mockReturnValue({
+    } as unknown as ReturnType<typeof apiModule.usePauseCycle>);
+    vi.spyOn(apiModule, "useResumeCycle").mockReturnValue({
       mutate: vi.fn(),
       isPending: false,
-    } as unknown as ReturnType<typeof apiModule.useResumeSession>);
+    } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
     vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
       mutate: vi.fn(),
       isPending: false,
@@ -569,14 +607,20 @@ describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
       isLoading: false,
       isError: false,
     } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    vi.spyOn(apiModule, "usePauseSession").mockReturnValue({
+    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+      events: [],
+      connected: true,
+      isRunning: true,
+      activeCycleId: ACTIVE_CYCLE_ID,
+    });
+    vi.spyOn(apiModule, "usePauseCycle").mockReturnValue({
       mutate: vi.fn(),
       isPending: false,
-    } as unknown as ReturnType<typeof apiModule.usePauseSession>);
-    vi.spyOn(apiModule, "useResumeSession").mockReturnValue({
+    } as unknown as ReturnType<typeof apiModule.usePauseCycle>);
+    vi.spyOn(apiModule, "useResumeCycle").mockReturnValue({
       mutate: vi.fn(),
       isPending: false,
-    } as unknown as ReturnType<typeof apiModule.useResumeSession>);
+    } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
     vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
       mutate: vi.fn(),
       isPending: true,

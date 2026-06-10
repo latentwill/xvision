@@ -117,12 +117,14 @@ describe("StrategiesRoute", () => {
     // table body — it's only acceptable as a Link href.
     expect(screen.queryByText("Backend ID")).not.toBeInTheDocument();
     expect(screen.queryByText("01TEST")).not.toBeInTheDocument();
+    // Each row has an "Actions for <name>" button (the action menu trigger).
+    // Verify the row is accessible by display name, not raw ULID.
     expect(
-      screen.queryByLabelText("Open inspector for 01TEST"),
+      screen.queryByRole("button", { name: /Actions for 01TEST/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getAllByLabelText("Open inspector for Trend 4H").length,
-    ).toBeGreaterThan(0);
+      screen.getByRole("button", { name: /Actions for Trend 4H/i }),
+    ).toBeInTheDocument();
   });
 
   it("does not render the template filter or template column", async () => {
@@ -195,10 +197,16 @@ describe("StrategiesRoute", () => {
 
     renderRoute();
 
-    const clone = await screen.findByRole("button", {
-      name: /Clone strategy Trend 4H/i,
+    // Open the row's action menu then click "Duplicate" (the clone action).
+    const actionsBtn = await screen.findByRole("button", {
+      name: /Actions for Trend 4H/i,
     });
-    fireEvent.click(clone);
+    fireEvent.click(actionsBtn);
+
+    const duplicateBtn = await screen.findByRole("menuitem", {
+      name: /Duplicate/i,
+    });
+    fireEvent.click(duplicateBtn);
 
     await waitFor(() =>
       expect(strategiesApi.cloneStrategy).toHaveBeenCalledWith("01SOURCE", {
@@ -287,10 +295,17 @@ describe("StrategiesRoute", () => {
     );
     expect(screen.getAllByText(/Pipeline Crew/).length).toBeGreaterThan(0);
 
-    const shapeSelect = screen.getByLabelText(
-      /Pipeline shape/i,
-    ) as HTMLSelectElement;
-    fireEvent.change(shapeSelect, { target: { value: "multi" } });
+    // The Pipeline shape filter is a custom SignalSelectMenu button.
+    // Click it to open the listbox, then click the "Multi-agent" option.
+    const shapeTrigger = screen.getByRole("button", {
+      name: (name) => /Pipeline shape/i.test(name) || /All shapes/i.test(name),
+    });
+    fireEvent.click(shapeTrigger);
+
+    const multiOption = await screen.findByRole("option", {
+      name: /Multi-agent/i,
+    });
+    fireEvent.click(multiOption);
 
     await waitFor(() => {
       expect(screen.queryByText(/Solo Trader/)).not.toBeInTheDocument();

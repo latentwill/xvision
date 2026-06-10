@@ -2943,6 +2943,11 @@ impl Executor {
         let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
         let cadence_min = strategy.manifest.decision_cadence_minutes.max(1);
         let bar_period_minutes = cadence_min;
+        // R3 risk-veto: run-level daily-loss accumulator state (mirrors the
+        // backtest path at lines ~817–818). These are NOT per-asset — the
+        // daily kill check applies to the whole run's realized PnL.
+        let mut daily_loss_day: Option<chrono::NaiveDate> = None;
+        let mut daily_realized_at_day_start: f64 = 0.0;
 
         // Pull the runtime out of the executor for the duration of the
         // loop. The `Mutex` is held across `.await`s on the stream + fills;
@@ -3173,6 +3178,8 @@ impl Executor {
                         bar_period_minutes,
                         signal_cache: asset_signal_cache,
                         multi_filter_config,
+                        daily_loss_day,
+                        daily_realized_at_day_start,
                     },
                     &mut runtime.fill_sink,
                     &mut book,
@@ -3193,6 +3200,9 @@ impl Executor {
             // Per-asset open-direction memory: write back THIS asset's
             // updated direction only.
             last_open_direction.insert(asset_sym, outcome.last_open_direction);
+            // R3 risk-veto: write back the (possibly updated) daily-loss state.
+            daily_loss_day = outcome.daily_loss_day;
+            daily_realized_at_day_start = outcome.daily_realized_at_day_start;
 
             // Push this bar onto THIS asset's rolling history AFTER the
             // decision (so the seed for bar T sees only bars strictly before
@@ -3367,6 +3377,8 @@ impl Executor {
             bar_period_minutes,
             signal_cache,
             multi_filter_config,
+            mut daily_loss_day,
+            mut daily_realized_at_day_start,
         } = ctx;
 
         // History slice: last `history_window` bars strictly before this
@@ -3489,6 +3501,78 @@ impl Executor {
                     .record_supervisor_note(&run.id, "guard", "warn", &note)
                     .await?;
                 action.as_str().to_string()
+            }
+        };
+
+        // R3 risk-veto block (ported from backtest path).
+        //
+        // Only new opens (`long_open` / `short_open`) are subject to the
+        // veto. Holds, flats, and guardrail-rewritten holds pass through
+        // unchanged.
+        //
+        //   * daily_loss_kill_pct — once cumulative realized loss for the
+        //     current UTC day exceeds this fraction of starting capital, no
+        //     further opens are admitted for the rest of that day.
+        //     (0.0 disables.)
+        //   * max_concurrent_positions — caps the number of distinct assets
+        //     holding an open position; a new open that would exceed the cap
+        //     is vetoed. Re-opening / adjusting an asset that is already
+        //     in-position is not blocked.
+        let applied_action: String = {
+            let is_new_open = applied_action == "long_open" || applied_action == "short_open";
+            if !is_new_open {
+                applied_action
+            } else {
+                let initial = scenario.capital.initial;
+                // Roll the realized-loss accumulator on a UTC-day boundary.
+                let bar_day = bar.timestamp.date_naive();
+                if daily_loss_day != Some(bar_day) {
+                    daily_loss_day = Some(bar_day);
+                    daily_realized_at_day_start = book.realized();
+                }
+                let kill_pct = strategy.risk.daily_loss_kill_pct;
+                let realized_today = book.realized() - daily_realized_at_day_start;
+                let daily_loss_breached = kill_pct > 0.0 && realized_today <= -(kill_pct * initial);
+
+                let max_positions = strategy.risk.max_concurrent_positions;
+                let open_positions = book.open_position_count();
+                let already_open = book.position(asset_sym).abs() > f64::EPSILON;
+                let max_positions_breached =
+                    max_positions > 0 && !already_open && open_positions >= max_positions as usize;
+
+                if daily_loss_breached || max_positions_breached {
+                    let reason = if daily_loss_breached {
+                        "daily_loss_kill"
+                    } else {
+                        "max_concurrent_positions"
+                    };
+                    let note = format!(
+                        "risk veto `{reason}` at decision {decision_idx} ({asset}): \
+                         open {applied_action} rewritten to hold \
+                         (realized_today={realized_today:.2}, open_positions={open_positions})"
+                    );
+                    store
+                        .record_supervisor_note(&run.id, "risk", "warn", &note)
+                        .await?;
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        let payload = serde_json::json!({
+                            "decision_index": decision_idx,
+                            "asset": asset,
+                            "reason": reason,
+                            "original": applied_action.as_str(),
+                            "applied": "hold",
+                        });
+                        obs.emit_engine_event(
+                            "risk_veto",
+                            None,
+                            Some(payload.to_string()),
+                        )
+                        .await;
+                    }
+                    "hold".to_string()
+                } else {
+                    applied_action
+                }
             }
         };
 
@@ -3662,6 +3746,8 @@ impl Executor {
             fill_happened,
             last_open_direction,
             broker_error,
+            daily_loss_day,
+            daily_realized_at_day_start,
         })
     }
 
@@ -4084,6 +4170,13 @@ struct DecideOneLiveCtx<'a> {
     bar_period_minutes: u32,
     signal_cache: &'a mut crate::agent::signal_cache::SignalCache,
     multi_filter_config: crate::agent::filter_dispatch::MultiFilterConfig,
+    /// R3 risk-veto: UTC day the daily-loss accumulator was last rolled (None
+    /// = not yet seen). Passed in from the loop driver's run-level state and
+    /// returned (possibly updated) via `LiveDecisionOutcome`.
+    daily_loss_day: Option<chrono::NaiveDate>,
+    /// R3 risk-veto: the book's realized-PnL snapshot taken at the start of
+    /// the current UTC day.  `realized_today = book.realized() - this`.
+    daily_realized_at_day_start: f64,
 }
 
 /// What `decide_one_live` returns to the loop driver.
@@ -4093,6 +4186,11 @@ struct LiveDecisionOutcome {
     fill_happened: bool,
     last_open_direction: Option<GuardAction>,
     broker_error: Option<(xvision_execution::broker_surface::BrokerErrorClass, String)>,
+    /// R3 risk-veto: updated daily-loss state, written back to the loop
+    /// driver so the accumulator persists across consecutive `decide_one_live`
+    /// calls on the same run.
+    daily_loss_day: Option<chrono::NaiveDate>,
+    daily_realized_at_day_start: f64,
 }
 
 // executor-trait-extraction: `SimulateFillArgs`, `SimulateFillResult`,
