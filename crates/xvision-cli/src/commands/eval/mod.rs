@@ -137,6 +137,14 @@ pub enum Op {
     /// status. The verb hits the same `eval::cancel` engine API as
     /// `POST /api/eval/runs/:id/cancel`.
     Cancel(CancelArgs),
+    /// Composite stop: flatten all open positions then cancel the run.
+    ///
+    /// Calls `POST /api/eval/runs/:id/flatten` (close every open broker
+    /// position), waits up to `--flatten-timeout` seconds for the
+    /// executor to acknowledge the flatten, then calls
+    /// `POST /api/eval/runs/:id/cancel`. Equivalent to the dashboard
+    /// [Flatten + Cancel] cockpit action.
+    Stop(StopArgs),
     /// Run eval across multiple time windows by cloning a base scenario per window.
     /// Sequentially clones, runs, and reports. Use --json for machine-readable output.
     Sweep(SweepArgs),
@@ -369,6 +377,19 @@ pub struct CancelArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct StopArgs {
+    /// Run id to stop (flatten positions then cancel).
+    pub run_id: String,
+    /// Seconds to wait for the executor to acknowledge the flatten before
+    /// proceeding to cancel. Default: 30.
+    #[arg(long, default_value_t = 30)]
+    pub flatten_timeout: u64,
+    /// Override the xvn home directory.
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
 pub struct SweepArgs {
     /// Strategy agent id.
     #[arg(long)]
@@ -559,6 +580,7 @@ pub async fn run(cmd: EvalCmd) -> CliResult<()> {
         Op::Review(args) => review::run_review_cmd(args).await,
         Op::Batch(args) => run_batch_cmd(args).await,
         Op::Cancel(args) => run_cancel(args).await,
+        Op::Stop(args) => run_stop(args).await,
         Op::ProbeLookahead(args) => probe_lookahead::run_probe_lookahead(args).await,
         Op::Sweep(args) => run_sweep(args).await,
     }
@@ -1051,6 +1073,59 @@ async fn run_cancel(args: CancelArgs) -> CliResult<()> {
     }
     println!();
     println!("Cancelled {} run(s).", cancelled_ids.len());
+    Ok(())
+}
+
+/// Composite stop: flatten open positions then cancel. Equivalent to the
+/// dashboard [Flatten + Cancel] cockpit action.
+async fn run_stop(args: StopArgs) -> CliResult<()> {
+    let ctx = open_ctx(args.xvn_home.clone())
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    let id = &args.run_id;
+
+    // 1. Request flatten (close all open positions on the next executor cycle).
+    eval::flatten(&ctx, id)
+        .await
+        .map_err(|e| api_to_cli("eval flatten", e))?;
+    println!("Flatten requested for run {id}.");
+
+    // 2. Wait up to flatten_timeout seconds for the executor to process it.
+    // The flatten flag is cleared when the broker confirms all positions flat.
+    // We poll `flatten_requested` and a non-flat book as the signal; if we
+    // time out we proceed to cancel anyway (supervisor notes carry the reason).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(args.flatten_timeout);
+    loop {
+        let run = eval::get(&ctx, id)
+            .await
+            .map_err(|e| api_to_cli("eval get (flatten poll)", e))?;
+        // Terminal state or flatten_requested cleared → done waiting.
+        let is_terminal = matches!(
+            run.status,
+            xvision_engine::eval::run::RunStatus::Completed
+                | xvision_engine::eval::run::RunStatus::Cancelled
+                | xvision_engine::eval::run::RunStatus::Failed
+        );
+        let flatten_cleared = !run.flatten_requested;
+        if is_terminal || flatten_cleared {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            println!(
+                "Flatten timeout after {}s — proceeding to cancel (supervisor notes carry partial-fill warnings).",
+                args.flatten_timeout
+            );
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+
+    // 3. Cancel the run.
+    let run = eval::cancel(&ctx, id)
+        .await
+        .map_err(|e| api_to_cli("eval cancel", e))?;
+    println!("Run {} stopped (status={}).", id, run.status.as_str());
     Ok(())
 }
 
