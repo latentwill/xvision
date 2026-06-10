@@ -33,13 +33,9 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 
-use xvision_dspy::signatures::signature_for;
-use xvision_dspy::snapshot::{signature_hash, OptimizationSnapshot, SnapshotDemo};
-use xvision_dspy::{Capability as DspyCapability, OptimizerError};
-
 use xvision_engine::api::optimize::{MemoryDemoOptimizeRequest, OptimizationGateRequest};
-use xvision_engine::api::{agents as agents_api, memory, optimize as memory_optimize, Actor, ApiContext};
-use xvision_engine::optimization::{NewCandidate, NewOptimizationRun, NewSnapshot, OptimizationStore};
+use xvision_engine::api::{memory, optimize as memory_optimize, Actor, ApiContext};
+use xvision_engine::optimization::OptimizationStore;
 
 use crate::exit::{CliError, CliResult, XvnExit};
 use crate::io::print_json;
@@ -92,7 +88,7 @@ impl OptimizerKind {
     }
 }
 
-/// Capability flag mirror. Maps to `xvision_dspy::Capability` for validation.
+/// Capability flag (preserved for CLI compat; `run` subcommand is deprecated).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "snake_case")]
 enum CapabilityArg {
@@ -104,15 +100,24 @@ enum CapabilityArg {
 }
 
 impl CapabilityArg {
-    fn to_dspy(self) -> DspyCapability {
+    fn as_key(self) -> &'static str {
         match self {
-            CapabilityArg::Trader => DspyCapability::Trader,
-            CapabilityArg::Filter => DspyCapability::Filter,
-            CapabilityArg::DecisionGrader => DspyCapability::DecisionGrader,
-            CapabilityArg::Intern => DspyCapability::Intern,
-            CapabilityArg::ChatAuthoring => DspyCapability::ChatAuthoring,
+            CapabilityArg::Trader => "trader",
+            CapabilityArg::Filter => "filter",
+            CapabilityArg::DecisionGrader => "decision_grader",
+            CapabilityArg::Intern => "intern",
+            CapabilityArg::ChatAuthoring => "chat_authoring",
         }
     }
+}
+
+/// Demo exemplar for the corpus JSON format (inputs/outputs maps).
+/// Preserved as a local type so demo export/import files remain readable
+/// after the xvision-dspy crate is removed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SnapshotDemo {
+    pub inputs: serde_json::Map<String, serde_json::Value>,
+    pub outputs: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Args, Debug)]
@@ -379,20 +384,14 @@ fn resolve_corpus(corpus: &str) -> CliResult<ResolvedCorpus> {
 // Validation helpers shared by run + dry-run
 // ---------------------------------------------------------------------------
 
-/// Validate the capability has an optimizer signature; return its hash.
-/// Maps the typed `MissingCapabilityOptimizer` to exit code 11.
-fn validate_capability(cap: DspyCapability) -> CliResult<String> {
-    match signature_for(cap) {
-        Ok(sig) => Ok(signature_hash(sig.as_ref())),
-        Err(e @ OptimizerError::MissingCapabilityOptimizer { .. }) => Err(CliError {
-            exit: XvnExit::OptMissingCapability,
-            source: anyhow::anyhow!("{e}"),
-        }),
-        Err(e) => Err(CliError {
-            exit: XvnExit::OptValidation,
-            source: anyhow::anyhow!("signature validation failed: {e}"),
-        }),
-    }
+fn validate_capability(_cap: CapabilityArg) -> CliResult<String> {
+    Err(CliError {
+        exit: XvnExit::OptMissingCapability,
+        source: anyhow::anyhow!(
+            "`xvn optimize run` is deprecated — the DSPy MIPRO optimizer has been removed. \
+             Use `xvn optimizer run-cycle` to run the AutoOptimizer instead."
+        ),
+    })
 }
 
 /// Known objective metrics. Optimizing against an unknown metric is exit 13.
@@ -450,249 +449,14 @@ struct RunReport {
     status: String,
 }
 
-async fn run_optimize(args: RunArgs) -> CliResult<()> {
-    let cap = args.capability.to_dspy();
-
-    // 1) capability must have a signature (exit 11 on miss).
-    let sig_hash = validate_capability(cap)?;
-    // 2) metric must be known (exit 13).
-    validate_metric(&args.metric)?;
-    // 3) corpus resolves (exit 14 on bad file).
-    let corpus = resolve_corpus(&args.corpus)?;
-
-    // Resolve model identity from the agent's bound slot, unless --test-model
-    // skips the lookup for CI / offline use.
-    let (model_provider, model_name) = if args.test_model {
-        ("dummy".to_string(), "dummy".to_string())
-    } else {
-        let ctx = open_api_context(args.xvn_home.clone(), XvnExit::OptValidation).await?;
-        let agent = agents_api::get(&ctx, &args.agent).await.map_err(|e| match e {
-            xvision_engine::api::ApiError::NotFound(_) => CliError {
-                exit: XvnExit::NotFound,
-                source: anyhow::anyhow!(
-                    "agent `{}` not found; run `xvn agent list` to see available agents",
-                    args.agent
-                ),
-            },
-            other => CliError {
-                exit: XvnExit::OptValidation,
-                source: anyhow::anyhow!("resolve agent model binding: {other}"),
-            },
-        })?;
-        let slot = agent
-            .slots
-            .iter()
-            .find(|s| s.name == args.slot)
-            .ok_or_else(|| CliError {
-                exit: XvnExit::OptValidation,
-                source: anyhow::anyhow!(
-                    "agent `{}` has no slot named `{}`; available: {}",
-                    args.agent,
-                    args.slot,
-                    agent
-                        .slots
-                        .iter()
-                        .map(|s| s.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            })?;
-        (slot.provider.clone(), slot.model.clone())
-    };
-
-    if args.dry_run {
-        // Validate only — NO store mutation.
-        let report = DryRunReport {
-            mode: "dry-run",
-            agent: args.agent,
-            slot: args.slot,
-            capability: cap.as_key().to_string(),
-            optimizer: args.optimizer.as_key().to_string(),
-            metric: args.metric,
-            corpus_query: corpus.query,
-            corpus_demo_count: corpus.demos.len(),
-            rng_seed: args.rng_seed,
-            signature_hash: sig_hash,
-            model_provider: model_provider.clone(),
-            model_name: model_name.clone(),
-            valid: true,
-        };
-        if args.json {
-            print_json(&report)?;
-        } else {
-            eprintln!(
-                "dry-run OK — capability={} optimizer={} metric={} corpus_demos={} sig={} model={}/{}",
-                report.capability,
-                report.optimizer,
-                report.metric,
-                report.corpus_demo_count,
-                report.signature_hash,
-                report.model_provider,
-                report.model_name,
-            );
-        }
-        return Ok(());
-    }
-
-    // A real run needs training data. No demos ⇒ missing data (exit 10).
-    if corpus.demos.is_empty() {
-        return Err(CliError {
-            exit: XvnExit::OptMissingData,
-            source: anyhow::anyhow!(
-                "corpus `{}` resolved to 0 training rows; run `xvn optimize \
-                 explain-missing-data --corpus <q>` for guidance",
-                corpus.query
-            ),
-        });
-    }
-
-    // Open the store (exit 15 on DB failure).
-    let store = open_store(args.xvn_home.clone()).await?;
-
-    // Persist the run header (the reproduction recipe).
-    let optimizer_version = format!("dspy-rs-{}", env!("CARGO_PKG_VERSION"));
-    let run = store
-        .create_run(NewOptimizationRun {
-            agent_id: args.agent.clone(),
-            slot_name: args.slot.clone(),
-            capability: cap.as_key().to_string(),
-            optimizer: args.optimizer.as_key().to_string(),
-            metric: args.metric.clone(),
-            corpus_query: corpus.query.clone(),
-            rng_seed: args.rng_seed as i64,
-            model_provider: Some(model_provider.clone()),
-            model_name: Some(model_name.clone()),
-            signature_hash: Some(sig_hash.clone()),
-            optimizer_version: Some(optimizer_version.clone()),
-        })
-        .await
-        .map_err(persistence_err)?;
-
-    store
-        .set_run_status(&run.id, "running")
-        .await
-        .map_err(persistence_err)?;
-
-    // Content-address the corpus demo set once and reference it.
-    let demos_json = serde_json::to_string(&corpus.demos).map_err(|e| CliError {
-        exit: XvnExit::OptValidation,
-        source: anyhow::anyhow!("serialize demos: {e}"),
-    })?;
-    let demo_set = store.put_demo_set(&demos_json).await.map_err(persistence_err)?;
-
-    // Deterministic optimization: produce `max_rounds` candidate instructions
-    // (seeded by rng_seed so the same inputs yield the same search), score each
-    // deterministically, and select the winner. No network — this is the
-    // DeterministicTestModel-equivalent path: a pure function of the inputs.
-    let base_instruction = signature_for(cap)
-        .map(|s| s.instruction().to_string())
-        .unwrap_or_default();
-    let rounds = args.max_rounds.max(1);
-    let mut best_index: i64 = 0;
-    let mut best_score = f64::NEG_INFINITY;
-    let mut best_instruction = base_instruction.clone();
-    for idx in 0..rounds {
-        let instruction = format!(
-            "{base_instruction}\n[opt {optimizer} r{idx} seed={seed}] be decisive and \
-             keep size within budget.",
-            optimizer = args.optimizer.as_key(),
-            seed = args.rng_seed,
-        );
-        // Deterministic pseudo-score from (seed, idx): reproducible, no RNG state.
-        let score = deterministic_score(args.rng_seed, idx);
-        let selected = false; // set after the loop on the winner
-        store
-            .add_candidate(
-                &run.id,
-                NewCandidate {
-                    candidate_index: idx as i64,
-                    instruction: instruction.clone(),
-                    metric_value: Some(score),
-                    split: "train".to_string(),
-                    demo_set: Some(demo_set.clone()),
-                    selected,
-                },
-            )
-            .await
-            .map_err(persistence_err)?;
-        if score > best_score {
-            best_score = score;
-            best_index = idx as i64;
-            best_instruction = instruction;
-        }
-    }
-
-    // Mark the winning candidate selected (clears the flag on the others).
-    store
-        .mark_candidate_selected(&run.id, best_index)
-        .await
-        .map_err(persistence_err)?;
-
-    // Build + persist the snapshot (the reproduction-of-record).
-    let snapshot_id = ulid::Ulid::new().to_string();
-    let snapshot = OptimizationSnapshot {
-        id: snapshot_id.clone(),
-        instruction: best_instruction,
-        demos: corpus.demos.clone(),
-        signature_hash: sig_hash.clone(),
-        metric_name: args.metric.clone(),
-        corpus_query: corpus.query.clone(),
-        rng_seed: args.rng_seed,
-        optimizer_name: args.optimizer.as_key().to_string(),
-        optimizer_version: optimizer_version.clone(),
-        parent_id: None,
-        child_ids: Vec::new(),
-    };
-    let snapshot_json = snapshot.to_json().map_err(|e| CliError {
-        exit: XvnExit::OptValidation,
-        source: anyhow::anyhow!("serialize snapshot: {e}"),
-    })?;
-    store
-        .add_snapshot(
-            &run.id,
-            NewSnapshot {
-                id: snapshot_id.clone(),
-                snapshot_json,
-                signature_hash: sig_hash.clone(),
-                demo_set: Some(demo_set.clone()),
-            },
-        )
-        .await
-        .map_err(persistence_err)?;
-
-    store
-        .set_run_status(&run.id, "completed")
-        .await
-        .map_err(persistence_err)?;
-
-    let report = RunReport {
-        run_id: run.id,
-        agent: args.agent,
-        slot: args.slot,
-        capability: cap.as_key().to_string(),
-        optimizer: args.optimizer.as_key().to_string(),
-        optimizer_version,
-        metric: args.metric,
-        corpus_query: corpus.query,
-        rng_seed: args.rng_seed,
-        signature_hash: sig_hash,
-        model_provider,
-        model_name,
-        candidate_count: rounds as usize,
-        selected_candidate_index: best_index,
-        snapshot_id,
-        demo_set: Some(demo_set),
-        status: "completed".to_string(),
-    };
-    if args.json {
-        print_json(&report)?;
-    } else {
-        eprintln!(
-            "optimization complete — run={} snapshot={} candidates={} winner=#{}",
-            report.run_id, report.snapshot_id, report.candidate_count, report.selected_candidate_index
-        );
-    }
-    Ok(())
+async fn run_optimize(_args: RunArgs) -> CliResult<()> {
+    Err(CliError {
+        exit: XvnExit::OptMissingCapability,
+        source: anyhow::anyhow!(
+            "`xvn optimize run` is deprecated — the DSPy MIPRO optimizer has been removed. \
+             Use `xvn optimizer run-cycle` to run the AutoOptimizer instead."
+        ),
+    })
 }
 
 /// Reproducible candidate score from (seed, round) — no RNG state, so the same
