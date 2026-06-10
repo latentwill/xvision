@@ -1,19 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
-import { Icon } from "@/components/primitives/Icon";
 import { ApiError } from "@/api/client";
 import { createStrategy, type CreateStrategyOut } from "@/api/strategies";
 
 export function StrategiesNewRoute() {
   const navigate = useNavigate();
-  const started = useRef(false);
-  const create = useMutation<CreateStrategyOut, unknown, void>({
-    mutationFn: () =>
+  const [name, setName] = useState("");
+
+  const create = useMutation<CreateStrategyOut, unknown, string>({
+    mutationFn: (displayName) =>
       createStrategy({
-        name: "Untitled strategy",
+        name: displayName.trim() || "Untitled strategy",
         creator: null,
       }),
     onSuccess: (out) => {
@@ -21,40 +21,73 @@ export function StrategiesNewRoute() {
     },
   });
 
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    create.mutate();
-  }, [create]);
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (create.isPending) return;
+    create.mutate(name);
+  }
 
   return (
     <>
-      <Topbar title="New strategy" sub="Creating a blank draft..." />
+      <Topbar title="New strategy" />
 
-      <Card className="p-5 max-w-3xl">
-        {create.isError ? (
-          <div role="alert">
-            <div className="text-[13px] text-rose-300 font-sans font-semibold mb-1">
-              couldn't create strategy
-            </div>
-            <code className="text-rose-300/80 font-mono text-[12px]">
-              {errorDetail(create.error)}
-            </code>
-            <div className="mt-4">
-              <Link
-                to="/strategies"
-                className="inline-flex items-center gap-1.5 text-[13px] text-text-3 hover:text-text"
-              >
-                <span className="inline-block rotate-180">
-                  <Icon name="chevR" size={12} />
-                </span>
-                Back to strategies
-              </Link>
-            </div>
+      <Card className="p-5 max-w-lg">
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div>
+            <h2 className="m-0 font-sans font-medium text-[20px] tracking-tight">
+              Create strategy
+            </h2>
+            <p className="m-0 mt-1 text-text-3 text-[12px]">
+              Give your strategy a name to get started. You can change it later.
+            </p>
           </div>
-        ) : (
-          <div className="text-[13px] text-text-3">Creating strategy...</div>
-        )}
+
+          <div>
+            <label
+              htmlFor="strategy-name"
+              className="block text-[12px] text-text-2 mb-1"
+            >
+              Name
+            </label>
+            <input
+              id="strategy-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Untitled strategy"
+              autoFocus
+              disabled={create.isPending}
+              className="w-full px-3 py-2 bg-surface-elev border border-border rounded text-text text-[13px] focus:outline-none focus:border-text-3 disabled:opacity-50"
+            />
+          </div>
+
+          {create.isError ? (
+            <div role="alert" className="space-y-1">
+              <div className="text-[13px] text-rose-300 font-sans font-semibold">
+                couldn't create strategy
+              </div>
+              <code className="text-rose-300/80 font-mono text-[12px]">
+                {errorDetail(create.error)}
+              </code>
+            </div>
+          ) : null}
+
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <Link
+              to="/strategies"
+              className="text-[13px] text-text-3 hover:text-text"
+            >
+              Cancel
+            </Link>
+            <button
+              type="submit"
+              disabled={create.isPending}
+              className="px-3.5 py-1.5 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {create.isPending ? "Creating…" : "Create strategy"}
+            </button>
+          </div>
+        </form>
       </Card>
     </>
   );
