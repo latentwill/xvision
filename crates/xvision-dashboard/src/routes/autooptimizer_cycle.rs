@@ -177,9 +177,6 @@ pub async fn start_cycle(
         ))
     };
 
-    let day_scenario = build_day_scenario(&cfg)?;
-    let baseline_scenario =
-        synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
     // The paper-test backtest dispatches every trader decision through the
     // metered mutator dispatch (the cycle provider), so the strategy's trader
     // must route to that same provider.
@@ -205,8 +202,14 @@ pub async fn start_cycle(
             field: "strategy_id".into(),
             msg: "strategy_id is required for dashboard run-cycle launches".into(),
         })?;
+    // B9: load the seed strategy BEFORE building the scenario so the scenario
+    // granularity matches the strategy's decision cadence (was hardcoded 1h).
     let (bundle_hash, strategy) =
         load_strategy_parent(strategy_id, &state.xvn_home, &lineage_store, &strategy_blob_store).await?;
+    let cadence_minutes = strategy.manifest.decision_cadence_minutes;
+    let day_scenario = build_day_scenario(&cfg, cadence_minutes)?;
+    let baseline_scenario =
+        synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
     // F22/F26: fail fast with guidance instead of a confusing cross-provider 400
     // when the strategy's trader would route to a provider other than the cycle's.
     // Shared with the CLI via `autooptimizer::preflight` — no parallel guard.
@@ -716,11 +719,16 @@ pub(super) async fn load_strategy_parent(
     Ok((bundle_hash, strategy))
 }
 
-pub(super) fn build_day_scenario(cfg: &AutoOptimizerConfig) -> Result<Scenario, DashboardError> {
+pub(super) fn build_day_scenario(
+    cfg: &AutoOptimizerConfig,
+    cadence_minutes: u32,
+) -> Result<Scenario, DashboardError> {
     // F10: delegate to the single shared optimizer scenario builder so the
     // dashboard and CLI never drift on venue/fee/fill settings.
+    // B9: granularity follows the seed strategy's decision cadence.
     Ok(synthesize_optimizer_day_scenario(
         &cfg.day_window,
+        cadence_minutes,
         "xvn-dashboard",
     ))
 }
@@ -983,7 +991,7 @@ mod tests {
     #[test]
     fn build_cycle_config_uses_resolved_judge_provider() {
         let cfg = AutoOptimizerConfig::default();
-        let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, "xvn-dashboard-test");
+        let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, 60, "xvn-dashboard-test");
         let baseline_scenario =
             synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
                 .expect("baseline scenario");
@@ -1004,6 +1012,61 @@ mod tests {
 
         assert_eq!(cycle.judge_provider, "ollama");
         assert_eq!(cycle.judge_model, "qwen2.5-coder:7b");
+    }
+
+    fn strategy_with_cadence(cadence_minutes: u32) -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000A",
+                "display_name": "Cadence Test Strategy",
+                "plain_summary": "Strategy for scenario-granularity wiring test.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": cadence_minutes,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": { "ema_fast": 12, "ema_slow": 26 }
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialise")
+    }
+
+    /// B9 wiring guard: the reordered route path derives the scenario granularity
+    /// from the seed strategy's decision cadence via `build_day_scenario`. A 15m
+    /// strategy must yield a 15m day scenario AND a 15m baseline — not the old
+    /// hardcoded 1h. This exercises the live helper, so an orphaned-helper
+    /// regression (builder edited but caller still hardcoded) fails here.
+    #[test]
+    fn build_day_scenario_follows_seed_strategy_cadence() {
+        use xvision_engine::eval::scenario::BarGranularity;
+
+        let cfg = AutoOptimizerConfig::default();
+        let strategy = strategy_with_cadence(15);
+        // Mirror exactly what the route does: cadence from the loaded strategy.
+        let cadence_minutes = strategy.manifest.decision_cadence_minutes;
+        let day_scenario = build_day_scenario(&cfg, cadence_minutes).expect("day scenario");
+        assert_eq!(
+            day_scenario.granularity,
+            BarGranularity::Minute15,
+            "15m strategy must produce a 15m day scenario"
+        );
+        let baseline = synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
+            .expect("baseline scenario");
+        assert_eq!(
+            baseline.granularity,
+            BarGranularity::Minute15,
+            "baseline must inherit the 15m granularity"
+        );
     }
 }
 

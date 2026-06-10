@@ -60,6 +60,20 @@ pub enum Op {
     RunCycle(crate::commands::optimize::RunCycleArgs),
     /// Replay a saved optimizer cycle from a fixture (no API keys required).
     Demo(crate::commands::optimize::DemoArgs),
+    /// Force-clear a wedged optimizer cycle lock (e.g. after a killed/crashed
+    /// run on a foreign host). Use when `run-cycle` reports "already running"
+    /// but no cycle is actually live.
+    Unlock(UnlockArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct UnlockArgs {
+    /// Path to the optimizer DB holding the lock (defaults to $XVN_HOME/xvn.db).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
 }
 
 // MutateOnceArgs, RunCycleArgs, DemoArgs are defined in optimize.rs and re-used here via
@@ -270,7 +284,24 @@ pub async fn run(cmd: AutoOptimizerCmd) -> CliResult<()> {
             eprintln!("warning: `xvn optimizer demo` is deprecated. Use `xvn optimize demo`.");
             crate::commands::optimize::run_demo_cmd(args).await
         }
+        Op::Unlock(args) => run_unlock(args).await,
     }
+}
+
+/// `xvn optimizer unlock` — force-clear the workspace optimizer cycle lock.
+async fn run_unlock(args: UnlockArgs) -> CliResult<()> {
+    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("resolve xvn home: {e}")))?;
+    let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
+    let pool = crate::commands::optimize::open_and_migrate_db(&db_path).await?;
+    let cleared = xvision_engine::autooptimizer::run_lock::force_clear(&pool)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("clear optimizer cycle lock: {e}")))?;
+    match cleared {
+        Some(cycle_id) => println!("cleared optimizer cycle lock (was held by cycle {cycle_id})"),
+        None => println!("no optimizer cycle lock was held"),
+    }
+    Ok(())
 }
 
 async fn run_distill(args: RunArgs) -> CliResult<()> {

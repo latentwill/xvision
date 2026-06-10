@@ -49,6 +49,7 @@ tracing-subscriber = { workspace = true }
 sqlx               = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tempfile = "3"
 tokio    = { workspace = true, features = ["rt", "macros"] }
 
