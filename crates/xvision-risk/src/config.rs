@@ -12,7 +12,6 @@ pub struct Limits {
     pub max_total_exposure_pct: f64,
     pub max_open_positions: usize,
     pub max_daily_loss_pct: f64,
-    pub max_correlation_cluster: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -100,9 +99,6 @@ impl RiskConfig {
         }
         if !(l.max_daily_loss_pct > 0.0 && l.max_daily_loss_pct <= 100.0) {
             return Err(RiskError::Config("max_daily_loss_pct must be in (0, 100]".into()));
-        }
-        if l.max_correlation_cluster == 0 {
-            return Err(RiskError::Config("max_correlation_cluster must be > 0".into()));
         }
         if s.stop_loss_min_pct <= 0.0 {
             return Err(RiskError::Config("stop_loss_min_pct must be > 0".into()));

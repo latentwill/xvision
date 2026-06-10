@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use chrono::Utc;
 use uuid::Uuid;
 use xvision_core::{Action, AssetSymbol, Direction, PortfolioState, RiskDecision, TraderDecision};
+use xvision_core::asset_registry::DataSource;
 use xvision_risk::{
     config::{Limits, RiskConfig, Stops},
     context::RiskEvalContext,
@@ -26,7 +27,8 @@ fn whitelist_btc_only() -> Whitelist {
         AssetSymbol::Btc,
         AssetEntry {
             enabled: true,
-            cluster: "btc".into(),
+            category: "btc".into(),
+            data: DataSource::Alpaca,
             venues: BTreeMap::new(),
         },
     );
@@ -40,7 +42,6 @@ fn default_config() -> RiskConfig {
             max_total_exposure_pct: 100.0,
             max_open_positions: 5,
             max_daily_loss_pct: 5.0,
-            max_correlation_cluster: 2,
         },
         stops: Stops {
             stop_loss_required: true,
@@ -212,7 +213,6 @@ fn layer_with_conviction_scale() -> RiskLayer {
             max_total_exposure_pct: 100.0,
             max_open_positions: 5,
             max_daily_loss_pct: 5.0,
-            max_correlation_cluster: 2,
         },
         stops: Stops {
             stop_loss_required: true,

@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
+use xvision_core::asset_registry::{self, DataSource, RegistryEntry};
 use xvision_core::AssetSymbol;
 
 use crate::RiskError;
@@ -12,9 +13,15 @@ use crate::RiskError;
 #[derive(Debug, Clone, Deserialize)]
 pub struct AssetEntry {
     pub enabled: bool,
-    pub cluster: String,
+    pub category: String,
     #[serde(default)]
     pub venues: BTreeMap<String, String>,
+    #[serde(default = "default_data_source")]
+    pub data: DataSource,
+}
+
+fn default_data_source() -> DataSource {
+    DataSource::Alpaca
 }
 
 /// The on-disk shape: an array of `[[assets]]` records.
@@ -27,9 +34,12 @@ struct WhitelistFile {
 struct RawAsset {
     symbol: String,
     enabled: bool,
-    cluster: String,
+    #[serde(alias = "cluster")]
+    category: String,
     #[serde(default)]
     venues: BTreeMap<String, String>,
+    #[serde(default = "default_data_source")]
+    data: DataSource,
 }
 
 /// Whitelist keyed by `AssetSymbol`.
@@ -49,15 +59,39 @@ impl Whitelist {
         for a in file.assets {
             let sym = parse_symbol(&a.symbol)
                 .ok_or_else(|| RiskError::Config(format!("unknown asset symbol: {}", a.symbol)))?;
+            if assets.contains_key(&sym) {
+                return Err(RiskError::Config(format!(
+                    "whitelist has duplicate symbol: {}",
+                    sym.as_str()
+                )));
+            }
             assets.insert(
                 sym,
                 AssetEntry {
                     enabled: a.enabled,
-                    cluster: a.cluster,
+                    category: a.category,
                     venues: a.venues,
+                    data: a.data,
                 },
             );
         }
+
+        // Install the process-global asset registry so that venue lookups
+        // (orderly_symbol, alpaca_pair, has_alpaca_data) use the authoritative
+        // whitelist data rather than the generic fallback patterns.
+        let registry_entries: Vec<RegistryEntry> = assets
+            .iter()
+            .map(|(sym, entry)| RegistryEntry {
+                symbol: *sym,
+                orderly_symbol: entry.venues.get("orderly").cloned(),
+                alpaca_pair: entry.venues.get("alpaca").cloned(),
+                category: entry.category.clone(),
+                data_source: entry.data,
+                enabled: entry.enabled,
+            })
+            .collect();
+        asset_registry::register(registry_entries);
+
         Ok(Self { assets })
     }
 
@@ -66,9 +100,17 @@ impl Whitelist {
         self.assets.get(&asset).map(|e| e.enabled).unwrap_or(false)
     }
 
-    /// Returns the cluster name for the asset, or `None` if not listed.
+    /// Returns the category name for the asset, or `None` if not listed.
+    pub fn category_of(&self, asset: AssetSymbol) -> Option<&str> {
+        self.assets.get(&asset).map(|e| e.category.as_str())
+    }
+
+    /// Alias for [`category_of`] — kept for any external code that still
+    /// references the old `cluster_of` name.
+    ///
+    /// [`category_of`]: Self::category_of
     pub fn cluster_of(&self, asset: AssetSymbol) -> Option<&str> {
-        self.assets.get(&asset).map(|e| e.cluster.as_str())
+        self.category_of(asset)
     }
 
     /// Construct directly from a map (used in tests and in-memory layer setup).
