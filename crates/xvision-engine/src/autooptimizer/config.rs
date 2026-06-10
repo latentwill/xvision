@@ -111,12 +111,6 @@ pub struct AutoOptimizerConfig {
     #[serde(default)]
     pub baseline_direction: TradeDirection,
 
-    /// Use the GEPA reflection+proposal algorithm instead of the single-call
-    /// `LiveDspyBridge` summarizer. Requires `dspy_enabled = true`. When false,
-    /// the simpler one-shot summarizer runs. Default: false.
-    #[serde(default)]
-    pub gepa_enabled: bool,
-
     /// Number of candidate instructions GEPA generates per generation.
     /// Each candidate is proposed independently and scored. Default: 3.
     #[serde(default = "default_gepa_candidates")]
@@ -218,7 +212,6 @@ impl Default for AutoOptimizerConfig {
             objective: crate::autooptimizer::gate::Objective::default(),
             regime_set: vec![],
             baseline_direction: TradeDirection::Both,
-            gepa_enabled: false,
             gepa_candidates: default_gepa_candidates(),
             gepa_generations: default_gepa_generations(),
         }

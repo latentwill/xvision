@@ -20,7 +20,6 @@ use xvision_engine::autooptimizer::{
     content_hash::ContentHash,
     cycle::{run_cycle, CycleConfig},
     cycle_runs::persist_cycle_cost,
-    dspy_bridge::LiveDspyBridge,
     dspy_flywheel::DspyContext,
     eval_adapter::{BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner},
     gate::GateVerdict,
@@ -287,7 +286,7 @@ pub async fn start_cycle(
         None
     };
     // DSPy in-loop bridge: when `dspy_enabled = true`, open the memory store
-    // and build a `DspyContext` with a `LiveDspyBridge` before the spawn so
+    // and build a `DspyContext` with a `GepaBridge` before the spawn so
     // the owned context can be moved into the task.  Mirrors the `cycle_memory`
     // pattern above.  The bridge reuses `metered_mutator` (the
     // `CostMeteringDispatch`-wrapped mutator dispatch) so DSPy reflection is
@@ -296,11 +295,15 @@ pub async fn start_cycle(
         match memory::open_default_store().await {
             Ok(store) => Some(DspyContext {
                 store,
-                bridge: std::sync::Arc::new(LiveDspyBridge {
-                    dispatch: std::sync::Arc::clone(&metered_mutator),
-                    model: cfg.mutator.model.clone(),
-                    provider: cfg.mutator.provider.clone(),
-                }),
+                bridge: std::sync::Arc::new(
+                    xvision_engine::autooptimizer::gepa::GepaBridge {
+                        dispatch: std::sync::Arc::clone(&metered_mutator),
+                        model: cfg.mutator.model.clone(),
+                        provider: cfg.mutator.provider.clone(),
+                        candidates: cfg.gepa_candidates,
+                        generations: cfg.gepa_generations,
+                    }
+                ),
                 namespace: "autooptimizer:dspy".to_string(),
                 pool: pool.clone(),
             }),

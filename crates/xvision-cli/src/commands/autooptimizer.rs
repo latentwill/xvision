@@ -900,8 +900,14 @@ async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
 
 // ── helpers retained for pattern-distillation commands ───────────────────────
 
-/// Resolve the effective lineage SQLite path (used by `run`, `gate`, `activate`,
-/// `retire`, and the `lineage` sub-commands).
+/// Resolve the effective lineage SQLite path: an explicit `--db` override wins,
+/// otherwise default to the shared `$XVN_HOME/xvn.db` (NOT `~/.xvn` or CWD).
+///
+/// F8 (2026-06-04): converged onto `xvn.db`, the same store the dashboard
+/// optimizer panel reads, so `xvn optimizer` lineage subcommands and the panel
+/// share one source of truth. The legacy `$XVN_HOME/lineage/lineage.db` is
+/// imported into `xvn.db` once on dashboard/server boot
+/// (`ApiContext::open` → `import_legacy_lineage_db`).
 fn resolve_lineage_db(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
     if let Some(p) = override_path {
         return Ok(p);
