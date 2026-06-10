@@ -55,6 +55,65 @@ vi.mock("@/components/chart/v2/surfaces/StrategyHistoryChartV2", () => ({
   StrategyHistoryChartV2: () => <div data-testid="strategy-chart" />,
 }));
 
+// ModelPicker uses a custom button-based dropdown; replace with a native <select>
+// so tests can use fireEvent.change to set provider::model without simulating
+// complex pointer interactions inside the floating menu.
+vi.mock("@/components/ModelPicker", () => ({
+  ModelPicker: ({
+    provider,
+    model,
+    onChange,
+    ariaLabel,
+  }: {
+    provider: string | null;
+    model: string;
+    onChange: (provider: string | null, model: string) => void;
+    ariaLabel?: string;
+  }) => (
+    <select
+      aria-label={ariaLabel}
+      value={provider && model ? `${provider}::${model}` : ""}
+      onChange={(e) => {
+        const [p, ...rest] = e.target.value.split("::");
+        onChange(p || null, rest.join("::"));
+      }}
+    >
+      <option value="">— pick a model —</option>
+      {provider && model && (
+        <option value={`${provider}::${model}`}>{`${provider}::${model}`}</option>
+      )}
+      <option value="openrouter::deepseek/deepseek-v4-flash">
+        openrouter::deepseek/deepseek-v4-flash
+      </option>
+    </select>
+  ),
+  ModelPickerDropdown: ({
+    provider,
+    model,
+    onChange,
+    ariaLabel,
+  }: {
+    provider: string | null;
+    model: string;
+    onChange: (provider: string | null, model: string) => void;
+    ariaLabel?: string;
+  }) => (
+    <select
+      aria-label={ariaLabel}
+      value={provider && model ? `${provider}::${model}` : ""}
+      onChange={(e) => {
+        const [p, ...rest] = e.target.value.split("::");
+        onChange(p || null, rest.join("::"));
+      }}
+    >
+      <option value="">— pick a model —</option>
+      <option value="openrouter::deepseek/deepseek-v4-flash">
+        openrouter::deepseek/deepseek-v4-flash
+      </option>
+    </select>
+  ),
+}));
+
 vi.mock("@/api/settings", () => ({
   settingsKeys: {
     providers: () => ["settings", "providers"],

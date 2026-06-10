@@ -796,7 +796,7 @@ describe("ChatRail", () => {
     renderRail();
 
     expect(
-      await screen.findByText("Selected chat model: ollama / qwen2.5-coder:7b"),
+      await screen.findByText("ollama / qwen2.5-coder:7b"),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(localStorage.getItem("xvn.chat_rail.provider")).toBe("ollama");

@@ -184,18 +184,17 @@ describe("ScenariosRoute", () => {
       ).toBe(true);
     });
 
-    await waitFor(() =>
-      expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0),
-    );
-    const sourceSelect = screen
-      .getAllByRole("combobox")
-      .find((select) =>
-        Array.from((select as HTMLSelectElement).options).some(
-          (option) => option.value === "optimizer",
-        ),
-      ) as HTMLSelectElement | undefined;
-    if (!sourceSelect) throw new Error("Optimizer source filter not found");
-    fireEvent.change(sourceSelect, { target: { value: "optimizer" } });
+    // The Source filter is a SignalSelectMenu button (not a native <select>).
+    // Click the trigger to open the listbox, then pick "Optimizer".
+    const sourceTrigger = await screen.findByRole("button", {
+      name: (name) => /Source/i.test(name) || /Any source/i.test(name),
+    });
+    fireEvent.click(sourceTrigger);
+
+    const optimizerOption = await screen.findByRole("option", {
+      name: /^Optimizer$/i,
+    });
+    fireEvent.click(optimizerOption);
 
     await waitFor(() => {
       const calls = vi.mocked(scenariosApi.listScenariosPaged).mock.calls;
