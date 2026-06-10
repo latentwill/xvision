@@ -848,7 +848,13 @@ pub async fn build_scenario_payload_with_granularity(
             .map_err(ApiError::Validation)?,
         _ => xvision_core::trading::AssetSymbol::Btc,
     };
-    let asset_pair = preview_asset.as_alpaca_pair();
+    if !xvision_data::asset_whitelist::is_alpaca_crypto_supported(preview_asset.as_str()) {
+        return Err(ApiError::Validation(format!(
+            "asset '{}' not in alpaca crypto whitelist",
+            preview_asset.as_str()
+        )));
+    }
+    let asset_pair = xvision_data::asset_whitelist::to_alpaca_pair(preview_asset.as_str());
     let data_source_tag = "alpaca-historical-v1";
     let cache_key = crate::eval::bars::compute_cache_key(
         &asset_pair,

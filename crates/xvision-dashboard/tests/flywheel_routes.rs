@@ -3,12 +3,15 @@
 mod support;
 
 use axum_test::TestServer;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::str::FromStr;
 use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 use xvision_engine::agents::Agent;
 use xvision_engine::api::agents::{self, CreateAgentRequest};
+
+static FLYWHEEL_TEST_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct EnvGuard {
     key: &'static str,
@@ -48,9 +51,12 @@ async fn server_with_memory_db() -> (TestServer, TempDir, AppState, EnvGuard, st
 }
 
 async fn seed_observation(memory_db: &std::path::Path, id: &str, namespace: &str, source_end: &str) {
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", memory_db.display()))
+        .expect("memory db options")
+        .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(&format!("sqlite://{}", memory_db.display()))
+        .connect_with(opts)
         .await
         .expect("open memory db");
     sqlx::query(
@@ -72,9 +78,12 @@ async fn seed_observation(memory_db: &std::path::Path, id: &str, namespace: &str
 }
 
 async fn seed_pattern(memory_db: &std::path::Path, id: &str, namespace: &str) {
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", memory_db.display()))
+        .expect("memory db options")
+        .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(&format!("sqlite://{}", memory_db.display()))
+        .connect_with(opts)
         .await
         .expect("open memory db");
     sqlx::query(
@@ -93,9 +102,12 @@ async fn seed_pattern(memory_db: &std::path::Path, id: &str, namespace: &str) {
 }
 
 async fn seed_autooptimizer_run(memory_db: &std::path::Path, id: &str, namespace: &str, pattern_id: &str) {
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", memory_db.display()))
+        .expect("memory db options")
+        .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(&format!("sqlite://{}", memory_db.display()))
+        .connect_with(opts)
         .await
         .expect("open memory db");
     sqlx::query(
@@ -116,6 +128,7 @@ async fn seed_autooptimizer_run(memory_db: &std::path::Path, id: &str, namespace
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn autooptimizer_run_defaults_expose_config_fallback() {
+    let _env_lock = FLYWHEEL_TEST_ENV_LOCK.lock().await;
     let (server, tmp, _state, _memory_guard, _memory_db) = server_with_memory_db().await;
     let _home_guard = EnvGuard::set("XVN_HOME", tmp.path());
 
@@ -136,6 +149,7 @@ async fn autooptimizer_run_defaults_expose_config_fallback() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn flywheel_routes_cover_status_autooptimizer_and_memory_demo_optimize() {
+    let _env_lock = FLYWHEEL_TEST_ENV_LOCK.lock().await;
     let (server, _tmp, state, _guard, memory_db) = server_with_memory_db().await;
     let mut slot = Agent::single_slot_default("unused", "target", "mock", "mock")
         .slots
@@ -256,9 +270,12 @@ async fn flywheel_routes_cover_status_autooptimizer_and_memory_demo_optimize() {
     demoted.assert_status_ok();
     let demoted_body: serde_json::Value = demoted.json();
     assert_eq!(demoted_body["promotion_state"], "demoted");
+    let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", memory_db.display()))
+        .expect("memory db options")
+        .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect(&format!("sqlite://{}", memory_db.display()))
+        .connect_with(opts)
         .await
         .expect("open memory db");
     let forgotten_at: Option<String> =
