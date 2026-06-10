@@ -40,3 +40,4 @@ pub use adapter::{
 };
 pub use error::MarketplaceError;
 pub use ipfs::{IpfsStore, PinataDriver};
+pub use xvision_identity::MarketplaceAddresses;

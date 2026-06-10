@@ -3,8 +3,12 @@
 use std::path::PathBuf;
 
 use alloy::primitives::{keccak256, Address, B256, U256};
+use alloy::signers::local::PrivateKeySigner;
 use clap::{Args, Subcommand};
-use xvision_marketplace::{AnchorDriver, AttestRequest, BuyRequest, MockDriver, PublishRequest};
+use xvision_marketplace::{
+    AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, MarketplaceAddresses, MockDriver,
+    PublishRequest,
+};
 
 use crate::exit::{CliError, CliResult};
 
@@ -86,11 +90,29 @@ fn fixture_path() -> CliResult<PathBuf> {
 
 fn driver() -> CliResult<Box<dyn AnchorDriver>> {
     if std::env::var("MARKETPLACE_DRIVER").as_deref() == Ok("onchain") {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "MARKETPLACE_DRIVER=onchain is not yet supported: the on-chain Erc8004MantleDriver \
-             is deploy-gated (needs deployed Mantle contracts + verified ABIs + a signer) and is \
-             not yet wired into any runtime surface. The CLI uses the in-memory MockDriver. See \
-             docs/superpowers/plans/2026-06-08-blockchain-implementation-synthesis.md §9."
+        let key_hex = std::env::var("MANTLE_PRIVATE_KEY").map_err(|_| {
+            CliError::usage(anyhow::anyhow!(
+                "MARKETPLACE_DRIVER=onchain requires MANTLE_PRIVATE_KEY to be set"
+            ))
+        })?;
+        let addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+            CliError::usage(anyhow::anyhow!(
+                "MARKETPLACE_DRIVER=onchain requires XVN_LISTING_REGISTRY (hex contract address)"
+            ))
+        })?;
+        let rpc_url = std::env::var("XVN_MANTLE_RPC_URL")
+            .unwrap_or_else(|_| "https://rpc.sepolia.mantle.xyz".to_string());
+        let chain_id: u64 = std::env::var("XVN_MANTLE_CHAIN_ID")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5003);
+        let signer: PrivateKeySigner = key_hex.trim_start_matches("0x").parse().map_err(|e| {
+            CliError::usage(anyhow::anyhow!(
+                "MANTLE_PRIVATE_KEY is not a valid hex private key: {e}"
+            ))
+        })?;
+        return Ok(Box::new(Erc8004MantleDriver::with_signer(
+            addresses, rpc_url, chain_id, signer,
         )));
     }
     Ok(Box::new(MockDriver::new()))
