@@ -240,7 +240,7 @@ describe("HomeRoute", () => {
   it("shows strategy count subtitle in topbar", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
-    expect(screen.getByText(/strategies/)).toBeInTheDocument();
+    expect(screen.getByText("0 strategies")).toBeInTheDocument();
   });
 
   // Reachability gate: the optimizer last-run digest must actually be MOUNTED
