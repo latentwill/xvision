@@ -24,5 +24,14 @@ fee_recipient           = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V2: ope
 admin                   = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V2: operator EOA
 
 [marketplace.usdc]
-address  = "0xAcab8129E2cE587fD203FD770ec9ECAFA2C88080" # USDC.e on Mantle Sepolia
+# MockUSDC3009 — xvn-deployed EIP-3009 test token (contracts/src/test/MockUSDC3009.sol),
+# faucet-enabled (`faucet(amount)`, cap 10_000e6 per call). Deployed because NO
+# EIP-3009-capable USDC exists on Mantle Sepolia (the community mock at
+# 0xAcab8129E2cE587fD203FD770ec9ECAFA2C88080 has no transferWithAuthorization),
+# which the x402 buyWithAuthorization path requires. Mantle MAINNET uses real
+# bridged USDC (0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9), which supports
+# EIP-3009 natively — the mainnet path is unaffected.
+# NOTE: the deployed Marketplace proxy still points at the old token until the
+# UUPS re-point upgrade lands (the current impl has no USDC setter).
+address  = "0x68aA91F73f359035875759E1d4C4949A27c84C88"
 decimals = 6
