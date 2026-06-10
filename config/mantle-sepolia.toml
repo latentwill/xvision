@@ -31,7 +31,9 @@ admin                   = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V2: ope
 # which the x402 buyWithAuthorization path requires. Mantle MAINNET uses real
 # bridged USDC (0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9), which supports
 # EIP-3009 natively — the mainnet path is unaffected.
-# NOTE: the deployed Marketplace proxy still points at the old token until the
-# UUPS re-point upgrade lands (the current impl has no USDC setter).
+# The Marketplace proxy points at this token since the 2026-06-10 UUPS upgrade
+# (impl 0x934453DE61f0AE3CF6692A9916E623c103153C5B adds `setUsdc`; called via
+# upgradeToAndCall — see script/UpgradeMarketplaceSetUsdc.s.sol and the deploy
+# runbook §2 addendum). Old-token allowances/balances did not carry over.
 address  = "0x68aA91F73f359035875759E1d4C4949A27c84C88"
 decimals = 6

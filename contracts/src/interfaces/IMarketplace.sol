@@ -27,6 +27,8 @@ interface IMarketplace {
 
     function setFeeRecipient(address newRecipient) external;
 
+    function setUsdc(address newUsdc) external;
+
     function protocolFeeBps() external view returns (uint16);
 
     function feeRecipient() external view returns (address);
@@ -51,4 +53,5 @@ interface IMarketplace {
     );
     event ProtocolFeeBpsChanged(uint16 oldBps, uint16 newBps);
     event FeeRecipientChanged(address oldRecipient, address newRecipient);
+    event UsdcChanged(address indexed oldUsdc, address indexed newUsdc);
 }
