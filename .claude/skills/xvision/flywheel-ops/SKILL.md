@@ -25,7 +25,7 @@ example pools, or gathering weekly/release evidence across the full cycle.
 - Show me the flywheel status for agent abc123
 - What is the 7-day velocity for agent abc123?
 - List the 20 most recent lineage entries for agent abc123
-- Run the memory-demos audit for agent abc123
+- Run the memory-demos audit script for agent abc123
 - Export the flywheel velocity report for the weekly review
 - Run the leakage regression and the MCP tests before this release
 - Check whether the demo source is frozen-snapshot or fresh-recorder
@@ -46,14 +46,10 @@ Dashboard equivalents live in the memory/flywheel panels. MCP read equivalents:
 
 ## Training Run Example Discipline
 
-```bash
-xvn optimize memory-demos \
-  --target-agent <agent_id> \
-  --memory-agent <agent_id> \
-  --demo-source frozen-snapshot \
-  --untouched-split 70/15/15 \
-  --json
+> **Note:** `xvn optimize memory-demos` has been removed. Use the audit script
+> directly and manage demo pools through the dashboard Optimizer panel.
 
+```bash
 bash scripts/audit-memory-demos.sh --target-agent <agent_id> --memory-agent <agent_id>
 ```
 
