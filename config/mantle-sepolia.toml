@@ -31,9 +31,11 @@ admin                   = "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553" # V2: ope
 # which the x402 buyWithAuthorization path requires. Mantle MAINNET uses real
 # bridged USDC (0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9), which supports
 # EIP-3009 natively — the mainnet path is unaffected.
-# Re-pointed live 2026-06-10: the Marketplace proxy was UUPS-upgraded to an
-# impl with `setUsdc` (impl 0x1FE13b656d9571798F7B3074f54eaFBfDc88bC44, script
-# contracts/script/UpgradeMarketplaceSetUsdc.s.sol) and now settles in this
-# token — verified with an on-chain approve+buy of listing 1.
+# The Marketplace proxy points at this token since the 2026-06-10 UUPS upgrade
+# (`setUsdc` via upgradeToAndCall — see script/UpgradeMarketplaceSetUsdc.s.sol
+# and the deploy runbook addendum). Two same-source impls were deployed by
+# parallel runs; the LIVE impl slot is 0x1FE13b656d9571798F7B3074f54eaFBfDc88bC44.
+# Verified with an on-chain approve+buy of listing 1 (license #1 minted).
+# Old-token allowances/balances did not carry over.
 address  = "0x68aA91F73f359035875759E1d4C4949A27c84C88"
 decimals = 6

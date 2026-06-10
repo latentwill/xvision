@@ -53,5 +53,5 @@ interface IMarketplace {
     );
     event ProtocolFeeBpsChanged(uint16 oldBps, uint16 newBps);
     event FeeRecipientChanged(address oldRecipient, address newRecipient);
-    event UsdcChanged(address oldUsdc, address newUsdc);
+    event UsdcChanged(address indexed oldUsdc, address indexed newUsdc);
 }

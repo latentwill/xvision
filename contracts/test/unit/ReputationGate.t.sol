@@ -28,9 +28,7 @@ contract ReputationGateTest is BaseTest {
         // is wired AUTOMATICALLY by `createListing` (ListingRegistry is the
         // authorized listing registrar on ReputationRegistry, wired in
         // BaseTest). Assert that wiring happened as a side effect of listing.
-        assertEq(
-            reputation.listingForAgent(agentId), listingId, "gate auto-wired at createListing (no manual call)"
-        );
+        assertEq(reputation.listingForAgent(agentId), listingId, "gate auto-wired at createListing (no manual call)");
     }
 
     /// FINDING 1: immediately after `createListing` — with NO manual
@@ -50,9 +48,7 @@ contract ReputationGateTest is BaseTest {
 
         // Non-holder reverts.
         vm.prank(stranger2);
-        vm.expectRevert(
-            abi.encodeWithSelector(ReputationRegistry.NotLicensed.selector, agent2, listing2, stranger2)
-        );
+        vm.expectRevert(abi.encodeWithSelector(ReputationRegistry.NotLicensed.selector, agent2, listing2, stranger2));
         reputation.giveFeedback(agent2, int128(1), 0, "tradingYield", "", "", "ipfs://a", keccak256("a"));
 
         // License holder succeeds.

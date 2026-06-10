@@ -349,12 +349,17 @@ contract MarketplaceTest is BaseTest {
         assertEq(market.feeRecipient(), nr);
     }
 
+    // ---- setUsdc (UUPS re-point of the sale currency) -------------------
+
     function test_setUsdc() public {
-        address nt = makeAddr("newUsdc");
-        vm.expectEmit(address(market));
-        emit IMarketplace.UsdcChanged(address(usdc), nt);
-        market.setUsdc(nt);
-        assertEq(market.usdc(), nt);
+        address oldToken = market.usdc();
+        address newToken = makeAddr("newUsdc");
+
+        vm.expectEmit(true, true, false, false, address(market));
+        emit IMarketplace.UsdcChanged(oldToken, newToken);
+        market.setUsdc(newToken);
+
+        assertEq(market.usdc(), newToken);
     }
 
     function test_setUsdc_revert_zeroAddress() public {

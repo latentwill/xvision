@@ -247,11 +247,11 @@ contract Marketplace is
     }
 
     /// @inheritdoc IMarketplace
-    /// @dev V2 testnet escape hatch: re-points the sale currency (added to swap
-    ///      the non-EIP-3009 community mock for MockUSDC3009 on Mantle Sepolia,
-    ///      so the x402 path is exercisable). Listing prices are denominated in
-    ///      token units — old-token allowances and balances do not carry over
-    ///      across a swap. V4/mainnet: governed like every other setter.
+    /// @dev Re-points the sale currency (e.g. the Mantle Sepolia UUPS upgrade
+    ///      to the EIP-3009 MockUSDC). NOTE: in-flight listings keep their
+    ///      USDC-unit prices, but allowances/balances in the OLD token do not
+    ///      carry over — buyers must approve/hold the new token. V2: operator
+    ///      EOA; V4: governed.
     function setUsdc(address newUsdc) external override onlyOwner {
         if (newUsdc == address(0)) revert ZeroAddress();
         address old = _usdc;

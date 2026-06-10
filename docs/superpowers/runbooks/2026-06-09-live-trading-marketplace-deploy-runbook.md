@@ -85,6 +85,34 @@ Run from the local build host. Each step is gas-spending and/or irreversible whe
 11. [ ] *(Optional — A6/A7)* provision a public read-only viewer (`xvn.market`) + a relay for
     Tier-B sealed-bundle decryption, if a public marketplace surface is wanted (deferrable if dashboard-only).
 
+### §2 addendum — 2026-06-10 Marketplace UUPS upgrade: setUsdc → MockUSDC3009
+
+The Marketplace proxy was re-pointed from the old non-3009 community mock USDC
+(`0xAcab8129E2cE587fD203FD770ec9ECAFA2C88080`) to the xvn-deployed EIP-3009
+MockUSDC3009 (`0x68AA91f73F359035875759e1d4C4949A27c84c88`) via a UUPS upgrade
+that added an `onlyOwner setUsdc(address)` (emits `UsdcChanged`), executed as a
+single `upgradeToAndCall` (script `contracts/script/UpgradeMarketplaceSetUsdc.s.sol`,
+chain-5003 guarded).
+
+- Proxy: `0x4b9450642f2b3Da248e90b4FEBaA8eCA87E78cE8` (unchanged)
+- Old impl: `0x42e6b4e03288b8274fa4a5a755b8be7cff1adeb0`
+- **New impl: `0x934453DE61f0AE3CF6692A9916E623c103153C5B`** (Sourcify
+  exact_match: <https://sourcify.dev/server/v2/contract/5003/0x934453DE61f0AE3CF6692A9916E623c103153C5B>)
+- Impl deploy tx: [`0x49b5e32048f4a946180bd3eb65a69a6ad0864444e02c9e0c180a84fb4faa2b84`](https://sepolia.mantlescan.xyz/tx/0x49b5e32048f4a946180bd3eb65a69a6ad0864444e02c9e0c180a84fb4faa2b84)
+- `upgradeToAndCall(newImpl, setUsdc(0x68AA…4c88))` tx: [`0x5103fba44d744f818e9cbf18ff1376c8a17f19a7f87e3edb9f9e9fd5e080b51a`](https://sepolia.mantlescan.xyz/tx/0x5103fba44d744f818e9cbf18ff1376c8a17f19a7f87e3edb9f9e9fd5e080b51a)
+- Verified post-upgrade: `usdc()` → `0x68AA…4c88`; EIP-1967 impl slot →
+  `0x9344…3C5B`; `protocolFeeBps()` (500) and `feeRecipient()` preserved.
+- Smoke (operator EOA, listing 1, price 1.0 USDC): `faucet`
+  [`0x1e22e7e2…d8eae5c0`](https://sepolia.mantlescan.xyz/tx/0x1e22e7e215c2c457d7a305ae4346f5d26b88c221bb9cca1fd1ce73e3d8eae5c0)
+  → `approve` [`0x470ddf54…f087f7d3aa`](https://sepolia.mantlescan.xyz/tx/0x470ddf5475bf866bd345ae69cf32461d29771bce40f38828662e27f087f7d3aa)
+  → `buy(1, operator)` [`0xba99628b…210347016`](https://sepolia.mantlescan.xyz/tx/0xba99628b04ea43ce8985c0fed3cdb57e6c9b73c7855801b47025e22210347016)
+  — license tokenId 1 minted, splits paid in the new token. The signed
+  EIP-3009 `buyWithAuthorization` path is covered with a real EIP-712
+  signature in `contracts/test/integration/UpgradeSetUsdc.t.sol`, which
+  mirrors this exact upgrade shape.
+- Note: in-flight listings keep their USDC-unit prices, but allowances and
+  balances in the OLD token do not carry over. Acceptable on testnet.
+
 ---
 
 ## 3. Post-deployment — wire the deploy-gated code
