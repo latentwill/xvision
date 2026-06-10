@@ -137,26 +137,40 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
     let delta_untouched = obj.oriented_value(&input.child_untouched_metrics)
         - obj.oriented_value(&input.parent_untouched_metrics);
 
-    if delta_day < input.min_improvement - CMP_EPS {
-        return GateVerdict::Fail {
-            reason: format!(
-                "today's score ({}) improved by {delta_day:.6} \
-                 but minimum-improvement threshold is {:.6}",
-                obj.label(),
-                input.min_improvement
-            ),
-        };
+    // B16: evaluate EVERY condition before returning so the rejection reason
+    // surfaces all failing checks, not just the first. A near-miss on the
+    // untouched (holdout) window must stay visible even when the day window is
+    // the one that tripped the gate. Order is deterministic: day, untouched,
+    // drawdown — so the reason string is byte-stable for identical inputs.
+    let mut failures: Vec<String> = Vec::new();
+
+    let day_failed = delta_day < input.min_improvement - CMP_EPS;
+    if day_failed {
+        failures.push(format!(
+            "today's score ({}) improved by {delta_day:.6} \
+             but minimum-improvement threshold is {:.6}",
+            obj.label(),
+            input.min_improvement
+        ));
     }
 
-    if delta_untouched < input.min_improvement - CMP_EPS {
-        return GateVerdict::Fail {
-            reason: format!(
-                "baseline-untouched-score ({}) improved by {delta_untouched:.6} \
-                 but minimum-improvement threshold is {:.6}",
-                obj.label(),
-                input.min_improvement
-            ),
-        };
+    let untouched_failed = delta_untouched < input.min_improvement - CMP_EPS;
+    if untouched_failed {
+        failures.push(format!(
+            "baseline-untouched-score ({}) improved by {delta_untouched:.6} \
+             but minimum-improvement threshold is {:.6}",
+            obj.label(),
+            input.min_improvement
+        ));
+    } else if day_failed {
+        // The day check failed but the holdout passed: surface the holdout delta
+        // anyway so a holdout near-miss (or near-pass) is never invisible.
+        failures.push(format!(
+            "baseline-untouched-score ({}) improved by {delta_untouched:.6} \
+             (cleared the {:.6} minimum)",
+            obj.label(),
+            input.min_improvement
+        ));
     }
 
     // Non-objective risk guard: don't let drawdown blow up while optimizing some
@@ -175,16 +189,20 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
             .max(input.child_untouched_metrics.max_drawdown_pct.abs());
 
         if child_worst > parent_worst * DRAWDOWN_DETERIORATION_FACTOR + CMP_EPS {
-            return GateVerdict::Fail {
-                reason: format!(
-                    "max drawdown deteriorated: candidate worst {child_worst:.4}% exceeds \
-                     {DRAWDOWN_DETERIORATION_FACTOR}× parent worst {parent_worst:.4}%"
-                ),
-            };
+            failures.push(format!(
+                "max drawdown deteriorated: candidate worst {child_worst:.4}% exceeds \
+                 {DRAWDOWN_DETERIORATION_FACTOR}× parent worst {parent_worst:.4}%"
+            ));
         }
     }
 
-    GateVerdict::Pass
+    if failures.is_empty() {
+        GateVerdict::Pass
+    } else {
+        GateVerdict::Fail {
+            reason: failures.join("; "),
+        }
+    }
 }
 
 use crate::autooptimizer::config::RegimeSide;
