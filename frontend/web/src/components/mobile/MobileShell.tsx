@@ -41,7 +41,7 @@ export function MobileShell({
           <Suspense fallback={null}>
             <ChatRailComponent
               variant="panel"
-              showHeader={false}
+              showHeader
               onOpenActions={() => setFunctionsOpen(true)}
             />
           </Suspense>

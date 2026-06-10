@@ -104,7 +104,7 @@ export const ListCard = forwardRef(function ListCard<T>(
       }
       const candidates = columns
         .filter((c) => !c.essential && columnState.visibleKeys.has(c.key))
-        .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+        .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
       const hidden = new Set<string>();
       let remaining = totalEst;
       for (const c of candidates) {

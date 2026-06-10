@@ -7,6 +7,7 @@
 
 import type { AgentRunSummary } from "@/api/types-agent-runs";
 import type { LiveStatus } from "@/components/chart/use-run-stream";
+import { displayStrategyName, type NamedStrategy } from "@/lib/run-display";
 import { ConnectionDot } from "./ConnectionDot";
 import { TransportControls } from "./TransportControls";
 import { computeStripMetric, type StripMetricId } from "./strip-metrics";
@@ -33,6 +34,7 @@ export interface StrategyPillProps {
   connStatus: LiveStatus;
   onSelect: () => void;
   walletDisabled: boolean;
+  strategies?: NamedStrategy[];
   // B-III transport seam — handlers + inline-expander UI state. Omitted ⇒
   // buttons render as disabled placeholders (B-I behavior).
   transport?: RunTransport;
@@ -45,10 +47,13 @@ export function StrategyPill({
   connStatus,
   onSelect,
   walletDisabled,
+  strategies,
   transport,
 }: StrategyPillProps) {
   const status = deriveStripStatus(run);
-  const name = run.objective || run.strategy_id || run.run_id.slice(0, 8);
+  const name = run.agent_id
+    ? displayStrategyName(run.agent_id, strategies)
+    : run.objective || run.strategy_id || run.run_id.slice(0, 8);
   const m = computeStripMetric(metric, run);
 
   // Keep the transport area visible (not hover-gated) whenever an inline
