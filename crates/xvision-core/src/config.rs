@@ -1238,6 +1238,33 @@ rate_limit_rpm = 600
         assert_eq!(AgentRuntime::default(), AgentRuntime::Cline);
     }
 
+    /// The shipped seed config (`config/default.toml`, copied into the deploy
+    /// image and seeded to `$XVN_HOME/config/default.toml` by the entrypoint)
+    /// must carry an EXPLICIT `agent_runtime = "cline"` line. The eval entry
+    /// point's resolver treats a missing field as "not opted in" and silently
+    /// falls back to LlmDispatch when `XVN_AGENTD_BIN` is unset — an explicit
+    /// line makes Cline the runtime everywhere the seed config lands (demo
+    /// hosts, fresh installs), not just in images that set the env var.
+    #[test]
+    fn shipped_default_config_sets_agent_runtime_cline_explicitly() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/default.toml");
+        let raw = std::fs::read_to_string(&path).expect("read workspace config/default.toml");
+        assert!(
+            raw.lines()
+                .map(str::trim_start)
+                .any(|l| l.starts_with("agent_runtime") && l.contains('=')),
+            "config/default.toml must contain an explicit `agent_runtime = ...` line \
+             (the eval resolver only honors Cline when the field is explicit or \
+             XVN_AGENTD_BIN is set)"
+        );
+        let cfg = load_runtime(&path).expect("workspace config/default.toml must parse");
+        assert_eq!(
+            cfg.agent_runtime,
+            AgentRuntime::Cline,
+            "the shipped seed config must explicitly select the Cline runtime"
+        );
+    }
+
     #[test]
     fn agent_runtime_parses_from_str() {
         use std::str::FromStr;
