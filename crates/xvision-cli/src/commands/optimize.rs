@@ -588,9 +588,16 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     // F32: derive the exploration seed from this mutate-once cycle id so the
     // experiment writer samples diversely (shared helper with the cycle path).
     let exploration_seed = xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
-    let diff = propose(&parent, &cfg, &dispatch, exploration_seed)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
+    let diff = propose(
+        &parent,
+        &cfg,
+        &binding.provider,
+        &binding.model,
+        &dispatch,
+        exploration_seed,
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
     let child = diff.apply_to(&parent);
     let child_json = serde_json::to_value(&child)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize child: {e}")))?;
@@ -748,7 +755,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             return Err(CliError::usage(anyhow::anyhow!(
                 "an optimizer cycle is already running on this workspace (cycle {cycle_id}, \
                  holder {holder}, since {acquired_at}). Wait for it to finish or cancel it before \
-                 starting another — concurrent cycles starve each other."
+                 starting another — concurrent cycles starve each other. If you are sure no cycle \
+                 is live (e.g. a previous run was killed on another host), run \
+                 `xvn optimizer unlock` to clear the stuck lock."
             )));
         }
     }
@@ -756,8 +765,21 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
+    // B9: load the seed strategy (if any) BEFORE building the scenario so the
+    // scenario granularity matches the strategy's decision cadence. Without an
+    // explicit --strategy we fall back to 60m (1h), preserving prior behaviour.
+    let seed_parent: Option<(ContentHash, Strategy)> = if let Some(ref strategy_id) = args.strategy {
+        Some(load_strategy_parent(strategy_id, &xvn_home, &lineage_store, &strategy_blob_store).await?)
+    } else {
+        None
+    };
+    let cadence_minutes = seed_parent
+        .as_ref()
+        .map(|(_, s)| s.manifest.decision_cadence_minutes)
+        .unwrap_or(60);
+
     // F10: build scenarios through the single shared optimizer scenario builder.
-    let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, "xvn-cli");
+    let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, cadence_minutes, "xvn-cli");
 
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
@@ -863,9 +885,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
 
     let mut parent_strategies = HashMap::new();
     let mut explicit_parent_hashes = Vec::new();
-    if let Some(ref strategy_id) = args.strategy {
-        let (bundle_hash, strategy) =
-            load_strategy_parent(strategy_id, &xvn_home, &lineage_store, &strategy_blob_store).await?;
+    if let Some((bundle_hash, strategy)) = seed_parent {
+        // B9: strategy already loaded above to derive scenario granularity; reuse it.
+        let strategy_id = args.strategy.as_deref().expect("seed_parent implies --strategy");
         xvision_engine::autooptimizer::preflight::preflight_trader_provider(
             &pool,
             &strategy,
@@ -1917,14 +1939,19 @@ async fn dispatch_from_provider_entry(
 async fn propose(
     base: &Strategy,
     cfg: &AutoOptimizerConfig,
+    provider: &str,
+    model: &str,
     dispatch: &Arc<dyn LlmDispatch + Send + Sync>,
     exploration_seed: u64,
 ) -> anyhow::Result<MutationDiff> {
+    // B5: honour the configured mutator provider/model (mirrors run_cycle_cmd's
+    // Mutator construction) instead of hardcoding the Anthropic haiku model —
+    // the hardcode made mutate-once unusable with Ollama / other providers.
     let mutator = Mutator {
-        provider: "anthropic".into(),
-        model: "claude-haiku-4-5-20251001".into(),
+        provider: provider.to_string(),
+        model: model.to_string(),
         dispatch: Arc::clone(dispatch),
-        max_retries: 2,
+        max_retries: cfg.mutator.max_retries,
     };
     mutator
         .propose(
@@ -1961,7 +1988,7 @@ fn paper_test_sharpes(mock: bool) -> (f64, f64, f64, f64) {
     }
 }
 
-async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
+pub(crate) async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage db dir: {e}")))?;
@@ -2062,5 +2089,105 @@ fn api_to_cli(op: &str, e: xvision_engine::api::ApiError) -> CliError {
             exit: XvnExit::Upstream,
             source: anyhow::anyhow!("{op}: {other}"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+    use xvision_engine::agent::llm::{ContentBlock, LlmRequest, LlmResponse, StopReason};
+    use xvision_engine::strategies::Strategy;
+
+    /// Test double that records the `model` of every `LlmRequest` it sees and
+    /// replies with a valid `param`-kind mutation diff so `propose()` succeeds.
+    struct RecordingDispatch {
+        models: StdMutex<Vec<String>>,
+    }
+
+    impl RecordingDispatch {
+        fn new() -> Self {
+            Self {
+                models: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn last_model(&self) -> Option<String> {
+            self.models.lock().expect("models lock").last().cloned()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmDispatch for RecordingDispatch {
+        async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+            self.models.lock().expect("models lock").push(req.model.clone());
+            let canned = r#"{"kind":"param","prose":[],"params":[{"key":"ema_fast","before":12,"after":20}],"tools":{"added":[],"removed":[]},"rationale":"increase ema_fast lookback"}"#;
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text { text: canned.into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: 0,
+            })
+        }
+    }
+
+    fn fixture_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000A",
+                "display_name": "Mutate Once Test Strategy",
+                "plain_summary": "Minimal strategy for mutate-once provider/model wiring.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": { "ema_fast": 12, "ema_slow": 26 }
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialise")
+    }
+
+    fn cfg_with_mutator_model(model: &str) -> AutoOptimizerConfig {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.mutator.provider = "ollama-local".into();
+        cfg.mutator.model = model.into();
+        cfg
+    }
+
+    /// B5: `propose` must honour the configured mutator provider/model rather
+    /// than hardcoding the Anthropic haiku model. With Ollama configured, the
+    /// `LlmRequest.model` reaching the dispatch must be the Ollama model.
+    #[tokio::test]
+    async fn propose_uses_configured_mutator_model_not_hardcoded_anthropic() {
+        let parent = fixture_strategy();
+        let cfg = cfg_with_mutator_model("qwen2.5:7b");
+        // Keep a concrete handle to read captures, plus a trait-object handle
+        // (same allocation) to pass into propose.
+        let concrete = Arc::new(RecordingDispatch::new());
+        let recording: Arc<dyn LlmDispatch + Send + Sync> = concrete.clone();
+
+        let diff = propose(&parent, &cfg, "ollama-local", "qwen2.5:7b", &recording, 0)
+            .await
+            .expect("propose should succeed with recording dispatch");
+        // Sanity: the canned diff applied to a real param.
+        assert_eq!(diff.params.len(), 1);
+
+        let captured = concrete.last_model();
+        assert_eq!(
+            captured.as_deref(),
+            Some("qwen2.5:7b"),
+            "propose must send the configured mutator model, not the hardcoded anthropic model"
+        );
     }
 }

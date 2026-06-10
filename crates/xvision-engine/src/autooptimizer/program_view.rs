@@ -47,9 +47,32 @@ pub fn to_markdown_with_resolved_prompts(strategy: &Strategy, resolved: &HashMap
     // rejections when the LLM inferred wrong `before` values. from_markdown
     // ignores this section and clones base.filter, so the round-trip is unaffected.
     if let Some(ref filter) = strategy.filter {
-        out.push_str(&render_json_section("Filter", filter));
+        out.push_str(&render_filter_section(filter));
     }
     out
+}
+
+/// Render the Filter JSON section, but ALWAYS surface nullable tunable fields as
+/// an explicit `null` even when serde skips them (B4).
+///
+/// `Filter::max_wakeups_per_day` carries `skip_serializing_if = Option::is_none`,
+/// so when it is `None` it vanishes from the pretty JSON the experiment writer
+/// reads — the writer then has no signal it can set/null the field and guesses a
+/// wrong `before`, which the validator used to hard-reject. Inserting an explicit
+/// `null` for the missing key restores that signal. This is purely additive to
+/// the rendered text; `from_markdown` ignores the Filter section and clones
+/// `base.filter`, so the round-trip is unaffected.
+fn render_filter_section(filter: &xvision_filters::Filter) -> String {
+    let mut value = serde_json::to_value(filter).unwrap_or(serde_json::Value::Null);
+    if let serde_json::Value::Object(ref mut map) = value {
+        // Nullable tunable filter fields that serde may have skipped. Keep in sync
+        // with `mutator::filter_tunable_paths`' nullable scalar fields.
+        if !map.contains_key("max_wakeups_per_day") {
+            map.insert("max_wakeups_per_day".to_string(), serde_json::Value::Null);
+        }
+    }
+    let json = serde_json::to_string_pretty(&value).unwrap_or_default();
+    format!("## Filter\n```json\n{json}\n```\n\n")
 }
 
 pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
@@ -155,6 +178,88 @@ fn extract_json_block<T: DeserializeOwned>(content: &str, section: &str) -> Resu
         .ok_or_else(|| ProgramViewError::MissingJsonBlock(section.to_owned()))?;
     let json_str = after_fence[..fence_end].trim();
     serde_json::from_str(json_str).map_err(|e| ProgramViewError::ParseFailed(section.to_owned(), e).into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strategy_with_filter_no_wakeups() -> Strategy {
+        // A filter-gated strategy whose `max_wakeups_per_day` is None. Because the
+        // field has `skip_serializing_if = Option::is_none`, the default pretty
+        // render would OMIT it entirely — so the experiment writer never sees that
+        // it can null/set it and guesses a wrong `before` (B4). The Filter section
+        // must therefore always surface it as `max_wakeups_per_day: null`.
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000P",
+                "display_name": "Program View Test Strategy",
+                "plain_summary": "",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000P", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {},
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000P",
+                "strategy_id": "01HZTEST00000000000000000P",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": {
+                    "all": [
+                        { "lhs": "adx_14", "op": ">", "rhs": 25.0 }
+                    ]
+                },
+                "cooldown_bars": 3
+            }
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialise")
+    }
+
+    #[test]
+    fn to_markdown_surfaces_null_max_wakeups_per_day() {
+        // B4: even though the field is skipped when None, the Filter section must
+        // render it as an explicit `null` so the writer's `before` can be null.
+        let strategy = strategy_with_filter_no_wakeups();
+        assert!(
+            strategy.filter.as_ref().unwrap().max_wakeups_per_day.is_none(),
+            "precondition: max_wakeups_per_day is None"
+        );
+        let md = to_markdown(&strategy);
+        assert!(
+            md.contains("max_wakeups_per_day"),
+            "Filter section must surface max_wakeups_per_day even when None: {md}"
+        );
+        assert!(
+            md.contains("\"max_wakeups_per_day\": null"),
+            "nullable tunable field must render as explicit null: {md}"
+        );
+    }
+
+    #[test]
+    fn round_trip_invariant_holds_with_nullable_filter_field() {
+        // The added null-surfacing must stay additive: from_markdown ignores the
+        // Filter section and clones base.filter, so the round-trip is unaffected.
+        let strategy = strategy_with_filter_no_wakeups();
+        assert!(
+            round_trip_invariant_ok(&strategy).is_ok(),
+            "round-trip must still hold after surfacing null filter fields"
+        );
+    }
 }
 
 fn parse_agents_section(content: &str) -> Result<Vec<AgentRef>> {

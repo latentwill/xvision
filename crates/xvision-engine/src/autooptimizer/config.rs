@@ -4,6 +4,17 @@ use anyhow::{bail, Context};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
+/// Maximum allowed span (in days) for any single evaluation window
+/// (day_window, baseline_untouched_window, or a regime's day window).
+///
+/// B22: bars for the whole window are loaded fully into memory per asset per
+/// candidate during a cycle's backtest (see `eval_adapter.rs`). A multi-month
+/// span (e.g. ~20 months of 1h bars) blows the container's memory budget and
+/// OOMs *after* the cycle lock is acquired, stranding the lock. Capping the
+/// span at config-validation time — before the lock and before any bars load —
+/// keeps the cycle from ever entering that trap.
+pub const MAX_WINDOW_DAYS: i64 = 120;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LooseningSchedule {
     pub day_n_thresholds: Vec<f64>,
@@ -267,6 +278,23 @@ pub fn validate_regime_set(regimes: &[RegimeWindow]) -> anyhow::Result<()> {
             )
         })?;
 
+        // B22: cap each regime's day-window span (same OOM trap as the
+        // top-level day_window). Label is named so the operator knows which
+        // regime to shrink.
+        let day_span = (day_end - day_start).num_days();
+        if day_span > MAX_WINDOW_DAYS {
+            bail!(
+                "regime '{}': day window span ({} days, {} – {}) exceeds the {}-day cap; \
+                 shrink this regime's day window \
+                 (a window this large loads too many bars per candidate and can OOM the cycle)",
+                rw.label,
+                day_span,
+                day_start,
+                day_end,
+                MAX_WINDOW_DAYS,
+            );
+        }
+
         // Overlap when: day_start < base_end AND base_start < day_end
         let overlaps = day_start < base_end && base_start < day_end;
         if overlaps {
@@ -331,6 +359,36 @@ impl AutoOptimizerConfig {
                 "day_window start ({}) must be before end ({})",
                 self.day_window.start,
                 self.day_window.end,
+            );
+        }
+        // B22: cap each evaluation window's span so a multi-month window cannot
+        // load enough bars per candidate to OOM the container after the cycle
+        // lock is taken. Applied here (right after the ordering checks, before
+        // the lock/bars) so both the CLI and dashboard entrypoints get it for
+        // free via their existing cfg.validate() call.
+        let baseline_span =
+            (self.baseline_untouched_window.end - self.baseline_untouched_window.start).num_days();
+        if baseline_span > MAX_WINDOW_DAYS {
+            bail!(
+                "baseline_untouched_window span ({} days, {} – {}) exceeds the {}-day cap; \
+                 shrink it via --baseline-start/--baseline-end or autooptimizer.toml \
+                 (a window this large loads too many bars per candidate and can OOM the cycle)",
+                baseline_span,
+                self.baseline_untouched_window.start,
+                self.baseline_untouched_window.end,
+                MAX_WINDOW_DAYS,
+            );
+        }
+        let day_span = (self.day_window.end - self.day_window.start).num_days();
+        if day_span > MAX_WINDOW_DAYS {
+            bail!(
+                "day_window span ({} days, {} – {}) exceeds the {}-day cap; \
+                 shrink it via --day-start/--day-end or autooptimizer.toml \
+                 (a window this large loads too many bars per candidate and can OOM the cycle)",
+                day_span,
+                self.day_window.start,
+                self.day_window.end,
+                MAX_WINDOW_DAYS,
             );
         }
         if self.mutator.max_retries > 10 {
@@ -463,6 +521,71 @@ mod tests {
             "2024-04-01",
         )];
         assert!(validate_regime_set(&regimes).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_overlong_day_window() {
+        // B22: a ~20-month day window must be rejected before any cycle launches
+        // (otherwise bars for the whole span load into memory per candidate and
+        // OOM the container, stranding the lock).
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.day_window = DayWindow {
+            start: NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date"),
+            end: NaiveDate::from_ymd_opt(2025, 9, 1).expect("valid date"),
+        };
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("day_window") && msg.contains("120"),
+            "message must name day_window and the cap; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_three_month_day_window() {
+        // ~90-day day window (the new default span) must stay Ok.
+        let cfg = AutoOptimizerConfig::default();
+        assert_eq!(
+            (cfg.day_window.end - cfg.day_window.start).num_days(),
+            90,
+            "default day_window should span ~3 months"
+        );
+        assert!(cfg.validate().is_ok(), "a ~3-month day window must remain valid");
+    }
+
+    #[test]
+    fn validate_rejects_overlong_baseline_window() {
+        // B22: the held-out baseline window must also be span-capped.
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.baseline_untouched_window = BaselineUntouchedWindow {
+            start: NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date"),
+            end: NaiveDate::from_ymd_opt(2025, 9, 1).expect("valid date"),
+        };
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("baseline_untouched_window") && msg.contains("120"),
+            "message must name baseline_untouched_window and the cap; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_regime_set_rejects_overlong_window() {
+        // B22: each regime's day window must be span-capped, with the label in
+        // the message so the operator knows which regime to shrink.
+        let regimes = vec![make_regime(
+            "bull_long",
+            "2024-01-01",
+            "2025-09-01",
+            "2025-09-01",
+            "2025-10-01",
+        )];
+        let err = validate_regime_set(&regimes).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bull_long") && msg.contains("120"),
+            "message must name the regime label and the cap; got: {msg}"
+        );
     }
 
     #[test]

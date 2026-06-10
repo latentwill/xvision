@@ -439,6 +439,85 @@ impl ResponseSchema {
         }
     }
 
+    /// B3: constrained schema for the autooptimizer experiment writer's
+    /// `MutationDiff` output. OpenAI-compat dispatchers (Ollama) only grammar-
+    /// constrain JSON when a `response_schema` is supplied; without it ~40% of
+    /// experiment proposals fail to parse. Mirrors `MutationDiff` in
+    /// `autooptimizer::mutator`.
+    ///
+    /// `before`/`after` are intentionally left UNCONSTRAINED (any JSON value):
+    /// they are `serde_json::Value` in the Rust type and over-constraining their
+    /// JSON types under `strict: true` would make Ollama refuse valid proposals.
+    pub fn mutation_diff() -> Self {
+        // A property that accepts any JSON value (string, number, bool, null,
+        // object, array). Used for the permissive before/after fields.
+        let any =
+            || serde_json::json!({ "type": ["string", "number", "boolean", "null", "object", "array"] });
+        Self {
+            name: "mutation_diff".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "kind": {
+                        "type": "string",
+                        "enum": ["prose", "param", "tool", "filter"]
+                    },
+                    "prose": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "agent_role": { "type": "string" },
+                                "before": { "type": "string" },
+                                "after": { "type": "string" }
+                            },
+                            "required": ["agent_role", "before", "after"]
+                        }
+                    },
+                    "params": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "key": { "type": "string" },
+                                "before": any(),
+                                "after": any()
+                            },
+                            "required": ["key", "before", "after"]
+                        }
+                    },
+                    "tools": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "added": { "type": "array", "items": { "type": "string" } },
+                            "removed": { "type": "array", "items": { "type": "string" } }
+                        },
+                        "required": ["added", "removed"]
+                    },
+                    "filter": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "path": { "type": "string" },
+                                "before": any(),
+                                "after": any()
+                            },
+                            "required": ["path", "before", "after"]
+                        }
+                    },
+                    "rationale": { "type": "string" }
+                },
+                "required": ["kind", "prose", "params", "tools", "filter", "rationale"]
+            }),
+        }
+    }
+
     pub fn openai_response_format(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "json_schema",
@@ -482,6 +561,92 @@ mod schema_tests {
             schema.schema.pointer("/additionalProperties"),
             Some(&serde_json::Value::Bool(false))
         );
+    }
+
+    #[test]
+    fn mutation_diff_schema_shape_and_openai_pointer() {
+        // B3: the mutation_diff schema must enumerate the MutationDiff shape and
+        // its openai_response_format must name it `mutation_diff`.
+        let schema = ResponseSchema::mutation_diff();
+        assert_eq!(schema.name, "mutation_diff");
+
+        // `kind` is a constrained enum of the four mutation kinds.
+        let kind_enum = schema
+            .schema
+            .pointer("/properties/kind/enum")
+            .and_then(|v| v.as_array())
+            .expect("kind enum present");
+        let kinds: Vec<&str> = kind_enum.iter().filter_map(|v| v.as_str()).collect();
+        for expected in ["prose", "param", "tool", "filter"] {
+            assert!(
+                kinds.contains(&expected),
+                "kind enum must include {expected}: {kinds:?}"
+            );
+        }
+
+        // The required keys mirror MutationDiff's fields.
+        let required: Vec<&str> = schema
+            .schema
+            .pointer("/required")
+            .and_then(|v| v.as_array())
+            .expect("required present")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        for key in ["kind", "prose", "params", "tools", "filter", "rationale"] {
+            assert!(
+                required.contains(&key),
+                "required must include {key}: {required:?}"
+            );
+        }
+
+        // openai_response_format points at the mutation_diff schema name.
+        let fmt = schema.openai_response_format();
+        assert_eq!(
+            fmt.pointer("/json_schema/name").and_then(|v| v.as_str()),
+            Some("mutation_diff")
+        );
+    }
+
+    #[test]
+    fn mutation_diff_schema_matches_serialized_mutation_diff_shape() {
+        // B3 round-trip / drift guard: a valid MutationDiff fixture, once
+        // serialized, must contain every key the schema marks `required` (and the
+        // nested item objects too). This keeps the hand-written schema in sync with
+        // the real serde shape without a full JSON-Schema validator dependency.
+        let fixture = serde_json::json!({
+            "kind": "filter",
+            "prose": [{"agent_role": "trader", "before": "a", "after": "b"}],
+            "params": [{"key": "ema_fast", "before": 12, "after": 20}],
+            "tools": {"added": ["x"], "removed": []},
+            "filter": [{"path": "conditions.0.rhs.numeric", "before": 25, "after": 28}],
+            "rationale": "round trip"
+        });
+        // It must deserialize into the real MutationDiff type.
+        let diff: crate::autooptimizer::mutator::MutationDiff =
+            serde_json::from_value(fixture.clone()).expect("fixture deserializes into MutationDiff");
+        let reserialized = serde_json::to_value(&diff).expect("re-serializes");
+        let obj = reserialized.as_object().expect("object");
+
+        let schema = ResponseSchema::mutation_diff();
+        let required = schema.schema.pointer("/required").unwrap().as_array().unwrap();
+        for key in required {
+            let k = key.as_str().unwrap();
+            assert!(
+                obj.contains_key(k),
+                "serialized MutationDiff missing required key `{k}`: {obj:?}"
+            );
+        }
+        // Nested param item required keys present.
+        let param0 = &reserialized["params"][0];
+        for k in ["key", "before", "after"] {
+            assert!(param0.get(k).is_some(), "param item missing `{k}`");
+        }
+        // Nested filter item required keys present.
+        let filter0 = &reserialized["filter"][0];
+        for k in ["path", "before", "after"] {
+            assert!(filter0.get(k).is_some(), "filter item missing `{k}`");
+        }
     }
 
     #[test]
