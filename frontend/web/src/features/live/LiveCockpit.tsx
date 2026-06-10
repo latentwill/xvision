@@ -23,10 +23,12 @@ import { useNavigate } from "react-router-dom";
 
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
 import { evalKeys, getRun } from "@/api/eval";
+import { listStrategies, strategyKeys } from "@/api/strategies";
 import { useRunStream } from "@/components/chart/use-run-stream";
 import { LiveChartV2Container } from "@/components/chart/v2/surfaces/LiveChartV2Container";
 import { Topbar } from "@/components/shell/Topbar";
 import { useWallet } from "@/features/marketplace/lib/wallet";
+import { displayStrategyName } from "@/lib/run-display";
 import { useTraceDock } from "@/stores/trace-dock";
 
 import { LiveAccountStrip } from "./LiveAccountStrip";
@@ -58,6 +60,12 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
     refetchInterval: 10_000,
   });
   const runs = useMemo(() => runsQuery.data ?? [], [runsQuery.data]);
+
+  const strategiesQuery = useQuery({
+    queryKey: strategyKeys.list(),
+    queryFn: listStrategies,
+  });
+  const strategies = strategiesQuery.data ?? [];
 
   // Selection: explicit `:id` wins; otherwise auto-select the most recently
   // started live run. `userPicked` lets a click on `/live` override the
@@ -121,12 +129,16 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
     if (runId) navigate(`/live/${id}`);
   };
 
+  const selectedRun = selectedId
+    ? runs.find((r) => r.run_id === selectedId)
+    : undefined;
+  const topbarSub = selectedRun
+    ? displayStrategyName(selectedRun.agent_id ?? "", strategies)
+    : "Live trading · active deployments";
+
   return (
     <>
-      <Topbar
-        title="Live cockpit"
-        sub={selectedId ?? "Live trading · active deployments"}
-      />
+      <Topbar title="Live cockpit" sub={topbarSub} />
 
       {/* §2.4 Strategy strip — fixed, always visible. */}
       <StrategyStrip
@@ -138,6 +150,7 @@ export function LiveCockpit({ runId }: LiveCockpitProps) {
         selectedConnStatus={selectedConnStatus}
         walletDisabled={walletDisabled}
         transportFor={transportFor}
+        strategies={strategies}
       />
 
       {/* §2.5 Wallet banner — only when wallet not connected. Never hides data. */}
