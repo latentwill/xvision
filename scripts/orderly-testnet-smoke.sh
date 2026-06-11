@@ -11,6 +11,7 @@ set -euo pipefail
 
 XVN_BIN="${1:-xvn}"
 SIZE_BPS="${SIZE_BPS:-100}"   # 1% of testnet equity
+ASSET="${ASSET:-SOL}"         # SOL: the BTC testnet book is often dead (market orders cancel)
 
 export ORDERLY_KEY=$(op read 'op://Olympus/xvision-orderly-testnet/key')
 export ORDERLY_SECRET=$(op read 'op://Olympus/xvision-orderly-testnet/secret')
@@ -28,11 +29,11 @@ echo "== portfolio (before) =="
 echo
 echo "== BUY (open long, ${SIZE_BPS} bps of equity) =="
 "$XVN_BIN" fire-trade --venue orderly --side buy --size-bps "$SIZE_BPS" \
-  --asset BTC --summary "orderly testnet smoke: open long (M6 round-trip)"
+  --asset "$ASSET" --summary "orderly testnet smoke: open long (M6 round-trip)"
 
 echo
 echo "== CLOSE (reduce-only, exact venue qty) =="
-"$XVN_BIN" close-position --venue orderly --asset BTC
+"$XVN_BIN" close-position --venue orderly --asset "$ASSET"
 
 echo
 echo "== portfolio (after) =="

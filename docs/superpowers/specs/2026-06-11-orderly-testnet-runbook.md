@@ -1,14 +1,17 @@
 # Orderly testnet runbook (MANUAL.md M6 — automated)
 
-Status: onboarding + signed read/write path verified against the real
-testnet gateway on 2026-06-11. This replaces the "manual web flow" wording
-in MANUAL.md M6 — onboarding is now scriptable end to end.
+Status: **M6 exit criterion satisfied 2026-06-11** — full round trip
+(buy 3380371731 → verified position → reduce-only close 3380371909 → flat)
+completed against the real testnet through `xvn` → `OrderlyExecutor`.
+Onboarding AND funding are scriptable end to end; the "manual web flow"
+wording in MANUAL.md M6 is obsolete.
 
 ## What exists
 
 | Piece | Where |
 |---|---|
 | Onboarding script (register account, announce ed25519 key, faucet, signed-read verify) | `scripts/orderly_testnet_onboard.py` |
+| Funding script (Mantle Sepolia on-chain: token `faucet()` → approve → vault deposit) | `scripts/orderly_testnet_fund_mantle.py` |
 | Round-trip smoke (portfolio → buy → close → portfolio via `xvn`) | `scripts/orderly-testnet-smoke.sh` |
 | Credentials | 1Password `op://Olympus/xvision-orderly-testnet` (account_id, key, secret, address, broker_id, chain_id, base_url) |
 | Executor | `crates/xvision-execution/src/orderly.rs` (`OrderlyExecutor`) — unchanged; testnet selected purely via `ORDERLY_BASE_URL` |
@@ -33,12 +36,26 @@ in MANUAL.md M6 — onboarding is now scriptable end to end.
   asynchronously and credits the **Orderly account ledger directly** (no
   on-chain deposit step — Orderly's own `examples/api/py` mints then
   immediately trades).
-- Faucet caveats (2026-06-11): claims for broker `woofi_dex` returned
-  success but never credited after 45+ min. Orderly's own examples use
-  broker **`woofi_pro`** on testnet — a second account was registered
-  under `woofi_pro` for faucet funding. The faucet endpoint is also
-  per-IP rate-limited (HTML 429 after a handful of claims); back off
-  ≥5 min between claims.
+- Faucet caveats (2026-06-11): claims for brokers `woofi_dex`,
+  `woofi_pro` AND `demo` all returned success but NONE credited within
+  an hour. The endpoint is also per-IP rate-limited (HTML 429, long
+  window). **Don't rely on it — use the on-chain Mantle path:**
+  the test USDC token `0xAcab8129E2cE587fD203FD770ec9ECAFA2C88080` on
+  Mantle Sepolia (5003) has a public `faucet()` (mints 1000 units,
+  18-dp amount on a 6-dp-registered token — i.e. a huge test balance);
+  approve + `Vault.deposit()` at
+  `0xfb0E5f3D16758984E668A3d76f0963710E775503` (fee ~0.34 MNT) credits
+  the account ledger in ~2 min. `scripts/orderly_testnet_fund_mantle.py`
+  does all three steps.
+- The FUNDED account is broker **`demo`** (Orderly's CLI default),
+  account `0x2e3722ad…0480` — 1Password item updated to it. Trade SOL
+  (or ETH) on testnet: the PERP_BTC_USDC book is frequently dead and the
+  venue CANCELS unmatched market orders.
+- Four executor bugs found+fixed by this validation (all with regression
+  tests): notional-sent-as-base-qty on first orders; missing step-size
+  (`base_tick`) alignment (-1104); CANCELLED-unfilled orders surfaced as
+  fabricated fills; `client_order_id` over the 36-char venue cap (-1005,
+  including silently-failing TP/SL brackets).
 
 ## Re-run from scratch
 

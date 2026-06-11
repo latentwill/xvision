@@ -15,16 +15,20 @@ and the live-trading spec (`../specs/2026-06-08-live-trading-marketplace-spec.md
 | Live page UI | Filterable strip (LIVE/PAUSED/STOPPED, strict `isLiveRun`), overlap fix, LIVE trace capsule, `/live/runs/:id` live inspector, venue account panel — 1991 frontend tests green |
 | Orderly as a live-run venue | `broker_creds_ref = "orderly_testnet"` accepted by `build_live_executor`, hard-walled to testnet base URLs; executes via the real `OrderlyLiveSurface` |
 
+## Update (later 2026-06-11): round trip DONE
+
+Funded via the on-chain Mantle Sepolia path (token `faucet()` → vault
+deposit; `scripts/orderly_testnet_fund_mantle.py`) — 5,000 USDC credited
+to the broker-`demo` account. Round trip completed through the real
+executor: BUY 3380371731 (SOL @ 65.287) → position verified → reduce-only
+CLOSE 3380371909 (@ 64.745) → flat. Four real executor bugs were found
+and fixed by this validation (see the runbook).
+
 ## Blocked / pending
 
-1. **Faucet credit** — claims return success but the `woofi_dex` account
-   never funded; retrying under `woofi_pro` (broker Orderly's own examples
-   use). Until test USDC lands, fills can't happen, so the buy→close
-   round-trip (`scripts/orderly-testnet-smoke.sh`) and a live demo run
-   with real fills are queued behind it.
-2. **End-to-end live strategy run on Orderly testnet** — wiring is in
-   place (gate lifted, surface implemented); needs the funded account +
-   a dashboard booted with both `ORDERLY_*` (execution) and `APCA_*`
+1. **End-to-end live strategy run on Orderly testnet** — wiring is in
+   place (gate lifted, surface implemented, account funded); needs a
+   dashboard booted with both `ORDERLY_*` (execution) and `APCA_*`
    (market data) env. Recipe in the runbook.
 
 ## Gap list to hackathon-ready (ranked)
