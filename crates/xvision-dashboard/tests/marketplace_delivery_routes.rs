@@ -35,6 +35,9 @@ fn listing(listing_id: u64, content_uri: &str, content_hash: &str) -> IndexedLis
         name: "xvn strategy 7".to_string(),
         symmetry: "Radial".into(),
         palette: "Ember".into(),
+        attestation_count: 0,
+        units_sold: 0,
+        earned_usdc: 0.0,
     }
 }
 
@@ -208,4 +211,55 @@ async fn import_without_license_env_is_503() {
         .json(&serde_json::json!({ "address": ALICE }))
         .await;
     response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// ── POST /api/marketplace/listings/:id/update ───────────────────────────────
+
+#[tokio::test]
+async fn update_unknown_listing_is_404() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server.post("/api/marketplace/listings/99/update").await;
+    response.assert_status(StatusCode::NOT_FOUND);
+    let body: Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn update_missing_local_strategy_is_404_named() {
+    // The listing exists in the snapshot but its agent_id has no local
+    // strategy on this host -> 404 with an explicit "local strategy" message
+    // (distinct from the unknown-listing 404).
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(
+        &state,
+        vec![listing(1, "xvn://strategy/agent-7", &"ab".repeat(32))],
+    )
+    .await;
+    let response = server.post("/api/marketplace/listings/1/update").await;
+    response.assert_status(StatusCode::NOT_FOUND);
+    let body: Value = response.json();
+    let msg = body["message"].as_str().unwrap();
+    assert!(
+        msg.contains("local strategy"),
+        "404 must name the missing local strategy: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn update_without_chain_env_is_503() {
+    // Removal-only (same contract as the revoke/buy 503 tests).
+    std::env::remove_var("XVN_RPC_URL");
+    std::env::remove_var("XVN_CHAIN_ID");
+    std::env::remove_var("XVN_PUBLISHER_PK");
+
+    let (server, state, _tmp) = boot().await;
+    let (id, _canonical, hash) = seed_strategy(&server, &state).await;
+    let mut l = listing(1, &format!("xvn://strategy/{id}"), &hash);
+    l.agent_id = id.clone();
+    inject_snapshot(&state, vec![l]).await;
+
+    let response = server.post("/api/marketplace/listings/1/update").await;
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = response.json();
+    assert_eq!(body["code"], "service_unavailable");
 }

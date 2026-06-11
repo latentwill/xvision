@@ -19,14 +19,17 @@
 //! - a failed poll keeps the previous snapshot's listings and surfaces the
 //!   error in `last_error`.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use alloy::primitives::{Address, U256};
-use alloy::providers::ProviderBuilder;
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::rpc::types::Filter;
+use alloy::sol_types::SolEvent;
 use anyhow::Context;
 
 use xvision_identity::client::IIdentityRegistry;
-use xvision_identity::contracts::IListingRegistry;
+use xvision_identity::contracts::{IEvalAttestationRegistry, IListingRegistry, IMarketplace};
 use xvision_identity::token_metadata::{decode_token_metadata, TokenMetadata};
 
 // ---------------------------------------------------------------------------
@@ -61,6 +64,14 @@ pub struct IndexedListing {
     pub symmetry: String,
     /// `Palette` attribute value, for display (`""` if absent).
     pub palette: String,
+    /// Eval attestations posted for this listing (`0` when the
+    /// `EvalAttestationRegistry` is unconfigured or the count call fails).
+    pub attestation_count: u64,
+    /// Licenses sold, from the `Sold` event log scan (`0` when the
+    /// marketplace contract is unconfigured or the scan fails).
+    pub units_sold: u64,
+    /// Sum of `Sold.sellerProceeds` in whole USDC (`0.0` when dormant).
+    pub earned_usdc: f64,
 }
 
 /// The full indexed view of the marketplace, replaced atomically per poll.
@@ -80,6 +91,26 @@ pub struct IndexerCfg {
     pub rpc_url: String,
     pub listing_registry: Address,
     pub identity_registry: Address,
+    /// Optional `EvalAttestationRegistry` address — enables per-listing
+    /// `attestation_count`. `None` → counts stay 0.
+    pub eval_attestation: Option<Address>,
+    /// Optional `Marketplace` address — enables the `Sold` log scan that
+    /// feeds `units_sold` / `earned_usdc`. `None` → both stay 0.
+    pub marketplace: Option<Address>,
+    /// Lower bound for the `Sold` log scan (`XVN_MARKETPLACE_DEPLOY_BLOCK`,
+    /// default 0).
+    pub marketplace_deploy_block: u64,
+}
+
+/// Parses an optional env address value: unset or unparseable → `None`
+/// (the enrichment it gates simply stays dormant, never an error).
+fn parse_opt_addr(v: Option<String>) -> Option<Address> {
+    v?.parse().ok()
+}
+
+/// Parses the deploy-block lower bound: unset or unparseable → 0.
+fn parse_deploy_block(v: Option<String>) -> u64 {
+    v.and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
 impl IndexerCfg {
@@ -87,6 +118,11 @@ impl IndexerCfg {
     /// Returns `None` when any is missing or an address fails to parse —
     /// the indexer then stays dormant (mirrors `ChainEnv::from_env` in
     /// `routes/marketplace.rs`).
+    ///
+    /// `XVN_EVAL_ATTESTATION`, `XVN_MARKETPLACE_CONTRACT`, and
+    /// `XVN_MARKETPLACE_DEPLOY_BLOCK` are OPTIONAL — their absence never
+    /// turns the whole config into `None`; the trust/earnings enrichment
+    /// just stays at zeros.
     pub fn from_env() -> Option<Self> {
         let rpc_url = std::env::var("XVN_RPC_URL").ok()?;
         let listing_registry: Address = std::env::var("XVN_LISTING_REGISTRY").ok()?.parse().ok()?;
@@ -95,6 +131,9 @@ impl IndexerCfg {
             rpc_url,
             listing_registry,
             identity_registry,
+            eval_attestation: parse_opt_addr(std::env::var("XVN_EVAL_ATTESTATION").ok()),
+            marketplace: parse_opt_addr(std::env::var("XVN_MARKETPLACE_CONTRACT").ok()),
+            marketplace_deploy_block: parse_deploy_block(std::env::var("XVN_MARKETPLACE_DEPLOY_BLOCK").ok()),
         })
     }
 }
@@ -122,6 +161,56 @@ fn hex64(bytes: &[u8; 32]) -> String {
         write!(out, "{b:02x}").expect("string write");
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Sold-event aggregation (pure)
+// ---------------------------------------------------------------------------
+
+/// Per-listing sale totals derived from decoded `Sold` events.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub(crate) struct SaleTotals {
+    pub units_sold: u64,
+    /// Sum of `sellerProceeds` in 6-decimal USDC units.
+    pub seller_proceeds_usdc6: u128,
+}
+
+/// Folds decoded `Sold` events into per-listing totals: one unit per event,
+/// seller proceeds summed (saturating — `uint96` sums cannot realistically
+/// overflow u128, but never panic on hostile logs).
+pub(crate) fn aggregate_sales<I>(events: I) -> HashMap<u64, SaleTotals>
+where
+    I: IntoIterator<Item = IMarketplace::Sold>,
+{
+    let mut totals: HashMap<u64, SaleTotals> = HashMap::new();
+    for sold in events {
+        let listing_id: u64 = sold.listingId.try_into().unwrap_or(u64::MAX);
+        let t = totals.entry(listing_id).or_default();
+        t.units_sold += 1;
+        t.seller_proceeds_usdc6 = t
+            .seller_proceeds_usdc6
+            .saturating_add(sold.sellerProceeds.to::<u128>());
+    }
+    totals
+}
+
+/// One `eth_getLogs` scan for `Sold` events on the marketplace contract
+/// (topic0 = the typed `SIGNATURE_HASH`, from the configured deploy block).
+/// Undecodable logs are skipped; a failed scan bubbles to the caller, which
+/// degrades to empty totals.
+async fn fetch_sale_totals<P: Provider>(
+    provider: &P,
+    marketplace: Address,
+    from_block: u64,
+) -> anyhow::Result<HashMap<u64, SaleTotals>> {
+    let filter = Filter::new()
+        .address(marketplace)
+        .event_signature(IMarketplace::Sold::SIGNATURE_HASH)
+        .from_block(from_block);
+    let logs = provider.get_logs(&filter).await.context("eth_getLogs(Sold)")?;
+    Ok(aggregate_sales(logs.iter().filter_map(|log| {
+        IMarketplace::Sold::decode_log(&log.inner).ok().map(|l| l.data)
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +242,27 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
     // persistence/pagination past ~500 listings (per plan).
     let total = total.min(10_000);
 
+    // Sold-event scan: one eth_getLogs per poll when the marketplace
+    // contract is configured. Degrades to empty totals (zeros) on error.
+    let sales: HashMap<u64, SaleTotals> = match cfg.marketplace {
+        Some(marketplace) => {
+            match fetch_sale_totals(&provider, marketplace, cfg.marketplace_deploy_block).await {
+                Ok(totals) => totals,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Sold log scan failed; units_sold/earned_usdc stay 0");
+                    HashMap::new()
+                }
+            }
+        }
+        None => HashMap::new(),
+    };
+
+    // Attestation counts: per-listing getAttestationCount when the
+    // EvalAttestationRegistry is configured. Degrades to 0 on error.
+    let attestation_registry = cfg
+        .eval_attestation
+        .map(|addr| IEvalAttestationRegistry::new(addr, &provider));
+
     let mut listings = Vec::with_capacity(total as usize);
     // Listing ids start at 1 (`_nextListingId = 1` in ListingRegistry.sol);
     // totalListings() returns `_nextListingId - 1`, so the range is 1..=total.
@@ -178,9 +288,22 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
             }
         };
 
+        let attestation_count = match &attestation_registry {
+            Some(registry) => match registry.getAttestationCount(U256::from(id)).call().await {
+                Ok(count) => count.try_into().unwrap_or(u64::MAX),
+                Err(e) => {
+                    tracing::warn!(listing_id = id, error = %e, "getAttestationCount failed; degrading to 0");
+                    0
+                }
+            },
+            None => 0,
+        };
+
         let content_hash = hex64(&listing.contentHash.0);
+        let listing_id = u64::try_from(listing.listingId).unwrap_or(id);
+        let sale = sales.get(&listing_id).copied().unwrap_or_default();
         listings.push(IndexedListing {
-            listing_id: u64::try_from(listing.listingId).unwrap_or(id),
+            listing_id,
             agent_nft_id: listing.agentNftId.to_string(),
             agent_id: meta.agent_id.clone(),
             seller: format!("{:#x}", listing.seller),
@@ -194,6 +317,9 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
             name: meta.name,
             symmetry: meta.symmetry,
             palette: meta.palette,
+            attestation_count,
+            units_sold: sale.units_sold,
+            earned_usdc: usdc6_to_f64(sale.seller_proceeds_usdc6),
         });
     }
 
@@ -277,6 +403,62 @@ mod tests {
         std::env::remove_var("XVN_LISTING_REGISTRY");
         std::env::remove_var("XVN_IDENTITY_REGISTRY");
         assert!(IndexerCfg::from_env().is_none());
+    }
+
+    // -- optional cfg parsing (pure — from_env's required vars are owned by
+    //    indexer_cfg_missing_env_is_none under the removal-only convention,
+    //    so the Some path is exercised through these value-level helpers) --
+
+    #[test]
+    fn optional_addr_parsing() {
+        assert_eq!(parse_opt_addr(None), None);
+        assert_eq!(parse_opt_addr(Some("nope".into())), None);
+        let addr = "0x1111111111111111111111111111111111111111";
+        assert_eq!(parse_opt_addr(Some(addr.into())), Some(addr.parse().unwrap()));
+    }
+
+    #[test]
+    fn deploy_block_parsing_defaults_zero() {
+        assert_eq!(parse_deploy_block(None), 0);
+        assert_eq!(parse_deploy_block(Some("not-a-number".into())), 0);
+        assert_eq!(parse_deploy_block(Some("12345678".into())), 12_345_678);
+    }
+
+    // -- Sold aggregation ----------------------------------------------------
+
+    fn sold(listing_id: u64, seller_proceeds_usdc6: u64) -> IMarketplace::Sold {
+        use alloy::primitives::aliases::U96;
+        IMarketplace::Sold {
+            listingId: U256::from(listing_id),
+            agentNftId: U256::from(7u64),
+            buyer: Address::ZERO,
+            priceUSDC: U96::from(seller_proceeds_usdc6),
+            sellerProceeds: U96::from(seller_proceeds_usdc6),
+            protocolProceeds: U96::from(0u64),
+            licenseTokenId: U256::from(listing_id),
+            payerKind: 0,
+            purchasePath: 1,
+        }
+    }
+
+    #[test]
+    fn aggregate_sales_counts_units_and_sums_proceeds() {
+        let totals = aggregate_sales(vec![sold(2, 950_000), sold(2, 950_000), sold(5, 46_550_000)]);
+        assert_eq!(
+            totals.get(&2).copied(),
+            Some(SaleTotals {
+                units_sold: 2,
+                seller_proceeds_usdc6: 1_900_000,
+            })
+        );
+        assert_eq!(totals.get(&5).unwrap().units_sold, 1);
+        assert_eq!(usdc6_to_f64(totals.get(&2).unwrap().seller_proceeds_usdc6), 1.9);
+        assert!(totals.get(&99).is_none());
+    }
+
+    #[test]
+    fn aggregate_sales_empty_is_empty() {
+        assert!(aggregate_sales(vec![]).is_empty());
     }
 
     // -- hex64 ---------------------------------------------------------------
