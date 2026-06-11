@@ -14,7 +14,7 @@ use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
 use xvision_engine::api::scenario as api_scenario;
 use xvision_engine::api::{agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError};
 use xvision_engine::diagnostics::{
-    self, assert_launchable, CapabilityStatus, DiagnosticsError, StrategyDiagnostics,
+    self, assert_launchable, DiagnosticsError, StrategyDiagnostics,
 };
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
@@ -661,7 +661,9 @@ async fn reindex() -> CliResult<()> {
     for id in &orphaned {
         match fs_store.load(id).await {
             Ok(strategy) => {
-                api_search::upsert_strategy(&ctx, &strategy).await;
+                if let Err(e) = api_search::upsert_strategy(&ctx, &strategy).await {
+                    eprintln!("warning: reindex upsert failed for {id}: {e}");
+                }
                 println!("attempted reindex: {id}");
                 attempted += 1;
             }
