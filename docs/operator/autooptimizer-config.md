@@ -42,7 +42,6 @@ If the file is absent, the cycle runs with the struct defaults documented below.
 | `regime_set` | array of `RegimeWindow` | `[]` | Optional **exhaustive** regime matrix. Every regime is evaluated for every candidate; the gate requires improvement across **all** regimes. See [Regime set vs scenario pool](#regime-set-vs-scenario-pool). |
 | `scenario_pool` | array of `ScenarioWindowPair` | `[]` | Optional **round-robin sampling** pool. One pair is picked per candidate (`pool[mutation_idx % pool.len()]`), spreading candidates across regimes so a strategy tuned to one fixed window can't dominate (overfitting guard). |
 | `baseline_direction` | enum | `both` | Trade-direction the random-baseline edge metric mirrors: `long`, `short`, or `both`. Informational only — never gates promotion. A LONG-only strategy should set `long` so the random counterfactual picks long/flat (never short). |
-| `gepa_enabled` | bool | `false` | Use the GEPA reflection+proposal algorithm instead of the single-call summarizer. Requires `dspy_enabled = true`. |
 | `gepa_candidates` | usize | `3` | Candidate instructions GEPA generates per generation. |
 | `gepa_generations` | usize | `2` | Reflection→proposal generations the GEPA loop runs. More = higher quality, more LLM calls. |
 
@@ -193,8 +192,8 @@ dspy_pattern_cohort_threshold = 5
 # Three-candidate Borda tournament per proposal (default off).
 tournament_enabled = false
 
-# GEPA reflection+proposal (requires dspy_enabled = true).
-gepa_enabled = false
+# GEPA reflection+proposal — wired unconditionally when dspy_enabled = true.
+# (gepa_enabled flag was removed; GEPA is the sole DspyBridge implementation.)
 gepa_candidates = 3
 gepa_generations = 2
 

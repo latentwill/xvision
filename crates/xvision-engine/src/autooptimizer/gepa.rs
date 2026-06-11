@@ -12,8 +12,9 @@ const SYSTEM_PROMPT: &str = "You are an instruction optimizer for an automated t
     what does not.";
 
 /// GEPA (Genetic-Pareto Evolutionary) bridge: two-stage reflection+proposal loop
-/// with LLM-based per-candidate scoring. Replaces the single-call `LiveDspyBridge`
-/// summarizer when `gepa_enabled = true`.
+/// with LLM-based per-candidate scoring. This is the sole DspyBridge implementation
+/// used when `dspy_enabled = true` (the `gepa_enabled` flag was removed; GEPA is
+/// unconditionally wired).
 ///
 /// Algorithm per generation:
 ///   1. REFLECT — single LLM call: analyze all observations, identify patterns
