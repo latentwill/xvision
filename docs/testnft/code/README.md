@@ -1,5 +1,9 @@
 # Xvision test NFT bitfield prototypes
 
+## Production engine: Bitfields v3
+
+The production generator (one engine, symmetry-as-a-trait: free/mirror/quad/diagonal/anti-diagonal/rot180/rot90, 33-palette roster, compact stroke-path SVG tokenURI) lives at `crates/xvision-identity/src/genart.rs` and `frontend/web/src/features/marketplace/lib/genartGrid.ts` + `genart.ts`, byte-parity enforced by `crates/xvision-identity/tests/fixtures/genart_v3.json`. Spec: `docs/superpowers/specs/2026-06-11-strategy-nft-genart-onchain-design.md`. The prototypes below (v1 lanes, v2 studies) are parked design research.
+
 Browser-openable generative-art prototypes for Xvision strategy NFT exploration.
 
 ## Structure lanes

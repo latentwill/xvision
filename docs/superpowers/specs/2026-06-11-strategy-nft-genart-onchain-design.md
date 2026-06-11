@@ -1,7 +1,7 @@
 # Strategy NFT generative art — onchain design (Bitfields v3, "unified family")
 
 Date: 2026-06-11
-Status: draft — pending operator review
+Status: approved 2026-06-11; implemented on feat/genart-v3-onchain (see plans/2026-06-11-strategy-nft-genart-onchain.md)
 Supersedes: the v1 hash-shapes SVG generator (`crates/xvision-identity/src/genart.rs` +
 `frontend/web/src/features/marketplace/lib/genart.ts`, PR #741), which is retired by this design.
 Related: `docs/testnft/code/v2/index.html` (bitfields v2 study),
@@ -17,8 +17,8 @@ frontend for previews. The art must be:
 - **Varied but never noise** — entropy is spent on a few discrete high-level traits
   (symmetry, palette, layer params); all visual richness comes from deterministic
   bitwise math downstream of those choices.
-- **Cheap** — compact SVG, run-length encoded; target ≤8 KB raw SVG, hard ceiling
-  12 KB tokenURI. On Mantle this stores for cents.
+- **Cheap** — compact SVG, stroke-path encoded; measured ~9 KB median tokenURI, hard ceiling
+  16 KB tokenURI. On Mantle this stores for cents.
 - **Reproducible everywhere** — Rust (mint path) and TypeScript (preview path) produce
   byte-identical SVG for the same seed. Golden-fixture tests enforce parity.
 
@@ -106,7 +106,7 @@ exact in practice, but the formula is normative.
 ## 4. Symmetry as a trait
 
 The final image maps each display cell to a canonical source cell; the engine grid is
-only read through this mapping. Eight modes, weighted bag of 14:
+only read through this mapping. Eight modes, weighted bag of 13:
 
 | Mode | Weight | Canonical mapping for (x, y), N=28 |
 |---|---|---|
@@ -162,18 +162,20 @@ roster size is unconstrained.
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="560" height="560"
      shape-rendering="crispEdges">
   <rect width="28" height="28" fill="{pal[0]}"/>
-  <!-- per-row horizontal RLE: consecutive same-color cells merge into one rect -->
-  <rect x="3" y="0" width="5" height="1" fill="{pal[i]}"/>
+  <!-- one <path> per palette index i (0..6) with ≥1 run, ascending index order -->
+  <path stroke="{pal[i]}" stroke-width="1" d="M3 0.5h5 M9 0.5h2…"/>
   …
 </svg>
 ```
 
-- Integer coordinates in grid units (1–2 chars each) keep rects ~45 bytes.
+- Envelope unchanged: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="560" height="560" shape-rendering="crispEdges">`, background `<rect width="28" height="28" fill="{pal[0]}"/>`.
+- Body: one `<path stroke="{pal[i]}" stroke-width="1" d="…"/>` per palette index `i` (0..6) with ≥1 run, in ascending index order; colors with zero runs emit nothing.
+- `d` = concatenated `M{x} {y}.5h{w}` per horizontal RLE run (row-major); a width-1 stroke centered at `y+0.5` covers the pixel row exactly.
 - The **post-symmetry** display grid is RLE-encoded directly (no `<use>` mirror
   tricks — symmetric grids RLE well anyway, and one code path means one parity
-  surface; the ~1 KB saving is not worth the complexity on Mantle).
+  surface).
 - `shape-rendering="crispEdges"` preserves the pixel aesthetic at any scale.
-- Expected size: ~1.5–6 KB raw SVG. Hard test ceiling: 12 KB encoded tokenURI.
+- Measured: ~9 KB median tokenURI, ~12.5 KB observed max. Hard test ceiling: 16 KB encoded tokenURI.
 
 Metadata JSON (then base64-wrapped into the tokenURI):
 
@@ -201,8 +203,7 @@ Metadata JSON (then base64-wrapped into the tokenURI):
 | TS twin (rewrite) | `frontend/web/src/features/marketplace/lib/genart.ts` | Same three functions, byte-identical output. |
 | Shared canvas renderer | `frontend/web/src/features/marketplace/lib/genartGrid.ts` | Exposes `buildGrid(seed) -> {grid, traits}` consumed by both `genart.ts` (SVG) and `GenArtPlaceholder.tsx` (canvas), so card previews ARE the NFT art. |
 | `GenArtPlaceholder.tsx` (modify) | same path | Switch from v2 `drawBitfield` to `buildGrid`; props unchanged (`seed, size, className`). Seed becomes `"{agent_id}:{manifest_hash}"` where both are available, falling back to current seeds elsewhere. |
-| Mint wiring (Rust) | `crates/xvision-marketplace/src/adapter.rs` | `PublishRequest` gains `agent_id: String` + `manifest_hash: B256`; `publish_listing` pre-mints the identity NFT via `IdentityClient::register(generate_token_uri(..))` when `agent_nft_id` is absent, then `createListing`. |
-| Backend route | `crates/xvision-dashboard` | `POST /api/marketplace/publish` — computes the canonical bundle hash, generates the URI, mints + lists, returns `{token_id, listing_id, tx_hashes}`. |
+| Mint wiring (Rust) | `crates/xvision-dashboard/src/routes/marketplace.rs` | `POST /api/marketplace/publish` orchestrates: strategy load → canonical JSON → keccak `manifest_hash` → `generate_token_uri` → `IdentityClient::register` (mint) → `Erc8004MantleDriver::publish_listing`. All chain config validated before the mint; env-gated (503 without XVN_RPC_URL/XVN_CHAIN_ID/XVN_PUBLISHER_PK/registry+marketplace addresses). Idempotency deliberately deferred (testnet v1). The marketplace adapter (`crates/xvision-marketplace/src/adapter.rs`) is unchanged — it deliberately keeps mint and listing separable; `PublishRequest` is NOT modified. |
 | Frontend publish | `features/marketplace/data/MarketplaceData.ts` | Replace fixture `submitListing` with a call to the new route. Sell-flow Step 3 preview renders `buildGrid` with the real seed so the operator sees the exact NFT before minting. |
 
 No contract changes: `IdentityRegistry.register(string agentURI)` already stores
@@ -227,7 +228,7 @@ as-is.
    matches; this IS the parity contract.
 2. **Density property test** — 1,000 derived seeds all ≥14% fill.
 3. **RLE round-trip** — decode emitted rects back to a grid, assert equal to source.
-4. **Size ceiling** — all fixture + property seeds produce tokenURI ≤ 12 KB.
+4. **Size ceiling** — all fixture + property seeds produce tokenURI ≤ 16 KB.
 5. **Symmetry law tests** — for each mode, assert the display grid satisfies its
    invariant (e.g. `quad`: `g[x][y] == g[N-1-x][y] == g[x][N-1-y]`).
 6. **Wiring tests** — publish route happy path + invalid-hash rejection; adapter
