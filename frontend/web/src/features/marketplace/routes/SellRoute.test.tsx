@@ -1,15 +1,27 @@
 // src/features/marketplace/routes/SellRoute.test.tsx
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderMarketplace } from "@/features/marketplace/test-utils";
+import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
+import { ApiError } from "@/api/client";
 import { SellRoute } from "./SellRoute";
 
-function renderSell() {
+function renderSell(client?: InstanceType<typeof FixtureMarketplaceData>) {
   return renderMarketplace(<SellRoute />, {
     path: "/marketplace/sell",
     route: "/marketplace/sell",
+    client,
   });
+}
+
+/** Navigate through steps 1 and 2 so step 3 is active (uses default fixture client). */
+async function advanceToStep3(client?: InstanceType<typeof FixtureMarketplaceData>) {
+  renderSell(client);
+  await userEvent.click(await screen.findByRole("button", { name: /btc-momentum/ }));
+  await screen.findByTestId("sell-step-2-body");
+  await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
+  await screen.findByTestId("sell-step-3-body");
 }
 
 describe("SellRoute", () => {
@@ -112,5 +124,79 @@ describe("SellRoute", () => {
     await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
     await screen.findByTestId("sell-step-3-body");
     expect(screen.getByRole("button", { name: /Mint/ }).textContent).toMatch(/Testnet/);
+  });
+
+  it("step 3: failed submitListing shows inline error, no navigation, no unhandled rejection", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "submitListing").mockRejectedValue(
+      new ApiError(503, "internal", "chain env not configured — set XVN_RPC_URL"),
+    );
+    await advanceToStep3(client);
+
+    const mintBtn = screen.getByRole("button", { name: /Mint/ });
+    await userEvent.click(mintBtn);
+
+    // Inline error strip visible with the server message
+    const strip = await screen.findByTestId("mint-error");
+    expect(strip).toBeInTheDocument();
+    expect(strip.textContent).toMatch(/chain env not configured/);
+
+    // Still on step 3 — no navigation occurred
+    expect(screen.getByTestId("sell-step-3-body")).toBeInTheDocument();
+
+    // Button re-enabled after failure
+    expect(mintBtn).not.toBeDisabled();
+  });
+
+  it("step 3: successful submitListing navigates to /marketplace/lineage/<listing_id>", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "submitListing").mockResolvedValue({
+      txHash: "42",
+      network: "mantle-sepolia",
+    });
+
+    // Render with an extra route so we can assert navigation landed on lineage detail.
+    const { render } = await import("@testing-library/react");
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const { MarketplaceDataProvider } = await import("@/features/marketplace/data/provider");
+    const { MemoryRouter, Routes, Route, useParams } = await import("react-router-dom");
+    const { default: React } = await import("react");
+
+    function LineageSpy() {
+      const { id } = useParams<{ id: string }>();
+      return React.createElement("div", { "data-testid": "lineage-page" }, `lineage:${id}`);
+    }
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        React.createElement(
+          MarketplaceDataProvider,
+          { client },
+          React.createElement(
+            MemoryRouter,
+            { initialEntries: ["/marketplace/sell"] },
+            React.createElement(
+              Routes,
+              null,
+              React.createElement(Route, { path: "/marketplace/sell", element: React.createElement(SellRoute) }),
+              React.createElement(Route, { path: "/marketplace/lineage/:id", element: React.createElement(LineageSpy) }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: /btc-momentum/ }));
+    await screen.findByTestId("sell-step-2-body");
+    await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    await screen.findByTestId("sell-step-3-body");
+    await userEvent.click(screen.getByRole("button", { name: /Mint/ }));
+
+    // Navigated to the real listing page — txHash is listing_id (see publish.ts Phase-2 wart)
+    const lineagePage = await screen.findByTestId("lineage-page");
+    expect(lineagePage.textContent).toBe("lineage:42");
   });
 });
