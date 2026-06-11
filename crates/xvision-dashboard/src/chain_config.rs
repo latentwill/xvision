@@ -11,8 +11,8 @@
 //! returns the same 503 with the same actionable message as before. Each
 //! sub-config is independently optional inside the struct so per-route
 //! gating stays exact; the whole config is `None` only when every
-//! chain-relevant piece is unset (Pinata alone does not activate it — the
-//! pin config is only meaningful alongside a publish-capable chain config).
+//! chain-relevant piece is unset (IPFS/Lit backends alone do not activate it
+//! — they are only meaningful alongside publish/import-capable chain config).
 //!
 //! One deliberate semantic note (documented, behavior class preserved): an
 //! invalid `XVN_PUBLISHER_PK` used to produce a per-request 503
@@ -29,7 +29,7 @@ use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 
 use xvision_identity::RegistryAddresses;
-use xvision_marketplace::{LitChipotleClient, MarketplaceAddresses};
+use xvision_marketplace::{IpfsStore, KuboStore, LitChipotleClient, MarketplaceAddresses, PinataDriver};
 
 use crate::error::DashboardError;
 use crate::marketplace_index::IndexerCfg;
@@ -121,23 +121,67 @@ impl ChainSigner {
     }
 }
 
-/// Optional Pinata pin config: `PINATA_JWT` (required to pin) and
-/// `PINATA_GATEWAY` (optional; empty → driver default).
-#[derive(Debug, Clone)]
-pub struct PinataCfg {
-    pub jwt: String,
-    pub gateway: String,
+/// The startup-resolved IPFS backend: a self-hosted Kubo (go-ipfs) node
+/// (preferred — no paid pinning service) or Pinata (alternative hosted
+/// backend). Both implement [`IpfsStore`]; this enum delegates so routes can
+/// hold one concrete type in `AppState` without a trait object.
+pub enum IpfsBackend {
+    /// Self-hosted Kubo node (`XVN_IPFS_API_URL` / `XVN_IPFS_GATEWAY_URL`).
+    Kubo(KuboStore),
+    /// Pinata hosted pinning (`PINATA_JWT` / `PINATA_GATEWAY`).
+    Pinata(PinataDriver),
 }
 
-/// `None` when the JWT is unset or blank — publish/update then fall back to
-/// the local `xvn://` content_uri.
-fn pinata_from_env() -> Option<PinataCfg> {
+/// Manual Debug — names the backend without spilling driver internals
+/// (the Pinata variant holds a JWT).
+impl fmt::Debug for IpfsBackend {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IpfsBackend::Kubo(_) => f.write_str("IpfsBackend::Kubo"),
+            IpfsBackend::Pinata(_) => f.write_str("IpfsBackend::Pinata"),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl IpfsStore for IpfsBackend {
+    async fn put(&self, bytes: &[u8]) -> Result<String, xvision_marketplace::MarketplaceError> {
+        match self {
+            IpfsBackend::Kubo(k) => k.put(bytes).await,
+            IpfsBackend::Pinata(p) => p.put(bytes).await,
+        }
+    }
+
+    async fn get(&self, cid: &str) -> Result<Vec<u8>, xvision_marketplace::MarketplaceError> {
+        match self {
+            IpfsBackend::Kubo(k) => k.get(cid).await,
+            IpfsBackend::Pinata(p) => p.get(cid).await,
+        }
+    }
+}
+
+/// Resolves the pin backend once at startup. Preference order:
+///
+/// 1. **Kubo** when `XVN_IPFS_API_URL` is set non-blank (e.g.
+///    `http://127.0.0.1:5001`). Optional `XVN_IPFS_GATEWAY_URL` overrides the
+///    read gateway; unset → the node's default `http://127.0.0.1:8080`.
+/// 2. **Pinata** when `PINATA_JWT` is set non-blank (optional
+///    `PINATA_GATEWAY`; empty → the public Pinata gateway).
+/// 3. `None` — publish/update fall back to the local `xvn://` content_uri,
+///    and ipfs:// reads fall back to the public gateway.
+fn ipfs_from_env() -> Option<IpfsBackend> {
+    if let Ok(api_url) = std::env::var("XVN_IPFS_API_URL") {
+        if !api_url.trim().is_empty() {
+            let gateway = std::env::var("XVN_IPFS_GATEWAY_URL").unwrap_or_default();
+            return Some(IpfsBackend::Kubo(KuboStore::new(api_url, gateway)));
+        }
+    }
     let jwt = std::env::var("PINATA_JWT").ok()?;
     if jwt.trim().is_empty() {
         return None;
     }
     let gateway = std::env::var("PINATA_GATEWAY").unwrap_or_default();
-    Some(PinataCfg { jwt, gateway })
+    Some(IpfsBackend::Pinata(PinataDriver::new(jwt, gateway)))
 }
 
 /// Reads the identity registry addresses: `XVN_IDENTITY_REGISTRY` (required
@@ -223,8 +267,9 @@ pub struct MarketplaceChainConfig {
     /// ListingRegistry / Marketplace / USDC address book — publish, revoke,
     /// buy, attest, update.
     pub marketplace_addresses: Option<MarketplaceAddresses>,
-    /// Pinata pin config — publish/update manifest pinning.
-    pub pinata: Option<PinataCfg>,
+    /// IPFS pin backend (Kubo preferred, Pinata fallback) —
+    /// publish/update manifest pinning + ipfs:// bundle reads.
+    pub ipfs: Option<IpfsBackend>,
     /// Read-only indexer config — also reused by the read routes
     /// (attestations, receipts, wallet) and the import license gate.
     pub indexer: Option<IndexerCfg>,
@@ -242,14 +287,14 @@ pub struct MarketplaceChainConfig {
 impl MarketplaceChainConfig {
     /// Resolves every chain-relevant env var once. Returns `None` when ALL
     /// chain pieces are unset (fully dormant — routes 503 exactly as they
-    /// did when they read the env per request). Pinata alone does not
-    /// activate the config.
+    /// did when they read the env per request). IPFS/Lit backends alone do
+    /// not activate the config.
     pub fn from_env() -> Option<Self> {
         let cfg = Self {
             chain: ChainSigner::from_env(),
             registry_addresses: registry_addresses_from_env(),
             marketplace_addresses: MarketplaceAddresses::from_env(),
-            pinata: pinata_from_env(),
+            ipfs: ipfs_from_env(),
             indexer: IndexerCfg::from_env(),
             license_token: license_token_from_env(),
             lit: lit_from_env(),
@@ -293,23 +338,58 @@ mod tests {
     }
 
     #[test]
-    fn pinata_cfg_requires_nonblank_jwt() {
-        // Single test owns PINATA_JWT / PINATA_GATEWAY in this crate's unit
-        // suite (the crate-wide env-mutation convention).
-        std::env::remove_var("PINATA_JWT");
-        std::env::remove_var("PINATA_GATEWAY");
-        assert!(pinata_from_env().is_none());
+    fn ipfs_backend_prefers_kubo_then_pinata() {
+        // Single test owns XVN_IPFS_API_URL / XVN_IPFS_GATEWAY_URL /
+        // PINATA_JWT / PINATA_GATEWAY in this crate's unit suite (the
+        // crate-wide env-mutation convention) — one test so the four vars
+        // can't race a parallel sibling.
+        for var in [
+            "XVN_IPFS_API_URL",
+            "XVN_IPFS_GATEWAY_URL",
+            "PINATA_JWT",
+            "PINATA_GATEWAY",
+        ] {
+            std::env::remove_var(var);
+        }
+        assert!(ipfs_from_env().is_none(), "nothing set → no backend");
 
+        // Blank values are unset.
+        std::env::set_var("XVN_IPFS_API_URL", "   ");
         std::env::set_var("PINATA_JWT", "   ");
-        assert!(pinata_from_env().is_none(), "blank JWT is not configured");
+        assert!(ipfs_from_env().is_none(), "blank values → no backend");
 
+        // Pinata when only the JWT is set.
         std::env::set_var("PINATA_JWT", "jwt-token");
         std::env::set_var("PINATA_GATEWAY", "https://gw.example");
-        let cfg = pinata_from_env().expect("configured");
-        assert_eq!(cfg.jwt, "jwt-token");
-        assert_eq!(cfg.gateway, "https://gw.example");
-        std::env::remove_var("PINATA_JWT");
-        std::env::remove_var("PINATA_GATEWAY");
+        std::env::remove_var("XVN_IPFS_API_URL");
+        match ipfs_from_env() {
+            Some(IpfsBackend::Pinata(p)) => assert_eq!(p.gateway(), "https://gw.example"),
+            other => panic!("expected Pinata backend, got {other:?}"),
+        }
+
+        // Kubo wins over Pinata when both are set; unset gateway → the
+        // node's default :8080 gateway.
+        std::env::set_var("XVN_IPFS_API_URL", "http://127.0.0.1:5001");
+        match ipfs_from_env() {
+            Some(IpfsBackend::Kubo(k)) => assert_eq!(k.gateway(), "http://127.0.0.1:8080"),
+            other => panic!("expected Kubo backend, got {other:?}"),
+        }
+
+        // Explicit Kubo gateway override.
+        std::env::set_var("XVN_IPFS_GATEWAY_URL", "http://gw.kubo.example/");
+        match ipfs_from_env() {
+            Some(IpfsBackend::Kubo(k)) => assert_eq!(k.gateway(), "http://gw.kubo.example"),
+            other => panic!("expected Kubo backend, got {other:?}"),
+        }
+
+        for var in [
+            "XVN_IPFS_API_URL",
+            "XVN_IPFS_GATEWAY_URL",
+            "PINATA_JWT",
+            "PINATA_GATEWAY",
+        ] {
+            std::env::remove_var(var);
+        }
     }
 
     #[test]

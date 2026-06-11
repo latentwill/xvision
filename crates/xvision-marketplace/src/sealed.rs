@@ -288,7 +288,7 @@ impl SealedBundleCrypto for LitChipotleClient {
     }
 
     fn is_configured(&self) -> bool {
-        !self.api_key.is_empty() && !self.pkp_id.is_empty()
+        !self.api_key.is_empty() && !self.pkp_id.is_empty() && !self.gate_action_cid.is_empty()
     }
 }
 
@@ -345,10 +345,11 @@ mod tests {
     // --- LitChipotleClient --------------------------------------------------
 
     #[test]
-    fn lit_is_configured_requires_key_and_pkp() {
+    fn lit_is_configured_requires_key_pkp_and_gate_cid() {
         assert!(LitChipotleClient::new("key", "pkp", "cid").is_configured());
         assert!(!LitChipotleClient::new("", "pkp", "cid").is_configured());
         assert!(!LitChipotleClient::new("key", "", "cid").is_configured());
+        assert!(!LitChipotleClient::new("key", "pkp", "").is_configured());
     }
 
     #[test]

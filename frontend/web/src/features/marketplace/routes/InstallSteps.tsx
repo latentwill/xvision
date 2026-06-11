@@ -7,6 +7,11 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, apiFetch } from "@/api/client";
 import { currentAddress } from "../lib/chain";
+import {
+  requirementsFromManifest,
+  useBundleManifest,
+} from "../data/bundle";
+import { RequirementChip } from "../components/RequirementChip";
 import type { Receipt, Ingredient } from "@/features/marketplace/data/types";
 
 // ── visual step states ───────────────────────────────────────────────────────
@@ -167,6 +172,14 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
   const missingCount = install.ingredients.filter((i) => !i.installed).length;
   const [importState, setImportState] = useState<ImportState>({ phase: "idle" });
 
+  // Real receipts carry no local ingredient detection (install.ingredients
+  // is an honest empty) — derive the requirement list from the listing's
+  // verified manifest instead. Installed state is unknown, so these render
+  // as neutral "required" chips, never installed/missing badges.
+  const manifest = useBundleManifest(receipt.listing.id);
+  const requirements =
+    install.ingredients.length === 0 ? requirementsFromManifest(manifest) : [];
+
   // Only IPFS-pinned (open tier) bundles get a step; receipts without a CID
   // (local xvn:// listings, unindexed listings) skip it — the import route
   // still resolves the manifest server-side.
@@ -247,36 +260,58 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
         />
       )}
 
-      {/* Install missing ingredients */}
-      <Step
-        n={next()}
-        state="pending"
-        title="Install missing ingredients"
-        description={
-          <div>
-            <span className="text-text-2">
-              {install.ingredients.filter((i) => i.installed).length} of{" "}
-              {install.ingredients.length} already installed in your XVN.
-            </span>
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {install.ingredients.map((ing) => (
-                <IngredientChip key={ing.name} ingredient={ing} />
-              ))}
+      {/* Install ingredients — local detection when the receipt carries it
+          (fixtures); otherwise the manifest's requirement list with no
+          installed/missing claim (real receipts). */}
+      {requirements.length > 0 ? (
+        <Step
+          n={next()}
+          state="pending"
+          title="Check the strategy's requirements"
+          description={
+            <div data-testid="receipt-requirements">
+              <span className="text-text-2">
+                Required to run this strategy — installed state unknown.
+              </span>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {requirements.map((r) => (
+                  <RequirementChip key={`${r.kind}:${r.name}`} requirement={r} />
+                ))}
+              </div>
             </div>
-          </div>
-        }
-        action={
-          missingCount > 0 ? (
-            <ChipBtn variant="chip">
-              {/* plus icon */}
-              <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M6 2v8M2 6h8" />
-              </svg>
-              Install missing ({missingCount})
-            </ChipBtn>
-          ) : undefined
-        }
-      />
+          }
+        />
+      ) : (
+        <Step
+          n={next()}
+          state="pending"
+          title="Install missing ingredients"
+          description={
+            <div>
+              <span className="text-text-2">
+                {install.ingredients.filter((i) => i.installed).length} of{" "}
+                {install.ingredients.length} already installed in your XVN.
+              </span>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {install.ingredients.map((ing) => (
+                  <IngredientChip key={ing.name} ingredient={ing} />
+                ))}
+              </div>
+            </div>
+          }
+          action={
+            missingCount > 0 ? (
+              <ChipBtn variant="chip">
+                {/* plus icon */}
+                <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M6 2v8M2 6h8" />
+                </svg>
+                Install missing ({missingCount})
+              </ChipBtn>
+            ) : undefined
+          }
+        />
+      )}
 
       {/* Add to Strategies — license-gated import into the local engine */}
       <Step
