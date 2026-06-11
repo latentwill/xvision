@@ -148,6 +148,7 @@
 //  R61. GET  /api/autooptimizer/flywheel
 //  R62. GET  /api/autooptimizer/stats    (P3-W1 per-cycle aggregates)
 //  R63. GET  /api/assets
+//  R64. GET  /api/live/venue-account     (live venue status snapshot)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -179,7 +180,7 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    marketplace as marketplace_route, memory as memory_route,
+    live_broker as live_broker_route, marketplace as marketplace_route, memory as memory_route,
     optimizations as optimizations_route, safety as safety_route, scenarios,
     search as search_route, settings, skills, static_files, strategies,
     strategies_folder as strategies_folder_route, tools as tools_route,
@@ -213,6 +214,7 @@ fn readonly_router(state: AppState) -> Router {
             get(diagnostics_route::agent),
         )
         .route("/api/assets", get(assets_route::list))
+        .route("/api/live/venue-account", get(live_broker_route::venue_account))
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))
