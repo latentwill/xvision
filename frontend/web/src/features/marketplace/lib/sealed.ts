@@ -130,12 +130,18 @@ export function litClientKey(): string | undefined {
 /**
  * Invoke the pinned gate action against the Lit ("Chipotle") API.
  *
- * !!! VERIFY against the Chipotle OpenAPI before live use. !!!
- * The exact run-action endpoint path, request body shape, auth header, and
- * the `{plaintext} | {error}` response envelope below are an EDUCATED GUESS
- * from the Lit v3 conventions; they are NOT confirmed against a live Chipotle
- * deployment. Everything Lit-shape-specific is intentionally isolated in this
- * one function so a single edit fixes it once the OpenAPI is confirmed.
+ * Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct). There is a SINGLE
+ * endpoint for running a pinned action:
+ *   POST {api_base}/core/v1/lit_action
+ *   header X-Api-Key: <VITE_LIT_CLIENT_KEY>
+ *   body   { ipfs_id: <gate CID>, js_params: {<gate params>} }
+ * The response is an envelope `{ response, logs, has_error }` where `response`
+ * is the gate action's return value — delivered EITHER as a JSON object
+ * (`{plaintext}` / `{error}`) OR as a JSON STRING that itself parses to that
+ * object (the `setResponse({response: JSON.stringify(...)})` pattern the gate
+ * uses). Both forms are handled. `has_error: true` is a hard failure.
+ *
+ * Everything Lit-shape-specific is intentionally isolated in this one function.
  *
  * Returns the raw `{ plaintext }` (or throws SealedGateError on `{ error }`).
  */
@@ -150,17 +156,16 @@ export async function invokeGateAction(
     );
   }
 
-  // UNVERIFIED: endpoint + body shape. See the warning above.
-  const url = `${litCfg.api_base.replace(/\/+$/, "")}/run-action`;
+  const url = `${litCfg.api_base.replace(/\/+$/, "")}/core/v1/lit_action`;
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${key}`,
+      "x-api-key": key,
     },
     body: JSON.stringify({
-      ipfsId: litCfg.gate_action_cid,
-      jsParams,
+      ipfs_id: litCfg.gate_action_cid,
+      js_params: jsParams,
     }),
   });
 
@@ -170,13 +175,18 @@ export async function invokeGateAction(
     );
   }
 
-  // UNVERIFIED: response envelope. Chipotle may wrap the action's setResponse
-  // payload under a `response` field; we accept either a top-level
-  // `{plaintext|error}` or a nested `{response:{plaintext|error}}`.
+  // Envelope: `{ response, logs, has_error }`. `has_error` is a hard failure
+  // regardless of `response`; otherwise `response` is the action's return
+  // value, as an object OR a JSON string — normalizeGatePayload handles both.
   const raw = (await res.json()) as
-    | { plaintext?: string; error?: string; response?: unknown }
+    | { has_error?: boolean; response?: unknown }
     | undefined;
-  const payload = normalizeGatePayload(raw);
+  if (raw?.has_error) {
+    throw new SealedGateError(
+      `Lit gate action reported has_error=true: ${gateErrorDetail(raw.response)}`,
+    );
+  }
+  const payload = normalizeGatePayload(raw?.response);
   if (payload.error) throw new SealedGateError(payload.error);
   if (typeof payload.plaintext !== "string") {
     throw new SealedGateError("Lit gate action returned no plaintext.");
@@ -192,26 +202,40 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
-/** Flatten the (unverified) Chipotle envelope to `{plaintext?, error?}`. */
+/**
+ * Flatten the Chipotle envelope's `response` value to `{plaintext?, error?}`.
+ *
+ * Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct): `response` is the
+ * action's return value, delivered EITHER as an object (`{plaintext}` /
+ * `{error}`) OR as a JSON STRING that itself parses to that object (the
+ * `setResponse({response: JSON.stringify(...)})` pattern). Both are handled.
+ */
 function normalizeGatePayload(
-  raw: { plaintext?: string; error?: string; response?: unknown } | undefined,
+  response: unknown,
 ): { plaintext?: string; error?: string } {
-  if (!raw) return { error: "Lit gate action returned an empty response." };
-  // Nested `response` may itself be a JSON string (action setResponse pattern).
-  if (raw.plaintext === undefined && raw.error === undefined && raw.response !== undefined) {
-    const r = raw.response;
-    if (typeof r === "string") {
-      try {
-        return JSON.parse(r) as { plaintext?: string; error?: string };
-      } catch {
-        return { error: "Lit gate action returned an unparseable response." };
-      }
-    }
-    if (r && typeof r === "object") {
-      return r as { plaintext?: string; error?: string };
+  if (response === undefined || response === null) {
+    return { error: "Lit gate action returned an empty response." };
+  }
+  // JSON-string form: response is a string holding the JSON payload.
+  if (typeof response === "string") {
+    try {
+      return JSON.parse(response) as { plaintext?: string; error?: string };
+    } catch {
+      return { error: "Lit gate action returned an unparseable response." };
     }
   }
-  return { plaintext: raw.plaintext, error: raw.error };
+  // Object form: response is already the payload object.
+  if (typeof response === "object") {
+    return response as { plaintext?: string; error?: string };
+  }
+  return { error: "Lit gate action returned an unexpected response." };
+}
+
+/** Best-effort string detail for a `has_error` envelope (object or string). */
+function gateErrorDetail(response: unknown): string {
+  const payload = normalizeGatePayload(response);
+  if (payload.error) return payload.error;
+  return typeof response === "string" ? response : JSON.stringify(response);
 }
 
 // ---------------------------------------------------------------------------

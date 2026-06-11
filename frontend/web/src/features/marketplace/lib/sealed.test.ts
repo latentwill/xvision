@@ -110,29 +110,45 @@ describe("invokeGateAction", () => {
     );
   });
 
-  it("POSTs ipfsId + jsParams with the bearer key and returns plaintext", async () => {
+  it("POSTs ipfs_id + js_params with X-Api-Key to /core/v1/lit_action (object form)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ plaintext: "{\"k\":1}" }),
+      // OBJECT form: response is a JSON object.
+      json: async () => ({ response: { plaintext: '{"k":1}' }, has_error: false }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await invokeGateAction(LIT, jsParams);
     expect(out.plaintext).toBe('{"k":1}');
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://lit.example/api/run-action",
+      "https://lit.example/api/core/v1/lit_action",
       expect.objectContaining({
         method: "POST",
-        headers: expect.objectContaining({ authorization: "Bearer test-client-key" }),
-        body: JSON.stringify({ ipfsId: "QmGateCID", jsParams }),
+        headers: expect.objectContaining({ "x-api-key": "test-client-key" }),
+        body: JSON.stringify({ ipfs_id: "QmGateCID", js_params: jsParams }),
       }),
     );
   });
 
-  it("throws SealedGateError when the action returns {error}", async () => {
+  it("parses the json-string response form (response is a JSON string)", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ error: "no license" }) }),
+      vi.fn().mockResolvedValue({
+        ok: true,
+        // JSON-STRING form: response is a string holding the payload.
+        json: async () => ({ response: JSON.stringify({ plaintext: "pt" }), has_error: false }),
+      }),
+    );
+    expect((await invokeGateAction(LIT, jsParams)).plaintext).toBe("pt");
+  });
+
+  it("throws SealedGateError when the action returns {error} (object form)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ response: { error: "no license" }, has_error: false }),
+      }),
     );
     await expect(invokeGateAction(LIT, jsParams)).rejects.toMatchObject({
       name: "SealedGateError",
@@ -140,15 +156,17 @@ describe("invokeGateAction", () => {
     });
   });
 
-  it("unwraps a nested {response:'{...}'} envelope", async () => {
+  it("throws SealedGateError when the envelope has_error is true", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ response: JSON.stringify({ plaintext: "pt" }) }),
+        json: async () => ({ response: "boom", logs: "trace", has_error: true }),
       }),
     );
-    expect((await invokeGateAction(LIT, jsParams)).plaintext).toBe("pt");
+    await expect(invokeGateAction(LIT, jsParams)).rejects.toMatchObject({
+      name: "SealedGateError",
+    });
   });
 
   it("throws on a non-2xx HTTP response", async () => {
@@ -168,7 +186,10 @@ describe("decryptSealedBundle", () => {
     const signMessage = stubWalletSign();
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ plaintext: JSON.stringify({ name: "Strat", agents: [] }) }),
+      json: async () => ({
+        response: { plaintext: JSON.stringify({ name: "Strat", agents: [] }) },
+        has_error: false,
+      }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -182,7 +203,8 @@ describe("decryptSealedBundle", () => {
 
     // jsParams carry the ciphertext, license token, pkp, signature
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.jsParams).toMatchObject({
+    expect(body.ipfs_id).toBe("QmGateCID");
+    expect(body.js_params).toMatchObject({
       pkpId: "0xPKP",
       ciphertext: "CT",
       address: ADDR,
@@ -225,7 +247,10 @@ describe("decryptSealedBundle", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ error: "caller does not hold the license NFT" }),
+        json: async () => ({
+          response: { error: "caller does not hold the license NFT" },
+          has_error: false,
+        }),
       }),
     );
     await expect(
@@ -239,7 +264,10 @@ describe("decryptSealedBundle", () => {
     stubWalletSign();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ plaintext: "[1,2]" }) }),
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ response: { plaintext: "[1,2]" }, has_error: false }),
+      }),
     );
     await expect(
       decryptSealedBundle({ listingId: 1, ciphertext: "CT" }),
