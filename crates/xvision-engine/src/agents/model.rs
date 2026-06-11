@@ -602,12 +602,7 @@ mod tests {
     fn single_slot_default_seeds_higher_max_tokens_for_cot_model() {
         // U12: a CoT model gets the elevated default so the reasoning
         // prefix doesn't truncate the slot before any visible output.
-        let a = Agent::single_slot_default(
-            "01HZ000000000000000000000",
-            "cot",
-            "ollama",
-            "deepseek-r1:8b",
-        );
+        let a = Agent::single_slot_default("01HZ000000000000000000000", "cot", "ollama", "deepseek-r1:8b");
         assert_eq!(a.slots[0].max_tokens, Some(COT_DEFAULT_MAX_TOKENS));
         // And a plain chat model still defaults to auto (`None`).
         let b = Agent::single_slot_default(

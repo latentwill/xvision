@@ -20,39 +20,204 @@ const DENSITY_FLOOR: f64 = 0.14;
 
 /// Locked roster — order is normative (spec Appendix A). Append-only post-launch.
 const PALETTES: [(&str, [&str; 7]); 33] = [
-    ("risoBlue", ["#0d1026", "#1c2a6b", "#2f4bb8", "#3f6df2", "#7fa3ff", "#ffd23f", "#fff6e0"]),
-    ("risoRedTeal", ["#140a0d", "#5c1a2e", "#c1224f", "#ff5470", "#1ca3a3", "#9fe3d4", "#fff3e8"]),
-    ("candyArcade", ["#0d0714", "#2e1245", "#5a1f7d", "#9032a8", "#e84393", "#ffd24f", "#fff5dc"]),
-    ("circuit", ["#041013", "#08242b", "#0f5260", "#18a98f", "#a5f3dc", "#ff3b73", "#ffe95e"]),
-    ("coldSignal", ["#071019", "#102936", "#23545b", "#44a3a3", "#c5e4dc", "#f44465", "#ffe6a7"]),
-    ("grapeSoda", ["#0c0714", "#231140", "#41207a", "#6a39b8", "#9c6be0", "#cda8f0", "#f3e8fd"]),
-    ("punolit", ["#11151f", "#1e3442", "#35665f", "#89a36a", "#d5c686", "#df9d8b", "#e8d7cf"]),
-    ("calmSunset", ["#2c1534", "#5c2751", "#a94768", "#df8584", "#f3cda9", "#f7e6b0", "#fff7d6"]),
-    ("lineage", ["#080916", "#182044", "#263b71", "#426e91", "#75a57d", "#d2bc72", "#f6ead0"]),
-    ("signalRust", ["#0c0b0a", "#26211c", "#4f4138", "#8a6450", "#c97f4f", "#f25c3a", "#ffe9d4"]),
-    ("magmaCore", ["#0c0508", "#330a12", "#70101c", "#bf1f26", "#f2542d", "#ffa552", "#ffe8c2"]),
-    ("tidalDusk", ["#0a1012", "#103035", "#1a5e60", "#2f9a8c", "#e6c36b", "#ef9f63", "#fcefd2"]),
-    ("ultraviolet", ["#08051a", "#160d44", "#2a1a80", "#4730c4", "#7a5ef2", "#b49cff", "#e9e2ff"]),
-    ("voltYellow", ["#0a0a10", "#1d2433", "#2f4866", "#4a7ab8", "#7fb3e8", "#ffe83f", "#fdf8e2"]),
-    ("mintMagenta", ["#070f0d", "#0f2e26", "#1a5c47", "#2f9a73", "#8fe0bb", "#f23fa0", "#fff0f7"]),
-    ("tealEmber", ["#06100f", "#0e3331", "#176561", "#2aa39a", "#aee8df", "#ff7733", "#ffeed9"]),
-    ("indigoCoral", ["#08081a", "#161a4d", "#2a2f8f", "#4a55d6", "#9aa3f2", "#ff6f61", "#fff1e8"]),
-    ("limeViolet", ["#0b0d06", "#222e0d", "#3f5c14", "#6f9a1f", "#b8e040", "#8a3ff2", "#f4eaff"]),
-    ("roseCyan", ["#120710", "#3a0f2e", "#73195c", "#b8268f", "#f060c4", "#2ee6e6", "#e8feff"]),
-    ("amberInk", ["#0b0a12", "#1f1d33", "#3a3866", "#5c59a8", "#9a97d9", "#ffb347", "#fff3da"]),
-    ("crimsonMint", ["#120709", "#3f0d18", "#7c142b", "#c41f44", "#f25c77", "#5ce8b8", "#eafff6"]),
-    ("cobaltTangerine", ["#06091a", "#0e1f56", "#1a3b9e", "#2f63e0", "#85aaf2", "#ff9433", "#fff0dc"]),
-    ("orchidLime", ["#100818", "#2e1247", "#5a2080", "#9438c4", "#d685f0", "#cfe83f", "#f9ffe0"]),
-    ("pinkPitch", ["#0d0c0c", "#1f1d1f", "#3b373b", "#6b6168", "#b3a6ad", "#ff3f8e", "#ffe6f1"]),
-    ("acidTeal", ["#0c1206", "#1f330d", "#3f6618", "#6fa826", "#b8e84a", "#1fb8c9", "#e0fbff"]),
-    ("goldGrape", ["#0e0814", "#291245", "#4d1f7d", "#7d33b8", "#b370e0", "#ffd23f", "#fff6dc"]),
-    ("rustTurquoise", ["#120b08", "#3b1c10", "#73331a", "#b85426", "#e88a4f", "#2ec9b8", "#e8fcf7"]),
-    ("cherryCola", ["#100808", "#330f12", "#661a21", "#a82a35", "#e0525c", "#ffc26b", "#fff0d9"]),
-    ("duskNeon", ["#0a0814", "#1d1640", "#352a73", "#5444a8", "#8a73d9", "#3fffb8", "#eafff5"]),
-    ("peachAbyss", ["#050811", "#0d1c3a", "#173366", "#2a52a3", "#6f8fd9", "#ffb38a", "#fff0e2"]),
-    ("saffronSea", ["#071013", "#0f2c38", "#1a5366", "#2f85a3", "#73c2d9", "#ffc63f", "#fff6da"]),
-    ("furnacePink", ["#0f070c", "#360d2b", "#6e1452", "#b81f7d", "#f23fb0", "#ffae3f", "#ffeed4"]),
-    ("glacierPunch", ["#070b10", "#13283d", "#234a73", "#3f78b3", "#8fc1e8", "#f2543f", "#ffe9e0"]),
+    (
+        "risoBlue",
+        [
+            "#0d1026", "#1c2a6b", "#2f4bb8", "#3f6df2", "#7fa3ff", "#ffd23f", "#fff6e0",
+        ],
+    ),
+    (
+        "risoRedTeal",
+        [
+            "#140a0d", "#5c1a2e", "#c1224f", "#ff5470", "#1ca3a3", "#9fe3d4", "#fff3e8",
+        ],
+    ),
+    (
+        "candyArcade",
+        [
+            "#0d0714", "#2e1245", "#5a1f7d", "#9032a8", "#e84393", "#ffd24f", "#fff5dc",
+        ],
+    ),
+    (
+        "circuit",
+        [
+            "#041013", "#08242b", "#0f5260", "#18a98f", "#a5f3dc", "#ff3b73", "#ffe95e",
+        ],
+    ),
+    (
+        "coldSignal",
+        [
+            "#071019", "#102936", "#23545b", "#44a3a3", "#c5e4dc", "#f44465", "#ffe6a7",
+        ],
+    ),
+    (
+        "grapeSoda",
+        [
+            "#0c0714", "#231140", "#41207a", "#6a39b8", "#9c6be0", "#cda8f0", "#f3e8fd",
+        ],
+    ),
+    (
+        "punolit",
+        [
+            "#11151f", "#1e3442", "#35665f", "#89a36a", "#d5c686", "#df9d8b", "#e8d7cf",
+        ],
+    ),
+    (
+        "calmSunset",
+        [
+            "#2c1534", "#5c2751", "#a94768", "#df8584", "#f3cda9", "#f7e6b0", "#fff7d6",
+        ],
+    ),
+    (
+        "lineage",
+        [
+            "#080916", "#182044", "#263b71", "#426e91", "#75a57d", "#d2bc72", "#f6ead0",
+        ],
+    ),
+    (
+        "signalRust",
+        [
+            "#0c0b0a", "#26211c", "#4f4138", "#8a6450", "#c97f4f", "#f25c3a", "#ffe9d4",
+        ],
+    ),
+    (
+        "magmaCore",
+        [
+            "#0c0508", "#330a12", "#70101c", "#bf1f26", "#f2542d", "#ffa552", "#ffe8c2",
+        ],
+    ),
+    (
+        "tidalDusk",
+        [
+            "#0a1012", "#103035", "#1a5e60", "#2f9a8c", "#e6c36b", "#ef9f63", "#fcefd2",
+        ],
+    ),
+    (
+        "ultraviolet",
+        [
+            "#08051a", "#160d44", "#2a1a80", "#4730c4", "#7a5ef2", "#b49cff", "#e9e2ff",
+        ],
+    ),
+    (
+        "voltYellow",
+        [
+            "#0a0a10", "#1d2433", "#2f4866", "#4a7ab8", "#7fb3e8", "#ffe83f", "#fdf8e2",
+        ],
+    ),
+    (
+        "mintMagenta",
+        [
+            "#070f0d", "#0f2e26", "#1a5c47", "#2f9a73", "#8fe0bb", "#f23fa0", "#fff0f7",
+        ],
+    ),
+    (
+        "tealEmber",
+        [
+            "#06100f", "#0e3331", "#176561", "#2aa39a", "#aee8df", "#ff7733", "#ffeed9",
+        ],
+    ),
+    (
+        "indigoCoral",
+        [
+            "#08081a", "#161a4d", "#2a2f8f", "#4a55d6", "#9aa3f2", "#ff6f61", "#fff1e8",
+        ],
+    ),
+    (
+        "limeViolet",
+        [
+            "#0b0d06", "#222e0d", "#3f5c14", "#6f9a1f", "#b8e040", "#8a3ff2", "#f4eaff",
+        ],
+    ),
+    (
+        "roseCyan",
+        [
+            "#120710", "#3a0f2e", "#73195c", "#b8268f", "#f060c4", "#2ee6e6", "#e8feff",
+        ],
+    ),
+    (
+        "amberInk",
+        [
+            "#0b0a12", "#1f1d33", "#3a3866", "#5c59a8", "#9a97d9", "#ffb347", "#fff3da",
+        ],
+    ),
+    (
+        "crimsonMint",
+        [
+            "#120709", "#3f0d18", "#7c142b", "#c41f44", "#f25c77", "#5ce8b8", "#eafff6",
+        ],
+    ),
+    (
+        "cobaltTangerine",
+        [
+            "#06091a", "#0e1f56", "#1a3b9e", "#2f63e0", "#85aaf2", "#ff9433", "#fff0dc",
+        ],
+    ),
+    (
+        "orchidLime",
+        [
+            "#100818", "#2e1247", "#5a2080", "#9438c4", "#d685f0", "#cfe83f", "#f9ffe0",
+        ],
+    ),
+    (
+        "pinkPitch",
+        [
+            "#0d0c0c", "#1f1d1f", "#3b373b", "#6b6168", "#b3a6ad", "#ff3f8e", "#ffe6f1",
+        ],
+    ),
+    (
+        "acidTeal",
+        [
+            "#0c1206", "#1f330d", "#3f6618", "#6fa826", "#b8e84a", "#1fb8c9", "#e0fbff",
+        ],
+    ),
+    (
+        "goldGrape",
+        [
+            "#0e0814", "#291245", "#4d1f7d", "#7d33b8", "#b370e0", "#ffd23f", "#fff6dc",
+        ],
+    ),
+    (
+        "rustTurquoise",
+        [
+            "#120b08", "#3b1c10", "#73331a", "#b85426", "#e88a4f", "#2ec9b8", "#e8fcf7",
+        ],
+    ),
+    (
+        "cherryCola",
+        [
+            "#100808", "#330f12", "#661a21", "#a82a35", "#e0525c", "#ffc26b", "#fff0d9",
+        ],
+    ),
+    (
+        "duskNeon",
+        [
+            "#0a0814", "#1d1640", "#352a73", "#5444a8", "#8a73d9", "#3fffb8", "#eafff5",
+        ],
+    ),
+    (
+        "peachAbyss",
+        [
+            "#050811", "#0d1c3a", "#173366", "#2a52a3", "#6f8fd9", "#ffb38a", "#fff0e2",
+        ],
+    ),
+    (
+        "saffronSea",
+        [
+            "#071013", "#0f2c38", "#1a5366", "#2f85a3", "#73c2d9", "#ffc63f", "#fff6da",
+        ],
+    ),
+    (
+        "furnacePink",
+        [
+            "#0f070c", "#360d2b", "#6e1452", "#b81f7d", "#f23fb0", "#ffae3f", "#ffeed4",
+        ],
+    ),
+    (
+        "glacierPunch",
+        [
+            "#070b10", "#13283d", "#234a73", "#3f78b3", "#8fc1e8", "#f2543f", "#ffe9e0",
+        ],
+    ),
 ];
 
 /// Symmetry mode of a Bitfields v3 grid. String forms match the TS engine.
@@ -203,7 +368,8 @@ fn raw_grid(seed_str: &str, transparent_states: i32) -> [i8; N * N] {
                 if s < transparent_states {
                     continue;
                 }
-                grid[(y as usize) * N + x as usize] = ((s - transparent_states) % PAL_LEN) as i8; // no-op for s-transparent in [0,5]; kept for line-parity with the TS twin
+                grid[(y as usize) * N + x as usize] = ((s - transparent_states) % PAL_LEN) as i8;
+                // no-op for s-transparent in [0,5]; kept for line-parity with the TS twin
             }
         }
     }
@@ -319,12 +485,15 @@ fn build_grid_from_seed_string(seed_string: &str) -> BuiltGrid {
 fn valid_agent_id(agent_id: &str) -> bool {
     let b = agent_id.as_bytes();
     (1..=64).contains(&b.len())
-        && b.iter().all(|&c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+        && b.iter()
+            .all(|&c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
 }
 
 fn valid_manifest_hash(hash: &str) -> bool {
     let b = hash.as_bytes();
-    b.len() == 64 && b.iter().all(|&c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    b.len() == 64
+        && b.iter()
+            .all(|&c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
 /// Validated entry for mint-path use. Errs on bad input — never falls back.
@@ -335,7 +504,9 @@ fn build_grid(agent_id: &str, manifest_hash: &str) -> Result<BuiltGrid, GenartEr
     if !valid_manifest_hash(manifest_hash) {
         return Err(GenartError::InvalidManifestHash);
     }
-    Ok(build_grid_from_seed_string(&format!("{agent_id}:{manifest_hash}")))
+    Ok(build_grid_from_seed_string(&format!(
+        "{agent_id}:{manifest_hash}"
+    )))
 }
 
 // ---------------------------------------------------------------------------
@@ -375,8 +546,12 @@ fn svg_from_built(built: &BuiltGrid) -> String {
     // One <path> per palette index with ≥1 run, ascending index order.
     for (i, d) in d_strings.iter().enumerate() {
         if !d.is_empty() {
-            write!(out, "<path stroke=\"{}\" stroke-width=\"1\" d=\"{d}\"/>", palette[i])
-                .expect("string write");
+            write!(
+                out,
+                "<path stroke=\"{}\" stroke-width=\"1\" d=\"{d}\"/>",
+                palette[i]
+            )
+            .expect("string write");
         }
     }
     out.push_str("</svg>");
@@ -404,7 +579,10 @@ pub fn generate_token_uri(agent_id: &str, manifest_hash: &str) -> Result<String,
         built.traits.density,
         built.traits.layers,
     );
-    Ok(format!("data:application/json;base64,{}", base64_encode(json.as_bytes())))
+    Ok(format!(
+        "data:application/json;base64,{}",
+        base64_encode(json.as_bytes())
+    ))
 }
 
 /// Keccak-256 of the canonical-JSON manifest bytes, as 64-char lowercase hex.

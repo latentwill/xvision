@@ -469,11 +469,7 @@ mod tests {
         }"#;
 
         let result = serde_json::from_str::<MetricsSummary>(legacy_json);
-        assert!(
-            result.is_ok(),
-            "expected Ok but got: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "expected Ok but got: {:?}", result.err());
         let ms = result.unwrap();
         let baselines = ms.baselines.expect("baselines should be Some");
         // random_direction should default to BaselineMetrics { return_pct: 0.0, sharpe: 0.0 }

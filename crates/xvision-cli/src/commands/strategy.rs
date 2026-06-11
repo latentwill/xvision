@@ -2191,8 +2191,12 @@ fn filter_from_strategy_json(
     }
 
     let body = serde_json::to_string(&value).exit_with(XvnExit::Upstream)?;
-    let filter = parse_filter_json(&body)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("filter parse error: {}", augment_filter_parse_error(&e.to_string()))))?;
+    let filter = parse_filter_json(&body).map_err(|e| {
+        CliError::usage(anyhow::anyhow!(
+            "filter parse error: {}",
+            augment_filter_parse_error(&e.to_string())
+        ))
+    })?;
     if filter.strategy_id != StrategyId::new(strategy_id) {
         return Err(CliError::usage(anyhow::anyhow!(
             "filter strategy_id did not match strategy `{strategy_id}`"
@@ -3377,13 +3381,23 @@ pub mod atomic_create {
 
     #[test]
     fn count_asset_flag_single_occurrence() {
-        let args = ["xvn", "strategy", "new", "--asset", "BTC/USD", "--timeframe", "1h"];
+        let args = [
+            "xvn",
+            "strategy",
+            "new",
+            "--asset",
+            "BTC/USD",
+            "--timeframe",
+            "1h",
+        ];
         assert_eq!(count_asset_flag_occurrences(args), 1);
     }
 
     #[test]
     fn count_asset_flag_duplicate_space_form() {
-        let args = ["xvn", "strategy", "new", "--asset", "BTC/USD", "--asset", "ETH/USD"];
+        let args = [
+            "xvn", "strategy", "new", "--asset", "BTC/USD", "--asset", "ETH/USD",
+        ];
         assert_eq!(count_asset_flag_occurrences(args), 2);
     }
 

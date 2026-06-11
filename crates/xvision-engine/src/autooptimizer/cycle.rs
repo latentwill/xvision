@@ -868,10 +868,7 @@ where
             session_id: String::new(),
             cycle_id: cycle_id.to_string(),
             parent_hash: parent_node.bundle_hash.to_hex(),
-            child_hash: candidate_hash
-                .as_ref()
-                .map(|h| h.to_hex())
-                .unwrap_or_default(),
+            child_hash: candidate_hash.as_ref().map(|h| h.to_hex()).unwrap_or_default(),
             mutator_model: mutator.model.clone(),
         });
         progress(CycleProgressEvent::PhaseStarted {

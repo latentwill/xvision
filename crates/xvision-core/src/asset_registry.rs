@@ -17,8 +17,8 @@ static INTERN_SET: LazyLock<Mutex<HashMap<String, &'static str>>> = LazyLock::ne
     // &'static str as the string literal "BTC" in the const definition.
     // Not required for correctness (Eq is value-based), but avoids leaking.
     let seeds: &[&'static str] = &[
-        "BTC", "ETH", "LTC", "SOL", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "SHIB",
-        "MATIC", "BCH", "USDT", "USDC",
+        "BTC", "ETH", "LTC", "SOL", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "SHIB", "MATIC", "BCH",
+        "USDT", "USDC",
     ];
     Mutex::new(seeds.iter().map(|&s| (s.to_string(), s)).collect())
 });
@@ -144,11 +144,21 @@ pub fn is_alpaca_crypto(asset: AssetSymbol) -> bool {
     }
     // Registry not loaded: check the legacy static set.
     const LEGACY: &[AssetSymbol] = &[
-        AssetSymbol::Btc,  AssetSymbol::Eth,  AssetSymbol::Ltc,
-        AssetSymbol::Sol,  AssetSymbol::Avax, AssetSymbol::Link,
-        AssetSymbol::Aave, AssetSymbol::Uni,  AssetSymbol::Dot,
-        AssetSymbol::Doge, AssetSymbol::Shib, AssetSymbol::Matic,
-        AssetSymbol::Bch,  AssetSymbol::Usdt, AssetSymbol::Usdc,
+        AssetSymbol::Btc,
+        AssetSymbol::Eth,
+        AssetSymbol::Ltc,
+        AssetSymbol::Sol,
+        AssetSymbol::Avax,
+        AssetSymbol::Link,
+        AssetSymbol::Aave,
+        AssetSymbol::Uni,
+        AssetSymbol::Dot,
+        AssetSymbol::Doge,
+        AssetSymbol::Shib,
+        AssetSymbol::Matic,
+        AssetSymbol::Bch,
+        AssetSymbol::Usdt,
+        AssetSymbol::Usdc,
     ];
     LEGACY.iter().any(|&s| s == asset)
 }
@@ -159,7 +169,10 @@ pub fn is_alpaca_crypto(asset: AssetSymbol) -> bool {
 pub fn symbol_from_orderly(orderly_sym: &str) -> Option<AssetSymbol> {
     // Registry path: scan for matching orderly_symbol.
     if let Some(reg) = REGISTRY.get() {
-        if let Some(entry) = reg.values().find(|e| e.orderly_symbol.as_deref() == Some(orderly_sym)) {
+        if let Some(entry) = reg
+            .values()
+            .find(|e| e.orderly_symbol.as_deref() == Some(orderly_sym))
+        {
             return Some(entry.symbol);
         }
         // Registry loaded but no match → no known symbol for this market.
@@ -168,8 +181,12 @@ pub fn symbol_from_orderly(orderly_sym: &str) -> Option<AssetSymbol> {
     }
     // Fallback: parse "PERP_{BASE}_USDC" pattern.
     let base = orderly_sym.strip_prefix("PERP_")?.strip_suffix("_USDC")?;
-    if base.is_empty() { return None; }
-    if !base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') { return None; }
+    if base.is_empty() {
+        return None;
+    }
+    if !base.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
     intern_symbol(base).map(AssetSymbol::from_static)
 }
 
@@ -188,10 +205,7 @@ mod tests {
 
     #[test]
     fn alpaca_fallback_generates_pair() {
-        assert_eq!(
-            alpaca_pair(AssetSymbol::Eth),
-            Some("ETH/USD".to_string())
-        );
+        assert_eq!(alpaca_pair(AssetSymbol::Eth), Some("ETH/USD".to_string()));
     }
 
     #[test]

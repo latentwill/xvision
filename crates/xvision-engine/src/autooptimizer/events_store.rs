@@ -239,11 +239,10 @@ mod tests {
             parent_hash: "p1".into(),
         };
         persist_cycle_event(&pool, &event, "cycle:c1").await.unwrap();
-        let sid: String =
-            sqlx::query_scalar("SELECT session_id FROM autooptimizer_events LIMIT 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let sid: String = sqlx::query_scalar("SELECT session_id FROM autooptimizer_events LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(sid, "real-session");
     }
 
@@ -315,7 +314,9 @@ mod tests {
             let sid = format!("session-{i:03}");
             let ts = format!("2026-01-01T00:00:{i:02}Z");
             insert_session_sync(&pool, &sid, &ts).await;
-            append_event(&pool, &sid, None, "test_event", r#"{}"#).await.unwrap();
+            append_event(&pool, &sid, None, "test_event", r#"{}"#)
+                .await
+                .unwrap();
         }
 
         // One dashboard-launched cycle: its events carry the `cycle:` fallback
@@ -329,12 +330,11 @@ mod tests {
 
         prune_old_events(&pool).await.unwrap();
 
-        let kept: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:01HX0'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let kept: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:01HX0'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(kept, 2, "dashboard-launched cycle events must survive prune");
     }
 
@@ -361,20 +361,18 @@ mod tests {
             .unwrap();
         assert_eq!(after, 50, "only 50 most-recent cycle keys retained");
 
-        let oldest: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:000'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let oldest: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:000'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(oldest, 0, "oldest cycle key pruned");
 
-        let newest: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:054'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let newest: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:054'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(newest, 1, "newest cycle key retained");
     }
 }

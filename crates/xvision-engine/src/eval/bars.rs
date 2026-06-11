@@ -673,11 +673,7 @@ mod coverage_tests {
     /// Leading and trailing gaps around a single mid-window segment.
     #[test]
     fn test_leading_and_trailing_gaps() {
-        let segs = merge_segments(vec![win(
-            "a",
-            "2025-02-01T00:00:00Z",
-            "2025-03-01T00:00:00Z",
-        )]);
+        let segs = merge_segments(vec![win("a", "2025-02-01T00:00:00Z", "2025-03-01T00:00:00Z")]);
         let report = coverage_for(&segs, ts("2025-01-01T00:00:00Z"), ts("2025-04-01T00:00:00Z"));
         assert!(!report.fully_covered);
         assert_eq!(report.gaps.len(), 2, "leading + trailing gaps");

@@ -330,9 +330,7 @@ const ALPACA_DATA_BASE_URL: &str = "https://data.alpaca.markets";
 /// (The QA U16 note listed env-first; we deliberately keep stored-first to match
 /// the established runtime behavior so the dashboard remains the single source
 /// of truth — env is the escape hatch, not the override.)
-pub async fn resolve_alpaca_credentials(
-    xvn_home: &Path,
-) -> ApiResult<ResolvedAlpacaCredentials> {
+pub async fn resolve_alpaca_credentials(xvn_home: &Path) -> ApiResult<ResolvedAlpacaCredentials> {
     // 1. Stored creds win.
     if let Some(c) = load_alpaca_credentials(xvn_home).await? {
         if !c.api_key_id.trim().is_empty() && !c.api_secret_key.trim().is_empty() {
@@ -352,9 +350,7 @@ pub async fn resolve_alpaca_credentials(
 
     // 2. Env fallback. Resolve each var independently so the error can name the
     //    SPECIFIC missing one.
-    let key_id = env::var("APCA_API_KEY_ID")
-        .ok()
-        .filter(|s| !s.trim().is_empty());
+    let key_id = env::var("APCA_API_KEY_ID").ok().filter(|s| !s.trim().is_empty());
     let secret = env::var("APCA_API_SECRET_KEY")
         .ok()
         .filter(|s| !s.trim().is_empty());
@@ -737,7 +733,10 @@ mod tests {
     /// guard on that so the test is not flaky under a pre-seeded env).
     #[tokio::test]
     async fn resolve_alpaca_credentials_fail_fast_names_credential() {
-        if env::var("APCA_API_KEY_ID").map(|v| !v.is_empty()).unwrap_or(false) {
+        if env::var("APCA_API_KEY_ID")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             // Env creds present in this process — the stored-empty path would
             // succeed via env, so skip the negative assertion here.
             return;

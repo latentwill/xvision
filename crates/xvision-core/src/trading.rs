@@ -968,8 +968,7 @@ mod tests {
         m.insert(AssetSymbol::Btc, 42i32);
         let json = serde_json::to_string(&m).unwrap();
         assert_eq!(json, r#"{"BTC":42}"#);
-        let back: std::collections::BTreeMap<AssetSymbol, i32> =
-            serde_json::from_str(&json).unwrap();
+        let back: std::collections::BTreeMap<AssetSymbol, i32> = serde_json::from_str(&json).unwrap();
         assert_eq!(back[&AssetSymbol::Btc], 42);
     }
 

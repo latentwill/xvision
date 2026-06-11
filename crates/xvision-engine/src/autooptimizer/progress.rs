@@ -271,8 +271,7 @@ mod tests {
         assert_eq!(v["mutator_model"], "claude-3-5-sonnet");
 
         // Old JSON without the new keys still deserializes (backward compat).
-        let old_json =
-            r#"{"type":"mutation_proposed","session_id":"s1","cycle_id":"c1","parent_hash":"p1"}"#;
+        let old_json = r#"{"type":"mutation_proposed","session_id":"s1","cycle_id":"c1","parent_hash":"p1"}"#;
         let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
         match parsed {
             CycleProgressEvent::MutationProposed {
@@ -281,10 +280,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(child_hash, "", "child_hash should default to empty string");
-                assert_eq!(
-                    mutator_model, "",
-                    "mutator_model should default to empty string"
-                );
+                assert_eq!(mutator_model, "", "mutator_model should default to empty string");
             }
             _ => panic!("wrong variant"),
         }
@@ -308,7 +304,8 @@ mod tests {
         assert!((v["delta_day"].as_f64().unwrap() - 0.042).abs() < 1e-9);
 
         // Old JSON without delta_day deserializes to None.
-        let old_json = r#"{"type":"mutation_gated","cycle_id":"c1","child_hash":"abc","passed":true,"outcome":"kept"}"#;
+        let old_json =
+            r#"{"type":"mutation_gated","cycle_id":"c1","child_hash":"abc","passed":true,"outcome":"kept"}"#;
         let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
         match parsed {
             CycleProgressEvent::MutationGated { delta_day, .. } => {

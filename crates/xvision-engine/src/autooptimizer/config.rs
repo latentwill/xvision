@@ -439,9 +439,8 @@ impl AutoOptimizerConfig {
         // "parsing autooptimizer config at <path>" with no field-level signal.
         // Inlining `{e}` here guarantees the offending field is visible no
         // matter how the caller formats the error.
-        toml::from_str(&raw).map_err(|e| {
-            anyhow::anyhow!("parsing autooptimizer config at {}: {e}", path.display())
-        })
+        toml::from_str(&raw)
+            .map_err(|e| anyhow::anyhow!("parsing autooptimizer config at {}: {e}", path.display()))
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {

@@ -161,20 +161,18 @@ pub async fn post_publish(
     let agent_id = body.strategy_id.clone();
 
     // d. Genart tokenURI (data:application/json;base64,…).
-    let token_uri = generate_token_uri(&agent_id, &manifest_hash).map_err(|e| {
-        DashboardError::Validation {
+    let token_uri =
+        generate_token_uri(&agent_id, &manifest_hash).map_err(|e| DashboardError::Validation {
             field: "strategy_id".into(),
             msg: format!("genart tokenURI generation failed: {e}"),
-        }
-    })?;
+        })?;
 
     // e. Chain gate — degrade loudly without env config. All config is
     //    validated here, before any chain write, so a missing env var cannot
     //    strand an orphan mint.
     let chain = ChainEnv::from_env().ok_or_else(|| {
         DashboardError::ServiceUnavailable(
-            "chain publishing not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK"
-                .into(),
+            "chain publishing not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
         )
     })?;
     let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
@@ -207,18 +205,17 @@ pub async fn post_publish(
     let identity_client = IdentityClient::connect(&chain.rpc_url, registry_addresses, chain.chain_id)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity connect: {e}")))?;
-    let agent_uri = url::Url::parse(&token_uri).map_err(|e| {
-        DashboardError::Internal(anyhow::anyhow!("tokenURI is not a valid URL: {e}"))
-    })?;
+    let agent_uri = url::Url::parse(&token_uri)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("tokenURI is not a valid URL: {e}")))?;
     let token_id = identity_client
         .register(&agent_uri, &signer)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity register: {e}")))?;
 
     // g. Create the marketplace listing.
-    let content_hash: B256 = manifest_hash.parse().map_err(|e| {
-        DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}"))
-    })?;
+    let content_hash: B256 = manifest_hash
+        .parse()
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}")))?;
     let listing = driver
         .publish_listing(PublishRequest {
             agent_nft_id: token_id.0,
@@ -229,7 +226,12 @@ pub async fn post_publish(
             transferable_license: body.transferable_license,
         })
         .await
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("publish listing failed after minting identity NFT token_id={}: {e}", token_id)))?;
+        .map_err(|e| {
+            DashboardError::Internal(anyhow::anyhow!(
+                "publish listing failed after minting identity NFT token_id={}: {e}",
+                token_id
+            ))
+        })?;
 
     // h. 201 + receipt.
     Ok((

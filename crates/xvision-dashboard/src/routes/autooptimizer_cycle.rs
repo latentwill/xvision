@@ -106,20 +106,46 @@ pub async fn run_defaults() -> Result<Json<RunDefaultsResponse>, DashboardError>
 fn event_ids(ev: &CycleProgressEvent) -> (String, Option<String>) {
     use CycleProgressEvent::*;
     match ev {
-        CycleStarted { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        ParentSelected { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        MutationProposed { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        NoCandidate { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        MutationGated { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        HonestyCheckRun { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        JudgeFinding { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        CycleFinished { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        PhaseStarted { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        PhaseFinished { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        EvalProgress { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
-        Heartbeat { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        CycleStarted {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        ParentSelected {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        MutationProposed {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        NoCandidate {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        MutationGated {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        HonestyCheckRun {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        JudgeFinding {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        CycleFinished {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        PhaseStarted {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        PhaseFinished {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        EvalProgress {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        Heartbeat {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
         SessionStateChanged { session_id, .. } => (session_id.clone(), None),
-        FlywheelCompiled { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        FlywheelCompiled {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
     }
 }
 
@@ -141,7 +167,9 @@ async fn persist_progress_event(pool: &sqlx::SqlitePool, ev: &CycleProgressEvent
         session_id
     };
     let payload = serde_json::to_string(ev).unwrap_or_else(|_| "{}".into());
-    if let Err(e) = events_store::append_event(pool, &session_key, cycle_id.as_deref(), event_kind(ev), &payload).await {
+    if let Err(e) =
+        events_store::append_event(pool, &session_key, cycle_id.as_deref(), event_kind(ev), &payload).await
+    {
         tracing::warn!(error = %e, "persist optimizer cycle event failed (best-effort)");
     }
 }
@@ -1635,9 +1663,8 @@ mod persist_tests {
         create_events_table(&pool).await;
 
         // Construct event via serde_json so adding new fields (Task 0a) doesn't break this.
-        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
-            serde_json::from_str(
-                r#"{
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent = serde_json::from_str(
+            r#"{
                     "type": "mutation_gated",
                     "session_id": "sess-1",
                     "cycle_id": "cyc-1",
@@ -1645,19 +1672,21 @@ mod persist_tests {
                     "passed": true,
                     "outcome": "kept"
                 }"#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         persist_progress_event(&pool, &ev).await;
 
-        let row: (String, Option<String>, String) = sqlx::query_as(
-            "SELECT kind, cycle_id, payload_json FROM autooptimizer_events LIMIT 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: (String, Option<String>, String) =
+            sqlx::query_as("SELECT kind, cycle_id, payload_json FROM autooptimizer_events LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
-        assert_eq!(row.0, "mutation_gated_passed", "kind should be event_kind() output");
+        assert_eq!(
+            row.0, "mutation_gated_passed",
+            "kind should be event_kind() output"
+        );
         assert_eq!(row.1.as_deref(), Some("cyc-1"), "cycle_id should be set");
         // payload_json must be valid JSON containing the event fields
         let payload: serde_json::Value = serde_json::from_str(&row.2).unwrap();
@@ -1671,11 +1700,10 @@ mod persist_tests {
         let pool = open_pool().await;
         create_events_table(&pool).await;
 
-        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
-            serde_json::from_str(
-                r#"{"type":"session_state_changed","session_id":"sess-2","state":"running"}"#,
-            )
-            .unwrap();
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent = serde_json::from_str(
+            r#"{"type":"session_state_changed","session_id":"sess-2","state":"running"}"#,
+        )
+        .unwrap();
 
         persist_progress_event(&pool, &ev).await;
 
@@ -1700,9 +1728,8 @@ mod persist_tests {
         let pool = open_pool().await;
         create_events_table(&pool).await;
 
-        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
-            serde_json::from_str(
-                r#"{
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent = serde_json::from_str(
+            r#"{
                     "type": "mutation_gated",
                     "session_id": "",
                     "cycle_id": "cyc-dash-1",
@@ -1710,8 +1737,8 @@ mod persist_tests {
                     "passed": true,
                     "outcome": "kept"
                 }"#,
-            )
-            .unwrap();
+        )
+        .unwrap();
 
         persist_progress_event(&pool, &ev).await;
 
@@ -1734,19 +1761,17 @@ mod persist_tests {
         let pool = open_pool().await;
         create_events_table(&pool).await;
 
-        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
-            serde_json::from_str(
-                r#"{"type":"session_state_changed","session_id":"sess-9","state":"running"}"#,
-            )
-            .unwrap();
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent = serde_json::from_str(
+            r#"{"type":"session_state_changed","session_id":"sess-9","state":"running"}"#,
+        )
+        .unwrap();
 
         persist_progress_event(&pool, &ev).await;
 
-        let session_id: String =
-            sqlx::query_scalar("SELECT session_id FROM autooptimizer_events LIMIT 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let session_id: String = sqlx::query_scalar("SELECT session_id FROM autooptimizer_events LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(session_id, "sess-9");
     }
 }
@@ -1766,8 +1791,8 @@ mod cycle_events_tests {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let cfg = std::fs::read_to_string("../../config/default.toml")
-            .expect("read workspace config/default.toml");
+        let cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = crate::state::AppState::new(xvn_home)
             .await

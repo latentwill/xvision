@@ -114,7 +114,10 @@ fn marketplace_onchain_buy_proceeds_to_env_validation() {
         .output()
         .expect("xvn marketplace buy");
 
-    assert!(!out.status.success(), "onchain buy without MANTLE_PRIVATE_KEY must fail");
+    assert!(
+        !out.status.success(),
+        "onchain buy without MANTLE_PRIVATE_KEY must fail"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Must reach the driver env check — not an EIP-3009 gate message
     assert!(
