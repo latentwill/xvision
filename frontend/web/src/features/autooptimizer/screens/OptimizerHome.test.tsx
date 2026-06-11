@@ -118,10 +118,10 @@ function mockMutations() {
     mutate: resumeMutateMock,
     isPending: false,
   } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
-  vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
+  vi.spyOn(apiModule, "useCancelCycle").mockReturnValue({
     mutate: cancelMutateMock,
     isPending: false,
-  } as unknown as ReturnType<typeof apiModule.useCancelSession>);
+  } as unknown as ReturnType<typeof apiModule.useCancelCycle>);
   return { pauseMutateMock, resumeMutateMock, cancelMutateMock };
 }
 
@@ -245,10 +245,37 @@ describe("OptimizerHome — running", () => {
 
     await user.click(screen.getByRole("button", { name: /pause/i }));
     expect(pauseMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
+    // Cancel targets the MOUNTED cycle-level route (POST /cycles/:id/cancel),
+    // not the unmounted /sessions/:id/cancel surface.
     await user.click(screen.getByRole("button", { name: /cancel/i }));
-    expect(cancelMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+    expect(cancelMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
 
     expect(screen.queryByText(/waiting for/i)).toBeNull();
+  });
+
+  it("Pause/Cancel still work after a page reload mid-run (empty stream buffer, cycle id from status)", async () => {
+    // After a reload the SSE buffer is empty — activeCycleId from the stream
+    // is null. StatusResponse.active_cycle_id is the fallback target.
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
+      ...runningSessionStatus,
+      active_cycle_id: "cycle_FROMSTATUS",
+    });
+    vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([lastCycle]));
+    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+      events: [],
+      connected: true,
+      isRunning: false,
+      activeCycleId: null,
+    });
+    const { pauseMutateMock, cancelMutateMock } = mockMutations();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+
+    await screen.findByRole("heading", { level: 1, name: /A run is in progress\./ });
+    await user.click(screen.getByRole("button", { name: /pause/i }));
+    expect(pauseMutateMock).toHaveBeenCalledWith("cycle_FROMSTATUS");
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(cancelMutateMock).toHaveBeenCalledWith("cycle_FROMSTATUS");
   });
 });
 
@@ -266,7 +293,7 @@ describe("OptimizerHome — paused", () => {
     await user.click(screen.getByRole("button", { name: /resume/i }));
     expect(resumeMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
     await user.click(screen.getByRole("button", { name: /cancel/i }));
-    expect(cancelMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+    expect(cancelMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
 
     expect(screen.queryByText(/waiting for/i)).toBeNull();
   });

@@ -19,7 +19,7 @@ import {
   useSchedule,
   usePauseCycle,
   useResumeCycle,
-  useCancelSession,
+  useCancelCycle,
   type LineageNode,
 } from "../api";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
@@ -106,10 +106,14 @@ export function OptimizerHome() {
     if (isActive) setLauncherOpen(false);
   }, [isActive]);
 
-  const { activeCycleId } = useCycleEventStream();
+  // The stream-derived cycle id is empty after a page reload mid-run (the SSE
+  // buffer starts fresh); the status poll's active_cycle_id is the fallback so
+  // Pause/Resume/Cancel stay wired.
+  const { activeCycleId: streamCycleId } = useCycleEventStream();
+  const activeCycleId = streamCycleId ?? status?.active_cycle_id ?? null;
   const pauseMutation = usePauseCycle();
   const resumeMutation = useResumeCycle();
-  const cancelMutation = useCancelSession();
+  const cancelMutation = useCancelCycle();
 
   const launchButton: ReactNode = !isActive ? (
     <button
@@ -128,10 +132,10 @@ export function OptimizerHome() {
   ) : null;
 
   const cancelButton =
-    session != null ? (
+    session != null && activeCycleId != null ? (
       <button
         type="button"
-        onClick={() => cancelMutation.mutate(session.session_id)}
+        onClick={() => cancelMutation.mutate(activeCycleId)}
         disabled={cancelMutation.isPending}
         className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
       >

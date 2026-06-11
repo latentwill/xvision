@@ -319,6 +319,17 @@ export function useResumeCycle() {
   });
 }
 
+/** useMutation hook: cancel the in-flight cycle (mounted cycle-level route),
+ *  then refresh status. Use this instead of `useCancelSession` — the
+ *  session-level `/sessions/:id/cancel` route is not mounted. */
+export function useCancelCycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cycleId: string) => cancelRunCycle(cycleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["optimizer/status"] }),
+  });
+}
+
 // ─── Session-level control mutations (P4) ────────────────────────────────────
 
 /** Pause a running optimizer session. */
