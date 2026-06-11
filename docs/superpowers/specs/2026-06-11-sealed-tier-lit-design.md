@@ -16,8 +16,12 @@ the public ciphertext is useless, and gate decryption on `LicenseToken.balanceOf
 
 Threat tiers we must address (from the 2026-06-11 discussion):
 1. **Non-buyers scraping IPFS** — MUST be cryptographically impossible. (Solved.)
-2. **Our dashboard server compromised** — MUST NOT leak the catalog. So the server
-   must never hold decryption keys. (Solved: keys live in Lit's TEE network.)
+2. **Our dashboard server compromised** — MUST NOT allow direct bulk decrypt of
+   the catalog. So the server must never hold decryption keys. (Solved for
+   server-side key custody: keys live in Lit's TEE network. Residual risk:
+   a server that can ship malicious frontend code could still exfiltrate a
+   licensed buyer's decrypted copy; handle that separately with asset integrity,
+   CSP, release signing, and monitoring.)
 3. **A legitimate buyer leaks plaintext** — irreducible (analog hole). NOT solved by
    crypto; mitigated by product design (soulbound licenses, re-encrypt on update,
    value in the live attestation/perf stream). Documented, not engineered away.
@@ -32,13 +36,15 @@ Verified 2026-06-11 (research spike, sources in the bead). Key facts that shaped
   `@lit-protocol/*` SDKs targeting them) are **dead** — we write none of that.
 - **No SDK required.** Chipotle is a REST API. Encryption/decryption run *inside a Lit
   Action* (sandboxed JS in the TEE) via `Lit.Actions.Encrypt/Decrypt`; the access gate
-  is ordinary JS in that action, pinned to an IPFS CID for immutability.
+  is ordinary JS in that action, content-addressed by CID and bound into the Lit group
+  for immutability.
 - **Mantle Sepolia (5003) needs no allowlist.** The action's runtime injects ethers v5
   and allows outbound RPC — our gate is literally `new JsonRpcProvider(mantle_rpc)` +
   `balanceOf`. Chain-agnostic by construction.
-- **Pricing: ~$0.01/decrypt, reads free, $5 min, credits never expire.** A platform
-  cost on the 5% commission, never a per-buyer fee. (Threshold TACo is the fallback but
-  is mid-relaunch until Q3 2026 — not viable now; noted in the bead.)
+- **Pricing: Lit Action execution is ~$0.01/second with a 1-second minimum; reads are
+  free, credit packages start at $5, and credits never expire.** Model a typical decrypt
+  as a platform cost on the 5% commission, never a per-buyer fee. (Threshold TACo is the
+  fallback but is mid-relaunch until Q3 2026 — not viable now; noted in the bead.)
 - **Nothing self-hosted.** Opposite of Kubo: Lit is the hosted network; Kubo is our box.
 
 **Vendor-churn risk is real** (3 breaking network migrations in 6 months). Mitigation is
@@ -85,9 +91,9 @@ client-side vs fetched plaintext).
 | `SealedBundleCrypto` trait | `crates/xvision-marketplace/src/sealed.rs` (new) | `encrypt(plaintext) -> Ciphertext`, `gate_action_cid()`, abstracts Lit; a `NoopSealed` for tests + an operator-escrow fallback impl. Lit calls are HTTP (reqwest), no SDK. |
 | Publish sealed path | `routes/marketplace.rs` post_publish | Replace the §PR920 hard-400 for `tier==sealed` with: encrypt → pin ciphertext → contentHash=ciphertext hash. Requires Lit config present (else keep 400 "sealed unavailable: Lit not configured"). |
 | Lit config | `chain_config.rs` | New `lit: Option<LitConfig{ api_base, api_key, pkp_id, gate_action_cid }>` from env `XVN_LIT_*`. Resolved at startup like the rest. |
-| Sealed import | `routes/marketplace.rs` | `POST /api/marketplace/listings/:id/import-sealed {manifest}` — server RE-CHECKS balanceOf (defense in depth; the browser already gated) → verify nothing (manifest came from a licensed decrypt) → import_strategy. The plaintext hash check is the browser's job; server trusts the license re-check. |
+| Sealed import | `routes/marketplace.rs` | `POST /api/marketplace/listings/:id/import-sealed {manifest, plaintext_hash}` — server RE-CHECKS balanceOf (defense in depth; the browser already gated), verifies the canonical manifest hash against `plaintext_hash`, then runs the normal manifest/import validation before `import_strategy`. The browser hash check is a UX fast path, not the server trust boundary; if the server ever needs provenance proof that the manifest came from this listing, add a Lit-signed decrypt receipt or seller signature instead of trusting browser input. |
 | Frontend sealed import | `features/marketplace/lib/sealed.ts` (new) + InstallSteps | SIWE sign + POST gate action + integrity check + POST import-sealed. The "Decrypt sealed bundle" step (removed in P3 as a fake) returns as real. |
-| Gate action | `contracts/lit-actions/sealed-gate.js` (new, version-controlled, pinned to IPFS) | The §3 import action JS. Pinned CID is the immutable gate; its CID is `XVN_LIT_GATE_ACTION_CID`. |
+| Gate action | `contracts/lit-actions/sealed-gate.js` (new, version-controlled, submitted/registered with Lit and optionally mirrored to IPFS for audit) | The §3 import action JS. The computed action CID is the immutable gate; its CID is `XVN_LIT_GATE_ACTION_CID`. |
 
 ## 5. Risk controls baked in
 - **Server never decrypts** → tier-2 threat closed even if dashboard is popped.
@@ -97,8 +103,10 @@ client-side vs fetched plaintext).
   all three. This is the easiest thing to get wrong — it gets its own tests.
 - **ciphertext contentHash** lets the existing bundle route integrity-check sealed blobs
   without decrypting (returns `{verified, encrypted: true}`, no manifest).
-- **1 MB Lit Action payload limit** — strategy manifests are KBs; add a guard + chunking
-  TODO only if a manifest ever approaches it.
+- **Lit Action size limits** — current Chipotle defaults are 16 MB for combined action
+  code + serialized `js_params` and 1 MB for the response payload. Strategy manifests are
+  KBs; add request/response guards now, and only add chunking or action-side CID fetch if
+  a manifest ever approaches those limits.
 
 ## 6. Out of scope / explicit non-goals
 - Stopping a legitimate buyer from leaking (analog hole — product mitigations only).
@@ -108,9 +116,12 @@ client-side vs fetched plaintext).
 
 ## 7. Operator setup checklist (Chipotle)
 1. Account at `dashboard.chipotle.litprotocol.com`; save the account API key.
-2. Fund min $5 (card or crypto; LITKEY on Base = 25% off). ~$0.01/decrypt thereafter.
+2. Fund min $5 (card or crypto; LITKEY on Base = 25% off). Typical decrypt-sized
+   Lit Actions should cost about the 1-second minimum thereafter.
 3. Create a **vault PKP**; note `pkpId`.
-4. Commit `contracts/lit-actions/sealed-gate.js`, pin it to IPFS (your Kubo), record the CID.
+4. Commit `contracts/lit-actions/sealed-gate.js`, submit/register it with Lit, and record
+   the computed action CID. Mirror/pin the source to IPFS for audit if the current Lit
+   toolchain supports that path.
 5. Create a **group** binding {PKP, gate-action CID, a tightly-scoped usage API key}.
 6. Set dashboard env: `XVN_LIT_API_BASE`, `XVN_LIT_API_KEY`, `XVN_LIT_PKP_ID`,
    `XVN_LIT_GATE_ACTION_CID`. Sealed publishing unlocks; absent → stays 400.
