@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import type { RunSummary } from "@/api/types.gen";
 import {
+  alignFieldSeries,
   drawdownFromEquity,
   evalThroughput,
+  fieldRunSeries,
   formatRelativeTime,
+  holdCompareSeries,
   isChartableRun,
   latestCompletionStamp,
+  normalizePulseView,
   pickHeroRun,
+  PULSE_VIEWS,
   pulseChartSeries,
   recentMetricSeries,
 } from "./pulse";
@@ -196,5 +201,74 @@ describe("formatRelativeTime", () => {
   it("returns empty string for null/invalid input", () => {
     expect(formatRelativeTime(null, now)).toBe("");
     expect(formatRelativeTime("not-a-date", now)).toBe("");
+  });
+});
+
+describe("normalizePulseView", () => {
+  it("accepts every known view", () => {
+    for (const v of PULSE_VIEWS) expect(normalizePulseView(v)).toBe(v);
+  });
+  it("falls back to return for unknown/null", () => {
+    expect(normalizePulseView(null)).toBe("return");
+    expect(normalizePulseView("bogus")).toBe("return");
+  });
+});
+
+describe("fieldRunSeries", () => {
+  const eq = (t: number, e: number) => ({ time: t, equity_usd: e });
+
+  it("normalizes to elapsed fraction and return pct", () => {
+    const s = fieldRunSeries("r1", "Alpha", [eq(100, 100_000), eq(150, 110_000), eq(200, 99_000)]);
+    expect(s).not.toBeNull();
+    expect(s!.fraction).toEqual([0, 0.5, 1]);
+    expect(s!.returnPct[0]).toBeCloseTo(0);
+    expect(s!.returnPct[1]).toBeCloseTo(10);
+    expect(s!.returnPct[2]).toBeCloseTo(-1);
+  });
+
+  it("rejects degenerate series", () => {
+    expect(fieldRunSeries("r1", "x", [])).toBeNull();
+    expect(fieldRunSeries("r1", "x", [eq(100, 100_000)])).toBeNull();
+    expect(fieldRunSeries("r1", "x", [eq(100, 0), eq(200, 5)])).toBeNull(); // zero base
+    expect(fieldRunSeries("r1", "x", [eq(100, 1), eq(100, 2)])).toBeNull(); // zero span
+  });
+});
+
+describe("alignFieldSeries", () => {
+  it("unions fractions and gaps non-shared samples with null", () => {
+    const a = { runId: "a", label: "A", fraction: [0, 1], returnPct: [0, 4] };
+    const b = { runId: "b", label: "B", fraction: [0, 0.5, 1], returnPct: [0, 1, 2] };
+    const { x, ys } = alignFieldSeries([a, b]);
+    expect(x).toEqual([0, 0.5, 1]);
+    expect(ys[0]).toEqual([0, null, 4]);
+    expect(ys[1]).toEqual([0, 1, 2]);
+  });
+});
+
+describe("holdCompareSeries", () => {
+  it("normalizes both curves to return pct on the shared axis", () => {
+    const equity = [
+      { time: 1, value: 0 },
+      { time: 2, value: 5 },
+    ];
+    const baseline = [
+      { time: 1, equity_usd: 100_000 },
+      { time: 2, equity_usd: 120_000 },
+    ];
+    const s = holdCompareSeries(equity, baseline);
+    expect(s.time).toEqual([1, 2]);
+    expect(s.strategy).toEqual([0, 5]);
+    expect(s.hold[0]).toBeCloseTo(0);
+    expect(s.hold[1]).toBeCloseTo(20);
+  });
+
+  it("gaps baseline timestamps missing from the equity axis", () => {
+    const equity = [
+      { time: 1, value: 0 },
+      { time: 2, value: 5 },
+    ];
+    const baseline = [{ time: 1, equity_usd: 100_000 }];
+    const s = holdCompareSeries(equity, baseline);
+    expect(s.hold).toEqual([0, null]);
   });
 });

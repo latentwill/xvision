@@ -17,7 +17,8 @@
 // All ranking/aggregation logic lives in tested selectors under
 // `features/home/`; this route only wires queries to components.
 
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
@@ -26,11 +27,13 @@ import { AttentionBand } from "@/components/home/AttentionBand";
 import { OptimizerPanel } from "@/components/home/OptimizerPanel";
 import { StrategyLeaderboard } from "@/components/home/StrategyLeaderboard";
 import type { AttentionItem } from "@/components/home/NagStrip";
+import { chartKeys, getRunChart } from "@/api/chart";
 import { evalKeys, listRuns } from "@/api/eval";
 import { strategyKeys, listStrategies } from "@/api/strategies";
 import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
 import { livenessCounts } from "@/features/live/strip-status";
+import { pickHeroRun } from "@/features/home/pulse";
 import type {
   BrokerEntry,
   BrokersReport,
@@ -68,6 +71,19 @@ export function HomeRoute() {
     queryFn: () => listAgentRuns(LIVENESS_PARAMS),
     refetchInterval: 10_000,
   });
+
+  // Kill the runs→chart waterfall: start the slim hero-chart fetch the
+  // moment the runs page lands, before PulseBand mounts its own query.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const hero = pickHeroRun(runs.data ?? []);
+    if (!hero) return;
+    void queryClient.prefetchQuery({
+      queryKey: chartKeys.run(hero.id, ["equity"]),
+      queryFn: () => getRunChart(hero.id, ["equity"]),
+      staleTime: 30_000,
+    });
+  }, [runs.data, queryClient]);
 
   const attentionItems = buildAttention({
     providers: providers.data?.providers,

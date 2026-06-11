@@ -35,9 +35,13 @@ vi.mock("@/api/eval", () => ({
 
 vi.mock("@/api/chart", () => ({
   chartKeys: {
-    run: (id: string) => ["chart", "run", id],
+    run: (id: string, include?: string[]) =>
+      ["chart", "run", id, include ? [...include].sort().join(",") : ""],
+    compare: (ids: string[]) =>
+      ["chart", "compare", [...ids].sort().join(",")],
   },
   getRunChart: vi.fn(),
+  getCompareChart: vi.fn(),
 }));
 
 vi.mock("@/api/strategies", () => ({

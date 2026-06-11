@@ -7,6 +7,7 @@ import type uPlot from "uplot";
 
 import {
   allFinite,
+  buildDrawdownFillGradient,
   buildReturnFillGradient,
   xvnAreaFill,
   xvnGradientFill,
@@ -78,6 +79,34 @@ describe("buildReturnFillGradient (F8 guard)", () => {
     const fill = buildReturnFillGradient(u);
     expect(typeof fill).not.toBe("string");
     expect(u.ctx.createLinearGradient).toHaveBeenCalledWith(0, 0, 0, 100);
+  });
+});
+
+describe("buildDrawdownFillGradient (F8 guard)", () => {
+  it("returns a transparent fill instead of throwing when positions are non-finite", () => {
+    const u = fakePlot();
+    expect(() => buildDrawdownFillGradient(u)).not.toThrow();
+    expect(buildDrawdownFillGradient(u)).toBe("rgba(0,0,0,0)");
+    expect((u.ctx.createLinearGradient as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+  });
+
+  it("builds a surface-to-depth gradient when positions are finite", () => {
+    const u = fakePlot({
+      scales: { x: {}, y: { min: -8, max: 0 } },
+      // top(0)=0, bot(-8)=100; avoids -0 (fails strict mock-arg equality)
+      valToPos: (v: number) => (1 - (v + 8) / 8) * 100,
+    });
+    const fill = buildDrawdownFillGradient(u);
+    expect(typeof fill).not.toBe("string");
+    expect(u.ctx.createLinearGradient).toHaveBeenCalledWith(0, 0, 0, 100);
+  });
+
+  it("falls back to transparent on a zero/negative span", () => {
+    const u = fakePlot({
+      scales: { x: {}, y: { min: 0, max: 0 } },
+      valToPos: () => 50, // top === bot
+    });
+    expect(buildDrawdownFillGradient(u)).toBe("rgba(0,0,0,0)");
   });
 });
 

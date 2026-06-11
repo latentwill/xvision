@@ -10,8 +10,26 @@ import type {
   StrategyChartPayload,
 } from "./types.gen";
 
+/** Allowlisted slim-payload sections of GET /api/eval/runs/:id/chart. */
+export type RunChartInclude = "equity" | "bars" | "markers" | "baseline";
+
+/** Canonical (sorted, comma-joined) include key; "" = full payload. */
+export function runChartIncludeKey(include?: RunChartInclude[]): string {
+  return include && include.length > 0 ? [...include].sort().join(",") : "";
+}
+
+export function runChartPath(
+  runId: string,
+  include?: RunChartInclude[],
+): string {
+  const key = runChartIncludeKey(include);
+  const suffix = key ? `?include=${encodeURIComponent(key)}` : "";
+  return `/api/eval/runs/${encodeURIComponent(runId)}/chart${suffix}`;
+}
+
 export const chartKeys = {
-  run: (id: string) => ["chart", "run", id] as const,
+  run: (id: string, include?: RunChartInclude[]) =>
+    ["chart", "run", id, runChartIncludeKey(include)] as const,
   compare: (ids: string[]) =>
     ["chart", "compare", ids.slice().sort().join(",")] as const,
 };
@@ -25,10 +43,11 @@ export const strategyChartKeys = {
   strategy: (id: string) => ["chart", "strategy", id] as const,
 };
 
-export function getRunChart(runId: string): Promise<RunChartPayload> {
-  return apiFetch<RunChartPayload>(
-    `/api/eval/runs/${encodeURIComponent(runId)}/chart`,
-  );
+export function getRunChart(
+  runId: string,
+  include?: RunChartInclude[],
+): Promise<RunChartPayload> {
+  return apiFetch<RunChartPayload>(runChartPath(runId, include));
 }
 
 export function getCompareChart(runIds: string[]): Promise<CompareChartPayload> {
