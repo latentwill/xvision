@@ -40,6 +40,7 @@ export function ConsoleModule({
   cycleId,
   defaultOpenHash,
   expandBoard,
+  feedMaxItems,
 }: {
   launchAction?: ReactNode;
   cycleId?: string;
@@ -47,6 +48,8 @@ export function ConsoleModule({
   defaultOpenHash?: string;
   /** Open all board cards on mount. */
   expandBoard?: boolean;
+  /** Forwarded to NarratedFeed's `maxItems` (defaults to its own cap). */
+  feedMaxItems?: number;
 }) {
   const stream = useCycleEventStream();
   const cycles = useCycleRuns();
@@ -113,7 +116,7 @@ export function ConsoleModule({
           Event log unavailable for this cycle.
         </p>
       ) : (
-        <NarratedFeed events={events} />
+        <NarratedFeed events={events} maxItems={feedMaxItems} />
       )}
     </section>
   );
