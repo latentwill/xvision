@@ -5,9 +5,8 @@ import { generateSvg, generateTokenUri } from "./genart";
 const HASH = "b".repeat(64);
 const AID = "01HXVNTESTAGENT";
 
-function decodePaths(svg: string): Int8Array {
+function decodePaths(svg: string, palette: readonly string[]): Int8Array {
   // RLE round-trip: parse <path> elements back into a grid using stroke->index from buildGrid's palette
-  const { palette } = buildGrid(AID, HASH);
   const grid = new Int8Array(N * N).fill(-1);
   const pathRe = /<path stroke="(#[0-9a-f]{6})" stroke-width="1" d="([^"]*)"\s*\/>/g;
   let pm: RegExpExecArray | null;
@@ -33,9 +32,9 @@ function decodePaths(svg: string): Int8Array {
 
 describe("generateSvg", () => {
   it("round-trips RLE back to the display grid", () => {
-    const { grid } = buildGrid(AID, HASH);
+    const { grid, palette } = buildGrid(AID, HASH);
     const svg = generateSvg(AID, HASH);
-    expect(Array.from(decodePaths(svg))).toEqual(Array.from(grid));
+    expect(Array.from(decodePaths(svg, palette))).toEqual(Array.from(grid));
   });
   it("has the normative envelope", () => {
     const svg = generateSvg(AID, HASH);
@@ -79,15 +78,26 @@ describe("generateTokenUri", () => {
     expect(types).toEqual(["Symmetry", "Palette", "Density", "Layers"]);
     expect(uri.length).toBeLessThanOrEqual(16 * 1024);
   });
+  it("enforces byte-order of tokenURI JSON keys", () => {
+    const uri = generateTokenUri(AID, HASH);
+    const raw = atob(uri.slice("data:application/json;base64,".length));
+    expect(raw).toMatch(/^\{"name":"xvn strategy [0-9A-Za-z_-]{1,8}","image":"data:image\/svg\+xml;base64,/);
+    expect(raw).toContain('","agent_id":"');
+    expect(raw).toContain('"attributes":[{"trait_type":"Symmetry","value":"');
+    expect(raw).toContain('{"trait_type":"Palette","value":"');
+    expect(raw).toMatch(/\{"trait_type":"Density","value":\d+\},\{"trait_type":"Layers","value":6\}\]\}$/);
+  });
   it("size ceiling holds across 300 seeds", () => {
-    let max = 0;
     for (let i = 0; i < 300; i++) {
       const h = i.toString(16).padStart(64, "0");
       const uri = generateTokenUri("01HXVNSZ", h);
-      if (uri.length > max) max = uri.length;
       expect(uri.length).toBeLessThanOrEqual(16 * 1024);
+      // Every 15th seed: round-trip SVG -> grid
+      if (i % 15 === 0) {
+        const { grid, palette } = buildGrid("01HXVNSZ", h);
+        const svg = generateSvg("01HXVNSZ", h);
+        expect(Array.from(decodePaths(svg, palette))).toEqual(Array.from(grid));
+      }
     }
-    // Report max for verification (visible in test output on failure)
-    expect(max).toBeLessThanOrEqual(16 * 1024);
   });
 });

@@ -1,6 +1,6 @@
 // genartGrid.ts — Bitfields v3 engine. NORMATIVE: spec 2026-06-11 §2-§5.
 // Any change here must be mirrored in crates/xvision-identity/src/genart.rs
-// and re-validated against tests/fixtures/genart_v3.json.
+// and re-validated against tests/fixtures/genart_v3.json (golden fixtures, Task 3).
 
 export const N = 28;
 const LAYERS = 6;

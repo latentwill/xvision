@@ -1,5 +1,5 @@
 // genart.ts — Bitfields v3 SVG + tokenURI. Byte-identical twin of
-// crates/xvision-identity/src/genart.rs; parity enforced by tests/fixtures/genart_v3.json.
+// crates/xvision-identity/src/genart.rs; parity will be enforced by tests/fixtures/genart_v3.json (golden fixtures, Task 3).
 // SVG body uses stroke-path encoding: one <path> per palette index with ≥1 run,
 // in ascending palette-index order; each run: M{x} {y}.5h{w}.
 import { N, buildGrid, type Traits } from "./genartGrid";
@@ -62,6 +62,7 @@ export function generateTokenUri(agentId: string, manifestHash: string): string 
   const svg = generateSvg(agentId, manifestHash);
   const svgB64 = base64Encode(new TextEncoder().encode(svg));
   const short = agentId.substring(0, 8);
+  // agentId already validated to [0-9A-Za-z_-]{1,64} by buildGrid — safe to interpolate raw.
   // Field order is normative — the Rust twin emits the identical byte string.
   const json =
     `{"name":"xvn strategy ${short}",` +
