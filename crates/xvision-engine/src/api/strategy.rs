@@ -964,6 +964,65 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
     result
 }
 
+/// Install a marketplace-delivered strategy manifest as a NEW local
+/// strategy.
+///
+/// Used by the dashboard's license-gated
+/// `POST /api/marketplace/listings/:id/import` route. Mirrors the shallow
+/// clone path: the manifest is deserialized into a full [`Strategy`], a
+/// fresh ULID is minted (the seller's id is NEVER reused — the buyer's copy
+/// is an independent local draft), `published_at` is cleared, and the
+/// source id is stashed in `mechanical_params.metadata.imported_from` so
+/// audit tooling can chain the import back to the listed original. Persists
+/// via the same [`FilesystemStore`] the clone path uses and returns the
+/// stored strategy.
+///
+/// A manifest that does not deserialize as a `Strategy` is a `Validation`
+/// error — the caller has already verified the bytes against the on-chain
+/// content hash, so a shape failure means the listing was published from an
+/// incompatible engine version, not transport corruption.
+pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = async {
+        let mut strategy: Strategy = serde_json::from_value(manifest)
+            .map_err(|e| ApiError::Validation(format!("manifest is not a valid Strategy: {e}")))?;
+        let source_id = strategy.manifest.id.clone();
+        strategy.manifest.id = Ulid::new().to_string();
+        strategy.manifest.published_at = None;
+        strategy.mechanical_params =
+            stash_metadata_string(&strategy.mechanical_params, "imported_from", &source_id);
+        store
+            .save(&strategy)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        Ok::<_, ApiError>(strategy)
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let target = result.as_ref().ok().map(|strategy| strategy.manifest.id.as_str());
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "import",
+        target,
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    if let Ok(strategy) = &result {
+        index_strategy_after_mutation(ctx, &store, &strategy.manifest.id).await;
+    }
+
+    result
+}
+
 /// Atomic strategy + paired-Agent clone with optional `(provider, model)`
 /// override.
 ///
@@ -1240,6 +1299,15 @@ async fn cleanup_created_clone_agents(ctx: &ApiContext, agent_ids: &[String]) {
 /// the existing value is preserved under a reserved `_legacy` key so the
 /// caller never silently drops authoring data.
 fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json::Value {
+    stash_metadata_string(source, "cloned_from", source_id)
+}
+
+/// Insert (or overwrite) `metadata.{key}` inside a strategy's
+/// `mechanical_params` JSON. If the source value is not a JSON object, the
+/// existing value is preserved under a reserved `_legacy` key so the caller
+/// never silently drops authoring data. Shared by the clone provenance
+/// (`cloned_from`) and the marketplace import provenance (`imported_from`).
+fn stash_metadata_string(source: &serde_json::Value, key: &str, value: &str) -> serde_json::Value {
     let mut params = source.clone();
     if !params.is_object() {
         let prior = params.clone();
@@ -1254,10 +1322,7 @@ fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json:
         *metadata = serde_json::json!({ "_legacy": prior });
     }
     let metadata_obj = metadata.as_object_mut().expect("ensured object above");
-    metadata_obj.insert(
-        "cloned_from".to_string(),
-        serde_json::Value::String(source_id.to_string()),
-    );
+    metadata_obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
     params
 }
 
@@ -2160,6 +2225,44 @@ mod tests {
         assert!(audit_row_exists(&ctx, "create", &out.id).await);
         let strategy = get(&ctx, &out.id).await.unwrap();
         assert_eq!(strategy.manifest.id, out.id);
+    }
+
+    #[tokio::test]
+    async fn import_strategy_mints_new_id_persists_and_audits() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "marketplace-buy".into(),
+                creator: Some("@seller".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let source = get(&ctx, &created.id).await.unwrap();
+        let manifest = serde_json::to_value(&source).unwrap();
+
+        let imported = import_strategy(&ctx, manifest).await.unwrap();
+        assert_ne!(imported.manifest.id, created.id, "must mint a NEW ULID");
+        assert!(imported.manifest.published_at.is_none());
+
+        // Round-trips through the same store the clone path uses.
+        let reread = get(&ctx, &imported.manifest.id).await.unwrap();
+        assert_eq!(reread.manifest.display_name, source.manifest.display_name);
+
+        // Provenance: the source id lands in mechanical_params.metadata.
+        assert_eq!(
+            reread.mechanical_params["metadata"]["imported_from"],
+            serde_json::Value::String(created.id.clone()),
+        );
+        assert!(audit_row_exists(&ctx, "import", &imported.manifest.id).await);
+    }
+
+    #[tokio::test]
+    async fn import_strategy_rejects_non_strategy_manifest() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let r = import_strategy(&ctx, serde_json::json!({"not": "a strategy"})).await;
+        assert!(matches!(r, Err(ApiError::Validation(_))), "got {r:?}");
     }
 
     // Pre-2026-05-21: the create_strategy_unknown_template test asserted

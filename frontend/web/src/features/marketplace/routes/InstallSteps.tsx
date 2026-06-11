@@ -1,6 +1,12 @@
 // src/features/marketplace/routes/InstallSteps.tsx
-// Inline install stepper — no modals, no external navigation.
-// All step actions are anchors/buttons that remain within the page.
+// Inline install stepper — no modals; all states render inline.
+// "Add to strategies" runs the license-gated import against the local
+// engine; the bundle step links the pinned IPFS manifest (open tier —
+// sealed-tier decryption does not exist yet, so we never offer it).
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { ApiError, apiFetch } from "@/api/client";
+import { currentAddress } from "../lib/chain";
 import type { Receipt, Ingredient } from "@/features/marketplace/data/types";
 
 // ── visual step states ───────────────────────────────────────────────────────
@@ -84,14 +90,36 @@ function Step({
   );
 }
 
-function ChipBtn({ children, variant = "chip" }: { children: React.ReactNode; variant?: "primary" | "chip" | "ghost" }) {
+function chipClass(variant: "primary" | "chip" | "ghost"): string {
   const base = "font-mono text-[11.5px] px-2.5 py-1 rounded cursor-pointer flex items-center gap-1";
   const styles: Record<string, string> = {
     primary: `${base} bg-gold text-black font-semibold motion-safe:active:scale-[0.96]`,
     chip:    `${base} border border-border-strong text-text-2 hover:text-text`,
     ghost:   `${base} text-text-3 hover:text-text`,
   };
-  return <button className={styles[variant]}>{children}</button>;
+  return styles[variant];
+}
+
+function ChipBtn({
+  children,
+  variant = "chip",
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  variant?: "primary" | "chip" | "ghost";
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      className={[chipClass(variant), disabled ? "opacity-60 cursor-default" : ""].filter(Boolean).join(" ")}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
 }
 
 function IngredientChip({ ingredient }: { ingredient: Ingredient }) {
@@ -123,16 +151,58 @@ function IngredientChip({ ingredient }: { ingredient: Ingredient }) {
   );
 }
 
+// ── import flow state (Add to strategies) ────────────────────────────────────
+type ImportState =
+  | { phase: "idle" }
+  | { phase: "pending" }
+  | { phase: "done"; agentId: string }
+  | { phase: "error"; message: string };
+
+/** IPFS gateway used for plain open-tier bundle reads (matches the backend's default). */
+const IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
+
 // ── component ────────────────────────────────────────────────────────────────
 export function InstallSteps({ receipt }: { receipt: Receipt }) {
   const { install } = receipt;
   const missingCount = install.ingredients.filter((i) => !i.installed).length;
+  const [importState, setImportState] = useState<ImportState>({ phase: "idle" });
+
+  // Only IPFS-pinned (open tier) bundles get a step; receipts without a CID
+  // (local xvn:// listings, unindexed listings) skip it — the import route
+  // still resolves the manifest server-side.
+  const bundleCid = receipt.license.bundleCid;
+  let n = 0;
+  const next = () => ++n;
+
+  async function runImport() {
+    setImportState({ phase: "pending" });
+    const address = await currentAddress();
+    if (!address) {
+      setImportState({ phase: "error", message: "Connect wallet first." });
+      return;
+    }
+    try {
+      const out = await apiFetch<{ agent_id: string }>(
+        `/api/marketplace/listings/${receipt.listing.id}/import`,
+        { method: "POST", body: JSON.stringify({ address }) },
+      );
+      setImportState({ phase: "done", agentId: out.agent_id });
+    } catch (e) {
+      const message =
+        e instanceof ApiError && e.status === 403
+          ? "No license held for this wallet."
+          : e instanceof Error
+            ? e.message
+            : String(e);
+      setImportState({ phase: "error", message });
+    }
+  }
 
   return (
     <div className="py-1">
       {/* Step 1 — XVN detected */}
       <Step
-        n={1}
+        n={next()}
         state={install.xvnDetected ? "done" : "active"}
         title="XVN install detected"
         description={
@@ -149,28 +219,37 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
         }
       />
 
-      {/* Step 2 — Decrypt sealed bundle */}
-      <Step
-        n={2}
-        state="active"
-        title="Decrypt sealed bundle"
-        description={
-          <>
-            Sealed bundle from IPFS — your license token authorises decryption.{" "}
-            About to fetch{" "}
-            <span className="font-mono text-text-2">{receipt.license.bundleCid}</span>.
-          </>
-        }
-        action={
-          <ChipBtn variant="primary">
-            Decrypt now
-          </ChipBtn>
-        }
-      />
+      {/* Bundle step — only when the listing's manifest is pinned to IPFS */}
+      {bundleCid !== "" && (
+        <Step
+          n={next()}
+          state="active"
+          title="Fetch strategy bundle"
+          description={
+            <>
+              Manifest pinned to IPFS as{" "}
+              <span className="font-mono text-text-2">{bundleCid}</span>.
+            </>
+          }
+          action={
+            <a
+              className={chipClass("chip")}
+              href={`${IPFS_GATEWAY}${bundleCid}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open bundle
+              <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+                <path d="M4 2h6v6M10 2L4.5 7.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </a>
+          }
+        />
+      )}
 
-      {/* Step 3 — Install missing ingredients */}
+      {/* Install missing ingredients */}
       <Step
-        n={3}
+        n={next()}
         state="pending"
         title="Install missing ingredients"
         description={
@@ -199,10 +278,10 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
         }
       />
 
-      {/* Step 4 — Add to Strategies */}
+      {/* Add to Strategies — license-gated import into the local engine */}
       <Step
-        n={4}
-        state="pending"
+        n={next()}
+        state={importState.phase === "done" ? "done" : "pending"}
         title="Add to your Strategies and run backtest first"
         description={
           <>
@@ -211,18 +290,30 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
               Strategies / Marketplace · {receipt.listing.id}
             </span>
             . Recommended: 7-day backtest with 2% risk cap before going live.
+            {importState.phase === "error" && (
+              <div data-testid="import-error" className="mt-1.5 text-warn">
+                {importState.message}
+              </div>
+            )}
           </>
         }
         action={
-          <div className="flex gap-1.5">
-            <ChipBtn variant="chip">Add to strategies</ChipBtn>
-            <ChipBtn variant="ghost">
-              Open in XVN
-              <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-                <path d="M4 2h6v6M10 2L4.5 7.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+          importState.phase === "done" ? (
+            <Link
+              className={chipClass("primary")}
+              to={`/authoring/${importState.agentId}`}
+            >
+              Open in strategies
+            </Link>
+          ) : importState.phase === "pending" ? (
+            <ChipBtn variant="chip" disabled>
+              Importing…
             </ChipBtn>
-          </div>
+          ) : (
+            <ChipBtn variant="chip" onClick={() => void runImport()}>
+              Add to strategies
+            </ChipBtn>
+          )
         }
         last
       />

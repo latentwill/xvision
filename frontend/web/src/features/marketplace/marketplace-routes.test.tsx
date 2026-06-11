@@ -104,9 +104,9 @@ describe("marketplace receipt route integration", () => {
     expect(matches.length).toBeGreaterThan(0);
   });
 
-  it("renders all four install step titles", async () => {
+  it("renders the bundle install step title", async () => {
     renderReceiptRoute("/marketplace/receipts/0xdemo-tx");
-    expect(await screen.findByText(/Decrypt sealed bundle/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Fetch strategy bundle/i)).toBeInTheDocument();
   });
 
   it("renders the share composer with Post to X CTA", async () => {
