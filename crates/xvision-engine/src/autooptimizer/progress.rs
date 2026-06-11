@@ -81,6 +81,14 @@ pub enum CycleProgressEvent {
         session_id: String,
         cycle_id: String,
         parent_hash: String,
+        /// Blob hash of the candidate strategy produced by the experiment writer.
+        /// Empty string when not yet known at the emit site.
+        #[serde(default)]
+        child_hash: String,
+        /// Model identifier of the experiment writer (mutator) that produced this candidate.
+        /// Empty string when not available at the emit site.
+        #[serde(default)]
+        mutator_model: String,
     },
     /// Fired when a parent yields no usable candidate this cycle — the mutator
     /// could not produce a distinct, valid experiment within its retry budget
@@ -113,6 +121,10 @@ pub enum CycleProgressEvent {
         /// Three-way result: `"kept"` | `"suspect"` | `"dropped"`.
         #[serde(default)]
         outcome: String,
+        /// Delta of the child's day-window Sharpe minus the parent's day-window
+        /// Sharpe. `None` when gate scores were not computed (e.g. early rejection).
+        #[serde(default)]
+        delta_day: Option<f64>,
     },
     /// Fired after the honesty check runs. Operator label: "Honesty check run".
     /// F9: carries the sabotage variant + a human-readable message so the CLI
@@ -211,6 +223,71 @@ mod tests {
             "flywheel_compiled",
             "FlywheelCompiled must serialize as 'flywheel_compiled', not 'fly_wheel_compiled'"
         );
+    }
+
+    /// MutationProposed with child_hash/mutator_model serializes at top level; old JSON
+    /// (without those keys) still deserializes via #[serde(default)].
+    #[test]
+    fn test_mutation_proposed_new_fields_serde() {
+        // New fields serialize at the top level (no "payload" envelope).
+        let event = CycleProgressEvent::MutationProposed {
+            session_id: "s1".into(),
+            cycle_id: "c1".into(),
+            parent_hash: "p1".into(),
+            child_hash: "ch1".into(),
+            mutator_model: "claude-3-5-sonnet".into(),
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(v["type"], "mutation_proposed");
+        assert_eq!(v["child_hash"], "ch1");
+        assert_eq!(v["mutator_model"], "claude-3-5-sonnet");
+
+        // Old JSON without the new keys still deserializes (backward compat).
+        let old_json =
+            r#"{"type":"mutation_proposed","session_id":"s1","cycle_id":"c1","parent_hash":"p1"}"#;
+        let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
+        match parsed {
+            CycleProgressEvent::MutationProposed {
+                child_hash,
+                mutator_model,
+                ..
+            } => {
+                assert_eq!(child_hash, "", "child_hash should default to empty string");
+                assert_eq!(
+                    mutator_model, "",
+                    "mutator_model should default to empty string"
+                );
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    /// MutationGated with delta_day serializes at top level; old JSON (without
+    /// delta_day) still deserializes with None.
+    #[test]
+    fn test_mutation_gated_delta_day_serde() {
+        // With delta_day populated.
+        let event = CycleProgressEvent::MutationGated {
+            session_id: "s1".into(),
+            cycle_id: "c1".into(),
+            child_hash: "ch1".into(),
+            passed: true,
+            outcome: "kept".into(),
+            delta_day: Some(0.042),
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(v["type"], "mutation_gated");
+        assert!((v["delta_day"].as_f64().unwrap() - 0.042).abs() < 1e-9);
+
+        // Old JSON without delta_day deserializes to None.
+        let old_json = r#"{"type":"mutation_gated","cycle_id":"c1","child_hash":"abc","passed":true,"outcome":"kept"}"#;
+        let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
+        match parsed {
+            CycleProgressEvent::MutationGated { delta_day, .. } => {
+                assert_eq!(delta_day, None, "delta_day should default to None");
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 
     /// Existing events must deserialize from JSON missing session_id, defaulting to "".
