@@ -1,6 +1,7 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
-import { useCycleEvents, useCycleRuns, useCycleRun } from "../api";
+import { useCycleEvents, useCycleRuns, useCycleRun, autooptimizerKeys } from "../api";
 import { normalizePersisted } from "../selectors/narrateEvent";
 import { boardFromNodes, buildBoardState } from "../selectors/buildBoardState";
 import { PhaseRibbon } from "./PhaseRibbon";
@@ -39,6 +40,7 @@ export function ConsoleModule({
 }) {
   const stream = useCycleEventStream();
   const cycles = useCycleRuns();
+  const queryClient = useQueryClient();
 
   const live = stream.isRunning && !cycleId;
   // explicit cycleId (CycleDetail) > live cycle > most recent completed cycle
@@ -46,17 +48,53 @@ export function ConsoleModule({
     cycleId ?? (!stream.isRunning ? (cycles.data?.[0]?.cycle_id ?? null) : null);
   const persisted = useCycleEvents(live ? null : replayId);
 
-  // Replay edge case: events pruned / pre-persistence cycle / older backend.
+  // Persistence-worker race: when cycle_finished arrives on the stream, the
+  // backend's event-persister task may not have drained its queue yet — a
+  // fetch right now could cache an empty log for 60s. Invalidate the query
+  // so it refetches once the worker has landed the rows.
+  const lastFinishedCycleId = useMemo(() => {
+    for (let i = stream.events.length - 1; i >= 0; i--) {
+      const e = stream.events[i];
+      const et = e.event_type ?? e.type ?? e.kind ?? "";
+      if (et === "cycle_finished") return e.cycle_id ?? null;
+    }
+    return null;
+  }, [stream.events]);
+  useEffect(() => {
+    if (lastFinishedCycleId) {
+      void queryClient.invalidateQueries({
+        queryKey: autooptimizerKeys.cycleEvents(lastFinishedCycleId),
+      });
+    }
+  }, [lastFinishedCycleId, queryClient]);
+
+  const persistedEmpty =
+    persisted.isError || (persisted.isSuccess && (persisted.data?.length ?? 0) === 0);
+
+  // Same race on the read side: the stream buffer still holds the finished
+  // cycle's events. If the persisted fetch comes back empty for that cycle,
+  // replay from the buffer instead of degrading to the node-derived fallback.
+  const streamReplayEvents = useMemo(() => {
+    if (!replayId) return [];
+    const start = stream.events.findIndex((e) => {
+      const et = e.event_type ?? e.type ?? e.kind ?? "";
+      return et === "cycle_started" && e.cycle_id === replayId;
+    });
+    return start === -1 ? [] : stream.events.slice(start);
+  }, [stream.events, replayId]);
+  const useStreamBuffer = !live && persistedEmpty && streamReplayEvents.length > 0;
+
+  // Replay edge case: events pruned / pre-persistence cycle / older backend
+  // (and nothing usable in the stream buffer either).
   const eventsUnavailable =
-    !live &&
-    replayId != null &&
-    (persisted.isError || (persisted.isSuccess && (persisted.data?.length ?? 0) === 0));
+    !live && replayId != null && persistedEmpty && !useStreamBuffer;
   const fallbackRun = useCycleRun(eventsUnavailable ? replayId : undefined);
 
   const events = useMemo(() => {
     if (live) return stream.events;
+    if (useStreamBuffer) return streamReplayEvents;
     return (persisted.data ?? []).map(normalizePersisted);
-  }, [live, stream.events, persisted.data]);
+  }, [live, useStreamBuffer, streamReplayEvents, stream.events, persisted.data]);
 
   const board = useMemo(() => {
     const fromEvents = buildBoardState(events);

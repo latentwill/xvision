@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
 import { screen } from "@testing-library/react";
 import { renderWithProviders } from "../test-utils";
 import { ConsoleModule } from "./ConsoleModule";
@@ -31,11 +32,15 @@ vi.mock("../hooks/useCycleEventStream", () => ({
   useCycleEventStream: vi.fn(),
 }));
 
-vi.mock("../api", () => ({
-  useCycleEvents: vi.fn(),
-  useCycleRuns: vi.fn(),
-  useCycleRun: vi.fn(),
-}));
+vi.mock("../api", async (importActual) => {
+  const actual = await importActual<typeof import("../api")>();
+  return {
+    ...actual,
+    useCycleEvents: vi.fn(),
+    useCycleRuns: vi.fn(),
+    useCycleRun: vi.fn(),
+  };
+});
 
 const mockStream = vi.mocked(useCycleEventStream);
 const mockEvents = vi.mocked(useCycleEvents);
@@ -247,6 +252,63 @@ describe("ConsoleModule", () => {
     // feed area is never blank
     expect(screen.getByText("Event log unavailable for this cycle.")).toBeInTheDocument();
     expect(screen.queryByText(/waiting for/i)).not.toBeInTheDocument();
+  });
+
+  it("replay falls back to the stream buffer when persisted events haven't landed yet", () => {
+    // The cycle just finished: the SSE buffer still holds its events, but the
+    // persistence worker hasn't drained the queue — the persisted fetch is empty.
+    const finishedStream = [
+      ...liveEvents,
+      {
+        _row_id: 5,
+        type: "cycle_finished",
+        cycle_id: "c-live",
+        active_count: 1,
+        rejected_count: 1,
+        ts: "2026-06-11T10:03:00Z",
+      },
+    ] as never[];
+    setStream({ events: finishedStream, connected: true, isRunning: false });
+    mockRuns.mockReturnValue(q([{ ...cycleSummary, cycle_id: "c-live" }]));
+    mockEvents.mockReturnValue(q([])); // worker race: nothing persisted yet
+    mockRun.mockReturnValue(q(cycleDetail));
+
+    renderWithProviders(<ConsoleModule />);
+
+    // No "unavailable" copy — the full board + feed render from the buffer.
+    expect(
+      screen.queryByText("Event log unavailable for this cycle."),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("artifact-abcd1234ef").length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("artifact-beef5678cd").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/proposed/i).length).toBeGreaterThan(0);
+    // Still replay mode, not live.
+    expect(screen.queryByText(/Live · cycle/i)).not.toBeInTheDocument();
+  });
+
+  it("invalidates the persisted cycle-events query when cycle_finished arrives", () => {
+    const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    const finishedStream = [
+      ...liveEvents,
+      {
+        _row_id: 5,
+        type: "cycle_finished",
+        cycle_id: "c-live",
+        ts: "2026-06-11T10:03:00Z",
+      },
+    ] as never[];
+    setStream({ events: finishedStream, connected: true, isRunning: false });
+    mockRuns.mockReturnValue(q([{ ...cycleSummary, cycle_id: "c-live" }]));
+    mockEvents.mockReturnValue(q([]));
+
+    renderWithProviders(<ConsoleModule />);
+
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryKey: ["autooptimizer", "cycle-events", "c-live"],
+      }),
+    );
+    invalidateSpy.mockRestore();
   });
 
   it("replay with an erroring events endpoint also falls back to nodes", () => {
