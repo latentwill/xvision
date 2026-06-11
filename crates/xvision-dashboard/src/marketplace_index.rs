@@ -67,10 +67,12 @@ pub struct IndexedListing {
     /// Eval attestations posted for this listing (`0` when the
     /// `EvalAttestationRegistry` is unconfigured or the count call fails).
     pub attestation_count: u64,
-    /// Licenses sold, from the `Sold` event log scan (`0` when the
-    /// marketplace contract is unconfigured or the scan fails).
+    /// Licenses sold, accumulated by the incremental chunked `Sold` log
+    /// scan (`0` when the marketplace contract is unconfigured or the
+    /// scan cursor hasn't reached the sale yet).
     pub units_sold: u64,
-    /// Sum of `Sold.sellerProceeds` in whole USDC (`0.0` when dormant).
+    /// Sum of `Sold.sellerProceeds` in whole USDC (`0.0` when dormant or
+    /// not yet scanned).
     pub earned_usdc: f64,
 }
 
@@ -94,12 +96,15 @@ pub struct IndexerCfg {
     /// Optional `EvalAttestationRegistry` address — enables per-listing
     /// `attestation_count`. `None` → counts stay 0.
     pub eval_attestation: Option<Address>,
-    /// Optional `Marketplace` address — enables the `Sold` log scan that
-    /// feeds `units_sold` / `earned_usdc`. `None` → both stay 0.
+    /// Optional `Marketplace` address — enables the incremental chunked
+    /// `Sold` log scan that feeds `units_sold` / `earned_usdc`.
+    /// `None` → both stay 0.
     pub marketplace: Option<Address>,
-    /// Lower bound for the `Sold` log scan (`XVN_MARKETPLACE_DEPLOY_BLOCK`,
-    /// default 0).
-    pub marketplace_deploy_block: u64,
+    /// Explicit lower bound for the `Sold` scan cursor
+    /// (`XVN_MARKETPLACE_DEPLOY_BLOCK`). `None` (unset/unparseable) →
+    /// the first tick starts at `latest - SOLD_SCAN_DEFAULT_LOOKBACK`,
+    /// which covers recent history only; set the env for a full backfill.
+    pub marketplace_deploy_block: Option<u64>,
 }
 
 /// Parses an optional env address value: unset or unparseable → `None`
@@ -108,9 +113,10 @@ fn parse_opt_addr(v: Option<String>) -> Option<Address> {
     v?.parse().ok()
 }
 
-/// Parses the deploy-block lower bound: unset or unparseable → 0.
-fn parse_deploy_block(v: Option<String>) -> u64 {
-    v.and_then(|s| s.parse().ok()).unwrap_or(0)
+/// Parses the deploy-block lower bound: unset or unparseable → `None`
+/// (the scan then defaults to a recent-history lookback on first tick).
+fn parse_deploy_block(v: Option<String>) -> Option<u64> {
+    v.and_then(|s| s.parse().ok())
 }
 
 impl IndexerCfg {
@@ -164,6 +170,66 @@ fn hex64(bytes: &[u8; 32]) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Sold-event scan: incremental chunked ledger
+//
+// The Mantle Sepolia RPC cannot be trusted with wide `eth_getLogs` ranges:
+// very large ranges (~10M blocks) error at the gateway, and ranges above
+// roughly ~100k blocks SILENTLY return an empty result set (verified
+// 2026-06-11: a 216k-block range returned 0 logs even though a known Sold
+// log exists inside it; 26k and 100-block ranges found it). A single-shot
+// full-range scan can therefore never be trusted. Instead the indexer keeps
+// a persistent in-memory ledger with a block cursor and scans forward in
+// small chunks, never advancing the cursor past a failed chunk.
+// ---------------------------------------------------------------------------
+
+/// Max block span per `eth_getLogs` call — safely under the ~100k-block
+/// threshold where the RPC starts silently dropping results.
+pub(crate) const SOLD_SCAN_CHUNK: u64 = 9_000;
+
+/// Max chunks scanned per tick (catch-up rate: up to 90k blocks / 30s).
+pub(crate) const SOLD_SCAN_MAX_CHUNKS_PER_TICK: usize = 10;
+
+/// First-tick lookback when `XVN_MARKETPLACE_DEPLOY_BLOCK` is unset:
+/// covers recent history only. Set the env for a full backfill.
+pub(crate) const SOLD_SCAN_DEFAULT_LOOKBACK: u64 = 100_000;
+
+/// Persistent (per indexer task) accumulation of `Sold` events.
+///
+/// `cursor` is the next block to scan (`None` until initialized on the
+/// first tick); `per_listing` holds the running totals for every Sold
+/// event decoded so far. The ledger only ever grows — a chunk's logs are
+/// folded in exactly once, when the cursor advances past it.
+#[derive(Debug, Default)]
+pub(crate) struct SalesLedger {
+    pub cursor: Option<u64>,
+    pub per_listing: HashMap<u64, SaleTotals>,
+}
+
+/// Initial scan cursor: the configured deploy block when set, otherwise
+/// `latest - SOLD_SCAN_DEFAULT_LOOKBACK` (recent history only).
+pub(crate) fn initial_cursor(deploy_block: Option<u64>, latest: u64) -> u64 {
+    deploy_block.unwrap_or_else(|| latest.saturating_sub(SOLD_SCAN_DEFAULT_LOOKBACK))
+}
+
+/// Pure chunk math: inclusive `(from, to)` ranges covering
+/// `cursor..=latest`, each at most `chunk` blocks wide, capped at
+/// `max_chunks` ranges. Empty when `cursor > latest`.
+pub(crate) fn chunk_ranges(cursor: u64, latest: u64, chunk: u64, max_chunks: usize) -> Vec<(u64, u64)> {
+    let mut out = Vec::new();
+    let chunk = chunk.max(1);
+    let mut from = cursor;
+    while from <= latest && out.len() < max_chunks {
+        let to = from.saturating_add(chunk - 1).min(latest);
+        out.push((from, to));
+        if to == u64::MAX {
+            break;
+        }
+        from = to + 1;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Sold-event aggregation (pure)
 // ---------------------------------------------------------------------------
 
@@ -175,14 +241,13 @@ pub(crate) struct SaleTotals {
     pub seller_proceeds_usdc6: u128,
 }
 
-/// Folds decoded `Sold` events into per-listing totals: one unit per event,
-/// seller proceeds summed (saturating — `uint96` sums cannot realistically
-/// overflow u128, but never panic on hostile logs).
-pub(crate) fn aggregate_sales<I>(events: I) -> HashMap<u64, SaleTotals>
+/// Folds decoded `Sold` events into existing per-listing totals: one unit
+/// per event, seller proceeds summed (saturating — `uint96` sums cannot
+/// realistically overflow u128, but never panic on hostile logs).
+pub(crate) fn fold_sales<I>(totals: &mut HashMap<u64, SaleTotals>, events: I)
 where
     I: IntoIterator<Item = IMarketplace::Sold>,
 {
-    let mut totals: HashMap<u64, SaleTotals> = HashMap::new();
     for sold in events {
         let listing_id: u64 = sold.listingId.try_into().unwrap_or(u64::MAX);
         let t = totals.entry(listing_id).or_default();
@@ -191,33 +256,114 @@ where
             .seller_proceeds_usdc6
             .saturating_add(sold.sellerProceeds.to::<u128>());
     }
+}
+
+/// One-shot fold of decoded `Sold` events into fresh per-listing totals
+/// (test convenience over [`fold_sales`]).
+#[cfg(test)]
+pub(crate) fn aggregate_sales<I>(events: I) -> HashMap<u64, SaleTotals>
+where
+    I: IntoIterator<Item = IMarketplace::Sold>,
+{
+    let mut totals = HashMap::new();
+    fold_sales(&mut totals, events);
     totals
 }
 
-/// One `eth_getLogs` scan for `Sold` events on the marketplace contract
-/// (topic0 = the typed `SIGNATURE_HASH`, from the configured deploy block).
-/// Undecodable logs are skipped; a failed scan bubbles to the caller, which
-/// degrades to empty totals.
-async fn fetch_sale_totals<P: Provider>(
+/// One bounded `eth_getLogs` scan for `Sold` events on the marketplace
+/// contract (topic0 = the typed `SIGNATURE_HASH`), over the INCLUSIVE
+/// `from..=to` block range. Callers must keep the range under the RPC's
+/// silent-empty threshold (see [`SOLD_SCAN_CHUNK`]). Undecodable logs are
+/// skipped; a failed call bubbles to the caller, which retries the same
+/// chunk next tick.
+async fn fetch_sold_events<P: Provider>(
     provider: &P,
     marketplace: Address,
-    from_block: u64,
-) -> anyhow::Result<HashMap<u64, SaleTotals>> {
+    from: u64,
+    to: u64,
+) -> anyhow::Result<Vec<IMarketplace::Sold>> {
     let filter = Filter::new()
         .address(marketplace)
         .event_signature(IMarketplace::Sold::SIGNATURE_HASH)
-        .from_block(from_block);
-    let logs = provider.get_logs(&filter).await.context("eth_getLogs(Sold)")?;
-    Ok(aggregate_sales(logs.iter().filter_map(|log| {
-        IMarketplace::Sold::decode_log(&log.inner).ok().map(|l| l.data)
-    })))
+        .from_block(from)
+        .to_block(to);
+    let logs = provider
+        .get_logs(&filter)
+        .await
+        .with_context(|| format!("eth_getLogs(Sold) blocks {from}..={to}"))?;
+    Ok(logs
+        .iter()
+        .filter_map(|log| IMarketplace::Sold::decode_log(&log.inner).ok().map(|l| l.data))
+        .collect())
+}
+
+/// One tick of the incremental Sold scan: fetch the latest block, then scan
+/// up to [`SOLD_SCAN_MAX_CHUNKS_PER_TICK`] chunks of [`SOLD_SCAN_CHUNK`]
+/// blocks from the ledger cursor. Each successful chunk folds its logs into
+/// the ledger and advances the cursor to `chunk_end + 1`; a failed chunk
+/// stops the tick WITHOUT advancing, so the same range is retried next tick
+/// (no data loss, no silent gaps). No-op when the marketplace contract is
+/// unconfigured.
+async fn advance_sales_ledger(cfg: &IndexerCfg, ledger: &mut SalesLedger) {
+    let Some(marketplace) = cfg.marketplace else {
+        return;
+    };
+    let provider = match ProviderBuilder::new().connect(cfg.rpc_url.as_str()).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "Sold scan: provider connect failed; cursor not advanced, retrying next tick");
+            return;
+        }
+    };
+    let latest = match provider.get_block_number().await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(error = %e, "Sold scan: eth_blockNumber failed; cursor not advanced, retrying next tick");
+            return;
+        }
+    };
+    let cursor = *ledger
+        .cursor
+        .get_or_insert_with(|| initial_cursor(cfg.marketplace_deploy_block, latest));
+    for (from, to) in chunk_ranges(cursor, latest, SOLD_SCAN_CHUNK, SOLD_SCAN_MAX_CHUNKS_PER_TICK) {
+        match fetch_sold_events(&provider, marketplace, from, to).await {
+            Ok(events) => {
+                fold_sales(&mut ledger.per_listing, events);
+                ledger.cursor = Some(to + 1);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    from_block = from,
+                    to_block = to,
+                    "Sold scan chunk failed; cursor stays at this chunk and retries next tick"
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// Overlays the ledger's accumulated sale totals onto a freshly built
+/// snapshot's `units_sold` / `earned_usdc` (listings without sales keep
+/// their zeros from `poll_once`).
+pub(crate) fn apply_sales(snapshot: &mut MarketplaceSnapshot, ledger: &SalesLedger) {
+    for listing in &mut snapshot.listings {
+        if let Some(t) = ledger.per_listing.get(&listing.listing_id) {
+            listing.units_sold = t.units_sold;
+            listing.earned_usdc = usdc6_to_f64(t.seller_proceeds_usdc6);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Chain reader
 // ---------------------------------------------------------------------------
 
-/// One full read pass over the marketplace contracts.
+/// One full read pass over the marketplace contracts (listings +
+/// attestations only — `units_sold` / `earned_usdc` come out as zeros and
+/// are overlaid afterwards via [`apply_sales`] from the spawn loop's
+/// persistent [`SalesLedger`]).
 ///
 /// Errors only on connection / `totalListings()` failure. Per-listing
 /// failures degrade: a failed `getListing` skips the id (logged), a failed
@@ -241,21 +387,6 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
     // registry can't make us issue unbounded RPC calls. Revisit with
     // persistence/pagination past ~500 listings (per plan).
     let total = total.min(10_000);
-
-    // Sold-event scan: one eth_getLogs per poll when the marketplace
-    // contract is configured. Degrades to empty totals (zeros) on error.
-    let sales: HashMap<u64, SaleTotals> = match cfg.marketplace {
-        Some(marketplace) => {
-            match fetch_sale_totals(&provider, marketplace, cfg.marketplace_deploy_block).await {
-                Ok(totals) => totals,
-                Err(e) => {
-                    tracing::warn!(error = %e, "Sold log scan failed; units_sold/earned_usdc stay 0");
-                    HashMap::new()
-                }
-            }
-        }
-        None => HashMap::new(),
-    };
 
     // Attestation counts: per-listing getAttestationCount when the
     // EvalAttestationRegistry is configured. Degrades to 0 on error.
@@ -301,7 +432,6 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
 
         let content_hash = hex64(&listing.contentHash.0);
         let listing_id = u64::try_from(listing.listingId).unwrap_or(id);
-        let sale = sales.get(&listing_id).copied().unwrap_or_default();
         listings.push(IndexedListing {
             listing_id,
             agent_nft_id: listing.agentNftId.to_string(),
@@ -318,8 +448,9 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
             symmetry: meta.symmetry,
             palette: meta.palette,
             attestation_count,
-            units_sold: sale.units_sold,
-            earned_usdc: usdc6_to_f64(sale.seller_proceeds_usdc6),
+            // Overlaid by apply_sales() in the spawn loop.
+            units_sold: 0,
+            earned_usdc: 0.0,
         });
     }
 
@@ -338,14 +469,22 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
 /// Spawns the 30s polling loop. First tick fires immediately. A successful
 /// poll replaces the snapshot wholesale; a failed poll keeps the previous
 /// listings and records `last_error` + the attempt time.
+///
+/// The loop owns the persistent [`SalesLedger`]: each tick first advances
+/// the incremental chunked Sold scan (cursor only moves past successfully
+/// scanned chunks), then overlays the accumulated totals onto the fresh
+/// snapshot via [`apply_sales`] before swapping it in.
 pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(30));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut ledger = SalesLedger::default();
         loop {
             tick.tick().await;
+            advance_sales_ledger(&cfg, &mut ledger).await;
             match poll_once(&cfg).await {
-                Ok(fresh) => {
+                Ok(mut fresh) => {
+                    apply_sales(&mut fresh, &ledger);
                     *snapshot.write().await = fresh;
                 }
                 Err(e) => {
@@ -418,10 +557,114 @@ mod tests {
     }
 
     #[test]
-    fn deploy_block_parsing_defaults_zero() {
-        assert_eq!(parse_deploy_block(None), 0);
-        assert_eq!(parse_deploy_block(Some("not-a-number".into())), 0);
-        assert_eq!(parse_deploy_block(Some("12345678".into())), 12_345_678);
+    fn deploy_block_parsing_defaults_none() {
+        assert_eq!(parse_deploy_block(None), None);
+        assert_eq!(parse_deploy_block(Some("not-a-number".into())), None);
+        assert_eq!(parse_deploy_block(Some("12345678".into())), Some(12_345_678));
+    }
+
+    // -- chunked-scan cursor math ---------------------------------------------
+
+    #[test]
+    fn initial_cursor_prefers_deploy_block() {
+        assert_eq!(initial_cursor(Some(42), 1_000_000), 42);
+        // Unset → recent-history lookback.
+        assert_eq!(
+            initial_cursor(None, 1_000_000),
+            1_000_000 - SOLD_SCAN_DEFAULT_LOOKBACK
+        );
+        // Saturates near genesis.
+        assert_eq!(initial_cursor(None, 5), 0);
+    }
+
+    #[test]
+    fn chunk_ranges_empty_when_cursor_past_latest() {
+        assert!(chunk_ranges(101, 100, 9_000, 10).is_empty());
+    }
+
+    #[test]
+    fn chunk_ranges_single_chunk_clamps_to_latest() {
+        assert_eq!(chunk_ranges(100, 150, 9_000, 10), vec![(100, 150)]);
+        // Exactly one block.
+        assert_eq!(chunk_ranges(100, 100, 9_000, 10), vec![(100, 100)]);
+    }
+
+    #[test]
+    fn chunk_ranges_splits_and_caps_at_max_chunks() {
+        // 25 blocks, chunk = 10 → 3 chunks, last clamped to latest.
+        assert_eq!(chunk_ranges(0, 24, 10, 10), vec![(0, 9), (10, 19), (20, 24)]);
+        // Cap at max_chunks = 2.
+        assert_eq!(chunk_ranges(0, 24, 10, 2), vec![(0, 9), (10, 19)]);
+        // Ranges are contiguous and inclusive (no gap, no overlap).
+        let ranges = chunk_ranges(7, 100_000, 9_000, 10);
+        assert_eq!(ranges.len(), 10);
+        assert_eq!(ranges[0], (7, 9_006));
+        for w in ranges.windows(2) {
+            assert_eq!(w[1].0, w[0].1 + 1);
+        }
+    }
+
+    #[test]
+    fn chunk_ranges_no_overflow_at_u64_max() {
+        let ranges = chunk_ranges(u64::MAX - 5, u64::MAX, 9_000, 10);
+        assert_eq!(ranges, vec![(u64::MAX - 5, u64::MAX)]);
+    }
+
+    // -- apply_sales merge ----------------------------------------------------
+
+    fn listing_with_id(listing_id: u64) -> IndexedListing {
+        IndexedListing {
+            listing_id,
+            agent_nft_id: "7".into(),
+            agent_id: String::new(),
+            seller: String::new(),
+            content_hash: String::new(),
+            content_uri: String::new(),
+            tier: 0,
+            price_usdc: 0.0,
+            transferable_license: false,
+            revoked: false,
+            gen_art_seed: String::new(),
+            name: String::new(),
+            symmetry: String::new(),
+            palette: String::new(),
+            attestation_count: 0,
+            units_sold: 0,
+            earned_usdc: 0.0,
+        }
+    }
+
+    #[test]
+    fn apply_sales_overlays_ledger_totals() {
+        let mut snapshot = MarketplaceSnapshot {
+            listings: vec![listing_with_id(2), listing_with_id(5)],
+            ..Default::default()
+        };
+        let mut ledger = SalesLedger::default();
+        fold_sales(
+            &mut ledger.per_listing,
+            vec![sold(2, 950_000), sold(2, 950_000), sold(9, 1_000_000)],
+        );
+        apply_sales(&mut snapshot, &ledger);
+        assert_eq!(snapshot.listings[0].units_sold, 2);
+        assert_eq!(snapshot.listings[0].earned_usdc, 1.9);
+        // Listing without sales keeps its zeros.
+        assert_eq!(snapshot.listings[1].units_sold, 0);
+        assert_eq!(snapshot.listings[1].earned_usdc, 0.0);
+    }
+
+    #[test]
+    fn fold_sales_accumulates_across_chunks() {
+        let mut totals = HashMap::new();
+        fold_sales(&mut totals, vec![sold(3, 500_000)]);
+        fold_sales(&mut totals, vec![sold(3, 500_000)]);
+        assert_eq!(
+            totals.get(&3).copied(),
+            Some(SaleTotals {
+                units_sold: 2,
+                seller_proceeds_usdc6: 1_000_000,
+            })
+        );
     }
 
     // -- Sold aggregation ----------------------------------------------------
