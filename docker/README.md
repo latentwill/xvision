@@ -20,10 +20,10 @@ Two Dockerfiles live in the repo root:
 
 | Tag | Description |
 |---|---|
-| `ghcr.io/latentwill/xvision:latest` | Default. SPA baked in. Built from `Dockerfile.deploy` on `workflow_dispatch`. |
+| `ghcr.io/latentwill/xvision:latest` | Default. SPA baked in. Built from `Dockerfile.deploy` on `workflow_dispatch`. Includes the on-chain identity/marketplace (alloy v2) stack via the dashboard's marketplace routes — env-gated at runtime (dormant/503 without `XVN_RPC_URL` etc.). |
 | `ghcr.io/latentwill/xvision:main`   | Same as `:latest`, refreshed on every main-branch dispatch. |
 | `ghcr.io/latentwill/xvision:sha-<short>` | Immutable per-build tag (e.g. `sha-0d09363`). |
-| `ghcr.io/latentwill/xvision:identity` | Includes the alloy v2 / on-chain identity stack. Larger build. Opt-in via `workflow_dispatch` input. |
+| `ghcr.io/latentwill/xvision:identity` | Explicit full-identity build: `xvision-identity` as a direct workspace member (full CLI identity verbs, not just the dashboard routes). Larger build. Opt-in via `workflow_dispatch` input. |
 
 ## Quick start
 
