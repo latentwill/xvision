@@ -124,6 +124,22 @@ pub struct AppState {
     /// safe checkpoint; `POST /cycles/:id/resume` clears it to continue.
     /// Entries are removed when the cycle ends (same lifecycle as cancel flags).
     autooptimizer_pauses: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    /// Marketplace indexer snapshot — written by the background poller
+    /// (`marketplace_index::spawn_indexer`), read by the
+    /// `/api/marketplace/*` read routes. Defaults to the empty snapshot; the
+    /// indexer only spawns when the chain env is configured (see
+    /// `IndexerCfg::from_env` + `server::serve`).
+    pub marketplace_snapshot: crate::marketplace_index::SharedSnapshot,
+    /// Whether the marketplace indexer task was actually spawned this
+    /// process. Distinct from snapshot freshness: `active` on the status
+    /// route requires BOTH this flag AND a completed first poll.
+    marketplace_indexer_active: Arc<std::sync::atomic::AtomicBool>,
+    /// Marketplace chain config, resolved ONCE at server startup
+    /// (`server::serve`) instead of per request (xvision-df3). `None` =
+    /// dormant: chain-touching marketplace routes return the same 503s they
+    /// did when they read the env per request. Tests inject via
+    /// [`AppState::with_marketplace_chain_config`].
+    marketplace_chain: Option<Arc<crate::chain_config::MarketplaceChainConfig>>,
 }
 
 impl AppState {
@@ -340,7 +356,36 @@ impl AppState {
             autooptimizer_tx,
             autooptimizer_cancels: Arc::new(Mutex::new(HashMap::new())),
             autooptimizer_pauses: Arc::new(Mutex::new(HashMap::new())),
+            marketplace_snapshot: Default::default(),
+            marketplace_indexer_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            marketplace_chain: None,
         })
+    }
+
+    /// The startup-resolved marketplace chain config (`None` = dormant).
+    pub fn marketplace_chain(&self) -> Option<&crate::chain_config::MarketplaceChainConfig> {
+        self.marketplace_chain.as_deref()
+    }
+
+    /// Attach the startup-resolved marketplace chain config. Called once by
+    /// `server::serve`; tests use it to inject config without touching env.
+    pub fn with_marketplace_chain_config(mut self, cfg: crate::chain_config::MarketplaceChainConfig) -> Self {
+        self.marketplace_chain = Some(Arc::new(cfg));
+        self
+    }
+
+    /// Whether the marketplace indexer task was spawned this process.
+    pub fn marketplace_indexer_active(&self) -> bool {
+        self.marketplace_indexer_active
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Record that the marketplace indexer was spawned. Called once from
+    /// `server::serve` when the chain env is configured; also used by route
+    /// tests to simulate an active indexer.
+    pub fn mark_marketplace_indexer_active(&self) {
+        self.marketplace_indexer_active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Shared safety manager reference for route handlers.

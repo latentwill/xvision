@@ -1,4 +1,5 @@
 // src/features/marketplace/routes/browse/HeaderStrip.tsx
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
@@ -53,6 +54,13 @@ export function HeaderStrip() {
         </div>
       </div>
       <div className="flex gap-2 items-center shrink-0">
+        <Link
+          to="/marketplace/wallet"
+          aria-label="wallet"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border-strong bg-transparent text-text-2 text-[12px] font-medium hover:text-text hover:border-border"
+        >
+          Wallet
+        </Link>
         <button
           type="button"
           aria-label="share"

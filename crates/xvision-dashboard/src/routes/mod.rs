@@ -20,6 +20,7 @@ pub mod focus;
 pub mod health;
 pub mod live_broker;
 pub mod marketplace;
+pub mod marketplace_read;
 pub mod memory;
 pub mod optimizations;
 pub mod safety;

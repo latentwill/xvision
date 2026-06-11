@@ -1,0 +1,461 @@
+// Chain-side helpers for the marketplace purchase flow (Mantle Sepolia).
+//
+// Contract addresses are NEVER hardcoded in the bundle — they're discovered
+// from `GET /api/marketplace/status` (`contracts` block) and cached for the
+// session. All USDC amounts are integer 6dp bigints; string/decimal
+// conversion happens only at the relay-body edge.
+//
+// The EIP-3009 `transferWithAuthorization` typed data here must match the
+// test USDC's EIP-712 domain exactly: name "USD Coin (xvn test)", version
+// "1", chainId 5003, verifyingContract = the USDC address. The typehash
+// field order (from, to, value, validAfter, validBefore, nonce) is
+// normative — reordering changes the digest and the relay tx reverts.
+
+import {
+  createPublicClient,
+  createWalletClient,
+  custom,
+  defineChain,
+  http,
+  parseSignature,
+  type Address,
+  type Hex,
+  type PublicClient,
+  type WalletClient,
+} from "viem";
+import { apiFetch } from "@/api/client";
+import { WALLET_STORAGE_KEY } from "./wallet";
+
+// ---------------------------------------------------------------------------
+// Chain
+// ---------------------------------------------------------------------------
+
+export const mantleSepolia = defineChain({
+  id: 5003,
+  name: "Mantle Sepolia",
+  nativeCurrency: { name: "Mantle", symbol: "MNT", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.sepolia.mantle.xyz"] },
+  },
+  blockExplorers: {
+    default: {
+      name: "Mantle Sepolia Explorer",
+      url: "https://explorer.sepolia.mantle.xyz",
+    },
+  },
+});
+
+/** `5003` as the hex chain-id string wallets expect. */
+export const MANTLE_SEPOLIA_HEX = "0x138b";
+
+// ---------------------------------------------------------------------------
+// Contract discovery (cached from /api/marketplace/status)
+// ---------------------------------------------------------------------------
+
+/** Mirrors `ContractsOut` in marketplace_read.rs (each null when unset). */
+export interface MarketplaceContracts {
+  marketplace: Address;
+  usdc: Address;
+  license_token: string | null;
+  listing_registry: string | null;
+  identity_registry: string | null;
+}
+
+interface StatusOut {
+  contracts: {
+    marketplace: string | null;
+    usdc: string | null;
+    license_token: string | null;
+    listing_registry: string | null;
+    identity_registry: string | null;
+  };
+}
+
+let contractsCache: MarketplaceContracts | null = null;
+
+/**
+ * Fetch (once per session) the marketplace contract address book.
+ * Throws when the marketplace or USDC address is not configured on the
+ * backend — purchase flows cannot proceed without both.
+ */
+export async function getContracts(): Promise<MarketplaceContracts> {
+  if (contractsCache) return contractsCache;
+  const status = await apiFetch<StatusOut>("/api/marketplace/status");
+  const c = status.contracts;
+  if (!c.marketplace || !c.usdc) {
+    throw new Error(
+      "Marketplace contracts not configured on the backend (marketplace/usdc address missing).",
+    );
+  }
+  contractsCache = {
+    marketplace: c.marketplace as Address,
+    usdc: c.usdc as Address,
+    license_token: c.license_token,
+    listing_registry: c.listing_registry,
+    identity_registry: c.identity_registry,
+  };
+  return contractsCache;
+}
+
+/** Test-only: clear the cached contract address book. */
+export function __resetContractsCacheForTest(): void {
+  contractsCache = null;
+}
+
+// ---------------------------------------------------------------------------
+// Clients
+// ---------------------------------------------------------------------------
+
+export function publicClient(): PublicClient {
+  return createPublicClient({ chain: mantleSepolia, transport: http() });
+}
+
+export function walletClient(): WalletClient {
+  if (!window.ethereum) {
+    throw new Error(
+      "MetaMask (or compatible wallet) not detected. Install from metamask.io.",
+    );
+  }
+  return createWalletClient({
+    chain: mantleSepolia,
+    transport: custom(window.ethereum),
+  });
+}
+
+async function connectedAccount(): Promise<Address> {
+  const [account] = await walletClient().getAddresses();
+  if (!account) {
+    throw new Error("No wallet account connected.");
+  }
+  return account;
+}
+
+/**
+ * The connected wallet address, or null when no wallet / not connected.
+ * Prefers the `useWallet` localStorage key (set on explicit connect),
+ * falling back to `eth_accounts` (already-authorized accounts; does not
+ * prompt). Never throws — callers turn null into a typed error.
+ */
+export async function currentAddress(): Promise<Address | null> {
+  if (!window.ethereum) return null;
+  const stored = localStorage.getItem(WALLET_STORAGE_KEY);
+  if (stored) return stored as Address;
+  try {
+    const accounts = (await window.ethereum.request({
+      method: "eth_accounts",
+    })) as string[];
+    return (accounts?.[0] as Address | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ensure the wallet is on Mantle Sepolia: check `eth_chainId`, attempt
+ * `wallet_switchEthereumChain`, and on error 4902 (chain unknown to the
+ * wallet) add the chain first, then switch.
+ */
+export async function ensureMantleSepolia(): Promise<void> {
+  if (!window.ethereum) {
+    throw new Error(
+      "MetaMask (or compatible wallet) not detected. Install from metamask.io.",
+    );
+  }
+  const chainId = (await window.ethereum.request({
+    method: "eth_chainId",
+  })) as string;
+  if (chainId?.toLowerCase() === MANTLE_SEPOLIA_HEX) return;
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: MANTLE_SEPOLIA_HEX }],
+    });
+  } catch (err) {
+    const code = (err as { code?: number })?.code;
+    if (code !== 4902) throw err;
+    await window.ethereum.request({
+      method: "wallet_addEthereumChain",
+      params: [
+        {
+          chainId: MANTLE_SEPOLIA_HEX,
+          chainName: mantleSepolia.name,
+          nativeCurrency: mantleSepolia.nativeCurrency,
+          rpcUrls: mantleSepolia.rpcUrls.default.http,
+          blockExplorerUrls: [mantleSepolia.blockExplorers.default.url],
+        },
+      ],
+    });
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: MANTLE_SEPOLIA_HEX }],
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// USDC reads/writes + marketplace buy
+// ---------------------------------------------------------------------------
+
+const ERC20_READS_ABI = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "allowance",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "spender", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
+
+const ERC20_APPROVE_ABI = [
+  {
+    type: "function",
+    name: "approve",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spender", type: "address" },
+      { name: "value", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+] as const;
+
+const USDC_FAUCET_ABI = [
+  {
+    type: "function",
+    name: "faucet",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "amount", type: "uint256" }],
+    outputs: [],
+  },
+] as const;
+
+const MARKETPLACE_BUY_ABI = [
+  {
+    type: "function",
+    name: "buy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "listingId", type: "uint256" },
+      { name: "recipient", type: "address" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/** USDC balance of `addr`, integer 6dp. */
+export async function usdcBalance(addr: Address): Promise<bigint> {
+  const { usdc } = await getContracts();
+  return publicClient().readContract({
+    address: usdc,
+    abi: ERC20_READS_ABI,
+    functionName: "balanceOf",
+    args: [addr],
+  });
+}
+
+/** USDC allowance from `owner` to the marketplace, integer 6dp. */
+export async function usdcAllowance(owner: Address): Promise<bigint> {
+  const { usdc, marketplace } = await getContracts();
+  return publicClient().readContract({
+    address: usdc,
+    abi: ERC20_READS_ABI,
+    functionName: "allowance",
+    args: [owner, marketplace],
+  });
+}
+
+async function writeAndWait(
+  write: (account: Address) => Promise<Hex>,
+): Promise<Hex> {
+  const account = await connectedAccount();
+  const hash = await write(account);
+  await publicClient().waitForTransactionReceipt({ hash });
+  return hash;
+}
+
+/** Mint test USDC to the connected account. `amount6` is integer 6dp. */
+export async function faucetUsdc(amount6: bigint): Promise<Hex> {
+  const { usdc } = await getContracts();
+  return writeAndWait((account) =>
+    walletClient().writeContract({
+      address: usdc,
+      abi: USDC_FAUCET_ABI,
+      functionName: "faucet",
+      args: [amount6],
+      account,
+      chain: mantleSepolia,
+    }),
+  );
+}
+
+/** Approve the marketplace to spend `amount6` USDC (integer 6dp). */
+export async function approveUsdc(amount6: bigint): Promise<Hex> {
+  const { usdc, marketplace } = await getContracts();
+  return writeAndWait((account) =>
+    walletClient().writeContract({
+      address: usdc,
+      abi: ERC20_APPROVE_ABI,
+      functionName: "approve",
+      args: [marketplace, amount6],
+      account,
+      chain: mantleSepolia,
+    }),
+  );
+}
+
+/** Direct (approve-path) purchase: `Marketplace.buy(listingId, recipient)`. */
+export async function buyDirect(
+  listingId: bigint,
+  recipient: Address,
+): Promise<Hex> {
+  const { marketplace } = await getContracts();
+  return writeAndWait((account) =>
+    walletClient().writeContract({
+      address: marketplace,
+      abi: MARKETPLACE_BUY_ABI,
+      functionName: "buy",
+      args: [listingId, recipient],
+      account,
+      chain: mantleSepolia,
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// EIP-3009 transferWithAuthorization signing
+// ---------------------------------------------------------------------------
+
+export interface TransferAuthMessage {
+  from: Address;
+  to: Address;
+  value: bigint;
+  validAfter: bigint;
+  validBefore: bigint;
+  nonce: Hex;
+}
+
+/** Relay body for `POST /api/marketplace/buy`'s `authorization` field. */
+export interface RelayAuthorization {
+  from: Address;
+  to: Address;
+  /** Decimal 6dp string (serde-friendly; avoids JS number precision). */
+  value: string;
+  valid_after: number;
+  valid_before: number;
+  nonce: Hex;
+  v: number;
+  r: Hex;
+  s: Hex;
+}
+
+/** Random 32-byte hex nonce via `crypto.getRandomValues`. */
+export function randomNonce(): Hex {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * Pure builder for the EIP-3009 typed data. Field names and order are
+ * normative (they hash into the typehash); do not reorder.
+ */
+export function buildTransferAuthTypedData(params: {
+  from: Address;
+  to: Address;
+  usdc: Address;
+  value: bigint;
+  validAfter: bigint;
+  validBefore: bigint;
+  nonce: Hex;
+}) {
+  return {
+    domain: {
+      name: "USD Coin (xvn test)",
+      version: "1",
+      chainId: 5003,
+      verifyingContract: params.usdc,
+    },
+    types: {
+      TransferWithAuthorization: [
+        { name: "from", type: "address" },
+        { name: "to", type: "address" },
+        { name: "value", type: "uint256" },
+        { name: "validAfter", type: "uint256" },
+        { name: "validBefore", type: "uint256" },
+        { name: "nonce", type: "bytes32" },
+      ],
+    },
+    primaryType: "TransferWithAuthorization",
+    message: {
+      from: params.from,
+      to: params.to,
+      value: params.value,
+      validAfter: params.validAfter,
+      validBefore: params.validBefore,
+      nonce: params.nonce,
+    },
+  } as const;
+}
+
+/**
+ * Pure: split a 65-byte signature into r/s/v (v normalized to 27/28 —
+ * wallets may return yParity 0/1 in the trailing byte) and assemble the
+ * relay `authorization` body.
+ */
+export function relayBodyFromSignature(
+  message: TransferAuthMessage,
+  signature: Hex,
+): RelayAuthorization {
+  const { r, s, v, yParity } = parseSignature(signature);
+  const vNorm =
+    v !== undefined && v >= 27n ? Number(v) : (yParity ?? 0) + 27;
+  return {
+    from: message.from,
+    to: message.to,
+    value: message.value.toString(),
+    valid_after: Number(message.validAfter),
+    valid_before: Number(message.validBefore),
+    nonce: message.nonce,
+    v: vNorm,
+    r,
+    s,
+  };
+}
+
+/**
+ * Sign an EIP-3009 transfer authorization paying the marketplace contract
+ * `valueUsdc6` (integer 6dp) from `from`, valid for `validSecs` (default
+ * 1h). Returns the relay `authorization` body for `POST /api/marketplace/buy`.
+ */
+export async function signTransferAuthorization(params: {
+  from: Address;
+  valueUsdc6: bigint;
+  validSecs?: number;
+}): Promise<RelayAuthorization> {
+  const { from, valueUsdc6, validSecs = 3600 } = params;
+  const { usdc, marketplace } = await getContracts();
+  const message: TransferAuthMessage = {
+    from,
+    to: marketplace,
+    value: valueUsdc6,
+    validAfter: 0n,
+    validBefore: BigInt(Math.floor(Date.now() / 1000) + validSecs),
+    nonce: randomNonce(),
+  };
+  const typedData = buildTransferAuthTypedData({ ...message, usdc });
+  const signature = await walletClient().signTypedData({
+    account: from,
+    ...typedData,
+  });
+  return relayBodyFromSignature(message, signature);
+}

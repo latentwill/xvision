@@ -389,9 +389,15 @@ impl IdentityClient {
         agent_uri: &url::Url,
         signer: &PrivateKeySigner,
     ) -> Result<TokenId, IdentityError> {
+        // Deliberately NOT logging the full URI: genart `data:` tokenURIs run
+        // 8–12 KB and would flood the log on every mint (xvision-2cm). The
+        // scheme + byte length + a short prefix is enough to correlate.
+        let uri_str = agent_uri.as_str();
         info!(
             chain_id = self.chain_id,
-            agent_uri = %agent_uri,
+            agent_uri_scheme = %agent_uri.scheme(),
+            agent_uri_bytes = uri_str.len(),
+            agent_uri_prefix = %uri_prefix(uri_str, 40),
             "registering agent identity"
         );
 
@@ -634,6 +640,19 @@ impl IdentityClient {
     }
 }
 
+/// The first `max` bytes of a URI for log correlation, char-boundary safe.
+/// Used instead of logging full genart `data:` tokenURIs (8–12 KB each).
+fn uri_prefix(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -655,6 +674,22 @@ mod tests {
     #[test]
     fn registry_addresses_mainnet_returns_none() {
         assert!(RegistryAddresses::mantle_mainnet().is_none());
+    }
+
+    #[test]
+    fn uri_prefix_truncates_long_uris_and_keeps_short_ones() {
+        // Short URI passes through whole.
+        assert_eq!(uri_prefix("data:application/json", 40), "data:application/json");
+        // A genart-sized data URI is cut to the cap.
+        let long = format!("data:application/json;base64,{}", "A".repeat(10_000));
+        let p = uri_prefix(&long, 40);
+        assert_eq!(p.len(), 40);
+        assert!(long.starts_with(p));
+        // Multi-byte boundary safety: never panics, never splits a char.
+        let multibyte = "data:€€€€€€€€€€€€€€€€€€€€";
+        let p = uri_prefix(multibyte, 7); // would land mid-'€' (3 bytes each)
+        assert!(p.len() <= 7);
+        assert!(multibyte.starts_with(p));
     }
 
     #[test]

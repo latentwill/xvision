@@ -95,18 +95,20 @@ then pass `--batch <batch_id>` to `eval compare` to resolve run ids automaticall
 
 Testnet marketplace listing, purchase, and attestation commands. The CLI uses
 the mock marketplace driver by default for local automation; setting
-`MARKETPLACE_DRIVER=onchain` returns a usage error because on-chain writes go
-through the dashboard or MCP server.
+`MARKETPLACE_DRIVER=onchain` runs against the deployed Mantle Sepolia
+contracts (write verbs need `MANTLE_PRIVATE_KEY` plus the `XVN_*` contract
+address env vars; see `xvn marketplace --help` for the full env contract).
 
 | Verb | Effect |
 |---|---|
-| `list` | Read `XVN_MARKETPLACE_FIXTURE` or `$XVN_HOME/marketplace/listings.json` and print listing rows as `agent_id`, `version`, `price_usdc`, `seller`, and `status`. Prints `(no listings)` when the fixture is absent or empty. |
-| `publish --agent-id <id> --price <usdc> --manifest-path <path>` | Validate the manifest JSON, hash its content, and publish a mock listing. Prints `listing_id=<id> agent_id=<id>`. |
-| `buy --listing-id <id> --buyer <0xaddress>` | Buy a mock listing for the supplied wallet address. Prints `tx_hash=<hash> license_token_id=<id>`. |
+| `list` | Default: read `XVN_MARKETPLACE_FIXTURE` or `$XVN_HOME/marketplace/listings.json` and print listing rows as `agent_id`, `version`, `price_usdc`, `seller`, and `status`. With `MARKETPLACE_DRIVER=onchain`: enumerate the deployed ListingRegistry read-only (no signer; needs `XVN_LISTING_REGISTRY` + `XVN_IDENTITY_REGISTRY`) and print `listing_id \| agent_id \| price_usdc \| seller \| revoked`. Prints `(no listings)` when empty. |
+| `show-token --token-id <id> [--svg-out <path>]` | Read-only fetch + decode of `IdentityRegistry.tokenURI(id)` (needs `XVN_IDENTITY_REGISTRY`). Prints name, agent_id, the Symmetry/Palette/Density/Layers attributes, and the decoded SVG byte length; `--svg-out` writes the SVG file. |
+| `publish --agent-id <id> --price <usdc> --manifest-path <path>` | Validate the manifest JSON, hash its content, and publish a listing. Prints `listing_id=<id> agent_id=<id>`. |
+| `buy --listing-id <id> --buyer <0xaddress>` | Buy a listing for the supplied wallet address. Prints `tx_hash=<hash> license_token_id=<id>`. |
 | `attest --listing-id <id> --cycles <n> --sharpe <f>` | Hash and post an eval attestation payload for a listing. Prints `tx_hash=<hash>`. |
 
 `--price` must be a non-negative finite USDC value. `--buyer` must parse as an
-EVM address.
+EVM address. `XVN_MANTLE_RPC_URL` defaults to `https://rpc.sepolia.mantle.xyz`.
 
 ---
 

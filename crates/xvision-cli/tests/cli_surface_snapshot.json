@@ -2191,6 +2191,17 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "marketplace",
+        "show-token"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -3823,6 +3834,17 @@
     {
       "aliases": [],
       "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "help",
+        "show-token"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
       "long_flags": [
         "--help"
       ],
@@ -3845,6 +3867,20 @@
       "path": [
         "marketplace",
         "publish"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--svg-out",
+        "--token-id"
+      ],
+      "mutates": false,
+      "path": [
+        "marketplace",
+        "show-token"
       ]
     },
     {

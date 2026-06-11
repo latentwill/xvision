@@ -7,7 +7,10 @@ declare global {
   }
 }
 
-const STORAGE_KEY = "xvn_wallet_address";
+// Shared with lib/chain.ts `currentAddress()` so non-hook code (the data
+// layer's purchaseIntent) can discover the connected address.
+export const WALLET_STORAGE_KEY = "xvn_wallet_address";
+const STORAGE_KEY = WALLET_STORAGE_KEY;
 
 export interface WalletState {
   address: string | null;

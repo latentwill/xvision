@@ -216,8 +216,10 @@ nukes source — only rebuildable artifacts.
 ## Docker
 
 Slim runtime image of the `xvn` CLI lives at `ghcr.io/latentwill/xvision`.
-Two tags: `:latest` (default-members; no on-chain identity stack) and
-`:identity` (workspace build including `xvision-identity`).
+Two tags: `:latest` (default-members build — which now includes the on-chain
+identity/marketplace/alloy stack via xvision-dashboard's marketplace routes,
+env-gated at runtime) and `:identity` (explicit full-workspace build
+including `xvision-identity` as a direct member).
 
 Local builds:
 

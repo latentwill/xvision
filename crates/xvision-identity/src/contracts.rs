@@ -81,6 +81,7 @@ sol! {
         function updateListing(uint256 listingId, bytes32 contentHash, string calldata contentURI) external;
         function revokeListing(uint256 listingId) external;
         function getListing(uint256 listingId) external view returns (Listing memory);
+        function totalListings() external view returns (uint256);
         function transferableForListing(uint256 listingId) external view returns (bool);
         function listingExists(uint256 listingId) external view returns (bool);
 
