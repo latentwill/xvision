@@ -33,3 +33,10 @@ PINATA_JWT from op (`op item list | grep -i pinata` to find; if absent, operator
 
 ## Outcome
 (append after Task 3)
+Live-verified 2026-06-11: bundle route verified:true on listing 2 (xvn:// local path,
+hash-checked); import with licensed wallet → 201 new agent_id 01KTV3DYXKJ8VPFR6JQ5YCWS85
+(strategy on disk, GET 200); unlicensed address → 403. Gate ordering spot-checked
+(balanceOf before fetch before import; fresh ULID + audit asserted by engine tests).
+ipfs:// pin path mock-tested only — no PINATA_JWT in 1Password yet; operator to supply
+one to activate real pinning. Review agent stalled mid-run; controller spot-checked
+security items directly.
