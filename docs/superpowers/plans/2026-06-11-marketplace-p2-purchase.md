@@ -36,3 +36,14 @@ wallet (two txs). Receipts become real (decoded `Sold` events).
 
 ### Task 4: live verification + PR
 - Start dashboard with full env; faucet 5 USDC to the op wallet if needed; build relay body by signing the typed data with `cast wallet sign --data` (op key) — POST /api/marketplace/buy → real gasless purchase on Mantle Sepolia; GET receipts/:tx returns decoded Sold; license balance increments. Frontend suites green. PR stacked on #912. Browser/MetaMask manual pass left to operator (documented in PR).
+
+## Outcome (2026-06-11)
+
+Live-verified on Mantle Sepolia: cast-signed EIP-3009 authorization relayed through
+`POST /api/marketplace/buy` → gasless purchase tx `0x372cc61d…` (purchase_path=1),
+receipt route decoded the Sold event (1.00 USDC, 0.95/0.05 split, full listing join
+with real art seed), license balance 1→2. Adversarial review passed: M-2 enforced at
+route/driver/contract layers; relayer exposure = bounded gas griefing (documented);
+EIP-712 typed data byte-exact vs MockUSDC3009. Browser/MetaMask manual pass left to
+operator. Nits deferred: localStorage address validation, transport-errors→400, 1970
+timestamp on degraded block lookup, faucet mints price not deficit.
