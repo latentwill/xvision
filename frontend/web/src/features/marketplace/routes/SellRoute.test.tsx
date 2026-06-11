@@ -172,10 +172,9 @@ describe("SellRoute", () => {
       React.createElement(
         QueryClientProvider,
         { client: queryClient },
-        React.createElement(
-          MarketplaceDataProvider,
-          { client },
-          React.createElement(
+        React.createElement(MarketplaceDataProvider, {
+          client,
+          children: React.createElement(
             MemoryRouter,
             { initialEntries: ["/marketplace/sell"] },
             React.createElement(
@@ -185,7 +184,7 @@ describe("SellRoute", () => {
               React.createElement(Route, { path: "/marketplace/lineage/:id", element: React.createElement(LineageSpy) }),
             ),
           ),
-        ),
+        }),
       ),
     );
 
