@@ -24,6 +24,10 @@ use serde::{Deserialize, Serialize};
 use xvision_core::AssetSymbol;
 
 use crate::alpaca::{AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide};
+use crate::orderly::{
+    orderly_symbol_for, AlgoKind, Credentials as OrderlyCredentials, OrderSide as OrderlyOrderSide,
+    OrderlyApi, OrderlyOrder, ReqwestOrderlyApi, ORDERLY_MAINNET_BASE,
+};
 
 /// Returns `true` when `asset` parses as an Alpaca crypto whitelist symbol
 /// (`"BTC"`, `"BTC/USD"`, `"BTCUSD"`, etc.). Used by `AlpacaPaperSurface` and
@@ -50,9 +54,7 @@ pub fn is_alpaca_crypto(asset: &str) -> bool {
             // suffix so callers passing Alpaca-style pairs without a slash still
             // resolve correctly.
             let upper = asset.trim().to_ascii_uppercase();
-            let base = upper
-                .strip_suffix("USDC")
-                .or_else(|| upper.strip_suffix("USD"));
+            let base = upper.strip_suffix("USDC").or_else(|| upper.strip_suffix("USD"));
             if let Some(b) = base {
                 if !b.is_empty() {
                     if let Ok(base_sym) = AssetSymbol::from_str(b) {
@@ -700,30 +702,231 @@ impl BrokerSurface for AlpacaLiveSurface {
     }
 }
 
-// ── OrderlyLiveSurface — stubbed for v1 ──────────────────────────────────────
+// ── OrderlyLiveSurface ───────────────────────────────────────────────────────
 
-/// Placeholder for Orderly Network live trading. v1 test ships Alpaca paper
-/// only; the existing `OrderlyExecutor` covers the live path through the
-/// `Executor` trait. A future plan can wire a thin `BrokerSurface` impl over
-/// the existing `OrderlyApi` trait the same way `AlpacaPaperSurface` does
-/// over `AlpacaApi`.
-pub struct OrderlyLiveSurface;
+/// Orderly Network (perps) behind the unified `BrokerSurface`. Mirrors
+/// `AlpacaPaperSurface` over `AlpacaApi`: thin order/position/balance calls
+/// over the existing `OrderlyApi` trait, generic so tests inject a mock.
+///
+/// Order semantics:
+/// - `req.size` is base-asset units, rounded to 6 dp before submission.
+/// - Market entry with `client_order_id = req.idempotency_key` (Orderly
+///   dedupes open orders on it).
+/// - Best-effort SL/TP bracket via reduce-only algo orders derived from
+///   `reference_price_usd` + `stop_loss_pct` / `take_profit_pct`. Bracket
+///   failures never fail the entry — same policy as `OrderlyExecutor::submit`.
+pub struct OrderlyLiveSurface<A: OrderlyApi = ReqwestOrderlyApi> {
+    api: A,
+}
 
-#[async_trait]
-impl BrokerSurface for OrderlyLiveSurface {
-    async fn submit_order(&self, _req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
-        Err(anyhow::anyhow!(
-            "OrderlyLiveSurface is stubbed for v1 BrokerSurface. \
-             Use xvision_execution::OrderlyExecutor for live Orderly trading via the Executor trait."
-        ))
+impl OrderlyLiveSurface<ReqwestOrderlyApi> {
+    /// Build from explicit credentials. `base_url` defaults to the Orderly
+    /// mainnet EVM gateway when `None` — live-eval callers pass the testnet
+    /// URL explicitly (the engine hard-requires it).
+    pub fn connect(creds: OrderlyCredentials, base_url: Option<&str>) -> anyhow::Result<Self> {
+        let url = base_url.unwrap_or(ORDERLY_MAINNET_BASE).to_string();
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| anyhow::anyhow!("orderly reqwest client: {e}"))?;
+        Ok(Self {
+            api: ReqwestOrderlyApi::new(http, url, creds),
+        })
     }
 
-    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
-        Err(anyhow::anyhow!("OrderlyLiveSurface stubbed"))
+    /// Build from environment variables (`ORDERLY_KEY`, `ORDERLY_SECRET`,
+    /// `ORDERLY_ACCOUNT_ID`, optional `ORDERLY_BASE_URL`) — same contract as
+    /// `OrderlyExecutor::from_env`.
+    pub fn from_env() -> anyhow::Result<Self> {
+        let key =
+            std::env::var("ORDERLY_KEY").map_err(|_| anyhow::anyhow!("auth_failed: ORDERLY_KEY not set"))?;
+        let secret = std::env::var("ORDERLY_SECRET")
+            .map_err(|_| anyhow::anyhow!("auth_failed: ORDERLY_SECRET not set"))?;
+        let account_id = std::env::var("ORDERLY_ACCOUNT_ID")
+            .map_err(|_| anyhow::anyhow!("auth_failed: ORDERLY_ACCOUNT_ID not set"))?;
+        let base_url = std::env::var("ORDERLY_BASE_URL").ok();
+        Self::connect(
+            OrderlyCredentials {
+                orderly_key: key,
+                orderly_secret: secret,
+                orderly_account_id: account_id,
+            },
+            base_url.as_deref(),
+        )
+    }
+}
+
+impl<A: OrderlyApi> OrderlyLiveSurface<A> {
+    /// Build from any `OrderlyApi` impl. Used by tests with mocks.
+    pub fn with_api(api: A) -> Self {
+        Self { api }
+    }
+
+    /// Resolve a free-text asset (`"BTC"`, `"BTC/USD"`, …) to its Orderly
+    /// perp symbol. Failures carry "unsupported asset" so
+    /// `classify_broker_error_message` lands on `UnsupportedAsset`.
+    fn resolve_symbol(asset: &str) -> anyhow::Result<String> {
+        let sym = AssetSymbol::from_str(asset)
+            .map_err(|e| anyhow::anyhow!("orderly unsupported asset '{asset}': {e}"))?;
+        orderly_symbol_for(sym).map_err(|e| anyhow::anyhow!("orderly unsupported asset '{asset}': {e}"))
+    }
+
+    async fn await_fill(&self, order_id: u64) -> anyhow::Result<OrderlyOrder> {
+        const MAX_POLLS: u32 = 5;
+        const POLL_DELAY_MS: u64 = 200;
+        for _ in 0..MAX_POLLS {
+            let order = self
+                .api
+                .get_order(order_id)
+                .await
+                .map_err(|e| anyhow::anyhow!("orderly get_order: {e}"))?;
+            if order.is_terminal() {
+                if order.is_unfilled_terminal() {
+                    anyhow::bail!(
+                        "orderly order {order_id} rejected: terminated unfilled ({}) — venue could not match it",
+                        order.status
+                    );
+                }
+                return Ok(order);
+            }
+            tokio::time::sleep(Duration::from_millis(POLL_DELAY_MS)).await;
+        }
+        anyhow::bail!("orderly order {order_id} did not fill within {MAX_POLLS} polls (timeout)")
+    }
+}
+
+#[async_trait]
+impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let symbol = Self::resolve_symbol(&req.asset)?;
+
+        // Align the base quantity to the market's step size (the venue
+        // rejects misaligned quantities with -1104 "does not match the
+        // step size"; caught live on testnet 2026-06-11) and enforce the
+        // per-order minimum.
+        let meta = self
+            .api
+            .get_symbol_meta(&symbol)
+            .await
+            .map_err(|e| anyhow::anyhow!("orderly get_symbol_meta: {e}"))?;
+        let qty = crate::orderly::round_to_tick(req.size, meta.base_tick);
+        if !(qty > 0.0) || qty < meta.base_min {
+            anyhow::bail!(
+                "orderly order amount is too small: size {} for {} (base_min {}, step {})",
+                req.size,
+                req.asset,
+                meta.base_min,
+                meta.base_tick
+            );
+        }
+
+        let side = match req.side {
+            Side::Buy => OrderlyOrderSide::Buy,
+            Side::Sell => OrderlyOrderSide::Sell,
+        };
+
+        // Entry market order; client_order_id = idempotency key.
+        let entry = self
+            .api
+            .create_order(&symbol, side, qty, Some(req.idempotency_key.clone()), None)
+            .await
+            .map_err(|e| anyhow::anyhow!("orderly create_order: {e}"))?;
+
+        let filled = self.await_fill(entry.order_id).await?;
+        let fill_price = filled.average_executed_price;
+        let fill_qty = filled.executed_quantity.unwrap_or(qty);
+
+        // Best-effort SL/TP bracket via reduce-only algo orders. Trigger
+        // prices derive from the caller's reference price (the live bar
+        // close), matching the AlpacaPaperSurface bracket derivation; the
+        // fill price is preferred when the venue reported one.
+        let anchor = fill_price
+            .filter(|p| *p > 0.0 && p.is_finite())
+            .unwrap_or(req.reference_price_usd);
+        if anchor > 0.0 && anchor.is_finite() {
+            let close_side = match side {
+                OrderlyOrderSide::Buy => OrderlyOrderSide::Sell,
+                OrderlyOrderSide::Sell => OrderlyOrderSide::Buy,
+            };
+            let dir = match side {
+                OrderlyOrderSide::Buy => 1.0,
+                OrderlyOrderSide::Sell => -1.0,
+            };
+            if let Some(tp_pct) = req.take_profit_pct {
+                let trigger = anchor * (1.0 + dir * tp_pct as f64 / 100.0);
+                if let Err(e) = self
+                    .api
+                    .create_algo_order(
+                        &symbol,
+                        AlgoKind::TakeProfitMarket,
+                        close_side,
+                        fill_qty,
+                        trigger,
+                        Some(crate::orderly::venue_client_id("tp-", &req.idempotency_key)),
+                        Some(true),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        target: "xvision::orderly",
+                        asset = %req.asset,
+                        "orderly take-profit algo order failed (entry stands): {e}"
+                    );
+                }
+            }
+            if let Some(sl_pct) = req.stop_loss_pct {
+                let trigger = anchor * (1.0 - dir * sl_pct as f64 / 100.0);
+                if let Err(e) = self
+                    .api
+                    .create_algo_order(
+                        &symbol,
+                        AlgoKind::StopMarket,
+                        close_side,
+                        fill_qty,
+                        trigger,
+                        Some(crate::orderly::venue_client_id("sl-", &req.idempotency_key)),
+                        Some(true),
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        target: "xvision::orderly",
+                        asset = %req.asset,
+                        "orderly stop-loss algo order failed (entry stands): {e}"
+                    );
+                }
+            }
+        }
+
+        Ok(OrderConfirmation {
+            broker_order_id: filled.order_id.to_string(),
+            fill_price,
+            fill_size: fill_qty,
+            fee: None,
+        })
+    }
+
+    async fn position(&self, asset: &str) -> anyhow::Result<f64> {
+        let symbol = Self::resolve_symbol(asset)?;
+        let positions = self
+            .api
+            .get_positions()
+            .await
+            .map_err(|e| anyhow::anyhow!("orderly get_positions: {e}"))?;
+        Ok(positions
+            .iter()
+            .find(|p| p.symbol == symbol)
+            .map(|p| p.position_qty)
+            .unwrap_or(0.0))
     }
 
     async fn balance(&self) -> anyhow::Result<f64> {
-        Err(anyhow::anyhow!("OrderlyLiveSurface stubbed"))
+        let account = self
+            .api
+            .get_account()
+            .await
+            .map_err(|e| anyhow::anyhow!("orderly get_account: {e}"))?;
+        Ok(account.equity())
     }
 }
 
@@ -822,5 +1025,319 @@ mod helper_tests {
                 "{not_ok} must NOT be classified as crypto"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod orderly_live_surface_tests {
+    use super::*;
+    use crate::executor::ExecutorError;
+    use crate::orderly::{OrderlyAccount, OrderlyPosition, OrderlySymbolMeta};
+
+    // ── Local mock OrderlyApi ────────────────────────────────────────────────
+
+    #[derive(Debug, Clone)]
+    struct CreateCall {
+        symbol: String,
+        side: OrderlyOrderSide,
+        quantity: f64,
+        client_order_id: Option<String>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct AlgoCall {
+        algo_type: AlgoKind,
+        side: OrderlyOrderSide,
+        quantity: f64,
+        trigger_price: f64,
+        client_order_id: Option<String>,
+        reduce_only: Option<bool>,
+    }
+
+    #[derive(Default)]
+    struct MockApi {
+        account: Option<OrderlyAccount>,
+        positions: Vec<OrderlyPosition>,
+        create_result: Option<OrderlyOrder>,
+        get_result: Option<OrderlyOrder>,
+        create_err: Option<String>,
+        algo_err: Option<String>,
+        created: Mutex<Vec<CreateCall>>,
+        algos: Mutex<Vec<AlgoCall>>,
+    }
+
+    #[async_trait]
+    impl OrderlyApi for MockApi {
+        async fn create_order(
+            &self,
+            symbol: &str,
+            side: OrderlyOrderSide,
+            quantity: f64,
+            client_order_id: Option<String>,
+            _reduce_only: Option<bool>,
+        ) -> Result<OrderlyOrder, ExecutorError> {
+            if let Some(msg) = &self.create_err {
+                return Err(ExecutorError::Rejected(msg.clone()));
+            }
+            self.created.lock().unwrap().push(CreateCall {
+                symbol: symbol.to_string(),
+                side,
+                quantity,
+                client_order_id,
+            });
+            Ok(self.create_result.clone().expect("create_result fixture"))
+        }
+
+        async fn create_algo_order(
+            &self,
+            _symbol: &str,
+            algo_type: AlgoKind,
+            side: OrderlyOrderSide,
+            quantity: f64,
+            trigger_price: f64,
+            client_order_id: Option<String>,
+            reduce_only: Option<bool>,
+        ) -> Result<u64, ExecutorError> {
+            if let Some(msg) = &self.algo_err {
+                return Err(ExecutorError::Rejected(msg.clone()));
+            }
+            self.algos.lock().unwrap().push(AlgoCall {
+                algo_type,
+                side,
+                quantity,
+                trigger_price,
+                client_order_id,
+                reduce_only,
+            });
+            Ok(1)
+        }
+
+        async fn get_order(&self, _order_id: u64) -> Result<OrderlyOrder, ExecutorError> {
+            Ok(self.get_result.clone().expect("get_result fixture"))
+        }
+
+        async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError> {
+            Ok(self.account.clone().expect("account fixture"))
+        }
+
+        async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
+            Ok(self.positions.clone())
+        }
+
+        async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {
+            Ok(50_000.0)
+        }
+
+        async fn get_symbol_meta(&self, _symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+            Ok(OrderlySymbolMeta {
+                base_tick: 0.00001,
+                base_min: 0.00001,
+            })
+        }
+    }
+
+    fn filled_order(id: u64, qty: f64, price: f64) -> OrderlyOrder {
+        OrderlyOrder {
+            order_id: id,
+            client_order_id: None,
+            status: "FILLED".into(),
+            executed_quantity: Some(qty),
+            average_executed_price: Some(price),
+        }
+    }
+
+    fn btc_pos(qty: f64) -> OrderlyPosition {
+        OrderlyPosition {
+            symbol: "PERP_BTC_USDC".into(),
+            position_qty: qty,
+            average_open_price: 70_000.0,
+            mark_price: 71_000.0,
+            unsettled_pnl: 50.0,
+        }
+    }
+
+    fn buy_req(size: f64) -> OrderRequest {
+        OrderRequest {
+            asset: "BTC/USD".into(),
+            side: Side::Buy,
+            size,
+            reference_price_usd: 70_000.0,
+            stop_loss_pct: Some(2.0),
+            take_profit_pct: Some(5.0),
+            idempotency_key: "cycle-abc".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn submit_order_places_market_entry_with_idempotency_key_and_brackets() {
+        let api = MockApi {
+            create_result: Some(filled_order(42, 0.05, 70_100.0)),
+            get_result: Some(filled_order(42, 0.05, 70_100.0)),
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+
+        let conf = surface
+            .submit_order(buy_req(0.05))
+            .await
+            .expect("submit must succeed");
+
+        assert_eq!(conf.broker_order_id, "42");
+        assert_eq!(conf.fill_price, Some(70_100.0));
+        assert_eq!(conf.fill_size, 0.05);
+        assert_eq!(conf.fee, None);
+
+        let created = surface.api.created.lock().unwrap().clone();
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].symbol, "PERP_BTC_USDC");
+        assert_eq!(created[0].side, OrderlyOrderSide::Buy);
+        assert_eq!(created[0].quantity, 0.05);
+        assert_eq!(created[0].client_order_id.as_deref(), Some("cycle-abc"));
+
+        // Brackets: reduce-only TP above fill, SL below fill, close side Sell.
+        let algos = surface.api.algos.lock().unwrap().clone();
+        assert_eq!(algos.len(), 2, "TP + SL algo orders must be placed");
+        let tp = algos
+            .iter()
+            .find(|a| matches!(a.algo_type, AlgoKind::TakeProfitMarket))
+            .expect("TP algo order");
+        let sl = algos
+            .iter()
+            .find(|a| matches!(a.algo_type, AlgoKind::StopMarket))
+            .expect("SL algo order");
+        assert!(tp.trigger_price > 70_100.0, "TP above fill for long");
+        assert!(sl.trigger_price < 70_100.0, "SL below fill for long");
+        for leg in [tp, sl] {
+            assert_eq!(leg.side, OrderlyOrderSide::Sell);
+            assert_eq!(leg.reduce_only, Some(true));
+            assert_eq!(leg.quantity, 0.05);
+        }
+        assert_eq!(tp.client_order_id.as_deref(), Some("tp-cycleabc"));
+        assert_eq!(sl.client_order_id.as_deref(), Some("sl-cycleabc"));
+    }
+
+    #[tokio::test]
+    async fn submit_order_bracket_failure_does_not_fail_entry() {
+        let api = MockApi {
+            create_result: Some(filled_order(7, 0.1, 70_000.0)),
+            get_result: Some(filled_order(7, 0.1, 70_000.0)),
+            algo_err: Some("algo not supported".into()),
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+
+        let conf = surface
+            .submit_order(buy_req(0.1))
+            .await
+            .expect("entry must survive bracket failure");
+        assert_eq!(conf.broker_order_id, "7");
+    }
+
+    #[tokio::test]
+    async fn submit_order_aligns_size_to_market_step() {
+        let api = MockApi {
+            create_result: Some(filled_order(9, 0.12345, 70_000.0)),
+            get_result: Some(filled_order(9, 0.12345, 70_000.0)),
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+
+        surface
+            .submit_order(buy_req(0.123456789))
+            .await
+            .expect("submit must succeed");
+
+        // Mock symbol meta serves base_tick = 0.00001 — qty must be
+        // rounded DOWN onto the step grid (venue rejects misaligned
+        // quantities with -1104), never up past the decided size.
+        let created = surface.api.created.lock().unwrap().clone();
+        assert!((created[0].quantity - 0.12345).abs() < 1e-12);
+    }
+
+    #[tokio::test]
+    async fn submit_order_rejected_status_maps_to_error() {
+        let mut rejected = filled_order(11, 0.0, 0.0);
+        rejected.status = "REJECTED".into();
+        let api = MockApi {
+            create_result: Some(rejected.clone()),
+            get_result: Some(rejected),
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+
+        let err = surface
+            .submit_order(buy_req(0.05))
+            .await
+            .expect_err("rejected order must error");
+        assert!(err.to_string().contains("rejected"), "got: {err:#}");
+    }
+
+    #[tokio::test]
+    async fn submit_order_venue_rejection_text_classifies_recoverable() {
+        // The venue body text must flow through anyhow so
+        // classify_broker_error_message lands on the right class.
+        let api = MockApi {
+            create_err: Some("insufficient balance for USDC".into()),
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+
+        let err = surface
+            .submit_order(buy_req(0.05))
+            .await
+            .expect_err("create_order error must propagate");
+        let class = classify_broker_error_message(&format!("{err:#}"));
+        assert_eq!(class, BrokerErrorClass::InsufficientFunds);
+    }
+
+    #[tokio::test]
+    async fn submit_order_unparseable_asset_classifies_unsupported() {
+        let surface = OrderlyLiveSurface::with_api(MockApi::default());
+        let mut req = buy_req(0.05);
+        req.asset = "not a symbol!!".into();
+
+        let err = surface
+            .submit_order(req)
+            .await
+            .expect_err("bad asset must error before any venue call");
+        let class = classify_broker_error_message(&format!("{err:#}"));
+        assert_eq!(class, BrokerErrorClass::UnsupportedAsset);
+        assert!(surface.api.created.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn submit_order_zero_size_is_min_order_size() {
+        let surface = OrderlyLiveSurface::with_api(MockApi::default());
+        let err = surface
+            .submit_order(buy_req(0.0))
+            .await
+            .expect_err("zero size must error");
+        let class = classify_broker_error_message(&format!("{err:#}"));
+        assert_eq!(class, BrokerErrorClass::MinOrderSize);
+    }
+
+    #[tokio::test]
+    async fn position_returns_signed_qty_or_zero() {
+        let api = MockApi {
+            positions: vec![btc_pos(-0.25)],
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+
+        assert_eq!(surface.position("BTC/USD").await.unwrap(), -0.25);
+        assert_eq!(surface.position("ETH/USD").await.unwrap(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn balance_returns_account_equity() {
+        let api = MockApi {
+            account: Some(OrderlyAccount {
+                usdc_holding: 1_000.0,
+                unrealized_pnl: -50.0,
+            }),
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+        assert_eq!(surface.balance().await.unwrap(), 950.0);
     }
 }

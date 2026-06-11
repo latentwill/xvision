@@ -136,6 +136,70 @@ export function livenessCounts(runs: AgentRunSummary[]): LivenessCounts {
   return counts;
 }
 
+// ─── Strategy-strip status filter (chips) ────────────────────────────────────
+
+/** Filter chip values for the strategy strip. `ALL` is a meta-filter. */
+export type StripFilter = "ALL" | "LIVE" | "PAUSED" | "STOPPED";
+
+/** Chip render order. */
+export const STRIP_FILTERS: readonly StripFilter[] = [
+  "ALL",
+  "LIVE",
+  "PAUSED",
+  "STOPPED",
+];
+
+/**
+ * Bucket a run for the strip's status filter chips.
+ *
+ *   LIVE    — live money and not paused (`isLiveRun` && ACTIVE). The ONLY
+ *             bucket allowed to present a run as live.
+ *   PAUSED  — live money but per-run paused.
+ *   STOPPED — everything else: terminal runs, stale orphans (parent eval
+ *             run already terminal), and non-live (backtest/paper or
+ *             parentless) children. None of these are moving real money,
+ *             so on the live page they all read as "not live".
+ *
+ * STALE deliberately folds into STOPPED (no separate chip): an orphaned
+ * recorder row is operationally a dead run, and the pill's own status
+ * badge still says STALE so the distinction isn't lost.
+ */
+export function stripFilterBucket(
+  run: AgentRunSummary,
+): Exclude<StripFilter, "ALL"> {
+  if (isLiveRun(run)) {
+    return run.paused === true ? "PAUSED" : "LIVE";
+  }
+  return "STOPPED";
+}
+
+/** Runs matching a filter chip. `ALL` returns the input unchanged. */
+export function filterRunsForStrip(
+  runs: AgentRunSummary[],
+  filter: StripFilter,
+): AgentRunSummary[] {
+  if (filter === "ALL") return runs;
+  return runs.filter((run) => stripFilterBucket(run) === filter);
+}
+
+export type StripFilterCounts = Record<StripFilter, number>;
+
+/** Per-chip counts. `ALL` is the total; the other three partition it. */
+export function stripFilterCounts(
+  runs: AgentRunSummary[],
+): StripFilterCounts {
+  const counts: StripFilterCounts = {
+    ALL: runs.length,
+    LIVE: 0,
+    PAUSED: 0,
+    STOPPED: 0,
+  };
+  for (const run of runs) {
+    counts[stripFilterBucket(run)] += 1;
+  }
+  return counts;
+}
+
 /**
  * Pick the run the live page should auto-select when no `:id` is supplied:
  * the most recently STARTED live-money run. Falls back to the most

@@ -59,20 +59,19 @@ use crate::executor::{ExecutionReceipt, Executor, ExecutorError};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const ORDERLY_MAINNET_BASE: &str = "https://api-evm.orderly.org";
+pub(crate) const ORDERLY_MAINNET_BASE: &str = "https://api-evm.orderly.org";
 
 /// Map an `AssetSymbol` to its Orderly perp symbol. Uses the process-global
 /// asset registry when loaded, with a `"PERP_{TICKER}_USDC"` fallback for
 /// unregistered symbols. Returns `NotActionable` only when the registry is
 /// loaded and explicitly marks the asset as having no Orderly symbol.
 pub fn orderly_symbol_for(asset: AssetSymbol) -> Result<String, ExecutorError> {
-    xvision_core::asset_registry::orderly_symbol(asset)
-        .ok_or_else(|| {
-            ExecutorError::NotActionable(format!(
-                "Orderly does not list {} on its Mantle EVM gateway",
-                asset.as_str()
-            ))
-        })
+    xvision_core::asset_registry::orderly_symbol(asset).ok_or_else(|| {
+        ExecutorError::NotActionable(format!(
+            "Orderly does not list {} on its Mantle EVM gateway",
+            asset.as_str()
+        ))
+    })
 }
 
 /// Inverse helper: map an Orderly market string back to its
@@ -140,6 +139,28 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Compose a venue `client_order_id` from a short prefix and a key,
+/// stripping hyphens and truncating to Orderly's 36-char limit
+/// (full prefixed UUIDs overflow it: "tp-" + 36 = 39 — the venue
+/// rejects with -1005; caught live on testnet 2026-06-11).
+pub(crate) fn venue_client_id(prefix: &str, key: &str) -> String {
+    let compact: String = key.chars().filter(|c| *c != '-').collect();
+    let mut id = format!("{prefix}{compact}");
+    id.truncate(36);
+    id
+}
+
+/// Round `qty` DOWN to a multiple of `tick`, defusing f64 noise (e.g.
+/// 0.00048 / 0.00001 = 47.999999…) by nudging the ratio before flooring.
+/// Rounding down (never up) keeps the order within the decided notional.
+pub(crate) fn round_to_tick(qty: f64, tick: f64) -> f64 {
+    if tick <= 0.0 {
+        return qty;
+    }
+    let steps = (qty / tick + 1e-9).floor();
+    steps * tick
+}
+
 // ── Plain-data types ─────────────────────────────────────────────────────────
 
 /// Orderly order record returned by the API abstraction.
@@ -163,6 +184,20 @@ impl OrderlyOrder {
     pub fn is_rejected(&self) -> bool {
         self.status == "REJECTED"
     }
+
+    /// Terminal without any fill: REJECTED, or CANCELLED/EXPIRED with zero
+    /// executed quantity. Orderly cancels market orders it cannot match
+    /// (e.g. an empty testnet book) — callers must surface that as a
+    /// failure, not fabricate a receipt from fallback prices (live
+    /// testnet finding 2026-06-11: a CANCELLED order produced a
+    /// "filled" ExecutionReceipt priced at the mark).
+    pub fn is_unfilled_terminal(&self) -> bool {
+        if self.status == "REJECTED" {
+            return true;
+        }
+        matches!(self.status.as_str(), "CANCELLED" | "EXPIRED")
+            && self.executed_quantity.unwrap_or(0.0) <= 0.0
+    }
 }
 
 /// Account equity snapshot.
@@ -179,7 +214,7 @@ impl OrderlyAccount {
 }
 
 /// Position snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OrderlyPosition {
     pub symbol: String,
     /// Positive = long, negative = short (BTC units).
@@ -187,6 +222,17 @@ pub struct OrderlyPosition {
     pub average_open_price: f64,
     pub mark_price: f64,
     pub unsettled_pnl: f64,
+}
+
+/// Account + positions snapshot for operator-facing venue status surfaces
+/// (dashboard live page, CLI). Serializable so the engine API can pass it
+/// through to HTTP handlers unchanged.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VenueSnapshot {
+    pub equity_usd: f64,
+    pub usdc_holding: f64,
+    pub unrealized_pnl: f64,
+    pub positions: Vec<OrderlyPosition>,
 }
 
 /// Order side.
@@ -233,6 +279,27 @@ pub trait OrderlyApi: Send + Sync {
     async fn get_order(&self, order_id: u64) -> Result<OrderlyOrder, ExecutorError>;
     async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError>;
     async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError>;
+
+    /// Mark price from the PUBLIC futures endpoint
+    /// (`GET /v1/public/futures/{symbol}`, no auth). Used to convert a
+    /// notional decision into base quantity when the account holds no
+    /// position on the market yet.
+    async fn get_mark_price(&self, symbol: &str) -> Result<f64, ExecutorError>;
+
+    /// Per-market order constraints from the PUBLIC info endpoint
+    /// (`GET /v1/public/info/{symbol}`, no auth). Quantities must be a
+    /// multiple of `base_tick` and at least `base_min` or the venue
+    /// rejects with -1104 ("does not match the step size").
+    async fn get_symbol_meta(&self, symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError>;
+}
+
+/// Order-quantity constraints for one market. See [`OrderlyApi::get_symbol_meta`].
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct OrderlySymbolMeta {
+    /// Quantity step (e.g. `0.00001` BTC) — submitted qty must be a multiple.
+    pub base_tick: f64,
+    /// Minimum base quantity per order.
+    pub base_min: f64,
 }
 
 // ── Real implementation ───────────────────────────────────────────────────────
@@ -332,8 +399,16 @@ struct OrderData {
     #[serde(default)]
     client_order_id: Option<String>,
     status: String,
+    /// The venue's `GET /v1/order/{id}` payload carries BOTH `executed`
+    /// and `total_executed_quantity` (other surfaces use
+    /// `executed_quantity`) — kept as separate fields (serde aliases
+    /// would error on the duplicate) and coalesced in [`order_from_data`].
     #[serde(default)]
     executed_quantity: Option<f64>,
+    #[serde(default)]
+    total_executed_quantity: Option<f64>,
+    #[serde(default)]
+    executed: Option<f64>,
     #[serde(default)]
     average_executed_price: Option<f64>,
 }
@@ -374,12 +449,17 @@ struct AlgoOrderData {
     algo_order_id: String,
 }
 
+#[derive(Deserialize)]
+struct MarkPriceData {
+    mark_price: f64,
+}
+
 fn order_from_data(d: OrderData) -> OrderlyOrder {
     OrderlyOrder {
         order_id: d.order_id,
         client_order_id: d.client_order_id,
         status: d.status.to_uppercase(),
-        executed_quantity: d.executed_quantity,
+        executed_quantity: d.executed_quantity.or(d.total_executed_quantity).or(d.executed),
         average_executed_price: d.average_executed_price,
     }
 }
@@ -527,6 +607,46 @@ impl OrderlyApi for ReqwestOrderlyApi {
             })
             .collect())
     }
+
+    async fn get_mark_price(&self, symbol: &str) -> Result<f64, ExecutorError> {
+        // Public endpoint — unsigned request.
+        let url = format!("{}/v1/public/futures/{}", self.base_url, symbol);
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            if e.is_timeout() {
+                ExecutorError::Timeout(e.to_string())
+            } else {
+                ExecutorError::Network(e.to_string())
+            }
+        })?;
+        let env: OkEnvelope<MarkPriceData> = Self::parse_response(resp).await?;
+        if env.data.mark_price <= 0.0 {
+            return Err(ExecutorError::Internal(format!(
+                "orderly public futures {symbol}: non-positive mark price {}",
+                env.data.mark_price
+            )));
+        }
+        Ok(env.data.mark_price)
+    }
+
+    async fn get_symbol_meta(&self, symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+        // Public endpoint — unsigned request.
+        let url = format!("{}/v1/public/info/{}", self.base_url, symbol);
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            if e.is_timeout() {
+                ExecutorError::Timeout(e.to_string())
+            } else {
+                ExecutorError::Network(e.to_string())
+            }
+        })?;
+        let env: OkEnvelope<OrderlySymbolMeta> = Self::parse_response(resp).await?;
+        if env.data.base_tick <= 0.0 {
+            return Err(ExecutorError::Internal(format!(
+                "orderly public info {symbol}: non-positive base_tick {}",
+                env.data.base_tick
+            )));
+        }
+        Ok(env.data)
+    }
 }
 
 // ── OrderlyExecutor ──────────────────────────────────────────────────────────
@@ -587,6 +707,19 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
         Self { api }
     }
 
+    /// Read-only account + positions snapshot for status surfaces (dashboard
+    /// live page, CLI). Fetches account and positions concurrently; no
+    /// orders are placed.
+    pub async fn venue_snapshot(&self) -> Result<VenueSnapshot, ExecutorError> {
+        let (account, positions) = tokio::try_join!(self.api.get_account(), self.api.get_positions())?;
+        Ok(VenueSnapshot {
+            equity_usd: account.equity(),
+            usdc_holding: account.usdc_holding,
+            unrealized_pnl: account.unrealized_pnl,
+            positions,
+        })
+    }
+
     async fn await_fill(&self, order_id: u64) -> Result<OrderlyOrder, ExecutorError> {
         const MAX_POLLS: u32 = 5;
         const POLL_DELAY_MS: u64 = 200;
@@ -594,9 +727,10 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
         for _ in 0..MAX_POLLS {
             let order = self.api.get_order(order_id).await?;
             if order.is_terminal() {
-                if order.is_rejected() {
+                if order.is_unfilled_terminal() {
                     return Err(ExecutorError::Rejected(format!(
-                        "order {order_id} was rejected by Orderly"
+                        "order {order_id} rejected: terminated unfilled ({}) — venue could not match it",
+                        order.status
                     )));
                 }
                 return Ok(order);
@@ -682,19 +816,28 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             .find(|p| p.symbol == symbol)
             .map(|p| p.mark_price);
 
-        // If we have a mark price, compute base quantity; otherwise send notional
-        // directly via order_quantity (Orderly accepts USDC notional for Market
-        // orders when no base qty is available — see F19 for the cleaner approach
-        // once the SDK dep conflict is resolved). The fallback triggers only on
-        // the very first order against this market for this account.
-        let qty = if let Some(price) = mark_price {
-            notional_usd / price
-        } else {
-            // No mark price available. First-order scenario for this
-            // market. Send notional as `order_quantity`; the fill receipt
-            // corrects the bps math via the actual filled price.
-            notional_usd
+        // With no open position on this market (the first-order scenario),
+        // fall back to the PUBLIC futures mark price. The previous fallback
+        // sent the USD notional as `order_quantity`, but Orderly interprets
+        // `order_quantity` as BASE units — a $50 BTC decision became a
+        // 50-BTC order (caught live on testnet 2026-06-11; the venue's
+        // max-quantity cap rejected it with code -1104).
+        let mark_price = match mark_price {
+            Some(p) => p,
+            None => self.api.get_mark_price(&symbol).await?,
         };
+
+        // Align to the market's step size (venue rejects misaligned
+        // quantities with -1104; caught live on testnet 2026-06-11) and
+        // enforce the per-order minimum.
+        let meta = self.api.get_symbol_meta(&symbol).await?;
+        let qty = round_to_tick(notional_usd / mark_price, meta.base_tick);
+        if qty < meta.base_min {
+            return Err(ExecutorError::Rejected(format!(
+                "min order size: {} {} below base_min {} (notional ${:.2} @ mark {})",
+                qty, symbol, meta.base_min, notional_usd, mark_price
+            )));
+        }
 
         let side = match td.action {
             Action::Buy => OrderSide::Buy,
@@ -709,7 +852,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
 
         // 7. Poll for fill.
         let filled = self.await_fill(entry.order_id).await?;
-        let fill_price = filled.average_executed_price.unwrap_or(mark_price.unwrap_or(0.0));
+        let fill_price = filled.average_executed_price.unwrap_or(mark_price);
         let fill_qty = filled.executed_quantity.unwrap_or(qty);
 
         // 8. Place TP/SL bracket legs (best-effort).
@@ -737,7 +880,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     close_side,
                     fill_qty,
                     tp_trigger,
-                    Some(format!("tp-{}", td.cycle_id)),
+                    Some(venue_client_id("tp-", &td.cycle_id.to_string())),
                     Some(true),
                 )
                 .await;
@@ -750,7 +893,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     close_side,
                     fill_qty,
                     sl_trigger,
-                    Some(format!("sl-{}", td.cycle_id)),
+                    Some(venue_client_id("sl-", &td.cycle_id.to_string())),
                     Some(true),
                 )
                 .await;
@@ -825,7 +968,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                 &symbol,
                 close_side,
                 qty,
-                Some(format!("close-{}", Uuid::new_v4())),
+                Some(venue_client_id("cl-", &Uuid::new_v4().to_string())),
                 Some(true),
             )
             .await?;
@@ -1016,7 +1159,23 @@ mod tests {
         async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
             Ok(self.positions.clone())
         }
+
+        async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {
+            Ok(MOCK_PUBLIC_MARK_PRICE)
+        }
+
+        async fn get_symbol_meta(&self, _symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+            Ok(OrderlySymbolMeta {
+                base_tick: 0.00001,
+                base_min: 0.00001,
+            })
+        }
     }
+
+    /// Mark price the mock "public futures" endpoint serves — distinct from
+    /// the position fixtures' 71_000 mark so tests can tell which source the
+    /// executor used.
+    const MOCK_PUBLIC_MARK_PRICE: f64 = 50_000.0;
 
     // ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -1076,6 +1235,77 @@ mod tests {
                 tp2_pct: None,
             },
         }
+    }
+
+    /// First order on a market (no open position to read a mark price
+    /// from) must price the base quantity off the PUBLIC futures mark
+    /// price — NOT submit the USD notional as base `order_quantity`.
+    /// Regression for the live testnet finding (2026-06-11): a $50 BTC
+    /// decision was submitted as a 50-BTC order and rejected with -1104.
+    #[tokio::test]
+    async fn submit_first_order_prices_qty_off_public_mark_price() {
+        let cycle_id = Uuid::new_v4();
+        let filled = fixture_filled_order(42, Some(&cycle_id.to_string()));
+
+        // NO positions — the mark must come from the public endpoint.
+        let api = MockOrderlyApi::new(fixture_account(), vec![], filled.clone(), filled);
+        let captured_create = Arc::clone(&api.captured_create);
+
+        let executor = OrderlyExecutor::with_api(api);
+        executor
+            .submit(&fixture_buy_decision(cycle_id))
+            .await
+            .expect("submit must succeed");
+
+        let call = captured_create.lock().unwrap().clone().unwrap();
+        // equity 100_000 × 1000 bps = 10_000 notional / 50_000 public mark.
+        let expected_qty = 10_000.0 / MOCK_PUBLIC_MARK_PRICE;
+        assert!(
+            (call.quantity - expected_qty).abs() < 1e-9,
+            "qty must be notional/mark ({expected_qty}), got {}",
+            call.quantity
+        );
+    }
+
+    /// A market order the venue CANCELLED without any fill (empty book,
+    /// price protection) must surface as `Rejected` — not as a fabricated
+    /// receipt priced at the mark (live testnet finding 2026-06-11).
+    #[tokio::test]
+    async fn submit_cancelled_unfilled_order_is_rejected() {
+        let cycle_id = Uuid::new_v4();
+        let created = fixture_filled_order(43, Some(&cycle_id.to_string()));
+        let cancelled = OrderlyOrder {
+            order_id: 43,
+            client_order_id: Some(cycle_id.to_string()),
+            status: "CANCELLED".to_string(),
+            executed_quantity: Some(0.0),
+            average_executed_price: None,
+        };
+
+        let api = MockOrderlyApi::new(
+            fixture_account(),
+            vec![fixture_btc_position(0.1)],
+            created,
+            cancelled,
+        );
+        let executor = OrderlyExecutor::with_api(api);
+
+        let err = executor
+            .submit(&fixture_buy_decision(cycle_id))
+            .await
+            .expect_err("cancelled-unfilled must be an error");
+        assert!(
+            matches!(err, ExecutorError::Rejected(_)),
+            "expected Rejected, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn venue_client_id_fits_orderly_limit() {
+        let id = venue_client_id("tp-", "550e8400-e29b-41d4-a716-446655440000");
+
+        assert_eq!(id, "tp-550e8400e29b41d4a716446655440000");
+        assert!(id.len() <= 36);
     }
 
     // ── Test 1 ───────────────────────────────────────────────────────────────
@@ -1189,6 +1419,12 @@ mod tests {
             }
             async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
                 panic!("get_positions must not be called")
+            }
+            async fn get_mark_price(&self, _: &str) -> Result<f64, ExecutorError> {
+                panic!("get_mark_price must not be called")
+            }
+            async fn get_symbol_meta(&self, _: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+                panic!("get_symbol_meta must not be called")
             }
         }
 
@@ -1357,6 +1593,25 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(r#"{"success":true,"data":{"rows":[]}}"#)
             .expect_at_least(1)
+            .create_async()
+            .await;
+
+        // Stub GET /v1/public/futures/PERP_BTC_USDC — the no-position path
+        // now reads the public mark price before placing the entry order.
+        let _futures = server
+            .mock("GET", "/v1/public/futures/PERP_BTC_USDC")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"data":{"mark_price":70000.0}}"#)
+            .create_async()
+            .await;
+
+        // Stub GET /v1/public/info/PERP_BTC_USDC — step-size metadata.
+        let _info = server
+            .mock("GET", "/v1/public/info/PERP_BTC_USDC")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"data":{"base_tick":0.00001,"base_min":0.00001}}"#)
             .create_async()
             .await;
 
@@ -1665,12 +1920,47 @@ mod tests {
 
         assert!(state.open_positions.contains_key(&AssetSymbol::Eth));
         assert!(state.open_positions.contains_key(&AssetSymbol::Btc));
-        assert!(state.open_positions.contains_key(&AssetSymbol::from_static("XRP")));
+        assert!(state
+            .open_positions
+            .contains_key(&AssetSymbol::from_static("XRP")));
         assert_eq!(
             state.open_positions.len(),
             3,
             "PERP_*_USDC markets resolve via fallback; only truly malformed symbols are filtered"
         );
+    }
+
+    // ── venue_snapshot ────────────────────────────────────────────────────────
+
+    /// `venue_snapshot()` must combine equity (holding + uPnL) with the raw
+    /// position rows and serialize cleanly.
+    #[tokio::test]
+    async fn venue_snapshot_combines_account_and_positions() {
+        let filler = fixture_filled_order(1, None);
+        let api = MockOrderlyApi::new(
+            OrderlyAccount {
+                usdc_holding: 1_000.0,
+                unrealized_pnl: 25.5,
+            },
+            vec![fixture_btc_position(0.5)],
+            filler.clone(),
+            filler,
+        );
+        let executor = OrderlyExecutor::with_api(api);
+
+        let snap = executor.venue_snapshot().await.expect("snapshot must succeed");
+
+        assert_eq!(snap.usdc_holding, 1_000.0);
+        assert_eq!(snap.unrealized_pnl, 25.5);
+        assert_eq!(snap.equity_usd, 1_025.5);
+        assert_eq!(snap.positions.len(), 1);
+        assert_eq!(snap.positions[0].symbol, "PERP_BTC_USDC");
+        assert_eq!(snap.positions[0].position_qty, 0.5);
+
+        let json = serde_json::to_value(&snap).expect("VenueSnapshot must serialize");
+        assert_eq!(json["equity_usd"], 1_025.5);
+        assert_eq!(json["positions"][0]["symbol"], "PERP_BTC_USDC");
+        assert_eq!(json["positions"][0]["mark_price"], 71_000.0);
     }
 
     // Helper used by the new multi-asset tests above. Returns a generic

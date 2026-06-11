@@ -60,7 +60,7 @@ use xvision_core::config::{self, AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
 use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
-use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface};
+use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface, OrderlyLiveSurface};
 use xvision_filters::{FilterEventV1, FilterSummary};
 
 // ---------------------------------------------------------------------------
@@ -288,6 +288,12 @@ pub struct RunSummary {
     /// state. Defaults to `false` for pre-062 runs.
     #[serde(default)]
     pub flatten_requested: bool,
+    /// Live launch envelope (`mode = live` runs only): venue label, stop
+    /// policy, capital, display name. `None` for backtests. Surfaced so the
+    /// live inspector can render deployment config without a second fetch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub live_config: Option<LiveConfig>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -3564,6 +3570,51 @@ async fn build_backtest_executor(
     Ok(Box::new(bt))
 }
 
+/// Live execution venue resolved from `live_config.broker_creds_ref`.
+/// `AlpacaPaper` is the original live scope; `OrderlyTestnet` executes on
+/// the Orderly Network testnet while Alpaca continues to supply the live
+/// market-data stream (bars). Real-money venues stay out of scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiveVenue {
+    AlpacaPaper,
+    OrderlyTestnet,
+}
+
+/// Gate `broker_creds_ref` to the supported live venues. For
+/// `"orderly_testnet"`, HARD-REQUIRE that `ORDERLY_BASE_URL` is set and
+/// points at a testnet gateway — mirroring the Alpaca paper-only guard, so a
+/// mainnet (real-money) Orderly config can never slip through by omission.
+fn resolve_live_venue(broker_creds_ref: &str, orderly_base_url: Option<&str>) -> ApiResult<LiveVenue> {
+    match broker_creds_ref {
+        "alpaca" => Ok(LiveVenue::AlpacaPaper),
+        "orderly_testnet" => {
+            let Some(url) = orderly_base_url.map(str::trim).filter(|s| !s.is_empty()) else {
+                return Err(ApiError::Validation(
+                    "live_config.broker_creds_ref 'orderly_testnet' requires ORDERLY_BASE_URL to be \
+                     set to the Orderly testnet gateway (e.g. https://testnet-api-evm.orderly.org). \
+                     Refusing to fall back to the mainnet default — real-money Orderly is out of \
+                     scope for the current live scope."
+                        .into(),
+                ));
+            };
+            if !url.contains("testnet") {
+                return Err(ApiError::Validation(format!(
+                    "current live scope for Orderly is testnet only; ORDERLY_BASE_URL must point at \
+                     a testnet gateway containing 'testnet' (got '{url}'). \
+                     Real-money Orderly mainnet is out of scope for the current live scope."
+                )));
+            }
+            Ok(LiveVenue::OrderlyTestnet)
+        }
+        other => Err(ApiError::Validation(format!(
+            "live_config.broker_creds_ref '{other}' is not supported in the current live scope. \
+             Supported venues: \"alpaca\" (Alpaca paper trading) and \"orderly_testnet\" \
+             (Orderly Network testnet execution with Alpaca market data). \
+             Real-money venues are out of scope for now."
+        ))),
+    }
+}
+
 async fn build_live_executor(
     ctx: &ApiContext,
     cfg: &LiveConfig,
@@ -3574,19 +3625,29 @@ async fn build_live_executor(
 ) -> ApiResult<Box<dyn RunExecutor>> {
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
-    if cfg.broker_creds_ref != "alpaca" {
-        return Err(ApiError::Validation(format!(
-            "live_config.broker_creds_ref '{}' is not supported in the current live scope. \
-             Current live mode is Alpaca paper trading only; set broker_creds_ref = \"alpaca\". \
-             Other brokers and real-money venues are out of scope for now.",
-            cfg.broker_creds_ref
-        )));
-    }
+    let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
+    let venue = resolve_live_venue(&cfg.broker_creds_ref, orderly_base_url.as_deref())?;
     if cfg.assets.is_empty() {
         return Err(ApiError::Validation(
             "live_config.assets must contain at least one asset".into(),
         ));
     }
+    // Alpaca credentials are required for EVERY live venue: the live bar
+    // stream (LiveStream warmup + websocket + poll) is Alpaca regardless of
+    // which venue executes the orders.
+    let missing_alpaca_creds = || {
+        match venue {
+        LiveVenue::AlpacaPaper => {
+            "no Alpaca credentials configured for Live run (set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY)".to_string()
+        }
+        LiveVenue::OrderlyTestnet => {
+            "no Alpaca credentials configured for Live run: Orderly testnet runs still need Alpaca \
+             credentials because Alpaca supplies the live market-data stream while Orderly executes \
+             the orders. Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
+                .to_string()
+        }
+    }
+    };
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
     let (key_id, secret, trade_base_url) = if let Some(c) = stored {
         (
@@ -3597,13 +3658,10 @@ async fn build_live_executor(
                 .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
         )
     } else {
-        let key_id = std::env::var("APCA_API_KEY_ID").map_err(|_| {
-            ApiError::Validation(
-                "no Alpaca credentials configured for Live run (set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY)".into(),
-            )
-        })?;
+        let key_id =
+            std::env::var("APCA_API_KEY_ID").map_err(|_| ApiError::Validation(missing_alpaca_creds()))?;
         let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
-            ApiError::Validation("no Alpaca credentials configured (APCA_API_SECRET_KEY unset)".into())
+            ApiError::Validation(format!("{} (APCA_API_SECRET_KEY unset)", missing_alpaca_creds()))
         })?;
         let trade_base_url = std::env::var("APCA_API_BASE_URL")
             .ok()
@@ -3611,7 +3669,7 @@ async fn build_live_executor(
             .unwrap_or_else(|| "https://paper-api.alpaca.markets".into());
         (key_id, secret, trade_base_url)
     };
-    if !trade_base_url.contains("paper-api.alpaca.markets") {
+    if venue == LiveVenue::AlpacaPaper && !trade_base_url.contains("paper-api.alpaca.markets") {
         return Err(ApiError::Validation(format!(
             "current live mode is Alpaca paper trading only; \
              APCA_API_BASE_URL must point at https://paper-api.alpaca.markets \
@@ -3622,10 +3680,16 @@ async fn build_live_executor(
 
     let broker: Arc<dyn BrokerSurface> = match broker_override {
         Some(b) => b,
-        None => Arc::new(
-            AlpacaPaperSurface::from_credentials(&key_id, &secret, &trade_base_url)
-                .map_err(|e| ApiError::Validation(format!("build Alpaca paper broker: {e}")))?,
-        ),
+        None => match venue {
+            LiveVenue::AlpacaPaper => Arc::new(
+                AlpacaPaperSurface::from_credentials(&key_id, &secret, &trade_base_url)
+                    .map_err(|e| ApiError::Validation(format!("build Alpaca paper broker: {e}")))?,
+            ),
+            LiveVenue::OrderlyTestnet => Arc::new(
+                OrderlyLiveSurface::from_env()
+                    .map_err(|e| ApiError::Validation(format!("build Orderly testnet broker: {e}")))?,
+            ),
+        },
     };
     let granularity = xvision_data::alpaca::BarGranularity::Minute1;
     let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
@@ -4446,6 +4510,7 @@ fn summarise(run: Run) -> RunSummary {
         paused: run.paused,
         paused_at: run.paused_at,
         flatten_requested: run.flatten_requested,
+        live_config: run.live_config,
     }
 }
 
@@ -4665,6 +4730,64 @@ mod tests {
     use crate::strategies::{
         manifest::PublicManifest, risk::RiskPreset, slot::LLMSlot, AgentRef, PipelineDef, Strategy,
     };
+
+    // --- resolve_live_venue (Orderly testnet live venue, 2026-06-11) --------
+
+    #[test]
+    fn live_venue_alpaca_resolves_regardless_of_orderly_env() {
+        for url in [None, Some("https://testnet-api-evm.orderly.org")] {
+            assert_eq!(resolve_live_venue("alpaca", url).unwrap(), LiveVenue::AlpacaPaper);
+        }
+    }
+
+    #[test]
+    fn live_venue_orderly_testnet_requires_base_url_set() {
+        for url in [None, Some(""), Some("   ")] {
+            let err = resolve_live_venue("orderly_testnet", url)
+                .expect_err("orderly_testnet without ORDERLY_BASE_URL must be rejected");
+            let msg = err.to_string();
+            assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+            assert!(msg.contains("ORDERLY_BASE_URL"), "must name the env var: {msg}");
+            assert!(msg.contains("mainnet"), "must explain mainnet refusal: {msg}");
+        }
+    }
+
+    #[test]
+    fn live_venue_orderly_testnet_rejects_mainnet_base_url() {
+        let err = resolve_live_venue("orderly_testnet", Some("https://api-evm.orderly.org"))
+            .expect_err("mainnet ORDERLY_BASE_URL must be rejected");
+        let msg = err.to_string();
+        assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+        assert!(
+            msg.contains("testnet only"),
+            "must state the testnet-only scope: {msg}"
+        );
+        assert!(
+            msg.contains("api-evm.orderly.org"),
+            "must echo the offending URL: {msg}"
+        );
+    }
+
+    #[test]
+    fn live_venue_orderly_testnet_accepts_testnet_base_url() {
+        assert_eq!(
+            resolve_live_venue("orderly_testnet", Some("https://testnet-api-evm.orderly.org")).unwrap(),
+            LiveVenue::OrderlyTestnet,
+        );
+    }
+
+    #[test]
+    fn live_venue_unknown_ref_names_both_supported_venues() {
+        let err = resolve_live_venue("bybit", Some("https://testnet-api-evm.orderly.org"))
+            .expect_err("unknown broker_creds_ref must be rejected");
+        let msg = err.to_string();
+        assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+        assert!(msg.contains("\"alpaca\""), "must name alpaca: {msg}");
+        assert!(
+            msg.contains("\"orderly_testnet\""),
+            "must name orderly_testnet: {msg}"
+        );
+    }
 
     // --- U13: agentd registry / cancel-degrades (2026-06-11) ----------------
 

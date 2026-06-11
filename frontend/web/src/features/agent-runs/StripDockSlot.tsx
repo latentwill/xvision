@@ -257,6 +257,13 @@ export function StripDockSlot() {
     (scenariosQ.data ?? []).map((s) => [s.id, s.display_name]),
   );
 
+  // Live-money discriminator for the capsule prefix + pop-out target.
+  // `is_live_money` is THE backend signal (parent eval run mode=live and
+  // non-terminal); `eval_mode === "live"` keeps the LIVE label on a
+  // just-finished live run whose capsule is still mounted.
+  const isLiveMoney =
+    summary.is_live_money === true || summary.eval_mode === "live";
+
   const focusedAgentId = summary.agent_id ?? summary.strategy_id ?? "agent";
   const focusedScenarioId = focusedEvalQ.data?.summary.scenario_id ?? "scenario";
   const focusedTone = deriveFocusedTone(summary, mode);
@@ -268,6 +275,7 @@ export function StripDockSlot() {
   );
   const focused: EvalCapsuleFocused = {
     id: summary.run_id,
+    kind: isLiveMoney ? "live" : "eval",
     short: shortTag(
       agentNameById.get(focusedAgentId) ?? null,
       scenarioNameById.get(focusedScenarioId) ?? null,
@@ -337,7 +345,13 @@ export function StripDockSlot() {
       siblings={siblings}
       onSwitchFocus={(run) => navigate(`/eval-runs/${encodeURIComponent(run.id)}`)}
       onExpandDock={() => setHeight("working")}
-      onPopOut={() => navigate(`/agent-runs/${activeRunId}`)}
+      onPopOut={() =>
+        navigate(
+          isLiveMoney
+            ? `/live/runs/${activeRunId}`
+            : `/agent-runs/${activeRunId}`,
+        )
+      }
     />
   );
 }

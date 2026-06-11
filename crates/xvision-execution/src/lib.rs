@@ -18,4 +18,4 @@ pub use broker_surface::{
 };
 pub use bybit::{BybitPaperSurface, BybitTestnetClient, MockBybitClient};
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
-pub use orderly::OrderlyExecutor;
+pub use orderly::{OrderlyExecutor, OrderlyPosition, VenueSnapshot};
