@@ -184,6 +184,52 @@ describe("ExpandableArtifact — body sections from mocked detail", () => {
   });
 });
 
+describe("ExpandableArtifact — GateScorecard content", () => {
+  it("renders GateScorecard delta values when gate_record is present", async () => {
+    useDetailOk();
+    renderArtifact();
+    const btn = screen.getByRole("button", { name: /v3\.1\.g/ });
+    await userEvent.click(btn);
+    // GateScorecard renders two ScoreBars with their labels
+    expect(screen.getByText("Today's window")).toBeInTheDocument();
+    expect(screen.getByText("Untouched period")).toBeInTheDocument();
+    // Both delta_day and delta_holdout are 0.21, so "+0.21" appears twice
+    expect(screen.getAllByText("+0.21")).toHaveLength(2);
+  });
+});
+
+describe("ExpandableArtifact — FindingsList non-empty", () => {
+  it("renders a finding's summary when findings array is non-empty", async () => {
+    vi.mocked(useExperimentDetail).mockReturnValue({
+      data: {
+        ...mockDetail,
+        findings: [
+          {
+            id: 1,
+            bundle_hash: "abcd1234ef",
+            severity: "warn",
+            code: "OVERFIT_RISK",
+            summary: "Possible overfit on recent window",
+            detail: "The in-sample gain exceeds out-of-sample gain by >15%.",
+            model: "gpt-4o",
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      isPending: false,
+      status: "success",
+      error: null,
+      isSuccess: true,
+    } as ReturnType<typeof useExperimentDetail>);
+
+    renderArtifact();
+    const btn = screen.getByRole("button", { name: /v3\.1\.g/ });
+    await userEvent.click(btn);
+    expect(screen.getByText(/Possible overfit on recent window/)).toBeInTheDocument();
+  });
+});
+
 describe("ExpandableArtifact — loading state", () => {
   it("shows loading text while the detail is fetching", () => {
     useDetailLoading();
