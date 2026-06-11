@@ -39,6 +39,19 @@ function fmtRatio(n: number): string {
 }
 
 /**
+ * Disclosure label for a bundle. Returns `"Sample data"` when the backend
+ * tagged the payload as the cold-start fixture stub (`isFixture`), else
+ * `undefined`. Keeps the fixture-disclosure decision (T3.2) a pure,
+ * testable function — the surface render itself exercises uPlot, which
+ * doesn't run in jsdom. Exported for tests.
+ */
+export function fixtureLabel(
+  bundle: MultiStrategyEquityBundle,
+): string | undefined {
+  return bundle.isFixture ? "Sample data" : undefined;
+}
+
+/**
  * Pick the bundle's lead strategy. Honours `bundle.lead` when set;
  * otherwise the first strategy by insertion order.
  * Exported for tests.
@@ -132,6 +145,7 @@ export function DarkMinimalDashboard({
   payload,
 }: DarkMinimalDashboardProps): ReactElement {
   const lead = pickLead(payload);
+  const sampleLabel = fixtureLabel(payload);
   const series = toEquitySeries(payload.strategies);
   const leadStats = lead
     ? deriveDrawdownStats(lead.drawdown)
@@ -146,6 +160,19 @@ export function DarkMinimalDashboard({
 
   return (
     <div className="flex flex-col gap-4">
+      {sampleLabel && (
+        <div
+          data-testid="fixture-disclosure"
+          className="flex items-center gap-2 rounded-card border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-300"
+        >
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+          <span className="font-medium">{sampleLabel}</span>
+          <span className="text-amber-700/70 dark:text-amber-300/70">
+            — no strategies or completed runs yet; showing an illustrative example, not real results.
+          </span>
+        </div>
+      )}
+
       <ChartsTopbar
         eyebrow="STRATEGY · OVERVIEW"
         headline="Strategy Comparison"

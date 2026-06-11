@@ -15,6 +15,7 @@ import {
   pickLead,
   toEquitySeries,
   deriveDrawdownStats,
+  fixtureLabel,
 } from "./DarkMinimalDashboard";
 import type { MultiStrategyEquityBundle } from "../types";
 
@@ -70,6 +71,21 @@ describe("pickLead", () => {
   it("returns undefined for empty bundle", () => {
     const b = makeBundle({ strategies: [], lead: undefined });
     expect(pickLead(b)).toBeUndefined();
+  });
+});
+
+describe("fixtureLabel", () => {
+  it("returns 'Sample data' when the bundle is the fixture stub", () => {
+    const b = makeBundle({ isFixture: true });
+    expect(fixtureLabel(b)).toBe("Sample data");
+  });
+  it("returns undefined for real builder output (isFixture unset)", () => {
+    const b = makeBundle();
+    expect(fixtureLabel(b)).toBeUndefined();
+  });
+  it("returns undefined when isFixture is explicitly false", () => {
+    const b = makeBundle({ isFixture: false });
+    expect(fixtureLabel(b)).toBeUndefined();
   });
 });
 

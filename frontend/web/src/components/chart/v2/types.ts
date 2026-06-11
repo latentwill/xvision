@@ -164,6 +164,13 @@ export type MultiStrategyEquityBundle = {
   strategies: MultiStrategyBundleEntry[];
   /** defaults to strategies[0].id when omitted */
   lead?: string;
+  /**
+   * `true` when the backend served the bundled fixture stub during a cold
+   * start (no strategies / no completed backtest runs on disk). The
+   * dashboard renders a visible "Sample data" label so fixture equity
+   * curves are never shown as real (fixture-disclosure rule, T3.2).
+   */
+  isFixture?: boolean;
 };
 
 // /api/v2/charts/annotated/{:run_id|live/:symbol} — AI annotations.
