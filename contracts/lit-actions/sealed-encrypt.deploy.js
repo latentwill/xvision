@@ -25,28 +25,20 @@
  * ## js_params the action expects (Lit-runtime only)
  *   { pkpId, message }
  *
- * PARAM ACCESS — Naga ("Chipotle" v3) jsParams object, NOT bare globals.
- * Datil (V0) spread jsParams into global scope; Naga removed that, so params
- * arrive ONLY on the `jsParams` object. The invoke guard below destructures
- * `jsParams` and passes the values into `main({ pkpId, message })`.
+ * PARAM ACCESS — Chipotle (Lit v3) AUTO-INVOKES `main(js_params)`. The action
+ * just DEFINES `main`; the runtime calls it with the request's `js_params` as
+ * the single argument object. There must be NO top-level self-invocation:
+ * Datil (V0) spread js_params into bare globals (gone — ReferenceError), and
+ * Chipotle exposes no `jsParams` global either (also ReferenceError; both
+ * were observed live against the Chipotle API on 2026-06-12).
  *
- * `main` is Lit-runtime-only (it touches the `Lit.Actions` globals). It is
- * guarded behind `typeof Lit` so importing this file in Node (for `node
- * --check` / the deploy-validity test, where `Lit`/jsParams are undefined)
- * does not execute the action.
+ * With no top-level call, importing this file in Node (for `node --check` /
+ * the deploy-validity test, where `Lit` is undefined) only defines `main`
+ * and never executes the action.
  */
 
 /* eslint-disable no-undef */
 async function main({ pkpId, message }) {
   const ciphertext = await Lit.Actions.Encrypt({ pkpId, message });
   return Lit.Actions.setResponse({ response: JSON.stringify({ ciphertext }) });
-}
-
-// The Lit runtime invokes the top-level expression. Guarded so importing this
-// file (in Node, where `Lit`/jsParams are undefined) does not execute it.
-// Params arrive on the Naga `jsParams` object (Datil V0's bare-global spread
-// was removed), so destructure them off jsParams and pass them into main.
-if (typeof Lit !== "undefined" && typeof Lit.Actions !== "undefined") {
-  const { pkpId, message } = jsParams;
-  main({ pkpId, message });
 }
