@@ -4,40 +4,39 @@ import type { LiveConfig } from "./LiveConfig";
 import type { ProviderOverride } from "./ProviderOverride";
 import type { ReviewModel } from "./ReviewModel";
 import type { RunMode } from "./RunMode";
-import type { RunTrajectoryMode } from "./RunTrajectoryMode";
 
-export type EvalRunRequest = { 
+export type EvalRunRequest = {
 /**
  * Strategy agent id returned by `api::strategy::list`.
  */
-agent_id: string, 
+agent_id: string,
 /**
  * Scenario id from `canonical_scenarios()` (e.g. `crypto-bull-q1-2025`).
  */
-scenario_id: string, 
+scenario_id: string,
 /**
  * Run mode. `Backtest` replays the scenario's parquet fixture in-process
  * without any broker. `Live` is routed to `Executor::live(...)`, which
  * currently returns a not-implemented error pending the
  * `live-bar-source-alpaca` track + the Phase 3 launch endpoint.
  */
-mode: RunMode, 
+mode: RunMode,
 /**
  * Optional per-run override of `Strategy.mechanical_params`. Persisted as
  * `eval_runs.params_override_json`.
  */
-params_override: Record<string, unknown> | null, 
+params_override: Record<string, unknown> | null,
 /**
  * Required for `mode = live`. Backtest runs must leave this unset.
  */
-live_config: LiveConfig | null, 
+live_config: LiveConfig | null,
 /**
  * Optional per-run hard caps (decisions / token totals / wall-clock).
  * Breach lands the run as `Cancelled` with a stable reason string in
  * `error`. See `crate::eval::limits::EvalLimits` for shape + semantics.
  * `None` (or every field None) is the pre-limits behavior.
  */
-limits: EvalLimits | null, 
+limits: EvalLimits | null,
 /**
  * When `true`, skip the provider reachability preflight and launch the
  * run regardless of provider state. For offline-development scenarios
@@ -48,7 +47,7 @@ limits: EvalLimits | null,
  * When skipped, a `warn`-severity `supervisor_notes` row is written
  * immediately after run creation so the audit trail is honest.
  */
-skip_preflight: boolean, 
+skip_preflight: boolean,
 /**
  * Optional per-launch override of the strategy's bound `(provider,
  * model)`. When set, the override is resolved through
@@ -62,7 +61,7 @@ skip_preflight: boolean,
  *
  * Wave B #5: `cli-eval-model-override`.
  */
-provider_override: ProviderOverride | null, 
+provider_override: ProviderOverride | null,
 /**
  * Optional per-run subset of the strategy's `asset_universe`. When set,
  * only the listed assets are traded in this run (backtest only — paper
@@ -73,31 +72,21 @@ provider_override: ProviderOverride | null,
  * CLI: `--assets ETH,SOL` (comma-separated). `None` (default) trades
  * the full universe as declared in the strategy manifest.
  */
-assets_subset: Array<string> | null, 
+assets_subset: Array<string> | null,
 /**
  * When true, finalizing a successful run fires the rule-based review
  * agent and stores chart annotations on `eval_reviews.annotations_json`.
  * Default false: auto-review is opt-in per run.
  */
-auto_fire_review: boolean, 
+auto_fire_review: boolean,
 /**
  * Optional display override for the review model requested by the
  * launcher. The current wave persists this for audit/UI; manual review
  * engine routing continues to use the selected agent profile.
  */
-review_model: ReviewModel | null, 
+review_model: ReviewModel | null,
 /**
  * Maximum annotations the review contract should emit. Stored on the
  * run so UI/CLI launches round-trip their annotation budget.
  */
-max_annotations_per_review: number | null, 
-/**
- * §2-D — per-run Cline trajectory-recording mode. The operator-chosen
- * driver for recording (replaces the §2-B `XVN_TRAJECTORY_RECORD` env
- * gate). `Live` (default) records nothing and is byte-identical to the
- * pre-§2-D behaviour; `Record` mints a trajectory recording for the
- * run's primary recorded slot. Only consulted when the run's
- * `agent_runtime` resolves to `Cline`; backtest/live LlmDispatch runs
- * ignore it. CLI: `--record-trajectory`.
- */
-trajectory_mode: RunTrajectoryMode, };
+max_annotations_per_review: number | null, };

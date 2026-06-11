@@ -3,7 +3,7 @@ import type { BaselineMetrics } from "./BaselineMetrics";
 import type { BaselineRelative } from "./BaselineRelative";
 
 /**
- * All five automatic baselines computed over the same bar slice the strategy
+ * All four automatic baselines computed over the same bar slice the strategy
  * saw, plus the per-baseline return delta (`strategy_return_pct −
  * baseline_return_pct`).
  *
@@ -12,12 +12,6 @@ import type { BaselineRelative } from "./BaselineRelative";
  * No DB migration required; old rows deserialize with `baselines: None`.
  */
 export type BaselinesReport = { buy_hold: BaselineMetrics, always_flat: BaselineMetrics, simple_trend: BaselineMetrics, simple_mean_reversion: BaselineMetrics, 
-/**
- * Coin-flip long/short at 100 bps per bar, seeded for reproducibility.
- * Defaults to `BaselineMetrics { return_pct: 0.0, sharpe: 0.0 }` when
- * deserializing legacy rows that predate this field.
- */
-random_direction: BaselineMetrics, 
 /**
  * `strategy_return_pct − baseline_return_pct` for each baseline.
  */

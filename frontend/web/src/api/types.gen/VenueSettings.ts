@@ -12,13 +12,4 @@ export type VenueSettings = { venue: Venue, fees: Fees, slippage: SlippageModel,
  * Falls through to the scenario defaults when no pattern matches.
  * Added in V2E eval-cost-model-per-bar-and-volume-share.
  */
-overrides: Array<VenueOverride>, 
-/**
- * Annualised borrow / financing cost charged per bar on open short
- * notional (spot-synthetic shorts only). Expressed in basis points per
- * calendar day. Default `5 bps/day` ≈ 18%/yr — conservative placeholder.
- * Per-asset override via [`VenueOverride::borrow_bps_per_day`] takes
- * precedence. Legacy JSON rows that predate this field hydrate to the
- * default via `serde(default)`.
- */
-borrow_bps_per_day: number, };
+overrides: Array<VenueOverride>, };

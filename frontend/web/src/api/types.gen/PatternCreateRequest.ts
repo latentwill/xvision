@@ -13,7 +13,7 @@ training_window_end: string | null,
  * `operator_attestations` row proving the operator accepted the
  * cross-scenario leakage implications of a timeless Pattern.
  */
-attestation_id: string | null, 
+attestation_id: string | null,
 /**
  * Provenance fields MUST be absent — operator-seeded Patterns
  * never carry run/scenario/cycle attribution. We surface them on

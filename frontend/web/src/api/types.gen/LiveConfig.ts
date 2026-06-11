@@ -8,25 +8,13 @@ import type { VenueLabel } from "./VenueLabel";
  * Launch envelope for a Live run. Persisted as
  * `eval_runs.live_config_json` (Phase B migration).
  *
- * **Current live scope: Alpaca paper trading only.** Live mode sends
- * orders to `https://paper-api.alpaca.markets` — real market data,
- * paper (simulated) money. Real-money venues (`VenueLabel::Live`) are
- * rejected at validation until the per-strategy verdict + kill-switch
- * hardening lands.
- *
  * `strategy_id` references the strategy artifact that drives the run.
- * `assets` is a non-empty list of whitelisted assets; each is fanned out
- * into its own `LiveStream` and merged in the executor (§4 L2 multi-asset
- * live fanout, see
- * `docs/superpowers/plans/2026-05-25-cline-live-followups.md` and the
- * invariants in
- * `docs/superpowers/notes/2026-05-25-live-multi-asset-invariants.md`). The
- * earlier single-asset wall (`len() == 1`) has been lifted.
+ * `assets` is `Vec` for forward-compat with multi-asset Live launches
+ * (see `docs/superpowers/plans/2026-05-21-multi-asset-alpaca-unlock.md`);
+ * v1 hard-walls it to `len() == 1`.
  *
- * `broker_creds_ref` selects WHICH stored credential set to load
- * (e.g. `"alpaca"` → the Alpaca credentials row). It is a lookup key,
- * not a venue/environment selector — venue selection is a separate
- * future plan. The engine never stores secret material in `LiveConfig`.
+ * `broker_creds_ref` resolves to a configured broker-credentials row;
+ * the engine never stores the secret material itself in `LiveConfig`.
  */
 export type LiveConfig = { strategy_id: string, assets: Array<AssetRef>, 
 /**
@@ -34,15 +22,7 @@ export type LiveConfig = { strategy_id: string, assets: Array<AssetRef>,
  * in the ts-rs export because `xvision_core::Capital` is not a ts-rs
  * type (mirrors the existing override on `Scenario`).
  */
-capital: { initial: number, currency: string }, 
-/**
- * Selects WHICH stored credential set to use (e.g. `"alpaca"` → the
- * Alpaca credentials row under Settings → Brokers). This is a lookup
- * key, **not** a venue/environment selector — venue and environment
- * selection is a separate future plan. Current live scope accepts only
- * `"alpaca"` (Alpaca paper trading).
- */
-broker_creds_ref: string, stop_policy: StopPolicy, 
+capital: { initial: number, currency: string }, broker_creds_ref: string, stop_policy: StopPolicy, 
 /**
  * Coarse safety label for the venue. v1 rejects [`VenueLabel::Live`]
  * at validation; once the per-strategy verdict + kill-switch hardening

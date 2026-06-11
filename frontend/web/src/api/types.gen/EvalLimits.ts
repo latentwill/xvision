@@ -27,15 +27,9 @@ max_output_tokens: bigint | null,
  */
 max_wall_clock_secs: bigint | null, 
 /**
- * When `true`, an `max_input_tokens` breach lands the run as
- * `Cancelled`; when `false`, that input-token breach is logged but
- * the run continues (advisory mode).
- *
- * NOTE (strict output cap): `max_output_tokens` no longer respects
- * this flag — when `max_output_tokens` IS set it is ALWAYS a hard
- * cap (a runaway output is misconfiguration, not something to log
- * and continue). This flag now only gates `max_input_tokens`.
- * `max_decisions` and `max_wall_clock_secs` are, as before, always
- * hard caps.
+ * When `true`, a token-cap breach lands the run as `Cancelled`
+ * with a breach reason; when `false`, the breach is logged but
+ * the run continues (advisory mode). Decisions/wall-clock breaches
+ * always cancel — only token caps respect this flag.
  */
 cancel_on_token_limit: boolean, };

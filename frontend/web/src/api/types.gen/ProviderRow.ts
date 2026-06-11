@@ -2,7 +2,7 @@
 
 export type ProviderRow = { name: string, 
 /**
- * Stable string form — `"anthropic" | "openai-compat" | "local-candle" | "ollama" | "llama-cpp" | "vllm"`.
+ * Stable string form — `"anthropic" | "openai-compat" | "local-candle"`.
  */
 kind: string, base_url: string, 
 /**
