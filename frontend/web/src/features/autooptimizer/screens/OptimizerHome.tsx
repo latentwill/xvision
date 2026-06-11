@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
-import { LiveCycleView } from "../LiveCycleView";
+import { LaunchPanel } from "../ui/LaunchPanel";
 import { RecentCyclesTableBody } from "../panels/RecentCyclesTable";
 import { ExperimentWritersPanel } from "../panels/ExperimentWritersPanel";
 import { EditorialHeadline } from "../ui/EditorialHeadline";
@@ -221,8 +221,8 @@ export function OptimizerHome() {
 
         {sessionId && <SessionScopeChip sessionId={sessionId} />}
 
-        {/* Inline launch panel — the existing LiveCycleView launch form */}
-        {launcherOpen && !isActive && <LiveCycleView embedded launchOnly />}
+        {/* Inline launch panel — the launch form extracted from LiveCycleView */}
+        {launcherOpen && !isActive && <LaunchPanel />}
 
         {/* The headline already carries the contextual action; hand the launch
             button to the console only for the never-ran explainer. */}

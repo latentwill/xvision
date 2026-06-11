@@ -7,11 +7,10 @@ import * as apiModule from "../api";
 import * as cycleEventStreamModule from "../hooks/useCycleEventStream";
 import type { CycleRunSummary, StatsRow } from "../api";
 
-// The launch panel is the existing LiveCycleView launch form; it has its own
-// tests. Stub it so opening the launcher doesn't pull the strategies network
-// stack into this suite.
-vi.mock("../LiveCycleView", () => ({
-  LiveCycleView: () => <div data-testid="launch-panel">launch-panel</div>,
+// The launch panel has its own tests. Stub it so opening the launcher
+// doesn't pull the strategies network stack into this suite.
+vi.mock("../ui/LaunchPanel", () => ({
+  LaunchPanel: () => <div data-testid="launch-panel">launch-panel</div>,
 }));
 
 // Mock uPlot — EdgeVsRandomChart renders inside the charts row.
