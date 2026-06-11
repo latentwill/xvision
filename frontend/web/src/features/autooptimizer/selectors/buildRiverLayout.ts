@@ -94,26 +94,25 @@ export function buildRiverLayout(nodes: RiverNode[]): RiverLayout {
   const lines: RiverLine[] = [];
   const stubs: RiverStub[] = [];
 
-  // Process each root. At each node in the chain, extra active children
-  // beyond the first start new sub-lines via walkLine.
+  // Process each root via a worklist so every line — primary or sub-line —
+  // is scanned for extra active children uniformly. (A primary-only scan
+  // silently dropped forks off non-primary lines: root → B sub-line with
+  // B → B2 and B → B3 lost B3 entirely.)
   for (const root of roots) {
-    // Walk the primary chain for this root
-    const primaryLine = walkLine(root, 0, childrenOf, stubs);
-    lines.push(primaryLine);
-
-    // For every point in the primary line, check for extra active children
-    // that need their own sub-lines
-    for (const p of primaryLine.points) {
-      const n = byHash.get(p.hash)!;
-      const kids = childrenOf.get(n.bundle_hash) ?? [];
-      const activeKids = kids
-        .filter((k) => k.status === "active")
-        .sort((a, b) => a.created_at.localeCompare(b.created_at));
-      // The first active child is already part of the primary chain (walked above).
-      // Extra active children beyond the first get their own sub-lines.
-      for (const extra of activeKids.slice(1)) {
-        const subLine = walkLine(extra, p.x + 1, childrenOf, stubs);
-        lines.push(subLine);
+    const worklist: RiverLine[] = [walkLine(root, 0, childrenOf, stubs)];
+    while (worklist.length > 0) {
+      const line = worklist.pop()!;
+      lines.push(line);
+      // At each point on this line, extra active children beyond the first
+      // (which already continues the line) start their own sub-lines.
+      for (const p of line.points) {
+        const kids = childrenOf.get(p.hash) ?? [];
+        const activeKids = kids
+          .filter((k) => k.status === "active")
+          .sort((a, b) => a.created_at.localeCompare(b.created_at));
+        for (const extra of activeKids.slice(1)) {
+          worklist.push(walkLine(extra, p.x + 1, childrenOf, stubs));
+        }
       }
     }
   }

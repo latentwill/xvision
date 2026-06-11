@@ -89,4 +89,34 @@ describe("buildRiverLayout", () => {
     expect(layout.lines[0].points).toHaveLength(1);
     expect(layout.stubs).toHaveLength(1);
   });
+
+  it("forks off non-primary lines get their own sub-lines (recursive fork scan)", () => {
+    // root → A (active, first by created_at: continues the primary line)
+    // root → B (active, second: starts a sub-line)
+    // B → B2 (active, first: continues B's sub-line)
+    // B → B3 (active, second: must start its OWN sub-line — previously dropped
+    //         because only the primary line's points were scanned for forks)
+    const layout = buildRiverLayout([
+      node("root", null, "active", 1.0, null, "2026-06-01"),
+      node("A", "root", "active", 1.1, 0.1, "2026-06-02"),
+      node("B", "root", "active", 1.2, 0.2, "2026-06-03"),
+      node("B2", "B", "active", 1.3, 0.1, "2026-06-04"),
+      node("B3", "B", "active", 1.4, 0.2, "2026-06-05"),
+    ]);
+
+    // Primary: root → A. Sub-line: B → B2. Sub-sub-line: B3.
+    const lineB = layout.lines.find((l) => l.points[0]?.hash === "B");
+    expect(lineB, "sub-line starting at B exists").toBeDefined();
+    expect(lineB!.points.map((p) => p.hash)).toEqual(["B", "B2"]);
+
+    const lineB3 = layout.lines.find((l) => l.points.some((p) => p.hash === "B3"));
+    expect(lineB3, "B3 (extra active child of a non-primary line) gets a line").toBeDefined();
+    expect(lineB3!.points[0]!.hash).toBe("B3");
+    // B3 forks off B (x=1 on B's line) → starts at x=2
+    expect(lineB3!.points[0]!.x).toBe(2);
+
+    // Every active node appears in exactly one line
+    const allHashes = layout.lines.flatMap((l) => l.points.map((p) => p.hash)).sort();
+    expect(allHashes).toEqual(["A", "B", "B2", "B3", "root"]);
+  });
 });
