@@ -1,0 +1,153 @@
+# Marketplace subgraph manifest (surface spec §6.3; runbook §2.9 / §3.2 C7).
+#
+# Host-agnostic: addresses + startBlock live in networks.json so the same
+# manifest deploys to Goldsky, The Graph hosted/decentralized, or a self-hosted
+# graph-node. Deploy with:
+#
+#   pnpm install
+#   pnpm codegen
+#   pnpm build
+#   pnpm exec graph deploy <slug> --network mantle-sepolia
+#
+# `dataSource.network` uses graph-node's chain alias. Mantle Sepolia (5003) is
+# `mantle-testnet` on hosted graph-node builds; confirm the exact alias for the
+# chosen indexer host (Goldsky uses `mantle-sepolia`). networks.json carries the
+# per-network address/startBlock; `graph build --network <name>` injects them.
+specVersion: 1.0.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: IdentityRegistry
+    network: mantle-testnet
+    source:
+      abi: IdentityRegistry
+      address: "0x1DE1ccb2bBB5e1dE856BA096698b1A97f4484Fe4"
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/identity.ts
+      entities:
+        - Agent
+      abis:
+        - name: IdentityRegistry
+          file: ./abis/IdentityRegistry.json
+      eventHandlers:
+        - event: AgentRegistered(indexed uint256,indexed address,string)
+          handler: handleAgentRegistered
+  - kind: ethereum
+    name: ListingRegistry
+    network: mantle-testnet
+    source:
+      abi: ListingRegistry
+      address: "0x64b5ae5B91CB2846e7dA8cE883f2023b98E2cD22"
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/listing.ts
+      entities:
+        - Agent
+        - Listing
+      abis:
+        - name: ListingRegistry
+          file: ./abis/ListingRegistry.json
+        - name: Marketplace
+          file: ./abis/Marketplace.json
+      eventHandlers:
+        - event: ListingCreated(indexed uint256,indexed address,indexed uint256,bytes32,uint8,uint96)
+          handler: handleListingCreated
+        - event: ListingUpdated(indexed uint256,bytes32,string)
+          handler: handleListingUpdated
+        - event: ListingRevoked(indexed uint256,indexed address)
+          handler: handleListingRevoked
+  - kind: ethereum
+    name: Marketplace
+    network: mantle-testnet
+    source:
+      abi: Marketplace
+      address: "0x4b9450642f2b3Da248e90b4FEBaA8eCA87E78cE8"
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/marketplace.ts
+      entities:
+        - Listing
+        - Sale
+      abis:
+        - name: Marketplace
+          file: ./abis/Marketplace.json
+      eventHandlers:
+        - event: Sold(indexed uint256,indexed uint256,indexed address,uint96,uint96,uint96,uint256,uint16,uint8)
+          handler: handleSold
+  - kind: ethereum
+    name: EvalAttestationRegistry
+    network: mantle-testnet
+    source:
+      abi: EvalAttestationRegistry
+      address: "0x205Ce1c3e43b2a4671b49a1Ff426AE8De90ABDf6"
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/attestation.ts
+      entities:
+        - Listing
+        - EvalAttestation
+      abis:
+        - name: EvalAttestationRegistry
+          file: ./abis/EvalAttestationRegistry.json
+      eventHandlers:
+        - event: AttestationPosted(indexed uint256,indexed address,bytes32,bytes32)
+          handler: handleAttestationPosted
+  - kind: ethereum
+    name: ReputationRegistry
+    network: mantle-testnet
+    source:
+      abi: ReputationRegistry
+      address: "0xbb8A920d6d342a4FcF3929D91668cfbbfb14d2D8"
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/reputation.ts
+      entities:
+        - Agent
+        - Feedback
+        - FeedbackCounter
+      abis:
+        - name: ReputationRegistry
+          file: ./abis/ReputationRegistry.json
+      eventHandlers:
+        - event: FeedbackPosted(indexed uint256,indexed address,int128,bytes32,string)
+          handler: handleFeedbackPosted
+        - event: FeedbackRevoked(indexed uint256,indexed uint256,indexed address)
+          handler: handleFeedbackRevoked
+  - kind: ethereum
+    name: ValidationRegistry
+    network: mantle-testnet
+    source:
+      abi: ValidationRegistry
+      address: "0xFAeeBF70aE0B351100a8Ba3244dDf8792bEff84F"
+      startBlock: 0
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/validation.ts
+      entities:
+        - Agent
+        - Validation
+      abis:
+        - name: ValidationRegistry
+          file: ./abis/ValidationRegistry.json
+      eventHandlers:
+        - event: ValidationPosted(indexed uint256,indexed address,bytes32,string)
+          handler: handleValidationPosted

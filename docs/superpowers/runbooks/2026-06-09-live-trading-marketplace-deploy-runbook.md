@@ -76,10 +76,14 @@ Run from the local build host. Each step is gas-spending and/or irreversible whe
    under `crates/xvision-identity/abi/v1/` (AM7). The `sol!` bindings in `contracts.rs` were
    written ahead of deploy — reconcile them against the verified ABIs.
 8. [ ] **Provision IPFS pinning:** create the Pinata JWT and set it where `PinataDriver` reads it.
-9. [ ] **Deploy the subgraph** (C2) to the chosen host. The repo currently has only
-   `crates/xvision-marketplace/subgraph/schema.graphql` (entity `Agent`, post-AM3) — the
-   `subgraph.yaml` manifest + AssemblyScript mappings are **net-new** and must be authored
-   against the deployed addresses + ABIs.
+9. [ ] **Deploy the subgraph** (C2) to the chosen host. ✅ **Authored 2026-06-11**
+   (PR for `feat/marketplace-subgraph`): `crates/xvision-marketplace/subgraph/` now carries the
+   `subgraph.yaml` manifest, minimal `abis/`, and AssemblyScript mappings for all six contracts
+   (Identity/Reputation/Validation/Listing/Marketplace/EvalAttestation), wired to the deployed
+   Mantle Sepolia addresses in `networks.json`. `graph codegen && graph build` pass and matchstick
+   covers the feedback-index/revoke logic. **Remaining for this step:** pick the indexer host
+   (Goldsky / The Graph / self-host), set each contract's `startBlock` (currently `0`), confirm the
+   network alias for the chosen host, and `graph deploy`. See the subgraph `README.md`.
 10. [ ] **Stand up the Validation Registry signer** (C5) — the trusted validator service that
     gates listing publication.
 11. [ ] *(Optional — A6/A7)* provision a public read-only viewer (`xvn.market`) + a relay for
