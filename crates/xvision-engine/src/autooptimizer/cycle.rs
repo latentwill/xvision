@@ -547,11 +547,12 @@ where
         (MetricsSummary::default(), MetricsSummary::default())
     };
 
-    // B19: per-pair parent metrics cache, keyed by the sampled day scenario's id.
-    // Computed lazily the first time a pair is sampled so each unique pair pays
-    // exactly one parent day+baseline backtest, however many candidates land on
-    // it. Empty / unused on the legacy and regime-matrix paths.
-    let mut parent_pool_metrics: HashMap<String, (MetricsSummary, MetricsSummary)> = HashMap::new();
+    // B19: per-pair parent metrics cache, keyed by BOTH sampled scenario ids.
+    // The baseline id is part of the key because two pool entries may reuse the
+    // same training/day window with different holdout windows. In that shape,
+    // keying only by day id would incorrectly reuse the first holdout metrics
+    // and break the parent/child comparability rule.
+    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> = HashMap::new();
 
     // Fix 2 + 3: validate regime set (duplicate labels, day/baseline overlap)
     // before entering the mutation loop. Returns immediately on the first
@@ -849,17 +850,18 @@ where
             mutation_idx,
         );
         // B19 comparability: parent metrics MUST come from the SAME sampled pair.
-        // For the pool path, compute (and cache by day-scenario id) the parent's
-        // day+baseline metrics on this pair; for the legacy/regime paths reuse the
-        // pre-computed `parent_day`/`parent_untouched` exactly as before.
+        // For the pool path, compute (and cache by sampled pair) the parent's
+        // day+baseline metrics on this pair; for the legacy/regime paths reuse
+        // the pre-computed `parent_day`/`parent_untouched` exactly as before.
         let (gate_parent_day, gate_parent_untouched) = if scenario_pool_active {
-            if !parent_pool_metrics.contains_key(&sampled_day.id) {
+            let pair_key = (sampled_day.id.clone(), sampled_baseline.id.clone());
+            if !parent_pool_metrics.contains_key(&pair_key) {
                 let pd = paper_tester.run(parent_strategy, sampled_day).await?;
                 let pu = paper_tester.run(parent_strategy, sampled_baseline).await?;
-                parent_pool_metrics.insert(sampled_day.id.clone(), (pd, pu));
+                parent_pool_metrics.insert(pair_key.clone(), (pd, pu));
             }
             let (pd, pu) = parent_pool_metrics
-                .get(&sampled_day.id)
+                .get(&pair_key)
                 .expect("parent pool metrics just inserted");
             (pd.clone(), pu.clone())
         } else {
