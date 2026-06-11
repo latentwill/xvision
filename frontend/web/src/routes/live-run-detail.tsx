@@ -13,10 +13,8 @@
 //   * No backtest affordances: SpanInspector is mounted with
 //     `isLive={true}` so "Rerun from here" stays locked on a live run.
 //
-// NOT shown: `live_config.venue_label`, stop-policy, and capital — the
-// eval run detail API (`RunDetail`/`RunSummary`) does not expose
-// `live_config`, so they are unreachable from the SPA today. When the
-// backend surfaces them, render them as chips in the header strip.
+//   * Deployment config chips (venue label, broker, capital, stop policy,
+//     assets) from the linked eval run's `live_config`.
 //
 // Single full-width column (no 4th column) per the repo layout rule.
 
@@ -41,6 +39,23 @@ function formatPnlPct(pct: number | null | undefined): string | null {
   if (pct == null || !Number.isFinite(pct)) return null;
   const sign = pct > 0 ? "+" : "";
   return `${sign}${pct.toFixed(2)}%`;
+}
+
+/** Compact "first limit wins" stop-policy summary, e.g. "15m / 60 bars". */
+function formatStopPolicy(sp: {
+  /** `bigint` because the wire type is u64 (ts-rs maps u64 → bigint). */
+  time_limit_secs?: number | bigint | null;
+  bar_limit?: number | null;
+  decision_limit?: number | null;
+}): string | null {
+  const parts: string[] = [];
+  if (sp.time_limit_secs != null) {
+    const m = Math.round(Number(sp.time_limit_secs) / 60);
+    parts.push(m >= 60 ? `${(m / 60).toFixed(1)}h` : `${m}m`);
+  }
+  if (sp.bar_limit != null) parts.push(`${sp.bar_limit} bars`);
+  if (sp.decision_limit != null) parts.push(`${sp.decision_limit} decisions`);
+  return parts.length > 0 ? parts.join(" / ") : null;
 }
 
 export function LiveRunDetailRoute() {
@@ -129,6 +144,8 @@ export function LiveRunDetailRoute() {
     summary.objective ||
     summary.run_id.slice(0, 8);
   const pnl = formatPnlPct(evalSummary?.total_return_pct);
+  const liveConfig = evalSummary?.live_config ?? null;
+  const stopPolicy = liveConfig ? formatStopPolicy(liveConfig.stop_policy) : null;
   const isRunning = summary.status === "running";
   // Defensive: a deep link can land on a non-live agent run; say so
   // instead of dressing a backtest up as live money.
@@ -188,6 +205,25 @@ export function LiveRunDetailRoute() {
             data-testid="live-pnl"
           >
             pnl {pnl}
+          </span>
+        ) : null}
+        {liveConfig ? (
+          <span
+            className="flex flex-wrap items-center gap-x-3 font-mono text-[12px] text-text-2"
+            data-testid="live-config-chips"
+          >
+            <span className="uppercase tracking-[0.1em]">
+              {liveConfig.venue_label}
+            </span>
+            <span>broker: {liveConfig.broker_creds_ref}</span>
+            <span>
+              capital: {liveConfig.capital.initial.toLocaleString()}{" "}
+              {liveConfig.capital.currency}
+            </span>
+            {stopPolicy ? <span>stops: {stopPolicy}</span> : null}
+            <span>
+              {liveConfig.assets.map((a) => a.venue_symbol).join(", ")}
+            </span>
           </span>
         ) : null}
         <span className="font-mono text-[12px] text-text-2">

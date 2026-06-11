@@ -184,6 +184,12 @@ pub struct RunSummary {
     /// state. Defaults to `false` for pre-062 runs.
     #[serde(default)]
     pub flatten_requested: bool,
+    /// Live launch envelope (`mode = live` runs only): venue label, stop
+    /// policy, capital, display name. `None` for backtests. Surfaced so the
+    /// live inspector can render deployment config without a second fetch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub live_config: Option<LiveConfig>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -4357,6 +4363,7 @@ fn summarise(run: Run) -> RunSummary {
         paused: run.paused,
         paused_at: run.paused_at,
         flatten_requested: run.flatten_requested,
+        live_config: run.live_config,
     }
 }
 

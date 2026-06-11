@@ -33,6 +33,7 @@ import { useTraceDock } from "@/stores/trace-dock";
 
 import { LiveAccountStrip } from "./LiveAccountStrip";
 import { LivePositionsTable } from "./LivePositionsTable";
+import { VenueAccountPanel } from "./VenueAccountPanel";
 import { StrategyStrip } from "./StrategyStrip";
 import { WalletBanner } from "./WalletBanner";
 import { loadStripMetric, saveStripMetric, type StripMetricId } from "./strip-metrics";
@@ -188,6 +189,15 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
           </p>
         </div>
       )}
+
+      {/*
+        Venue account — the execution venue's OWN ledger (Orderly), independent
+        of run selection: real equity / USDC / positions behind live runs.
+        Full-width inline band per the layout rule.
+      */}
+      <div className="mt-5">
+        <VenueAccountPanel />
+      </div>
     </>
   );
 }
