@@ -36,6 +36,8 @@
 // 18d. POST  /api/marketplace/listings/:id/revoke     marketplace_route::post_revoke
 // 18e. POST  /api/marketplace/buy                     marketplace_route::post_buy
 // 18f. POST  /api/marketplace/listings/:id/import    marketplace_route::post_import
+// 18g. POST  /api/marketplace/listings/:id/attest     marketplace_route::post_attest
+// 18h. POST  /api/marketplace/listings/:id/update     marketplace_route::post_update
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -157,6 +159,7 @@
 //  R67. GET  /api/marketplace/wallet/:address
 //  R68. GET  /api/marketplace/receipts/:tx_hash
 //  R69. GET  /api/marketplace/listings/:id/bundle
+//  R70. GET  /api/marketplace/listings/:id/attestations
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -473,6 +476,12 @@ fn readonly_router(state: AppState) -> Router {
             "/api/marketplace/listings/:id/bundle",
             get(marketplace_read_route::get_bundle),
         )
+        // Eval attestations for a listing, read live from the
+        // EvalAttestationRegistry. 404 unknown listing; 503 dormant env.
+        .route(
+            "/api/marketplace/listings/:id/attestations",
+            get(marketplace_read_route::get_attestations),
+        )
         .with_state(state)
 }
 
@@ -554,6 +563,18 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/marketplace/listings/:id/import",
             post(marketplace_route::post_import),
+        )
+        // Manual eval attestation (permissionless on-chain; the server's
+        // publisher key is the attester). Env-gated: 503 without chain config.
+        .route(
+            "/api/marketplace/listings/:id/attest",
+            post(marketplace_route::post_attest),
+        )
+        // Seller content refresh (updateListing; price immutable on-chain).
+        // Env-gated: 503 without chain config; NotSeller et al. → 400.
+        .route(
+            "/api/marketplace/listings/:id/update",
+            post(marketplace_route::post_update),
         )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(

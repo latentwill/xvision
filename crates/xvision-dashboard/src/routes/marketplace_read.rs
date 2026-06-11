@@ -14,6 +14,8 @@
 //!   behind a listing's `content_uri` (ipfs:// gateway or xvn:// local
 //!   store) and verify them against the on-chain `content_hash` (409 on
 //!   mismatch).
+//! - `GET /api/marketplace/listings/:id/attestations` — the listing's eval
+//!   attestations read live from the `EvalAttestationRegistry`.
 //!
 //! Handlers stay thin: all aggregation is the pure [`wallet_view`] over the
 //! snapshot plus [`OwnershipFacts`] gathered from the chain. Chain access
@@ -33,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use xvision_engine::api::strategy;
 use xvision_engine::autooptimizer::content_hash::canonical_json;
 use xvision_identity::client::IIdentityRegistry;
-use xvision_identity::contracts::{ILicenseToken, IMarketplace};
+use xvision_identity::contracts::{IEvalAttestationRegistry, ILicenseToken, IMarketplace};
 use xvision_identity::manifest_hash_hex;
 use xvision_marketplace::{IpfsStore, PinataDriver};
 
@@ -258,6 +260,85 @@ pub async fn get_bundle(
         content_uri: listing.content_uri,
         verified: true,
         manifest,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/marketplace/listings/:id/attestations
+// ---------------------------------------------------------------------------
+
+/// One eval attestation, decoded from the `EvalAttestationRegistry`.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct AttestationOut {
+    /// Lowercase `0x…` attester address.
+    pub attester: String,
+    pub posted_at_unix: u64,
+    pub eval_result_uri: String,
+    /// `0x` + 64-hex keccak256 of the eval payload.
+    pub eval_result_hash: String,
+    /// `0x` + 64-hex schema id (`0x00…00` for the v1 cycles/sharpe payload).
+    pub schema: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AttestationsOut {
+    pub items: Vec<AttestationOut>,
+}
+
+/// Pure mapping from the on-chain struct to the wire shape.
+fn attestation_out(a: &IEvalAttestationRegistry::Attestation) -> AttestationOut {
+    AttestationOut {
+        attester: format!("{:#x}", a.attester),
+        posted_at_unix: a.postedAt,
+        eval_result_uri: a.evalResultURI.clone(),
+        eval_result_hash: format!("0x{:x}", a.evalResultHash),
+        schema: format!("0x{:x}", a.schema),
+    }
+}
+
+/// `GET /api/marketplace/listings/:id/attestations` — read the listing's
+/// eval attestations live from the `EvalAttestationRegistry` over the
+/// read-only provider. 404 unknown listing; 503 when the chain env or
+/// `XVN_EVAL_ATTESTATION` is dormant; 200 `{items: […]}`.
+pub async fn get_attestations(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Json<AttestationsOut>, DashboardError> {
+    // a. Listing must be indexed (404 unknown).
+    {
+        let snap = state.marketplace_snapshot.read().await;
+        snap.listings
+            .iter()
+            .find(|l| l.listing_id == id)
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?;
+    }
+
+    // b. Same read-only provider config as the indexer; dormant env → 503.
+    let cfg = IndexerCfg::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
+             XVN_IDENTITY_REGISTRY"
+                .into(),
+        )
+    })?;
+    let registry_addr = cfg.eval_attestation.ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "attestation registry not configured: set XVN_EVAL_ATTESTATION".into(),
+        )
+    })?;
+
+    let provider = ProviderBuilder::new()
+        .connect(cfg.rpc_url.as_str())
+        .await
+        .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
+    let attestations = IEvalAttestationRegistry::new(registry_addr, &provider)
+        .getAttestations(U256::from(id))
+        .call()
+        .await
+        .map_err(|e| DashboardError::ServiceUnavailable(format!("attestation lookup failed: {e}")))?;
+
+    Ok(Json(AttestationsOut {
+        items: attestations.iter().map(attestation_out).collect(),
     }))
 }
 
@@ -627,6 +708,9 @@ mod tests {
             name: format!("xvn strategy {agent_nft_id}"),
             symmetry: "Radial".into(),
             palette: "Ember".into(),
+            attestation_count: 0,
+            units_sold: 0,
+            earned_usdc: 0.0,
         }
     }
 
@@ -754,6 +838,24 @@ mod tests {
         assert_eq!(out.name, "");
         assert_eq!(out.content_uri, "");
         assert_eq!(out.block_time_unix, 0);
+    }
+
+    #[test]
+    fn attestation_maps_to_wire_shape() {
+        let hash = alloy::primitives::keccak256(r#"{"cycles":20,"sharpe":1.5}"#.as_bytes());
+        let a = IEvalAttestationRegistry::Attestation {
+            evalResultHash: hash,
+            evalResultURI: "xvn://eval/listing/2".to_string(),
+            attester: "0xAaAaAAaaaAAAAAaAaaaAAAaaAaaaAAaaAaAaaaaA".parse().unwrap(),
+            postedAt: 1_700_000_777,
+            schema: B256::ZERO,
+        };
+        let out = attestation_out(&a);
+        assert_eq!(out.attester, ALICE, "lowercase 0x address");
+        assert_eq!(out.posted_at_unix, 1_700_000_777);
+        assert_eq!(out.eval_result_uri, "xvn://eval/listing/2");
+        assert_eq!(out.eval_result_hash, format!("0x{hash:x}"));
+        assert_eq!(out.schema, format!("0x{}", "00".repeat(32)));
     }
 
     #[test]

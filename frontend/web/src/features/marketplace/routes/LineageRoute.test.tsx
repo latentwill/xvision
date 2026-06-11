@@ -1,7 +1,7 @@
 // src/features/marketplace/routes/LineageRoute.test.tsx
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeAll, afterAll } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
@@ -208,5 +208,95 @@ describe("LineageRoute", () => {
   it("shows an error state for an unknown strategy name", async () => {
     render(<Wrapper initialPath="/marketplace/lineage/does-not-exist" />);
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
+  });
+});
+
+// ── Eval attestations (on-chain) ─────────────────────────────────────────────
+describe("LineageRoute eval attestations", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const ATTESTER = "0xa83e000000000000000000000000000000000001";
+
+  async function verifiedNumericClient() {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing(
+      "btc-momentum-v3",
+    );
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...base,
+      id: "3",
+      verification: "verified",
+    });
+    return client;
+  }
+
+  it("fetches attestations for a verified on-chain listing and renders the section", async () => {
+    const client = await verifiedNumericClient();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              attester: ATTESTER,
+              posted_at_unix: 1760000000, // 2025-10-09
+              eval_result_uri: "xvn://eval/listing/3",
+              eval_result_hash: "0x" + "ab".repeat(32),
+              schema: "0x" + "00".repeat(32),
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Wrapper client={client} />);
+
+    expect(await screen.findByTestId("verified-evals")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/marketplace/listings/3/attestations",
+      expect.anything(),
+    );
+    // attester truncated in the middle
+    expect(screen.getByText(/0xa83e…0001/)).toBeInTheDocument();
+    // date derived from posted_at_unix
+    expect(screen.getByText(/2025/)).toBeInTheDocument();
+    // eval result uri rendered as text
+    expect(screen.getByText("xvn://eval/listing/3")).toBeInTheDocument();
+    // honest wording: self-attestations render as "attested", never "verified"
+    expect(screen.getByText("Eval attestations")).toBeInTheDocument();
+    expect(screen.getByText(/attested/i)).toBeInTheDocument();
+    expect(screen.queryByText(/endorsed/i)).not.toBeInTheDocument();
+  });
+
+  it("does not fetch or render the section for fixture (non-numeric) listings", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Wrapper />); // fixture detail: verified but slug id
+    await screen.findByTestId("lineage-page");
+
+    expect(screen.queryByTestId("verified-evals")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch for unverified on-chain listings", async () => {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing(
+      "btc-momentum-v3",
+    );
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...base,
+      id: "3",
+      verification: "unverified",
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-page");
+
+    expect(screen.queryByTestId("verified-evals")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

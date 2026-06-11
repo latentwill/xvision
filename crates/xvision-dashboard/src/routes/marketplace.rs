@@ -8,6 +8,11 @@
 //! - `POST /api/marketplace/listings/:id/import` — license-gated bundle
 //!   delivery: verify the buyer holds an ERC-1155 license, fetch+verify the
 //!   manifest, install it as a new local strategy.
+//! - `POST /api/marketplace/listings/:id/attest` — post an eval attestation
+//!   (`EvalAttestationRegistry.postAttestation`, permissionless on-chain).
+//! - `POST /api/marketplace/listings/:id/update` — seller-only content
+//!   refresh (`ListingRegistry.updateListing`; price is immutable on-chain —
+//!   re-pricing is revoke + relist).
 //!
 //! Flow: parse/validate body → load strategy → hash → tokenURI →
 //! `ChainEnv::from_env` → signer parse → `registry_addresses_from_env` →
@@ -34,14 +39,18 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::network::EthereumWallet;
+use alloy::primitives::{keccak256, Address, B256, U256};
+use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
 
 use xvision_engine::api::strategy;
+use xvision_engine::api::ApiError;
 use xvision_engine::autooptimizer::content_hash::canonical_json;
+use xvision_identity::contracts::IListingRegistry;
 use xvision_identity::{generate_token_uri, manifest_hash_hex, IdentityClient, RegistryAddresses};
 use xvision_marketplace::adapter::{
-    AnchorDriver, BuyRequest, Erc8004MantleDriver, PublishRequest, TransferAuthorization,
+    AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, PublishRequest, TransferAuthorization,
 };
 use xvision_marketplace::{IpfsStore, MarketplaceAddresses, PinataDriver};
 
@@ -635,6 +644,244 @@ pub async fn post_import(
     ))
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/marketplace/listings/:id/attest — manual eval attestation
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /api/marketplace/listings/:id/attest`.
+#[derive(Debug, Deserialize)]
+pub struct AttestBody {
+    /// Decision cycles backing the eval result.
+    pub cycles: u64,
+    /// Sharpe ratio of the eval — must be finite.
+    pub sharpe: f64,
+}
+
+/// Response for a successful attestation post.
+#[derive(Debug, Serialize)]
+pub struct AttestOut {
+    pub tx_hash: String,
+}
+
+/// The attest payload convention shared with `xvn marketplace attest`
+/// (crates/xvision-cli/src/commands/marketplace.rs): the on-chain
+/// `evalResultHash` is the keccak256 of the compact
+/// `{"cycles":N,"sharpe":F}` JSON bytes.
+fn attest_payload_hash(cycles: u64, sharpe: f64) -> B256 {
+    let payload = serde_json::json!({ "cycles": cycles, "sharpe": sharpe });
+    keccak256(payload.to_string().as_bytes())
+}
+
+/// `POST /api/marketplace/listings/:id/attest` — post an eval attestation
+/// for a listing. Permissionless on-chain (attester = the server's publisher
+/// key here).
+///
+/// Order: validate sharpe (400) → listing from snapshot (404) → chain env
+/// gate (503) → `driver.attest_eval` (chain errors → 400 with the chain
+/// text, same posture as revoke/buy) → 201 `{tx_hash}`.
+pub async fn post_attest(
+    Path(id): Path<u64>,
+    State(state): State<AppState>,
+    Json(body): Json<AttestBody>,
+) -> Result<(StatusCode, Json<AttestOut>), DashboardError> {
+    // a. Validate the cheap, pure input first.
+    if !body.sharpe.is_finite() {
+        return Err(DashboardError::Validation {
+            field: "sharpe".into(),
+            msg: "must be a finite number".into(),
+        });
+    }
+
+    // b. Listing from the indexer snapshot (404 unknown).
+    {
+        let snap = state.marketplace_snapshot.read().await;
+        snap.listings
+            .iter()
+            .find(|l| l.listing_id == id)
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?;
+    }
+
+    // c. Chain gate — all config validated before any chain write.
+    let chain = ChainEnv::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
+        )
+    })?;
+    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
+        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
+    })?;
+    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "marketplace not configured: set XVN_LISTING_REGISTRY and XVN_EVAL_ATTESTATION".into(),
+        )
+    })?;
+
+    // d. Post the attestation with the CLI payload convention.
+    let driver = Erc8004MantleDriver::with_signer(
+        marketplace_addresses,
+        chain.rpc_url.clone(),
+        chain.chain_id,
+        signer,
+    );
+    let tx_hash = driver
+        .attest_eval(AttestRequest {
+            listing_id: U256::from(id),
+            eval_result_hash: attest_payload_hash(body.cycles, body.sharpe),
+            eval_result_uri: format!("xvn://eval/listing/{id}"),
+            schema: B256::ZERO,
+        })
+        .await
+        .map_err(|e| {
+            // Chain errors (incl. NotConfigured zero-address and RPC
+            // transport) map to 400 with the chain text — same testnet
+            // posture as post_revoke / post_buy.
+            let msg = e.to_string();
+            DashboardError::Validation {
+                field: "listing_id".into(),
+                msg: format!("attest failed: {msg}"),
+            }
+        })?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(AttestOut {
+            tx_hash: format!("0x{tx_hash:x}"),
+        }),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/marketplace/listings/:id/update — seller content refresh
+// ---------------------------------------------------------------------------
+
+/// Response for a successful content update.
+#[derive(Debug, Serialize)]
+pub struct UpdateOut {
+    pub listing_id: u64,
+    /// 64-char lowercase hex keccak256 of the canonical strategy JSON (the
+    /// new on-chain `contentHash`).
+    pub content_hash: String,
+    /// `ipfs://<cid>` when `PINATA_JWT` was configured, else the local
+    /// `xvn://strategy/<id>` fallback (same convention as publish).
+    pub content_uri: String,
+    pub tx_hash: String,
+}
+
+/// `POST /api/marketplace/listings/:id/update` — re-canonicalize the local
+/// strategy behind a listing and push the new content hash/URI on-chain via
+/// `ListingRegistry.updateListing`. Content-only: price is immutable
+/// on-chain (re-pricing = revoke + relist).
+///
+/// Order: listing from snapshot (404) → local strategy by `listing.agent_id`
+/// (404 with an explicit "local strategy not found") → canonical + hash →
+/// chain env gate (503, all config before any pin/write) → IPFS pin when
+/// `PINATA_JWT` is set (shared `pin_canonical`; failure aborts before the
+/// chain write) → `updateListing` (reverts like NotSeller → 400 with the
+/// chain text) → 200 `{listing_id, content_hash, content_uri, tx_hash}`.
+pub async fn post_update(
+    Path(id): Path<u64>,
+    State(state): State<AppState>,
+) -> Result<Json<UpdateOut>, DashboardError> {
+    // a. Listing from the indexer snapshot (404 unknown).
+    let listing = {
+        let snap = state.marketplace_snapshot.read().await;
+        snap.listings
+            .iter()
+            .find(|l| l.listing_id == id)
+            .cloned()
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
+    };
+
+    // b. Load the local strategy behind the listing. A missing strategy is a
+    //    distinct, named 404 (the listing exists; this host can't rebuild
+    //    its content).
+    let strategy = strategy::get(&state.api_context(), &listing.agent_id)
+        .await
+        .map_err(|e| match e {
+            ApiError::NotFound(_) => DashboardError::NotFound(format!(
+                "local strategy not found for listing {id} (agent_id {:?})",
+                listing.agent_id
+            )),
+            other => other.into(),
+        })?;
+
+    // c. Canonical JSON → new content hash.
+    let value = serde_json::to_value(&strategy)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize strategy: {e}")))?;
+    let canonical = canonical_json(&value);
+    let manifest_hash = manifest_hash_hex(&canonical);
+    let content_hash: B256 = manifest_hash
+        .parse()
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}")))?;
+
+    // d. Chain gate — all config validated before the pin or chain write.
+    let chain = ChainEnv::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
+        )
+    })?;
+    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
+        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
+    })?;
+    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable("marketplace not configured: set XVN_LISTING_REGISTRY".into())
+    })?;
+
+    // e. Pin the refreshed manifest when Pinata is configured (failure
+    //    aborts with 503 BEFORE the chain write — same no-orphan posture as
+    //    publish), else keep the local xvn:// reference.
+    let content_uri = match pinata_env() {
+        Some((jwt, gateway)) => {
+            let ipfs = PinataDriver::new(jwt, gateway);
+            let cid = pin_canonical(&ipfs, &canonical).await?;
+            format!("ipfs://{cid}")
+        }
+        None => {
+            tracing::info!(
+                listing_id = id,
+                agent_id = %listing.agent_id,
+                "PINATA_JWT unset; updating listing with local xvn:// content_uri"
+            );
+            format!("xvn://strategy/{}", listing.agent_id)
+        }
+    };
+
+    // f. updateListing via the IListingRegistry binding with the publisher
+    //    signer (seller-only on-chain; NotSeller and friends → 400 below).
+    let wallet = EthereumWallet::from(signer);
+    let provider = ProviderBuilder::new()
+        .wallet(wallet)
+        .connect(chain.rpc_url.as_str())
+        .await
+        .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
+    let registry = IListingRegistry::new(marketplace_addresses.listing_registry, &provider);
+    let receipt = registry
+        .updateListing(U256::from(id), content_hash, content_uri.clone())
+        .send()
+        .await
+        .map_err(|e| update_chain_error(e.to_string()))?
+        .get_receipt()
+        .await
+        .map_err(|e| update_chain_error(e.to_string()))?;
+
+    Ok(Json(UpdateOut {
+        listing_id: id,
+        content_hash: manifest_hash,
+        content_uri,
+        tx_hash: format!("0x{:x}", receipt.transaction_hash),
+    }))
+}
+
+/// Maps `updateListing` chain failures to 400 with the chain text (contract
+/// reverts: NotSeller, UnknownListing, AlreadyRevoked; plus RPC transport —
+/// the same testnet posture as post_revoke).
+fn update_chain_error(msg: String) -> DashboardError {
+    DashboardError::Validation {
+        field: "listing_id".into(),
+        msg: format!("update failed: {msg}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -761,6 +1008,31 @@ mod tests {
                 );
             }
             other => panic!("expected ServiceUnavailable, got {other:?}"),
+        }
+    }
+
+    // --- attest payload convention --------------------------------------------
+
+    #[test]
+    fn attest_payload_hash_matches_cli_convention() {
+        // The CLI (xvn marketplace attest) hashes the compact serde_json
+        // bytes of {"cycles":N,"sharpe":F}; the route must produce the
+        // identical digest so on-chain hashes are comparable across surfaces.
+        let expected = keccak256(r#"{"cycles":20,"sharpe":1.5}"#.as_bytes());
+        assert_eq!(attest_payload_hash(20, 1.5), expected);
+        // Different inputs → different digests (sanity).
+        assert_ne!(attest_payload_hash(21, 1.5), expected);
+    }
+
+    #[test]
+    fn update_chain_error_is_validation_400() {
+        let err = update_chain_error("execution reverted: NotSeller()".into());
+        match err {
+            DashboardError::Validation { field, msg } => {
+                assert_eq!(field, "listing_id");
+                assert!(msg.contains("NotSeller"), "keeps the chain text: {msg}");
+            }
+            other => panic!("expected Validation, got {other:?}"),
         }
     }
 

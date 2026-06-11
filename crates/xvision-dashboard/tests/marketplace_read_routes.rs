@@ -28,6 +28,9 @@ fn listing(listing_id: u64, agent_nft_id: &str, seller: &str, revoked: bool) -> 
         name: format!("xvn strategy {agent_nft_id}"),
         symmetry: "Radial".into(),
         palette: "Ember".into(),
+        attestation_count: 0,
+        units_sold: 0,
+        earned_usdc: 0.0,
     }
 }
 
@@ -147,6 +150,11 @@ async fn listing_detail_found_and_404() {
     let body: Value = response.json();
     assert_eq!(body["listing_id"], 1);
     assert_eq!(body["agent_id"], "agent-7");
+    // P4 trust fields are always present on the wire (zeros when the
+    // attestation/marketplace contracts are unconfigured).
+    assert_eq!(body["attestation_count"], 0);
+    assert_eq!(body["units_sold"], 0);
+    assert_eq!(body["earned_usdc"], 0.0);
 
     let response = server.get("/api/marketplace/listings/999").await;
     response.assert_status_not_found();
@@ -247,6 +255,64 @@ async fn buy_without_chain_env_is_503() {
         .post("/api/marketplace/buy")
         .json(&buy_body(ALICE, ALICE, 27))
         .await;
+    response.assert_status_service_unavailable();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "service_unavailable");
+}
+
+// ── attest (write) ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn attest_unknown_listing_is_404() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server
+        .post("/api/marketplace/listings/99/attest")
+        .json(&serde_json::json!({ "cycles": 20, "sharpe": 1.5 }))
+        .await;
+    response.assert_status_not_found();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn attest_without_chain_env_is_503() {
+    // Removal-only (same contract as revoke_without_chain_env_is_503).
+    std::env::remove_var("XVN_RPC_URL");
+    std::env::remove_var("XVN_CHAIN_ID");
+    std::env::remove_var("XVN_PUBLISHER_PK");
+
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![listing(1, "7", ALICE, false)]).await;
+    let response = server
+        .post("/api/marketplace/listings/1/attest")
+        .json(&serde_json::json!({ "cycles": 20, "sharpe": 1.5 }))
+        .await;
+    response.assert_status_service_unavailable();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "service_unavailable");
+}
+
+// ── attestations (read) ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn attestations_unknown_listing_is_404() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server.get("/api/marketplace/listings/99/attestations").await;
+    response.assert_status_not_found();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+#[tokio::test]
+async fn attestations_503_when_chain_env_dormant() {
+    // Removal-only: IndexerCfg::from_env requires XVN_RPC_URL (+ registries);
+    // nothing in this binary ever sets XVN_RPC_URL or XVN_IDENTITY_REGISTRY.
+    std::env::remove_var("XVN_RPC_URL");
+    std::env::remove_var("XVN_IDENTITY_REGISTRY");
+
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![listing(1, "7", ALICE, false)]).await;
+    let response = server.get("/api/marketplace/listings/1/attestations").await;
     response.assert_status_service_unavailable();
     let body: Value = response.json();
     assert_eq!(body["code"], "service_unavailable");

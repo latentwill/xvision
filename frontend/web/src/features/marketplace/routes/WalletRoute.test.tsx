@@ -73,6 +73,9 @@ const walletPayload = {
       name: "btc-momentum-v3",
       symmetry: "radial",
       palette: "gold",
+      attestation_count: 0,
+      units_sold: 2,
+      earned_usdc: 1.9,
     },
     {
       listing_id: 8,
@@ -89,6 +92,9 @@ const walletPayload = {
       name: "old-revoked",
       symmetry: "grid",
       palette: "ice",
+      attestation_count: 0,
+      units_sold: 0,
+      earned_usdc: 0,
     },
   ],
 };
@@ -296,6 +302,181 @@ describe("WalletRoute", () => {
     expect(
       screen.queryByRole("button", { name: /get test usdc/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("earnings chip shows units sold and earned USDC only when units_sold > 0", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockResolvedValue(jsonResponse(walletPayload));
+    renderRoute();
+
+    // listing 7 sold 2 for 1.90 USDC; revoked listing 8 sold 0 → single chip
+    expect(await screen.findByText("sold ×2 · $1.90 earned")).toBeInTheDocument();
+    expect(screen.getAllByText(/earned/)).toHaveLength(1);
+  });
+
+  it("republish flow: inline confirm, POSTs update, shows new content_uri, refetches", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url === "/api/marketplace/listings/7/update" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({
+          listing_id: 7,
+          content_hash: "0xnewhash",
+          content_uri: "ipfs://bafy-new",
+          tx_hash: "0xupdated",
+        });
+      }
+      return jsonResponse(walletPayload);
+    });
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: /republish content/i }),
+    );
+
+    // inline two-step confirm — no dialog
+    expect(screen.getByText(/confirm republish\?/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^yes$/i }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/marketplace/listings/7/update",
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+
+    // success: new content_uri rendered inline
+    expect(await screen.findByText(/ipfs:\/\/bafy-new/)).toBeInTheDocument();
+
+    // refetch: wallet GET fired at least twice (initial + post-update)
+    await waitFor(() => {
+      const walletGets = fetchMock.mock.calls.filter(
+        ([url]) => url === `/api/marketplace/wallet/${ADDR}`,
+      );
+      expect(walletGets.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it("republish cancel restores the button without POSTing", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockResolvedValue(jsonResponse(walletPayload));
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: /republish content/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByText(/confirm republish\?/i)).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(0);
+  });
+
+  it("republish failure renders an inline error", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url === "/api/marketplace/listings/7/update" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(
+          { code: "validation", message: "NotSeller" },
+          400,
+        );
+      }
+      return jsonResponse(walletPayload);
+    });
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: /republish content/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /^yes$/i }));
+
+    expect(
+      await screen.findByText(/republish failed.*NotSeller/i),
+    ).toBeInTheDocument();
+  });
+
+  it("attest flow: inline expander POSTs cycles + sharpe, shows truncated tx", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url === "/api/marketplace/listings/7/attest" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse({ tx_hash: "0xattesttxhash1234567890" }, 201);
+      }
+      return jsonResponse(walletPayload);
+    });
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: /post attestation/i }),
+    );
+
+    // inline mini-form, submit disabled until both fields are valid
+    const submit = screen.getByRole("button", { name: /^attest$/i });
+    expect(submit).toBeDisabled();
+    await user.type(screen.getByRole("spinbutton", { name: /cycles/i }), "20");
+    await user.type(
+      screen.getByRole("spinbutton", { name: /sharpe/i }),
+      "1.5",
+    );
+    expect(submit).not.toBeDisabled();
+    await user.click(submit);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/marketplace/listings/7/attest",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ cycles: 20, sharpe: 1.5 }),
+        }),
+      ),
+    );
+
+    // success: truncated tx hash inline
+    expect(await screen.findByText(/0xatte…7890/)).toBeInTheDocument();
+  });
+
+  it("attest failure renders an inline error", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url === "/api/marketplace/listings/7/attest" &&
+        init?.method === "POST"
+      ) {
+        return jsonResponse(
+          { code: "unavailable", message: "signer not configured" },
+          503,
+        );
+      }
+      return jsonResponse(walletPayload);
+    });
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: /post attestation/i }),
+    );
+    await user.type(screen.getByRole("spinbutton", { name: /cycles/i }), "20");
+    await user.type(
+      screen.getByRole("spinbutton", { name: /sharpe/i }),
+      "1.5",
+    );
+    await user.click(screen.getByRole("button", { name: /^attest$/i }));
+
+    expect(
+      await screen.findByText(/attestation failed.*signer not configured/i),
+    ).toBeInTheDocument();
   });
 
   it("empty sections render muted empty states", async () => {

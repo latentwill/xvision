@@ -44,6 +44,14 @@ export interface IndexedListing {
   name: string;
   symmetry: string;
   palette: string;
+  /// On-chain attestation count from EvalAttestationRegistry (0 when the
+  /// registry isn't configured on the server).
+  attestation_count: number;
+  /// Licenses sold, derived from `Sold` event logs (0 when the marketplace
+  /// address isn't configured).
+  units_sold: number;
+  /// Sum of seller proceeds across `Sold` events, in whole USDC.
+  earned_usdc: number;
 }
 
 /** Mirrors `ReceiptOut` in marketplace_read.rs. */
@@ -94,11 +102,16 @@ function toRow(l: IndexedListing): ListingRow {
     assets: [],
     return30dPct: 0,
     sharpe: 0,
-    buyers: { humans: 0, agents: 0 },
+    // Honest approximation: the chain only tells us how many licenses sold,
+    // not whether the buyer was a human or an agent — count them all as
+    // humans rather than inventing an agent split.
+    buyers: { humans: l.units_sold, agents: 0 },
     priceUsdc: l.price_usdc > 0 ? l.price_usdc : null,
     tier: l.tier === 1 ? "sealed" : "open",
     transferableLicense: l.transferable_license,
-    verification: "unverified",
+    // Positive-only badge: any on-chain eval attestation marks the listing
+    // verified; zero attestations renders no badge (never a negative mark).
+    verification: l.attestation_count > 0 ? "verified" : "unverified",
     acceptsX402: true,
     clones: 0,
     genArtSeed: l.gen_art_seed,

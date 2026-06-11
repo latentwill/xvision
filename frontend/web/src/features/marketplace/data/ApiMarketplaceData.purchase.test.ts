@@ -40,6 +40,9 @@ const indexedListing = {
   name: "BTC Momentum",
   symmetry: "radial-6",
   palette: "ember",
+  attestation_count: 0,
+  units_sold: 0,
+  earned_usdc: 0,
 };
 
 const AUTH = {
