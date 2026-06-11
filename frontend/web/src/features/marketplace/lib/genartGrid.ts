@@ -61,6 +61,7 @@ const SYMMETRY_BAG: readonly SymmetryMode[] = [
   "diagonal", "anti-diagonal", "rot180", "rot90", "rot90",
 ];
 
+// ASCII-parity only: hashes UTF-16 code units; non-ASCII seeds will not match the Rust twin.
 export function fnv1a32(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -84,11 +85,11 @@ export function mulberry32(seed: number): () => number {
 type Op = (a: number, b: number) => number;
 const OPS: readonly Op[] = [(a, b) => a & b, (a, b) => a ^ b, (a, b) => a | b];
 
-function rawGrid(seedStr: string, transparent: number): Int8Array {
+function rawGrid(seedStr: string, transparentStates: number): Int8Array {
   const r = mulberry32(fnv1a32(seedStr));
   const grid = new Int8Array(N * N).fill(-1);
   for (let L = 0; L < LAYERS; L++) {
-    const op = OPS[Math.floor(r() * 3)];
+    const op = OPS[Math.floor(r() * OPS.length)];
     const band = 1 + Math.floor(r() * 7);
     const base = 2 + Math.floor(r() * 9);
     const xo = Math.floor(r() * 64);
@@ -108,9 +109,9 @@ function rawGrid(seedStr: string, transparent: number): Int8Array {
         let v = op(x + y + xo, y - x + yo);
         if (invert) v = ~v;
         v = ((v % t) + t) % t;
-        const s = v % (STATES + transparent);
-        if (s < transparent) continue;
-        grid[y * N + x] = (s - transparent) % PAL_LEN;
+        const s = v % (STATES + transparentStates);
+        if (s < transparentStates) continue;
+        grid[y * N + x] = (s - transparentStates) % PAL_LEN;
       }
     }
   }
@@ -124,11 +125,11 @@ function filledRatio(grid: Int8Array): number {
 }
 
 function denseGrid(seedStr: string): Int8Array {
-  let transparent = 7;
+  let transparentStates = 7;
   for (let attempt = 0; attempt < 5; attempt++) {
-    const g = rawGrid(seedStr + (attempt ? `#${attempt}` : ""), transparent);
+    const g = rawGrid(seedStr + (attempt ? `#${attempt}` : ""), transparentStates);
     if (filledRatio(g) >= DENSITY_FLOOR) return g;
-    transparent = Math.max(2, transparent - 2);
+    transparentStates = Math.max(2, transparentStates - 2);
   }
   return rawGrid(seedStr + "#final", 2);
 }
@@ -158,12 +159,13 @@ function canon(mode: SymmetryMode, x: number, y: number): [number, number] {
 }
 
 export interface BuiltGrid {
-  grid: Int8Array;            // display grid, post-symmetry, values -1..6
+  grid: Int8Array;            // display grid, post-symmetry, values -1..5
   palette: readonly string[]; // 7 hex colors
   traits: Traits;
 }
 
-/** Engine entry for arbitrary seed strings (previews without a manifest hash). */
+/** Engine entry for arbitrary seed strings (previews without a manifest hash).
+ * Seeds must be ASCII to stay parity-safe with the Rust twin. */
 export function buildGridFromSeedString(seedString: string): BuiltGrid {
   const r = mulberry32(fnv1a32(seedString));
   const [paletteName, palette] = PALETTES[Math.floor(r() * PALETTES.length)];

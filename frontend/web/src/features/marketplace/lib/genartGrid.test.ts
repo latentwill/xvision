@@ -50,12 +50,19 @@ describe("buildGrid", () => {
       const { grid, traits } = buildGridFromSeedString(`law-${i}`);
       if (!seen.has(traits.symmetry)) seen.set(traits.symmetry, grid);
     }
+    expect(seen.size).toBe(8);
     const g = (grid: Int8Array, x: number, y: number) => grid[y * N + x];
     const quad = seen.get("quad")!;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       expect(g(quad, x, y)).toBe(g(quad, N - 1 - x, y));
       expect(g(quad, x, y)).toBe(g(quad, x, N - 1 - y));
     }
+    const mirrorX = seen.get("mirror-x")!;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
+      expect(g(mirrorX, x, y)).toBe(g(mirrorX, N - 1 - x, y));
+    const mirrorY = seen.get("mirror-y")!;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
+      expect(g(mirrorY, x, y)).toBe(g(mirrorY, x, N - 1 - y));
     const diag = seen.get("diagonal")!;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
       expect(g(diag, x, y)).toBe(g(diag, y, x));
@@ -75,5 +82,17 @@ describe("buildGrid", () => {
       expect(cols.length).toBe(7);
       for (const c of cols) expect(c).toMatch(/^#[0-9a-f]{6}$/);
     }
+  });
+  it("buildGrid produces same result as buildGridFromSeedString", () => {
+    const id = "ok";
+    const hash = "a".repeat(64);
+    const a = buildGrid(id, hash);
+    const b = buildGridFromSeedString(`${id}:${hash}`);
+    expect(Array.from(a.grid)).toEqual(Array.from(b.grid));
+    expect(a.palette).toEqual(b.palette);
+    expect(a.traits).toEqual(b.traits);
+  });
+  it("buildGrid rejects uppercase hex", () => {
+    expect(() => buildGrid("ok", "A".repeat(64))).toThrow();
   });
 });
