@@ -274,6 +274,30 @@ export function buildReturnFillGradient(u: uPlot): CanvasGradient | string {
 }
 
 /**
+ * Red underwater gradient for drawdown panes: strongest at the surface
+ * (the y-scale ceiling, normally 0) fading toward the deepest drawdown.
+ * Used as the `series.fill` callback on `UplotDrawdownPane` - the depth
+ * counterpart to `buildReturnFillGradient`.
+ */
+export function buildDrawdownFillGradient(u: uPlot): CanvasGradient | string {
+  const yMax = u.scales.y.max ?? 0;
+  const yMin = u.scales.y.min ?? -10;
+  const top = u.valToPos(yMax, "y", true);
+  const bot = u.valToPos(yMin, "y", true);
+  // F8 guard: empty data / un-ranged scales yield NaN positions, and
+  // `createLinearGradient` throws on non-finite args. Fall back to a
+  // transparent fill instead of crashing the draw pass.
+  if (!allFinite(top, bot) || bot - top <= 0) {
+    return "rgba(0,0,0,0)";
+  }
+  const grad = u.ctx.createLinearGradient(0, top, 0, bot);
+  grad.addColorStop(0, "rgba(255,77,77,0.32)");
+  grad.addColorStop(0.6, "rgba(255,77,77,0.10)");
+  grad.addColorStop(1, "rgba(255,77,77,0.02)");
+  return grad;
+}
+
+/**
  * Dashed zero-baseline drawn across the plot area. Visible only when the
  * y-scale spans zero (positive + negative returns both present).
  */

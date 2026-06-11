@@ -220,7 +220,7 @@ export function RunChartV2({ payload, showAnnotations = true }: Props) {
             />
           ) : null}
           {layers.equity ? <UplotEquityPane points={payload.equity} height={110} /> : null}
-          {layers.drawdown ? <UplotDrawdownPane points={payload.drawdown} height={80} /> : null}
+          {layers.drawdown ? <UplotDrawdownPane points={payload.drawdown} height={110} /> : null}
           {layers.volume ? <UplotHistogramPane candles={payload.candles} height={70} /> : null}
         </PaneStack>
         {showAnnotations ? (

@@ -259,7 +259,7 @@ async fn import_with_injected_license_token_but_no_indexer_is_503_chain_access()
         chain: None,
         registry_addresses: None,
         marketplace_addresses: None,
-        pinata: None,
+        ipfs: None,
         indexer: None,
         license_token: Some("0x3333333333333333333333333333333333333333".parse().unwrap()),
         lit: None,
@@ -438,7 +438,7 @@ async fn import_sealed_with_token_but_no_indexer_is_503() {
         chain: None,
         registry_addresses: None,
         marketplace_addresses: None,
-        pinata: None,
+        ipfs: None,
         indexer: None,
         license_token: Some("0x3333333333333333333333333333333333333333".parse().unwrap()),
         lit: None,
@@ -462,13 +462,15 @@ async fn import_sealed_with_token_but_no_indexer_is_503() {
 // ── POST /api/marketplace/publish (sealed tier) ──────────────────────────────
 
 /// A fully-populated chain config (dummy addresses) so the sealed-publish path
-/// gets past the chain gate to the encrypt+pin step. `pinata` carries an
-/// EMPTY jwt so the pin fails fast (NotConfigured) WITHOUT network — the
-/// encrypt has already run by then, which is what these tests assert.
+/// gets past the chain gate to the encrypt+pin step. The IPFS backend is a
+/// Pinata driver with an EMPTY jwt so the pin fails fast (NotConfigured)
+/// WITHOUT network — the encrypt has already run by then, which is what these
+/// tests assert.
 fn full_chain_config_empty_pinata() -> xvision_dashboard::chain_config::MarketplaceChainConfig {
     use alloy::signers::local::PrivateKeySigner;
-    use xvision_dashboard::chain_config::{ChainSigner, MarketplaceChainConfig, PinataCfg};
+    use xvision_dashboard::chain_config::{ChainSigner, IpfsBackend, MarketplaceChainConfig};
     use xvision_identity::{MarketplaceAddresses, RegistryAddresses};
+    use xvision_marketplace::PinataDriver;
 
     // A well-known Anvil dev key — only used to satisfy ChainSigner; no chain
     // call is reached because the pin aborts first.
@@ -493,10 +495,10 @@ fn full_chain_config_empty_pinata() -> xvision_dashboard::chain_config::Marketpl
             usdc: addr,
             platform_agent_token_id: 0,
         }),
-        pinata: Some(PinataCfg {
-            jwt: String::new(),
-            gateway: String::new(),
-        }),
+        ipfs: Some(IpfsBackend::Pinata(PinataDriver::new(
+            String::new(),
+            String::new(),
+        ))),
         indexer: None,
         license_token: None,
         lit: None,

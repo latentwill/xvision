@@ -2,9 +2,10 @@
 //
 // Hero equity chart for the home Pulse band: return-% area line with the
 // client-side drawdown band (running max − equity) rendered as a subdued
-// red-tinted secondary area below zero. All gradient/path construction goes
-// through the F8-guarded plugins, so empty/non-finite data can never throw
-// `createLinearGradient: non-finite`.
+// red-tinted area below zero with NO stroke (the xvnAreaFill plugin paints
+// the band; a visible stroke would read as a duplicate earnings line).
+// All gradient/path construction goes through the F8-guarded plugins, so
+// empty/non-finite data can never throw `createLinearGradient: non-finite`.
 
 import "uplot/dist/uPlot.min.css";
 
@@ -70,11 +71,11 @@ export function PulseEquityChart({
       },
       {
         label: "Drawdown",
-        stroke: theme.panes.drawdown,
-        width: 1,
+        // Band only — the xvnAreaFill plugin paints the underwater tint;
+        // a visible stroke here reads as a duplicate earnings line.
+        stroke: "transparent",
+        width: 0,
         points: { show: false },
-        // The dedicated area-fill plugin paints the band; keep the series
-        // fill empty so the two don't double-tint.
       },
     ],
     plugins: [

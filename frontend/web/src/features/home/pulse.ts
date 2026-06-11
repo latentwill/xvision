@@ -115,6 +115,101 @@ export function recentMetricSeries(
   return out.slice(-n);
 }
 
+// ─── pulse view switcher ─────────────────────────────────────────────────────
+
+export const PULSE_VIEWS = [
+  "return",
+  "trades",
+  "hold",
+  "drawdown",
+  "field",
+] as const;
+export type PulseView = (typeof PULSE_VIEWS)[number];
+export const PULSE_VIEW_STORAGE_KEY = "xvn:pulse-view";
+
+export function normalizePulseView(raw: string | null): PulseView {
+  return (PULSE_VIEWS as readonly string[]).includes(raw ?? "")
+    ? (raw as PulseView)
+    : "return";
+}
+
+// ─── "All runs" field view ───────────────────────────────────────────────────
+
+export interface FieldRunSeries {
+  runId: string;
+  label: string;
+  /** Elapsed fraction of the run's own window, 0..1. */
+  fraction: number[];
+  returnPct: (number | null)[];
+}
+
+/** Normalize one run's raw equity curve for the field overlay. Returns null
+ * for series that can't be charted (under 2 finite samples, zero base
+ * equity, or zero time span). */
+export function fieldRunSeries(
+  runId: string,
+  label: string,
+  equity: { time: number; equity_usd: number }[],
+): FieldRunSeries | null {
+  const pts = equity.filter(
+    (p) => Number.isFinite(p.time) && Number.isFinite(p.equity_usd),
+  );
+  if (pts.length < 2) return null;
+  const base = pts[0].equity_usd;
+  const t0 = pts[0].time;
+  const span = pts[pts.length - 1].time - t0;
+  if (base === 0 || span <= 0) return null;
+  return {
+    runId,
+    label,
+    fraction: pts.map((p) => (p.time - t0) / span),
+    returnPct: pts.map((p) => (p.equity_usd / base - 1) * 100),
+  };
+}
+
+/** Align per-run fraction grids onto one shared x column (union of all
+ * fractions); missing samples become null gaps (chart uses spanGaps). */
+export function alignFieldSeries(series: FieldRunSeries[]): {
+  x: number[];
+  ys: (number | null)[][];
+} {
+  const x = [...new Set(series.flatMap((s) => s.fraction))].sort(
+    (a, b) => a - b,
+  );
+  const ys = series.map((s) => {
+    const byFraction = new Map(
+      s.fraction.map((f, i) => [f, s.returnPct[i]] as const),
+    );
+    return x.map((f) => byFraction.get(f) ?? null);
+  });
+  return { x, ys };
+}
+
+// ─── "vs Buy & Hold" view ────────────────────────────────────────────────────
+
+/** Merge the strategy return-% curve with the server baseline (raw USD,
+ * sampled at equity timestamps) onto one axis; baseline normalizes to its
+ * own first sample. */
+export function holdCompareSeries(
+  equity: SeriesPoint[],
+  baseline: { time: number; equity_usd: number }[],
+): { time: number[]; strategy: (number | null)[]; hold: (number | null)[] } {
+  const time = equity.map((p) => p.time);
+  const strategy = equity.map((p) =>
+    Number.isFinite(p.value) ? p.value : null,
+  );
+  const base = baseline.find((b) => Number.isFinite(b.equity_usd))?.equity_usd;
+  const holdByTime = new Map(
+    base
+      ? baseline
+          .filter((b) => Number.isFinite(b.equity_usd))
+          .map((b) => [b.time, (b.equity_usd / base - 1) * 100] as const)
+      : [],
+  );
+  const hold = time.map((t) => holdByTime.get(t) ?? null);
+  return { time, strategy, hold };
+}
+
 /** Latest `completed_at` across the supplied runs — the freshness stamp. */
 export function latestCompletionStamp(runs: RunSummary[]): string | null {
   let latest: string | null = null;

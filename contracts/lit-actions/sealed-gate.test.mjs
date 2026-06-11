@@ -10,12 +10,17 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
   MIN_NONCE_LEN,
   checkSigner,
   parseMessage,
   validateMessage,
 } from "./sealed-gate.js";
+
+const dir = dirname(fileURLToPath(import.meta.url));
 
 let passed = 0;
 function test(name, fn) {
@@ -153,6 +158,12 @@ test("parseMessage ignores the freeform header line", () => {
   const r = parseMessage(buildMessage());
   assert.equal(r.ok, true);
   assert.equal(r.fields.listingId, "42");
+});
+
+test("runtime decrypt call uses Chipotle's exported Decrypt function", () => {
+  const source = readFileSync(join(dir, "sealed-gate.js"), "utf8");
+  assert.match(source, /Lit\.Actions\.Decrypt\(/);
+  assert.doesNotMatch(source, /Lit\.Actions\.decrypt\(/);
 });
 
 // --- summary ---------------------------------------------------------------

@@ -359,7 +359,7 @@ impl SealedBundleCrypto for LitChipotleClient {
     }
 
     fn is_configured(&self) -> bool {
-        !self.api_key.is_empty() && !self.pkp_id.is_empty()
+        !self.api_key.is_empty() && !self.pkp_id.is_empty() && !self.gate_action_cid.is_empty()
     }
 }
 

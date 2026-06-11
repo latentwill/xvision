@@ -87,6 +87,7 @@ function runPayload(runId: string): RunChartPayload {
       atr_14: [],
     },
     equity: [],
+    baseline_equity: null,
     drawdown: [],
     position: [],
     markers: { trades: [], vetoes: [], holds: [] },

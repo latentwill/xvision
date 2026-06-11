@@ -3,10 +3,11 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { ApiError } from "@/api/client";
+import { patchStrategyMetadata } from "@/api/strategies";
 import type { ListableStrategy, PublishDraft } from "@/features/marketplace/data/types";
 import { Step1PickStrategy } from "./sell/Step1PickStrategy";
 import { Step2Configure } from "./sell/Step2Configure";
-import { Step3Preview } from "./sell/Step3Preview";
+import { Step3Preview, type PublicDescription } from "./sell/Step3Preview";
 
 type Step = 1 | 2 | 3;
 
@@ -41,10 +42,28 @@ export function SellRoute() {
     [],
   );
 
-  const handleMint = useCallback(async () => {
+  const handleMint = useCallback(async (description: PublicDescription) => {
     if (!draft) return;
     setMinting(true);
     setMintError(null);
+    // The public description must land on the stored strategy BEFORE the
+    // listing is submitted — the manifest hash is computed server-side from
+    // the stored strategy. A failed save aborts the publish.
+    if (description.dirty) {
+      try {
+        await patchStrategyMetadata(draft.strategyId, {
+          plain_summary: description.value,
+        });
+      } catch (err) {
+        setMintError(
+          err instanceof Error
+            ? `Saving the public description failed — ${err.message}`
+            : "Saving the public description failed — try again.",
+        );
+        setMinting(false);
+        return;
+      }
+    }
     try {
       const tx = await mp.submitListing(draft);
       // Phase-2 wart: txHash carries listing_id (not a real tx hash) until the

@@ -6,7 +6,9 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { apiFetch } from "@/api/client";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
+import type { IndexedListing } from "@/features/marketplace/data/ApiMarketplaceData";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
@@ -452,10 +454,130 @@ function CloneByRow({ item, isLast }: { item: CloneByEntry; isLast: boolean }) {
   );
 }
 
+// ─── On-chain creator page (0x… address params) ──────────────────────────────
+
+/** Mirrors `WalletView` in marketplace_read.rs (only the fields used here). */
+interface WalletViewOut {
+  address: string;
+  strategies: unknown[];
+  licenses: unknown[];
+  listings: IndexedListing[];
+}
+
+function OnChainCreatorListingCard({ listing }: { listing: IndexedListing }) {
+  return (
+    <Link
+      to={`/marketplace/lineage/${listing.listing_id}`}
+      data-testid="onchain-creator-listing"
+      className="block border border-border rounded-[5px] overflow-hidden bg-surface-card hover:border-border-strong transition-colors"
+    >
+      <div className="p-[10px_12px] flex items-center gap-2.5">
+        <GenArtPlaceholder seed={listing.gen_art_seed} size={46} />
+        <div className="flex-1 min-w-0">
+          <div className="font-mono text-[12px] text-text font-semibold truncate">
+            {listing.name || `Listing #${listing.listing_id}`}
+          </div>
+          <div className="font-mono text-[11px] text-gold mt-0.5">
+            {listing.price_usdc > 0 ? `${listing.price_usdc} USDC` : "FREE"}
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function OnChainCreatorRoute({ address }: { address: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["marketplace", "wallet", address],
+    queryFn: () => apiFetch<WalletViewOut>(`/api/marketplace/wallet/${address}`),
+    retry: false,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="px-7 py-8 text-[13px] text-text-3">Loading creator…</div>
+    );
+  }
+  if (isError || !data) {
+    return (
+      <div className="px-7 py-8 text-[13px] text-text-3">Creator not found.</div>
+    );
+  }
+
+  const listings = data.listings.filter((l) => !l.revoked);
+
+  return (
+    <div
+      data-testid="onchain-creator-page"
+      className="flex flex-col overflow-y-auto"
+    >
+      {/* Address header */}
+      <div
+        className="border-b border-border flex items-center gap-[22px]"
+        style={{ padding: "22px 28px 18px 44px" }}
+      >
+        <GenArtPlaceholder seed={address} size={96} />
+        <div className="min-w-0">
+          <div className="font-mono text-[18px] font-semibold text-text">
+            {truncAddr(address)}
+          </div>
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+            <a
+              href={`https://explorer.mantle.xyz/address/${address}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono text-[10px] text-info hover:underline"
+              title="View on Mantlescan"
+            >
+              ↗ Mantlescan
+            </a>
+            <span className="font-mono text-[11px] text-text-3">
+              {listings.length} listing{listings.length !== 1 ? "s" : ""} on chain
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Listings grid */}
+      <div style={{ padding: "18px 28px 28px" }}>
+        <div className="border border-border rounded-[5px] overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <div className="font-mono text-[13px] font-semibold text-text">
+              Listings
+            </div>
+            <div className="font-mono text-[10.5px] text-text-3 mt-0.5">
+              indexed from the on-chain marketplace
+            </div>
+          </div>
+          <div className="p-3 grid grid-cols-3 gap-3">
+            {listings.map((l) => (
+              <OnChainCreatorListingCard key={l.listing_id} listing={l} />
+            ))}
+            {listings.length === 0 && (
+              <div className="col-span-3 py-6 text-center font-mono text-[12px] text-text-3">
+                No listings.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── CreatorRoute (page) ──────────────────────────────────────────────────────
 
 export function CreatorRoute() {
   const { handleOrAddr = "" } = useParams<{ handleOrAddr: string }>();
+  // Real wallet addresses get the indexer-backed page; handles and fixture
+  // slugs keep the fixture profile path untouched.
+  if (/^0x[0-9a-fA-F]{40}$/.test(handleOrAddr)) {
+    return <OnChainCreatorRoute address={handleOrAddr} />;
+  }
+  return <FixtureCreatorRoute handleOrAddr={handleOrAddr} />;
+}
+
+function FixtureCreatorRoute({ handleOrAddr }: { handleOrAddr: string }) {
   const mp = useMarketplaceData();
 
   const { data: profile, isLoading, isError } = useQuery({

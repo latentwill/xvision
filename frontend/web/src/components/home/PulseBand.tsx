@@ -9,10 +9,11 @@
 // completed eval and say so; drawdown always rides next to return; "no live
 // capital deployed" is a designed first-class state, not an apologetic dash.
 
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
-import { chartKeys, getRunChart } from "@/api/chart";
+import { chartKeys, getCompareChart, getRunChart } from "@/api/chart";
 import type { RunSummary } from "@/api/types.gen";
 import type { StrategyListItem } from "@/api/strategies";
 import { Card } from "@/components/primitives/Card";
@@ -22,12 +23,21 @@ import type { LivenessCounts } from "@/features/live/strip-status";
 import {
   evalThroughput,
   formatRelativeTime,
+  isChartableRun,
   latestCompletionStamp,
+  normalizePulseView,
   pickHeroRun,
+  PULSE_VIEW_STORAGE_KEY,
   pulseChartSeries,
   recentMetricSeries,
+  type PulseView,
 } from "@/features/home/pulse";
 import { PulseEquityChart } from "./PulseEquityChart";
+import { PulseViewSwitcher } from "./PulseViewSwitcher";
+import { PulseDrawdownChart } from "./views/PulseDrawdownChart";
+import { PulseFieldChart } from "./views/PulseFieldChart";
+import { PulseHoldChart } from "./views/PulseHoldChart";
+import { PulseTradesChart } from "./views/PulseTradesChart";
 import { Sparkline, type SparklineTone } from "./Sparkline";
 
 export interface PulseBandProps {
@@ -148,6 +158,41 @@ function HeroEmptyState() {
   );
 }
 
+// ─── view slot helpers ────────────────────────────────────────────────────────
+
+function ViewSkeleton() {
+  return <div className="h-[210px] animate-pulse rounded bg-surface-elev" />;
+}
+
+function ViewError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      data-testid="pulse-view-error"
+      className="flex h-[210px] flex-col items-center justify-center gap-2 rounded border border-border-soft"
+    >
+      <p className="text-[13px] text-text-3">Couldn&apos;t load this view.</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="rounded-sm border border-border-soft px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-text-3 hover:text-text"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
+
+function ViewEmpty({ message, testId }: { message: string; testId?: string }) {
+  return (
+    <div
+      data-testid={testId}
+      className="rounded border border-border-soft px-4 py-10 text-center"
+    >
+      <p className="text-[13px] text-text-3">{message}</p>
+    </div>
+  );
+}
+
 // ─── main component ──────────────────────────────────────────────────────────
 
 export function PulseBand({
@@ -159,10 +204,44 @@ export function PulseBand({
   const heroRun = pickHeroRun(runs);
   const heroRunId = heroRun?.id ?? "";
 
+  // View selection — read localStorage in the initializer so the lazy view's
+  // query is enabled on first render (no flash-fire of the default view).
+  const [view, setView] = useState<PulseView>(() =>
+    normalizePulseView(window.localStorage.getItem(PULSE_VIEW_STORAGE_KEY)),
+  );
+  const changeView = (v: PulseView) => {
+    setView(v);
+    window.localStorage.setItem(PULSE_VIEW_STORAGE_KEY, v);
+  };
+
   const chart = useQuery({
-    queryKey: chartKeys.run(heroRunId),
-    queryFn: () => getRunChart(heroRunId),
+    queryKey: chartKeys.run(heroRunId, ["equity"]),
+    queryFn: () => getRunChart(heroRunId, ["equity"]),
     enabled: heroRunId !== "",
+    staleTime: 30_000,
+  });
+
+  const tradesChart = useQuery({
+    queryKey: chartKeys.run(heroRunId, ["bars", "markers"]),
+    queryFn: () => getRunChart(heroRunId, ["bars", "markers"]),
+    enabled: heroRunId !== "" && view === "trades",
+    staleTime: 30_000,
+  });
+  const holdChart = useQuery({
+    queryKey: chartKeys.run(heroRunId, ["equity", "baseline"]),
+    queryFn: () => getRunChart(heroRunId, ["equity", "baseline"]),
+    enabled: heroRunId !== "" && view === "hold",
+    staleTime: 30_000,
+  });
+  const fieldRunIds = runs
+    .filter((r) => r.status === "completed" && isChartableRun(r))
+    .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""))
+    .slice(0, 10)
+    .map((r) => r.id);
+  const fieldChart = useQuery({
+    queryKey: chartKeys.compare(fieldRunIds),
+    queryFn: () => getCompareChart(fieldRunIds),
+    enabled: view === "field" && fieldRunIds.length >= 2,
     staleTime: 30_000,
   });
 
@@ -215,30 +294,59 @@ export function PulseBand({
           <ExecutionChip liveness={liveness} />
         </div>
 
-        {/* Body: chart, loading skeleton, or designed empty state */}
+        {/* View switcher — full-width sub-row below the header */}
+        {heroRun !== null && !runsPending ? (
+          <PulseViewSwitcher view={view} onViewChange={changeView} />
+        ) : null}
+
+        {/* Body: per-view chart, loading skeleton, or designed empty state */}
         {runsPending ? (
-          <div className="px-5 pb-4">
-            <div className="h-[210px] animate-pulse rounded bg-surface-elev" />
-          </div>
+          <div className="px-5 pb-4"><ViewSkeleton /></div>
         ) : heroRun === null ? (
           <HeroEmptyState />
-        ) : chart.isPending ? (
-          <div className="px-5 pb-4">
-            <div className="h-[210px] animate-pulse rounded bg-surface-elev" />
-          </div>
-        ) : hasSeries ? (
-          <div className="relative px-3 pb-2">
-            <PulseEquityChart series={series} />
-          </div>
         ) : (
-          <div
-            data-testid="pulse-chart-unavailable"
-            className="mx-5 mb-4 rounded border border-border-soft px-4 py-10 text-center"
-          >
-            <p className="caps mb-1">Equity series</p>
-            <p className="text-[13px] text-text-3">
-              No equity samples recorded for this run.
-            </p>
+          <div className="relative px-3 pb-2">
+            {view === "return" &&
+              (chart.isPending ? <ViewSkeleton /> :
+               chart.isError ? <ViewError onRetry={() => chart.refetch()} /> :
+               hasSeries ? <PulseEquityChart series={series!} /> :
+               <ViewEmpty
+                 testId="pulse-chart-unavailable"
+                 message="No equity samples recorded for this run."
+               />)}
+            {view === "drawdown" &&
+              (chart.isPending ? <ViewSkeleton /> :
+               chart.isError ? <ViewError onRetry={() => chart.refetch()} /> :
+               hasSeries ? <PulseDrawdownChart payload={chart.data!} /> :
+               <ViewEmpty message="No equity samples recorded for this run." />)}
+            {view === "trades" &&
+              (tradesChart.isPending ? <ViewSkeleton /> :
+               tradesChart.isError ? <ViewError onRetry={() => tradesChart.refetch()} /> :
+               (tradesChart.data?.bars.length ?? 0) >= 2 ?
+                 <PulseTradesChart payload={tradesChart.data!} /> :
+               <ViewEmpty message="No market bars cached for this run." />)}
+            {view === "hold" &&
+              (holdChart.isPending ? <ViewSkeleton /> :
+               holdChart.isError ? <ViewError onRetry={() => holdChart.refetch()} /> :
+               (holdChart.data?.baseline_equity?.length ?? 0) >= 2 ?
+                 <PulseHoldChart payload={holdChart.data!} /> :
+               <ViewEmpty message="Buy & Hold baseline unavailable for this run." />)}
+            {view === "field" &&
+              (fieldRunIds.length < 2 ?
+                 <ViewEmpty message="Need at least two completed runs for the field view." /> :
+               fieldChart.isPending ? <ViewSkeleton /> :
+               fieldChart.isError ? <ViewError onRetry={() => fieldChart.refetch()} /> :
+                 <PulseFieldChart
+                   heroRunId={heroRunId}
+                   runs={(fieldChart.data?.runs ?? []).map((r) => ({
+                     runId: r.run_id,
+                     label: displayStrategyName(
+                       runs.find((x) => x.id === r.run_id)?.agent_id ?? r.label,
+                       strategies,
+                     ),
+                     equity: r.equity,
+                   }))}
+                 />)}
           </div>
         )}
 

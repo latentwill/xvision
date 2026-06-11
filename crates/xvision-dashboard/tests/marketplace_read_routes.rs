@@ -81,7 +81,7 @@ async fn status_lit_block_exposes_public_fields_never_api_key() {
         chain: None,
         registry_addresses: None,
         marketplace_addresses: None,
-        pinata: None,
+        ipfs: None,
         indexer: None,
         license_token: None,
         lit: Some(LitConfig {
@@ -126,17 +126,18 @@ async fn status_public_gateway_defaults_to_vendor_neutral() {
 
 #[tokio::test]
 async fn status_public_gateway_reflects_configured_gateway() {
-    use xvision_dashboard::chain_config::{MarketplaceChainConfig, PinataCfg};
+    use xvision_dashboard::chain_config::{IpfsBackend, MarketplaceChainConfig};
+    use xvision_marketplace::PinataDriver;
     let cfg = MarketplaceChainConfig {
         chain: None,
         registry_addresses: None,
         marketplace_addresses: None,
-        pinata: Some(PinataCfg {
-            // The JWT is a pinning credential — it must never leak to the
-            // status route, only the read gateway should surface.
-            jwt: "super-secret-pin-jwt".into(),
-            gateway: "https://ipfs.mynode.example".into(),
-        }),
+        // The JWT is a pinning credential — it must never leak to the status
+        // route, only the read gateway should surface.
+        ipfs: Some(IpfsBackend::Pinata(PinataDriver::new(
+            "super-secret-pin-jwt",
+            "https://ipfs.mynode.example",
+        ))),
         indexer: None,
         license_token: None,
         lit: None,
@@ -406,7 +407,7 @@ async fn attestations_503_names_registry_with_injected_config_sans_attestation()
         chain: None,
         registry_addresses: None,
         marketplace_addresses: None,
-        pinata: None,
+        ipfs: None,
         indexer: Some(IndexerCfg {
             rpc_url: "http://127.0.0.1:9".into(),
             listing_registry: "0x1111111111111111111111111111111111111111".parse().unwrap(),

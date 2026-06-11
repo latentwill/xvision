@@ -16,8 +16,9 @@
 //!
 //! Flow: parse/validate body → load strategy → hash → tokenURI →
 //! chain-config gate (the startup-resolved [`MarketplaceChainConfig`] in
-//! `AppState`) → construct driver → IPFS pin (when Pinata was configured at
-//! startup; a pin failure aborts BEFORE the mint) → connect + register
+//! `AppState`) → construct driver → IPFS pin (when an IPFS backend — Kubo or
+//! Pinata — was configured at startup; a pin failure aborts BEFORE the
+//! mint) → connect + register
 //! (mint) → `publish_listing`. All config errors surface before the mint so
 //! no orphan NFTs are created by a missing env var.
 //!
@@ -51,7 +52,7 @@ use xvision_identity::{generate_token_uri, manifest_hash_hex, IdentityClient};
 use xvision_marketplace::adapter::{
     AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, PublishRequest, TransferAuthorization,
 };
-use xvision_marketplace::{IpfsStore, PinataDriver};
+use xvision_marketplace::IpfsStore;
 
 use crate::chain_config::{chain_call_timeout, with_chain_timeout};
 use crate::error::DashboardError;
@@ -84,24 +85,24 @@ pub struct PublishOut {
     pub listing_id: String,
     /// Size of the generated `data:application/json;base64,…` tokenURI.
     pub token_uri_bytes: usize,
-    /// Where the canonical manifest lives: `ipfs://<cid>` when `PINATA_JWT`
-    /// was configured at publish time, else the local `xvn://strategy/<id>`
-    /// fallback.
+    /// Where the canonical manifest lives: `ipfs://<cid>` when an IPFS
+    /// backend (`XVN_IPFS_API_URL` or `PINATA_JWT`) was configured at
+    /// publish time, else the local `xvn://strategy/<id>` fallback.
     pub content_uri: String,
 }
 
 /// Pins the canonical manifest bytes, mapping any pin failure to a 503-class
-/// error. The caller invokes this BEFORE the identity mint so a Pinata
+/// error. The caller invokes this BEFORE the identity mint so an IPFS-backend
 /// outage can never strand an orphan NFT (DashboardError has no 502 variant;
 /// `ServiceUnavailable` is the upstream-dependency class here).
-async fn pin_canonical(ipfs: &PinataDriver, canonical: &str) -> Result<String, DashboardError> {
+async fn pin_canonical(ipfs: &impl IpfsStore, canonical: &str) -> Result<String, DashboardError> {
     pin_bytes(ipfs, canonical.as_bytes()).await
 }
 
 /// Pins arbitrary bytes (plaintext canonical manifest for open tier, or the
 /// sealed ciphertext for sealed tier), mapping any pin failure to the same
 /// 503-class no-orphan error as [`pin_canonical`].
-async fn pin_bytes(ipfs: &PinataDriver, bytes: &[u8]) -> Result<String, DashboardError> {
+async fn pin_bytes(ipfs: &impl IpfsStore, bytes: &[u8]) -> Result<String, DashboardError> {
     ipfs.put(bytes).await.map_err(|e| {
         DashboardError::ServiceUnavailable(format!(
             "IPFS pin failed (publish aborted before mint, nothing on chain): {e}"
@@ -148,6 +149,18 @@ pub async fn post_publish(
 ) -> Result<(StatusCode, Json<PublishOut>), DashboardError> {
     // Validate the cheap, pure inputs before touching the store or chain.
     let tier = tier_code(&body.tier)?;
+    // Sealed-tier guard — BEFORE any store/chain/pin work. Sealed listings
+    // promise an encrypted bundle, but encryption is unimplemented:
+    // publishing today would pin the full strategy plaintext to public IPFS.
+    if tier == 1 {
+        return Err(DashboardError::Validation {
+            field: "tier".into(),
+            msg: "sealed-tier publishing is not yet supported: bundle encryption is \
+                  unimplemented and publishing would pin the full strategy plaintext to \
+                  public IPFS (tracked: xvision-cgz)"
+                .into(),
+        });
+    }
     let price_usdc = usdc6(body.price_usdc)?;
 
     // a. Load the strategy (404s via ApiError::NotFound when absent).
@@ -205,19 +218,21 @@ pub async fn post_publish(
     //    genart seed + tokenURI are identical regardless of tier; the tiers
     //    diverge only in WHAT gets pinned at this step.
     //
-    //    - Open tier: pin the plaintext canonical manifest (as before). Pinata
-    //      optional — without it the listing keeps the local `xvn://` ref.
+    //    - Open tier: pin the plaintext canonical manifest (as before). The
+    //      IPFS backend (Kubo preferred via XVN_IPFS_API_URL, else Pinata via
+    //      PINATA_JWT) is optional — without it the listing keeps the local
+    //      `xvn://` ref (the bundle route resolves both).
     //    - Sealed tier: encrypt the canonical plaintext server-side (the
     //      seller's own strategy) and pin the CIPHERTEXT. Requires BOTH Lit
-    //      (else 400) AND a pin backend (else 503) — there is no `xvn://`
+    //      (else 400) AND an IPFS backend (else 503) — there is no `xvn://`
     //      fallback for sealed because the plaintext must never be locally
     //      resolvable as a public bundle.
     //
     //    Either branch happens AFTER all other config validation and BEFORE
-    //    the mint: a pin (or encrypt) failure aborts and leaves nothing on
-    //    chain.
+    //    the mint: a pin (or encrypt) failure aborts with 503 and leaves
+    //    nothing on chain.
     let content_uri = if tier == 1 {
-        // Sealed: require Lit, then require a pin backend.
+        // Sealed: require Lit, then require an IPFS pin backend.
         let sealed = state.sealed_crypto();
         if !sealed.is_configured() {
             return Err(DashboardError::Validation {
@@ -225,29 +240,30 @@ pub async fn post_publish(
                 msg: "sealed-tier publishing requires Lit configuration (XVN_LIT_*)".into(),
             });
         }
-        let pinata = mp.and_then(|c| c.pinata.clone()).ok_or_else(|| {
+        let ipfs = mp.and_then(|c| c.ipfs.as_ref()).ok_or_else(|| {
             DashboardError::ServiceUnavailable(
-                "sealed-tier publishing requires an IPFS pin backend: set PINATA_JWT".into(),
+                "sealed-tier publishing requires an IPFS pin backend: set XVN_IPFS_API_URL or \
+                 PINATA_JWT"
+                    .into(),
             )
         })?;
         let ciphertext = sealed
             .encrypt(canonical.as_bytes())
             .await
             .map_err(|e| DashboardError::ServiceUnavailable(format!("sealed encrypt failed: {e}")))?;
-        let ipfs = PinataDriver::new(pinata.jwt, pinata.gateway);
-        let cid = pin_bytes(&ipfs, ciphertext.as_bytes()).await?;
+        let cid = pin_bytes(ipfs, ciphertext.as_bytes()).await?;
         format!("ipfs://{cid}")
     } else {
-        match mp.and_then(|c| c.pinata.clone()) {
-            Some(pinata) => {
-                let ipfs = PinataDriver::new(pinata.jwt, pinata.gateway);
-                let cid = pin_canonical(&ipfs, &canonical).await?;
+        match mp.and_then(|c| c.ipfs.as_ref()) {
+            Some(ipfs) => {
+                let cid = pin_canonical(ipfs, &canonical).await?;
                 format!("ipfs://{cid}")
             }
             None => {
                 tracing::info!(
                     agent_id = %agent_id,
-                    "PINATA_JWT unset; publishing with local xvn:// content_uri"
+                    "no IPFS backend configured (XVN_IPFS_API_URL / PINATA_JWT unset); \
+                     publishing with local xvn:// content_uri"
                 );
                 format!("xvn://strategy/{agent_id}")
             }
@@ -851,8 +867,9 @@ pub struct UpdateOut {
     /// 64-char lowercase hex keccak256 of the canonical strategy JSON (the
     /// new on-chain `contentHash`).
     pub content_hash: String,
-    /// `ipfs://<cid>` when `PINATA_JWT` was configured, else the local
-    /// `xvn://strategy/<id>` fallback (same convention as publish).
+    /// `ipfs://<cid>` when an IPFS backend (`XVN_IPFS_API_URL` or
+    /// `PINATA_JWT`) was configured, else the local `xvn://strategy/<id>`
+    /// fallback (same convention as publish).
     pub content_uri: String,
     pub tx_hash: String,
 }
@@ -864,8 +881,8 @@ pub struct UpdateOut {
 ///
 /// Order: listing from snapshot (404) → local strategy by `listing.agent_id`
 /// (404 with an explicit "local strategy not found") → canonical + hash →
-/// chain env gate (503, all config before any pin/write) → IPFS pin when
-/// `PINATA_JWT` is set (shared `pin_canonical`; failure aborts before the
+/// chain env gate (503, all config before any pin/write) → IPFS pin when a
+/// backend is configured (shared `pin_canonical`; failure aborts before the
 /// chain write) → `updateListing` (reverts like NotSeller → 400 with the
 /// chain text) → 200 `{listing_id, content_hash, content_uri, tx_hash}`.
 pub async fn post_update(
@@ -916,20 +933,21 @@ pub async fn post_update(
         DashboardError::ServiceUnavailable("marketplace not configured: set XVN_LISTING_REGISTRY".into())
     })?;
 
-    // e. Pin the refreshed manifest when Pinata is configured (failure
-    //    aborts with 503 BEFORE the chain write — same no-orphan posture as
-    //    publish), else keep the local xvn:// reference.
-    let content_uri = match mp.and_then(|c| c.pinata.clone()) {
-        Some(pinata) => {
-            let ipfs = PinataDriver::new(pinata.jwt, pinata.gateway);
-            let cid = pin_canonical(&ipfs, &canonical).await?;
+    // e. Pin the refreshed manifest when an IPFS backend is configured
+    //    (Kubo preferred, else Pinata; failure aborts with 503 BEFORE the
+    //    chain write — same no-orphan posture as publish), else keep the
+    //    local xvn:// reference.
+    let content_uri = match mp.and_then(|c| c.ipfs.as_ref()) {
+        Some(ipfs) => {
+            let cid = pin_canonical(ipfs, &canonical).await?;
             format!("ipfs://{cid}")
         }
         None => {
             tracing::info!(
                 listing_id = id,
                 agent_id = %listing.agent_id,
-                "PINATA_JWT unset; updating listing with local xvn:// content_uri"
+                "no IPFS backend configured (XVN_IPFS_API_URL / PINATA_JWT unset); \
+                 updating listing with local xvn:// content_uri"
             );
             format!("xvn://strategy/{}", listing.agent_id)
         }
@@ -1077,7 +1095,7 @@ mod tests {
     async fn pin_canonical_maps_failure_to_service_unavailable() {
         // An empty-JWT driver fails fast (NotConfigured) without network;
         // the route maps every pin failure to the 503 upstream class.
-        let ipfs = PinataDriver::new("", "");
+        let ipfs = xvision_marketplace::PinataDriver::new("", "");
         let err = pin_canonical(&ipfs, "{}").await.unwrap_err();
         match err {
             DashboardError::ServiceUnavailable(msg) => {

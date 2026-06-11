@@ -214,7 +214,7 @@ async function main() {
     }
 
     // 4. All gates passed — decrypt.
-    const plaintext = await Lit.Actions.decrypt({ pkpId, ciphertext });
+    const plaintext = await Lit.Actions.Decrypt({ pkpId, ciphertext });
     return Lit.Actions.setResponse({
       response: JSON.stringify({ plaintext }),
     });
