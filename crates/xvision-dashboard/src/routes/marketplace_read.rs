@@ -1,11 +1,15 @@
 //! Read routes over the marketplace indexer snapshot.
 //!
-//! - `GET /api/marketplace/status` — indexer liveness + last poll info.
+//! - `GET /api/marketplace/status` — indexer liveness + last poll info +
+//!   the env-configured contract addresses (frontend discovers addresses
+//!   here, nothing hardcoded in the bundle).
 //! - `GET /api/marketplace/listings` — indexed listings (revoked filtered
 //!   out unless `?include_revoked=1`).
 //! - `GET /api/marketplace/listings/:id` — single listing or 404.
 //! - `GET /api/marketplace/wallet/:address` — per-wallet view: owned
 //!   strategy NFTs, license balances, and seller listings.
+//! - `GET /api/marketplace/receipts/:tx_hash` — decoded `Sold` event for a
+//!   purchase tx, joined with listing metadata from the snapshot.
 //!
 //! Handlers stay thin: all aggregation is the pure [`wallet_view`] over the
 //! snapshot plus [`OwnershipFacts`] gathered from the chain. Chain access
@@ -15,14 +19,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use alloy::primitives::{Address, U256};
-use alloy::providers::ProviderBuilder;
+use alloy::primitives::{Address, B256, U256};
+use alloy::providers::{Provider, ProviderBuilder};
+use alloy::sol_types::SolEvent;
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use xvision_identity::client::IIdentityRegistry;
-use xvision_identity::contracts::ILicenseToken;
+use xvision_identity::contracts::{ILicenseToken, IMarketplace};
 
 use crate::error::DashboardError;
 use crate::marketplace_index::{IndexedListing, IndexerCfg, MarketplaceSnapshot};
@@ -40,6 +45,41 @@ pub struct StatusOut {
     pub last_poll_unix: i64,
     pub total_onchain: u64,
     pub last_error: Option<String>,
+    /// Env-configured contract addresses (each `null` when unset/invalid).
+    /// The frontend discovers addresses here — never hardcoded in the bundle.
+    pub contracts: ContractsOut,
+}
+
+/// The marketplace contract address book, as configured via env. Read per
+/// request (cheap, and keeps the route honest if env changes mid-process —
+/// same posture as the publish/revoke chain gates).
+#[derive(Debug, Serialize)]
+pub struct ContractsOut {
+    pub marketplace: Option<String>,
+    pub usdc: Option<String>,
+    pub license_token: Option<String>,
+    pub listing_registry: Option<String>,
+    pub identity_registry: Option<String>,
+}
+
+/// Reads `key` and normalizes it to a lowercase `0x…` address string.
+/// Unset or unparseable → `None` (the frontend treats null as "not deployed").
+fn env_addr(key: &str) -> Option<String> {
+    let addr: Address = std::env::var(key).ok()?.parse().ok()?;
+    Some(format!("{addr:#x}"))
+}
+
+/// Env var names mirror `MarketplaceAddresses::from_env` in
+/// `xvision_identity::contracts` (plus the identity registry used by the
+/// indexer / publish mint path).
+fn contracts_from_env() -> ContractsOut {
+    ContractsOut {
+        marketplace: env_addr("XVN_MARKETPLACE_CONTRACT"),
+        usdc: env_addr("XVN_MARKETPLACE_USDC"),
+        license_token: env_addr("XVN_LICENSE_TOKEN"),
+        listing_registry: env_addr("XVN_LISTING_REGISTRY"),
+        identity_registry: env_addr("XVN_IDENTITY_REGISTRY"),
+    }
 }
 
 pub async fn get_status(State(state): State<AppState>) -> Json<StatusOut> {
@@ -49,6 +89,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusOut> {
         last_poll_unix: snap.last_poll_unix,
         total_onchain: snap.total_onchain,
         last_error: snap.last_error.clone(),
+        contracts: contracts_from_env(),
     })
 }
 
@@ -307,6 +348,142 @@ pub async fn get_wallet(
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/marketplace/receipts/:tx_hash
+// ---------------------------------------------------------------------------
+
+/// A purchase receipt: the decoded `Sold` event joined with listing metadata
+/// from the indexer snapshot.
+#[derive(Debug, Serialize)]
+pub struct ReceiptOut {
+    pub tx_hash: String,
+    pub listing_id: u64,
+    /// From the snapshot join; `""` when the listing is not (yet) indexed.
+    pub agent_id: String,
+    pub gen_art_seed: String,
+    pub name: String,
+    /// Lowercase `0x…`.
+    pub buyer: String,
+    pub price_usdc: f64,
+    pub seller_proceeds_usdc: f64,
+    pub protocol_proceeds_usdc: f64,
+    /// Decimal string (== listing_id by spec, but read from the event).
+    pub license_token_id: String,
+    pub purchase_path: u8,
+    /// Unix seconds of the containing block; `0` when the block lookup
+    /// fails/degrades (we prefer a partial receipt over a 500).
+    pub block_time_unix: i64,
+}
+
+/// Validates a `0x` + 64-hex-char transaction hash (any case).
+fn is_tx_hash(s: &str) -> bool {
+    s.len() == 66 && s.starts_with("0x") && s.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
+}
+
+/// Pure join of a decoded `Sold` event with the snapshot's listing metadata.
+/// Missing listing → empty-string defaults (the chain facts still stand).
+fn receipt_from_sold(
+    tx_hash: &str,
+    sold: &IMarketplace::Sold,
+    snapshot: &MarketplaceSnapshot,
+    block_time_unix: i64,
+) -> ReceiptOut {
+    let listing_id: u64 = sold.listingId.try_into().unwrap_or(u64::MAX);
+    let listing = snapshot.listings.iter().find(|l| l.listing_id == listing_id);
+    ReceiptOut {
+        tx_hash: tx_hash.to_lowercase(),
+        listing_id,
+        agent_id: listing.map(|l| l.agent_id.clone()).unwrap_or_default(),
+        gen_art_seed: listing.map(|l| l.gen_art_seed.clone()).unwrap_or_default(),
+        name: listing.map(|l| l.name.clone()).unwrap_or_default(),
+        buyer: format!("{:#x}", sold.buyer),
+        price_usdc: crate::marketplace_index::usdc6_to_f64(sold.priceUSDC.to::<u128>()),
+        seller_proceeds_usdc: crate::marketplace_index::usdc6_to_f64(sold.sellerProceeds.to::<u128>()),
+        protocol_proceeds_usdc: crate::marketplace_index::usdc6_to_f64(sold.protocolProceeds.to::<u128>()),
+        license_token_id: sold.licenseTokenId.to_string(),
+        purchase_path: sold.purchasePath,
+        block_time_unix,
+    }
+}
+
+/// `GET /api/marketplace/receipts/:tx_hash` — fetch the tx receipt over the
+/// read-only provider, decode the `Sold` event, join listing metadata from
+/// the snapshot. 400 bad hash; 503 chain env dormant; 404 unknown tx or no
+/// `Sold` log in the receipt.
+pub async fn get_receipt(
+    State(state): State<AppState>,
+    Path(tx_hash): Path<String>,
+) -> Result<Json<ReceiptOut>, DashboardError> {
+    if !is_tx_hash(&tx_hash) {
+        return Err(DashboardError::Validation {
+            field: "tx_hash".into(),
+            msg: "must be a 0x-prefixed 64-hex-char transaction hash".into(),
+        });
+    }
+    // Same read-only provider config as the indexer; dormant env → 503.
+    let cfg = IndexerCfg::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
+             XVN_IDENTITY_REGISTRY"
+                .into(),
+        )
+    })?;
+    let hash: B256 = tx_hash.parse().map_err(|_| DashboardError::Validation {
+        field: "tx_hash".into(),
+        msg: "must be a 0x-prefixed 64-hex-char transaction hash".into(),
+    })?;
+
+    let provider = ProviderBuilder::new()
+        .connect(cfg.rpc_url.as_str())
+        .await
+        .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
+
+    let receipt = provider
+        .get_transaction_receipt(hash)
+        .await
+        .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc receipt lookup failed: {e}")))?
+        .ok_or_else(|| DashboardError::NotFound(format!("transaction {tx_hash} not found on chain")))?;
+
+    // Decode the Sold event: topic0 match on the typed SIGNATURE_HASH, then a
+    // full typed decode (Sold carries the proceeds/licenseTokenId in data, so
+    // unlike the adapter's ListingCreated topic-only read we need decode_log).
+    let sold = receipt
+        .inner
+        .logs()
+        .iter()
+        .find_map(|log| {
+            (log.topics().first() == Some(&IMarketplace::Sold::SIGNATURE_HASH))
+                .then(|| IMarketplace::Sold::decode_log(&log.inner).ok())
+                .flatten()
+        })
+        .ok_or_else(|| {
+            DashboardError::NotFound(format!(
+                "transaction {tx_hash} has no Sold event (not a purchase)"
+            ))
+        })?;
+
+    // Block timestamp: one extra lookup; degrade to 0 rather than failing the
+    // whole receipt on a flaky block fetch.
+    let block_time_unix = match receipt.block_hash {
+        Some(bh) => provider
+            .get_block_by_hash(bh)
+            .await
+            .ok()
+            .flatten()
+            .map(|b| b.header.timestamp as i64)
+            .unwrap_or(0),
+        None => 0,
+    };
+
+    let snapshot = state.marketplace_snapshot.read().await;
+    Ok(Json(receipt_from_sold(
+        &tx_hash,
+        &sold.data,
+        &snapshot,
+        block_time_unix,
+    )))
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -409,6 +586,55 @@ mod tests {
         let view = wallet_view(&snap, checksummed, &OwnershipFacts::default());
         assert_eq!(view.listings.len(), 1);
         assert_eq!(view.address, ALICE);
+    }
+
+    #[test]
+    fn tx_hash_validation() {
+        assert!(is_tx_hash(&format!("0x{}", "ab".repeat(32))));
+        assert!(is_tx_hash(&format!("0x{}", "AB".repeat(32)))); // any case
+        assert!(!is_tx_hash("0x1234")); // too short
+        assert!(!is_tx_hash(&format!("1x{}", "ab".repeat(32)))); // bad prefix
+        assert!(!is_tx_hash(&format!("0x{}gg", "ab".repeat(31)))); // non-hex
+    }
+
+    #[test]
+    fn receipt_join_with_and_without_indexed_listing() {
+        use alloy::primitives::aliases::U96;
+        let sold = IMarketplace::Sold {
+            listingId: U256::from(1u64),
+            agentNftId: U256::from(7u64),
+            buyer: ALICE.parse().unwrap(),
+            priceUSDC: U96::from(49_000_000u64),
+            sellerProceeds: U96::from(46_550_000u64),
+            protocolProceeds: U96::from(2_450_000u64),
+            licenseTokenId: U256::from(1u64),
+            payerKind: 0,
+            purchasePath: 1,
+        };
+        let tx = format!("0x{}", "AB".repeat(32));
+
+        // Listing indexed → metadata joined.
+        let snap = snapshot(vec![listing(1, "7", BOB, false)]);
+        let out = receipt_from_sold(&tx, &sold, &snap, 1_700_000_123);
+        assert_eq!(out.tx_hash, tx.to_lowercase());
+        assert_eq!(out.listing_id, 1);
+        assert_eq!(out.agent_id, "agent-7");
+        assert_eq!(out.name, "xvn strategy 7");
+        assert_eq!(out.buyer, ALICE);
+        assert_eq!(out.price_usdc, 49.0);
+        assert_eq!(out.seller_proceeds_usdc, 46.55);
+        assert_eq!(out.protocol_proceeds_usdc, 2.45);
+        assert_eq!(out.license_token_id, "1");
+        assert_eq!(out.purchase_path, 1);
+        assert_eq!(out.block_time_unix, 1_700_000_123);
+
+        // Listing not indexed → chain facts stand, metadata defaults empty.
+        let out = receipt_from_sold(&tx, &sold, &snapshot(vec![]), 0);
+        assert_eq!(out.listing_id, 1);
+        assert_eq!(out.agent_id, "");
+        assert_eq!(out.gen_art_seed, "");
+        assert_eq!(out.name, "");
+        assert_eq!(out.block_time_unix, 0);
     }
 
     #[test]

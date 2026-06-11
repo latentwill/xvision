@@ -34,6 +34,7 @@
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
 // 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
 // 18d. POST  /api/marketplace/listings/:id/revoke     marketplace_route::post_revoke
+// 18e. POST  /api/marketplace/buy                     marketplace_route::post_buy
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -153,6 +154,7 @@
 //  R65. GET  /api/marketplace/listings
 //  R66. GET  /api/marketplace/listings/:id
 //  R67. GET  /api/marketplace/wallet/:address
+//  R68. GET  /api/marketplace/receipts/:tx_hash
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -456,6 +458,12 @@ fn readonly_router(state: AppState) -> Router {
             "/api/marketplace/wallet/:address",
             get(marketplace_read_route::get_wallet),
         )
+        // Purchase receipt: decoded Sold event for a tx hash. Env-gated:
+        // returns 503 without the read-only chain config.
+        .route(
+            "/api/marketplace/receipts/:tx_hash",
+            get(marketplace_read_route::get_receipt),
+        )
         .with_state(state)
 }
 
@@ -529,6 +537,9 @@ fn mutating_router(state: AppState) -> Router {
             "/api/marketplace/listings/:id/revoke",
             post(marketplace_route::post_revoke),
         )
+        // Gasless x402 purchase relay (buyWithAuthorization). Env-gated:
+        // returns 503 without chain config; 400 on M-2 / contract reverts.
+        .route("/api/marketplace/buy", post(marketplace_route::post_buy))
         // ── Strategies folder ─────────────────────────────────────────────
         .route(
             "/api/strategies-folder/import",
