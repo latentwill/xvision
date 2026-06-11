@@ -159,10 +159,11 @@ fn license_token_from_env() -> Option<Address> {
 }
 
 /// Lit Protocol v3 ("Chipotle") config for sealed-tier bundle encryption.
-/// All four env vars are required for `Some`:
+/// All FIVE env vars are required for `Some`:
 /// `XVN_LIT_API_BASE`, `XVN_LIT_API_KEY`, `XVN_LIT_PKP_ID`,
-/// `XVN_LIT_GATE_ACTION_CID`. NOT yet wired into routes (later phase) — this
-/// phase only resolves it at startup and can build a [`LitChipotleClient`].
+/// `XVN_LIT_GATE_ACTION_CID`, `XVN_LIT_ENCRYPT_ACTION_CID`. NOT yet wired into
+/// routes (later phase) — this phase only resolves it at startup and can build
+/// a [`LitChipotleClient`].
 #[derive(Clone)]
 pub struct LitConfig {
     /// Lit REST API base (e.g. `https://api.chipotle.litprotocol.com`).
@@ -173,6 +174,8 @@ pub struct LitConfig {
     pub pkp_id: String,
     /// IPFS CID of the immutable decrypt gate Lit Action.
     pub gate_action_cid: String,
+    /// IPFS CID of the pinned ENCRYPT Lit Action run server-side at publish.
+    pub encrypt_action_cid: String,
 }
 
 /// Manual Debug impl — redacts the API key so it cannot appear in logs.
@@ -183,6 +186,7 @@ impl fmt::Debug for LitConfig {
             .field("api_key", &"<redacted>")
             .field("pkp_id", &self.pkp_id)
             .field("gate_action_cid", &self.gate_action_cid)
+            .field("encrypt_action_cid", &self.encrypt_action_cid)
             .finish()
     }
 }
@@ -190,24 +194,33 @@ impl fmt::Debug for LitConfig {
 impl LitConfig {
     /// Build a [`LitChipotleClient`] from this config.
     pub fn build_client(&self) -> LitChipotleClient {
-        LitChipotleClient::with_api_base(&self.api_base, &self.api_key, &self.pkp_id, &self.gate_action_cid)
+        LitChipotleClient::with_api_base(
+            &self.api_base,
+            &self.api_key,
+            &self.pkp_id,
+            &self.gate_action_cid,
+            &self.encrypt_action_cid,
+        )
     }
 }
 
-/// Reads the Lit Chipotle config. Returns `Some` only when ALL FOUR of
+/// Reads the Lit Chipotle config. Returns `Some` only when ALL FIVE of
 /// `XVN_LIT_API_BASE`, `XVN_LIT_API_KEY`, `XVN_LIT_PKP_ID`,
-/// `XVN_LIT_GATE_ACTION_CID` are set (and non-blank); any missing → `None`.
+/// `XVN_LIT_GATE_ACTION_CID`, `XVN_LIT_ENCRYPT_ACTION_CID` are set (and
+/// non-blank); any missing → `None`.
 fn lit_from_env() -> Option<LitConfig> {
     let nonblank = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
     let api_base = nonblank("XVN_LIT_API_BASE")?;
     let api_key = nonblank("XVN_LIT_API_KEY")?;
     let pkp_id = nonblank("XVN_LIT_PKP_ID")?;
     let gate_action_cid = nonblank("XVN_LIT_GATE_ACTION_CID")?;
+    let encrypt_action_cid = nonblank("XVN_LIT_ENCRYPT_ACTION_CID")?;
     Some(LitConfig {
         api_base,
         api_key,
         pkp_id,
         gate_action_cid,
+        encrypt_action_cid,
     })
 }
 
@@ -326,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn lit_cfg_requires_all_four_env_vars() {
+    fn lit_cfg_requires_all_five_env_vars() {
         // Single test owns the XVN_LIT_* vars in this crate's unit suite
         // (the crate-wide env-mutation convention).
         let vars = [
@@ -334,21 +347,27 @@ mod tests {
             "XVN_LIT_API_KEY",
             "XVN_LIT_PKP_ID",
             "XVN_LIT_GATE_ACTION_CID",
+            "XVN_LIT_ENCRYPT_ACTION_CID",
         ];
+        let set_all = || {
+            std::env::set_var("XVN_LIT_API_BASE", "https://api.chipotle.litprotocol.com");
+            std::env::set_var("XVN_LIT_API_KEY", "secret-key");
+            std::env::set_var("XVN_LIT_PKP_ID", "pkp-123");
+            std::env::set_var("XVN_LIT_GATE_ACTION_CID", "bafygatecid");
+            std::env::set_var("XVN_LIT_ENCRYPT_ACTION_CID", "bafyencryptcid");
+        };
         for v in vars {
             std::env::remove_var(v);
         }
         assert!(lit_from_env().is_none(), "all unset → None");
 
-        // Set all four → Some.
-        std::env::set_var("XVN_LIT_API_BASE", "https://api.chipotle.litprotocol.com");
-        std::env::set_var("XVN_LIT_API_KEY", "secret-key");
-        std::env::set_var("XVN_LIT_PKP_ID", "pkp-123");
-        std::env::set_var("XVN_LIT_GATE_ACTION_CID", "bafygatecid");
-        let cfg = lit_from_env().expect("all four set → Some");
+        // Set all five → Some.
+        set_all();
+        let cfg = lit_from_env().expect("all five set → Some");
         assert_eq!(cfg.api_base, "https://api.chipotle.litprotocol.com");
         assert_eq!(cfg.pkp_id, "pkp-123");
         assert_eq!(cfg.gate_action_cid, "bafygatecid");
+        assert_eq!(cfg.encrypt_action_cid, "bafyencryptcid");
 
         // Debug redacts the api key.
         let dbg = format!("{cfg:?}");
@@ -360,11 +379,7 @@ mod tests {
 
         // Any one missing → None.
         for missing in vars {
-            // Re-set all, then drop `missing`.
-            std::env::set_var("XVN_LIT_API_BASE", "https://api.chipotle.litprotocol.com");
-            std::env::set_var("XVN_LIT_API_KEY", "secret-key");
-            std::env::set_var("XVN_LIT_PKP_ID", "pkp-123");
-            std::env::set_var("XVN_LIT_GATE_ACTION_CID", "bafygatecid");
+            set_all();
             std::env::remove_var(missing);
             assert!(lit_from_env().is_none(), "{missing} missing → None");
         }
@@ -388,6 +403,7 @@ mod tests {
                 api_key: "key".into(),
                 pkp_id: "pkp-123".into(),
                 gate_action_cid: "bafygatecid".into(),
+                encrypt_action_cid: "bafyencryptcid".into(),
             }),
             chain_timeout: Duration::from_secs(45),
         };

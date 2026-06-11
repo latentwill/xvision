@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Lit Protocol gate actions (version-controlled; pinned to IPFS by the operator). Pure validators are unit-tested via sealed-gate.test.mjs.",
   "scripts": {
-    "test": "node sealed-gate.test.mjs"
+    "build": "node build-deploy.mjs",
+    "test": "node sealed-gate.test.mjs && node sealed-encrypt.test.mjs"
   }
 }

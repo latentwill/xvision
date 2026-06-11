@@ -89,6 +89,7 @@ async fn status_lit_block_exposes_public_fields_never_api_key() {
             api_key: "super-secret-api-key".into(),
             pkp_id: "pkp-123".into(),
             gate_action_cid: "bafygatecid".into(),
+            encrypt_action_cid: "bafyencryptcid".into(),
         }),
         chain_timeout: std::time::Duration::from_secs(45),
     };
