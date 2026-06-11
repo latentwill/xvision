@@ -173,6 +173,20 @@ impl OrderlyOrder {
     pub fn is_rejected(&self) -> bool {
         self.status == "REJECTED"
     }
+
+    /// Terminal without any fill: REJECTED, or CANCELLED/EXPIRED with zero
+    /// executed quantity. Orderly cancels market orders it cannot match
+    /// (e.g. an empty testnet book) — callers must surface that as a
+    /// failure, not fabricate a receipt from fallback prices (live
+    /// testnet finding 2026-06-11: a CANCELLED order produced a
+    /// "filled" ExecutionReceipt priced at the mark).
+    pub fn is_unfilled_terminal(&self) -> bool {
+        if self.status == "REJECTED" {
+            return true;
+        }
+        matches!(self.status.as_str(), "CANCELLED" | "EXPIRED")
+            && self.executed_quantity.unwrap_or(0.0) <= 0.0
+    }
 }
 
 /// Account equity snapshot.
@@ -374,7 +388,10 @@ struct OrderData {
     #[serde(default)]
     client_order_id: Option<String>,
     status: String,
-    #[serde(default)]
+    /// The venue's `GET /v1/order/{id}` payload spells this
+    /// `total_executed_quantity` (with a sibling `executed`); other
+    /// surfaces use `executed_quantity`. Accept all three.
+    #[serde(default, alias = "total_executed_quantity", alias = "executed")]
     executed_quantity: Option<f64>,
     #[serde(default)]
     average_executed_price: Option<f64>,
@@ -694,9 +711,10 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
         for _ in 0..MAX_POLLS {
             let order = self.api.get_order(order_id).await?;
             if order.is_terminal() {
-                if order.is_rejected() {
+                if order.is_unfilled_terminal() {
                     return Err(ExecutorError::Rejected(format!(
-                        "order {order_id} was rejected by Orderly"
+                        "order {order_id} rejected: terminated unfilled ({}) — venue could not match it",
+                        order.status
                     )));
                 }
                 return Ok(order);
@@ -1230,6 +1248,39 @@ mod tests {
             (call.quantity - expected_qty).abs() < 1e-9,
             "qty must be notional/mark ({expected_qty}), got {}",
             call.quantity
+        );
+    }
+
+    /// A market order the venue CANCELLED without any fill (empty book,
+    /// price protection) must surface as `Rejected` — not as a fabricated
+    /// receipt priced at the mark (live testnet finding 2026-06-11).
+    #[tokio::test]
+    async fn submit_cancelled_unfilled_order_is_rejected() {
+        let cycle_id = Uuid::new_v4();
+        let created = fixture_filled_order(43, Some(&cycle_id.to_string()));
+        let cancelled = OrderlyOrder {
+            order_id: 43,
+            client_order_id: Some(cycle_id.to_string()),
+            status: "CANCELLED".to_string(),
+            executed_quantity: Some(0.0),
+            average_executed_price: None,
+        };
+
+        let api = MockOrderlyApi::new(
+            fixture_account(),
+            vec![fixture_btc_position(0.1)],
+            created,
+            cancelled,
+        );
+        let executor = OrderlyExecutor::with_api(api);
+
+        let err = executor
+            .submit(&fixture_buy_decision(cycle_id))
+            .await
+            .expect_err("cancelled-unfilled must be an error");
+        assert!(
+            matches!(err, ExecutorError::Rejected(_)),
+            "expected Rejected, got {err:?}"
         );
     }
 

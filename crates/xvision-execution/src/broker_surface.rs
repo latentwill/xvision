@@ -781,8 +781,11 @@ impl<A: OrderlyApi> OrderlyLiveSurface<A> {
                 .await
                 .map_err(|e| anyhow::anyhow!("orderly get_order: {e}"))?;
             if order.is_terminal() {
-                if order.is_rejected() {
-                    anyhow::bail!("orderly order {order_id} rejected by venue");
+                if order.is_unfilled_terminal() {
+                    anyhow::bail!(
+                        "orderly order {order_id} rejected: terminated unfilled ({}) — venue could not match it",
+                        order.status
+                    );
                 }
                 return Ok(order);
             }
