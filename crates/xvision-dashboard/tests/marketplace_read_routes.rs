@@ -77,6 +77,39 @@ async fn status_active_after_spawn_and_first_poll() {
     assert_eq!(body["total_onchain"], 1);
 }
 
+#[tokio::test]
+async fn status_contracts_object_reflects_env() {
+    // Phase A: vars absent → all-null contracts object. No test in this
+    // binary sets the two vars we probe afterwards, and the set/remove of
+    // phase B is confined to this single test (the crate-wide env-mutation
+    // convention), so the phases cannot race siblings.
+    std::env::remove_var("XVN_MARKETPLACE_CONTRACT");
+    std::env::remove_var("XVN_MARKETPLACE_USDC");
+
+    let (server, _state, _tmp) = boot().await;
+    let body: Value = server.get("/api/marketplace/status").await.json();
+    assert!(body["contracts"].is_object(), "contracts object always present");
+    assert!(body["contracts"]["marketplace"].is_null());
+    assert!(body["contracts"]["usdc"].is_null());
+    assert!(body["contracts"]["license_token"].is_null());
+    assert!(body["contracts"]["listing_registry"].is_null());
+    assert!(body["contracts"]["identity_registry"].is_null());
+
+    // Phase B: set the two marketplace-only vars (NOT listing/identity
+    // registry — those gate the indexer/receipts dormancy asserted elsewhere).
+    let marketplace = "0x1111111111111111111111111111111111111111";
+    let usdc = "0x2222222222222222222222222222222222222222";
+    std::env::set_var("XVN_MARKETPLACE_CONTRACT", marketplace);
+    std::env::set_var("XVN_MARKETPLACE_USDC", usdc);
+    let body: Value = server.get("/api/marketplace/status").await.json();
+    std::env::remove_var("XVN_MARKETPLACE_CONTRACT");
+    std::env::remove_var("XVN_MARKETPLACE_USDC");
+
+    assert_eq!(body["contracts"]["marketplace"], marketplace);
+    assert_eq!(body["contracts"]["usdc"], usdc);
+    assert!(body["contracts"]["license_token"].is_null());
+}
+
 // ── listings ────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -132,6 +165,115 @@ async fn revoke_without_chain_env_is_503() {
 
     let (server, _state, _tmp) = boot().await;
     let response = server.post("/api/marketplace/listings/5/revoke").await;
+    response.assert_status_service_unavailable();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "service_unavailable");
+}
+
+// ── buy ─────────────────────────────────────────────────────────────────────
+
+/// A structurally valid buy body: recipient == authorization.from (M-2),
+/// decimal-string value, 0x-64-hex nonce/r/s, v as a number.
+fn buy_body(recipient: &str, from: &str, v: u64) -> Value {
+    serde_json::json!({
+        "listing_id": 1,
+        "recipient": recipient,
+        "authorization": {
+            "from": from,
+            "to": "0xcccccccccccccccccccccccccccccccccccccccc",
+            "value": "49000000",
+            "valid_after": 0,
+            "valid_before": 1_893_456_000u64,
+            "nonce": format!("0x{}", "ab".repeat(32)),
+            "v": v,
+            "r": format!("0x{}", "cd".repeat(32)),
+            "s": format!("0x{}", "ef".repeat(32)),
+        }
+    })
+}
+
+#[tokio::test]
+async fn buy_bad_recipient_address_is_400() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server
+        .post("/api/marketplace/buy")
+        .json(&buy_body("not-an-address", ALICE, 27))
+        .await;
+    response.assert_status_bad_request();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "recipient");
+}
+
+#[tokio::test]
+async fn buy_v_out_of_range_is_400() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server
+        .post("/api/marketplace/buy")
+        .json(&buy_body(ALICE, ALICE, 300))
+        .await;
+    response.assert_status_bad_request();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "authorization.v");
+}
+
+#[tokio::test]
+async fn buy_recipient_not_payer_is_400_m2() {
+    let (server, _state, _tmp) = boot().await;
+    let other = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let response = server
+        .post("/api/marketplace/buy")
+        .json(&buy_body(other, ALICE, 27))
+        .await;
+    response.assert_status_bad_request();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert!(
+        body["message"].as_str().unwrap().contains("RecipientMustBePayer"),
+        "message must name the contract revert: {body}"
+    );
+}
+
+#[tokio::test]
+async fn buy_without_chain_env_is_503() {
+    // Removal-only (same contract as revoke_without_chain_env_is_503).
+    std::env::remove_var("XVN_RPC_URL");
+    std::env::remove_var("XVN_CHAIN_ID");
+    std::env::remove_var("XVN_PUBLISHER_PK");
+
+    let (server, _state, _tmp) = boot().await;
+    let response = server
+        .post("/api/marketplace/buy")
+        .json(&buy_body(ALICE, ALICE, 27))
+        .await;
+    response.assert_status_service_unavailable();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "service_unavailable");
+}
+
+// ── receipts ────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn receipt_bad_tx_hash_is_400() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server.get("/api/marketplace/receipts/0x1234").await;
+    response.assert_status_bad_request();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "tx_hash");
+}
+
+#[tokio::test]
+async fn receipt_503_when_chain_env_dormant() {
+    // Removal-only: IndexerCfg::from_env requires XVN_RPC_URL (+ registries);
+    // nothing in this binary ever sets XVN_RPC_URL or XVN_IDENTITY_REGISTRY.
+    std::env::remove_var("XVN_RPC_URL");
+    std::env::remove_var("XVN_IDENTITY_REGISTRY");
+
+    let (server, _state, _tmp) = boot().await;
+    let tx = format!("0x{}", "ab".repeat(32));
+    let response = server.get(&format!("/api/marketplace/receipts/{tx}")).await;
     response.assert_status_service_unavailable();
     let body: Value = response.json();
     assert_eq!(body["code"], "service_unavailable");

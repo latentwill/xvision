@@ -3,6 +3,7 @@
 // Replaces MarketplaceBrowseStub. All data via useMarketplaceData() + useQuery.
 // No popups. FilterDrawer is the F0 docked panel; its content is FilterDrawerContent.
 import { useCallback, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { useFilterState } from "@/features/marketplace/hooks/useFilterState";
@@ -63,8 +64,12 @@ function ListHeader() {
 
 export function BrowseRoute() {
   const mp = useMarketplaceData();
+  const navigate = useNavigate();
   const { filter, setFilter } = useFilterState();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Per-card inline error surface is impractical in the dense list; failures
+  // land in a single dismissible strip at the top of the grid (no popups).
+  const [buyError, setBuyError] = useState<{ id: string; message: string } | null>(null);
 
   // Load slices first (needed to merge slice filter into listing query)
   const { data: slices = [] } = useQuery<Slice[]>({
@@ -87,14 +92,21 @@ export function BrowseRoute() {
 
   const handleBuy = useCallback(
     async (id: string) => {
-      // DEPLOY WALL (C7 / AM6 + signer): fixture `purchaseIntent` returns a fake
-      // TxRef. The real on-chain EIP-3009 `buyWithAuthorization` swaps in here
-      // once contracts are deployed and `useWallet` exposes a signer. Do NOT
-      // fake the signing flow. See LineageRoute buyMutation for the full note.
-      await mp.purchaseIntent(id);
-      // TODO(F6): navigate(`/marketplace/receipts/${ref.txHash}`)
+      // Real purchase via the seam (gasless relay → approve+buy fallback in
+      // ApiMarketplaceData). Success routes to the receipt; failure surfaces
+      // in the inline strip above the grid.
+      setBuyError(null);
+      try {
+        const ref = await mp.purchaseIntent(id);
+        navigate(`/marketplace/receipts/${ref.txHash}`);
+      } catch (e) {
+        setBuyError({
+          id,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
     },
-    [mp]
+    [mp, navigate]
   );
 
   const handleSliceClick = useCallback(
@@ -120,6 +132,25 @@ export function BrowseRoute() {
       />
 
       <AppliedChips filter={filter} setFilter={setFilter} matchCount={matched} />
+
+      {/* Inline buy-error strip (no popups) */}
+      {buyError && (
+        <div
+          data-testid="browse-buy-error"
+          className="mx-[22px] my-2 flex items-center gap-2 rounded border border-danger/40 bg-danger/5 px-3 py-2 font-mono text-[11px] text-danger"
+        >
+          <span className="min-w-0">
+            Buy failed for {buyError.id}: {buyError.message}
+          </span>
+          <button
+            type="button"
+            onClick={() => setBuyError(null)}
+            className="ml-auto shrink-0 text-text-3 underline underline-offset-2 hover:text-text transition-colors"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
 
       {/* Body: leaderboard rail | list + optional drawer overlay */}
       <div

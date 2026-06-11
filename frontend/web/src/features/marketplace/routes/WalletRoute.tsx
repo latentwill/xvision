@@ -11,6 +11,7 @@ import {
 } from "@tanstack/react-query";
 import { ApiError, apiFetch } from "@/api/client";
 import { useWallet } from "@/features/marketplace/lib/wallet";
+import { faucetUsdc, usdcBalance } from "@/features/marketplace/lib/chain";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import type { IndexedListing } from "@/features/marketplace/data/ApiMarketplaceData";
 
@@ -68,6 +69,55 @@ function EmptyLine({ children }: { children: React.ReactNode }) {
   );
 }
 
+function formatUsdc6(amount6: bigint): string {
+  return (Number(amount6) / 1e6).toFixed(2);
+}
+
+// ── USDC balance line + testnet faucet (inline, connected only) ──────────────
+
+function UsdcLine({ address }: { address: string }) {
+  const queryClient = useQueryClient();
+  const balanceQuery = useQuery({
+    queryKey: ["marketplace", "usdc-balance", address],
+    queryFn: () => usdcBalance(address as `0x${string}`),
+    retry: false,
+  });
+  const faucet = useMutation({
+    mutationFn: () => faucetUsdc(10_000_000n), // 10 test USDC per click
+    onSuccess: () =>
+      void queryClient.invalidateQueries({
+        queryKey: ["marketplace", "usdc-balance", address],
+      }),
+  });
+
+  return (
+    <span className="flex items-center gap-2 flex-wrap">
+      <span data-testid="usdc-balance" className="font-mono text-[11px] text-text-2">
+        {balanceQuery.isLoading
+          ? "USDC …"
+          : balanceQuery.isError
+            ? "USDC unavailable"
+            : `${formatUsdc6(balanceQuery.data!)} USDC`}
+      </span>
+      <button
+        type="button"
+        data-testid="wallet-faucet-btn"
+        onClick={() => faucet.mutate()}
+        disabled={faucet.isPending}
+        className="font-mono text-[10.5px] px-2 py-0.5 border border-gold/40 text-gold rounded-[3px] hover:bg-gold/10 transition-colors disabled:opacity-60"
+      >
+        {faucet.isPending ? "Minting…" : "Get test USDC"}
+      </button>
+      {faucet.isError && (
+        <span className="font-mono text-[10.5px] text-danger">
+          Faucet failed:{" "}
+          {faucet.error instanceof Error ? faucet.error.message : "unknown error"}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ── Wallet strip ──────────────────────────────────────────────────────────────
 
 function WalletStrip() {
@@ -93,6 +143,7 @@ function WalletStrip() {
           <span className="font-mono text-[10.5px] text-text-3">
             connected · Ethereum
           </span>
+          <UsdcLine address={address} />
           <button
             type="button"
             onClick={disconnect}

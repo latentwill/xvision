@@ -18,6 +18,14 @@ vi.mock("@/features/marketplace/lib/wallet", () => ({
   useWallet: () => mockWallet,
 }));
 
+// ── chain.ts mock — jsdom has no wallet/RPC; balance + faucet are stubbed ────
+const usdcBalanceMock = vi.fn<(addr: string) => Promise<bigint>>();
+const faucetUsdcMock = vi.fn<(amount6: bigint) => Promise<string>>();
+vi.mock("@/features/marketplace/lib/chain", () => ({
+  usdcBalance: (addr: string) => usdcBalanceMock(addr),
+  faucetUsdc: (amount6: bigint) => faucetUsdcMock(amount6),
+}));
+
 const ADDR = "0x1111222233334444555566667777888899990000";
 
 const walletPayload = {
@@ -101,6 +109,10 @@ beforeEach(() => {
   mockWallet.disconnect.mockClear();
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+  usdcBalanceMock.mockReset();
+  usdcBalanceMock.mockResolvedValue(0n);
+  faucetUsdcMock.mockReset();
+  faucetUsdcMock.mockResolvedValue("0xfaucet-tx");
 });
 
 afterEach(() => {
@@ -241,6 +253,49 @@ describe("WalletRoute", () => {
     expect(
       fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
     ).toHaveLength(0);
+  });
+
+  it("connected: shows the USDC balance line with a faucet button", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockResolvedValue(jsonResponse(walletPayload));
+    usdcBalanceMock.mockResolvedValue(12_340_000n); // 12.34 USDC
+
+    renderRoute();
+
+    expect(await screen.findByText("12.34 USDC")).toBeInTheDocument();
+    expect(usdcBalanceMock).toHaveBeenCalledWith(ADDR);
+    expect(
+      screen.getByRole("button", { name: /get test usdc/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("faucet click mints test USDC and refetches the balance", async () => {
+    mockWallet.address = ADDR;
+    fetchMock.mockResolvedValue(jsonResponse(walletPayload));
+    usdcBalanceMock.mockResolvedValue(0n);
+
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: /get test usdc/i }),
+    );
+
+    await waitFor(() =>
+      expect(faucetUsdcMock).toHaveBeenCalledWith(10_000_000n),
+    );
+    // invalidation refetches the balance (initial + post-faucet)
+    await waitFor(() =>
+      expect(usdcBalanceMock.mock.calls.length).toBeGreaterThanOrEqual(2),
+    );
+  });
+
+  it("disconnected: no USDC balance line or faucet button", () => {
+    renderRoute();
+    expect(screen.queryByTestId("usdc-balance")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /get test usdc/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("empty sections render muted empty states", async () => {
