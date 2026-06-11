@@ -320,6 +320,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/lineage",
             get(autooptimizer_route::list_lineage),
         )
+        // Lineage-river chart: all lineage nodes joined with gate scores (read-only LEFT JOIN; spec §8.2).
+        .route(
+            "/api/autooptimizer/river",
+            get(autooptimizer_route::get_river),
+        )
         .route(
             "/api/autooptimizer/run-defaults",
             get(autooptimizer_cycle::run_defaults),
