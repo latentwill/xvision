@@ -120,13 +120,13 @@ export class SubgraphError extends Error {
 
 /** The subgraph endpoint, or null when unconfigured (→ fixture fallback). */
 export function subgraphUrl(): string | null {
-  // `import.meta.env` is replaced at build time by Vite. Read it through a cast
-  // (matching src/api/agent-runs.ts) so tsc -b doesn't require vite/client types
-  // and tests can flip it with `vi.stubEnv`.
-  const meta = import.meta as unknown as {
-    env?: Record<string, string | undefined>;
-  };
-  const url = meta.env?.VITE_MARKETPLACE_SUBGRAPH_URL;
+  // MUST stay the literal `import.meta.env.VITE_…` expression (typed via
+  // src/vite-env.d.ts): Vite's define replacement only rewrites this exact
+  // form. The previous alias read (`const meta = import.meta; meta.env?.…`)
+  // survived to production bundles as a runtime lookup, where browsers have
+  // no `import.meta.env` — silently disabling the subgraph client in every
+  // deploy. Vitest keeps env live, so `vi.stubEnv` still works.
+  const url = import.meta.env.VITE_MARKETPLACE_SUBGRAPH_URL;
   return url && url.trim().length > 0 ? url.trim() : null;
 }
 

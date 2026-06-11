@@ -123,7 +123,9 @@ async fn extract_and_record_inner(
     for f in findings {
         match store.record_finding(&f).await {
             Ok(()) => {
-                api_search::upsert_finding(ctx, &f).await;
+                if let Err(e) = api_search::upsert_finding(ctx, &f).await {
+                    tracing::warn!(error = %e, run_id, finding_id = %f.id, "search index upsert (finding) failed");
+                }
                 persisted += 1;
             }
             Err(e) => {

@@ -3145,7 +3145,9 @@ async fn run_inner(
         // — operators frequently want to find a recently-failed run by id
         // prefix without leaving the palette.
         if let Ok(failed) = store.get(&run.id).await {
-            api_search::upsert_run(ctx, &failed).await;
+            if let Err(e) = api_search::upsert_run(ctx, &failed).await {
+                tracing::warn!(error = %e, run_id = %run.id, "search index upsert (run) failed");
+            }
         }
         if let Some(em) = obs_emitter.as_ref() {
             em.emit_run_finished(xvision_observability::RunStatus::Failed, Some(err_msg.clone()))
@@ -3184,7 +3186,9 @@ async fn run_inner(
     // as gross_return_pct.
     enrich_with_inference_cost(ctx, &store, &mut finalized, &scenario).await;
 
-    api_search::upsert_run(ctx, &finalized).await;
+    if let Err(e) = api_search::upsert_run(ctx, &finalized).await {
+        tracing::warn!(error = %e, run_id = %finalized.id, "search index upsert (run) failed");
+    }
     fire_chain_attestation_after_finalize(&finalized);
 
     // Postprocess: drive the findings extractor against the finalized run,
@@ -4117,7 +4121,9 @@ async fn execute_in_background(
         }
         Ok(false) => {
             if let Ok(terminal) = store.get(&run.id).await {
-                api_search::upsert_run(&ctx, &terminal).await;
+                if let Err(e) = api_search::upsert_run(&ctx, &terminal).await {
+                    tracing::warn!(error = %e, run_id = %run.id, "search index upsert (run) failed");
+                }
             }
             // Caller already advanced past Queued (e.g., cancel before
             // executor start). Emit Cancelled so SSE consumers don't
@@ -4163,7 +4169,9 @@ async fn execute_in_background(
         let err_msg = format!("{e:#}");
         if matches!(store.is_cancelled(&run.id).await, Ok(true)) {
             if let Ok(cancelled) = store.get(&run.id).await {
-                api_search::upsert_run(&ctx, &cancelled).await;
+                if let Err(e) = api_search::upsert_run(&ctx, &cancelled).await {
+                    tracing::warn!(error = %e, run_id = %run.id, "search index upsert (run) failed");
+                }
             }
             if let Some(em) = obs_emitter.as_ref() {
                 em.emit_run_finished(xvision_observability::RunStatus::Cancelled, None)
@@ -4180,7 +4188,9 @@ async fn execute_in_background(
         );
         route_mark_failed(&ctx, &store, &run.id, &err_msg).await;
         if let Ok(failed) = store.get(&run.id).await {
-            api_search::upsert_run(&ctx, &failed).await;
+            if let Err(e) = api_search::upsert_run(&ctx, &failed).await {
+                tracing::warn!(error = %e, run_id = %run.id, "search index upsert (run) failed");
+            }
         }
         if let Some(em) = obs_emitter.as_ref() {
             em.emit_run_finished(xvision_observability::RunStatus::Failed, Some(err_msg))
@@ -4219,7 +4229,9 @@ async fn execute_in_background(
     // V2E item 25: enrich with inference cost aggregate (best-effort).
     enrich_with_inference_cost(&ctx, &store, &mut finalized, &scenario).await;
 
-    api_search::upsert_run(&ctx, &finalized).await;
+    if let Err(e) = api_search::upsert_run(&ctx, &finalized).await {
+        tracing::warn!(error = %e, run_id = %finalized.id, "search index upsert (run) failed");
+    }
     fire_chain_attestation_after_finalize(&finalized);
     if let Some(em) = obs_emitter.as_ref() {
         em.emit_run_finished(xvision_observability::RunStatus::Completed, None)

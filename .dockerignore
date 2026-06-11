@@ -13,6 +13,13 @@ frontend/web/node_modules
 frontend/web/dist
 frontend/web/.vite
 frontend/web/*.tsbuildinfo
+# Vite's real outDir (gitignored local builds). Without this, a stale local
+# SPA build rides into the builder stage via `COPY . .` and rust-embed embeds
+# its leftover hashed chunks alongside the fresh in-Docker build. Handwritten
+# static JS (js/bus.js) is tracked source and must stay in the context.
+crates/xvision-dashboard/static
+!crates/xvision-dashboard/static/.gitkeep
+!crates/xvision-dashboard/static/js
 coverage
 **/coverage
 

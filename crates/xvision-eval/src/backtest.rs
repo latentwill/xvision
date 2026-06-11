@@ -666,6 +666,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: vec![],
         }
     }
 

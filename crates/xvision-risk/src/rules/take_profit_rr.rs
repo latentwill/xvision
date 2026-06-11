@@ -112,7 +112,7 @@ mod tests {
         // rule() has required=false; tp=0.1 < 0.5 → but not required → check rr
         // rr = 0.1/2.0 = 0.05 < 1.5 → modify
         match rule().evaluate(&make_ctx(&d, &p, AssetSymbol::Btc)) {
-            RuleVerdict::Modify(_, _) | RuleVerdict::Pass => {} // acceptable
+            RuleVerdict::Modify(_, _) | RuleVerdict::Pass | RuleVerdict::Warn(_) => {} // acceptable
             RuleVerdict::Veto(_) => panic!("should not veto when not required"),
         }
     }

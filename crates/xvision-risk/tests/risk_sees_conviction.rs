@@ -119,7 +119,7 @@ fn default_config_ignores_conviction_regression() {
 
         // The approved decision must carry the same size as the input.
         match (&baseline, &result) {
-            (RiskDecision::Approved { decision: base_d }, RiskDecision::Approved { decision: d }) => {
+            (RiskDecision::Approved { decision: base_d, .. }, RiskDecision::Approved { decision: d, .. }) => {
                 assert_eq!(
                     d.size_bps, base_d.size_bps,
                     "conviction={conviction}: size_bps must be unchanged by conviction"
@@ -163,7 +163,7 @@ fn evaluate_convenience_equals_zero_conviction() {
     let via_explicit = layer.evaluate_with_conviction(buy_decision(1500), &portfolio, 0.0);
 
     match (via_convenience, via_explicit) {
-        (RiskDecision::Approved { decision: d1 }, RiskDecision::Approved { decision: d2 }) => {
+        (RiskDecision::Approved { decision: d1, .. }, RiskDecision::Approved { decision: d2, .. }) => {
             assert_eq!(d1.size_bps, d2.size_bps);
         }
         (a, b) => panic!("expected both Approved; got ({a:?}, {b:?})"),

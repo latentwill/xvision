@@ -48,6 +48,8 @@ pub enum RuleVerdict {
     Modify(TraderDecision, VetoReason),
     /// Decision is rejected; short-circuit evaluation.
     Veto(VetoReason),
+    /// Decision passes unchanged but a warning is recorded in the outcome.
+    Warn(String),
 }
 
 // ── RiskLayer ─────────────────────────────────────────────────────────────────
@@ -210,6 +212,7 @@ impl RiskLayer {
 
         let mut current = decision;
         let mut first_modify_reason: Option<VetoReason> = None;
+        let mut warnings: Vec<String> = Vec::new();
 
         for rule in &self.rules {
             let ctx = RiskEvalContext {
@@ -234,6 +237,10 @@ impl RiskLayer {
                     debug!(rule = rule.name(), ?reason, "veto");
                     return RiskDecision::Vetoed { original, reason };
                 }
+                RuleVerdict::Warn(msg) => {
+                    debug!(rule = rule.name(), "warn");
+                    warnings.push(msg);
+                }
             }
         }
 
@@ -254,8 +261,9 @@ impl RiskLayer {
                 original,
                 modified: current,
                 reason,
+                warnings,
             },
-            None => RiskDecision::Approved { decision: current },
+            None => RiskDecision::Approved { decision: current, warnings },
         }
     }
 
@@ -276,7 +284,7 @@ impl RiskLayer {
                 conviction,
             };
             match rule.evaluate(&ctx) {
-                RuleVerdict::Pass => {}
+                RuleVerdict::Pass | RuleVerdict::Warn(_) => {}
                 RuleVerdict::Modify(mut modified, reason) => {
                     if first_modify_reason.is_none() {
                         *first_modify_reason = Some(reason);
@@ -523,12 +531,12 @@ mod integration {
         );
     }
 
-    /// Scenario (b): BTC long, 2500 bps → Vetoed(PositionTooLarge).
+    /// Scenario (b): BTC long, 2500 bps → Approved with a non-empty warnings vec.
     ///
     /// Note: `TraderDecision.size_bps` has a garde max of 2000; we construct
     /// the decision directly (bypassing garde) to test the risk rule itself.
     #[test]
-    fn scenario_b_veto_position_too_large() {
+    fn scenario_b_warn_position_too_large() {
         use tests_common::{flat_portfolio, make_decision};
 
         let layer = layer_from_files();
@@ -538,16 +546,15 @@ mod integration {
         decision.size_bps = 2500; // bypass garde for rule-level test
         let portfolio = flat_portfolio();
         let result = layer.evaluate(decision, &portfolio);
-        assert!(
-            matches!(
-                result,
-                RiskDecision::Vetoed {
-                    reason: VetoReason::PositionTooLarge,
-                    ..
-                }
-            ),
-            "expected Vetoed(PositionTooLarge), got {result:?}"
-        );
+        match &result {
+            RiskDecision::Approved { warnings, .. } => {
+                assert!(
+                    !warnings.is_empty(),
+                    "expected non-empty warnings for oversize position, got {result:?}"
+                );
+            }
+            other => panic!("expected Approved with warnings, got {other:?}"),
+        }
     }
 
     #[test]
@@ -644,7 +651,7 @@ mod integration {
         let decision = make_decision(Action::Buy, Direction::Long, 1500, 2.0, 5.0);
         let result = layer.evaluate(decision, &flat_portfolio());
         match result {
-            RiskDecision::Approved { decision } => {
+            RiskDecision::Approved { decision, .. } => {
                 assert_eq!(decision.asset, AssetSymbol::Btc);
             }
             other => panic!("expected Approved, got {other:?}"),
@@ -691,14 +698,8 @@ mod integration {
         let result = layer.evaluate(decision, &flat_portfolio());
 
         assert!(
-            matches!(
-                result,
-                RiskDecision::Vetoed {
-                    reason: VetoReason::PositionTooLarge,
-                    ..
-                }
-            ),
-            "expected appended oversize modify to be vetoed, got {result:?}"
+            matches!(result, RiskDecision::Modified { .. }),
+            "expected appended oversize modify to produce Modified (MaxPositionSize now warns), got {result:?}"
         );
     }
 }

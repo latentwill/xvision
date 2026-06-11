@@ -52,14 +52,19 @@ pub async fn search(ctx: &ApiContext, q: &str, opts: &SearchQuery) -> ApiResult<
     result
 }
 
-/// Upsert a strategy into the index. Best-effort — logs and returns
-/// `Ok(())` on failure so the calling create/update path isn't blocked by
-/// a transient index write error.
-pub async fn upsert_strategy(ctx: &ApiContext, strategy: &Strategy) {
+/// Upsert a strategy into the index. Returns an error so callers can
+/// decide whether to propagate or log-and-continue.
+pub async fn upsert_strategy(ctx: &ApiContext, strategy: &Strategy) -> anyhow::Result<()> {
     let entry = strategy_entry(strategy);
-    if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
-        tracing::warn!(error = %e, agent_id = %strategy.manifest.id, "search index upsert (strategy) failed");
-    }
+    SearchIndex::upsert(&ctx.db, &entry).await?;
+    Ok(())
+}
+
+/// Return all strategy IDs currently in the search index, newest-first.
+pub async fn list_strategy_ids(ctx: &ApiContext) -> ApiResult<Vec<String>> {
+    SearchIndex::list_ids(&ctx.db, SearchKind::Strategy)
+        .await
+        .map_err(|e| ApiError::Internal(format!("list strategy ids from index: {e}")))
 }
 
 /// Drop a strategy from the index. Called when a strategy is deleted.
@@ -69,27 +74,20 @@ pub async fn delete_strategy(ctx: &ApiContext, agent_id: &str) {
     }
 }
 
-/// Upsert an eval run into the index. Best-effort.
-pub async fn upsert_run(ctx: &ApiContext, run: &Run) {
+/// Upsert an eval run into the index. Returns an error so callers can
+/// decide whether to propagate or log-and-continue.
+pub async fn upsert_run(ctx: &ApiContext, run: &Run) -> anyhow::Result<()> {
     let entry = run_entry(run);
-    if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
-        tracing::warn!(error = %e, run_id = %run.id, "search index upsert (run) failed");
-    }
+    SearchIndex::upsert(&ctx.db, &entry).await?;
+    Ok(())
 }
 
-/// Upsert an eval finding into the index. Best-effort.
-///
-/// No production callsite calls this yet — `RunStore::record_finding`
-/// has no orchestrator wired in v1. The hook is exposed so the future
-/// findings-extraction path (Phase 3.C orchestration) can call it as a
-/// one-liner when finalizing a finding. The cold-start `reindex_all`
-/// walker already picks up any findings persisted directly via tests
-/// or a future orchestrator without further coordination.
-pub async fn upsert_finding(ctx: &ApiContext, finding: &Finding) {
+/// Upsert an eval finding into the index. Returns an error so callers can
+/// decide whether to propagate or log-and-continue.
+pub async fn upsert_finding(ctx: &ApiContext, finding: &Finding) -> anyhow::Result<()> {
     let entry = finding_entry(finding);
-    if let Err(e) = SearchIndex::upsert(&ctx.db, &entry).await {
-        tracing::warn!(error = %e, finding_id = %finding.id, "search index upsert (finding) failed");
-    }
+    SearchIndex::upsert(&ctx.db, &entry).await?;
+    Ok(())
 }
 
 /// Index every canonical scenario. Scenarios are static at build time so
@@ -185,6 +183,36 @@ pub async fn seed_actions(ctx: &ApiContext) {
     }
 }
 
+/// Lightweight diagnostic read: return all strategy artifact IDs currently
+/// in the search index. Opens a minimal read-only pool directly against the
+/// given db path so callers (e.g. `xvn doctor`) that cannot call
+/// `ApiContext::open` (migrations print to stdout, corrupting `--json`)
+/// can still get an accurate count. Returns an empty vec on any error —
+/// the table may not exist yet on a fresh install.
+pub async fn indexed_strategy_ids_raw(db_path: &std::path::Path) -> Vec<String> {
+    if !db_path.exists() {
+        return vec![];
+    }
+    let opts = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true);
+    let pool = match sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+    {
+        Ok(p) => p,
+        Err(_) => return vec![],
+    };
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT artifact_id FROM search_index WHERE kind = 'strategy'")
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+    pool.close().await;
+    rows
+}
+
 /// Cold-start walker: re-derive every index row from the authoritative
 /// stores. Safe to call on a fresh DB and on a populated one — `upsert`
 /// is idempotent.
@@ -199,7 +227,11 @@ pub async fn reindex_all(ctx: &ApiContext) {
         Ok(ids) => {
             for id in ids {
                 match store.load(&id).await {
-                    Ok(strategy) => upsert_strategy(ctx, &strategy).await,
+                    Ok(strategy) => {
+                        if let Err(e) = upsert_strategy(ctx, &strategy).await {
+                            tracing::warn!(error = %e, agent_id = %id, "reindex: upsert strategy failed");
+                        }
+                    }
                     Err(e) => tracing::warn!(error = %e, agent_id = %id, "reindex: load strategy failed"),
                 }
             }
@@ -215,11 +247,15 @@ pub async fn reindex_all(ctx: &ApiContext) {
     match run_store.list(ListFilter::default()).await {
         Ok(runs) => {
             for run in runs {
-                upsert_run(ctx, &run).await;
+                if let Err(e) = upsert_run(ctx, &run).await {
+                    tracing::warn!(error = %e, run_id = %run.id, "reindex: upsert run failed");
+                }
                 match run_store.read_findings(&run.id).await {
                     Ok(findings) => {
                         for f in findings {
-                            upsert_finding(ctx, &f).await;
+                            if let Err(e) = upsert_finding(ctx, &f).await {
+                                tracing::warn!(error = %e, finding_id = %f.id, "reindex: upsert finding failed");
+                            }
                         }
                     }
                     Err(e) => tracing::warn!(error = %e, run_id = %run.id, "reindex: read findings failed"),
@@ -417,7 +453,7 @@ mod tests {
             recommendation: None,
             created_at: None,
         };
-        upsert_finding(&ctx, &f).await;
+        upsert_finding(&ctx, &f).await.unwrap();
 
         // By summary token
         let by_summary = search(&ctx, "drawdowns", &SearchQuery::default()).await.unwrap();
@@ -480,8 +516,8 @@ mod tests {
 
         // Two upserts in a row — second must not error and must not
         // create a duplicate row in the index.
-        upsert_run(&ctx, &run).await;
-        upsert_run(&ctx, &run).await;
+        upsert_run(&ctx, &run).await.unwrap();
+        upsert_run(&ctx, &run).await.unwrap();
 
         let hits = search(
             &ctx,
@@ -509,5 +545,79 @@ mod tests {
         reindex_all(&ctx).await;
         let count_after_second = search(&ctx, "", &SearchQuery::default()).await.unwrap().len();
         assert_eq!(count_after_first, count_after_second);
+    }
+
+    #[tokio::test]
+    async fn list_strategy_ids_empty_on_fresh_db() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let ids = list_strategy_ids(&ctx).await.unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_strategy_ids_returns_upserted_ids() {
+        use crate::search::{IndexEntry, SearchIndex, SearchKind};
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let now = chrono::Utc::now();
+        for (id, offset_secs) in [("sid-a", 100i64), ("sid-b", 200)] {
+            SearchIndex::upsert(
+                &ctx.db,
+                &IndexEntry {
+                    artifact_id: id.into(),
+                    kind: SearchKind::Strategy,
+                    title: id.into(),
+                    summary: "x".into(),
+                    tags: vec![],
+                    updated_at: now + chrono::Duration::seconds(offset_secs),
+                    href: format!("/strategies/{id}"),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let ids = list_strategy_ids(&ctx).await.unwrap();
+        // newest first: sid-b has the higher offset
+        assert_eq!(ids, vec!["sid-b", "sid-a"]);
+    }
+
+    #[tokio::test]
+    async fn list_strategy_ids_excludes_non_strategy_kinds() {
+        use crate::search::{IndexEntry, SearchIndex, SearchKind};
+
+        let (ctx, _dir) = fresh_ctx().await;
+        let now = chrono::Utc::now();
+        SearchIndex::upsert(
+            &ctx.db,
+            &IndexEntry {
+                artifact_id: "r1".into(),
+                kind: SearchKind::Run,
+                title: "a run".into(),
+                summary: "x".into(),
+                tags: vec![],
+                updated_at: now,
+                href: "/eval-runs/r1".into(),
+            },
+        )
+        .await
+        .unwrap();
+        SearchIndex::upsert(
+            &ctx.db,
+            &IndexEntry {
+                artifact_id: "s1".into(),
+                kind: SearchKind::Strategy,
+                title: "a strategy".into(),
+                summary: "x".into(),
+                tags: vec![],
+                updated_at: now,
+                href: "/strategies/s1".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let ids = list_strategy_ids(&ctx).await.unwrap();
+        assert_eq!(ids, vec!["s1"], "run id must not appear in strategy list");
     }
 }
