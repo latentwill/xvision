@@ -56,6 +56,16 @@ pub struct CycleConfig {
     /// When empty the orchestrator uses the single day+baseline path unchanged.
     /// Populated from `AutoOptimizerConfig.regime_set`.
     pub regime_set: Vec<RegimeWindow>,
+    /// Strict per-call output-token cap applied to EVERY LLM dispatch this
+    /// cycle (candidate paper-test trader decisions, the experiment writer,
+    /// and the judge). `None` = no cycle-level cap; each slot keeps its own
+    /// `max_tokens`. `Some(n)` is the cap the CLI installs via
+    /// [`crate::autooptimizer::metering_dispatch::MaxTokensCapDispatch`] —
+    /// enforcement happens at the provider boundary, so this field is the
+    /// recorded cycle-level intent that travels with the config.
+    ///
+    /// Set by `xvn optimizer run-cycle --max-output-tokens N`.
+    pub max_output_tokens: Option<u32>,
 }
 
 pub struct CycleResult {

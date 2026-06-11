@@ -225,6 +225,16 @@ pub struct RunCycleArgs {
         help = "Candidate experiments per parent this cycle (1..=64; overrides config)"
     )]
     pub experiments_per_cycle: Option<u32>,
+    /// Strict per-call output-token cap applied to candidate eval +
+    /// mutator/judge dispatches this cycle. When set, every LLM call's
+    /// provider `max_tokens` is forced to this value at dispatch time;
+    /// unset means no cycle-level cap (each slot keeps its own).
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Strict per-call output-token cap applied to candidate eval dispatches this cycle"
+    )]
+    pub max_output_tokens: Option<u32>,
 }
 
 #[derive(Args, Debug)]
@@ -792,7 +802,21 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         &cfg.mutator.model,
     )
     .await?;
-    let raw_dispatch = Arc::clone(&binding.dispatch);
+    // Strict per-call output-token cap (run-cycle --max-output-tokens):
+    // wrap the raw provider dispatch so EVERY cycle LLM call (paper-test
+    // trader decisions, experiment writer/mutator, judge) has its
+    // `max_tokens` forced to the operator's cap at the provider boundary.
+    // The cost meter wraps this layer so it still tallies real token usage
+    // from the response. When the flag is unset, behaviour is unchanged.
+    let raw_dispatch: Arc<dyn LlmDispatch + Send + Sync> = match args.max_output_tokens {
+        Some(cap) => Arc::new(
+            xvision_engine::autooptimizer::metering_dispatch::MaxTokensCapDispatch::new(
+                Arc::clone(&binding.dispatch),
+                cap,
+            ),
+        ),
+        None => Arc::clone(&binding.dispatch),
+    };
 
     // F11/F23: one shared meter for the whole cycle.
     let meter: Arc<std::sync::Mutex<CycleMeter>> = Arc::new(std::sync::Mutex::new(CycleMeter::default()));
@@ -919,6 +943,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         explicit_parent_hashes,
         objective: cfg.objective,
         regime_set: cfg.regime_set.clone(),
+        max_output_tokens: args.max_output_tokens,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;

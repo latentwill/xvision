@@ -100,11 +100,44 @@ impl LlmDispatch for CostMeteringDispatch {
     }
 }
 
+/// Wraps an [`LlmDispatch`] and forces a strict per-call output-token
+/// cap on every request, overriding whatever `max_tokens` the request
+/// carried (per-slot value, model default, or `None`).
+///
+/// Used by `xvn optimizer run-cycle --max-output-tokens N`: the CLI
+/// wraps the ONE dispatch every cycle LLM call funnels through — the
+/// paper-test backtest trader decisions AND the experiment writer
+/// (mutator) AND the judge — so the operator's cap is applied at the
+/// provider boundary for all candidate evaluations and mutator/judge
+/// dispatches this cycle. When the operator does not pass the flag the
+/// CLI simply doesn't install this wrapper, so behaviour is unchanged
+/// (each slot keeps its own `max_tokens`).
+pub struct MaxTokensCapDispatch {
+    inner: Arc<dyn LlmDispatch + Send + Sync>,
+    /// Strict per-call output-token cap applied to every request.
+    cap: u32,
+}
+
+impl MaxTokensCapDispatch {
+    pub fn new(inner: Arc<dyn LlmDispatch + Send + Sync>, cap: u32) -> Self {
+        Self { inner, cap }
+    }
+}
+
+#[async_trait]
+impl LlmDispatch for MaxTokensCapDispatch {
+    async fn complete(&self, mut req: LlmRequest) -> anyhow::Result<LlmResponse> {
+        req.max_tokens = Some(self.cap);
+        self.inner.complete(req).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent::llm::{ContentBlock, LlmResponse, StopReason};
     use chrono::Utc;
+    use std::sync::Mutex as StdMutex;
     use xvision_core::providers::{Catalog, ModelEntry};
 
     /// Inner dispatch returning fixed token counts so the meter has something to
@@ -186,6 +219,49 @@ mod tests {
         assert_eq!(m.unpriced_calls, 0);
         assert_eq!(m.input_tokens, 1_000_000);
         assert_eq!(m.output_tokens, 1_000_000);
+    }
+
+    /// Records the `max_tokens` of the request it last saw, so a test can
+    /// assert the cap reached the provider boundary.
+    struct CapturingDispatch {
+        seen_max_tokens: Arc<StdMutex<Option<u32>>>,
+    }
+
+    #[async_trait]
+    impl LlmDispatch for CapturingDispatch {
+        async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+            *self.seen_max_tokens.lock().unwrap() = req.max_tokens;
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text { text: "{}".into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: 0,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cap_overrides_max_tokens_on_every_request() {
+        let seen = Arc::new(StdMutex::new(None));
+        let dispatch = MaxTokensCapDispatch::new(
+            Arc::new(CapturingDispatch {
+                seen_max_tokens: Arc::clone(&seen),
+            }),
+            777,
+        );
+
+        // Request carrying None → capped to Some(777).
+        dispatch
+            .complete(req("google/gemini-3.1-flash-lite"))
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), Some(777));
+
+        // Request carrying a larger per-slot value → still forced to the cap.
+        let mut big = req("google/gemini-3.1-flash-lite");
+        big.max_tokens = Some(172_000);
+        dispatch.complete(big).await.unwrap();
+        assert_eq!(*seen.lock().unwrap(), Some(777));
     }
 
     #[tokio::test]

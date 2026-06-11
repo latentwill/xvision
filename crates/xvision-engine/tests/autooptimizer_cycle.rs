@@ -351,6 +351,7 @@ async fn run_cycle_smoke() {
         explicit_parent_hashes: Vec::new(),
         objective: Default::default(),
         regime_set: vec![],
+        max_output_tokens: None,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -515,6 +516,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         explicit_parent_hashes: Vec::new(),
         objective: Default::default(),
         regime_set: vec![],
+        max_output_tokens: None,
     };
 
     let result = run_cycle(

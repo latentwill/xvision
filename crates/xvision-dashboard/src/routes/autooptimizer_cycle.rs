@@ -654,6 +654,9 @@ pub(super) fn build_cycle_config(
         explicit_parent_hashes,
         objective: cfg.objective,
         regime_set: cfg.regime_set.clone(),
+        // The dashboard cycle launcher does not (yet) surface a per-cycle
+        // output-token cap; preserve prior behaviour (no cycle-level cap).
+        max_output_tokens: None,
     }
 }
 
