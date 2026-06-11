@@ -206,6 +206,28 @@ Inherits the dashboard redesign brief (`docs/design/README.md`) wholesale:
 - No marketplace or lineage-page redesign (they keep linking into
   StrategyInspector).
 - No DSPy prompt-optimizer surface changes.
-- No backend changes beyond a possible events-by-cycle read endpoint for
-  replay (see §6).
+- Backend changes are limited to the four items in §8 — nothing else.
 - No new charting library; no popups/modals of any kind (house rule).
+
+## 8 · Backend scope (amended 2026-06-11 after plan-review-gate escalation)
+
+Plan-review feasibility analysis found that cycle events are broadcast to the
+live SSE stream but never persisted (`autooptimizer_events` only ever receives
+`schedule_skipped`), and that the events carry too little data for the
+designed feed/board (no experiment hash or writer on `mutation_proposed`, no
+ΔSharpe on `mutation_gated`). The operator chose to extend backend scope
+rather than degrade the design. The authorized backend work, all additive and
+back-compatible:
+
+1. **Events-by-cycle read endpoint** — `GET /api/autooptimizer/cycles/:id/events`
+   over the persisted event log (the original §6 allowance).
+2. **River read endpoint** — `GET /api/autooptimizer/river`: lineage nodes
+   LEFT-JOINed with gate scores (`child_day_score`, `delta_day`); read-only,
+   no new computation.
+3. **Progress-event enrichment** — additive `#[serde(default)]` fields:
+   `MutationProposed` gains `child_hash` and `mutator_model`;
+   `MutationGated` gains `delta_day`. Existing consumers unaffected.
+4. **Cycle-event persistence** — the dashboard's existing broadcast point
+   also appends each event to `autooptimizer_events` (kind via the existing
+   `event_kind()` mapping, payload = the serialized event), giving replay a
+   data source. Pruning continues via the existing `prune_old_events`.
