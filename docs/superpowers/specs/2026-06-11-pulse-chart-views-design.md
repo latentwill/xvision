@@ -56,6 +56,28 @@ Unrequested sections are returned as empty vectors (not nulls) to keep the
 existing `RunChartPayload` shape and generated TS types stable; the new
 `baseline_equity` field is the only schema addition.
 
+Implementation contract (design-review round 1 outcomes):
+
+- `include` parses into an explicit allowlist struct `IncludeSet`
+  (`equity`, `bars`, `markers`, `baseline`) — unknown tokens ignored,
+  no raw-string matching in business logic. `IncludeSet::parse` is a pure
+  function with its own unit tests.
+- `Indicators` stays **non-optional**; when indicators are skipped the
+  payload carries an empty `Indicators` (all-empty vectors via
+  `Indicators::default()`-style constructor, NOT `compute_indicators(&[])`),
+  so the generated TS type is unchanged and the skip is semantically
+  explicit.
+- Baseline is computed only for backtest runs with a resolved scenario;
+  live runs (and runs whose asset has no cached bars for the window)
+  return `baseline_equity: null`, which the frontend renders as the
+  per-view empty card. A baseline request may trigger the same internal
+  bar load as today's full payload (cache-miss cost unchanged).
+- **Codegen:** the new field gets the same ts-rs export attributes as the
+  rest of `RunChartPayload`; regenerate the TS types
+  (`cargo test -p xvision-engine --features ts-export`) before frontend
+  work so `frontend/web/src/api/types.gen/RunChartPayload.ts` includes
+  `baseline_equity`.
+
 ### 2. Hero drawdown becomes a band
 
 `PulseEquityChart` keeps the drawdown column feeding the `xvnAreaFill`
@@ -69,11 +91,20 @@ styling):
 
 `[ Return % ] [ Price + trades ] [ vs Buy & Hold ] [ Drawdown ] [ All runs ]`
 
+- The switcher renders as its **own full-width sub-row** below the
+  existing header flex row and above the chart slot (the header row
+  already carries eyebrow/name/link/freshness/execution chip and would
+  crowd at small breakpoints).
 - Same 210px chart slot and KPI rail; only the canvas swaps.
-- Selected view persists to `localStorage` key `xvn:pulse-view`.
-- Per-view data loads lazily (TanStack Query `enabled` on selection);
-  query keys include the `include` set so payload variants cache
-  independently.
+- Selected view persists to `localStorage` key `xvn:pulse-view`, read in
+  the `useState` initializer (Vite SPA, no SSR), so lazy-view queries
+  never flash-fire the default view's query first. URL `?view=` deep-link
+  is out of scope for this pass.
+- Per-view data loads lazily (TanStack Query `enabled` on selection).
+  Query key shape is locked: `["chart", "run", id, includeKey]` where
+  `includeKey` is the sorted, comma-joined include set (`""` for the full
+  payload), so payload variants cache independently. The client
+  `getRunChart(runId, include?)` takes a typed union of known tokens.
 
 | View | Data | Rendering |
 |---|---|---|
@@ -85,7 +116,18 @@ styling):
 
 "All runs" normalization is client-side: each run's equity → return %,
 time → elapsed fraction (0..1) of that run's own window, so runs over
-different scenarios/windows overlay meaningfully.
+different scenarios/windows overlay meaningfully. The run-id list is
+derived client-side from the already-loaded runs-list query (no new
+server selector); the frontend discards the compare payload's
+`price_backdrop` (threading `include` into the compare endpoint is out
+of scope). Run identification without popups: the hero run is labeled
+inline at line end; hovering any other line highlights it and shows its
+strategy/run label in an inline caption row under the chart. The x-axis
+carries no wall-clock labels in this view (elapsed-fraction axis).
+
+Candle-view note: the home Price + trades view mounts `KlineCandlePane`
+bare — no `ChartFrame` wrapper — so no chart-v2 range/zoom window events
+are dispatched into other charts on the page.
 
 ### 4. Prefetch
 
@@ -120,15 +162,35 @@ no server compute.
 
 ## Testing
 
-- Rust: unit tests for include filtering (equity-only performs no bar
-  fetch / indicator compute — assert via payload emptiness and a
-  test-visible work counter or by stubbing the bar source), baseline
-  correctness against a known bar fixture, alignment of baseline to
-  equity timestamps.
+- Rust test mechanism (concrete): `IncludeSet::parse` is pure and unit
+  tested directly (token sets, unknown tokens, empty/garbage input →
+  equity-only behavior). Payload assembly is tested through the existing
+  in-process SQLite harness pattern (as used by `eval/store.rs` tests):
+  seed a fixture run + equity curve + bar cache in a temp SQLite DB,
+  call `build_run_payload` with each include variant, and assert payload
+  shape — equity-only ⇒ `bars`, `markers`, every `Indicators` vector
+  empty; `bars,markers` ⇒ indicators empty, bars/markers populated;
+  `equity,baseline` ⇒ baseline aligned to equity timestamps and correct
+  against the fixture bars ($100k buy-and-hold); live-run fixture ⇒
+  `baseline_equity: null`. "Skipped work" is enforced structurally: bar
+  loading and indicator computation sit behind single
+  `include.needs_bars()` / `include.needs_indicators()` branches, so
+  empty-output assertions are a sufficient observable (no work counter,
+  no trait seam needed).
 - Vitest: selector tests (normalization, baseline mapping, view
   persistence), per-view component render tests with mocked queries,
   switcher interaction (chip click → lazy query fires → canvas swaps).
 - Coverage per `.coverage-thresholds.json`.
+
+## Coordination
+
+The main checkout currently carries uncommitted in-flight edits to
+`crates/xvision-engine/src/eval/run.rs` / `eval/store.rs` /
+`crates/xvision-dashboard/src/routes/*` from concurrent sessions. This
+track branches from `main@032a3149`; before merge, rebase onto whatever
+those tracks land. This track's single-writer files:
+`crates/xvision-engine/src/api/chart.rs`,
+`frontend/web/src/components/home/**`, `frontend/web/src/features/home/**`.
 
 ## Out of scope
 
