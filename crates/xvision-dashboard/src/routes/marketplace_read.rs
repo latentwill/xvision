@@ -65,6 +65,34 @@ pub struct StatusOut {
     /// The API key is NEVER exposed here; the browser only needs the public
     /// `api_base` / `gate_action_cid` / `pkp_id` to invoke the gate action.
     pub lit: Option<LitStatusOut>,
+    /// Public IPFS read gateway base (no trailing slash, no `/ipfs`) the
+    /// frontend uses to build "open bundle" links: `${public_gateway}/ipfs/<cid>`.
+    /// Sourced from the configured backend's gateway (`PINATA_GATEWAY`) when
+    /// set, else the vendor-neutral default. This is the READ gateway only —
+    /// the pinning API URL is NEVER exposed here.
+    pub public_gateway: String,
+}
+
+/// Vendor-neutral default public read gateway. Mirrors
+/// `xvision_marketplace::ipfs::DEFAULT_GATEWAY` (kept in sync; that constant is
+/// private to the marketplace crate). `dweb.link` is the IPFS-canonical public
+/// gateway, not a vendor product.
+const DEFAULT_PUBLIC_GATEWAY: &str = "https://dweb.link";
+
+/// The public read gateway base for "open bundle" links. Prefers the
+/// configured backend's gateway (`PINATA_GATEWAY`, surfaced on the startup
+/// `pinata` config) when non-empty, else the vendor-neutral default. Returns
+/// only the gateway base — NEVER the pinning API URL.
+fn public_gateway(state: &AppState) -> String {
+    let configured = state
+        .marketplace_chain()
+        .and_then(|c| c.pinata.as_ref())
+        .map(|p| p.gateway.trim().trim_end_matches('/'))
+        .filter(|g| !g.is_empty());
+    match configured {
+        Some(g) => g.to_string(),
+        None => DEFAULT_PUBLIC_GATEWAY.to_string(),
+    }
 }
 
 /// Public-safe Lit config for the frontend. Deliberately omits `api_key`.
@@ -129,6 +157,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusOut> {
         last_error: snap.last_error.clone(),
         contracts: contracts_from_env(),
         lit: lit_status(&state),
+        public_gateway: public_gateway(&state),
     })
 }
 
@@ -242,7 +271,7 @@ pub enum BundleResponse {
 /// Resolution:
 /// - `ipfs://<cid>` — gateway GET via [`PinataDriver`] (gets are
 ///   unauthenticated; an empty `PINATA_JWT` is fine). Gateway override via
-///   `PINATA_GATEWAY`, default the public Pinata gateway. Fetch failure →
+///   `PINATA_GATEWAY`, default the vendor-neutral public gateway. Fetch failure →
 ///   503 (upstream dependency, not a client error).
 /// - `xvn://strategy/<ulid>` — local store load + canonical JSON (404 when
 ///   the strategy file is absent on this host).

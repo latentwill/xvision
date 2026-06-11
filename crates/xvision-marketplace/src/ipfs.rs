@@ -11,10 +11,17 @@ use serde::Deserialize;
 
 use crate::error::MarketplaceError;
 
-/// Default Pinata pinning API base (overridable for tests).
+/// Default pinning API base for the legacy [`PinataDriver`] path only — this
+/// is the one place an external vendor (Pinata) is named, and it is only
+/// reachable when an operator opts into the Pinata pinning backend by setting
+/// `PINATA_JWT`. The default backend is self-hosted Kubo; nothing here is
+/// dialed unless the alternative Pinata backend is explicitly configured.
 const DEFAULT_PINATA_API: &str = "https://api.pinata.cloud";
-/// Default public gateway base (overridable for tests / dedicated gateways).
-const DEFAULT_GATEWAY: &str = "https://gateway.pinata.cloud";
+/// Default public read gateway base (overridable for tests / dedicated
+/// gateways). Vendor-neutral: `dweb.link` is the IPFS-canonical public
+/// gateway, not a vendor product — we never bake an external vendor's gateway
+/// into a self-hosted, open-source product as the default.
+const DEFAULT_GATEWAY: &str = "https://dweb.link";
 /// HTTP timeout for Pinata pin/gateway requests. Without it a hung connection
 /// to Pinata or the gateway would block a `put`/`get` future forever.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -161,6 +168,15 @@ impl IpfsStore for PinataDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_gateway_falls_back_to_vendor_neutral_default() {
+        // The neutral default must be the IPFS-canonical public gateway, never
+        // a vendor product (no pinata.cloud baked into a self-hosted product).
+        let d = PinataDriver::new("jwt", "");
+        assert_eq!(d.gateway(), "https://dweb.link");
+        assert!(!d.gateway().contains("pinata"));
+    }
 
     #[test]
     fn is_configured_reflects_jwt_presence() {
