@@ -23,9 +23,14 @@
  * ## js_params the action expects (Lit-runtime only)
  *   { pkpId, message }
  *
+ * PARAM ACCESS — Naga ("Chipotle" v3) jsParams object, NOT bare globals.
+ * Datil (V0) spread jsParams into global scope; Naga removed that, so params
+ * arrive ONLY on the `jsParams` object. The invoke guard below destructures
+ * `jsParams` and passes the values into `main({ pkpId, message })`.
+ *
  * `main` is Lit-runtime-only (it touches the `Lit.Actions` globals). It is
  * guarded behind `typeof Lit` so importing this file in Node (for `node
- * --check` / the deploy-validity test, where `Lit`/js_params are undefined)
+ * --check` / the deploy-validity test, where `Lit`/jsParams are undefined)
  * does not execute the action.
  */
 
@@ -36,7 +41,10 @@ async function main({ pkpId, message }) {
 }
 
 // The Lit runtime invokes the top-level expression. Guarded so importing this
-// file (in Node, where `Lit`/js_params are undefined) does not execute it.
+// file (in Node, where `Lit`/jsParams are undefined) does not execute it.
+// Params arrive on the Naga `jsParams` object (Datil V0's bare-global spread
+// was removed), so destructure them off jsParams and pass them into main.
 if (typeof Lit !== "undefined" && typeof Lit.Actions !== "undefined") {
+  const { pkpId, message } = jsParams;
   main({ pkpId, message });
 }
