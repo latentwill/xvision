@@ -29,3 +29,15 @@ Post attestation on listing 2 (cycles 20, sharpe 1.5) → GET attestations shows
 
 ## Outcome
 (append after Task 3)
+Live-verified 2026-06-11 on Mantle Sepolia: attestation posted via route (tx 0x213e72…),
+read back from chain, attestation_count=1 flows to the "attested" badge after re-poll;
+content update live (tx 0xe73941…, idempotent re-point); earnings via chunked Sold scan:
+listing 2 shows units_sold=2 / earned_usdc=1.90 within 40s of startup (deploy-block cursor
+39700000). Two live findings fixed mid-phase: (1) the RPC silently returns EMPTY for
+getLogs ranges >~100k blocks (and errors on multi-M ranges) → chunked scan with persistent
+cursor, 9k chunks, ≤10/tick, failed chunk retries without advancing; (2) attestation-count
+flicker on per-listing RPC errors → carry-forward overlay. Review recommendations applied:
+"attested" wording (permissionless self-attestation must not claim "verified"), empty
+verdicts row hidden. Target-dir note: the review agent's temp worktree contaminated the
+isolated cargo dir (foreign xvision-identity rlib) — fixed with scoped cargo clean;
+per-checkout target dirs remain the rule.
