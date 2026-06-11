@@ -26,6 +26,9 @@ const indexedListing = {
   name: "BTC Momentum",
   symmetry: "radial-6",
   palette: "ember",
+  attestation_count: 2,
+  units_sold: 3,
+  earned_usdc: 12.5,
 };
 
 const freeListing = {
@@ -37,6 +40,9 @@ const freeListing = {
   transferable_license: false,
   gen_art_seed: "seed-free",
   name: "Open One",
+  attestation_count: 0,
+  units_sold: 0,
+  earned_usdc: 0,
 };
 
 function mockOkJson(body: unknown) {
@@ -89,10 +95,12 @@ describe("ApiMarketplaceData.listListings", () => {
     expect(sealed.tier).toBe("sealed");
     expect(sealed.priceUsdc).toBe(49);
     expect(sealed.transferableLicense).toBe(true);
-    expect(sealed.verification).toBe("unverified");
+    // attestation_count > 0 → verified (badge stays positive-only)
+    expect(sealed.verification).toBe("verified");
     expect(sealed.acceptsX402).toBe(true);
     expect(sealed.clones).toBe(0);
-    expect(sealed.buyers).toEqual({ humans: 0, agents: 0 });
+    // units_sold approximated as human buyers (agents not distinguished on-chain)
+    expect(sealed.buyers).toEqual({ humans: 3, agents: 0 });
     expect(sealed.return30dPct).toBe(0);
     expect(sealed.sharpe).toBe(0);
     expect(sealed.assets).toEqual([]);
@@ -102,6 +110,8 @@ describe("ApiMarketplaceData.listListings", () => {
     expect(open.tier).toBe("open");
     expect(open.priceUsdc).toBeNull(); // price 0 → null (open/free)
     expect(open.lineageId).toBe("4"); // empty agent_id falls back to listing id
+    expect(open.verification).toBe("unverified"); // zero attestations
+    expect(open.buyers).toEqual({ humans: 0, agents: 0 });
   });
 });
 
@@ -119,6 +129,8 @@ describe("ApiMarketplaceData.getListing", () => {
     expect(d.id).toBe("3");
     expect(d.genArtSeed).toBe("seed-xyz");
     expect(d.promise).toBe("BTC Momentum"); // chain metadata name
+    expect(d.verification).toBe("verified"); // attestation_count 2
+    expect(d.buyers).toEqual({ humans: 3, agents: 0 }); // units_sold approximation
     expect(d.metrics).toEqual({
       return30dPct: 0,
       sharpe: 0,

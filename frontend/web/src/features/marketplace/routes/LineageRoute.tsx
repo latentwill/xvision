@@ -6,6 +6,7 @@
 // Per addendum §1: queryKey ["marketplace", "listing", name] / ["marketplace", "viewer"]
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiFetch } from "@/api/client";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { useWallet } from "@/features/marketplace/lib/wallet";
 import { faucetUsdc } from "@/features/marketplace/lib/chain";
@@ -285,6 +286,86 @@ function MoreFromCreatorCard({
   );
 }
 
+// ── Verified evals (on-chain attestations) ──────────────────────────────────
+// Fetched directly from the attestations route rather than threading the data
+// through `detail.onChain.attestations` — ApiMarketplaceData.getListing only
+// hits the listing route and has no attestation fetch, so populating the
+// OnChainReceipts shape there would mean a second fetch hidden inside the
+// data seam. The section owns its own query instead.
+
+/** Mirrors the backend `GET /api/marketplace/listings/:id/attestations` item. */
+interface AttestationItem {
+  attester: string;
+  posted_at_unix: number;
+  eval_result_uri: string;
+  eval_result_hash: string;
+  schema: string;
+}
+
+function truncMiddle(s: string): string {
+  if (s.length <= 12) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
+function VerifiedEvalsSection({ listingId }: { listingId: string }) {
+  const { data } = useQuery({
+    queryKey: ["marketplace", "attestations", listingId],
+    queryFn: () =>
+      apiFetch<{ items: AttestationItem[] }>(
+        `/api/marketplace/listings/${listingId}/attestations`,
+      ),
+    retry: false,
+  });
+
+  if (!data || data.items.length === 0) return null;
+
+  return (
+    <section
+      data-testid="verified-evals"
+      className="mx-6 mt-6 rounded-md border border-border bg-surface-card"
+    >
+      <div className="px-4 py-3 border-b border-border">
+        <span className="text-[12px] font-medium text-foreground">
+          Verified evals
+        </span>
+        <span className="ml-2 font-mono text-[10px] text-text-3">
+          on-chain eval attestations
+        </span>
+      </div>
+      <div>
+        {data.items.map((a, i) => (
+          <div
+            key={`${a.attester}-${a.posted_at_unix}-${i}`}
+            className={[
+              "flex items-center gap-3 px-4 py-2.5 flex-wrap",
+              i < data.items.length - 1 ? "border-b border-border-soft" : "",
+            ].join(" ")}
+          >
+            {/* v1: any posted attestation counts as an endorsement — the
+                registry carries no verdict field yet. */}
+            <span className="font-mono text-[10px] px-1.5 py-0.5 border border-gold/40 rounded-[3px] text-gold">
+              endorsed
+            </span>
+            <span className="font-mono text-[11.5px] text-text-2">
+              {truncMiddle(a.attester)}
+            </span>
+            <span className="font-mono text-[10.5px] text-text-3 min-w-0 truncate">
+              {a.eval_result_uri}
+            </span>
+            <span className="ml-auto font-mono text-[10.5px] text-text-3">
+              {new Date(a.posted_at_unix * 1000).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ────────────────────────────────────────────────────
 // Main route component
 // ────────────────────────────────────────────────────
@@ -552,6 +633,13 @@ export function LineageRoute() {
 
       {/* ===== INGREDIENT BANNER ===== */}
       <IngredientBanner ingredients={detail.ingredients} />
+
+      {/* ===== VERIFIED EVALS (inline, only for verified on-chain listings;
+            verification === "verified" ⇔ attestation_count > 0 in the
+            indexer mapping, so the fetch only fires when rows exist) ===== */}
+      {/^\d+$/.test(detail.id) && detail.verification === "verified" && (
+        <VerifiedEvalsSection listingId={detail.id} />
+      )}
 
       {/* ===== BELOW THE FOLD (2-col) ===== */}
       <div className="grid gap-6 p-6" style={{ gridTemplateColumns: "1fr 380px" }}>
