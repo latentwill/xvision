@@ -67,6 +67,7 @@ pub enum ScenarioOp {
     /// Create a new scenario.
     Create(CreateArgs),
     /// List scenarios (newest first, archived excluded by default).
+    #[command(visible_alias = "list")]
     Ls(LsArgs),
     /// Show a scenario by id. JSON shape matches the `scenario` slot
     /// inside `EvalRunExport` (q15 §3 / §6).

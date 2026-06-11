@@ -239,7 +239,15 @@ pub enum FetchError {
     Network(#[from] reqwest::Error),
     #[error("parse error: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("request timed out after {0}s")]
+    Timeout(u64),
 }
+
+/// Wall-clock timeout applied to every Alpaca HTTP request. U16(c): without
+/// this, a stalled fetch (empty creds, network black hole) hangs the eval
+/// indefinitely. On timeout the fetch path maps the reqwest error to
+/// [`FetchError::Timeout`] rather than the generic [`FetchError::Network`].
+const ALPACA_REQUEST_TIMEOUT_SECS: u64 = 30;
 
 type AlpacaRateLimiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>;
 
@@ -274,11 +282,18 @@ impl AlpacaBarsFetcher {
 
     pub fn with_rate_limit(base_url: String, api_key: String, api_secret: String, rpm: u32) -> Self {
         let quota = Quota::per_minute(std::num::NonZeroU32::new(rpm.max(1)).unwrap_or(nonzero!(200u32)));
+        // Build a client with a per-request timeout so a stalled fetch fails
+        // fast instead of hanging the eval (U16(c)). Fall back to the default
+        // client if the builder fails — the public signature stays unchanged.
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(ALPACA_REQUEST_TIMEOUT_SECS))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
             base_url,
             api_key,
             api_secret,
-            client: Client::new(),
+            client,
             rate_limiter: Arc::new(RateLimiter::direct(quota)),
         }
     }
@@ -320,7 +335,7 @@ impl AlpacaBarsFetcher {
                     ("limit", "10000"),
                     ("page_token", page_token.as_deref().unwrap_or("")),
                 ]);
-            let resp = req.send().await?;
+            let resp = req.send().await.map_err(map_request_error)?;
             match resp.status() {
                 StatusCode::OK => {}
                 StatusCode::UNAUTHORIZED => return Err(FetchError::Unauthorized),
@@ -343,7 +358,7 @@ impl AlpacaBarsFetcher {
                     return Err(FetchError::Network(resp.error_for_status().unwrap_err()));
                 }
             }
-            let payload: BarsResponse = resp.json().await?;
+            let payload: BarsResponse = resp.json().await.map_err(map_request_error)?;
             let raw = payload.bars.get(asset.venue_symbol).cloned().unwrap_or_default();
             out.extend(raw.into_iter().map(|b| MarketBar {
                 timestamp: b.t,
@@ -359,5 +374,50 @@ impl AlpacaBarsFetcher {
             }
         }
         Ok(out)
+    }
+}
+
+/// Map a reqwest error to the closest [`FetchError`]. Request/response timeouts
+/// (driven by the client's `.timeout(...)`) become [`FetchError::Timeout`] so
+/// callers can distinguish a hung fetch from a generic transport failure
+/// (U16(c)). Everything else stays [`FetchError::Network`].
+fn map_request_error(err: reqwest::Error) -> FetchError {
+    if err.is_timeout() {
+        FetchError::Timeout(ALPACA_REQUEST_TIMEOUT_SECS)
+    } else {
+        FetchError::Network(err)
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+
+    #[test]
+    fn timeout_variant_renders_seconds() {
+        let err = FetchError::Timeout(30);
+        assert_eq!(err.to_string(), "request timed out after 30s");
+    }
+
+    #[test]
+    fn timeout_constant_is_thirty_seconds() {
+        // The fetch path maps timeouts to `Timeout(ALPACA_REQUEST_TIMEOUT_SECS)`;
+        // pin the value so the operator-facing message stays accurate.
+        assert_eq!(ALPACA_REQUEST_TIMEOUT_SECS, 30);
+        let err = FetchError::Timeout(ALPACA_REQUEST_TIMEOUT_SECS);
+        assert_eq!(err.to_string(), "request timed out after 30s");
+    }
+
+    #[test]
+    fn with_rate_limit_signature_unchanged_builds_fetcher() {
+        // Smoke test: construction still succeeds and applies the timeout
+        // client without changing the public signature.
+        let fetcher = AlpacaBarsFetcher::with_rate_limit(
+            "https://example.test".to_string(),
+            "key".to_string(),
+            "secret".to_string(),
+            200,
+        );
+        assert_eq!(fetcher.base_url, "https://example.test");
     }
 }

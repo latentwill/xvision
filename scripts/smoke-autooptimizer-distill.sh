@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# DEPRECATED (2026-06-11): this script drove the manual memory-distillation
+# verbs `xvn optimizer run` / `xvn optimizer inspect`, which were REMOVED when
+# the optimizer CLI consolidated onto `xvn optimize`. The optimizer cycle now
+# drives distill/gate internally; there is no manual CLI surface to smoke here.
+# The underlying engine APIs (run_memory_distillation/gate_run/...) still exist
+# for the dashboard/flywheel, but are no longer reachable from the CLI.
+#
+# This script is kept as a no-op stub so existing references don't break.
+echo "smoke-autooptimizer-distill.sh is deprecated: the manual 'xvn optimizer run/inspect/gate' \
+distillation verbs were removed in the optimizer CLI consolidation. The cycle (\`xvn optimize run\`) \
+now drives distill/gate internally. Nothing to do." >&2
+exit 0
+
 usage() {
   cat >&2 <<'USAGE'
 Usage:

@@ -101,10 +101,17 @@ enum StrategyAction {
         /// Only used in atomic mode (--prompt).
         #[arg(long)]
         role: Option<String>,
-        /// Primary asset the strategy trades (e.g. `ETH/USD`).
-        /// Only used in atomic mode (--prompt). Populates `asset_universe`.
-        /// Superseded by `--assets` when both are supplied.
-        #[arg(long)]
+        /// Primary asset the strategy trades (e.g. `ETH/USD`). Single-valued.
+        #[arg(
+            long,
+            long_help = "Primary asset the strategy trades (e.g. \"ETH/USD\"). Single-valued.\n\
+                         For more than one asset, use --assets with a comma-separated list \
+                         (e.g. --assets BTC,ETH,SOL). Passing --asset twice is an error; \
+                         multi-asset strategies must be created via --assets, the dashboard, \
+                         or strategy JSON directly.\n\
+                         Only used in atomic mode (--prompt). Populates asset_universe. \
+                         Superseded by --assets when both are supplied."
+        )]
         asset: Option<String>,
         /// Comma-separated assets the strategy trades, e.g. `BTC,ETH,SOL`.
         /// Populates `asset_universe`. Supersedes `--asset` (kept as a 1-elem alias).
@@ -115,10 +122,14 @@ enum StrategyAction {
         /// Only used in atomic mode (--prompt).
         #[arg(long, default_value = "per-asset")]
         execution_mode: String,
-        /// Decision timeframe / bar granularity.
-        /// Accepted: `1m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `1d`.
-        /// Only used in atomic mode (--prompt). Maps to `decision_cadence_minutes`.
-        #[arg(long)]
+        /// Decision timeframe / bar granularity, e.g. "1h", "15m", "4h"
+        /// (a string, NOT integer minutes — `60` is rejected, use `1h`).
+        #[arg(
+            long,
+            long_help = "Timeframe string, e.g. \"1h\", \"15m\", \"4h\" (not integer minutes).\n\
+                         Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d.\n\
+                         Only used in atomic mode (--prompt). Maps to decision_cadence_minutes."
+        )]
         timeframe: Option<String>,
 
         // ── hypothesis flags (intake #7) ─────────────────────────────────
@@ -729,9 +740,97 @@ pub fn parse_timeframe_minutes(timeframe: &str) -> Result<u32, String> {
         "2h" => Ok(120),
         "4h" => Ok(240),
         "1d" => Ok(1440),
-        other => Err(format!(
-            "unknown timeframe '{other}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"
-        )),
+        other => {
+            // U7: operators reach for raw integer minutes (`--timeframe 60`).
+            // Detect that shape and point them at the string form they meant.
+            let trimmed = other.trim();
+            if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
+                let suggestion = match trimmed {
+                    "1" => Some("1m"),
+                    "5" => Some("5m"),
+                    "15" => Some("15m"),
+                    "30" => Some("30m"),
+                    "60" => Some("1h"),
+                    "120" => Some("2h"),
+                    "240" => Some("4h"),
+                    "1440" => Some("1d"),
+                    _ => None,
+                };
+                return Err(match suggestion {
+                    Some(s) => format!(
+                        "timeframe '{other}' looks like integer minutes; use a string like \"{s}\" instead. \
+                         Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"
+                    ),
+                    None => format!(
+                        "timeframe '{other}' looks like integer minutes, but timeframes are strings \
+                         (e.g. \"1h\", \"15m\", \"4h\"), not minute counts. \
+                         Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"
+                    ),
+                });
+            }
+            Err(format!(
+                "unknown timeframe '{other}'. Accepted: 1m, 5m, 15m, 30m, 1h, 2h, 4h, 1d"
+            ))
+        }
+    }
+}
+
+/// Count how many times `--asset` (in either `--asset VALUE` or
+/// `--asset=VALUE` form) appears in a CLI argument stream.
+///
+/// `--asset` is a single-valued clap `Option<String>`, so clap silently
+/// keeps the *last* value when the flag is repeated rather than erroring.
+/// That makes `strategy new --asset BTC/USD --asset ETH/USD` look like it
+/// "worked" with only ETH/USD, or fail with an unhelpful message. U6 wants
+/// an actionable error, so we count occurrences ourselves and reject the
+/// duplicate explicitly.
+///
+/// Pure over the iterator so it can be unit-tested without touching the
+/// process argv. `--assets` (the plural multi-value flag) is intentionally
+/// NOT matched.
+pub fn count_asset_flag_occurrences<I, S>(args: I) -> usize
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .filter(|a| {
+            let a = a.as_ref();
+            a == "--asset" || a.starts_with("--asset=")
+        })
+        .count()
+}
+
+/// Compute the *effective* per-request `max_tokens` for a slot: the
+/// operator override when set (`> 0`), otherwise the provider/model auto
+/// default. This mirrors the dispatcher's resolution so a warning can be
+/// emitted against the value the model will actually run with — not just
+/// the slot's `Option`, which is often `None` even when a low value gets
+/// seeded downstream.
+pub fn effective_max_tokens(slot: &AgentSlot) -> u32 {
+    slot.resolve_max_tokens().unwrap_or_else(|| {
+        xvision_engine::agents::model::provider_default_max_tokens(&slot.provider, &slot.model)
+    })
+}
+
+/// U12 (b)/(c): if `model` looks like a chain-of-thought model and the
+/// effective resolved `max_tokens` is below the safe threshold, return a
+/// human warning string; otherwise `None`.
+///
+/// Pure so it can be unit-tested. The threshold and recommended minimum
+/// come from `agents::model` so the CLI and the slot defaults stay in sync.
+pub fn cot_max_tokens_warning(model: &str, effective_max_tokens: u32) -> Option<String> {
+    use xvision_engine::agents::model::{
+        looks_like_cot_model, COT_MIN_SAFE_MAX_TOKENS, COT_RECOMMENDED_MIN_MAX_TOKENS,
+    };
+    if looks_like_cot_model(model) && effective_max_tokens < COT_MIN_SAFE_MAX_TOKENS {
+        Some(format!(
+            "max_tokens={effective_max_tokens} may be insufficient for model '{model}'; \
+             recommended minimum is {COT_RECOMMENDED_MIN_MAX_TOKENS} for CoT models \
+             (they emit a long reasoning prefix before any decision output)."
+        ))
+    } else {
+        None
     }
 }
 
@@ -868,6 +967,15 @@ async fn new(
 /// tested without a running `ApiContext` (B23 regression guard).
 fn build_atomic_slot(role: &str, provider: &str, model: &str, prompt_text: String) -> AgentSlot {
     use xvision_engine::agents::InputsPolicy;
+    // U12: seed a higher per-request token budget for chain-of-thought
+    // models so the slot does not truncate during the hidden reasoning
+    // prefix before any decision JSON is emitted. Non-CoT models keep
+    // `None` (auto from model metadata at dispatch time).
+    let max_tokens = if xvision_engine::agents::model::looks_like_cot_model(model) {
+        Some(xvision_engine::agents::model::COT_DEFAULT_MAX_TOKENS)
+    } else {
+        None
+    };
     AgentSlot {
         name: "main".to_string(),
         provider: provider.to_string(),
@@ -878,7 +986,7 @@ fn build_atomic_slot(role: &str, provider: &str, model: &str, prompt_text: Strin
         } else {
             Vec::new()
         },
-        max_tokens: None,
+        max_tokens,
         max_wall_ms: None,
         temperature: None,
         prompt_version: String::new(),
@@ -921,6 +1029,16 @@ async fn new_atomic(
     use std::str::FromStr as _;
     use xvision_core::trading::AssetSymbol;
     use xvision_engine::strategies::exec_mode::ExecutionMode;
+
+    // U6: `--asset` is single-valued; clap silently keeps the last value
+    // when it is repeated. Reject the duplicate with an actionable message
+    // before doing any other work.
+    if count_asset_flag_occurrences(std::env::args()) > 1 {
+        return Err(CliError::usage(anyhow::anyhow!(
+            "--asset can only be specified once. Multi-asset strategies must be created via \
+             `--assets BTC,ETH,SOL`, the dashboard, or strategy JSON directly."
+        )));
+    }
 
     // Validate required atomic-mode fields.
     let name = name.ok_or_else(|| CliError::usage(anyhow::anyhow!("atomic mode requires --name")))?;
@@ -1079,11 +1197,25 @@ async fn new_atomic(
     store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
 
     // 5. Emit output.
-    let warnings = preflight.warnings;
+    let mut warnings = preflight.warnings;
+    // U12 (b): pre-launch warning when the effective resolved max_tokens
+    // is too small for a CoT model. The slot just persisted carries the
+    // CoT-seeded default (or None → provider auto), so compute the value
+    // the model will actually run with.
+    let cot_warning = agent
+        .slots
+        .first()
+        .and_then(|slot| cot_max_tokens_warning(&model, effective_max_tokens(slot)));
+    if let Some(warn) = cot_warning.clone() {
+        warnings.push(warn);
+    }
     if json {
         let out = build_atomic_create_output(&strategy_id, &agent_id, &provider, &model, warnings);
         crate::io::print_json(&out)?;
     } else {
+        if let Some(warn) = cot_warning {
+            eprintln!("warning: {warn}");
+        }
         if let Some(warn) = every_bar_warning(&strategy) {
             eprintln!("warning: {warn}");
         }
@@ -1378,10 +1510,20 @@ async fn diagnostics(id: &str, json: bool) -> CliResult<()> {
         .await
         .map_err(|e| api_to_cli("strategy diagnostics", e))?;
 
+    // U12 (c): surface a CoT max_tokens warning per agent slot. The
+    // engine `StrategyDiagnostics` does not carry model/max_tokens, so
+    // recompute from the strategy's agents here. Best-effort: a load
+    // failure simply yields no warnings (the launch gate below still
+    // runs against the authoritative diagnostics).
+    let cot_warnings = collect_cot_max_tokens_warnings(&ctx, id).await;
+
     if json {
         crate::io::print_json(&diag)?;
     } else {
         print_diagnostics_text(&diag);
+        for warn in &cot_warnings {
+            println!("warning: {warn}");
+        }
     }
 
     // Non-zero exit when not launchable. Use the typed launch gate so the
@@ -1393,6 +1535,31 @@ async fn diagnostics(id: &str, json: bool) -> CliResult<()> {
             source: anyhow::anyhow!("{}", render_diagnostics_error(&e)),
         }),
     }
+}
+
+/// U12 (c): collect per-slot CoT `max_tokens` warnings for a strategy.
+///
+/// Loads the strategy and each referenced agent, and for every slot whose
+/// model looks like a chain-of-thought model with an effective resolved
+/// `max_tokens` below the safe threshold, returns a warning string. Pure
+/// best-effort: any load error short-circuits to an empty list so the
+/// diagnostics command never fails on a transient agent-store miss.
+async fn collect_cot_max_tokens_warnings(ctx: &ApiContext, strategy_id: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let Ok(strategy) = store().load(strategy_id).await else {
+        return out;
+    };
+    for agent_ref in &strategy.agents {
+        let Ok(agent) = api_agents::get(ctx, &agent_ref.agent_id).await else {
+            continue;
+        };
+        for slot in &agent.slots {
+            if let Some(warn) = cot_max_tokens_warning(&slot.model, effective_max_tokens(slot)) {
+                out.push(warn);
+            }
+        }
+    }
+    out
 }
 
 /// One-line human summary of a [`DiagnosticsError`].
@@ -1974,6 +2141,25 @@ fn filter_catalog(json: bool) -> CliResult<()> {
     Ok(())
 }
 
+/// Append an actionable hint to a filter parse error when the underlying
+/// message indicates `asset_scope` was given as a bare string rather than a
+/// JSON array (U10). serde renders this as `invalid type: string ...`; the
+/// raw message never names the field or the fix, so operators get stuck.
+///
+/// Pure over the message text so it can be unit-tested without a real
+/// serde round-trip.
+pub fn augment_filter_parse_error(msg: &str) -> String {
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("invalid type: string") {
+        format!(
+            "{msg}. 'asset_scope' must be a JSON array, e.g. [\"BTC/USD\"]. \
+             See `xvn strategy filter-catalog --json` for a complete example."
+        )
+    } else {
+        msg.to_string()
+    }
+}
+
 fn filter_from_strategy_json(
     raw: serde_json::Value,
     strategy_id: &str,
@@ -2005,8 +2191,8 @@ fn filter_from_strategy_json(
     }
 
     let body = serde_json::to_string(&value).exit_with(XvnExit::Upstream)?;
-    let filter =
-        parse_filter_json(&body).map_err(|e| CliError::usage(anyhow::anyhow!("filter parse error: {e}")))?;
+    let filter = parse_filter_json(&body)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("filter parse error: {}", augment_filter_parse_error(&e.to_string()))))?;
     if filter.strategy_id != StrategyId::new(strategy_id) {
         return Err(CliError::usage(anyhow::anyhow!(
             "filter strategy_id did not match strategy `{strategy_id}`"
@@ -3167,6 +3353,106 @@ pub mod atomic_create {
         assert!(parse_timeframe_minutes("2d").is_err());
         assert!(parse_timeframe_minutes("1w").is_err());
         assert!(parse_timeframe_minutes("garbage").is_err());
+    }
+
+    // ── U7: integer-minutes timeframe gives an actionable error ───────────
+
+    #[test]
+    fn timeframe_integer_minutes_suggests_string_form() {
+        let err = parse_timeframe_minutes("60").unwrap_err();
+        assert!(err.contains("integer minutes"), "got: {err}");
+        assert!(err.contains("\"1h\""), "should suggest 1h: {err}");
+    }
+
+    #[test]
+    fn timeframe_unknown_integer_minutes_still_explains_string_shape() {
+        // An integer that doesn't map to a known timeframe still gets the
+        // "timeframes are strings" explanation rather than the bare unknown.
+        let err = parse_timeframe_minutes("7").unwrap_err();
+        assert!(err.contains("integer minutes"), "got: {err}");
+        assert!(err.contains("strings"), "got: {err}");
+    }
+
+    // ── U6: duplicate --asset detection ───────────────────────────────────
+
+    #[test]
+    fn count_asset_flag_single_occurrence() {
+        let args = ["xvn", "strategy", "new", "--asset", "BTC/USD", "--timeframe", "1h"];
+        assert_eq!(count_asset_flag_occurrences(args), 1);
+    }
+
+    #[test]
+    fn count_asset_flag_duplicate_space_form() {
+        let args = ["xvn", "strategy", "new", "--asset", "BTC/USD", "--asset", "ETH/USD"];
+        assert_eq!(count_asset_flag_occurrences(args), 2);
+    }
+
+    #[test]
+    fn count_asset_flag_duplicate_equals_form() {
+        let args = ["xvn", "strategy", "new", "--asset=BTC/USD", "--asset=ETH/USD"];
+        assert_eq!(count_asset_flag_occurrences(args), 2);
+    }
+
+    #[test]
+    fn count_asset_flag_does_not_match_plural_assets() {
+        // `--assets` (plural multi-value) must NOT be counted as `--asset`.
+        let args = ["xvn", "strategy", "new", "--assets", "BTC,ETH,SOL"];
+        assert_eq!(count_asset_flag_occurrences(args), 0);
+        let args2 = ["xvn", "--assets=BTC,ETH"];
+        assert_eq!(count_asset_flag_occurrences(args2), 0);
+    }
+
+    // ── U10: asset_scope hint ─────────────────────────────────────────────
+
+    #[test]
+    fn augment_filter_parse_error_adds_asset_scope_hint() {
+        let msg = "invalid type: string \"BTC/USD\", expected a sequence at line 3 column 5";
+        let out = augment_filter_parse_error(msg);
+        assert!(out.contains("'asset_scope' must be a JSON array"), "got: {out}");
+        assert!(out.contains("[\"BTC/USD\"]"), "got: {out}");
+        assert!(out.contains("filter-catalog --json"), "got: {out}");
+    }
+
+    #[test]
+    fn augment_filter_parse_error_passthrough_for_unrelated_errors() {
+        let msg = "missing field `conditions` at line 1 column 10";
+        assert_eq!(augment_filter_parse_error(msg), msg);
+    }
+
+    // ── U12: CoT max_tokens warning ───────────────────────────────────────
+
+    #[test]
+    fn cot_warning_fires_for_low_budget_cot_model() {
+        let warn = cot_max_tokens_warning("deepseek-r1:8b", 1024);
+        assert!(warn.is_some());
+        let warn = warn.unwrap();
+        assert!(warn.contains("max_tokens=1024"), "got: {warn}");
+        assert!(warn.contains("deepseek-r1:8b"), "got: {warn}");
+        assert!(warn.contains("4096"), "recommended min: {warn}");
+    }
+
+    #[test]
+    fn cot_warning_silent_for_adequate_budget() {
+        assert!(cot_max_tokens_warning("deepseek-r1:8b", 8192).is_none());
+    }
+
+    #[test]
+    fn cot_warning_silent_for_non_cot_model() {
+        assert!(cot_max_tokens_warning("claude-sonnet-4-6", 1024).is_none());
+    }
+
+    #[test]
+    fn build_atomic_slot_seeds_cot_default_max_tokens() {
+        // U12 (a): a CoT model gets the elevated default seeded on the slot
+        // so it does not truncate during the reasoning prefix.
+        let slot = build_atomic_slot("trader", "ollama", "deepseek-r1:8b", "p".to_string());
+        assert_eq!(
+            slot.max_tokens,
+            Some(xvision_engine::agents::model::COT_DEFAULT_MAX_TOKENS)
+        );
+        // A plain chat model leaves it unset (auto from metadata).
+        let slot2 = build_atomic_slot("trader", "openrouter", "kimi-k2", "p".to_string());
+        assert_eq!(slot2.max_tokens, None);
     }
 
     // ── build_atomic_create_output ────────────────────────────────────────

@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# DEPRECATED (2026-06-11): this script read `xvn optimizer inspect --json`, which
+# was REMOVED when the optimizer CLI consolidated onto `xvn optimize`. The old
+# memory-distillation run ledger is no longer surfaced via a CLI inspect verb.
+# For optimizer cycle lineage, use `xvn optimize lineage ls` / `lineage show`
+# and `xvn optimize show <cycle_id>` instead.
+#
+# This script is kept as a no-op stub so existing references don't break.
+echo "export-pattern-lineage.sh is deprecated: 'xvn optimizer inspect' was removed in the optimizer \
+CLI consolidation. Use 'xvn optimize lineage ls', 'xvn optimize lineage show <hash>', or \
+'xvn optimize show <cycle_id>' instead. Nothing to do." >&2
+exit 0
+
 usage() {
   cat >&2 <<'USAGE'
 Usage:

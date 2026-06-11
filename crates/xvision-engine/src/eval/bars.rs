@@ -192,6 +192,194 @@ fn market_bar_to_ohlcv(b: MarketBar) -> xvision_core::market::Ohlcv {
     }
 }
 
+// ---------------------------------------------------------------------------
+// U16: bar-cache coverage preflight
+// ---------------------------------------------------------------------------
+
+/// One contiguous covered segment of the requested window, expressed as the
+/// `[start, end)` it covers plus the originating cache row(s). Adjacent /
+/// overlapping cache rows are merged into a single segment (see
+/// [`merge_segments`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverageSegment {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+    /// blake3 cache keys of the rows that compose this merged segment, in
+    /// chronological order. Surfaced so a CLI error can name the cache entries.
+    pub cache_keys: Vec<String>,
+}
+
+/// A gap in coverage — a `[start, end)` sub-window of the request not covered
+/// by any cache row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverageGap {
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+/// Result of [`check_bar_coverage`]: whether the local cache fully covers the
+/// requested `[start, end)` window as a UNION of (possibly multiple, possibly
+/// adjacent) cache segments, plus the covered segments and any gaps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverageReport {
+    pub fully_covered: bool,
+    pub covered: Vec<CoverageSegment>,
+    pub gaps: Vec<CoverageGap>,
+}
+
+/// A single cache row's window, as read from `bars_cache`. Public so callers
+/// that already have rows in hand (tests, `xvn bars ls`) can compose coverage
+/// without re-querying.
+#[derive(Debug, Clone)]
+pub struct CachedWindow {
+    pub cache_key: String,
+    pub start: DateTime<Utc>,
+    pub end: DateTime<Utc>,
+}
+
+/// Merge a set of cached windows into the minimal set of contiguous covered
+/// segments. Windows are treated as half-open `[start, end)`. Two windows are
+/// contiguous when the next window's start is `<=` the running segment's end —
+/// crucially, granularity-aligned ADJACENCY (e.g. `Apr-01T00:00 == Apr-01T00:00`
+/// where one row ends exactly where the next begins) is treated as contiguous,
+/// NOT as a gap. This is the core fix for U16: a request spanning two adjacent
+/// cache entries is "fully covered" even though no single entry contains it.
+///
+/// Pure and deterministic — unit-tested without any DB.
+pub fn merge_segments(mut windows: Vec<CachedWindow>) -> Vec<CoverageSegment> {
+    windows.sort_by_key(|w| (w.start, w.end));
+    let mut out: Vec<CoverageSegment> = Vec::new();
+    for w in windows {
+        if w.end <= w.start {
+            // Degenerate/empty window — ignore.
+            continue;
+        }
+        match out.last_mut() {
+            // Contiguous or overlapping: extend the running segment. `<=`
+            // makes exact adjacency (end == next.start) merge instead of gap.
+            Some(seg) if w.start <= seg.end => {
+                if w.end > seg.end {
+                    seg.end = w.end;
+                }
+                seg.cache_keys.push(w.cache_key);
+            }
+            _ => out.push(CoverageSegment {
+                start: w.start,
+                end: w.end,
+                cache_keys: vec![w.cache_key],
+            }),
+        }
+    }
+    out
+}
+
+/// Given merged coverage segments and a requested `[req_start, req_end)`
+/// window, compute the [`CoverageReport`]: the covered sub-segments that
+/// intersect the request and the gaps within the request not covered by any
+/// segment. Pure — separated from the DB read so it is directly unit-testable.
+pub fn coverage_for(
+    segments: &[CoverageSegment],
+    req_start: DateTime<Utc>,
+    req_end: DateTime<Utc>,
+) -> CoverageReport {
+    let mut covered: Vec<CoverageSegment> = Vec::new();
+    let mut gaps: Vec<CoverageGap> = Vec::new();
+    if req_end <= req_start {
+        return CoverageReport {
+            fully_covered: true,
+            covered,
+            gaps,
+        };
+    }
+    // Walk the request from cursor → req_end, consuming intersecting segments.
+    let mut cursor = req_start;
+    for seg in segments {
+        if seg.end <= cursor {
+            continue; // entirely before the cursor
+        }
+        if seg.start >= req_end {
+            break; // entirely after the request (segments are sorted)
+        }
+        let seg_lo = seg.start.max(req_start);
+        if seg_lo > cursor {
+            // Uncovered gap before this segment.
+            gaps.push(CoverageGap {
+                start: cursor,
+                end: seg_lo,
+            });
+        }
+        let seg_hi = seg.end.min(req_end);
+        covered.push(CoverageSegment {
+            start: seg_lo,
+            end: seg_hi,
+            cache_keys: seg.cache_keys.clone(),
+        });
+        if seg_hi > cursor {
+            cursor = seg_hi;
+        }
+        if cursor >= req_end {
+            break;
+        }
+    }
+    if cursor < req_end {
+        gaps.push(CoverageGap {
+            start: cursor,
+            end: req_end,
+        });
+    }
+    CoverageReport {
+        fully_covered: gaps.is_empty(),
+        covered,
+        gaps,
+    }
+}
+
+/// U16 preflight: report whether the local `bars_cache` fully covers the
+/// requested `[start, end)` window for `asset_pair` at `granularity`, treating
+/// adjacent cache entries as contiguous (a multi-segment window is "covered").
+///
+/// Reads every `bars_cache` row matching the asset + granularity + the given
+/// `data_source_tag`, merges their windows, and computes the report against the
+/// request. Designed to be called by BOTH `xvn bars ls` (to show union
+/// coverage) and the optimizer/eval preflight (to fail fast with an actionable
+/// error BEFORE the cycle lock is acquired and BEFORE any backtest spawns).
+pub async fn check_bar_coverage(
+    ctx: &ApiContext,
+    asset_pair: &str,
+    granularity: BarGranularity,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    data_source_tag: &str,
+) -> ApiResult<CoverageReport> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT cache_key, window_start, window_end FROM bars_cache \
+         WHERE asset = ? AND granularity = ? AND data_source = ?",
+    )
+    .bind(asset_pair)
+    .bind(granularity.as_alpaca_str())
+    .bind(data_source_tag)
+    .fetch_all(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("check_bar_coverage: {e}")))?;
+
+    let mut windows = Vec::with_capacity(rows.len());
+    for (cache_key, ws, we) in rows {
+        let w_start = chrono::DateTime::parse_from_rfc3339(&ws)
+            .map_err(|e| ApiError::Internal(format!("coverage: bad window_start: {e}")))?
+            .with_timezone(&Utc);
+        let w_end = chrono::DateTime::parse_from_rfc3339(&we)
+            .map_err(|e| ApiError::Internal(format!("coverage: bad window_end: {e}")))?
+            .with_timezone(&Utc);
+        windows.push(CachedWindow {
+            cache_key,
+            start: w_start,
+            end: w_end,
+        });
+    }
+    let segments = merge_segments(windows);
+    Ok(coverage_for(&segments, start, end))
+}
+
 /// Read bars for the window described by `args`, going through the
 /// `bars_cache` table. On miss, calls the Alpaca fetcher on the context
 /// and back-fills the cache before returning. Concurrent misses for the
@@ -403,4 +591,109 @@ fn deserialise_bars(blob: &[u8], compression: &str) -> Result<Vec<MarketBar>, Ap
         });
     }
     Ok(bars)
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    fn ts(s: &str) -> DateTime<Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    fn win(key: &str, start: &str, end: &str) -> CachedWindow {
+        CachedWindow {
+            cache_key: key.into(),
+            start: ts(start),
+            end: ts(end),
+        }
+    }
+
+    /// Two adjacent cache rows (Apr-01-end == Apr-01-start) merge into ONE
+    /// segment — exact adjacency is NOT a gap. This is the U16 core bug.
+    #[test]
+    fn test_adjacent_windows_merge_no_gap() {
+        let windows = vec![
+            win("a", "2025-01-01T00:00:00Z", "2025-04-01T00:00:00Z"),
+            win("b", "2025-04-01T00:00:00Z", "2025-06-01T00:00:00Z"),
+        ];
+        let segs = merge_segments(windows);
+        assert_eq!(segs.len(), 1, "adjacent rows must merge into one segment");
+        assert_eq!(segs[0].start, ts("2025-01-01T00:00:00Z"));
+        assert_eq!(segs[0].end, ts("2025-06-01T00:00:00Z"));
+        assert_eq!(segs[0].cache_keys, vec!["a".to_string(), "b".to_string()]);
+
+        // A request straddling the boundary is fully covered.
+        let report = coverage_for(&segs, ts("2025-03-15T00:00:00Z"), ts("2025-05-01T00:00:00Z"));
+        assert!(report.fully_covered, "straddling request must be covered");
+        assert!(report.gaps.is_empty());
+    }
+
+    /// Overlapping windows also merge.
+    #[test]
+    fn test_overlapping_windows_merge() {
+        let windows = vec![
+            win("a", "2025-01-01T00:00:00Z", "2025-03-15T00:00:00Z"),
+            win("b", "2025-03-01T00:00:00Z", "2025-06-01T00:00:00Z"),
+        ];
+        let segs = merge_segments(windows);
+        assert_eq!(segs.len(), 1);
+        assert_eq!(segs[0].end, ts("2025-06-01T00:00:00Z"));
+    }
+
+    /// A real gap between two non-adjacent windows is reported.
+    #[test]
+    fn test_real_gap_reported() {
+        let windows = vec![
+            win("a", "2025-01-01T00:00:00Z", "2025-02-01T00:00:00Z"),
+            win("b", "2025-04-01T00:00:00Z", "2025-06-01T00:00:00Z"),
+        ];
+        let segs = merge_segments(windows);
+        assert_eq!(segs.len(), 2, "non-adjacent rows stay separate");
+        let report = coverage_for(&segs, ts("2025-01-15T00:00:00Z"), ts("2025-05-01T00:00:00Z"));
+        assert!(!report.fully_covered);
+        assert_eq!(report.gaps.len(), 1);
+        assert_eq!(report.gaps[0].start, ts("2025-02-01T00:00:00Z"));
+        assert_eq!(report.gaps[0].end, ts("2025-04-01T00:00:00Z"));
+    }
+
+    /// Request entirely outside any cache → one gap == the whole request.
+    #[test]
+    fn test_no_coverage_at_all() {
+        let segs: Vec<CoverageSegment> = Vec::new();
+        let report = coverage_for(&segs, ts("2025-01-01T00:00:00Z"), ts("2025-02-01T00:00:00Z"));
+        assert!(!report.fully_covered);
+        assert_eq!(report.gaps.len(), 1);
+        assert_eq!(report.gaps[0].start, ts("2025-01-01T00:00:00Z"));
+        assert_eq!(report.gaps[0].end, ts("2025-02-01T00:00:00Z"));
+    }
+
+    /// Leading and trailing gaps around a single mid-window segment.
+    #[test]
+    fn test_leading_and_trailing_gaps() {
+        let segs = merge_segments(vec![win(
+            "a",
+            "2025-02-01T00:00:00Z",
+            "2025-03-01T00:00:00Z",
+        )]);
+        let report = coverage_for(&segs, ts("2025-01-01T00:00:00Z"), ts("2025-04-01T00:00:00Z"));
+        assert!(!report.fully_covered);
+        assert_eq!(report.gaps.len(), 2, "leading + trailing gaps");
+        assert_eq!(report.gaps[0].start, ts("2025-01-01T00:00:00Z"));
+        assert_eq!(report.gaps[0].end, ts("2025-02-01T00:00:00Z"));
+        assert_eq!(report.gaps[1].start, ts("2025-03-01T00:00:00Z"));
+        assert_eq!(report.gaps[1].end, ts("2025-04-01T00:00:00Z"));
+        assert_eq!(report.covered.len(), 1);
+    }
+
+    /// Empty request window is trivially covered.
+    #[test]
+    fn test_empty_request_covered() {
+        let segs: Vec<CoverageSegment> = Vec::new();
+        let report = coverage_for(&segs, ts("2025-01-01T00:00:00Z"), ts("2025-01-01T00:00:00Z"));
+        assert!(report.fully_covered);
+        assert!(report.gaps.is_empty());
+    }
 }

@@ -97,6 +97,27 @@ pub enum ProgressEvent {
     },
     /// Terminal-failure event. After this fires the executor exits.
     RunFailed { run_id: String, error: String },
+    /// U5: periodic wall-clock heartbeat emitted from the top of the
+    /// backtest decision loop at ~30s intervals (mirroring the
+    /// `PARTIAL_PERSIST_INTERVAL` cadence-independent check). Lets a live
+    /// subscriber — the CLI watch, the dashboard SSE, or the optimizer cycle
+    /// re-emit bridge — observe that a long backtest is still making forward
+    /// progress instead of treating a 10–20 minute silent stretch as a hang.
+    /// `decisions` is the count of trader decisions emitted so far; `elapsed_s`
+    /// is seconds since the decision loop started.
+    EvalHeartbeat {
+        run_id: String,
+        decisions: u64,
+        elapsed_s: u64,
+    },
+    /// U11: emitted when a filter wake is suppressed because a position is
+    /// already open in the asset (`wake_when_in_position` gating →
+    /// `SuppressedInPosition`). Lets live streams (CLI/dashboard) distinguish
+    /// "filter never fired" from "filter fired but was blocked by an open
+    /// position", which previously required reading the persisted
+    /// `eval_filter_evaluations` ledger after the run. `reason` is a stable
+    /// snake_case tag (today always `"in_position"`).
+    FilterBlocked { run_id: String, reason: String },
     /// Emitted once per bar when a `FilterGated` strategy's runtime
     /// runs. Carries the activation decision and per-condition booleans
     /// so consumers (trace dock, CLI watch) can surface "plan touches"
@@ -173,4 +194,61 @@ impl Default for ProgressBus {
 /// executors so a missing subscriber never aborts a run.
 pub fn send_event(tx: &ProgressTx, event: ProgressEvent) {
     let _ = tx.send(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// U5: EvalHeartbeat serializes as snake_case "eval_heartbeat".
+    #[test]
+    fn test_eval_heartbeat_wire_name() {
+        let event = ProgressEvent::EvalHeartbeat {
+            run_id: "r1".into(),
+            decisions: 7,
+            elapsed_s: 30,
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(v["type"], "eval_heartbeat");
+        assert_eq!(v["decisions"], 7);
+        assert_eq!(v["elapsed_s"], 30);
+        // round-trips
+        let s = serde_json::to_string(&event).unwrap();
+        let back: ProgressEvent = serde_json::from_str(&s).unwrap();
+        assert!(matches!(back, ProgressEvent::EvalHeartbeat { decisions: 7, .. }));
+    }
+
+    /// U11: FilterBlocked serializes as snake_case "filter_blocked" and carries
+    /// the reason tag.
+    #[test]
+    fn test_filter_blocked_wire_name() {
+        let event = ProgressEvent::FilterBlocked {
+            run_id: "r1".into(),
+            reason: "in_position".into(),
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(v["type"], "filter_blocked");
+        assert_eq!(v["reason"], "in_position");
+    }
+
+    /// A subscriber attached before send receives the event; send with no
+    /// subscribers is a no-op (does not panic).
+    #[test]
+    fn test_bus_delivers_and_tolerates_no_subscribers() {
+        let bus = ProgressBus::new(8);
+        let tx = bus.sender();
+        // No external subscriber yet (anchor only) — must not panic.
+        send_event(&tx, ProgressEvent::FilterBlocked {
+            run_id: "r".into(),
+            reason: "in_position".into(),
+        });
+        let mut rx = bus.subscribe();
+        send_event(&tx, ProgressEvent::EvalHeartbeat {
+            run_id: "r".into(),
+            decisions: 1,
+            elapsed_s: 30,
+        });
+        let got = rx.try_recv().expect("subscriber receives event sent after subscribe");
+        assert!(matches!(got, ProgressEvent::EvalHeartbeat { .. }));
+    }
 }

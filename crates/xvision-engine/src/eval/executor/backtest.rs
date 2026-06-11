@@ -319,6 +319,17 @@ impl Executor {
         }
     }
 
+    /// Attach a progress `ProgressTx` to an EXISTING executor, builder-style,
+    /// without resetting the other fields. `with_progress` (the constructor)
+    /// resets every field, so chaining it after `with_bars`/`with_event_bus`
+    /// would wipe the injected bars/bus. This setter is the chainable form the
+    /// optimizer paper-tester adapter (U5) uses:
+    ///   `Executor::with_bars(bars).with_event_bus(bus).with_progress_tx(tx)`.
+    pub fn with_progress_tx(mut self, progress: ProgressTx) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+
     /// Attach a live-stream event bus to an existing executor. Builder-style
     /// so callers can chain after `with_bars` / `with_progress`:
     ///   `Executor::with_bars(bars).with_event_bus(bus)`.
@@ -906,10 +917,24 @@ impl Executor {
         // (cancelled / timed out / crashed) isn't left with NULL metrics. The
         // cancel checkpoint below also persists a final snapshot before bailing.
         let mut last_partial_persist = Instant::now();
+        // U5: wall-clock heartbeat so a long backtest (e.g. the optimizer's
+        // parent baseline eval) doesn't go silent for 10–20 minutes. Mirrors
+        // the `PARTIAL_PERSIST_INTERVAL` pattern — a constant-time `Instant`
+        // check at the TOP of the loop, independent of the cadence early-continue
+        // below, so it fires on wall-clock time rather than per-decision.
+        let mut last_heartbeat = Instant::now();
         for (&ts, assets_at_ts) in &timeline {
             // Update the logical clock to this timestamp before any
             // decision-side work. Live impls ignore this.
             clock.advance_to(ts);
+            if last_heartbeat.elapsed() >= EVAL_HEARTBEAT_INTERVAL {
+                self.emit(ProgressEvent::EvalHeartbeat {
+                    run_id: run.id.clone(),
+                    decisions: decision_idx as u64,
+                    elapsed_s: run_started.elapsed().as_secs(),
+                });
+                last_heartbeat = Instant::now();
+            }
             if store.is_terminal(&run.id).await? {
                 // F36: capture the partial metrics+tokens accumulated up to the
                 // interrupt before bailing.
@@ -1013,6 +1038,22 @@ impl Executor {
                         .await?;
                     if !evaluation.outcome.decision.is_active() {
                         filter_gated = true;
+                        // U11: surface the specific "blocked because a position
+                        // is open" case on the live progress stream so operators
+                        // can tell it apart from "filter simply didn't fire". The
+                        // suppressed_in_position reason is already recorded in the
+                        // persisted FilterEventV1 ledger via `hook.record`; this
+                        // additional event rides the same ProgressTx for live
+                        // CLI/dashboard consumers.
+                        if matches!(
+                            evaluation.outcome.decision,
+                            xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                        ) {
+                            self.emit(ProgressEvent::FilterBlocked {
+                                run_id: run.id.clone(),
+                                reason: "in_position".to_string(),
+                            });
+                        }
                     } else {
                         filter_trigger_context = evaluation.trigger_context.clone();
                     }
@@ -4934,6 +4975,13 @@ fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
 /// a run, so an interrupt loses at most this much progress. Bounds the periodic
 /// recompute cost regardless of run length.
 const PARTIAL_PERSIST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// U5: how often the backtest decision loop emits a `ProgressEvent::EvalHeartbeat`
+/// so a live subscriber (CLI watch, dashboard SSE, optimizer cycle re-emit
+/// bridge) sees forward progress during a long, otherwise-silent backtest.
+/// Checked on wall-clock time at the top of the loop, independent of the
+/// strategy cadence early-continue.
+const EVAL_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// F36: snapshot the accumulators into a partial [`MetricsSummary`] and persist
 /// it (best-effort, no status change) so a cancelled/timed-out/crashed run keeps

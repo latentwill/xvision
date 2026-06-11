@@ -432,7 +432,16 @@ impl AutoOptimizerConfig {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading autooptimizer config at {}", path.display()))?;
-        toml::from_str(&raw).with_context(|| format!("parsing autooptimizer config at {}", path.display()))
+        // U1/U15: embed the toml deserialization error text (field path +
+        // line/col) DIRECTLY in the returned error message. `with_context`
+        // alone would only surface in the error *chain*, which the CLI prints
+        // as `{e}` (outermost frame only) — so the operator saw
+        // "parsing autooptimizer config at <path>" with no field-level signal.
+        // Inlining `{e}` here guarantees the offending field is visible no
+        // matter how the caller formats the error.
+        toml::from_str(&raw).map_err(|e| {
+            anyhow::anyhow!("parsing autooptimizer config at {}: {e}", path.display())
+        })
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -923,6 +932,59 @@ mod tests {
         assert!(
             msg.contains("toolong") && msg.contains("120"),
             "message must name the pair label and the cap; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn from_path_error_embeds_offending_field_name() {
+        // U1/U15: a config with an unknown / mistyped field must surface the
+        // toml field path (and line) DIRECTLY in the returned error message —
+        // not only deep in the error chain — so an operator who runs
+        // `xvn optimize run` and the CLI prints `{e}` still sees which field is
+        // wrong. We assert on the embedded toml text, which names the field.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ar-config-test-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("autooptimizer.toml");
+        // `day_window.start` is a date field; a table value is a type error,
+        // and an unknown top-level key trips deny-unknown style messages — use
+        // a clearly-wrong scalar type for a known field so toml names it.
+        std::fs::write(
+            &path,
+            r#"
+min_improvement = "not-a-number"
+
+[day_window]
+start = "2025-01-01"
+end   = "2025-04-01"
+
+[baseline_untouched_window]
+start = "2025-04-01"
+end   = "2025-05-01"
+
+[mutator]
+provider    = "test"
+model       = "test-model"
+max_retries = 2
+"#,
+        )
+        .unwrap();
+
+        let err = AutoOptimizerConfig::from_path(&path).unwrap_err();
+        let msg = err.to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            msg.contains("parsing autooptimizer config at"),
+            "message must name the config path; got: {msg}"
+        );
+        assert!(
+            msg.contains("min_improvement"),
+            "message must embed the offending field name from the toml error; got: {msg}"
         );
     }
 

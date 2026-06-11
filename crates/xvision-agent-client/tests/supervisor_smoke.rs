@@ -49,6 +49,15 @@ async fn spawns_and_calls_health() {
 
     let client = AgentClient::spawn(&bin, &sock).await.expect("spawn sidecar");
 
+    // U13: the supervisor snapshots the sidecar pid at spawn time so `eval
+    // cancel` can SIGTERM it. A live, just-spawned client must expose one.
+    let pid = client.sidecar_pid();
+    assert!(
+        pid.is_some(),
+        "expected sidecar_pid to be Some for a live client, got None"
+    );
+    assert_ne!(pid, Some(0), "sidecar pid must not be 0");
+
     let h = client.health().await.expect("health");
     assert_eq!(h.status, "ok");
     assert_eq!(h.protocol_version, "0.1.0");

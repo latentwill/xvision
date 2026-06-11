@@ -536,12 +536,50 @@ where
     // the gate. Skipping these runs avoids wasted backtests. B19: also skip when
     // a scenario_pool is active (per-pair parent metrics are computed lazily).
     let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() && !scenario_pool_active {
+        // U5: bracket the parent baseline backtests with phase boundaries so the
+        // cycle output stream isn't silent for the 10–20 minutes these two
+        // (full-window) backtests take. Before this, the only event between
+        // `ParentSelected` and the first candidate's `PhaseStarted` was nothing —
+        // operators read the gap as a hang and cancelled the cycle. The
+        // underlying executor also emits `EvalHeartbeat` on its ProgressTx (wired
+        // via `CachedBacktestPaperTester::with_progress_bus`); a CLI/dashboard
+        // bridge drains that and re-emits `CycleProgressEvent::EvalProgress`.
+        progress(CycleProgressEvent::PhaseStarted {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(parent_node.bundle_hash.to_hex()),
+            phase: Phase::EvalDayWindow,
+            detail: "Evaluating parent baseline on the day window".to_string(),
+        });
+        let day_t0 = Instant::now();
         let pd = paper_tester
             .run(parent_strategy, &cycle_config.day_scenario)
             .await?;
+        progress(CycleProgressEvent::PhaseFinished {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(parent_node.bundle_hash.to_hex()),
+            phase: Phase::EvalDayWindow,
+            duration_ms: day_t0.elapsed().as_millis() as u64,
+        });
+        progress(CycleProgressEvent::PhaseStarted {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(parent_node.bundle_hash.to_hex()),
+            phase: Phase::EvalUntouchedWindow,
+            detail: "Evaluating parent baseline on the untouched window".to_string(),
+        });
+        let unt_t0 = Instant::now();
         let pu = paper_tester
             .run(parent_strategy, &cycle_config.baseline_scenario)
             .await?;
+        progress(CycleProgressEvent::PhaseFinished {
+            session_id: String::new(),
+            cycle_id: cycle_id.to_string(),
+            parent_hash: Some(parent_node.bundle_hash.to_hex()),
+            phase: Phase::EvalUntouchedWindow,
+            duration_ms: unt_t0.elapsed().as_millis() as u64,
+        });
         (pd, pu)
     } else {
         (MetricsSummary::default(), MetricsSummary::default())

@@ -225,9 +225,6 @@ pub enum Command {
     /// over the operator memory store (`$XVN_MEMORY_DB` or
     /// `~/.xvn/memory.db`).
     Memory(commands::memory::MemoryCmd),
-    /// Offline Optimizer operations over memory Observations.
-    #[command(name = "optimizer")]
-    AutoOptimizer(commands::autooptimizer::AutoOptimizerCmd),
     /// Flywheel observability over memory + Optimizer activity.
     Flywheel(commands::flywheel::FlywheelCmd),
     /// Bounded (strategy × model) bakeoff verb. See
@@ -235,9 +232,9 @@ pub enum Command {
     Model(commands::model::ModelCmd),
     /// Trajectory store operations — inspect / validate / purge / reindex.
     Trajectory(commands::trajectory::TrajectoryCmd),
-    /// Offline DSPy prompt/demonstration optimizer (Phase 3.6): run an
-    /// optimization pass over a corpus, compile memory demos, inspect/export/import
-    /// results, and accept a snapshot as a child agent. See `xvn optimize --help`.
+    /// The AutoOptimizer strategy-experiment cycle (run with no subcommand to
+    /// run the full cycle). Also hosts cycle history (ls/show), lineage, and
+    /// unlock. See `xvn optimize --help`.
     Optimize(commands::optimize::OptimizeCmd),
     /// Show the most recent eval run(s) as a compact health card.
     Last {
@@ -258,6 +255,15 @@ pub enum Command {
 
 impl Cli {
     pub async fn run(self) -> Result<(), crate::exit::CliError> {
+        // U8(a): source provider keys from $XVN_HOME/secrets/providers.toml into
+        // the process env ONCE, early, BEFORE any ApiContext::open / env key
+        // lookup. Idempotent + best-effort — a missing secrets file is fine, and
+        // any genuinely-missing key still surfaces later with an actionable,
+        // env-var-naming error. Failure to resolve the home is non-fatal here.
+        if let Ok(home) = crate::commands::home::resolve_xvn_home(None) {
+            commands::provider::load_secrets_into_env_best_effort(&home).await;
+        }
+
         match self.command {
             Command::ShowMetrics { report } => commands::show_metrics::run(report).map_err(Into::into),
             Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db)
@@ -336,7 +342,6 @@ impl Cli {
             Command::Run(cmd) => commands::run::run(cmd).await,
             Command::Experiment(cmd) => commands::experiment::run(cmd).await,
             Command::Memory(cmd) => commands::memory::run(cmd).await,
-            Command::AutoOptimizer(cmd) => commands::autooptimizer::run(cmd).await,
             Command::Flywheel(cmd) => commands::flywheel::run(cmd).await,
             Command::Model(cmd) => commands::model::run(cmd).await,
             Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
