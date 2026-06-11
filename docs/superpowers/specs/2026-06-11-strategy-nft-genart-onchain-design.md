@@ -163,7 +163,7 @@ roster size is unconstrained.
      shape-rendering="crispEdges">
   <rect width="28" height="28" fill="{pal[0]}"/>
   <!-- one <path> per palette index i (0..6) with ≥1 run, ascending index order -->
-  <path stroke="{pal[i]}" stroke-width="1" d="M3 0.5h5 M9 0.5h2…"/>
+  <path stroke="{pal[i]}" stroke-width="1" d="M3 0.5h5M9 0.5h2…"/>
   …
 </svg>
 ```
@@ -204,7 +204,7 @@ Metadata JSON (then base64-wrapped into the tokenURI):
 | Shared canvas renderer | `frontend/web/src/features/marketplace/lib/genartGrid.ts` | Exposes `buildGrid(seed) -> {grid, traits}` consumed by both `genart.ts` (SVG) and `GenArtPlaceholder.tsx` (canvas), so card previews ARE the NFT art. |
 | `GenArtPlaceholder.tsx` (modify) | same path | Switch from v2 `drawBitfield` to `buildGrid`; props unchanged (`seed, size, className`). Seed becomes `"{agent_id}:{manifest_hash}"` where both are available, falling back to current seeds elsewhere. |
 | Mint wiring (Rust) | `crates/xvision-dashboard/src/routes/marketplace.rs` | `POST /api/marketplace/publish` orchestrates: strategy load → canonical JSON → keccak `manifest_hash` → `generate_token_uri` → `IdentityClient::register` (mint) → `Erc8004MantleDriver::publish_listing`. All chain config validated before the mint; env-gated (503 without XVN_RPC_URL/XVN_CHAIN_ID/XVN_PUBLISHER_PK/registry+marketplace addresses). Idempotency deliberately deferred (testnet v1). The marketplace adapter (`crates/xvision-marketplace/src/adapter.rs`) is unchanged — it deliberately keeps mint and listing separable; `PublishRequest` is NOT modified. |
-| Frontend publish | `features/marketplace/data/MarketplaceData.ts` | Replace fixture `submitListing` with a call to the new route. Sell-flow Step 3 preview renders `buildGrid` with the real seed so the operator sees the exact NFT before minting. |
+| Frontend publish | `features/marketplace/data/MarketplaceData.ts` | Replace fixture `submitListing` with a call to the new route. Sell-flow Step 3 shows a provisional identity-art preview seeded by `strategyId` only (labeled “finalizes at mint”); the final seed `{agent_id}:{manifest_hash}` is computed server-side at publish. |
 
 No contract changes: `IdentityRegistry.register(string agentURI)` already stores
 arbitrary URIs (ERC721URIStorage), and the deployed Mantle Sepolia instance is reused
