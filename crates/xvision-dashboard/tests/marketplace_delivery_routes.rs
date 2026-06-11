@@ -227,6 +227,7 @@ async fn import_with_injected_license_token_but_no_indexer_is_503_chain_access()
         pinata: None,
         indexer: None,
         license_token: Some("0x3333333333333333333333333333333333333333".parse().unwrap()),
+        chain_timeout: std::time::Duration::from_secs(45),
     };
     let (state, _tmp) = support::state_with_chain_config(cfg).await;
     let server = TestServer::new(build_router(state.clone())).unwrap();

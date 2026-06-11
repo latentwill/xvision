@@ -40,6 +40,7 @@ use xvision_identity::contracts::{IEvalAttestationRegistry, ILicenseToken, IMark
 use xvision_identity::manifest_hash_hex;
 use xvision_marketplace::{IpfsStore, PinataDriver};
 
+use crate::chain_config::{chain_call_timeout, with_chain_timeout};
 use crate::error::DashboardError;
 use crate::marketplace_index::{IndexedListing, IndexerCfg, MarketplaceSnapshot};
 use crate::state::AppState;
@@ -334,15 +335,18 @@ pub async fn get_attestations(
         )
     })?;
 
-    let provider = ProviderBuilder::new()
-        .connect(cfg.rpc_url.as_str())
-        .await
+    let timeout = chain_call_timeout(state.marketplace_chain());
+    let provider = with_chain_timeout(timeout, ProviderBuilder::new().connect(cfg.rpc_url.as_str()))
+        .await?
         .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
-    let attestations = IEvalAttestationRegistry::new(registry_addr, &provider)
-        .getAttestations(U256::from(id))
-        .call()
-        .await
-        .map_err(|e| DashboardError::ServiceUnavailable(format!("attestation lookup failed: {e}")))?;
+    let attestations = with_chain_timeout(
+        timeout,
+        IEvalAttestationRegistry::new(registry_addr, &provider)
+            .getAttestations(U256::from(id))
+            .call(),
+    )
+    .await?
+    .map_err(|e| DashboardError::ServiceUnavailable(format!("attestation lookup failed: {e}")))?;
 
     Ok(Json(AttestationsOut {
         items: attestations.iter().map(attestation_out).collect(),
@@ -539,7 +543,21 @@ pub async fn get_wallet(
     let mp = state.marketplace_chain();
     let facts = match (mp.and_then(|c| c.indexer.as_ref()), address.parse::<Address>()) {
         (Some(cfg), Ok(addr)) => {
-            fetch_ownership_facts(cfg, &snapshot, addr, mp.and_then(|c| c.license_token)).await
+            // One deadline bounds the whole ownership gather (xvision-4fp).
+            // This route degrades on chain failures by design, so a timeout
+            // degrades to empty facts too (logged) instead of erroring.
+            match with_chain_timeout(
+                chain_call_timeout(mp),
+                fetch_ownership_facts(cfg, &snapshot, addr, mp.and_then(|c| c.license_token)),
+            )
+            .await
+            {
+                Ok(facts) => facts,
+                Err(e) => {
+                    tracing::warn!(error = %e, "wallet view: ownership gather timed out; returning empty ownership facts");
+                    OwnershipFacts::default()
+                }
+            }
         }
         _ => OwnershipFacts::default(),
     };
@@ -641,14 +659,13 @@ pub async fn get_receipt(
         msg: "must be a 0x-prefixed 64-hex-char transaction hash".into(),
     })?;
 
-    let provider = ProviderBuilder::new()
-        .connect(cfg.rpc_url.as_str())
-        .await
+    let timeout = chain_call_timeout(state.marketplace_chain());
+    let provider = with_chain_timeout(timeout, ProviderBuilder::new().connect(cfg.rpc_url.as_str()))
+        .await?
         .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
 
-    let receipt = provider
-        .get_transaction_receipt(hash)
-        .await
+    let receipt = with_chain_timeout(timeout, provider.get_transaction_receipt(hash))
+        .await?
         .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc receipt lookup failed: {e}")))?
         .ok_or_else(|| DashboardError::NotFound(format!("transaction {tx_hash} not found on chain")))?;
 
@@ -671,12 +688,13 @@ pub async fn get_receipt(
         })?;
 
     // Block timestamp: one extra lookup; degrade to 0 rather than failing the
-    // whole receipt on a flaky block fetch.
+    // whole receipt on a flaky (or hung — same deadline as every chain call)
+    // block fetch.
     let block_time_unix = match receipt.block_hash {
-        Some(bh) => provider
-            .get_block_by_hash(bh)
+        Some(bh) => with_chain_timeout(timeout, provider.get_block_by_hash(bh))
             .await
             .ok()
+            .and_then(|r| r.ok())
             .flatten()
             .map(|b| b.header.timestamp as i64)
             .unwrap_or(0),

@@ -22,6 +22,8 @@
 //! The server never crashes on a bad key.
 
 use std::fmt;
+use std::future::IntoFuture;
+use std::time::Duration;
 
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
@@ -29,7 +31,49 @@ use alloy::signers::local::PrivateKeySigner;
 use xvision_identity::RegistryAddresses;
 use xvision_marketplace::MarketplaceAddresses;
 
+use crate::error::DashboardError;
 use crate::marketplace_index::IndexerCfg;
+
+/// Default per-call deadline for chain interactions (RPC connects, contract
+/// calls, transaction sends) when `XVN_CHAIN_TIMEOUT_SECS` is unset.
+pub const DEFAULT_CHAIN_TIMEOUT_SECS: u64 = 45;
+
+/// Bounds one chain interaction with a deadline (xvision-4fp). On timeout
+/// the future is dropped and the routes' upstream-error class (503
+/// `ServiceUnavailable`) is returned with an explicit message — a hung RPC
+/// can no longer pin a request handler forever.
+///
+/// Accepts `IntoFuture` so alloy's lazy call builders (`.call()`,
+/// `get_block_by_hash`, …) can be passed directly.
+pub async fn with_chain_timeout<F: IntoFuture>(
+    timeout: Duration,
+    fut: F,
+) -> Result<F::Output, DashboardError> {
+    tokio::time::timeout(timeout, fut.into_future())
+        .await
+        .map_err(|_| {
+            DashboardError::ServiceUnavailable(format!("chain call timed out after {}s", timeout.as_secs()))
+        })
+}
+
+/// The per-call chain deadline from the startup-resolved config. The default
+/// is only reachable when no config exists at all — and then every chain
+/// route 503s before its first chain call anyway.
+pub fn chain_call_timeout(mp: Option<&MarketplaceChainConfig>) -> Duration {
+    mp.map(|c| c.chain_timeout)
+        .unwrap_or(Duration::from_secs(DEFAULT_CHAIN_TIMEOUT_SECS))
+}
+
+/// Reads `XVN_CHAIN_TIMEOUT_SECS` once at startup. Unset, unparseable, or
+/// zero → [`DEFAULT_CHAIN_TIMEOUT_SECS`].
+fn chain_timeout_from_env() -> Duration {
+    let secs = std::env::var("XVN_CHAIN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&s| s > 0)
+        .unwrap_or(DEFAULT_CHAIN_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
 
 /// Chain connection + publisher signer. All of `XVN_RPC_URL`,
 /// `XVN_CHAIN_ID`, `XVN_PUBLISHER_PK` are required, and the key must parse.
@@ -133,6 +177,9 @@ pub struct MarketplaceChainConfig {
     pub indexer: Option<IndexerCfg>,
     /// ERC-1155 license token — import gate + wallet license balances.
     pub license_token: Option<Address>,
+    /// Per-call deadline for chain interactions (xvision-4fp). Resolved at
+    /// startup from `XVN_CHAIN_TIMEOUT_SECS`, default 45s.
+    pub chain_timeout: Duration,
 }
 
 impl MarketplaceChainConfig {
@@ -148,6 +195,7 @@ impl MarketplaceChainConfig {
             pinata: pinata_from_env(),
             indexer: IndexerCfg::from_env(),
             license_token: license_token_from_env(),
+            chain_timeout: chain_timeout_from_env(),
         };
         let dormant = cfg.chain.is_none()
             && cfg.registry_addresses.is_none()
@@ -203,5 +251,31 @@ mod tests {
         assert_eq!(cfg.gateway, "https://gw.example");
         std::env::remove_var("PINATA_JWT");
         std::env::remove_var("PINATA_GATEWAY");
+    }
+
+    // --- with_chain_timeout (xvision-4fp) -----------------------------------
+
+    #[tokio::test]
+    async fn with_chain_timeout_passes_instant_future_through() {
+        let out = with_chain_timeout(Duration::from_secs(1), async { 42u32 })
+            .await
+            .expect("instant future completes inside the deadline");
+        assert_eq!(out, 42);
+    }
+
+    #[tokio::test]
+    async fn with_chain_timeout_times_out_pending_future() {
+        let err = with_chain_timeout(Duration::from_millis(5), std::future::pending::<()>())
+            .await
+            .expect_err("pending future must hit the deadline");
+        match err {
+            DashboardError::ServiceUnavailable(msg) => {
+                assert!(
+                    msg.contains("chain call timed out after 0s"),
+                    "names the deadline: {msg}"
+                );
+            }
+            other => panic!("expected ServiceUnavailable, got {other:?}"),
+        }
     }
 }

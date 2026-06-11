@@ -53,6 +53,7 @@ use xvision_marketplace::adapter::{
 };
 use xvision_marketplace::{IpfsStore, PinataDriver};
 
+use crate::chain_config::{chain_call_timeout, with_chain_timeout};
 use crate::error::DashboardError;
 use crate::state::AppState;
 
@@ -214,37 +215,43 @@ pub async fn post_publish(
 
     // g. Mint the identity NFT with the genart tokenURI.
     //    All config has been validated above — no config error can occur
-    //    after this point.
-    let identity_client = IdentityClient::connect(&chain.rpc_url, registry_addresses, chain.chain_id)
-        .await
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity connect: {e}")))?;
+    //    after this point. Every chain interaction is deadline-bounded
+    //    (xvision-4fp; timeout → 503 with an explicit message).
+    let timeout = chain_call_timeout(mp);
+    let identity_client = with_chain_timeout(
+        timeout,
+        IdentityClient::connect(&chain.rpc_url, registry_addresses, chain.chain_id),
+    )
+    .await?
+    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity connect: {e}")))?;
     let agent_uri = url::Url::parse(&token_uri)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("tokenURI is not a valid URL: {e}")))?;
-    let token_id = identity_client
-        .register(&agent_uri, &chain.signer)
-        .await
+    let token_id = with_chain_timeout(timeout, identity_client.register(&agent_uri, &chain.signer))
+        .await?
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity register: {e}")))?;
 
     // h. Create the marketplace listing.
     let content_hash: B256 = manifest_hash
         .parse()
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}")))?;
-    let listing = driver
-        .publish_listing(PublishRequest {
+    let listing = with_chain_timeout(
+        timeout,
+        driver.publish_listing(PublishRequest {
             agent_nft_id: token_id.0,
             content_hash,
             content_uri: content_uri.clone(),
             tier,
             price_usdc,
             transferable_license: body.transferable_license,
-        })
-        .await
-        .map_err(|e| {
-            DashboardError::Internal(anyhow::anyhow!(
-                "publish listing failed after minting identity NFT token_id={}: {e}",
-                token_id
-            ))
-        })?;
+        }),
+    )
+    .await?
+    .map_err(|e| {
+        DashboardError::Internal(anyhow::anyhow!(
+            "publish listing failed after minting identity NFT token_id={}: {e}",
+            token_id
+        ))
+    })?;
 
     // i. 201 + receipt.
     Ok((
@@ -296,17 +303,19 @@ pub async fn post_revoke(
         chain.chain_id,
         chain.signer.clone(),
     );
-    let tx_hash = driver.revoke_listing(U256::from(id)).await.map_err(|e| {
-        // All chain errors (contract reverts: NotSeller, UnknownListing, AlreadyRevoked,
-        // and RPC transport failures) map to DashboardError::Validation → 400 BAD_REQUEST.
-        // NOTE: maps ALL chain errors (incl. RPC transport) to 400 — acceptable for
-        // testnet; split transport → 503 when this hardens.
-        let msg = e.to_string();
-        DashboardError::Validation {
-            field: "listing_id".into(),
-            msg: format!("revoke failed: {msg}"),
-        }
-    })?;
+    let tx_hash = with_chain_timeout(chain_call_timeout(mp), driver.revoke_listing(U256::from(id)))
+        .await?
+        .map_err(|e| {
+            // All chain errors (contract reverts: NotSeller, UnknownListing, AlreadyRevoked,
+            // and RPC transport failures) map to DashboardError::Validation → 400 BAD_REQUEST.
+            // NOTE: maps ALL chain errors (incl. RPC transport) to 400 — acceptable for
+            // testnet; split transport → 503 when this hardens.
+            let msg = e.to_string();
+            DashboardError::Validation {
+                field: "listing_id".into(),
+                msg: format!("revoke failed: {msg}"),
+            }
+        })?;
 
     Ok(Json(RevokeOut {
         listing_id: id,
@@ -468,17 +477,19 @@ pub async fn post_buy(
         chain.chain_id,
         chain.signer.clone(),
     );
-    let receipt = driver.buy_listing(req).await.map_err(|e| {
-        // Contract reverts (UnknownListing, ListingRevoked, expired/used
-        // authorization, bad signature) map to 400 with the chain text.
-        // NOTE: like post_revoke this also maps RPC transport errors to 400 —
-        // acceptable for testnet; split transport → 503 when this hardens.
-        let msg = e.to_string();
-        DashboardError::Validation {
-            field: "listing_id".into(),
-            msg: format!("buy failed: {msg}"),
-        }
-    })?;
+    let receipt = with_chain_timeout(chain_call_timeout(mp), driver.buy_listing(req))
+        .await?
+        .map_err(|e| {
+            // Contract reverts (UnknownListing, ListingRevoked, expired/used
+            // authorization, bad signature) map to 400 with the chain text.
+            // NOTE: like post_revoke this also maps RPC transport errors to 400 —
+            // acceptable for testnet; split transport → 503 when this hardens.
+            let msg = e.to_string();
+            DashboardError::Validation {
+                field: "listing_id".into(),
+                msg: format!("buy failed: {msg}"),
+            }
+        })?;
 
     Ok(Json(BuyOut {
         tx_hash: format!("0x{:x}", receipt.tx_hash),
@@ -550,15 +561,21 @@ pub async fn post_import(
                 .into(),
         )
     })?;
-    let provider = alloy::providers::ProviderBuilder::new()
-        .connect(cfg.rpc_url.as_str())
-        .await
-        .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
-    let balance = xvision_identity::contracts::ILicenseToken::new(license_token, &provider)
-        .balanceOf(address, U256::from(id))
-        .call()
-        .await
-        .map_err(|e| DashboardError::ServiceUnavailable(format!("license balance lookup failed: {e}")))?;
+    let timeout = chain_call_timeout(mp);
+    let provider = with_chain_timeout(
+        timeout,
+        alloy::providers::ProviderBuilder::new().connect(cfg.rpc_url.as_str()),
+    )
+    .await?
+    .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
+    let balance = with_chain_timeout(
+        timeout,
+        xvision_identity::contracts::ILicenseToken::new(license_token, &provider)
+            .balanceOf(address, U256::from(id))
+            .call(),
+    )
+    .await?
+    .map_err(|e| DashboardError::ServiceUnavailable(format!("license balance lookup failed: {e}")))?;
     if balance.is_zero() {
         return Err(DashboardError::Forbidden(format!(
             "no license for {address:#x} on listing {id}"
@@ -657,24 +674,26 @@ pub async fn post_attest(
         chain.chain_id,
         chain.signer.clone(),
     );
-    let tx_hash = driver
-        .attest_eval(AttestRequest {
+    let tx_hash = with_chain_timeout(
+        chain_call_timeout(mp),
+        driver.attest_eval(AttestRequest {
             listing_id: U256::from(id),
             eval_result_hash: attest_payload_hash(body.cycles, body.sharpe),
             eval_result_uri: format!("xvn://eval/listing/{id}"),
             schema: B256::ZERO,
-        })
-        .await
-        .map_err(|e| {
-            // Chain errors (incl. NotConfigured zero-address and RPC
-            // transport) map to 400 with the chain text — same testnet
-            // posture as post_revoke / post_buy.
-            let msg = e.to_string();
-            DashboardError::Validation {
-                field: "listing_id".into(),
-                msg: format!("attest failed: {msg}"),
-            }
-        })?;
+        }),
+    )
+    .await?
+    .map_err(|e| {
+        // Chain errors (incl. NotConfigured zero-address and RPC
+        // transport) map to 400 with the chain text — same testnet
+        // posture as post_revoke / post_buy.
+        let msg = e.to_string();
+        DashboardError::Validation {
+            field: "listing_id".into(),
+            msg: format!("attest failed: {msg}"),
+        }
+    })?;
 
     Ok((
         StatusCode::CREATED,
@@ -781,21 +800,28 @@ pub async fn post_update(
 
     // f. updateListing via the IListingRegistry binding with the publisher
     //    signer (seller-only on-chain; NotSeller and friends → 400 below).
+    let timeout = chain_call_timeout(mp);
     let wallet = EthereumWallet::from(chain.signer.clone());
-    let provider = ProviderBuilder::new()
-        .wallet(wallet)
-        .connect(chain.rpc_url.as_str())
-        .await
-        .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
+    let provider = with_chain_timeout(
+        timeout,
+        ProviderBuilder::new()
+            .wallet(wallet)
+            .connect(chain.rpc_url.as_str()),
+    )
+    .await?
+    .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
     let registry = IListingRegistry::new(marketplace_addresses.listing_registry, &provider);
-    let receipt = registry
-        .updateListing(U256::from(id), content_hash, content_uri.clone())
-        .send()
-        .await
-        .map_err(|e| update_chain_error(e.to_string()))?
-        .get_receipt()
-        .await
-        .map_err(|e| update_chain_error(e.to_string()))?;
+    let receipt = with_chain_timeout(timeout, async {
+        registry
+            .updateListing(U256::from(id), content_hash, content_uri.clone())
+            .send()
+            .await
+            .map_err(|e| update_chain_error(e.to_string()))?
+            .get_receipt()
+            .await
+            .map_err(|e| update_chain_error(e.to_string()))
+    })
+    .await??;
 
     Ok(Json(UpdateOut {
         listing_id: id,
