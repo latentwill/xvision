@@ -18,9 +18,9 @@ Threat tiers we must address (from the 2026-06-11 discussion):
 1. **Non-buyers scraping IPFS** — MUST be cryptographically impossible. (Solved.)
 2. **Our dashboard server compromised** — MUST NOT leak the catalog. So the server
    must never hold decryption keys. (Solved: keys live in Lit's TEE network.)
-3. **A legitimate buyer leaks plaintext** — irreducible (analog hole). NOT solved by
-   crypto; mitigated by product design (soulbound licenses, re-encrypt on update,
-   value in the live attestation/perf stream). Documented, not engineered away.
+3. **A legitimate buyer leaks plaintext** — the analog hole; no crypto closes it and
+   it's low-priority here (a buyer already paid; soulbound licenses prevent resale).
+   Noted, not engineered around.
 
 ## 2. Why Lit Chipotle (v3)
 
