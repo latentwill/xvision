@@ -25,11 +25,15 @@
 //! ## Lit Chipotle wire format
 //!
 //! Lit v3 "Chipotle" is a REST API (`api.chipotle.litprotocol.com`), not an
-//! SDK. There is a SINGLE endpoint for running a pinned action:
-//! `POST {api_base}/core/v1/lit_action`, header `X-Api-Key: <key>`, body
-//! `{"ipfs_id": "<action CID>", "js_params": {<params>}}`. The response is an
-//! envelope `{"response": <value or json-string>, "logs": "...",
-//! "has_error": bool}`.
+//! SDK. There is a SINGLE endpoint for running an action:
+//! `POST {api_base}/core/v1/lit_action`, header `X-Api-Key: <key>`. The body
+//! accepts EITHER `{"ipfs_id": "<action CID>", "js_params": {...}}` (resolve a
+//! cached action by CID) OR `{"code": "<full JS source>", "js_params": {...}}`
+//! (run the JS inline). The CID cache is IN-MEMORY and non-durable, so this
+//! client ALWAYS sends `code` inline — Lit caches it by hash and authorization
+//! is unchanged (it computes the CID over the inline bytes and checks the
+//! operator's group binding). The response is an envelope
+//! `{"response": <value or json-string>, "logs": "...", "has_error": bool}`.
 //!
 //! Encryption has NO standalone endpoint — it runs INSIDE an action via
 //! `Lit.Actions.Encrypt({pkpId, message}) → ciphertext`. So this client
@@ -51,6 +55,19 @@ use crate::error::MarketplaceError;
 
 /// Default Lit Chipotle REST API base (overridable for tests).
 const DEFAULT_LIT_API: &str = "https://api.chipotle.litprotocol.com";
+
+/// The full JS source of the pinned ENCRYPT action, embedded at compile time
+/// from the byte-identical deploy file. We send this INLINE as `code` on every
+/// `lit_action` call (never by `ipfs_id`): Lit's CID-keyed action cache is
+/// in-memory and non-durable, so an `ipfs_id` reference only resolves if that
+/// exact CID happens to still be cached — no durability guarantee. Inline
+/// `code` always works (Lit caches it by hash on the spot).
+///
+/// AUTHORIZATION still holds: Lit computes the CID (v0) of these inline bytes
+/// and checks its keccak hash is in a group the API key may execute. So the
+/// bytes here MUST stay byte-identical to the pinned deploy file the operator
+/// registered — `encrypt_action_src_matches_pinned_deploy_file` guards that.
+const ENCRYPT_ACTION_SRC: &str = include_str!("../../../contracts/lit-actions/sealed-encrypt.deploy.js");
 /// HTTP timeout for Lit Action requests. A Lit Action may run up to 15min
 /// server-side, but the *encrypt* path is a short call; without a timeout a
 /// hung connection would block an `encrypt` future forever. Matches the
@@ -167,11 +184,15 @@ struct EncryptJsParams<'a> {
 
 /// Request body POSTed to `POST {api_base}/core/v1/lit_action`.
 ///
-/// Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct): run a pinned
-/// action by CID (`ipfs_id`) with its inputs (`js_params`).
+/// Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct): the endpoint
+/// accepts EITHER `{ipfs_id, js_params}` (resolve a cached action by CID — but
+/// the cache is in-memory / non-durable) OR `{code, js_params}` (run the inline
+/// JS source — always works, Lit caches it by hash). We ALWAYS send `code`
+/// inline for durability; authorization is unchanged (Lit hashes the inline
+/// bytes to the CID and checks the operator's group binding).
 #[derive(Debug, Serialize)]
 struct LitActionRequest<'a> {
-    ipfs_id: &'a str,
+    code: &'a str,
     js_params: EncryptJsParams<'a>,
 }
 
@@ -217,7 +238,12 @@ pub struct LitChipotleClient {
     pkp_id: String,
     /// IPFS CID of the immutable decrypt gate action.
     gate_action_cid: String,
-    /// IPFS CID of the pinned ENCRYPT action run server-side at publish.
+    /// AUTHORIZATION REFERENCE for the ENCRYPT action — must be registered in
+    /// the operator's Lit group (the PKP's authorized CID set). Execution does
+    /// NOT send this CID; it sends the action source inline as `code`
+    /// ([`ENCRYPT_ACTION_SRC`]). Kept so the operator's group binding (CID +
+    /// PKP) is documented and verifiable. The inline `code` bytes hash to this
+    /// same CID, which is what keeps authorization intact.
     encrypt_action_cid: String,
     client: reqwest::Client,
 }
@@ -298,8 +324,13 @@ impl SealedBundleCrypto for LitChipotleClient {
         // same string on decrypt. (Callers should hand UTF-8 payloads, e.g.
         // JSON manifests; binary sealing is a later-phase concern.)
         let message = String::from_utf8_lossy(plaintext);
+        // Send the encrypt action source INLINE as `code` (not by
+        // `encrypt_action_cid` / `ipfs_id`): Lit's CID-keyed cache is
+        // non-durable, so inline `code` is the only reliable path. `code` is
+        // byte-identical to the pinned deploy file, so the CID Lit computes
+        // over it matches the operator's registered group binding.
         let body = LitActionRequest {
-            ipfs_id: &self.encrypt_action_cid,
+            code: ENCRYPT_ACTION_SRC,
             js_params: EncryptJsParams {
                 pkp_id: &self.pkp_id,
                 message: &message,
@@ -445,18 +476,42 @@ mod tests {
         assert!(matches!(err, MarketplaceError::Sealed(_)), "{err:?}");
     }
 
-    /// POSTs the Chipotle `lit_action` shape (X-Api-Key + `{ipfs_id, js_params}`
-    /// with the ENCRYPT action CID) and parses the OBJECT response form
-    /// (`response` is a JSON object). Matches the Chipotle OpenAPI 2026-06-12.
+    /// The embedded encrypt action source must be byte-identical to the pinned
+    /// deploy file so the CID Lit computes over the inline `code` matches the
+    /// CID the operator registered in the PKP's authorized group. If this drifts
+    /// the inline call would compute a different CID and authorization fails.
+    #[test]
+    fn encrypt_action_src_matches_pinned_deploy_file() {
+        let on_disk = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../contracts/lit-actions/sealed-encrypt.deploy.js"
+        ))
+        .expect("read pinned deploy file");
+        assert_eq!(
+            ENCRYPT_ACTION_SRC, on_disk,
+            "embedded ENCRYPT_ACTION_SRC drifted from the pinned deploy file"
+        );
+    }
+
+    /// POSTs the Chipotle `lit_action` shape (X-Api-Key + `{code, js_params}`
+    /// with the inline ENCRYPT action source) and parses the OBJECT response
+    /// form (`response` is a JSON object). Matches the Chipotle OpenAPI
+    /// 2026-06-12. We send `code` inline (not `ipfs_id`) because Lit's
+    /// CID-keyed action cache is non-durable; inline `code` always works.
     #[tokio::test]
-    async fn lit_encrypt_posts_and_parses_object_response() {
+    async fn lit_encrypt_posts_code_inline_and_parses_object_response() {
         let mut server = mockito::Server::new_async().await;
         let m = server
             .mock("POST", "/core/v1/lit_action")
             .match_header("x-api-key", "test-api-key")
+            // Body carries the inline `code` (encrypt action source) + js_params,
+            // and NOT an `ipfs_id` field.
             .match_body(mockito::Matcher::PartialJsonString(
-                r#"{"ipfs_id":"bafyencryptcid","js_params":{"pkpId":"pkp-123","message":"plain-secret"}}"#
-                    .to_string(),
+                serde_json::json!({
+                    "code": ENCRYPT_ACTION_SRC,
+                    "js_params": {"pkpId": "pkp-123", "message": "plain-secret"}
+                })
+                .to_string(),
             ))
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -475,6 +530,39 @@ mod tests {
         let ct = c.encrypt(b"plain-secret").await.unwrap();
         assert_eq!(ct, "sealed-blob-abc");
         m.assert_async().await;
+    }
+
+    /// The request body must NOT contain an `ipfs_id` field anymore — the
+    /// migration is to inline `code`, and a lingering `ipfs_id` would be dead
+    /// weight (or, worse, route around the durable path).
+    #[tokio::test]
+    async fn lit_encrypt_body_has_no_ipfs_id() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/core/v1/lit_action")
+            .match_body(mockito::Matcher::AllOf(vec![mockito::Matcher::Regex(
+                r#""code""#.to_string(),
+            )]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"response":{"ciphertext":"ok"},"has_error":false}"#)
+            .create_async()
+            .await;
+
+        let c = LitChipotleClient::with_api_base(server.url(), "key", "pkp", "cid", "bafyencryptcid");
+        c.encrypt(b"x").await.unwrap();
+        m.assert_async().await;
+        // Belt-and-suspenders: serialize the request body and assert no ipfs_id.
+        let body = serde_json::to_value(LitActionRequest {
+            code: ENCRYPT_ACTION_SRC,
+            js_params: EncryptJsParams {
+                pkp_id: "pkp",
+                message: "m",
+            },
+        })
+        .unwrap();
+        assert!(body.get("ipfs_id").is_none(), "ipfs_id must be gone");
+        assert!(body.get("code").is_some(), "code must be present");
     }
 
     /// Parses the JSON-STRING response form: `response` is a string that itself

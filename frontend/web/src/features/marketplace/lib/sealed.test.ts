@@ -26,6 +26,7 @@ import {
   SealedNotConfiguredError,
   type LitConfig,
 } from "./sealed";
+import { SEALED_GATE_ACTION_SRC } from "./sealedGateCode";
 
 const mockedAddress = vi.mocked(currentAddress);
 const mockedWalletClient = vi.mocked(walletClient);
@@ -110,7 +111,7 @@ describe("invokeGateAction", () => {
     );
   });
 
-  it("POSTs ipfs_id + js_params with X-Api-Key to /core/v1/lit_action (object form)", async () => {
+  it("POSTs the gate source as inline `code` + js_params with X-Api-Key (object form)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       // OBJECT form: response is a JSON object.
@@ -125,9 +126,13 @@ describe("invokeGateAction", () => {
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({ "x-api-key": "test-client-key" }),
-        body: JSON.stringify({ ipfs_id: "QmGateCID", js_params: jsParams }),
+        body: JSON.stringify({ code: SEALED_GATE_ACTION_SRC, js_params: jsParams }),
       }),
     );
+    // The body sends the inline `code` and NOT an `ipfs_id` field.
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.code).toBe(SEALED_GATE_ACTION_SRC);
+    expect(body.ipfs_id).toBeUndefined();
   });
 
   it("parses the json-string response form (response is a JSON string)", async () => {
@@ -203,7 +208,8 @@ describe("decryptSealedBundle", () => {
 
     // jsParams carry the ciphertext, license token, pkp, signature
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.ipfs_id).toBe("QmGateCID");
+    expect(body.code).toBe(SEALED_GATE_ACTION_SRC);
+    expect(body.ipfs_id).toBeUndefined();
     expect(body.js_params).toMatchObject({
       pkpId: "0xPKP",
       ciphertext: "CT",
