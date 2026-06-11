@@ -194,6 +194,7 @@ describe("ApiMarketplaceData.getReceipt", () => {
     agent_id: "01HXAGENT",
     gen_art_seed: "seed-xyz",
     name: "BTC Momentum",
+    content_uri: "ipfs://bafybeibundlecid123",
     buyer: "0x7c2e000000000000000000000000000000000007",
     price_usdc: 49,
     seller_proceeds_usdc: 46.55,
@@ -235,7 +236,7 @@ describe("ApiMarketplaceData.getReceipt", () => {
     expect(r.license.tokenId).toBe("3");
     expect(r.license.contract).toBe("0x4444444444444444444444444444444444444444");
     expect(r.license.manifestHash).toBe("");
-    expect(r.license.bundleCid).toBe("");
+    expect(r.license.bundleCid).toBe("bafybeibundlecid123");
     expect(r.license.pricePaidUsdc).toBe(49);
     expect(r.license.feeUsdc).toBe(2.45);
     expect(r.license.netToCreatorUsdc).toBe(46.55);
@@ -246,6 +247,19 @@ describe("ApiMarketplaceData.getReceipt", () => {
     expect(r.share.ogCard.id).toBe("3");
     expect(r.share.ogCard.genArtSeed).toBe("seed-xyz");
     expect(r.share.ogCard.priceUsdc).toBe(49);
+  });
+
+  it("maps an xvn:// content_uri to an honest empty bundleCid", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === `/api/marketplace/receipts/${TX}`)
+        return jsonResponse({ ...receiptOut, content_uri: "xvn://strategy/01HXAGENT" });
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    mocked.getContracts.mockRejectedValue(new Error("not configured"));
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const r = await api.getReceipt(TX);
+    expect(r.license.bundleCid).toBe("");
   });
 
   it("keeps an empty license contract when the address book is unavailable", async () => {

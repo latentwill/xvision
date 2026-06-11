@@ -473,6 +473,10 @@ pub struct ReceiptOut {
     pub agent_id: String,
     pub gen_art_seed: String,
     pub name: String,
+    /// The listing's `content_uri` (`ipfs://CID` or `xvn://strategy/<ulid>`)
+    /// from the snapshot join; `""` when the listing is not (yet) indexed.
+    /// Lets the receipt page surface the bundle CID without a second fetch.
+    pub content_uri: String,
     /// Lowercase `0x…`.
     pub buyer: String,
     pub price_usdc: f64,
@@ -507,6 +511,7 @@ fn receipt_from_sold(
         agent_id: listing.map(|l| l.agent_id.clone()).unwrap_or_default(),
         gen_art_seed: listing.map(|l| l.gen_art_seed.clone()).unwrap_or_default(),
         name: listing.map(|l| l.name.clone()).unwrap_or_default(),
+        content_uri: listing.map(|l| l.content_uri.clone()).unwrap_or_default(),
         buyer: format!("{:#x}", sold.buyer),
         price_usdc: crate::marketplace_index::usdc6_to_f64(sold.priceUSDC.to::<u128>()),
         seller_proceeds_usdc: crate::marketplace_index::usdc6_to_f64(sold.sellerProceeds.to::<u128>()),
@@ -732,6 +737,7 @@ mod tests {
         assert_eq!(out.listing_id, 1);
         assert_eq!(out.agent_id, "agent-7");
         assert_eq!(out.name, "xvn strategy 7");
+        assert_eq!(out.content_uri, "xvn://strategy/agent-7");
         assert_eq!(out.buyer, ALICE);
         assert_eq!(out.price_usdc, 49.0);
         assert_eq!(out.seller_proceeds_usdc, 46.55);
@@ -746,6 +752,7 @@ mod tests {
         assert_eq!(out.agent_id, "");
         assert_eq!(out.gen_art_seed, "");
         assert_eq!(out.name, "");
+        assert_eq!(out.content_uri, "");
         assert_eq!(out.block_time_unix, 0);
     }
 

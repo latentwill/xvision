@@ -53,6 +53,9 @@ export interface ReceiptOut {
   agent_id: string;
   gen_art_seed: string;
   name: string;
+  /// Listing `content_uri` joined from the snapshot — `ipfs://CID`,
+  /// `xvn://strategy/<ulid>`, or "" when the listing isn't indexed.
+  content_uri: string;
   buyer: string;
   price_usdc: number;
   seller_proceeds_usdc: number;
@@ -60,6 +63,17 @@ export interface ReceiptOut {
   license_token_id: string;
   purchase_path: number;
   block_time_unix: number;
+}
+
+/**
+ * The bundle CID behind a listing's `content_uri`, for receipt display.
+ * `ipfs://CID` → `CID`; `xvn://strategy/<ulid>` (local-only, no IPFS pin)
+ * and anything else → "" — the receipt shows an honest empty rather than
+ * pretending a non-IPFS URI is a CID.
+ */
+export function bundleCidFromContentUri(contentUri: string | undefined): string {
+  if (!contentUri) return "";
+  return contentUri.startsWith("ipfs://") ? contentUri.slice("ipfs://".length) : "";
 }
 
 export interface MarketplaceIndexStatus {
@@ -211,7 +225,7 @@ export class ApiMarketplaceData implements MarketplaceData {
         tokenId: String(r.license_token_id),
         contract: licenseContract,
         manifestHash: "", // not carried by the receipts route
-        bundleCid: "",
+        bundleCid: bundleCidFromContentUri(r.content_uri),
         pricePaidUsdc: r.price_usdc,
         feeUsdc: r.protocol_proceeds_usdc,
         netToCreatorUsdc: r.seller_proceeds_usdc,
