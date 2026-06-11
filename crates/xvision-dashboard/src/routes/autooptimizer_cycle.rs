@@ -40,6 +40,7 @@ use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 
 use crate::error::DashboardError;
+use crate::routes::autooptimizer::table_exists;
 use crate::state::AppState;
 
 #[derive(Deserialize, Default)]
@@ -1362,6 +1363,40 @@ pub async fn promote_strategy(
     }))
 }
 
+/// One row from `autooptimizer_events`, returned by the cycle-replay endpoint.
+#[derive(Serialize, sqlx::FromRow)]
+pub struct PersistedCycleEvent {
+    pub seq: i64,
+    pub session_id: String,
+    pub cycle_id: Option<String>,
+    pub kind: String,
+    pub payload_json: String,
+    pub ts: String,
+}
+
+/// GET /api/autooptimizer/cycles/:cycle_id/events
+///
+/// Replay source for the ConsoleModule's idle state: the persisted event log
+/// of a completed cycle, oldest-first. Absent table (fresh install) → empty
+/// list, never an error — "no events yet" is a designed product state.
+pub async fn get_cycle_events(
+    Path(cycle_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PersistedCycleEvent>>, DashboardError> {
+    if !table_exists(&state.pool, "autooptimizer_events").await? {
+        return Ok(Json(Vec::new()));
+    }
+    let events: Vec<PersistedCycleEvent> = sqlx::query_as(
+        "SELECT seq, session_id, cycle_id, kind, payload_json, ts
+         FROM autooptimizer_events WHERE cycle_id = ?1 ORDER BY seq ASC LIMIT 1000",
+    )
+    .bind(&cycle_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))?;
+    Ok(Json(events))
+}
+
 #[cfg(test)]
 mod schedule_tests {
     use super::*;
@@ -1599,5 +1634,95 @@ mod persist_tests {
 
         assert_eq!(row.0, "session_state_changed");
         assert!(row.1.is_none(), "cycle_id should be NULL for SessionStateChanged");
+    }
+}
+
+#[cfg(test)]
+mod cycle_events_tests {
+    use super::*;
+    use axum::extract::{Path, State};
+    use tempfile::TempDir;
+
+    /// Spin up a fresh `AppState` backed by a temp dir.
+    /// Mirrors the `fresh_state` pattern in `routes/agent_runs.rs`.
+    async fn fresh_state() -> (crate::state::AppState, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let xvn_home = tmp.path().to_path_buf();
+        std::fs::create_dir_all(xvn_home.join("config")).unwrap();
+        let cfg = std::fs::read_to_string("../../config/default.toml")
+            .expect("read workspace config/default.toml");
+        std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
+        let state = crate::state::AppState::new(xvn_home)
+            .await
+            .expect("AppState::new");
+        (state, tmp)
+    }
+
+    /// Creates `autooptimizer_events` in the given pool (mirrors migration 057 DDL).
+    async fn create_events_table(pool: &sqlx::SqlitePool) {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS autooptimizer_events (
+                seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                cycle_id     TEXT,
+                kind         TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                ts           TEXT NOT NULL
+            )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // ── test_get_cycle_events_returns_ordered_events ──────────────────────────
+
+    /// Seeding 5 rows (4 for cyc-1, 1 for cyc-2) must return exactly the 4
+    /// rows for cyc-1 in seq order.
+    #[tokio::test]
+    async fn test_get_cycle_events_returns_ordered_events() {
+        let (state, _tmp) = fresh_state().await;
+        create_events_table(&state.pool).await;
+
+        for (kind, cycle) in [
+            ("cycle_started", "cyc-1"),
+            ("mutation_proposed", "cyc-1"),
+            ("mutation_gated", "cyc-1"),
+            ("cycle_started", "cyc-2"), // other cycle — must be filtered out
+            ("cycle_finished", "cyc-1"),
+        ] {
+            sqlx::query(
+                "INSERT INTO autooptimizer_events (session_id, cycle_id, kind, payload_json, ts)
+                 VALUES ('sess-1', ?1, ?2, '{}', '2026-06-11T00:00:00Z')",
+            )
+            .bind(cycle)
+            .bind(kind)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        }
+
+        let resp = get_cycle_events(Path("cyc-1".into()), State(state))
+            .await
+            .unwrap();
+        let events = resp.0;
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].kind, "cycle_started");
+        assert_eq!(events[3].kind, "cycle_finished");
+        assert!(events.windows(2).all(|w| w[0].seq < w[1].seq));
+    }
+
+    // ── test_get_cycle_events_missing_table_returns_empty ─────────────────────
+
+    /// When `autooptimizer_events` does not exist (fresh install), the handler
+    /// must return an empty list — never an error.
+    #[tokio::test]
+    async fn test_get_cycle_events_missing_table_returns_empty() {
+        let (state, _tmp) = fresh_state().await;
+        // No create_events_table — table is absent.
+        let resp = get_cycle_events(Path("cyc-x".into()), State(state))
+            .await
+            .unwrap();
+        assert!(resp.0.is_empty());
     }
 }

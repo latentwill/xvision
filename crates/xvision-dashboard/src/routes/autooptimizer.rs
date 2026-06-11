@@ -1433,7 +1433,7 @@ async fn load_stats_rows(
     Ok(result)
 }
 
-async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, DashboardError> {
+pub(super) async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, DashboardError> {
     use sqlx::Row;
     let found: Option<String> =
         sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")

@@ -369,6 +369,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/cycles/:cycle_id/cost",
             get(autooptimizer_route::get_cycle_cost_handler),
         )
+        // Replay source for the ConsoleModule: persisted event log of a completed cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/events",
+            get(autooptimizer_cycle::get_cycle_events),
+        )
         // P3-W1: per-cycle aggregate statistics (kept/suspect/dropped/cost/cum_cost).
         // Registered before the /:id catch-all.
         .route(
