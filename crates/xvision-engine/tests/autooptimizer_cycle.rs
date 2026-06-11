@@ -351,6 +351,8 @@ async fn run_cycle_smoke() {
         explicit_parent_hashes: Vec::new(),
         objective: Default::default(),
         regime_set: vec![],
+        scenario_pool: vec![],
+        max_output_tokens: None,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -515,6 +517,8 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         explicit_parent_hashes: Vec::new(),
         objective: Default::default(),
         regime_set: vec![],
+        scenario_pool: vec![],
+        max_output_tokens: None,
     };
 
     let result = run_cycle(
@@ -554,4 +558,324 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         "the kept candidate must differ from its parent (not an identity no-op)"
     );
     assert_eq!(result.no_candidate_count, 0, "a real candidate was produced");
+}
+
+// ── B19: scenario_pool round-robin + parent/child comparability ───────────────
+
+/// Records every `(strategy_content_hash, scenario_id)` pair each `run` call
+/// observed, so a test can assert which scenario each strategy was evaluated on.
+/// Sharpe tracks `risk.stop_loss_atr_multiple` (as `SharpeByStopLoss`) so a
+/// risk-param mutation produces a directional, non-noise result.
+#[derive(Clone, Default)]
+struct RecordingPaperTester {
+    /// (strategy bundle-hash hex, scenario id) in call order.
+    calls: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+#[async_trait::async_trait]
+impl xvision_engine::autooptimizer::eval_adapter::PaperTestRunner for RecordingPaperTester {
+    async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> anyhow::Result<MetricsSummary> {
+        let hash = ContentHash::of_json(&serde_json::to_value(strategy).unwrap()).to_hex();
+        self.calls.lock().unwrap().push((hash, scenario.id.clone()));
+        Ok(MetricsSummary {
+            sharpe: strategy.risk.stop_loss_atr_multiple,
+            ..metrics_stub(strategy.risk.stop_loss_atr_multiple)
+        })
+    }
+}
+
+/// B19: with a non-empty `scenario_pool` and 2 candidates, candidate 0 must be
+/// evaluated on pool pair 0 and candidate 1 on pool pair 1 (round-robin), AND —
+/// the critical comparability rule — for each candidate the PARENT and the CHILD
+/// must both be evaluated on the SAME sampled (day, baseline) pair. Proven by a
+/// recording paper tester that captures (strategy-hash, scenario-id) per `run`.
+#[tokio::test]
+async fn run_cycle_scenario_pool_round_robin_keeps_parent_child_comparable() {
+    let pool = fresh_pool().await;
+    let strategy = make_strategy();
+    let bundle_hash =
+        ContentHash::of_json(&serde_json::to_value(&strategy).expect("strategy must serialise"));
+    let parent_hash_hex = bundle_hash.to_hex();
+    LineageStore::new(pool.clone())
+        .insert(&LineageNode {
+            bundle_hash,
+            parent_hash: None,
+            gate_verdict: GateVerdict::Pass,
+            status: LineageStatus::Active,
+            cycle_id: None,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            diversity_score: None,
+        })
+        .await
+        .expect("insert root lineage node");
+
+    let blob_dir = TempDir::new().expect("create temp blob dir");
+    let blob_store = BlobStore::new(blob_dir.path().join("blobs"));
+
+    // Two distinct risk-param diffs (one per candidate) + judge findings. The
+    // mutator emits a fresh diff per mutation_idx; provide two distinct ones plus
+    // findings responses so both candidates are non-identity and gateable.
+    let dispatch = Arc::new(MockDispatch::sequence(vec![
+        mock_text(risk_param_diff_after(3.0)),
+        mock_text(valid_findings_json()),
+        mock_text(risk_param_diff_after(4.0)),
+        mock_text(valid_findings_json()),
+        mock_text(valid_findings_json()),
+    ]));
+    let mutator = Mutator {
+        provider: "mock".into(),
+        model: "mock-model".into(),
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        max_retries: 0,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        provider: "mock".into(),
+        model: "mock-model".into(),
+    };
+
+    let ar_config = AutoOptimizerConfig {
+        min_improvement: 0.05,
+        ..AutoOptimizerConfig::default()
+    };
+    // Fallback single pair (used for the honesty check + as index-0 fallback).
+    let day_scenario = make_scenario("day-fallback", 2024, 2025);
+    let baseline_scenario = make_scenario("baseline-fallback", 2025, 2026);
+
+    // Two pool pairs with deterministic, distinct scenario ids.
+    let pool_pairs = vec![
+        (
+            make_scenario("pool0-day", 2020, 2021),
+            make_scenario("pool0-base", 2021, 2022),
+        ),
+        (
+            make_scenario("pool1-day", 2022, 2023),
+            make_scenario("pool1-base", 2023, 2024),
+        ),
+    ];
+
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(parent_hash_hex.clone(), strategy);
+
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: 2,
+        sabotage_seed: 42,
+        judge_provider: "mock".into(),
+        judge_model: "mock-model".into(),
+        prompt_version: "v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes: Vec::new(),
+        objective: Default::default(),
+        regime_set: vec![],
+        scenario_pool: pool_pairs,
+        max_output_tokens: None,
+    };
+
+    let recorder = RecordingPaperTester::default();
+    let calls_handle = Arc::clone(&recorder.calls);
+
+    run_cycle(
+        &pool,
+        &blob_store,
+        &ar_config,
+        &cycle_config,
+        &ParentPolicy::RoundRobin,
+        &mutator,
+        &judge,
+        &recorder,
+        |_evt| {},
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("run_cycle must return Ok");
+
+    let calls = calls_handle.lock().unwrap().clone();
+
+    // The parent must have been evaluated on BOTH pool day windows (one per
+    // sampled pair), proving the parent is re-evaluated per sampled pair.
+    let parent_day_scenarios: std::collections::HashSet<&str> = calls
+        .iter()
+        .filter(|(h, _)| *h == parent_hash_hex)
+        .map(|(_, sid)| sid.as_str())
+        .collect();
+    assert!(
+        parent_day_scenarios.contains("pool0-day"),
+        "parent must be evaluated on pool pair 0 day window; calls={calls:?}"
+    );
+    assert!(
+        parent_day_scenarios.contains("pool1-day"),
+        "parent must be evaluated on pool pair 1 day window (round-robin reached pair 1); calls={calls:?}"
+    );
+
+    // Comparability rule: for EACH pool day window a child was evaluated on, the
+    // PARENT must also have been evaluated on that SAME day window — otherwise the
+    // gate would compare child and parent across different regimes.
+    let child_day_scenarios: std::collections::HashSet<&str> = calls
+        .iter()
+        .filter(|(h, sid)| *h != parent_hash_hex && sid.ends_with("-day"))
+        .map(|(_, sid)| sid.as_str())
+        .collect();
+    assert!(
+        child_day_scenarios.contains("pool0-day"),
+        "a child must have been evaluated on pool pair 0 day window; calls={calls:?}"
+    );
+    assert!(
+        child_day_scenarios.contains("pool1-day"),
+        "a child must have been evaluated on pool pair 1 day window; calls={calls:?}"
+    );
+    for child_day in &child_day_scenarios {
+        assert!(
+            parent_day_scenarios.contains(child_day),
+            "comparability violated: a child was evaluated on '{child_day}' but the parent was \
+             never evaluated on that same window; parent windows={parent_day_scenarios:?}, calls={calls:?}"
+        );
+    }
+
+    // The single fallback pair must NOT be used for candidate evaluation when the
+    // pool is non-empty (only the honesty check may touch it). No child should be
+    // scored on the fallback day window.
+    assert!(
+        !child_day_scenarios.contains("day-fallback"),
+        "candidates must be scored on the pool, not the fallback pair; calls={calls:?}"
+    );
+}
+
+/// Regression for the parent-metrics cache key: two sampled pairs may share the
+/// same training/day scenario while using different baseline windows. The cache
+/// must include both scenario ids, otherwise candidate 1 reuses candidate 0's
+/// parent holdout metrics and is compared against the wrong baseline.
+#[tokio::test]
+async fn run_cycle_scenario_pool_cache_distinguishes_same_day_different_baseline() {
+    let pool = fresh_pool().await;
+    let strategy = make_strategy();
+    let bundle_hash =
+        ContentHash::of_json(&serde_json::to_value(&strategy).expect("strategy must serialise"));
+    let parent_hash_hex = bundle_hash.to_hex();
+    LineageStore::new(pool.clone())
+        .insert(&LineageNode {
+            bundle_hash,
+            parent_hash: None,
+            gate_verdict: GateVerdict::Pass,
+            status: LineageStatus::Active,
+            cycle_id: None,
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            diversity_score: None,
+        })
+        .await
+        .expect("insert root lineage node");
+
+    let blob_dir = TempDir::new().expect("create temp blob dir");
+    let blob_store = BlobStore::new(blob_dir.path().join("blobs"));
+
+    let dispatch = Arc::new(MockDispatch::sequence(vec![
+        mock_text(risk_param_diff_after(3.0)),
+        mock_text(valid_findings_json()),
+        mock_text(risk_param_diff_after(4.0)),
+        mock_text(valid_findings_json()),
+        mock_text(valid_findings_json()),
+    ]));
+    let mutator = Mutator {
+        provider: "mock".into(),
+        model: "mock-model".into(),
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        max_retries: 0,
+    };
+    let judge = Judge {
+        dispatch: Arc::clone(&dispatch) as Arc<dyn xvision_engine::agent::llm::LlmDispatch + Send + Sync>,
+        provider: "mock".into(),
+        model: "mock-model".into(),
+    };
+
+    let ar_config = AutoOptimizerConfig {
+        min_improvement: 0.05,
+        ..AutoOptimizerConfig::default()
+    };
+    let day_scenario = make_scenario("day-fallback", 2024, 2025);
+    let baseline_scenario = make_scenario("baseline-fallback", 2025, 2026);
+
+    let shared_day = make_scenario("shared-pool-day", 2020, 2021);
+    let pool_pairs = vec![
+        (shared_day.clone(), make_scenario("pool0-base", 2021, 2022)),
+        (shared_day, make_scenario("pool1-base", 2023, 2024)),
+    ];
+
+    let mut parent_strategies = HashMap::new();
+    parent_strategies.insert(parent_hash_hex.clone(), strategy);
+
+    let cycle_config = CycleConfig {
+        num_parents: 1,
+        mutations_per_parent: 2,
+        sabotage_seed: 42,
+        judge_provider: "mock".into(),
+        judge_model: "mock-model".into(),
+        prompt_version: "v1".into(),
+        sustained_no_pass_cycles: 0,
+        day_scenario,
+        baseline_scenario,
+        parent_strategies,
+        explicit_parent_hashes: Vec::new(),
+        objective: Default::default(),
+        regime_set: vec![],
+        scenario_pool: pool_pairs,
+        max_output_tokens: None,
+    };
+
+    let recorder = RecordingPaperTester::default();
+    let calls_handle = Arc::clone(&recorder.calls);
+
+    run_cycle(
+        &pool,
+        &blob_store,
+        &ar_config,
+        &cycle_config,
+        &ParentPolicy::RoundRobin,
+        &mutator,
+        &judge,
+        &recorder,
+        |_evt| {},
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("run_cycle must return Ok");
+
+    let calls = calls_handle.lock().unwrap().clone();
+    let parent_scenarios: std::collections::HashSet<&str> = calls
+        .iter()
+        .filter(|(h, _)| *h == parent_hash_hex)
+        .map(|(_, sid)| sid.as_str())
+        .collect();
+
+    assert!(
+        parent_scenarios.contains("pool0-base"),
+        "parent must be evaluated on first sampled baseline; calls={calls:?}"
+    );
+    assert!(
+        parent_scenarios.contains("pool1-base"),
+        "parent must be evaluated on second sampled baseline even though the day id is shared; \
+         calls={calls:?}"
+    );
+}
+
+/// A risk-param diff that widens `risk.stop_loss_atr_multiple` to `after`.
+fn risk_param_diff_after(after: f64) -> String {
+    serde_json::json!({
+        "kind": "param",
+        "prose": [],
+        "params": [{"key": "risk.stop_loss_atr_multiple", "before": 2.0, "after": after}],
+        "tools": {"added": [], "removed": []},
+        "rationale": format!("widen ATR stop to {after}")
+    })
+    .to_string()
 }

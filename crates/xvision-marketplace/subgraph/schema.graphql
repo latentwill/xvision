@@ -12,7 +12,7 @@
 # unused self-reference retained for forks recorded off-chain in the manifest;
 # nothing in the contracts enforces it.
 
-type Agent @entity {
+type Agent @entity(immutable: false) {
   id: ID! # agentId (IdentityRegistry ERC-721 token id == strategy/listing agent)
   owner: Bytes!
   manifestCid: String!
@@ -22,7 +22,7 @@ type Agent @entity {
   listings: [Listing!]! @derivedFrom(field: "agent")
 }
 
-type Listing @entity {
+type Listing @entity(immutable: false) {
   id: ID! # listingId
   agent: Agent! # agentId (1:1 strategy/listing under AM3)
   seller: Bytes!
@@ -35,7 +35,7 @@ type Listing @entity {
   attestations: [EvalAttestation!]! @derivedFrom(field: "listing")
 }
 
-type Sale @entity {
+type Sale @entity(immutable: true) {
   id: ID! # txHash-logIndex
   listing: Listing!
   buyer: Bytes!
@@ -47,7 +47,7 @@ type Sale @entity {
   blockTimestamp: BigInt!
 }
 
-type EvalAttestation @entity {
+type EvalAttestation @entity(immutable: true) {
   id: ID!
   listing: Listing!
   attester: Bytes!
@@ -56,8 +56,13 @@ type EvalAttestation @entity {
   postedAt: BigInt!
 }
 
-type Feedback @entity {
-  id: ID! # txHash-logIndex
+type Feedback @entity(immutable: false) {
+  id: ID! # "<agentId>-<index>" — keyed by the on-chain append index so a
+          # FeedbackRevoked(agentId, index, ...) event can resolve THIS entity
+          # to tombstone it. (Not txHash-logIndex: the revoke event carries the
+          # array index, not the posting tx, so the id must be reconstructable
+          # from (agentId, index). The per-agent index comes from
+          # FeedbackCounter below, which tracks the append position.)
   agent: Agent!
   rater: Bytes!
   value: BigInt!
@@ -67,7 +72,17 @@ type Feedback @entity {
   blockTimestamp: BigInt!
 }
 
-type Validation @entity {
+# Internal bookkeeping entity — NOT part of the public read contract (the
+# frontend MarketplaceData layer ignores it). Tracks the next append index per
+# agent so each FeedbackPosted gets the same index the contract's
+# ReputationRegistry feedback array uses, letting FeedbackRevoked(agentId,
+# index, ...) resolve the Feedback entity (id "<agentId>-<index>") to tombstone.
+type FeedbackCounter @entity(immutable: false) {
+  id: ID! # agentId
+  count: BigInt! # number of feedback entries appended so far (== next index)
+}
+
+type Validation @entity(immutable: true) {
   id: ID! # txHash-logIndex
   agent: Agent!
   validator: Bytes!

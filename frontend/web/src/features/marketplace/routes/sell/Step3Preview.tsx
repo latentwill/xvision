@@ -1,6 +1,7 @@
 // src/features/marketplace/routes/sell/Step3Preview.tsx
 import type { PublishDraft } from "@/features/marketplace/data/types";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
+import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { ListingPreviewCard } from "./ListingPreviewCard";
 
 export function Step3Preview({
@@ -43,6 +44,21 @@ export function Step3Preview({
           Listing preview
         </p>
         <ListingPreviewCard listing={draft.preview} />
+      </div>
+
+      {/* Mint art preview — full-width inline section, no right-column */}
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-[11px] font-mono uppercase tracking-wide text-text-3">
+          Identity art preview
+        </p>
+        {/*
+         * Final minted seed is "{agent_id}:{manifest_hash}" computed server-side;
+         * strategyId-only preview is provisional.
+         */}
+        <GenArtPlaceholder seed={draft.strategyId} size={160} className="rounded-md" />
+        <p className="text-[11px] text-text-3 italic">
+          Identity art preview — finalizes at mint
+        </p>
       </div>
 
       {/* Failed checks warning (when minting is blocked) */}

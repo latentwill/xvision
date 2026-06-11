@@ -13,6 +13,11 @@ serde = { workspace = true }
 [dependencies]
 xvision-core          = { path = "../xvision-core" }
 xvision-engine        = { path = "../xvision-engine" }
+# On-chain publish path: POST /api/marketplace/publish mints the identity NFT
+# (genart tokenURI) and creates the marketplace listing. Pulls the alloy v2
+# stack into the dashboard build.
+xvision-identity      = { path = "../xvision-identity" }
+xvision-marketplace   = { path = "../xvision-marketplace" }
 xvision-filters       = { path = "../xvision-filters" }
 xvision-memory        = { path = "../xvision-memory" }
 xvision-observability = { path = "../xvision-observability" }
@@ -47,6 +52,10 @@ sha2            = "0.10"
 getrandom       = "0.2"
 # reqwest: used by POST /api/assets/refresh to fetch live Orderly market data.
 reqwest         = { workspace = true }
+# alloy + url: chain primitives (U256/B256/Address, PrivateKeySigner) and the
+# url::Url that IdentityClient::register takes — marketplace publish route.
+alloy           = { workspace = true }
+url             = "2"
 
 [dev-dependencies]
 axum-test = "16"

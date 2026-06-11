@@ -1,0 +1,24 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "agentId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "rater", "type": "address" },
+      { "indexed": false, "internalType": "int128", "name": "value", "type": "int128" },
+      { "indexed": false, "internalType": "bytes32", "name": "feedbackHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "string", "name": "tag1", "type": "string" }
+    ],
+    "name": "FeedbackPosted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "agentId", "type": "uint256" },
+      { "indexed": true, "internalType": "uint256", "name": "index", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "revoker", "type": "address" }
+    ],
+    "name": "FeedbackRevoked",
+    "type": "event"
+  }
+]

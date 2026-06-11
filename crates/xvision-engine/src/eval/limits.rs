@@ -48,10 +48,16 @@ pub struct EvalLimits {
     /// Serialized as seconds for wire stability across language clients.
     #[serde(default)]
     pub max_wall_clock_secs: Option<u64>,
-    /// When `true`, a token-cap breach lands the run as `Cancelled`
-    /// with a breach reason; when `false`, the breach is logged but
-    /// the run continues (advisory mode). Decisions/wall-clock breaches
-    /// always cancel — only token caps respect this flag.
+    /// When `true`, an `max_input_tokens` breach lands the run as
+    /// `Cancelled`; when `false`, that input-token breach is logged but
+    /// the run continues (advisory mode).
+    ///
+    /// NOTE (strict output cap): `max_output_tokens` no longer respects
+    /// this flag — when `max_output_tokens` IS set it is ALWAYS a hard
+    /// cap (a runaway output is misconfiguration, not something to log
+    /// and continue). This flag now only gates `max_input_tokens`.
+    /// `max_decisions` and `max_wall_clock_secs` are, as before, always
+    /// hard caps.
     #[serde(default)]
     pub cancel_on_token_limit: bool,
 }
@@ -76,9 +82,14 @@ impl EvalLimits {
     /// first breach encountered, or `None` if every cap is either
     /// unset or still under its threshold.
     ///
-    /// `cancel_on_token_limit == false` defers token-cap breaches to
-    /// advisory mode — `check_for_cancel` filters those out; callers
-    /// who want the advisory signal can call `check_advisory` instead.
+    /// Cap semantics:
+    /// - `max_decisions` and `max_wall_clock_secs`: always hard caps.
+    /// - `max_output_tokens`: **strict when set** — always a hard cap,
+    ///   independent of `cancel_on_token_limit`. A 172k-token response
+    ///   is misconfiguration, not something to silently log and
+    ///   continue, so when an operator sets this cap it is enforced.
+    /// - `max_input_tokens`: still respects `cancel_on_token_limit`
+    ///   (advisory unless the flag is set), preserving prior behaviour.
     pub fn check_for_cancel(
         &self,
         decisions: u32,
@@ -86,8 +97,6 @@ impl EvalLimits {
         output_tokens: u64,
         started_at: Instant,
     ) -> Option<LimitBreach> {
-        // Decisions and wall-clock are always hard caps. Token caps
-        // depend on `cancel_on_token_limit`.
         if let Some(cap) = self.max_decisions {
             if decisions >= cap {
                 return Some(LimitBreach::MaxDecisions { cap });
@@ -100,15 +109,18 @@ impl EvalLimits {
                 });
             }
         }
+        // Strict output cap: enforced whenever set, regardless of the
+        // advisory flag.
+        if let Some(cap) = self.max_output_tokens {
+            if output_tokens >= cap {
+                return Some(LimitBreach::MaxOutputTokens { cap });
+            }
+        }
+        // Input-token cap remains advisory unless the flag opts in.
         if self.cancel_on_token_limit {
             if let Some(cap) = self.max_input_tokens {
                 if input_tokens >= cap {
                     return Some(LimitBreach::MaxInputTokens { cap });
-                }
-            }
-            if let Some(cap) = self.max_output_tokens {
-                if output_tokens >= cap {
-                    return Some(LimitBreach::MaxOutputTokens { cap });
                 }
             }
         }
@@ -184,24 +196,59 @@ mod tests {
     }
 
     #[test]
-    fn token_caps_require_cancel_on_token_limit_flag() {
+    fn input_token_cap_requires_cancel_on_token_limit_flag() {
+        // Input-token cap is still advisory unless the flag is set.
         let advisory = EvalLimits {
-            max_output_tokens: Some(100),
+            max_input_tokens: Some(100),
             cancel_on_token_limit: false,
             ..Default::default()
         };
-        // Advisory mode: token breach does NOT trigger cancel.
-        assert!(advisory.check_for_cancel(0, 0, 1_000, t0()).is_none());
+        assert!(advisory.check_for_cancel(0, 1_000, 0, t0()).is_none());
 
         let strict = EvalLimits {
-            max_output_tokens: Some(100),
+            max_input_tokens: Some(100),
             cancel_on_token_limit: true,
             ..Default::default()
         };
         assert_eq!(
-            strict.check_for_cancel(0, 0, 100, t0()),
+            strict.check_for_cancel(0, 100, 0, t0()),
+            Some(LimitBreach::MaxInputTokens { cap: 100 })
+        );
+    }
+
+    #[test]
+    fn output_token_cap_is_strict_when_set_without_flag() {
+        // Strict-when-set: with cancel_on_token_limit == false, exceeding
+        // max_output_tokens now STOPS the run. (Before the strict change
+        // this returned None and the run continued.)
+        let limits = EvalLimits {
+            max_output_tokens: Some(100),
+            cancel_on_token_limit: false,
+            ..Default::default()
+        };
+        // Under the cap → no breach.
+        assert!(limits.check_for_cancel(0, 0, 99, t0()).is_none());
+        // At/over the cap → breach, even though the flag is false.
+        assert_eq!(
+            limits.check_for_cancel(0, 0, 100, t0()),
             Some(LimitBreach::MaxOutputTokens { cap: 100 })
         );
+        assert_eq!(
+            limits.check_for_cancel(0, 0, 1_000, t0()),
+            Some(LimitBreach::MaxOutputTokens { cap: 100 })
+        );
+    }
+
+    #[test]
+    fn unset_output_cap_never_breaches() {
+        // When max_output_tokens is None, even huge output is fine —
+        // strict-when-SET, not strict-always.
+        let limits = EvalLimits {
+            max_output_tokens: None,
+            cancel_on_token_limit: false,
+            ..Default::default()
+        };
+        assert!(limits.check_for_cancel(0, 0, 1_000_000, t0()).is_none());
     }
 
     #[test]

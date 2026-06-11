@@ -1,0 +1,34 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "listingId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "seller", "type": "address" },
+      { "indexed": true, "internalType": "uint256", "name": "agentNftId", "type": "uint256" },
+      { "indexed": false, "internalType": "bytes32", "name": "contentHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "uint8", "name": "tier", "type": "uint8" },
+      { "indexed": false, "internalType": "uint96", "name": "priceUSDC", "type": "uint96" }
+    ],
+    "name": "ListingCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "listingId", "type": "uint256" },
+      { "indexed": false, "internalType": "bytes32", "name": "contentHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "string", "name": "contentURI", "type": "string" }
+    ],
+    "name": "ListingUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "listingId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "seller", "type": "address" }
+    ],
+    "name": "ListingRevoked",
+    "type": "event"
+  }
+]

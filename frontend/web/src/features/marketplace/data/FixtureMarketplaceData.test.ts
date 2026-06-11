@@ -4,6 +4,12 @@ import { FixtureMarketplaceData } from "./MarketplaceData";
 import { defaultFilterState } from "./filter";
 import { ED_CREATOR } from "./fixtures/creators";
 
+// submitListing now calls the real publish endpoint; mock it so this unit test
+// doesn't require a live server. The real publish path is tested in publish.test.ts.
+vi.mock("./publish", () => ({
+  publishListing: vi.fn().mockResolvedValue({ txHash: "0xmocked-listing-id", network: "mantle-sepolia" }),
+}));
+
 const mp = new FixtureMarketplaceData();
 
 describe("FixtureMarketplaceData", () => {

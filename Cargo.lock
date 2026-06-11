@@ -8061,6 +8061,7 @@ dependencies = [
 name = "xvision-dashboard"
 version = "0.21.0"
 dependencies = [
+ "alloy",
  "anyhow",
  "async-stream",
  "async-trait",
@@ -8088,9 +8089,12 @@ dependencies = [
  "tower-http",
  "tracing",
  "ulid",
+ "url",
  "xvision-core",
  "xvision-engine",
  "xvision-filters",
+ "xvision-identity",
+ "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
 ]

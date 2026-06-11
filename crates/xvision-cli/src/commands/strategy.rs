@@ -857,6 +857,49 @@ async fn new(
     )))
 }
 
+/// Build the `AgentSlot` for the single "main" slot created in atomic mode.
+///
+/// Trader-role slots are seeded with `["ohlcv", "submit_decision"]` so the
+/// resulting strategy passes `eval validate` / `assert_launchable` out of the
+/// box for every provider (anthropic, openrouter, ollama, …).  Non-trader
+/// roles receive an empty tool list because they don't produce decisions.
+///
+/// This is a pure function extracted from `new_atomic` so it can be unit-
+/// tested without a running `ApiContext` (B23 regression guard).
+fn build_atomic_slot(role: &str, provider: &str, model: &str, prompt_text: String) -> AgentSlot {
+    use xvision_engine::agents::InputsPolicy;
+    AgentSlot {
+        name: "main".to_string(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+        system_prompt: prompt_text,
+        skill_ids: if role.eq_ignore_ascii_case("trader") {
+            vec!["ohlcv".to_string(), "indicator_panel".to_string()]
+        } else {
+            Vec::new()
+        },
+        max_tokens: None,
+        max_wall_ms: None,
+        temperature: None,
+        prompt_version: String::new(),
+        inputs_policy: InputsPolicy::Raw,
+        bar_history_limit: None,
+        memory_mode: Default::default(),
+        noop_skip: None,
+        // Seed the tool grants so the strategy is launchable immediately.
+        // Trader slots must have submit_decision; ohlcv is the canonical
+        // data tool that all builtin templates grant (see templates.rs ~83).
+        // Without this, `eval validate` fails with "no slot grants
+        // submit_decision" for every provider (B23).
+        allowed_tools: if role.eq_ignore_ascii_case("trader") {
+            vec!["ohlcv".to_string(), "submit_decision".to_string()]
+        } else {
+            Vec::new()
+        },
+        delta_briefing: None,
+    }
+}
+
 /// Atomic-mode create: one command that creates a strategy + agent + provider/model
 /// binding from a prompt file. Exits with structured JSON on --json.
 #[allow(clippy::too_many_arguments)]
@@ -972,27 +1015,7 @@ async fn new_atomic(
             name: format!("{name} {role}"),
             description: format!("Created atomically with strategy '{name}' role '{role}'"),
             tags: vec!["atomic-create".to_string()],
-            slots: vec![AgentSlot {
-                name: "main".to_string(),
-                provider: provider.clone(),
-                model: model.clone(),
-                system_prompt: prompt_text,
-                skill_ids: if role.eq_ignore_ascii_case("trader") {
-                    vec!["ohlcv".to_string(), "indicator_panel".to_string()]
-                } else {
-                    Vec::new()
-                },
-                max_tokens: None,
-                max_wall_ms: None,
-                temperature: None,
-                prompt_version: String::new(),
-                inputs_policy: xvision_engine::agents::InputsPolicy::Raw,
-                bar_history_limit: None,
-                memory_mode: Default::default(),
-                noop_skip: None,
-                allowed_tools: Vec::new(),
-                delta_briefing: None,
-            }],
+            slots: vec![build_atomic_slot(&role, &provider, &model, prompt_text)],
             scope_strategy_id: None,
         },
     )
@@ -3170,6 +3193,160 @@ pub mod atomic_create {
         );
         assert_eq!(out["eval_ready"], false);
         assert_eq!(out["warnings"].as_array().unwrap().len(), 1);
+    }
+
+    // ── build_atomic_slot ─────────────────────────────────────────────────
+    // B23: atomic slot created for a trader-role must contain submit_decision
+    // so the resulting strategy passes eval validate (assert_launchable).
+
+    #[test]
+    fn atomic_trader_slot_grants_submit_decision_for_openrouter() {
+        use ulid::Ulid;
+        use xvision_engine::agents::Agent;
+        use xvision_engine::diagnostics::{assert_launchable, diagnose};
+        use xvision_engine::strategies::agent_ref::AgentRef;
+        use xvision_engine::strategies::manifest::PublicManifest;
+        use xvision_engine::strategies::risk::RiskPreset;
+        use xvision_engine::strategies::Strategy;
+
+        // Build the slot the same way new_atomic does, provider = openrouter.
+        let slot = build_atomic_slot("trader", "openrouter", "kimi-k2", "You are a trader.".to_string());
+
+        // Wrap it in a minimal Agent + Strategy so diagnose() can inspect it.
+        let agent_id = Ulid::new().to_string();
+        let now = chrono::Utc::now();
+        let agent = Agent {
+            agent_id: agent_id.clone(),
+            name: "test-agent".into(),
+            description: String::new(),
+            tags: Vec::new(),
+            slots: vec![slot],
+            archived: false,
+            created_at: now,
+            updated_at: now,
+            scope_strategy_id: None,
+        };
+
+        let strategy = Strategy {
+            manifest: PublicManifest {
+                id: "test-strategy".to_string(),
+                display_name: "Test".to_string(),
+                plain_summary: String::new(),
+                creator: "@test".to_string(),
+                template: "custom".to_string(),
+                regime_fit: Vec::new(),
+                asset_universe: vec!["BTC/USD".to_string()],
+                required_tools: Vec::new(),
+                decision_cadence_minutes: 240,
+                attested_with: Vec::new(),
+                risk_preset_or_config: "balanced".to_string(),
+                published_at: None,
+                min_warmup_bars: None,
+                color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
+            },
+            agents: vec![AgentRef {
+                agent_id: agent_id.clone(),
+                role: "trader".to_string(),
+                activates: None,
+                prompt_override: None,
+                model_override: None,
+            }],
+            pipeline: Default::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+            hypothesis: None,
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
+            acknowledge_no_filter: true,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
+        };
+
+        let diag = diagnose(&strategy, &[agent]);
+        assert!(
+            diag.has_decision_path,
+            "openrouter atomic trader slot must grant submit_decision (B23): {diag:?}"
+        );
+        assert_launchable(&diag).expect("openrouter atomic strategy must be launchable (B23)");
+    }
+
+    #[test]
+    fn atomic_trader_slot_grants_submit_decision_for_ollama() {
+        use ulid::Ulid;
+        use xvision_engine::agents::Agent;
+        use xvision_engine::diagnostics::{assert_launchable, diagnose};
+        use xvision_engine::strategies::agent_ref::AgentRef;
+        use xvision_engine::strategies::manifest::PublicManifest;
+        use xvision_engine::strategies::risk::RiskPreset;
+        use xvision_engine::strategies::Strategy;
+
+        let slot = build_atomic_slot("trader", "ollama", "llama3.2", "You are a trader.".to_string());
+
+        let agent_id = Ulid::new().to_string();
+        let now = chrono::Utc::now();
+        let agent = Agent {
+            agent_id: agent_id.clone(),
+            name: "test-agent-ollama".into(),
+            description: String::new(),
+            tags: Vec::new(),
+            slots: vec![slot],
+            archived: false,
+            created_at: now,
+            updated_at: now,
+            scope_strategy_id: None,
+        };
+
+        let strategy = Strategy {
+            manifest: PublicManifest {
+                id: "test-strategy-ollama".to_string(),
+                display_name: "Test Ollama".to_string(),
+                plain_summary: String::new(),
+                creator: "@test".to_string(),
+                template: "custom".to_string(),
+                regime_fit: Vec::new(),
+                asset_universe: vec!["ETH/USD".to_string()],
+                required_tools: Vec::new(),
+                decision_cadence_minutes: 60,
+                attested_with: Vec::new(),
+                risk_preset_or_config: "balanced".to_string(),
+                published_at: None,
+                min_warmup_bars: None,
+                color: None,
+                execution_mode: Default::default(),
+                capital_mode: Default::default(),
+            },
+            agents: vec![AgentRef {
+                agent_id: agent_id.clone(),
+                role: "trader".to_string(),
+                activates: None,
+                prompt_override: None,
+                model_override: None,
+            }],
+            pipeline: Default::default(),
+            regime_slot: None,
+            intern_slot: None,
+            trader_slot: None,
+            risk: RiskPreset::Balanced.expand(),
+            mechanical_params: serde_json::json!({}),
+            hypothesis: None,
+            activation_mode: xvision_filters::ActivationMode::EveryBar,
+            filter: None,
+            acknowledge_no_filter: true,
+            decision_mode: Default::default(),
+            mechanistic_config: None,
+        };
+
+        let diag = diagnose(&strategy, &[agent]);
+        assert!(
+            diag.has_decision_path,
+            "ollama atomic trader slot must grant submit_decision (B23): {diag:?}"
+        );
+        assert_launchable(&diag).expect("ollama atomic strategy must be launchable (B23)");
     }
 
     // ── post-template-registry-removal: --template no longer accepted ────
