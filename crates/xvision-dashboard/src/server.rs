@@ -931,26 +931,43 @@ pub async fn serve(
         });
     }
 
-    // Marketplace indexer: when the chain env is configured, poll the
-    // on-chain ListingRegistry/IdentityRegistry into the shared snapshot
-    // every 30s. The JoinHandle is intentionally dropped — the poller lives
-    // for the full process lifetime. Without the env the read routes serve
-    // the empty default snapshot and the wallet route returns 503.
-    match crate::marketplace_index::IndexerCfg::from_env() {
+    // Marketplace chain config: resolved ONCE here (xvision-df3) instead of
+    // per request in the routes. When the indexer sub-config is present,
+    // poll the on-chain ListingRegistry/IdentityRegistry into the shared
+    // snapshot every 30s. The JoinHandle is intentionally dropped — the
+    // poller lives for the full process lifetime. Without the env the read
+    // routes serve the empty default snapshot and the wallet route returns
+    // 503; chain-mutating routes 503 with the same messages as before.
+    let state = match crate::chain_config::MarketplaceChainConfig::from_env() {
         Some(cfg) => {
-            tracing::info!(
-                rpc_url = %cfg.rpc_url,
-                listing_registry = %cfg.listing_registry,
-                identity_registry = %cfg.identity_registry,
-                "marketplace indexer active",
-            );
-            state.mark_marketplace_indexer_active();
-            let _indexer = crate::marketplace_index::spawn_indexer(state.marketplace_snapshot.clone(), cfg);
+            match cfg.indexer.clone() {
+                Some(indexer_cfg) => {
+                    tracing::info!(
+                        rpc_url = %indexer_cfg.rpc_url,
+                        listing_registry = %indexer_cfg.listing_registry,
+                        identity_registry = %indexer_cfg.identity_registry,
+                        "marketplace indexer active",
+                    );
+                    state.mark_marketplace_indexer_active();
+                    let _indexer = crate::marketplace_index::spawn_indexer(
+                        state.marketplace_snapshot.clone(),
+                        indexer_cfg,
+                    );
+                }
+                None => tracing::info!(
+                    "marketplace indexer dormant (XVN_RPC_URL/XVN_LISTING_REGISTRY/XVN_IDENTITY_REGISTRY unset)"
+                ),
+            }
+            state.with_marketplace_chain_config(cfg)
         }
-        None => tracing::info!(
-            "marketplace indexer dormant (XVN_RPC_URL/XVN_LISTING_REGISTRY/XVN_IDENTITY_REGISTRY unset)"
-        ),
-    }
+        None => {
+            tracing::info!(
+                "marketplace chain config dormant (no XVN_RPC_URL/XVN_*_REGISTRY/XVN_LICENSE_TOKEN); \
+                 chain-touching marketplace routes will return 503"
+            );
+            state
+        }
+    };
 
     // AR-3: start the autooptimizer IPC Unix socket listener when the
     // operator passes `--autooptimizer-ipc-socket`. Optimizer-cycle CLI

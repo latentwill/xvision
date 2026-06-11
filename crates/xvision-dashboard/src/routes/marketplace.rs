@@ -15,22 +15,22 @@
 //!   re-pricing is revoke + relist).
 //!
 //! Flow: parse/validate body → load strategy → hash → tokenURI →
-//! `ChainEnv::from_env` → signer parse → `registry_addresses_from_env` →
-//! `MarketplaceAddresses::from_env` → construct driver → IPFS pin (when
-//! `PINATA_JWT` is set; a pin failure aborts BEFORE the mint) → connect +
-//! register (mint) → `publish_listing`. All config errors surface before
-//! the mint so no orphan NFTs are created by a missing env var.
+//! chain-config gate (the startup-resolved [`MarketplaceChainConfig`] in
+//! `AppState`) → construct driver → IPFS pin (when Pinata was configured at
+//! startup; a pin failure aborts BEFORE the mint) → connect + register
+//! (mint) → `publish_listing`. All config errors surface before the mint so
+//! no orphan NFTs are created by a missing env var.
 //!
-//! Chain access is env-gated: without `XVN_RPC_URL` / `XVN_CHAIN_ID` /
-//! `XVN_PUBLISHER_PK` (plus registry addresses) the route returns 503 so dev
-//! boxes degrade loudly. All pure logic (tier mapping, USDC scaling, env
-//! gating) is unit-testable without a chain.
+//! Chain access is config-gated: `MarketplaceChainConfig` is resolved ONCE
+//! at server startup from `XVN_RPC_URL` / `XVN_CHAIN_ID` /
+//! `XVN_PUBLISHER_PK` (plus registry addresses); when the needed piece is
+//! absent the route returns 503 so dev boxes degrade loudly — same status
+//! and messages as the old per-request env reads (xvision-df3). All pure
+//! logic (tier mapping, USDC scaling) is unit-testable without a chain.
 //!
 //! Idempotency: deliberately none in v1 (testnet). Re-publishing the same
 //! strategy mints a new NFT and listing; double-click protection is the
 //! frontend's job. Revisit with a publish-receipt store before mainnet.
-
-use std::fmt;
 
 use axum::{
     extract::{Path, State},
@@ -42,17 +42,16 @@ use serde::{Deserialize, Serialize};
 use alloy::network::EthereumWallet;
 use alloy::primitives::{keccak256, Address, B256, U256};
 use alloy::providers::ProviderBuilder;
-use alloy::signers::local::PrivateKeySigner;
 
 use xvision_engine::api::strategy;
 use xvision_engine::api::ApiError;
 use xvision_engine::autooptimizer::content_hash::canonical_json;
 use xvision_identity::contracts::IListingRegistry;
-use xvision_identity::{generate_token_uri, manifest_hash_hex, IdentityClient, RegistryAddresses};
+use xvision_identity::{generate_token_uri, manifest_hash_hex, IdentityClient};
 use xvision_marketplace::adapter::{
     AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, PublishRequest, TransferAuthorization,
 };
-use xvision_marketplace::{IpfsStore, MarketplaceAddresses, PinataDriver};
+use xvision_marketplace::{IpfsStore, PinataDriver};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -90,18 +89,6 @@ pub struct PublishOut {
     pub content_uri: String,
 }
 
-/// Reads the optional Pinata pin config: `PINATA_JWT` (required to pin) and
-/// `PINATA_GATEWAY` (optional; empty → driver default). `None` when the JWT
-/// is unset or blank — publish then falls back to the `xvn://` content_uri.
-fn pinata_env() -> Option<(String, String)> {
-    let jwt = std::env::var("PINATA_JWT").ok()?;
-    if jwt.trim().is_empty() {
-        return None;
-    }
-    let gateway = std::env::var("PINATA_GATEWAY").unwrap_or_default();
-    Some((jwt, gateway))
-}
-
 /// Pins the canonical manifest bytes, mapping any pin failure to a 503-class
 /// error. The caller invokes this BEFORE the identity mint so a Pinata
 /// outage can never strand an orphan NFT (DashboardError has no 502 variant;
@@ -112,39 +99,6 @@ async fn pin_canonical(ipfs: &PinataDriver, canonical: &str) -> Result<String, D
             "IPFS pin failed (publish aborted before mint, nothing on chain): {e}"
         ))
     })
-}
-
-/// Chain connection env config. All three are required for any on-chain work.
-struct ChainEnv {
-    rpc_url: String,
-    chain_id: u64,
-    publisher_pk: String,
-}
-
-/// Manual Debug impl — redacts the private key so it cannot appear in logs.
-impl fmt::Debug for ChainEnv {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChainEnv")
-            .field("rpc_url", &self.rpc_url)
-            .field("chain_id", &self.chain_id)
-            .field("publisher_pk", &"<redacted>")
-            .finish()
-    }
-}
-
-impl ChainEnv {
-    /// Reads `XVN_RPC_URL`, `XVN_CHAIN_ID`, `XVN_PUBLISHER_PK`. Returns
-    /// `None` when any is missing or `XVN_CHAIN_ID` is not a valid u64.
-    fn from_env() -> Option<Self> {
-        let rpc_url = std::env::var("XVN_RPC_URL").ok()?;
-        let chain_id: u64 = std::env::var("XVN_CHAIN_ID").ok()?.parse().ok()?;
-        let publisher_pk = std::env::var("XVN_PUBLISHER_PK").ok()?;
-        Some(Self {
-            rpc_url,
-            chain_id,
-            publisher_pk,
-        })
-    }
 }
 
 /// Maps the wire tier name to its on-chain code: `"open"` → 0, `"sealed"` → 1.
@@ -178,18 +132,6 @@ fn usdc6(price: f64) -> Result<U256, DashboardError> {
     Ok(U256::from(scaled as u64))
 }
 
-/// Reads the identity registry addresses from env: `XVN_IDENTITY_REGISTRY`
-/// (required for minting) and `XVN_REPUTATION_REGISTRY` (optional here —
-/// `register` doesn't touch it; defaults to the zero address).
-fn registry_addresses_from_env() -> Option<RegistryAddresses> {
-    let identity: Address = std::env::var("XVN_IDENTITY_REGISTRY").ok()?.parse().ok()?;
-    let reputation: Address = std::env::var("XVN_REPUTATION_REGISTRY")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(Address::ZERO);
-    Some(RegistryAddresses::custom(identity, reputation))
-}
-
 /// `POST /api/marketplace/publish` — mint + list. Returns 201 on success,
 /// 503 when the chain env is not configured.
 pub async fn post_publish(
@@ -219,25 +161,24 @@ pub async fn post_publish(
             msg: format!("genart tokenURI generation failed: {e}"),
         })?;
 
-    // e. Chain gate — degrade loudly without env config. All config is
-    //    validated here, before any chain write, so a missing env var cannot
-    //    strand an orphan mint.
-    let chain = ChainEnv::from_env().ok_or_else(|| {
+    // e. Chain gate — degrade loudly without chain config (resolved once at
+    //    server startup; see `chain_config`). All config is validated here,
+    //    before any chain write, so a missing env var cannot strand an
+    //    orphan mint.
+    let mp = state.marketplace_chain();
+    let chain = mp.and_then(|c| c.chain.as_ref()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "chain publishing not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
         )
     })?;
-    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
-        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
-    })?;
-    let registry_addresses = registry_addresses_from_env().ok_or_else(|| {
+    let registry_addresses = mp.and_then(|c| c.registry_addresses.clone()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "identity registry not configured: set XVN_IDENTITY_REGISTRY (and optionally \
              XVN_REPUTATION_REGISTRY)"
                 .into(),
         )
     })?;
-    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+    let marketplace_addresses = mp.and_then(|c| c.marketplace_addresses.clone()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "marketplace not configured: set XVN_LISTING_REGISTRY (and related XVN_MARKETPLACE_* \
              vars)"
@@ -248,7 +189,7 @@ pub async fn post_publish(
         marketplace_addresses,
         chain.rpc_url.clone(),
         chain.chain_id,
-        signer.clone(),
+        chain.signer.clone(),
     );
 
     // f. Pin the canonical manifest to IPFS when Pinata is configured. This
@@ -256,9 +197,9 @@ pub async fn post_publish(
     //    failure aborts with 503 and leaves nothing on chain. Without
     //    `PINATA_JWT` the listing keeps the local `xvn://` reference (the
     //    bundle route resolves both).
-    let content_uri = match pinata_env() {
-        Some((jwt, gateway)) => {
-            let ipfs = PinataDriver::new(jwt, gateway);
+    let content_uri = match mp.and_then(|c| c.pinata.clone()) {
+        Some(pinata) => {
+            let ipfs = PinataDriver::new(pinata.jwt, pinata.gateway);
             let cid = pin_canonical(&ipfs, &canonical).await?;
             format!("ipfs://{cid}")
         }
@@ -280,7 +221,7 @@ pub async fn post_publish(
     let agent_uri = url::Url::parse(&token_uri)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("tokenURI is not a valid URL: {e}")))?;
     let token_id = identity_client
-        .register(&agent_uri, &signer)
+        .register(&agent_uri, &chain.signer)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity register: {e}")))?;
 
@@ -335,18 +276,16 @@ pub struct RevokeOut {
 /// in the response message.
 pub async fn post_revoke(
     Path(id): Path<u64>,
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<RevokeOut>, DashboardError> {
-    // a. Chain gate — all config validated before any chain write.
-    let chain = ChainEnv::from_env().ok_or_else(|| {
+    // a. Chain gate — startup-resolved config validated before any chain write.
+    let mp = state.marketplace_chain();
+    let chain = mp.and_then(|c| c.chain.as_ref()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
         )
     })?;
-    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
-        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
-    })?;
-    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+    let marketplace_addresses = mp.and_then(|c| c.marketplace_addresses.clone()).ok_or_else(|| {
         DashboardError::ServiceUnavailable("marketplace not configured: set XVN_LISTING_REGISTRY".into())
     })?;
 
@@ -355,7 +294,7 @@ pub async fn post_revoke(
         marketplace_addresses,
         chain.rpc_url.clone(),
         chain.chain_id,
-        signer,
+        chain.signer.clone(),
     );
     let tx_hash = driver.revoke_listing(U256::from(id)).await.map_err(|e| {
         // All chain errors (contract reverts: NotSeller, UnknownListing, AlreadyRevoked,
@@ -501,22 +440,20 @@ fn build_buy_request(body: &BuyBody) -> Result<BuyRequest, DashboardError> {
 /// 400 malformed body / M-2 violation / contract revert; 503 chain env
 /// unconfigured; 200 `{tx_hash, license_token_id}`.
 pub async fn post_buy(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(body): Json<BuyBody>,
 ) -> Result<Json<BuyOut>, DashboardError> {
-    // a. Parse + validate everything (incl. M-2) before any env/chain work.
+    // a. Parse + validate everything (incl. M-2) before any config/chain work.
     let req = build_buy_request(&body)?;
 
-    // b. Chain gate — degrade loudly without env config.
-    let chain = ChainEnv::from_env().ok_or_else(|| {
+    // b. Chain gate — degrade loudly without startup-resolved config.
+    let mp = state.marketplace_chain();
+    let chain = mp.and_then(|c| c.chain.as_ref()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "chain relay not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
         )
     })?;
-    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
-        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
-    })?;
-    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+    let marketplace_addresses = mp.and_then(|c| c.marketplace_addresses.clone()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "marketplace not configured: set XVN_LISTING_REGISTRY, XVN_MARKETPLACE_CONTRACT, \
              XVN_MARKETPLACE_USDC"
@@ -529,7 +466,7 @@ pub async fn post_buy(
         marketplace_addresses,
         chain.rpc_url.clone(),
         chain.chain_id,
-        signer,
+        chain.signer.clone(),
     );
     let receipt = driver.buy_listing(req).await.map_err(|e| {
         // Contract reverts (UnknownListing, ListingRevoked, expired/used
@@ -599,15 +536,14 @@ pub async fn post_import(
             .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
     };
 
-    // c. License gate. All env config is validated before the chain read so
-    //    a dev box degrades with 503, never a silent skip of the gate.
-    let license_token: Address = std::env::var("XVN_LICENSE_TOKEN")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .ok_or_else(|| {
-            DashboardError::ServiceUnavailable("license gating not configured: set XVN_LICENSE_TOKEN".into())
-        })?;
-    let cfg = crate::marketplace_index::IndexerCfg::from_env().ok_or_else(|| {
+    // c. License gate. All startup-resolved config is validated before the
+    //    chain read so a dev box degrades with 503, never a silent skip of
+    //    the gate.
+    let mp = state.marketplace_chain();
+    let license_token: Address = mp.and_then(|c| c.license_token).ok_or_else(|| {
+        DashboardError::ServiceUnavailable("license gating not configured: set XVN_LICENSE_TOKEN".into())
+    })?;
+    let cfg = mp.and_then(|c| c.indexer.as_ref()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
              XVN_IDENTITY_REGISTRY"
@@ -701,16 +637,14 @@ pub async fn post_attest(
             .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?;
     }
 
-    // c. Chain gate — all config validated before any chain write.
-    let chain = ChainEnv::from_env().ok_or_else(|| {
+    // c. Chain gate — startup-resolved config validated before any chain write.
+    let mp = state.marketplace_chain();
+    let chain = mp.and_then(|c| c.chain.as_ref()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
         )
     })?;
-    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
-        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
-    })?;
-    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+    let marketplace_addresses = mp.and_then(|c| c.marketplace_addresses.clone()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "marketplace not configured: set XVN_LISTING_REGISTRY and XVN_EVAL_ATTESTATION".into(),
         )
@@ -721,7 +655,7 @@ pub async fn post_attest(
         marketplace_addresses,
         chain.rpc_url.clone(),
         chain.chain_id,
-        signer,
+        chain.signer.clone(),
     );
     let tx_hash = driver
         .attest_eval(AttestRequest {
@@ -814,25 +748,24 @@ pub async fn post_update(
         .parse()
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}")))?;
 
-    // d. Chain gate — all config validated before the pin or chain write.
-    let chain = ChainEnv::from_env().ok_or_else(|| {
+    // d. Chain gate — startup-resolved config validated before the pin or
+    //    chain write.
+    let mp = state.marketplace_chain();
+    let chain = mp.and_then(|c| c.chain.as_ref()).ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
         )
     })?;
-    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
-        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
-    })?;
-    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+    let marketplace_addresses = mp.and_then(|c| c.marketplace_addresses.clone()).ok_or_else(|| {
         DashboardError::ServiceUnavailable("marketplace not configured: set XVN_LISTING_REGISTRY".into())
     })?;
 
     // e. Pin the refreshed manifest when Pinata is configured (failure
     //    aborts with 503 BEFORE the chain write — same no-orphan posture as
     //    publish), else keep the local xvn:// reference.
-    let content_uri = match pinata_env() {
-        Some((jwt, gateway)) => {
-            let ipfs = PinataDriver::new(jwt, gateway);
+    let content_uri = match mp.and_then(|c| c.pinata.clone()) {
+        Some(pinata) => {
+            let ipfs = PinataDriver::new(pinata.jwt, pinata.gateway);
             let cid = pin_canonical(&ipfs, &canonical).await?;
             format!("ipfs://{cid}")
         }
@@ -848,7 +781,7 @@ pub async fn post_update(
 
     // f. updateListing via the IListingRegistry binding with the publisher
     //    signer (seller-only on-chain; NotSeller and friends → 400 below).
-    let wallet = EthereumWallet::from(signer);
+    let wallet = EthereumWallet::from(chain.signer.clone());
     let provider = ProviderBuilder::new()
         .wallet(wallet)
         .connect(chain.rpc_url.as_str())
@@ -974,25 +907,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pinata_env_requires_nonblank_jwt() {
-        // Single test owns PINATA_JWT / PINATA_GATEWAY in this crate's unit
-        // suite (the crate-wide env-mutation convention).
-        std::env::remove_var("PINATA_JWT");
-        std::env::remove_var("PINATA_GATEWAY");
-        assert!(pinata_env().is_none());
-
-        std::env::set_var("PINATA_JWT", "   ");
-        assert!(pinata_env().is_none(), "blank JWT is not configured");
-
-        std::env::set_var("PINATA_JWT", "jwt-token");
-        std::env::set_var("PINATA_GATEWAY", "https://gw.example");
-        let (jwt, gateway) = pinata_env().expect("configured");
-        assert_eq!(jwt, "jwt-token");
-        assert_eq!(gateway, "https://gw.example");
-        std::env::remove_var("PINATA_JWT");
-        std::env::remove_var("PINATA_GATEWAY");
-    }
+    // pinata / chain env-parsing tests moved to `crate::chain_config` with
+    // the startup-resolved config (xvision-df3).
 
     #[tokio::test]
     async fn pin_canonical_maps_failure_to_service_unavailable() {
@@ -1034,15 +950,5 @@ mod tests {
             }
             other => panic!("expected Validation, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn chain_env_missing_is_none() {
-        // Single test owns these vars (no other test in this crate touches
-        // them) so removal cannot race a sibling under parallel threads.
-        std::env::remove_var("XVN_RPC_URL");
-        std::env::remove_var("XVN_CHAIN_ID");
-        std::env::remove_var("XVN_PUBLISHER_PK");
-        assert!(ChainEnv::from_env().is_none());
     }
 }

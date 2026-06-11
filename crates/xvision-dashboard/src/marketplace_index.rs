@@ -97,6 +97,7 @@ pub struct MarketplaceSnapshot {
 pub type SharedSnapshot = std::sync::Arc<tokio::sync::RwLock<MarketplaceSnapshot>>;
 
 /// Indexer connection config (read-only — no signer).
+#[derive(Debug, Clone)]
 pub struct IndexerCfg {
     pub rpc_url: String,
     pub listing_registry: Address,
@@ -548,11 +549,7 @@ pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::
                         snapshot: mut fresh,
                         attestation_failures,
                     } = outcome;
-                    carry_forward_attestations(
-                        &mut fresh,
-                        &attestation_failures,
-                        &mut attestation_counts,
-                    );
+                    carry_forward_attestations(&mut fresh, &attestation_failures, &mut attestation_counts);
                     apply_sales(&mut fresh, &ledger);
                     *snapshot.write().await = fresh;
                 }
@@ -750,10 +747,7 @@ mod tests {
         let mut last_known: HashMap<u64, u64> = HashMap::from([(2, 3)]);
         let mut snapshot = MarketplaceSnapshot {
             // Listing 2 failed this poll (count degraded to 0); listing 5 read fine.
-            listings: vec![
-                listing_with_attestations(2, 0),
-                listing_with_attestations(5, 1),
-            ],
+            listings: vec![listing_with_attestations(2, 0), listing_with_attestations(5, 1)],
             ..Default::default()
         };
         carry_forward_attestations(&mut snapshot, &[2], &mut last_known);

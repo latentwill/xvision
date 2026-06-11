@@ -303,6 +303,44 @@ async fn attestations_unknown_listing_is_404() {
     assert_eq!(body["code"], "not_found");
 }
 
+/// Injected-config path (xvision-df3): the route reads the startup-resolved
+/// `MarketplaceChainConfig` from `AppState`, not the env. An indexer config
+/// WITHOUT an attestation registry yields the registry-specific 503 — no
+/// network, no env mutation.
+#[tokio::test]
+async fn attestations_503_names_registry_with_injected_config_sans_attestation() {
+    use xvision_dashboard::chain_config::MarketplaceChainConfig;
+    use xvision_dashboard::marketplace_index::IndexerCfg;
+
+    let cfg = MarketplaceChainConfig {
+        chain: None,
+        registry_addresses: None,
+        marketplace_addresses: None,
+        pinata: None,
+        indexer: Some(IndexerCfg {
+            rpc_url: "http://127.0.0.1:9".into(),
+            listing_registry: "0x1111111111111111111111111111111111111111".parse().unwrap(),
+            identity_registry: "0x2222222222222222222222222222222222222222".parse().unwrap(),
+            eval_attestation: None,
+            marketplace: None,
+            marketplace_deploy_block: None,
+        }),
+        license_token: None,
+    };
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    inject_snapshot(&state, vec![listing(1, "7", ALICE, false)]).await;
+
+    let response = server.get("/api/marketplace/listings/1/attestations").await;
+    response.assert_status_service_unavailable();
+    let body: Value = response.json();
+    assert!(
+        body["message"].as_str().unwrap().contains("XVN_EVAL_ATTESTATION"),
+        "the injected indexer config must be honored (the 503 names the \
+         missing attestation registry, not the chain env): {body}"
+    );
+}
+
 #[tokio::test]
 async fn attestations_503_when_chain_env_dormant() {
     // Removal-only: IndexerCfg::from_env requires XVN_RPC_URL (+ registries);

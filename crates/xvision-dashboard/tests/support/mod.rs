@@ -13,6 +13,16 @@ pub async fn state_with_tempdir() -> (AppState, TempDir) {
     (state, tmp)
 }
 
+/// State with an injected marketplace chain config — the test-side
+/// equivalent of `server::serve` resolving `MarketplaceChainConfig::from_env`
+/// once at startup. Route tests inject config here instead of mutating env.
+pub async fn state_with_chain_config(
+    cfg: xvision_dashboard::chain_config::MarketplaceChainConfig,
+) -> (AppState, TempDir) {
+    let (state, tmp) = state_with_tempdir().await;
+    (state.with_marketplace_chain_config(cfg), tmp)
+}
+
 pub async fn state_with_dashboard_migrations() -> (AppState, TempDir) {
     let (state, tmp) = state_with_tempdir().await;
     state

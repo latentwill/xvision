@@ -213,6 +213,38 @@ async fn import_without_license_env_is_503() {
     response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 }
 
+/// Injected-config path (xvision-df3): a config with a license token but no
+/// indexer sub-config gets past the license gate and 503s on the missing
+/// chain access — proving the route reads `AppState` config, not env.
+#[tokio::test]
+async fn import_with_injected_license_token_but_no_indexer_is_503_chain_access() {
+    use xvision_dashboard::chain_config::MarketplaceChainConfig;
+
+    let cfg = MarketplaceChainConfig {
+        chain: None,
+        registry_addresses: None,
+        marketplace_addresses: None,
+        pinata: None,
+        indexer: None,
+        license_token: Some("0x3333333333333333333333333333333333333333".parse().unwrap()),
+    };
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    inject_snapshot(&state, vec![listing(1, "xvn://strategy/x", &"ab".repeat(32))]).await;
+
+    let response = server
+        .post("/api/marketplace/listings/1/import")
+        .json(&serde_json::json!({ "address": ALICE }))
+        .await;
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = response.json();
+    assert!(
+        body["message"].as_str().unwrap().contains("chain access"),
+        "license gate must pass with the injected token; the 503 names the \
+         missing chain access: {body}"
+    );
+}
+
 // ── POST /api/marketplace/listings/:id/update ───────────────────────────────
 
 #[tokio::test]

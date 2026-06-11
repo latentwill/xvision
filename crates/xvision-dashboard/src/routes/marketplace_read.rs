@@ -20,7 +20,8 @@
 //! Handlers stay thin: all aggregation is the pure [`wallet_view`] over the
 //! snapshot plus [`OwnershipFacts`] gathered from the chain. Chain access
 //! (ownerOf / ERC-1155 balanceOf) reuses the indexer's read-only provider
-//! construction; license lookups additionally need `XVN_LICENSE_TOKEN` and
+//! config from the startup-resolved `MarketplaceChainConfig`; license
+//! lookups additionally need its `license_token` (`XVN_LICENSE_TOKEN`) and
 //! silently yield an empty `licenses` array when it's unset.
 
 use std::collections::{HashMap, HashSet};
@@ -60,9 +61,11 @@ pub struct StatusOut {
     pub contracts: ContractsOut,
 }
 
-/// The marketplace contract address book, as configured via env. Read per
-/// request (cheap, and keeps the route honest if env changes mid-process —
-/// same posture as the publish/revoke chain gates).
+/// The marketplace contract address book, as configured via env. Still read
+/// per request (cheap, and keeps the discovery surface honest if env changes
+/// mid-process) — deliberately NOT moved to the startup-resolved
+/// `MarketplaceChainConfig`: this is a display/discovery payload, not a
+/// chain gate.
 #[derive(Debug, Serialize)]
 pub struct ContractsOut {
     pub marketplace: Option<String>,
@@ -313,14 +316,18 @@ pub async fn get_attestations(
             .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?;
     }
 
-    // b. Same read-only provider config as the indexer; dormant env → 503.
-    let cfg = IndexerCfg::from_env().ok_or_else(|| {
-        DashboardError::ServiceUnavailable(
-            "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
-             XVN_IDENTITY_REGISTRY"
-                .into(),
-        )
-    })?;
+    // b. Same read-only provider config as the indexer (startup-resolved;
+    //    see `chain_config`); dormant → 503.
+    let cfg = state
+        .marketplace_chain()
+        .and_then(|c| c.indexer.as_ref())
+        .ok_or_else(|| {
+            DashboardError::ServiceUnavailable(
+                "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
+                 XVN_IDENTITY_REGISTRY"
+                    .into(),
+            )
+        })?;
     let registry_addr = cfg.eval_attestation.ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "attestation registry not configured: set XVN_EVAL_ATTESTATION".into(),
@@ -455,19 +462,16 @@ fn is_eth_address(s: &str) -> bool {
     s.len() == 42 && s.starts_with("0x") && s.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
 }
 
-/// Reads the optional `XVN_LICENSE_TOKEN` address. `None` → license lookups
-/// are skipped (empty `licenses`), never an error.
-fn license_token_from_env() -> Option<Address> {
-    std::env::var("XVN_LICENSE_TOKEN").ok()?.parse().ok()
-}
-
 /// Gathers [`OwnershipFacts`] from the chain. Degrades, never errors: a
 /// failed provider connect or a reverted call (e.g. `ownerOf` on a burned
-/// token) is treated as not-owned / zero-balance.
+/// token) is treated as not-owned / zero-balance. `license_token` is the
+/// startup-resolved `XVN_LICENSE_TOKEN` address; `None` → license lookups
+/// are skipped (empty `licenses`), never an error.
 async fn fetch_ownership_facts(
     cfg: &IndexerCfg,
     snapshot: &MarketplaceSnapshot,
     address: Address,
+    license_token: Option<Address>,
 ) -> OwnershipFacts {
     let mut facts = OwnershipFacts::default();
     let provider = match ProviderBuilder::new().connect(cfg.rpc_url.as_str()).await {
@@ -495,7 +499,7 @@ async fn fetch_ownership_facts(
         }
     }
 
-    if let Some(license_token) = license_token_from_env() {
+    if let Some(license_token) = license_token {
         let license = ILicenseToken::new(license_token, &provider);
         for l in &snapshot.listings {
             if let Ok(balance) = license.balanceOf(address, U256::from(l.listing_id)).call().await {
@@ -530,10 +534,13 @@ pub async fn get_wallet(
 
     let snapshot = state.marketplace_snapshot.read().await.clone();
 
-    // The flag implies the env parsed at startup; a vanished env mid-process
-    // degrades to empty facts rather than erroring.
-    let facts = match (IndexerCfg::from_env(), address.parse::<Address>()) {
-        (Some(cfg), Ok(addr)) => fetch_ownership_facts(&cfg, &snapshot, addr).await,
+    // The indexer-active flag implies the config resolved at startup; a
+    // missing config here degrades to empty facts rather than erroring.
+    let mp = state.marketplace_chain();
+    let facts = match (mp.and_then(|c| c.indexer.as_ref()), address.parse::<Address>()) {
+        (Some(cfg), Ok(addr)) => {
+            fetch_ownership_facts(cfg, &snapshot, addr, mp.and_then(|c| c.license_token)).await
+        }
         _ => OwnershipFacts::default(),
     };
 
@@ -617,14 +624,18 @@ pub async fn get_receipt(
             msg: "must be a 0x-prefixed 64-hex-char transaction hash".into(),
         });
     }
-    // Same read-only provider config as the indexer; dormant env → 503.
-    let cfg = IndexerCfg::from_env().ok_or_else(|| {
-        DashboardError::ServiceUnavailable(
-            "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
-             XVN_IDENTITY_REGISTRY"
-                .into(),
-        )
-    })?;
+    // Same read-only provider config as the indexer (startup-resolved;
+    // see `chain_config`); dormant → 503.
+    let cfg = state
+        .marketplace_chain()
+        .and_then(|c| c.indexer.as_ref())
+        .ok_or_else(|| {
+            DashboardError::ServiceUnavailable(
+                "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
+                 XVN_IDENTITY_REGISTRY"
+                    .into(),
+            )
+        })?;
     let hash: B256 = tx_hash.parse().map_err(|_| DashboardError::Validation {
         field: "tx_hash".into(),
         msg: "must be a 0x-prefixed 64-hex-char transaction hash".into(),

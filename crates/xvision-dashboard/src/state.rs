@@ -134,6 +134,12 @@ pub struct AppState {
     /// process. Distinct from snapshot freshness: `active` on the status
     /// route requires BOTH this flag AND a completed first poll.
     marketplace_indexer_active: Arc<std::sync::atomic::AtomicBool>,
+    /// Marketplace chain config, resolved ONCE at server startup
+    /// (`server::serve`) instead of per request (xvision-df3). `None` =
+    /// dormant: chain-touching marketplace routes return the same 503s they
+    /// did when they read the env per request. Tests inject via
+    /// [`AppState::with_marketplace_chain_config`].
+    marketplace_chain: Option<Arc<crate::chain_config::MarketplaceChainConfig>>,
 }
 
 impl AppState {
@@ -352,7 +358,20 @@ impl AppState {
             autooptimizer_pauses: Arc::new(Mutex::new(HashMap::new())),
             marketplace_snapshot: Default::default(),
             marketplace_indexer_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            marketplace_chain: None,
         })
+    }
+
+    /// The startup-resolved marketplace chain config (`None` = dormant).
+    pub fn marketplace_chain(&self) -> Option<&crate::chain_config::MarketplaceChainConfig> {
+        self.marketplace_chain.as_deref()
+    }
+
+    /// Attach the startup-resolved marketplace chain config. Called once by
+    /// `server::serve`; tests use it to inject config without touching env.
+    pub fn with_marketplace_chain_config(mut self, cfg: crate::chain_config::MarketplaceChainConfig) -> Self {
+        self.marketplace_chain = Some(Arc::new(cfg));
+        self
     }
 
     /// Whether the marketplace indexer task was spawned this process.
