@@ -49,7 +49,10 @@ export function ExperimentBoard({
 
         return (
           <ExpandableArtifact
-            key={c.hash}
+            // defaultOpen only applies on mount (uncontrolled useState), so the
+            // open-state identity is part of the key: a ?exp= change on the same
+            // page remounts the affected cards with the new default.
+            key={`${c.hash}:${isDefaultOpen}`}
             hash={c.hash}
             defaultOpen={isDefaultOpen}
             writerModel={c.writer}

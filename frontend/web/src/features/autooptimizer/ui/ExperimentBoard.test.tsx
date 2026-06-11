@@ -228,6 +228,24 @@ describe("ExperimentBoard — defaultOpenHash and expandBoard props", () => {
     }
   });
 
+  it("changing defaultOpenHash after mount opens the newly targeted card", () => {
+    const cards = [
+      makeCard({ hash: "first1234ef", state: "kept" }),
+      makeCard({ hash: "second5678cd", state: "rejected" }),
+    ];
+    const { rerender } = renderWithProviders(
+      <ExperimentBoard cards={cards} defaultOpenHash="first1234ef" />,
+    );
+    let buttons = screen.getAllByRole("button");
+    expect(buttons[0]).toHaveAttribute("aria-expanded", "true");
+    expect(buttons[1]).toHaveAttribute("aria-expanded", "false");
+
+    // Same page, new ?exp= deep link → the new card must open.
+    rerender(<ExperimentBoard cards={cards} defaultOpenHash="second5678cd" />);
+    buttons = screen.getAllByRole("button");
+    expect(buttons[1]).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("expandBoard and defaultOpenHash can be combined: expandBoard wins for all cards", () => {
     renderWithProviders(
       <ExperimentBoard
