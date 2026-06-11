@@ -622,7 +622,7 @@ async fn include_baseline_ships_aligned_buy_and_hold() {
 }
 
 #[tokio::test]
-async fn live_run_baseline_is_null_not_error() {
+async fn baseline_degrades_to_none_when_equity_empty() {
     // A run with bars cached but NO equity seeded: compute_baseline_equity
     // returns None when the equity slice is empty. This verifies that
     // requesting baseline does not error — it degrades to None gracefully.
@@ -660,6 +660,62 @@ async fn live_run_baseline_is_null_not_error() {
 }
 
 #[tokio::test]
+async fn empty_scenario_early_return_baseline_is_null_not_error() {
+    // A Backtest run with an empty scenario_id exercises the chart builder's
+    // early-return branch at `run.scenario_id.is_empty()`, returning a
+    // metric-only payload without bars, indicators, or baseline.
+    //
+    // `store::create` for Backtest binds scenario_id as Some(""), which the
+    // runs_scenario_id_fk_insert trigger rejects (empty string IS NOT NULL, so
+    // the trigger fires and can't find "" in scenarios). We bypass it by
+    // dropping the trigger, inserting directly via raw SQL, then restoring the
+    // trigger — the same technique used in eval_early_stop.rs and similar
+    // integration tests.
+    let ctx = test_ctx().await;
+    let run = Run::new_queued("metadata-only-strategy".into(), String::new(), RunMode::Backtest);
+    sqlx::query("DROP TRIGGER IF EXISTS runs_scenario_id_fk_insert")
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO eval_runs \
+         (id, agent_id, scenario_id, mode, status, started_at) \
+         VALUES (?, ?, '', 'backtest', 'queued', ?)",
+    )
+    .bind(&run.id)
+    .bind(&run.agent_id)
+    .bind(run.started_at.to_rfc3339())
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER runs_scenario_id_fk_insert \
+         BEFORE INSERT ON eval_runs \
+         WHEN NEW.scenario_id IS NOT NULL \
+         BEGIN \
+           SELECT RAISE(ABORT, 'foreign-key violation: eval_runs.scenario_id does not exist in scenarios') \
+           WHERE NOT EXISTS (SELECT 1 FROM scenarios WHERE id = NEW.scenario_id); \
+         END",
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+
+    let payload = xvision_engine::api::chart::build_run_payload_with(
+        &ctx,
+        &run.id,
+        IncludeSet::parse("equity,baseline"),
+    )
+    .await
+    .unwrap();
+
+    assert!(payload.baseline_equity.is_none(), "early return ships no baseline");
+    assert!(payload.bars.is_empty(), "early return ships no bars");
+    assert!(payload.equity.is_empty(), "no equity recorded for this run");
+    assert!(payload.indicators.sma_20.is_empty(), "early return ships no indicators");
+}
+
+#[tokio::test]
 async fn full_payload_unchanged_and_baseline_absent() {
     let ctx = test_ctx().await;
     let run_id = seed_backtest_run_with_equity(&ctx).await;
@@ -668,6 +724,8 @@ async fn full_payload_unchanged_and_baseline_absent() {
         .await
         .unwrap();
     assert_eq!(payload.bars.len(), 8);
+    assert!(!payload.indicators.ema_20.is_empty() || payload.bars.len() < 20,
+        "full payload computes indicators (empty only from warmup)");
     assert_eq!(payload.markers.holds.len(), 1);
     assert!(payload.baseline_equity.is_none(), "full mode never computes baseline");
 }
