@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import type { RunSummary } from "@/api/types.gen";
@@ -10,12 +11,26 @@ import { PulseBand } from "./PulseBand";
 
 vi.mock("@/api/chart", async () => {
   const actual = await vi.importActual<typeof import("@/api/chart")>("@/api/chart");
-  return { ...actual, getRunChart: vi.fn() };
+  return { ...actual, getRunChart: vi.fn(), getCompareChart: vi.fn() };
 });
 
 // The uPlot pane needs a real canvas; stub it for jsdom.
 vi.mock("./PulseEquityChart", () => ({
   PulseEquityChart: () => <div data-testid="pulse-equity-chart" />,
+}));
+
+// Stub the view-specific chart components — they have canvas/uPlot deps.
+vi.mock("./views/PulseDrawdownChart", () => ({
+  PulseDrawdownChart: () => <div data-testid="pulse-drawdown-chart" />,
+}));
+vi.mock("./views/PulseTradesChart", () => ({
+  PulseTradesChart: () => <div data-testid="pulse-trades-chart" />,
+}));
+vi.mock("./views/PulseHoldChart", () => ({
+  PulseHoldChart: () => <div data-testid="pulse-hold-chart" />,
+}));
+vi.mock("./views/PulseFieldChart", () => ({
+  PulseFieldChart: () => <div data-testid="pulse-field-chart" />,
 }));
 
 function run(over: Partial<RunSummary>): RunSummary {
@@ -72,6 +87,10 @@ function renderBand(props: Partial<Parameters<typeof PulseBand>[0]> = {}) {
     </MemoryRouter>,
   );
 }
+
+afterEach(() => {
+  localStorage.clear();
+});
 
 beforeEach(() => {
   vi.mocked(chartApi.getRunChart).mockResolvedValue({
@@ -158,5 +177,78 @@ describe("PulseBand", () => {
     expect(await screen.findByTestId("pulse-freshness")).toHaveTextContent(
       /updated .*ago|updated just now/i,
     );
+  });
+
+  it("renders the view switcher and persists the selection", async () => {
+    const user = userEvent.setup();
+    renderBand();
+
+    // Wait for the band to finish loading so the switcher appears.
+    await screen.findByTestId("pulse-equity-chart");
+
+    const switcher = screen.getByTestId("pulse-view-switcher");
+    expect(switcher).toBeInTheDocument();
+
+    // Click the "Drawdown" chip.
+    await user.click(screen.getByRole("button", { name: /drawdown/i }));
+
+    // localStorage should be updated.
+    expect(localStorage.getItem("xvn:pulse-view")).toBe("drawdown");
+
+    // Drawdown chart should appear.
+    expect(await screen.findByTestId("pulse-drawdown-chart")).toBeInTheDocument();
+  });
+
+  it("initial view comes from localStorage", async () => {
+    localStorage.setItem("xvn:pulse-view", "drawdown");
+    renderBand();
+
+    // The drawdown chip should start as pressed.
+    await waitFor(() => {
+      const btn = screen.getByRole("button", { name: /drawdown/i });
+      expect(btn).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+
+  it("failed lazy view fetch shows an inline retry, not a crash", async () => {
+    const user = userEvent.setup();
+
+    // The default equity fetch resolves fine; the bars+markers fetch rejects.
+    vi.mocked(chartApi.getRunChart).mockImplementation(
+      (_id: string, include?: string[]) => {
+        if (include && include.includes("bars")) {
+          return Promise.reject(new Error("network error"));
+        }
+        return Promise.resolve({
+          run_id: "run-1",
+          scenario_id: "scn-1",
+          asset: "BTC",
+          granularity: "1h",
+          time_window: { start: 0, end: 1 },
+          bars: [],
+          indicators: {} as never,
+          equity: [
+            { time: 1, equity_usd: 100_000 },
+            { time: 2, equity_usd: 100_100 },
+            { time: 3, equity_usd: 99_900 },
+          ],
+          drawdown: [],
+          position: [],
+          markers: { trades: [], vetoes: [], holds: [] },
+        } as never);
+      },
+    );
+
+    renderBand();
+
+    // Wait for the switcher to appear.
+    await screen.findByTestId("pulse-equity-chart");
+
+    // Click "Price + trades".
+    await user.click(screen.getByRole("button", { name: /price \+ trades/i }));
+
+    // Error UI should appear with a Retry button.
+    expect(await screen.findByTestId("pulse-view-error")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 });
