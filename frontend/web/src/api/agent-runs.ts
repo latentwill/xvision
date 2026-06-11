@@ -62,19 +62,17 @@ export function agentRunExportUrl(id: string): string {
  * monkey-patching `import.meta.env`.
  */
 export function shouldUseMockAgentRuns(): boolean {
-  // `import.meta.env` is replaced at build time by Vite. Vitest's jsdom env
-  // also provides it via the merged Vite config, with MODE === "test". We
-  // read the env object dynamically (not via destructured property access)
-  // so test setups can flip the flag with `vi.stubEnv` between cases.
-  const meta = import.meta as unknown as {
-    env?: Record<string, string | boolean | undefined>;
-  };
-  const env = meta.env ?? {};
-  const explicit = env.VITE_USE_MOCK_AGENT_RUNS;
-  if (explicit === "1" || explicit === "true" || explicit === true) return true;
-  if (explicit === "0" || explicit === "false" || explicit === false) return false;
-  if (env.MODE === "test" || env.MODE === "development") return true;
-  return env.DEV === true || env.DEV === "true";
+  // MUST stay literal `import.meta.env.…` expressions (typed via
+  // src/vite-env.d.ts) so Vite statically replaces them in production builds;
+  // an alias read (`const meta = import.meta`) survives to runtime where
+  // browsers have no `import.meta.env`. Vitest keeps env live and the reads
+  // happen at call time, so `vi.stubEnv` still flips the flag between cases.
+  const explicit = import.meta.env.VITE_USE_MOCK_AGENT_RUNS;
+  if (explicit === "1" || explicit === "true") return true;
+  if (explicit === "0" || explicit === "false") return false;
+  if (import.meta.env.MODE === "test" || import.meta.env.MODE === "development")
+    return true;
+  return import.meta.env.DEV === true;
 }
 
 // ---------------------------------------------------------------------------

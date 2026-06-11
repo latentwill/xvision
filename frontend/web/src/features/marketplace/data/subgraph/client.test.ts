@@ -1,6 +1,6 @@
 // src/features/marketplace/data/subgraph/client.test.ts
-import { describe, expect, it, vi } from "vitest";
-import { createSubgraphClient, SubgraphError } from "./client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSubgraphClient, SubgraphError, subgraphUrl } from "./client";
 
 type FakeRes = {
   ok: boolean;
@@ -14,6 +14,43 @@ const res = (status: number, body: unknown): FakeRes => ({
 });
 
 const URL = "https://example.test/subgraph";
+
+describe("subgraphUrl", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("returns the trimmed endpoint when the env var is set", () => {
+    vi.stubEnv("VITE_MARKETPLACE_SUBGRAPH_URL", `  ${URL}  `);
+    expect(subgraphUrl()).toBe(URL);
+  });
+
+  it("returns null when the env var is blank", () => {
+    vi.stubEnv("VITE_MARKETPLACE_SUBGRAPH_URL", "   ");
+    expect(subgraphUrl()).toBeNull();
+  });
+
+  it("returns null when the env var is unset", () => {
+    vi.stubEnv("VITE_MARKETPLACE_SUBGRAPH_URL", "");
+    expect(subgraphUrl()).toBeNull();
+  });
+
+  // Guards the production-build failure mode this module shipped with: the
+  // env read must be the literal `import.meta.env.VITE_…` expression or Vite
+  // cannot statically replace it and the bundle silently loses the endpoint.
+  // Unit tests can't see the bundler, so we assert on the source directly.
+  it("reads the env var as a literal import.meta.env expression", async () => {
+    const fs = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const srcPath = fileURLToPath(import.meta.url).replace(
+      /client\.test\.ts$/,
+      "client.ts",
+    );
+    const src = await fs.readFile(srcPath, "utf8");
+    expect(src).toMatch(/import\.meta\.env\.VITE_MARKETPLACE_SUBGRAPH_URL/);
+    expect(src).not.toMatch(/import\.meta as unknown/);
+  });
+});
 
 describe("createSubgraphClient", () => {
   it("POSTs query + variables and returns data", async () => {
