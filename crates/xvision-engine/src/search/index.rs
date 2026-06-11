@@ -204,6 +204,18 @@ impl SearchIndex {
         Ok(())
     }
 
+    /// Return all artifact IDs of the given kind, newest-first.
+    pub async fn list_ids(pool: &SqlitePool, kind: SearchKind) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT artifact_id FROM search_index WHERE kind = ?1 ORDER BY updated_at DESC",
+        )
+        .bind(kind.as_str())
+        .fetch_all(pool)
+        .await
+        .context("list search_index ids")?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     /// Remove a row by `(artifact_id, kind)`. No-op if missing.
     pub async fn delete(pool: &SqlitePool, kind: SearchKind, artifact_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM search_index WHERE artifact_id = ?1 AND kind = ?2")
@@ -504,5 +516,46 @@ mod tests {
             .await
             .unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_ids_returns_indexed_strategies_newest_first() {
+        let pool = fresh_pool().await;
+
+        let mut e1 = entry("strat-a", SearchKind::Strategy, "alpha", "x", &[]);
+        e1.updated_at = Utc::now() - chrono::Duration::hours(1);
+        let mut e2 = entry("strat-b", SearchKind::Strategy, "bravo", "x", &[]);
+        e2.updated_at = Utc::now();
+        SearchIndex::upsert(&pool, &e1).await.unwrap();
+        SearchIndex::upsert(&pool, &e2).await.unwrap();
+
+        // Also insert a run row — must not appear in strategy list.
+        let e_run = entry("run-x", SearchKind::Run, "some run", "x", &[]);
+        SearchIndex::upsert(&pool, &e_run).await.unwrap();
+
+        let ids = SearchIndex::list_ids(&pool, SearchKind::Strategy).await.unwrap();
+        assert_eq!(ids, vec!["strat-b", "strat-a"], "newest first, runs excluded");
+    }
+
+    #[tokio::test]
+    async fn list_ids_empty_when_none_indexed() {
+        let pool = fresh_pool().await;
+        let ids = SearchIndex::list_ids(&pool, SearchKind::Strategy).await.unwrap();
+        assert!(ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_ids_excludes_deleted_entry() {
+        let pool = fresh_pool().await;
+        SearchIndex::upsert(&pool, &entry("s1", SearchKind::Strategy, "keep", "x", &[]))
+            .await
+            .unwrap();
+        SearchIndex::upsert(&pool, &entry("s2", SearchKind::Strategy, "gone", "x", &[]))
+            .await
+            .unwrap();
+        SearchIndex::delete(&pool, SearchKind::Strategy, "s2").await.unwrap();
+
+        let ids = SearchIndex::list_ids(&pool, SearchKind::Strategy).await.unwrap();
+        assert_eq!(ids, vec!["s1"]);
     }
 }
