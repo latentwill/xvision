@@ -79,20 +79,35 @@ pub struct StatusOut {
 /// gateway, not a vendor product.
 const DEFAULT_PUBLIC_GATEWAY: &str = "https://dweb.link";
 
-/// The public read gateway base for "open bundle" links. Prefers the
-/// configured backend's gateway (`PINATA_GATEWAY`, surfaced on the startup
-/// `pinata` config) when non-empty, else the vendor-neutral default. Returns
-/// only the gateway base — NEVER the pinning API URL.
+/// The public read gateway base for browser "open bundle" links. Resolution,
+/// in order: `XVN_PUBLIC_GATEWAY` (the operator's branded public read gateway,
+/// e.g. `https://ipfs.example.com`) → the legacy `PINATA_GATEWAY` (alternative
+/// backend) → the vendor-neutral default `dweb.link`. Returns only the gateway
+/// base — NEVER the pinning API URL, and never a localhost/API address.
 fn public_gateway(state: &AppState) -> String {
-    let configured = state
+    let backend_gateway = state
         .marketplace_chain()
         .and_then(|c| c.pinata.as_ref())
-        .map(|p| p.gateway.trim().trim_end_matches('/'))
-        .filter(|g| !g.is_empty());
-    match configured {
-        Some(g) => g.to_string(),
-        None => DEFAULT_PUBLIC_GATEWAY.to_string(),
-    }
+        .map(|p| p.gateway.clone());
+    resolve_public_gateway(std::env::var("XVN_PUBLIC_GATEWAY").ok(), backend_gateway)
+}
+
+/// Pure resolver (env read split out for testability): `XVN_PUBLIC_GATEWAY`
+/// override → configured backend gateway → vendor-neutral default. Trims
+/// trailing slashes; empty/whitespace values are treated as unset.
+fn resolve_public_gateway(env_override: Option<String>, backend: Option<String>) -> String {
+    let clean = |s: String| {
+        let t = s.trim().trim_end_matches('/').to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    };
+    env_override
+        .and_then(clean)
+        .or_else(|| backend.and_then(clean))
+        .unwrap_or_else(|| DEFAULT_PUBLIC_GATEWAY.to_string())
 }
 
 /// Public-safe Lit config for the frontend. Deliberately omits `api_key`.
@@ -850,6 +865,26 @@ mod tests {
 
     const ALICE: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const BOB: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    #[test]
+    fn resolve_public_gateway_precedence() {
+        // env override wins, trailing slash trimmed
+        assert_eq!(
+            resolve_public_gateway(Some("https://ipfs.me/".into()), Some("https://b.example".into())),
+            "https://ipfs.me"
+        );
+        // blank/whitespace override is treated as unset → falls through to backend
+        assert_eq!(
+            resolve_public_gateway(Some("  ".into()), Some("https://b.example/".into())),
+            "https://b.example"
+        );
+        // neither set → vendor-neutral default
+        assert_eq!(resolve_public_gateway(None, None), DEFAULT_PUBLIC_GATEWAY);
+        assert_eq!(
+            resolve_public_gateway(Some(String::new()), Some(String::new())),
+            DEFAULT_PUBLIC_GATEWAY
+        );
+    }
 
     fn listing(listing_id: u64, agent_nft_id: &str, seller: &str, revoked: bool) -> IndexedListing {
         IndexedListing {
