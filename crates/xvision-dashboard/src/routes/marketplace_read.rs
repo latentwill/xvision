@@ -10,6 +10,10 @@
 //!   strategy NFTs, license balances, and seller listings.
 //! - `GET /api/marketplace/receipts/:tx_hash` — decoded `Sold` event for a
 //!   purchase tx, joined with listing metadata from the snapshot.
+//! - `GET /api/marketplace/listings/:id/bundle` — fetch the manifest bytes
+//!   behind a listing's `content_uri` (ipfs:// gateway or xvn:// local
+//!   store) and verify them against the on-chain `content_hash` (409 on
+//!   mismatch).
 //!
 //! Handlers stay thin: all aggregation is the pure [`wallet_view`] over the
 //! snapshot plus [`OwnershipFacts`] gathered from the chain. Chain access
@@ -26,8 +30,12 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use xvision_engine::api::strategy;
+use xvision_engine::autooptimizer::content_hash::canonical_json;
 use xvision_identity::client::IIdentityRegistry;
 use xvision_identity::contracts::{ILicenseToken, IMarketplace};
+use xvision_identity::manifest_hash_hex;
+use xvision_marketplace::{IpfsStore, PinataDriver};
 
 use crate::error::DashboardError;
 use crate::marketplace_index::{IndexedListing, IndexerCfg, MarketplaceSnapshot};
@@ -147,6 +155,110 @@ pub async fn get_listing(
         .cloned()
         .map(Json)
         .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/marketplace/listings/:id/bundle
+// ---------------------------------------------------------------------------
+
+/// Response for a verified bundle fetch. `verified` is always `true` when
+/// this shape is returned at all — a hash mismatch is a 409, never a
+/// `verified: false` payload, so no caller can accidentally use unverified
+/// bytes.
+#[derive(Debug, Serialize)]
+pub struct BundleOut {
+    pub listing_id: u64,
+    pub content_uri: String,
+    pub verified: bool,
+    /// The canonical strategy manifest, parsed back into JSON.
+    pub manifest: serde_json::Value,
+}
+
+/// Fetches the manifest bytes behind a listing's `content_uri` and verifies
+/// them against the listing's on-chain `content_hash`. Shared by the bundle
+/// route and the license-gated import route (`POST …/:id/import`).
+///
+/// Resolution:
+/// - `ipfs://<cid>` — gateway GET via [`PinataDriver`] (gets are
+///   unauthenticated; an empty `PINATA_JWT` is fine). Gateway override via
+///   `PINATA_GATEWAY`, default the public Pinata gateway. Fetch failure →
+///   503 (upstream dependency, not a client error).
+/// - `xvn://strategy/<ulid>` — local store load + canonical JSON (404 when
+///   the strategy file is absent on this host).
+/// - anything else → 503 with the scheme named (an unsupported scheme means
+///   this server version can't deliver the listing, not that it's gone).
+///
+/// Integrity failures (hash mismatch, non-UTF-8 or non-JSON bytes that
+/// nevertheless hashed correctly) are 409 `Conflict` — the listing and its
+/// content disagree.
+pub(crate) async fn fetch_verified_manifest(
+    state: &AppState,
+    listing: &IndexedListing,
+) -> Result<serde_json::Value, DashboardError> {
+    let bytes: Vec<u8> = if let Some(cid) = listing.content_uri.strip_prefix("ipfs://") {
+        let gateway = std::env::var("PINATA_GATEWAY").unwrap_or_default();
+        let jwt = std::env::var("PINATA_JWT").unwrap_or_default();
+        let ipfs = PinataDriver::new(jwt, gateway);
+        ipfs.get(cid).await.map_err(|e| {
+            DashboardError::ServiceUnavailable(format!("ipfs gateway fetch failed for {cid}: {e}"))
+        })?
+    } else if let Some(agent_id) = listing.content_uri.strip_prefix("xvn://strategy/") {
+        let strategy = strategy::get(&state.api_context(), agent_id).await?;
+        let value = serde_json::to_value(&strategy)
+            .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize strategy: {e}")))?;
+        canonical_json(&value).into_bytes()
+    } else {
+        return Err(DashboardError::ServiceUnavailable(format!(
+            "unsupported content_uri scheme for listing {}: {}",
+            listing.listing_id, listing.content_uri
+        )));
+    };
+
+    let canonical = String::from_utf8(bytes).map_err(|_| {
+        DashboardError::Conflict(format!(
+            "bundle integrity check failed for listing {}: fetched bytes are not UTF-8",
+            listing.listing_id
+        ))
+    })?;
+    let fetched_hash = manifest_hash_hex(&canonical);
+    let onchain_hash = listing.content_hash.trim_start_matches("0x").to_lowercase();
+    if fetched_hash != onchain_hash {
+        return Err(DashboardError::Conflict(format!(
+            "bundle integrity check failed for listing {}: content hash mismatch \
+             (on-chain {onchain_hash}, fetched bytes hash to {fetched_hash})",
+            listing.listing_id
+        )));
+    }
+    serde_json::from_str(&canonical).map_err(|e| {
+        DashboardError::Conflict(format!(
+            "bundle for listing {} verified but is not parseable JSON: {e}",
+            listing.listing_id
+        ))
+    })
+}
+
+/// `GET /api/marketplace/listings/:id/bundle` — 404 unknown listing, 409
+/// integrity mismatch, 503 unreachable gateway / unsupported scheme, 200
+/// `{listing_id, content_uri, verified: true, manifest}`.
+pub async fn get_bundle(
+    State(state): State<AppState>,
+    Path(id): Path<u64>,
+) -> Result<Json<BundleOut>, DashboardError> {
+    let listing = {
+        let snap = state.marketplace_snapshot.read().await;
+        snap.listings
+            .iter()
+            .find(|l| l.listing_id == id)
+            .cloned()
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
+    };
+    let manifest = fetch_verified_manifest(&state, &listing).await?;
+    Ok(Json(BundleOut {
+        listing_id: id,
+        content_uri: listing.content_uri,
+        verified: true,
+        manifest,
+    }))
 }
 
 // ---------------------------------------------------------------------------

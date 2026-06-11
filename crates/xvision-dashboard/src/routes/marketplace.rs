@@ -5,12 +5,16 @@
 //! - `POST /api/marketplace/listings/:id/revoke` — seller-initiated revoke.
 //! - `POST /api/marketplace/buy` — gasless x402 purchase relay
 //!   (`buyWithAuthorization` signed by the buyer, gas paid by the relayer).
+//! - `POST /api/marketplace/listings/:id/import` — license-gated bundle
+//!   delivery: verify the buyer holds an ERC-1155 license, fetch+verify the
+//!   manifest, install it as a new local strategy.
 //!
 //! Flow: parse/validate body → load strategy → hash → tokenURI →
 //! `ChainEnv::from_env` → signer parse → `registry_addresses_from_env` →
-//! `MarketplaceAddresses::from_env` → construct driver → connect + register
-//! (mint) → `publish_listing`. All config errors surface before the mint so
-//! no orphan NFTs are created by a missing env var.
+//! `MarketplaceAddresses::from_env` → construct driver → IPFS pin (when
+//! `PINATA_JWT` is set; a pin failure aborts BEFORE the mint) → connect +
+//! register (mint) → `publish_listing`. All config errors surface before
+//! the mint so no orphan NFTs are created by a missing env var.
 //!
 //! Chain access is env-gated: without `XVN_RPC_URL` / `XVN_CHAIN_ID` /
 //! `XVN_PUBLISHER_PK` (plus registry addresses) the route returns 503 so dev
@@ -39,7 +43,7 @@ use xvision_identity::{generate_token_uri, manifest_hash_hex, IdentityClient, Re
 use xvision_marketplace::adapter::{
     AnchorDriver, BuyRequest, Erc8004MantleDriver, PublishRequest, TransferAuthorization,
 };
-use xvision_marketplace::MarketplaceAddresses;
+use xvision_marketplace::{IpfsStore, MarketplaceAddresses, PinataDriver};
 
 use crate::error::DashboardError;
 use crate::state::AppState;
@@ -71,6 +75,34 @@ pub struct PublishOut {
     pub listing_id: String,
     /// Size of the generated `data:application/json;base64,…` tokenURI.
     pub token_uri_bytes: usize,
+    /// Where the canonical manifest lives: `ipfs://<cid>` when `PINATA_JWT`
+    /// was configured at publish time, else the local `xvn://strategy/<id>`
+    /// fallback.
+    pub content_uri: String,
+}
+
+/// Reads the optional Pinata pin config: `PINATA_JWT` (required to pin) and
+/// `PINATA_GATEWAY` (optional; empty → driver default). `None` when the JWT
+/// is unset or blank — publish then falls back to the `xvn://` content_uri.
+fn pinata_env() -> Option<(String, String)> {
+    let jwt = std::env::var("PINATA_JWT").ok()?;
+    if jwt.trim().is_empty() {
+        return None;
+    }
+    let gateway = std::env::var("PINATA_GATEWAY").unwrap_or_default();
+    Some((jwt, gateway))
+}
+
+/// Pins the canonical manifest bytes, mapping any pin failure to a 503-class
+/// error. The caller invokes this BEFORE the identity mint so a Pinata
+/// outage can never strand an orphan NFT (DashboardError has no 502 variant;
+/// `ServiceUnavailable` is the upstream-dependency class here).
+async fn pin_canonical(ipfs: &PinataDriver, canonical: &str) -> Result<String, DashboardError> {
+    ipfs.put(canonical.as_bytes()).await.map_err(|e| {
+        DashboardError::ServiceUnavailable(format!(
+            "IPFS pin failed (publish aborted before mint, nothing on chain): {e}"
+        ))
+    })
 }
 
 /// Chain connection env config. All three are required for any on-chain work.
@@ -210,7 +242,27 @@ pub async fn post_publish(
         signer.clone(),
     );
 
-    // f. Mint the identity NFT with the genart tokenURI.
+    // f. Pin the canonical manifest to IPFS when Pinata is configured. This
+    //    happens AFTER all config validation and BEFORE the mint: a pin
+    //    failure aborts with 503 and leaves nothing on chain. Without
+    //    `PINATA_JWT` the listing keeps the local `xvn://` reference (the
+    //    bundle route resolves both).
+    let content_uri = match pinata_env() {
+        Some((jwt, gateway)) => {
+            let ipfs = PinataDriver::new(jwt, gateway);
+            let cid = pin_canonical(&ipfs, &canonical).await?;
+            format!("ipfs://{cid}")
+        }
+        None => {
+            tracing::info!(
+                agent_id = %agent_id,
+                "PINATA_JWT unset; publishing with local xvn:// content_uri"
+            );
+            format!("xvn://strategy/{agent_id}")
+        }
+    };
+
+    // g. Mint the identity NFT with the genart tokenURI.
     //    All config has been validated above — no config error can occur
     //    after this point.
     let identity_client = IdentityClient::connect(&chain.rpc_url, registry_addresses, chain.chain_id)
@@ -223,7 +275,7 @@ pub async fn post_publish(
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity register: {e}")))?;
 
-    // g. Create the marketplace listing.
+    // h. Create the marketplace listing.
     let content_hash: B256 = manifest_hash
         .parse()
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}")))?;
@@ -231,7 +283,7 @@ pub async fn post_publish(
         .publish_listing(PublishRequest {
             agent_nft_id: token_id.0,
             content_hash,
-            content_uri: format!("xvn://strategy/{agent_id}"),
+            content_uri: content_uri.clone(),
             tier,
             price_usdc,
             transferable_license: body.transferable_license,
@@ -244,7 +296,7 @@ pub async fn post_publish(
             ))
         })?;
 
-    // h. 201 + receipt.
+    // i. 201 + receipt.
     Ok((
         StatusCode::CREATED,
         Json(PublishOut {
@@ -253,6 +305,7 @@ pub async fn post_publish(
             token_id: token_id.to_string(),
             listing_id: listing.listing_id.to_string(),
             token_uri_bytes: token_uri.len(),
+            content_uri,
         }),
     ))
 }
@@ -487,6 +540,101 @@ pub async fn post_buy(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// POST /api/marketplace/listings/:id/import — license-gated bundle delivery
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /api/marketplace/listings/:id/import`.
+#[derive(Debug, Deserialize)]
+pub struct ImportBody {
+    /// The buyer's wallet — must hold an ERC-1155 license for the listing.
+    pub address: String,
+}
+
+/// Response for a successful import: the freshly minted local strategy id.
+#[derive(Debug, Serialize)]
+pub struct ImportOut {
+    pub agent_id: String,
+}
+
+/// `POST /api/marketplace/listings/:id/import` — install a purchased
+/// strategy into the local engine.
+///
+/// Order: validate address (400) → listing from snapshot (404) → license
+/// gate via `ILicenseToken::balanceOf(address, listing_id)` over the
+/// read-only provider (503 when `XVN_LICENSE_TOKEN` / indexer chain env is
+/// dormant; 403 when the balance is zero) → fetch + hash-verify the bundle
+/// (shared with `GET …/:id/bundle`; 409 on integrity mismatch) →
+/// `import_strategy` mints a NEW local ULID → 201 `{agent_id}`.
+///
+/// V1 CAVEAT: `address` is asserted by the client, not proven — there is no
+/// signature challenge yet. Anyone who knows a license-holding address can
+/// trigger an import of an OPEN-tier manifest, which is acceptable because
+/// the open-tier manifest is already public (pinned plaintext on IPFS).
+/// Signature-challenge auth arrives with the sealed tier.
+pub async fn post_import(
+    Path(id): Path<u64>,
+    State(state): State<AppState>,
+    Json(body): Json<ImportBody>,
+) -> Result<(StatusCode, Json<ImportOut>), DashboardError> {
+    // a. Validate the asserted wallet before any snapshot/chain work.
+    let address = parse_address("address", &body.address)?;
+
+    // b. Listing from the indexer snapshot.
+    let listing = {
+        let snap = state.marketplace_snapshot.read().await;
+        snap.listings
+            .iter()
+            .find(|l| l.listing_id == id)
+            .cloned()
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
+    };
+
+    // c. License gate. All env config is validated before the chain read so
+    //    a dev box degrades with 503, never a silent skip of the gate.
+    let license_token: Address = std::env::var("XVN_LICENSE_TOKEN")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| {
+            DashboardError::ServiceUnavailable("license gating not configured: set XVN_LICENSE_TOKEN".into())
+        })?;
+    let cfg = crate::marketplace_index::IndexerCfg::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "marketplace chain access not configured: set XVN_RPC_URL, XVN_LISTING_REGISTRY, \
+             XVN_IDENTITY_REGISTRY"
+                .into(),
+        )
+    })?;
+    let provider = alloy::providers::ProviderBuilder::new()
+        .connect(cfg.rpc_url.as_str())
+        .await
+        .map_err(|e| DashboardError::ServiceUnavailable(format!("rpc connect failed: {e}")))?;
+    let balance = xvision_identity::contracts::ILicenseToken::new(license_token, &provider)
+        .balanceOf(address, U256::from(id))
+        .call()
+        .await
+        .map_err(|e| DashboardError::ServiceUnavailable(format!("license balance lookup failed: {e}")))?;
+    if balance.is_zero() {
+        return Err(DashboardError::Forbidden(format!(
+            "no license for {address:#x} on listing {id}"
+        )));
+    }
+
+    // d. Fetch + hash-verify the bundle (404/409/503 per the shared fn).
+    let manifest = crate::routes::marketplace_read::fetch_verified_manifest(&state, &listing).await?;
+
+    // e. Install as a NEW local strategy (fresh ULID; provenance stashed in
+    //    mechanical_params.metadata.imported_from).
+    let imported = strategy::import_strategy(&state.api_context(), manifest).await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ImportOut {
+            agent_id: imported.manifest.id,
+        }),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +724,43 @@ mod tests {
                 );
             }
             other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pinata_env_requires_nonblank_jwt() {
+        // Single test owns PINATA_JWT / PINATA_GATEWAY in this crate's unit
+        // suite (the crate-wide env-mutation convention).
+        std::env::remove_var("PINATA_JWT");
+        std::env::remove_var("PINATA_GATEWAY");
+        assert!(pinata_env().is_none());
+
+        std::env::set_var("PINATA_JWT", "   ");
+        assert!(pinata_env().is_none(), "blank JWT is not configured");
+
+        std::env::set_var("PINATA_JWT", "jwt-token");
+        std::env::set_var("PINATA_GATEWAY", "https://gw.example");
+        let (jwt, gateway) = pinata_env().expect("configured");
+        assert_eq!(jwt, "jwt-token");
+        assert_eq!(gateway, "https://gw.example");
+        std::env::remove_var("PINATA_JWT");
+        std::env::remove_var("PINATA_GATEWAY");
+    }
+
+    #[tokio::test]
+    async fn pin_canonical_maps_failure_to_service_unavailable() {
+        // An empty-JWT driver fails fast (NotConfigured) without network;
+        // the route maps every pin failure to the 503 upstream class.
+        let ipfs = PinataDriver::new("", "");
+        let err = pin_canonical(&ipfs, "{}").await.unwrap_err();
+        match err {
+            DashboardError::ServiceUnavailable(msg) => {
+                assert!(
+                    msg.contains("before mint"),
+                    "names the no-orphan guarantee: {msg}"
+                );
+            }
+            other => panic!("expected ServiceUnavailable, got {other:?}"),
         }
     }
 
