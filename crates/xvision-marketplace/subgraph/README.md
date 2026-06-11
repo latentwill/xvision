@@ -41,26 +41,36 @@ mappings use, so the subgraph builds without the Foundry artifacts.
 
 ## Deploy
 
-Host-agnostic. Pick an indexer host (runbook §2.9 — Goldsky / The Graph hosted
-or decentralized / self-hosted graph-node) and:
+Host: **Goldsky** (the only host indexing Mantle Sepolia today — The Graph's
+decentralized net doesn't list Mantle, and its hosted Mantle service is
+deprecated). The artifact stays host-agnostic; redeploy elsewhere unchanged if
+that changes.
 
 ```bash
-# Goldsky example
-goldsky subgraph deploy xvision-marketplace/v0.1.0 --path .
-
-# The Graph (hosted/studio) example
-pnpm exec graph deploy <slug> --network mantle-testnet
+goldsky subgraph deploy xvision-marketplace/<version> --path .
+goldsky subgraph tag create xvision-marketplace/<version> --tag live   # stable URL
 ```
 
-### Before mainnet / first real deploy
+### Live deployment (2026-06-11)
 
-- **Set `startBlock`** in `networks.json` to each contract's deploy block
-  (currently `0`; scanning from genesis works but is slow). Get them from
-  Mantlescan for the addresses in `config/mantle-sepolia.toml`.
-- **Confirm the network alias.** `subgraph.yaml` uses `mantle-testnet`; Goldsky
-  expects `mantle-sepolia`. Match your chosen host's chain name (`graph build
-  --network <name>` injects `networks.json`).
-- **Update `src/constants.ts`** `MARKETPLACE_ADDRESS` if redeploying the
-  Marketplace proxy (used only for the `protocolFeeBps` snapshot).
+- **Version:** `xvision-marketplace/1.0.1` (tag `live`).
+- **GraphQL endpoint (public read):**
+  `https://api.goldsky.com/api/public/project_cmq8zp6etzmv101xwaeih73lr/subgraphs/xvision-marketplace/live/gn`
+- **Network alias:** `mantle-sepolia` (Goldsky's slug for chain 5003).
+- **startBlocks** set to each contract's creation block (Identity 39765646,
+  Reputation 39765649, Validation 39765652, Listing 39765663, EvalAttestation
+  39765668, Marketplace 39765674) — synced in seconds vs. a full-chain scan.
+- Verified live: indexes agent #0/#1, listing #1 (1.0 USDC), and the two
+  smoke-test buys from the runbook addenda.
+
+The frontend reads this endpoint via `VITE_MARKETPLACE_SUBGRAPH_URL` (baked by
+`Dockerfile.deploy`; see `frontend/web/.env.example`).
+
+### When redeploying / changing addresses
+
+- Re-run the deploy + re-point the `live` tag (frontend env stays stable via the
+  tag). Recompute `startBlock`s if the contracts move.
+- **Update `src/constants.ts`** `MARKETPLACE_ADDRESS` if the Marketplace proxy
+  changes (used only for the `protocolFeeBps` snapshot).
 - **Reconcile ABIs** against the Mantlescan-verified contracts (runbook §2.7
-  AM7) if any event signature changed since this was authored.
+  AM7) if any event signature changed.

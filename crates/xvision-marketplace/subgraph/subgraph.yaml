@@ -1,29 +1,14 @@
-# Marketplace subgraph manifest (surface spec §6.3; runbook §2.9 / §3.2 C7).
-#
-# Host-agnostic: addresses + startBlock live in networks.json so the same
-# manifest deploys to Goldsky, The Graph hosted/decentralized, or a self-hosted
-# graph-node. Deploy with:
-#
-#   pnpm install
-#   pnpm codegen
-#   pnpm build
-#   pnpm exec graph deploy <slug> --network mantle-sepolia
-#
-# `dataSource.network` uses graph-node's chain alias. Mantle Sepolia (5003) is
-# `mantle-testnet` on hosted graph-node builds; confirm the exact alias for the
-# chosen indexer host (Goldsky uses `mantle-sepolia`). networks.json carries the
-# per-network address/startBlock; `graph build --network <name>` injects them.
 specVersion: 1.0.0
 schema:
   file: ./schema.graphql
 dataSources:
   - kind: ethereum
     name: IdentityRegistry
-    network: mantle-testnet
+    network: mantle-sepolia
     source:
       abi: IdentityRegistry
       address: "0x1DE1ccb2bBB5e1dE856BA096698b1A97f4484Fe4"
-      startBlock: 0
+      startBlock: 39765646
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -39,11 +24,11 @@ dataSources:
           handler: handleAgentRegistered
   - kind: ethereum
     name: ListingRegistry
-    network: mantle-testnet
+    network: mantle-sepolia
     source:
       abi: ListingRegistry
       address: "0x64b5ae5B91CB2846e7dA8cE883f2023b98E2cD22"
-      startBlock: 0
+      startBlock: 39765663
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -58,7 +43,8 @@ dataSources:
         - name: Marketplace
           file: ./abis/Marketplace.json
       eventHandlers:
-        - event: ListingCreated(indexed uint256,indexed address,indexed uint256,bytes32,uint8,uint96)
+        - event: ListingCreated(indexed uint256,indexed address,indexed
+            uint256,bytes32,uint8,uint96)
           handler: handleListingCreated
         - event: ListingUpdated(indexed uint256,bytes32,string)
           handler: handleListingUpdated
@@ -66,11 +52,11 @@ dataSources:
           handler: handleListingRevoked
   - kind: ethereum
     name: Marketplace
-    network: mantle-testnet
+    network: mantle-sepolia
     source:
       abi: Marketplace
       address: "0x4b9450642f2b3Da248e90b4FEBaA8eCA87E78cE8"
-      startBlock: 0
+      startBlock: 39765674
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -83,15 +69,16 @@ dataSources:
         - name: Marketplace
           file: ./abis/Marketplace.json
       eventHandlers:
-        - event: Sold(indexed uint256,indexed uint256,indexed address,uint96,uint96,uint96,uint256,uint16,uint8)
+        - event: Sold(indexed uint256,indexed uint256,indexed
+            address,uint96,uint96,uint96,uint256,uint16,uint8)
           handler: handleSold
   - kind: ethereum
     name: EvalAttestationRegistry
-    network: mantle-testnet
+    network: mantle-sepolia
     source:
       abi: EvalAttestationRegistry
       address: "0x205Ce1c3e43b2a4671b49a1Ff426AE8De90ABDf6"
-      startBlock: 0
+      startBlock: 39765668
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -108,11 +95,11 @@ dataSources:
           handler: handleAttestationPosted
   - kind: ethereum
     name: ReputationRegistry
-    network: mantle-testnet
+    network: mantle-sepolia
     source:
       abi: ReputationRegistry
       address: "0xbb8A920d6d342a4FcF3929D91668cfbbfb14d2D8"
-      startBlock: 0
+      startBlock: 39765649
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
@@ -132,11 +119,11 @@ dataSources:
           handler: handleFeedbackRevoked
   - kind: ethereum
     name: ValidationRegistry
-    network: mantle-testnet
+    network: mantle-sepolia
     source:
       abi: ValidationRegistry
       address: "0xFAeeBF70aE0B351100a8Ba3244dDf8792bEff84F"
-      startBlock: 0
+      startBlock: 39765652
     mapping:
       kind: ethereum/events
       apiVersion: 0.0.7
