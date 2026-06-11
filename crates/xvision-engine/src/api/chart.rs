@@ -675,6 +675,40 @@ fn compute_drawdown(equity: &[ChartEquityPoint]) -> Vec<DrawdownPoint> {
         .collect()
 }
 
+/// Buy-and-hold equity: $100k initial, proportional to bar close (same
+/// convention as the scenario-preview baseline at `build_scenario_preview`),
+/// sampled at the equity curve's timestamps so both series share one time
+/// axis. Returns `None` when either input is empty.
+#[allow(dead_code)] // wired in by build_run_payload_with (Task 3)
+fn compute_baseline_equity(
+    bars: &[MarketBar],
+    equity: &[ChartEquityPoint],
+) -> Option<Vec<ChartEquityPoint>> {
+    if bars.is_empty() || equity.is_empty() {
+        return None;
+    }
+    let initial = 100_000.0;
+    let first_close = bars[0].close.max(f64::EPSILON);
+    let times: Vec<i64> = bars.iter().map(|b| b.timestamp.timestamp()).collect();
+    Some(
+        equity
+            .iter()
+            .map(|p| {
+                // Latest bar at-or-before the sample; clamp to the first bar.
+                let idx = match times.binary_search(&p.time) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                ChartEquityPoint {
+                    time: p.time,
+                    equity_usd: initial * (bars[idx].close / first_close),
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Walk decisions in decision_index order (already sorted by `read_decisions`)
 /// alongside bars in timestamp order, emitting a `PositionPoint` per bar.
 ///
@@ -1565,5 +1599,77 @@ mod include_set_tests {
         assert!(IncludeSet::full().needs_indicators());
         assert!(!IncludeSet::parse("bars,markers").needs_indicators());
         assert!(!IncludeSet::parse("equity").needs_indicators());
+    }
+}
+
+#[cfg(test)]
+mod baseline_tests {
+    use super::{compute_baseline_equity, ChartEquityPoint};
+    use chrono::TimeZone;
+    use xvision_data::alpaca::MarketBar;
+
+    fn bar(offset_h: i64, close: f64) -> MarketBar {
+        let ts = chrono::Utc
+            .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
+            .unwrap()
+            + chrono::Duration::hours(offset_h);
+        MarketBar {
+            timestamp: ts,
+            open: close,
+            high: close + 1.0,
+            low: close - 1.0,
+            close,
+            volume: 1_000.0,
+        }
+    }
+
+    fn eq_point(offset_h: i64, equity_usd: f64) -> ChartEquityPoint {
+        let ts = chrono::Utc
+            .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
+            .unwrap()
+            + chrono::Duration::hours(offset_h);
+        ChartEquityPoint { time: ts.timestamp(), equity_usd }
+    }
+
+    #[test]
+    fn baseline_is_100k_buy_and_hold_sampled_at_equity_times() {
+        let bars = vec![bar(0, 100.0), bar(1, 110.0), bar(2, 120.0)];
+        let equity = vec![eq_point(0, 100_000.0), eq_point(1, 99_000.0), eq_point(2, 101_000.0)];
+        let baseline = compute_baseline_equity(&bars, &equity).unwrap();
+        assert_eq!(baseline.len(), 3);
+        assert_eq!(baseline[0].time, equity[0].time);
+        assert!((baseline[0].equity_usd - 100_000.0).abs() < 1e-6);
+        assert!((baseline[1].equity_usd - 110_000.0).abs() < 1e-6);
+        assert!((baseline[2].equity_usd - 120_000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn baseline_uses_latest_bar_at_or_before_sample() {
+        let bars = vec![bar(0, 100.0), bar(1, 110.0), bar(2, 120.0)];
+        let mid = ChartEquityPoint {
+            time: bars[1].timestamp.timestamp() + 1_800,
+            equity_usd: 100_500.0,
+        };
+        let baseline = compute_baseline_equity(&bars, &[mid]).unwrap();
+        assert!((baseline[0].equity_usd - 110_000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn baseline_clamps_samples_before_first_bar() {
+        let bars = vec![bar(1, 100.0), bar(2, 110.0)];
+        let early = ChartEquityPoint {
+            time: bars[0].timestamp.timestamp() - 3_600,
+            equity_usd: 100_000.0,
+        };
+        let baseline = compute_baseline_equity(&bars, &[early]).unwrap();
+        assert!((baseline[0].equity_usd - 100_000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn baseline_none_on_empty_inputs() {
+        let bars = vec![bar(0, 100.0)];
+        let equity = vec![eq_point(0, 1.0)];
+        assert!(compute_baseline_equity(&[], &equity).is_none());
+        assert!(compute_baseline_equity(&bars, &[]).is_none());
     }
 }
