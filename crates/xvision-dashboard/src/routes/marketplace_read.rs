@@ -185,10 +185,12 @@ pub struct BundleOut {
 /// route and the license-gated import route (`POST …/:id/import`).
 ///
 /// Resolution:
-/// - `ipfs://<cid>` — gateway GET via [`PinataDriver`] (gets are
-///   unauthenticated; an empty `PINATA_JWT` is fine). Gateway override via
-///   `PINATA_GATEWAY`, default the public Pinata gateway. Fetch failure →
-///   503 (upstream dependency, not a client error).
+/// - `ipfs://<cid>` — `get` through the startup-resolved IPFS backend
+///   (Kubo when `XVN_IPFS_API_URL` is set, else Pinata). When no backend is
+///   configured, falls back to an unauthenticated [`PinataDriver`] gateway
+///   GET (`PINATA_GATEWAY` override, default the public Pinata gateway) so
+///   already-pinned content stays fetchable. Fetch failure → 503 (upstream
+///   dependency, not a client error).
 /// - `xvn://strategy/<ulid>` — local store load + canonical JSON (404 when
 ///   the strategy file is absent on this host).
 /// - anything else → 503 with the scheme named (an unsupported scheme means
@@ -202,10 +204,17 @@ pub(crate) async fn fetch_verified_manifest(
     listing: &IndexedListing,
 ) -> Result<serde_json::Value, DashboardError> {
     let bytes: Vec<u8> = if let Some(cid) = listing.content_uri.strip_prefix("ipfs://") {
-        let gateway = std::env::var("PINATA_GATEWAY").unwrap_or_default();
-        let jwt = std::env::var("PINATA_JWT").unwrap_or_default();
-        let ipfs = PinataDriver::new(jwt, gateway);
-        ipfs.get(cid).await.map_err(|e| {
+        let fetched = match state.marketplace_chain().and_then(|c| c.ipfs.as_ref()) {
+            Some(backend) => backend.get(cid).await,
+            None => {
+                // No configured backend: keep already-pinned content
+                // fetchable through a public gateway (gets are
+                // unauthenticated; an empty JWT is fine).
+                let gateway = std::env::var("PINATA_GATEWAY").unwrap_or_default();
+                PinataDriver::new("", gateway).get(cid).await
+            }
+        };
+        fetched.map_err(|e| {
             DashboardError::ServiceUnavailable(format!("ipfs gateway fetch failed for {cid}: {e}"))
         })?
     } else if let Some(agent_id) = listing.content_uri.strip_prefix("xvn://strategy/") {

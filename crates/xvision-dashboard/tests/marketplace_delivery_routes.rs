@@ -224,7 +224,7 @@ async fn import_with_injected_license_token_but_no_indexer_is_503_chain_access()
         chain: None,
         registry_addresses: None,
         marketplace_addresses: None,
-        pinata: None,
+        ipfs: None,
         indexer: None,
         license_token: Some("0x3333333333333333333333333333333333333333".parse().unwrap()),
         chain_timeout: std::time::Duration::from_secs(45),
@@ -295,4 +295,32 @@ async fn update_without_chain_env_is_503() {
     response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
     let body: Value = response.json();
     assert_eq!(body["code"], "service_unavailable");
+}
+
+// ── POST /api/marketplace/publish (sealed-tier guard) ───────────────────────
+
+#[tokio::test]
+async fn publish_sealed_tier_is_rejected_before_chain_or_pin_work() {
+    // The guard runs BEFORE strategy load / chain config / pinning, so no
+    // chain env, no Pinata/Kubo backend, and not even a real strategy are
+    // needed: a sealed publish must 400 (not 404/503).
+    let (server, _state, _tmp) = boot().await;
+    let response = server
+        .post("/api/marketplace/publish")
+        .json(&serde_json::json!({
+            "strategy_id": "01JXNOTREALSTRATEGYULID000",
+            "tier": "sealed",
+            "price_usdc": 49.0,
+        }))
+        .await;
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let body: Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "tier");
+    let msg = body["message"].as_str().unwrap();
+    assert!(
+        msg.contains("sealed-tier publishing is not yet supported") && msg.contains("xvision-cgz"),
+        "guard message must explain the plaintext-pin hazard and name the \
+         tracking issue: {msg}"
+    );
 }
