@@ -36,6 +36,7 @@
 // 18d. POST  /api/marketplace/listings/:id/revoke     marketplace_route::post_revoke
 // 18e. POST  /api/marketplace/buy                     marketplace_route::post_buy
 // 18f. POST  /api/marketplace/listings/:id/import    marketplace_route::post_import
+// 18f2. POST /api/marketplace/listings/:id/import-sealed marketplace_route::post_import_sealed
 // 18g. POST  /api/marketplace/listings/:id/attest     marketplace_route::post_attest
 // 18h. POST  /api/marketplace/listings/:id/update     marketplace_route::post_update
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
@@ -575,6 +576,15 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/marketplace/listings/:id/import",
             post(marketplace_route::post_import),
+        )
+        // Sealed-tier import: the browser decrypts the bundle via Lit and
+        // POSTs the plaintext manifest here; the server re-checks the license
+        // (403/503) and re-verifies the manifest against the on-chain hash
+        // (409) before installing it as a NEW local strategy.
+        .route(
+            "/api/marketplace/listings/:id/import-sealed",
+            post(marketplace_route::post_import_sealed)
+                .route_layer(DefaultBodyLimit::max(import_body_limit)),
         )
         // Manual eval attestation (permissionless on-chain; the server's
         // publisher key is the attester). Env-gated: 503 without chain config.

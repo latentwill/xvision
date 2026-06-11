@@ -60,6 +60,19 @@ pub struct StatusOut {
     /// Env-configured contract addresses (each `null` when unset/invalid).
     /// The frontend discovers addresses here — never hardcoded in the bundle.
     pub contracts: ContractsOut,
+    /// Lit Protocol (Chipotle) config for the sealed-tier client-side decrypt
+    /// flow — `null` when Lit is unconfigured (sealed publishing disabled).
+    /// The API key is NEVER exposed here; the browser only needs the public
+    /// `api_base` / `gate_action_cid` / `pkp_id` to invoke the gate action.
+    pub lit: Option<LitStatusOut>,
+}
+
+/// Public-safe Lit config for the frontend. Deliberately omits `api_key`.
+#[derive(Debug, Serialize)]
+pub struct LitStatusOut {
+    pub api_base: String,
+    pub gate_action_cid: String,
+    pub pkp_id: String,
 }
 
 /// The marketplace contract address book, as configured via env. Still read
@@ -96,6 +109,17 @@ fn contracts_from_env() -> ContractsOut {
     }
 }
 
+/// The public-safe Lit status block from the startup-resolved config. Returns
+/// `None` when Lit is unconfigured. NEVER includes the API key.
+fn lit_status(state: &AppState) -> Option<LitStatusOut> {
+    let lit = state.marketplace_chain().and_then(|c| c.lit.as_ref())?;
+    Some(LitStatusOut {
+        api_base: lit.api_base.clone(),
+        gate_action_cid: lit.gate_action_cid.clone(),
+        pkp_id: lit.pkp_id.clone(),
+    })
+}
+
 pub async fn get_status(State(state): State<AppState>) -> Json<StatusOut> {
     let snap = state.marketplace_snapshot.read().await;
     Json(StatusOut {
@@ -104,6 +128,7 @@ pub async fn get_status(State(state): State<AppState>) -> Json<StatusOut> {
         total_onchain: snap.total_onchain,
         last_error: snap.last_error.clone(),
         contracts: contracts_from_env(),
+        lit: lit_status(&state),
     })
 }
 
@@ -167,8 +192,8 @@ pub async fn get_listing(
 // GET /api/marketplace/listings/:id/bundle
 // ---------------------------------------------------------------------------
 
-/// Response for a verified bundle fetch. `verified` is always `true` when
-/// this shape is returned at all — a hash mismatch is a 409, never a
+/// Response for a verified OPEN-tier bundle fetch. `verified` is always `true`
+/// when this shape is returned at all — a hash mismatch is a 409, never a
 /// `verified: false` payload, so no caller can accidentally use unverified
 /// bytes.
 #[derive(Debug, Serialize)]
@@ -178,6 +203,36 @@ pub struct BundleOut {
     pub verified: bool,
     /// The canonical strategy manifest, parsed back into JSON.
     pub manifest: serde_json::Value,
+}
+
+/// Response for a SEALED-tier bundle fetch. The server NEVER decrypts — it
+/// returns the opaque ciphertext (for the browser to hand to the Lit gate
+/// action) plus the on-chain `content_hash` (the keccak256 of the canonical
+/// PLAINTEXT) so the browser can integrity-check `keccak256(decrypted)` after
+/// a licensed decrypt. No plaintext manifest is ever returned here.
+#[derive(Debug, Serialize)]
+pub struct SealedBundleOut {
+    pub listing_id: u64,
+    pub content_uri: String,
+    /// Always `true` — marks this as the sealed shape so the frontend routes
+    /// to the decrypt flow instead of expecting a plaintext manifest.
+    pub encrypted: bool,
+    /// The opaque sealed blob fetched from `content_uri` (handed to Lit).
+    pub ciphertext: String,
+    /// `0x`-less 64-hex keccak256 of the canonical plaintext manifest (the
+    /// on-chain `content_hash`). The browser verifies the decrypted manifest
+    /// against this.
+    pub content_hash: String,
+}
+
+/// The two bundle shapes. Untagged so the open shape stays byte-identical to
+/// the pre-sealed `BundleOut` (no wire-break for existing open-tier callers);
+/// the sealed shape is distinguished by its `encrypted: true` marker.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum BundleResponse {
+    Open(BundleOut),
+    Sealed(SealedBundleOut),
 }
 
 /// Fetches the manifest bytes behind a listing's `content_uri` and verifies
@@ -243,13 +298,45 @@ pub(crate) async fn fetch_verified_manifest(
     })
 }
 
+/// Fetches the RAW bytes behind a listing's `content_uri` without any
+/// plaintext-hash verification — used for sealed bundles whose pinned blob is
+/// the opaque ciphertext (the on-chain `content_hash` commits to the canonical
+/// PLAINTEXT, not the ciphertext, so a plaintext-hash check here would always
+/// fail). Only the `ipfs://` scheme is supported for sealed bundles: a sealed
+/// blob must never be resolvable from a local `xvn://` plaintext store.
+async fn fetch_sealed_ciphertext(listing: &IndexedListing) -> Result<String, DashboardError> {
+    let cid = listing.content_uri.strip_prefix("ipfs://").ok_or_else(|| {
+        DashboardError::ServiceUnavailable(format!(
+            "sealed listing {} has a non-ipfs content_uri ({}); sealed bundles must be pinned",
+            listing.listing_id, listing.content_uri
+        ))
+    })?;
+    let gateway = std::env::var("PINATA_GATEWAY").unwrap_or_default();
+    let jwt = std::env::var("PINATA_JWT").unwrap_or_default();
+    let ipfs = PinataDriver::new(jwt, gateway);
+    let bytes = ipfs.get(cid).await.map_err(|e| {
+        DashboardError::ServiceUnavailable(format!("ipfs gateway fetch failed for {cid}: {e}"))
+    })?;
+    String::from_utf8(bytes).map_err(|_| {
+        DashboardError::Conflict(format!(
+            "sealed bundle for listing {} is not UTF-8 ciphertext",
+            listing.listing_id
+        ))
+    })
+}
+
 /// `GET /api/marketplace/listings/:id/bundle` — 404 unknown listing, 409
-/// integrity mismatch, 503 unreachable gateway / unsupported scheme, 200
-/// `{listing_id, content_uri, verified: true, manifest}`.
+/// integrity mismatch, 503 unreachable gateway / unsupported scheme.
+///
+/// - OPEN tier (`tier == 0`): 200 `{listing_id, content_uri, verified: true,
+///   manifest}` — the plaintext manifest, hash-verified.
+/// - SEALED tier (`tier == 1`): 200 `{listing_id, content_uri, encrypted:
+///   true, ciphertext, content_hash}` — the opaque blob for the browser to
+///   decrypt via Lit; NO plaintext manifest is returned.
 pub async fn get_bundle(
     State(state): State<AppState>,
     Path(id): Path<u64>,
-) -> Result<Json<BundleOut>, DashboardError> {
+) -> Result<Json<BundleResponse>, DashboardError> {
     let listing = {
         let snap = state.marketplace_snapshot.read().await;
         snap.listings
@@ -258,13 +345,27 @@ pub async fn get_bundle(
             .cloned()
             .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
     };
+
+    if listing.tier == 1 {
+        // Sealed: return the ciphertext + the on-chain plaintext content_hash;
+        // never the manifest. The browser decrypts and self-verifies.
+        let ciphertext = fetch_sealed_ciphertext(&listing).await?;
+        return Ok(Json(BundleResponse::Sealed(SealedBundleOut {
+            listing_id: id,
+            content_uri: listing.content_uri,
+            encrypted: true,
+            ciphertext,
+            content_hash: listing.content_hash.trim_start_matches("0x").to_lowercase(),
+        })));
+    }
+
     let manifest = fetch_verified_manifest(&state, &listing).await?;
-    Ok(Json(BundleOut {
+    Ok(Json(BundleResponse::Open(BundleOut {
         listing_id: id,
         content_uri: listing.content_uri,
         verified: true,
         manifest,
-    }))
+    })))
 }
 
 // ---------------------------------------------------------------------------
