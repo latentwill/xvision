@@ -1,14 +1,14 @@
 // src/features/marketplace/components/GenArtPlaceholder.test.tsx
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { GenArtPlaceholder } from "./GenArtPlaceholder";
 
 describe("GenArtPlaceholder", () => {
-  it("renders a canvas element with bitfields-v2 marker", () => {
-    const { container } = render(<GenArtPlaceholder seed="btc-momentum-7a91-v3" size={80} />);
-    const canvas = container.querySelector("canvas");
-    expect(canvas).not.toBeNull();
-    expect(canvas?.getAttribute("data-genart")).toBe("bitfields-v2");
+  it("renders a canvas tagged bitfields-v3", () => {
+    render(<GenArtPlaceholder seed="listing-abc" />);
+    const canvas = screen.getByLabelText("strategy generative art");
+    expect(canvas).toHaveAttribute("data-genart", "bitfields-v3");
+    expect(canvas).toHaveAttribute("width", "140");
   });
 
   it("renders at the requested display size", () => {
