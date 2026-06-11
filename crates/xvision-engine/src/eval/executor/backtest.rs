@@ -2716,9 +2716,7 @@ impl Executor {
         // B25: flush all buffered equity samples in a single transaction now
         // that the timeline loop is complete. This is the sole DB write for
         // the entire equity series, replacing ~2 000 auto-commit INSERTs.
-        store
-            .record_equity_batch(&run.id, &equity_samples_buf)
-            .await?;
+        store.record_equity_batch(&run.id, &equity_samples_buf).await?;
 
         if store.is_terminal(&run.id).await? {
             // F36: capture the (now near-complete) accumulators before bailing.

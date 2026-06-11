@@ -51,8 +51,8 @@
 //! arithmetic drift.
 
 use sqlx::SqlitePool;
-use xvision_core::providers::{Catalog, ModelEntry};
 use xvision_core::config::ProviderKind;
+use xvision_core::providers::{Catalog, ModelEntry};
 
 /// Does this provider report `$0`/token for *every* model the cost
 /// machinery can see?
@@ -79,10 +79,9 @@ use xvision_core::config::ProviderKind;
 pub fn provider_reports_zero_cost(kind: ProviderKind, catalog: &Catalog) -> bool {
     match kind {
         // Local inference — no per-token cost to meter against a budget.
-        ProviderKind::LocalCandle
-        | ProviderKind::Ollama
-        | ProviderKind::LlamaCpp
-        | ProviderKind::Vllm => true,
+        ProviderKind::LocalCandle | ProviderKind::Ollama | ProviderKind::LlamaCpp | ProviderKind::Vllm => {
+            true
+        }
         // Network kinds: zero cost iff nothing in the catalog has a
         // positive published price. A single 1-in/1-out probe through the
         // same `compute_token_cost_usd` gate tells us whether the entry

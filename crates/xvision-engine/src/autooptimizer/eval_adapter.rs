@@ -228,10 +228,7 @@ impl CachedBacktestPaperTester {
     /// U5: attach a shared progress bus so the backtest executor emits
     /// liveness events the cycle can bridge into `CycleProgressEvent`. Builder
     /// style so the existing `new` call sites are unchanged.
-    pub fn with_progress_bus(
-        mut self,
-        bus: Arc<crate::eval::progress::ProgressBus>,
-    ) -> Self {
+    pub fn with_progress_bus(mut self, bus: Arc<crate::eval::progress::ProgressBus>) -> Self {
         self.progress_bus = Some(bus);
         self
     }

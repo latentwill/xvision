@@ -621,10 +621,7 @@ pub async fn list_cycles(
         } else {
             None
         };
-        rows.push(CycleRunRow {
-            summary,
-            strategy_id,
-        });
+        rows.push(CycleRunRow { summary, strategy_id });
     }
     Ok(Json(rows))
 }
@@ -2503,8 +2500,8 @@ mod river_tests {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let cfg = std::fs::read_to_string("../../config/default.toml")
-            .expect("read workspace config/default.toml");
+        let cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = crate::state::AppState::new(xvn_home)
             .await

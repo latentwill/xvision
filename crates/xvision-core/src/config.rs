@@ -1179,7 +1179,9 @@ rate_limit_rpm = 600
             enabled.len()
         );
         // Legacy crypto symbols must still be present.
-        let legacy = ["BTC", "ETH", "SOL", "LTC", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "BCH"];
+        let legacy = [
+            "BTC", "ETH", "SOL", "LTC", "AVAX", "LINK", "AAVE", "UNI", "DOT", "DOGE", "BCH",
+        ];
         for sym in &legacy {
             assert!(
                 enabled.contains(sym),

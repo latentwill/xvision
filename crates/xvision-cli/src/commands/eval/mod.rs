@@ -928,10 +928,16 @@ async fn preflight_bar_coverage(
 
     for asset in assets {
         let asset_pair = asset.as_alpaca_pair();
-        let report =
-            check_bar_coverage(ctx, &asset_pair, granularity, start, end, HISTORICAL_DATA_SOURCE_TAG)
-                .await
-                .map_err(|e| api_to_cli("eval run (bar-coverage preflight)", e))?;
+        let report = check_bar_coverage(
+            ctx,
+            &asset_pair,
+            granularity,
+            start,
+            end,
+            HISTORICAL_DATA_SOURCE_TAG,
+        )
+        .await
+        .map_err(|e| api_to_cli("eval run (bar-coverage preflight)", e))?;
         if report.fully_covered {
             continue;
         }

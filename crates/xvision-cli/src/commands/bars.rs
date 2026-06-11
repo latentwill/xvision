@@ -28,9 +28,7 @@ use xvision_core::AssetSymbol;
 use xvision_data::alpaca::BarGranularity;
 use xvision_engine::api::settings::brokers;
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::bars::{
-    self, check_bar_coverage, compute_cache_key, BarCacheArgs, CoverageReport,
-};
+use xvision_engine::eval::bars::{self, check_bar_coverage, compute_cache_key, BarCacheArgs, CoverageReport};
 
 use crate::exit::{CliError, CliResult};
 
@@ -259,14 +257,22 @@ fn render_coverage(rows: &[BarsCacheRow]) -> String {
                 fmt_ts(seg.start),
                 fmt_ts(seg.end),
                 seg.cache_keys.len(),
-                if seg.cache_keys.len() == 1 { "entry" } else { "entries" },
+                if seg.cache_keys.len() == 1 {
+                    "entry"
+                } else {
+                    "entries"
+                },
             ));
         }
         if report.gaps.is_empty() {
             out.push_str("    gaps:    none\n");
         } else {
             for gap in &report.gaps {
-                out.push_str(&format!("    GAP:     {}..{}\n", fmt_ts(gap.start), fmt_ts(gap.end)));
+                out.push_str(&format!(
+                    "    GAP:     {}..{}\n",
+                    fmt_ts(gap.start),
+                    fmt_ts(gap.end)
+                ));
             }
         }
     }

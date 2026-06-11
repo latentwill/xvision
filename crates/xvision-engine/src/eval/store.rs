@@ -1122,11 +1122,7 @@ impl RunStore {
     /// Ordering is preserved (samples are inserted in slice order). If the
     /// slice is empty the call is a no-op. The transaction is committed only
     /// after all rows succeed; on error the entire batch is rolled back.
-    pub async fn record_equity_batch(
-        &self,
-        run_id: &str,
-        samples: &[(DateTime<Utc>, f64)],
-    ) -> Result<()> {
+    pub async fn record_equity_batch(&self, run_id: &str, samples: &[(DateTime<Utc>, f64)]) -> Result<()> {
         if samples.is_empty() {
             return Ok(());
         }
@@ -1145,9 +1141,7 @@ impl RunStore {
             .bind(equity_usd)
             .execute(&mut *tx)
             .await
-            .with_context(|| {
-                format!("insert equity batch row run_id={run_id} ts={timestamp}")
-            })?;
+            .with_context(|| format!("insert equity batch row run_id={run_id} ts={timestamp}"))?;
         }
         tx.commit()
             .await
@@ -1185,9 +1179,7 @@ impl RunStore {
             .bind(equity_usd)
             .execute(&mut *tx)
             .await
-            .with_context(|| {
-                format!("upsert equity batch row run_id={run_id} ts={timestamp}")
-            })?;
+            .with_context(|| format!("upsert equity batch row run_id={run_id} ts={timestamp}"))?;
         }
         tx.commit()
             .await
@@ -2195,10 +2187,7 @@ mod equity_batch_tests {
 
         // Old per-row path.
         for &(ts_val, eq) in &samples {
-            store_old
-                .record_equity("run-per-row", ts_val, eq)
-                .await
-                .unwrap();
+            store_old.record_equity("run-per-row", ts_val, eq).await.unwrap();
         }
         // New batch path.
         store_new

@@ -238,17 +238,25 @@ mod tests {
         let bus = ProgressBus::new(8);
         let tx = bus.sender();
         // No external subscriber yet (anchor only) — must not panic.
-        send_event(&tx, ProgressEvent::FilterBlocked {
-            run_id: "r".into(),
-            reason: "in_position".into(),
-        });
+        send_event(
+            &tx,
+            ProgressEvent::FilterBlocked {
+                run_id: "r".into(),
+                reason: "in_position".into(),
+            },
+        );
         let mut rx = bus.subscribe();
-        send_event(&tx, ProgressEvent::EvalHeartbeat {
-            run_id: "r".into(),
-            decisions: 1,
-            elapsed_s: 30,
-        });
-        let got = rx.try_recv().expect("subscriber receives event sent after subscribe");
+        send_event(
+            &tx,
+            ProgressEvent::EvalHeartbeat {
+                run_id: "r".into(),
+                decisions: 1,
+                elapsed_s: 30,
+            },
+        );
+        let got = rx
+            .try_recv()
+            .expect("subscriber receives event sent after subscribe");
         assert!(matches!(got, ProgressEvent::EvalHeartbeat { .. }));
     }
 }

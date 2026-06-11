@@ -653,21 +653,23 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     // it drives per-candidate sampling; the single pair (which still honors the
     // --day-*/--baseline-* CLI overrides) is the fallback used only when the pool
     // is empty, and remains the honesty-check scenario.
-    let scenario_pool: Vec<(xvision_engine::eval::scenario::Scenario, xvision_engine::eval::scenario::Scenario)> =
-        cfg.scenario_pool
-            .iter()
-            .map(|pair| {
-                let day = synthesize_optimizer_day_scenario(&pair.day, cadence_minutes, "xvn-cli");
-                let baseline = synthesize_baseline_untouched_scenario(&day, &pair.baseline)
-                    .map_err(|e| {
-                        CliError::upstream(anyhow::anyhow!(
-                            "synthesize scenario_pool '{}' baseline: {e}",
-                            pair.label
-                        ))
-                    })?;
-                Ok::<_, CliError>((day, baseline))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    let scenario_pool: Vec<(
+        xvision_engine::eval::scenario::Scenario,
+        xvision_engine::eval::scenario::Scenario,
+    )> = cfg
+        .scenario_pool
+        .iter()
+        .map(|pair| {
+            let day = synthesize_optimizer_day_scenario(&pair.day, cadence_minutes, "xvn-cli");
+            let baseline = synthesize_baseline_untouched_scenario(&day, &pair.baseline).map_err(|e| {
+                CliError::upstream(anyhow::anyhow!(
+                    "synthesize scenario_pool '{}' baseline: {e}",
+                    pair.label
+                ))
+            })?;
+            Ok::<_, CliError>((day, baseline))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let binding = build_dispatch(
         args.mock,
@@ -1483,12 +1485,10 @@ async fn warn_if_zero_cost_provider(xvn_home: &Path, provider: &str, _budget: f6
         Ok(r) => r,
         Err(_) => return,
     };
-    let Some(kind) = runtime.as_ref().and_then(|cfg| {
-        cfg.providers
-            .iter()
-            .find(|p| p.name == provider)
-            .map(|p| p.kind)
-    }) else {
+    let Some(kind) = runtime
+        .as_ref()
+        .and_then(|cfg| cfg.providers.iter().find(|p| p.name == provider).map(|p| p.kind))
+    else {
         return;
     };
     let catalog = match xvision_engine::providers::load_cached_catalog(xvn_home, provider).await {
@@ -2298,7 +2298,10 @@ sqlite_url = "sqlite://x.db"
             None => std::env::remove_var(KEY),
         }
 
-        assert_eq!(resolved_override, override_db, "explicit --db must be honored verbatim");
+        assert_eq!(
+            resolved_override, override_db,
+            "explicit --db must be honored verbatim"
+        );
         assert_eq!(
             resolved_override_fix, override_fix,
             "explicit --fixture must be honored verbatim"

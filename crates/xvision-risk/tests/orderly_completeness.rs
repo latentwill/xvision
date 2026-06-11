@@ -25,7 +25,10 @@ fn every_orderly_snapshot_symbol_is_in_whitelist() {
         } else if in_venues {
             // Look for: orderly  = "PERP_BTC_USDC"
             if let Some(rest) = trimmed.strip_prefix("orderly") {
-                let val = rest.trim_start_matches(|c: char| c == ' ' || c == '=').trim().trim_matches('"');
+                let val = rest
+                    .trim_start_matches(|c: char| c == ' ' || c == '=')
+                    .trim()
+                    .trim_matches('"');
                 if !val.is_empty() {
                     whitelist_orderly.insert(val.to_string());
                 }
@@ -34,7 +37,8 @@ fn every_orderly_snapshot_symbol_is_in_whitelist() {
     }
 
     let snapshot_set: HashSet<&str> = snapshot.iter().map(|s| s.as_str()).collect();
-    let missing: Vec<&&str> = snapshot_set.iter()
+    let missing: Vec<&&str> = snapshot_set
+        .iter()
         .filter(|&&sym| !whitelist_orderly.contains(sym))
         .collect();
 
@@ -55,5 +59,10 @@ fn every_orderly_snapshot_symbol_is_in_whitelist() {
 #[test]
 fn orderly_snapshot_count_matches_fixture() {
     let snapshot: Vec<String> = serde_json::from_str(SNAPSHOT).expect("parse snapshot");
-    assert_eq!(snapshot.len(), 102, "Expected 102 symbols in snapshot, got {}", snapshot.len());
+    assert_eq!(
+        snapshot.len(),
+        102,
+        "Expected 102 symbols in snapshot, got {}",
+        snapshot.len()
+    );
 }
