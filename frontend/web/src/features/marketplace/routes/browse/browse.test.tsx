@@ -283,6 +283,12 @@ describe("ListingCard", () => {
     expect(screen.getByTitle(/backtested/i)).toBeInTheDocument();
   });
 
+  it("renders no verification badge for unverified listings", () => {
+    render(<ListingCard row={FREE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
+    expect(screen.queryByTitle(/backtested/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unverified/i)).not.toBeInTheDocument();
+  });
+
   it("renders X402Badge for x402 listings", () => {
     render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
     expect(screen.getByText("x402")).toBeInTheDocument();

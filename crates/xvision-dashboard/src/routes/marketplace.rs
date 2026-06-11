@@ -254,9 +254,10 @@ pub struct RevokeOut {
 /// `POST /api/marketplace/listings/:id/revoke` — seller-initiated revoke.
 ///
 /// Returns 200 `{"listing_id": id, "tx_hash": "0x…"}` on success.
-/// 503 when chain env is not configured; 400 when the private key is invalid;
-/// 422 when the contract reverts (NotSeller, unknown id, already revoked) —
-/// the revert string is included in the response message.
+/// 503 when chain env is not configured or the private key is invalid;
+/// 400 (via `DashboardError::Validation`) for any chain error from `revoke_listing`
+/// (contract reverts, RPC transport failures, etc.) — the error text is included
+/// in the response message.
 pub async fn post_revoke(
     Path(id): Path<u64>,
     State(_state): State<AppState>,
@@ -287,9 +288,10 @@ pub async fn post_revoke(
         .revoke_listing(U256::from(id))
         .await
         .map_err(|e| {
-            // Contract reverts (NotSeller, UnknownListing, AlreadyRevoked) surface
-            // as MarketplaceError::Contract; map them to 422 with the chain error
-            // text so callers can act on them. All other chain failures → 500.
+            // All chain errors (contract reverts: NotSeller, UnknownListing, AlreadyRevoked,
+            // and RPC transport failures) map to DashboardError::Validation → 400 BAD_REQUEST.
+            // NOTE: maps ALL chain errors (incl. RPC transport) to 400 — acceptable for
+            // testnet; split transport → 503 when this hardens.
             let msg = e.to_string();
             DashboardError::Validation {
                 field: "listing_id".into(),
