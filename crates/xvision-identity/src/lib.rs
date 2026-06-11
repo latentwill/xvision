@@ -39,6 +39,7 @@ pub mod client;
 pub mod contracts;
 pub mod genart;
 pub mod manifest;
+pub mod token_metadata;
 
 pub use attestation::{
     build_attestation_outcome, decide_submission, AttestationDecision, TAG1_TRADING_YIELD, TAG2_MONTH,
@@ -46,7 +47,7 @@ pub use attestation::{
 pub use client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
 pub use contracts::MarketplaceAddresses;
 pub use genart::{
-    derive_traits, generate_svg, generate_token_uri, manifest_hash_hex, GenartError, Symmetry,
-    Traits,
+    derive_traits, generate_svg, generate_token_uri, manifest_hash_hex, GenartError, Symmetry, Traits,
 };
 pub use manifest::{AgentManifest, ReputationEntry, StrategyConfigSummary, TradeOutcome};
+pub use token_metadata::{decode_svg_image, decode_token_metadata, TokenMetadata};
