@@ -55,7 +55,13 @@ export function StrategyStrip({
       className="sticky top-0 z-10 -mx-6 mb-4 border-b border-border bg-bg/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-bg/80"
     >
       <div className="flex items-center gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-0.5">
+        {/*
+          The pill list is the only flexible child (flex-1 + min-w-0) and is
+          its own scroll container, so scrolled pills clip at this box's edge
+          and can never paint under the right-side controls. `overscroll-x-
+          contain` stops a trackpad fling from chaining into page scroll.
+        */}
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain pb-0.5">
           {runs.length === 0 ? (
             <span className="py-1 text-[13px] text-text-3">
               No live strategies.
@@ -89,7 +95,12 @@ export function StrategyStrip({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-3">
+        {/*
+          Right control group: never shrinks, and a left border gives the
+          scrolling pill list a hard visual boundary to clip against instead
+          of pills appearing to run into the metric picker.
+        */}
+        <div className="flex shrink-0 items-center gap-3 border-l border-border pl-3">
           <SignalSelectMenu
             label="Metric"
             icon="sliders"
