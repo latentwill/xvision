@@ -276,6 +276,69 @@ pub struct CompareRunSeries {
     pub equity: Vec<ChartEquityPoint>,
 }
 
+// ── include-set (slim payload selection) ───────────────────────────────────
+
+/// Which payload sections `GET /api/eval/runs/:id/chart?include=…` assembles.
+/// Parsed from an explicit allowlist; unknown tokens are ignored and an
+/// empty/unrecognized set degrades to equity-only. Indicators are NOT a
+/// public token — they ship only on the full (no-param) payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IncludeSet {
+    pub equity: bool,
+    pub bars: bool,
+    pub markers: bool,
+    pub baseline: bool,
+    pub indicators: bool,
+}
+
+impl IncludeSet {
+    /// Full payload — the behavior when no `include` param is supplied.
+    pub fn full() -> Self {
+        Self {
+            equity: true,
+            bars: true,
+            markers: true,
+            baseline: false,
+            indicators: true,
+        }
+    }
+
+    pub fn parse(raw: &str) -> Self {
+        let mut set = Self {
+            equity: false,
+            bars: false,
+            markers: false,
+            baseline: false,
+            indicators: false,
+        };
+        for token in raw.split(',').map(str::trim) {
+            match token {
+                "equity" => set.equity = true,
+                "bars" => set.bars = true,
+                "markers" => set.markers = true,
+                "baseline" => set.baseline = true,
+                _ => {}
+            }
+        }
+        if !(set.equity || set.bars || set.markers || set.baseline) {
+            set.equity = true;
+        }
+        set
+    }
+
+    /// Bars must be loaded when they ship, when markers need bar context,
+    /// or when the buy-and-hold baseline is computed from them.
+    pub fn needs_bars(&self) -> bool {
+        self.bars || self.markers || self.baseline
+    }
+
+    /// Indicators (and the full payload's position spans) compute only on
+    /// the full, no-`include`-param payload.
+    pub fn needs_indicators(&self) -> bool {
+        self.indicators
+    }
+}
+
 // ── Task 3 — build_run_payload ──────────────────────────────────────────────
 
 use xvision_data::alpaca::MarketBar;
@@ -1448,4 +1511,59 @@ fn preview_expected_bar_count(
     let secs = (to - from).num_seconds().max(0) as u64;
     let bar_secs = g.seconds();
     (secs / bar_secs) as u32
+}
+
+#[cfg(test)]
+mod include_set_tests {
+    use super::IncludeSet;
+
+    #[test]
+    fn parse_single_token() {
+        let s = IncludeSet::parse("equity");
+        assert!(s.equity && !s.bars && !s.markers && !s.baseline && !s.indicators);
+    }
+
+    #[test]
+    fn parse_multiple_tokens_with_whitespace() {
+        let s = IncludeSet::parse(" bars , markers ");
+        assert!(s.bars && s.markers && !s.equity && !s.baseline);
+    }
+
+    #[test]
+    fn parse_ignores_unknown_tokens() {
+        let s = IncludeSet::parse("equity,bogus,indicators");
+        // "indicators" is deliberately NOT a public token — full payload only.
+        assert!(s.equity && !s.indicators && !s.bars);
+    }
+
+    #[test]
+    fn parse_empty_or_garbage_degrades_to_equity_only() {
+        for raw in ["", "  ", "bogus", ",,,"] {
+            let s = IncludeSet::parse(raw);
+            assert!(s.equity, "raw={raw:?} should degrade to equity-only");
+            assert!(!s.bars && !s.markers && !s.baseline && !s.indicators);
+        }
+    }
+
+    #[test]
+    fn full_enables_everything_except_baseline() {
+        let s = IncludeSet::full();
+        assert!(s.equity && s.bars && s.markers && s.indicators);
+        assert!(!s.baseline, "full payload does not compute baseline");
+    }
+
+    #[test]
+    fn needs_bars_when_bars_markers_or_baseline() {
+        assert!(IncludeSet::parse("bars").needs_bars());
+        assert!(IncludeSet::parse("markers").needs_bars());
+        assert!(IncludeSet::parse("equity,baseline").needs_bars());
+        assert!(!IncludeSet::parse("equity").needs_bars());
+    }
+
+    #[test]
+    fn needs_indicators_only_on_full() {
+        assert!(IncludeSet::full().needs_indicators());
+        assert!(!IncludeSet::parse("bars,markers").needs_indicators());
+        assert!(!IncludeSet::parse("equity").needs_indicators());
+    }
 }
