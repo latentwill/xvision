@@ -139,9 +139,6 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Round `qty` DOWN to a multiple of `tick`, defusing f64 noise (e.g.
-/// 0.00048 / 0.00001 = 47.999999…) by nudging the ratio before flooring.
-/// Rounding down (never up) keeps the order within the decided notional.
 /// Compose a venue `client_order_id` from a short prefix and a key,
 /// stripping hyphens and truncating to Orderly's 36-char limit
 /// (full prefixed UUIDs overflow it: "tp-" + 36 = 39 — the venue
@@ -153,6 +150,9 @@ pub(crate) fn venue_client_id(prefix: &str, key: &str) -> String {
     id
 }
 
+/// Round `qty` DOWN to a multiple of `tick`, defusing f64 noise (e.g.
+/// 0.00048 / 0.00001 = 47.999999…) by nudging the ratio before flooring.
+/// Rounding down (never up) keeps the order within the decided notional.
 pub(crate) fn round_to_tick(qty: f64, tick: f64) -> f64 {
     if tick <= 0.0 {
         return qty;
@@ -459,10 +459,7 @@ fn order_from_data(d: OrderData) -> OrderlyOrder {
         order_id: d.order_id,
         client_order_id: d.client_order_id,
         status: d.status.to_uppercase(),
-        executed_quantity: d
-            .executed_quantity
-            .or(d.total_executed_quantity)
-            .or(d.executed),
+        executed_quantity: d.executed_quantity.or(d.total_executed_quantity).or(d.executed),
         average_executed_price: d.average_executed_price,
     }
 }
@@ -1301,6 +1298,14 @@ mod tests {
             matches!(err, ExecutorError::Rejected(_)),
             "expected Rejected, got {err:?}"
         );
+    }
+
+    #[test]
+    fn venue_client_id_fits_orderly_limit() {
+        let id = venue_client_id("tp-", "550e8400-e29b-41d4-a716-446655440000");
+
+        assert_eq!(id, "tp-550e8400e29b41d4a716446655440000");
+        assert!(id.len() <= 36);
     }
 
     // ── Test 1 ───────────────────────────────────────────────────────────────
