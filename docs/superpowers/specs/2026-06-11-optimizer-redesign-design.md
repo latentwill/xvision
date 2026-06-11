@@ -66,9 +66,10 @@ side boxes (house rule). Order:
    Launch (idle) / Pause + Cancel (running) / Resume + Cancel (paused). This
    replaces the current CommandBar.
 2. **Console module** (§3).
-3. **Charts row.** Improvement-over-time + edge-vs-random. All uPlot gradient
-   construction guarded against empty/non-finite series (closes audit
-   F8/F15 console noise).
+3. **Charts row.** The **lineage river** (§3a — the signature visualization,
+   replacing the improvement-over-time chart, which it strictly supersedes) +
+   edge-vs-random. All chart gradient construction guarded against
+   empty/non-finite series (closes audit F8/F15 console noise).
 4. **Experiment writers ladder** (existing panel, restyled to tokens).
 5. **Cycle history.** Rows route to `/optimizer/cycle/:id`.
 
@@ -109,6 +110,39 @@ zone breathes and the stack survives mobile unchanged — operator-requested):
   "Waiting for the cycle…" are deleted from the product.
 - **Never-ran:** the module renders a designed explainer of the four phases
   with the Launch action — an honest empty state, not a skeleton.
+
+## 3a · The lineage river (signature visualization)
+
+The optimizer's one distinctive, memorable chart (operator-chosen over cycle
+candles and attempt-spaghetti). A branching line chart: **Y = Sharpe, X =
+generations** — a git graph that trades.
+
+- Every lineage is a line. Kept experiments extend it and move it up/down by
+  their ΔSharpe; each generation node **erupts into a fan** of attempt stubs —
+  one per experiment tried that cycle. Rejected stubs are short, muted, and
+  fade with age; quarantined suspects are amber-dashed; the champion lineage
+  glows full-signal green; retired lineages dim out where they died.
+- **Live frontier:** while a cycle runs, the right edge shows a pulsing node
+  with a ghost-fan of in-flight attempts that resolve in real time from the
+  same SSE events the console module consumes.
+- **Interaction — richer readout (no popups, no floating tooltips):** hovering
+  a branch highlights it and populates a fixed inline readout beneath the
+  chart, rendered as a small **expandable card**: experiment id, verdict
+  (kept / rejected / suspect), ΔSharpe with a small sparkline vs the parent's
+  equity, the one-line config diff, the writer model, and an "open experiment"
+  link. Clicking a branch routes to `/optimizer/cycle/:id?exp=<id>`; clicking
+  a lineage node routes to that cycle; clicking a line's live end routes to
+  the StrategyInspector for that strategy hash.
+- **Placement:** the charts row on the home page (left slot, beside
+  edge-vs-random). The console module remains the hero above it.
+- **Data:** built entirely from existing records — lineage parent/child
+  relations, per-experiment ΔSharpe and gate verdicts, `LineageStatus`
+  (Ghost → "Rejected", Quarantined → "Suspect"). No new backend computation;
+  rendering is custom SVG/canvas (uPlot is not a fit for branch routing —
+  this one component may hand-roll its drawing, still no new chart library).
+- Degenerate states are designed: one lineage and zero kept experiments still
+  render an honest, labeled river ("1 line · nothing kept yet"); empty data
+  renders the never-ran explainer, not a blank panel.
 
 ## 4 · CycleDetail
 
@@ -158,9 +192,14 @@ Inherits the dashboard redesign brief (`docs/design/README.md`) wholesale:
   uses. If an events-by-cycle endpoint is missing, adding it is in scope for
   the implementation plan (confirm during planning).
 - Charts stay on uPlot; no new charting library. Gradient guards required.
+- The lineage river gets a pure layout selector (`buildRiverLayout(lineages,
+  experiments) → nodes/branches/stubs`) so branch routing is unit-testable
+  without rendering; the SVG component consumes its output.
 - Vitest coverage on: headline copy per state (including never-ran and the
   no-"tonight" rule), `narrateEvent` per event type, board state derivation,
-  deep-link expansion (`?exp=`), and route redirects.
+  deep-link expansion (`?exp=`), route redirects, and `buildRiverLayout`
+  (fans, suspect/rejected classification, degenerate single-lineage and
+  zero-kept cases).
 
 ## 7 · Out of scope
 
