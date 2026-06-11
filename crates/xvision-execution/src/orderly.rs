@@ -243,6 +243,12 @@ pub trait OrderlyApi: Send + Sync {
     async fn get_order(&self, order_id: u64) -> Result<OrderlyOrder, ExecutorError>;
     async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError>;
     async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError>;
+
+    /// Mark price from the PUBLIC futures endpoint
+    /// (`GET /v1/public/futures/{symbol}`, no auth). Used to convert a
+    /// notional decision into base quantity when the account holds no
+    /// position on the market yet.
+    async fn get_mark_price(&self, symbol: &str) -> Result<f64, ExecutorError>;
 }
 
 // ── Real implementation ───────────────────────────────────────────────────────
@@ -382,6 +388,11 @@ struct PositionsData {
 #[derive(Deserialize)]
 struct AlgoOrderData {
     algo_order_id: String,
+}
+
+#[derive(Deserialize)]
+struct MarkPriceData {
+    mark_price: f64,
 }
 
 fn order_from_data(d: OrderData) -> OrderlyOrder {
@@ -536,6 +547,26 @@ impl OrderlyApi for ReqwestOrderlyApi {
                 unsettled_pnl: p.unsettled_pnl,
             })
             .collect())
+    }
+
+    async fn get_mark_price(&self, symbol: &str) -> Result<f64, ExecutorError> {
+        // Public endpoint — unsigned request.
+        let url = format!("{}/v1/public/futures/{}", self.base_url, symbol);
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            if e.is_timeout() {
+                ExecutorError::Timeout(e.to_string())
+            } else {
+                ExecutorError::Network(e.to_string())
+            }
+        })?;
+        let env: OkEnvelope<MarkPriceData> = Self::parse_response(resp).await?;
+        if env.data.mark_price <= 0.0 {
+            return Err(ExecutorError::Internal(format!(
+                "orderly public futures {symbol}: non-positive mark price {}",
+                env.data.mark_price
+            )));
+        }
+        Ok(env.data.mark_price)
     }
 }
 
@@ -705,19 +736,17 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             .find(|p| p.symbol == symbol)
             .map(|p| p.mark_price);
 
-        // If we have a mark price, compute base quantity; otherwise send notional
-        // directly via order_quantity (Orderly accepts USDC notional for Market
-        // orders when no base qty is available — see F19 for the cleaner approach
-        // once the SDK dep conflict is resolved). The fallback triggers only on
-        // the very first order against this market for this account.
-        let qty = if let Some(price) = mark_price {
-            notional_usd / price
-        } else {
-            // No mark price available. First-order scenario for this
-            // market. Send notional as `order_quantity`; the fill receipt
-            // corrects the bps math via the actual filled price.
-            notional_usd
+        // With no open position on this market (the first-order scenario),
+        // fall back to the PUBLIC futures mark price. The previous fallback
+        // sent the USD notional as `order_quantity`, but Orderly interprets
+        // `order_quantity` as BASE units — a $50 BTC decision became a
+        // 50-BTC order (caught live on testnet 2026-06-11; the venue's
+        // max-quantity cap rejected it with code -1104).
+        let mark_price = match mark_price {
+            Some(p) => p,
+            None => self.api.get_mark_price(&symbol).await?,
         };
+        let qty = notional_usd / mark_price;
 
         let side = match td.action {
             Action::Buy => OrderSide::Buy,
@@ -732,7 +761,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
 
         // 7. Poll for fill.
         let filled = self.await_fill(entry.order_id).await?;
-        let fill_price = filled.average_executed_price.unwrap_or(mark_price.unwrap_or(0.0));
+        let fill_price = filled.average_executed_price.unwrap_or(mark_price);
         let fill_qty = filled.executed_quantity.unwrap_or(qty);
 
         // 8. Place TP/SL bracket legs (best-effort).
@@ -1039,7 +1068,16 @@ mod tests {
         async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
             Ok(self.positions.clone())
         }
+
+        async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {
+            Ok(MOCK_PUBLIC_MARK_PRICE)
+        }
     }
+
+    /// Mark price the mock "public futures" endpoint serves — distinct from
+    /// the position fixtures' 71_000 mark so tests can tell which source the
+    /// executor used.
+    const MOCK_PUBLIC_MARK_PRICE: f64 = 50_000.0;
 
     // ── Fixtures ─────────────────────────────────────────────────────────────
 
@@ -1099,6 +1137,36 @@ mod tests {
                 tp2_pct: None,
             },
         }
+    }
+
+    /// First order on a market (no open position to read a mark price
+    /// from) must price the base quantity off the PUBLIC futures mark
+    /// price — NOT submit the USD notional as base `order_quantity`.
+    /// Regression for the live testnet finding (2026-06-11): a $50 BTC
+    /// decision was submitted as a 50-BTC order and rejected with -1104.
+    #[tokio::test]
+    async fn submit_first_order_prices_qty_off_public_mark_price() {
+        let cycle_id = Uuid::new_v4();
+        let filled = fixture_filled_order(42, Some(&cycle_id.to_string()));
+
+        // NO positions — the mark must come from the public endpoint.
+        let api = MockOrderlyApi::new(fixture_account(), vec![], filled.clone(), filled);
+        let captured_create = Arc::clone(&api.captured_create);
+
+        let executor = OrderlyExecutor::with_api(api);
+        executor
+            .submit(&fixture_buy_decision(cycle_id))
+            .await
+            .expect("submit must succeed");
+
+        let call = captured_create.lock().unwrap().clone().unwrap();
+        // equity 100_000 × 1000 bps = 10_000 notional / 50_000 public mark.
+        let expected_qty = 10_000.0 / MOCK_PUBLIC_MARK_PRICE;
+        assert!(
+            (call.quantity - expected_qty).abs() < 1e-9,
+            "qty must be notional/mark ({expected_qty}), got {}",
+            call.quantity
+        );
     }
 
     // ── Test 1 ───────────────────────────────────────────────────────────────
@@ -1212,6 +1280,9 @@ mod tests {
             }
             async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
                 panic!("get_positions must not be called")
+            }
+            async fn get_mark_price(&self, _: &str) -> Result<f64, ExecutorError> {
+                panic!("get_mark_price must not be called")
             }
         }
 
@@ -1380,6 +1451,16 @@ mod tests {
             .with_header("content-type", "application/json")
             .with_body(r#"{"success":true,"data":{"rows":[]}}"#)
             .expect_at_least(1)
+            .create_async()
+            .await;
+
+        // Stub GET /v1/public/futures/PERP_BTC_USDC — the no-position path
+        // now reads the public mark price before placing the entry order.
+        let _futures = server
+            .mock("GET", "/v1/public/futures/PERP_BTC_USDC")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"data":{"mark_price":70000.0}}"#)
             .create_async()
             .await;
 

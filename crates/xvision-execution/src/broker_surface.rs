@@ -1111,6 +1111,10 @@ mod orderly_live_surface_tests {
         async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
             Ok(self.positions.clone())
         }
+
+        async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {
+            Ok(50_000.0)
+        }
     }
 
     fn filled_order(id: u64, qty: f64, price: f64) -> OrderlyOrder {
