@@ -1,4 +1,4 @@
-import type { CycleProgressEvent } from "../api";
+import type { CycleNodeDetail, CycleProgressEvent } from "../api";
 
 // "queued": not yet assigned by this selector — no event currently produces it.
 // Consumed downstream by LineageRiver's ghost-fan filter (`state === "queued"`).
@@ -78,4 +78,34 @@ export function buildBoardState(events: CycleProgressEvent[]): BoardState {
   }
 
   return { phase, cards: [...cards.values()], cycleId };
+}
+
+/**
+ * Node-derived board fallback (Task 10 replay edge case): when a cycle's
+ * persisted event log is empty (pruned by `prune_old_events`, run before
+ * event persistence shipped, or an older backend lacking the endpoint),
+ * derive board cards directly from the cycle's lineage nodes so the board
+ * is never blank and `?exp=` deep links still have cards to expand.
+ *
+ * Status mapping mirrors the operator-surface terminology lock:
+ * active → kept, quarantined → suspect, everything else → rejected.
+ * Delta is null-safe (nodes may carry `delta_day` from the gate verdict);
+ * writer is unknown without the event log.
+ */
+export function boardFromNodes(nodes: CycleNodeDetail[]): BoardCard[] {
+  return nodes.map((n) => {
+    const delta = (n as Record<string, unknown>).delta_day;
+    return {
+      hash: n.bundle_hash,
+      label: null,
+      state:
+        n.status === "active"
+          ? ("kept" as const)
+          : n.status === "quarantined"
+            ? ("suspect" as const)
+            : ("rejected" as const),
+      delta: typeof delta === "number" ? delta : null,
+      writer: null,
+    };
+  });
 }

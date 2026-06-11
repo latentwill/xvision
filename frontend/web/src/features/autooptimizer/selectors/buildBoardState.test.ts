@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildBoardState } from "./buildBoardState";
+import { boardFromNodes, buildBoardState } from "./buildBoardState";
+import type { CycleNodeDetail } from "../api";
 
 const ev = (type: string, extra: object = {}) => ({ type, ...extra });
 
@@ -35,5 +36,47 @@ describe("buildBoardState", () => {
     const s = buildBoardState([]);
     expect(s.phase).toBe("idle");
     expect(s.cards).toEqual([]);
+  });
+});
+
+describe("boardFromNodes", () => {
+  const node = (
+    bundle_hash: string,
+    status: string,
+    extra: object = {},
+  ): CycleNodeDetail =>
+    ({
+      bundle_hash,
+      parent_hash: "p",
+      status,
+      cycle_id: "cyc-1",
+      created_at: "2026-06-10T00:00:00Z",
+      regime_results: [],
+      ...extra,
+    }) as CycleNodeDetail;
+
+  it("maps node statuses to board card states (kept/rejected/suspect)", () => {
+    const cards = boardFromNodes([
+      node("aaa", "active"),
+      node("bbb", "rejected"),
+      node("ccc", "quarantined"),
+    ]);
+    expect(cards).toHaveLength(3);
+    expect(cards[0]).toMatchObject({ hash: "aaa", state: "kept", writer: null });
+    expect(cards[1]).toMatchObject({ hash: "bbb", state: "rejected", writer: null });
+    expect(cards[2]).toMatchObject({ hash: "ccc", state: "suspect", writer: null });
+  });
+
+  it("is delta null-safe: uses delta_day when present, null otherwise", () => {
+    const cards = boardFromNodes([
+      node("aaa", "active", { delta_day: 0.21 }),
+      node("bbb", "rejected"),
+    ]);
+    expect(cards[0].delta).toBe(0.21);
+    expect(cards[1].delta).toBeNull();
+  });
+
+  it("returns empty for no nodes", () => {
+    expect(boardFromNodes([])).toEqual([]);
   });
 });
