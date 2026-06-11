@@ -8,7 +8,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, apiFetch } from "@/api/client";
-import { currentAddress } from "../lib/chain";
+import {
+  currentAddress,
+  getPublicGateway,
+  DEFAULT_PUBLIC_GATEWAY,
+} from "../lib/chain";
 import {
   fetchBundle,
   importSealedListing,
@@ -169,9 +173,6 @@ type ImportState =
   | { phase: "done"; agentId: string }
   | { phase: "error"; message: string };
 
-/** IPFS gateway used for plain open-tier bundle reads (matches the backend's default). */
-const IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
-
 // ── component ────────────────────────────────────────────────────────────────
 /** Map a sealed import/decrypt failure to inline operator copy. */
 function sealedErrorMessage(e: unknown): string {
@@ -191,6 +192,25 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
   // Sealed-tier detection: the bundle route reports encrypted:true for sealed
   // listings. null = still loading / unknown; false = open tier.
   const [sealed, setSealed] = useState<boolean | null>(null);
+  // Config-driven public IPFS read gateway base (no trailing slash), from the
+  // status route; the neutral default until it loads.
+  const [publicGateway, setPublicGateway] = useState<string>(
+    DEFAULT_PUBLIC_GATEWAY,
+  );
+
+  useEffect(() => {
+    let live = true;
+    getPublicGateway()
+      .then((g) => {
+        if (live) setPublicGateway(g);
+      })
+      .catch(() => {
+        // Keep the neutral default.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -287,7 +307,7 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
           action={
             <a
               className={chipClass("chip")}
-              href={`${IPFS_GATEWAY}${bundleCid}`}
+              href={`${publicGateway}/ipfs/${bundleCid}`}
               target="_blank"
               rel="noreferrer"
             >

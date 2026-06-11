@@ -9,7 +9,7 @@ import { InstallSteps } from "./InstallSteps";
 
 vi.mock("../lib/chain", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/chain")>();
-  return { ...actual, currentAddress: vi.fn() };
+  return { ...actual, currentAddress: vi.fn(), getPublicGateway: vi.fn() };
 });
 vi.mock("@/api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/client")>();
@@ -23,13 +23,14 @@ vi.mock("@/features/marketplace/data/ApiMarketplaceData", () => ({
 }));
 
 import { apiFetch } from "@/api/client";
-import { currentAddress } from "../lib/chain";
+import { currentAddress, getPublicGateway } from "../lib/chain";
 import {
   fetchBundle,
   importSealedListing,
 } from "@/features/marketplace/data/ApiMarketplaceData";
 
 const mockedAddress = vi.mocked(currentAddress);
+const mockedGateway = vi.mocked(getPublicGateway);
 const mockedApiFetch = vi.mocked(apiFetch);
 const mockedFetchBundle = vi.mocked(fetchBundle);
 const mockedImportSealed = vi.mocked(importSealedListing);
@@ -62,6 +63,8 @@ function wrap(ui: React.ReactElement) {
 beforeEach(() => {
   vi.clearAllMocks();
   bundleOpen();
+  // Default: the status route surfaces a configured self-hosted gateway.
+  mockedGateway.mockResolvedValue("https://ipfs.mynode.example");
 });
 
 describe("InstallSteps", () => {
@@ -126,15 +129,32 @@ describe("InstallSteps", () => {
 
   // ── bundle step (IPFS open-tier) ──────────────────────────────────────────
   describe("bundle step", () => {
-    it("links 'Open bundle' to the IPFS gateway for the receipt's CID", () => {
+    it("links 'Open bundle' to the config-driven public gateway for the receipt's CID", async () => {
       wrap(<InstallSteps receipt={receipt} />);
-      const link = screen.getByRole("link", { name: /open bundle/i });
-      expect(link).toHaveAttribute(
-        "href",
-        `https://gateway.pinata.cloud/ipfs/${receipt.license.bundleCid}`,
+      const link = await screen.findByRole("link", { name: /open bundle/i });
+      // The href is config-driven from the status route's public_gateway.
+      await vi.waitFor(() =>
+        expect(link).toHaveAttribute(
+          "href",
+          `https://ipfs.mynode.example/ipfs/${receipt.license.bundleCid}`,
+        ),
       );
+      // No vendor gateway is baked in.
+      expect(link.getAttribute("href")).not.toContain("pinata");
       // never offer a fake decrypt action
       expect(screen.queryByText(/decrypt/i)).not.toBeInTheDocument();
+    });
+
+    it("falls back to the vendor-neutral default gateway when status lacks one", async () => {
+      mockedGateway.mockResolvedValue("https://dweb.link");
+      wrap(<InstallSteps receipt={receipt} />);
+      const link = await screen.findByRole("link", { name: /open bundle/i });
+      await vi.waitFor(() =>
+        expect(link).toHaveAttribute(
+          "href",
+          `https://dweb.link/ipfs/${receipt.license.bundleCid}`,
+        ),
+      );
     });
 
     it("is hidden entirely when the receipt has no bundle CID", () => {
