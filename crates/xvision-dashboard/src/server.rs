@@ -33,6 +33,7 @@
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
 // 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
+// 18d. POST  /api/marketplace/listings/:id/revoke     marketplace_route::post_revoke
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -148,6 +149,10 @@
 //  R61. GET  /api/autooptimizer/flywheel
 //  R62. GET  /api/autooptimizer/stats    (P3-W1 per-cycle aggregates)
 //  R63. GET  /api/assets
+//  R64. GET  /api/marketplace/status
+//  R65. GET  /api/marketplace/listings
+//  R66. GET  /api/marketplace/listings/:id
+//  R67. GET  /api/marketplace/wallet/:address
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -179,10 +184,10 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    marketplace as marketplace_route, memory as memory_route,
-    optimizations as optimizations_route, safety as safety_route, scenarios,
-    search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, tools as tools_route,
+    marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
+    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    tools as tools_route,
     version::version,
     wizard,
 };
@@ -433,6 +438,24 @@ fn readonly_router(state: AppState) -> Router {
         // engine OptimizationStore).
         .route("/api/optimizations", get(optimizations_route::list))
         .route("/api/optimizations/:id", get(optimizations_route::get))
+        // Marketplace reads over the indexer snapshot (Phase 1 real-loop).
+        // Static "status"/"listings" segments before the :id catch-all.
+        .route(
+            "/api/marketplace/status",
+            get(marketplace_read_route::get_status),
+        )
+        .route(
+            "/api/marketplace/listings",
+            get(marketplace_read_route::get_listings),
+        )
+        .route(
+            "/api/marketplace/listings/:id",
+            get(marketplace_read_route::get_listing),
+        )
+        .route(
+            "/api/marketplace/wallet/:address",
+            get(marketplace_read_route::get_wallet),
+        )
         .with_state(state)
 }
 
@@ -500,6 +523,11 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/marketplace/publish",
             post(marketplace_route::post_publish),
+        )
+        // Seller-initiated revoke. Env-gated: returns 503 without chain config.
+        .route(
+            "/api/marketplace/listings/:id/revoke",
+            post(marketplace_route::post_revoke),
         )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(
@@ -854,6 +882,27 @@ pub async fn serve(
                 }
             }
         });
+    }
+
+    // Marketplace indexer: when the chain env is configured, poll the
+    // on-chain ListingRegistry/IdentityRegistry into the shared snapshot
+    // every 30s. The JoinHandle is intentionally dropped — the poller lives
+    // for the full process lifetime. Without the env the read routes serve
+    // the empty default snapshot and the wallet route returns 503.
+    match crate::marketplace_index::IndexerCfg::from_env() {
+        Some(cfg) => {
+            tracing::info!(
+                rpc_url = %cfg.rpc_url,
+                listing_registry = %cfg.listing_registry,
+                identity_registry = %cfg.identity_registry,
+                "marketplace indexer active",
+            );
+            state.mark_marketplace_indexer_active();
+            let _indexer = crate::marketplace_index::spawn_indexer(state.marketplace_snapshot.clone(), cfg);
+        }
+        None => tracing::info!(
+            "marketplace indexer dormant (XVN_RPC_URL/XVN_LISTING_REGISTRY/XVN_IDENTITY_REGISTRY unset)"
+        ),
     }
 
     // AR-3: start the autooptimizer IPC Unix socket listener when the

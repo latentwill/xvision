@@ -76,6 +76,7 @@ const LineageRoute = lazy(() => import("./features/marketplace/routes/LineageRou
 const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRoute").then((m) => ({ default: m.CreatorRoute })));
 const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
 const ReceiptRoute = lazy(() => import("./features/marketplace/routes/ReceiptRoute").then((m) => ({ default: m.ReceiptRoute })));
+const MarketplaceWalletRoute = lazy(() => import("./features/marketplace/routes/WalletRoute").then((m) => ({ default: m.WalletRoute })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -215,6 +216,7 @@ export const router = createBrowserRouter([
           { path: "lineage/:name", element: page(<LineageRoute />) },
           { path: "creator/:handleOrAddr", element: page(<CreatorRoute />) },
           { path: "sell", element: page(<SellRoute />) },
+          { path: "wallet", element: page(<MarketplaceWalletRoute />) },
           { path: "receipts/:tx", element: page(<ReceiptRoute />) },
         ],
       },

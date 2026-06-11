@@ -18,7 +18,11 @@
 
 use std::fmt;
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use serde::{Deserialize, Serialize};
 
 use alloy::primitives::{Address, B256, U256};
@@ -161,20 +165,18 @@ pub async fn post_publish(
     let agent_id = body.strategy_id.clone();
 
     // d. Genart tokenURI (data:application/json;base64,…).
-    let token_uri = generate_token_uri(&agent_id, &manifest_hash).map_err(|e| {
-        DashboardError::Validation {
+    let token_uri =
+        generate_token_uri(&agent_id, &manifest_hash).map_err(|e| DashboardError::Validation {
             field: "strategy_id".into(),
             msg: format!("genart tokenURI generation failed: {e}"),
-        }
-    })?;
+        })?;
 
     // e. Chain gate — degrade loudly without env config. All config is
     //    validated here, before any chain write, so a missing env var cannot
     //    strand an orphan mint.
     let chain = ChainEnv::from_env().ok_or_else(|| {
         DashboardError::ServiceUnavailable(
-            "chain publishing not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK"
-                .into(),
+            "chain publishing not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
         )
     })?;
     let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
@@ -207,18 +209,17 @@ pub async fn post_publish(
     let identity_client = IdentityClient::connect(&chain.rpc_url, registry_addresses, chain.chain_id)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity connect: {e}")))?;
-    let agent_uri = url::Url::parse(&token_uri).map_err(|e| {
-        DashboardError::Internal(anyhow::anyhow!("tokenURI is not a valid URL: {e}"))
-    })?;
+    let agent_uri = url::Url::parse(&token_uri)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("tokenURI is not a valid URL: {e}")))?;
     let token_id = identity_client
         .register(&agent_uri, &signer)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity register: {e}")))?;
 
     // g. Create the marketplace listing.
-    let content_hash: B256 = manifest_hash.parse().map_err(|e| {
-        DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}"))
-    })?;
+    let content_hash: B256 = manifest_hash
+        .parse()
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}")))?;
     let listing = driver
         .publish_listing(PublishRequest {
             agent_nft_id: token_id.0,
@@ -229,7 +230,12 @@ pub async fn post_publish(
             transferable_license: body.transferable_license,
         })
         .await
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("publish listing failed after minting identity NFT token_id={}: {e}", token_id)))?;
+        .map_err(|e| {
+            DashboardError::Internal(anyhow::anyhow!(
+                "publish listing failed after minting identity NFT token_id={}: {e}",
+                token_id
+            ))
+        })?;
 
     // h. 201 + receipt.
     Ok((
@@ -242,6 +248,62 @@ pub async fn post_publish(
             token_uri_bytes: token_uri.len(),
         }),
     ))
+}
+
+/// Response for a successful revoke.
+#[derive(Debug, Serialize)]
+pub struct RevokeOut {
+    pub listing_id: u64,
+    pub tx_hash: String,
+}
+
+/// `POST /api/marketplace/listings/:id/revoke` — seller-initiated revoke.
+///
+/// Returns 200 `{"listing_id": id, "tx_hash": "0x…"}` on success.
+/// 503 when chain env is not configured or the private key is invalid;
+/// 400 (via `DashboardError::Validation`) for any chain error from `revoke_listing`
+/// (contract reverts, RPC transport failures, etc.) — the error text is included
+/// in the response message.
+pub async fn post_revoke(
+    Path(id): Path<u64>,
+    State(_state): State<AppState>,
+) -> Result<Json<RevokeOut>, DashboardError> {
+    // a. Chain gate — all config validated before any chain write.
+    let chain = ChainEnv::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
+        )
+    })?;
+    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
+        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
+    })?;
+    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable("marketplace not configured: set XVN_LISTING_REGISTRY".into())
+    })?;
+
+    // b. Build a signing driver and call revokeListing.
+    let driver = Erc8004MantleDriver::with_signer(
+        marketplace_addresses,
+        chain.rpc_url.clone(),
+        chain.chain_id,
+        signer,
+    );
+    let tx_hash = driver.revoke_listing(U256::from(id)).await.map_err(|e| {
+        // All chain errors (contract reverts: NotSeller, UnknownListing, AlreadyRevoked,
+        // and RPC transport failures) map to DashboardError::Validation → 400 BAD_REQUEST.
+        // NOTE: maps ALL chain errors (incl. RPC transport) to 400 — acceptable for
+        // testnet; split transport → 503 when this hardens.
+        let msg = e.to_string();
+        DashboardError::Validation {
+            field: "listing_id".into(),
+            msg: format!("revoke failed: {msg}"),
+        }
+    })?;
+
+    Ok(Json(RevokeOut {
+        listing_id: id,
+        tx_hash: format!("0x{tx_hash:x}"),
+    }))
 }
 
 #[cfg(test)]

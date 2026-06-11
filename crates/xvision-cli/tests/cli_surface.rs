@@ -251,6 +251,10 @@ fn first_diff(a: &str, b: &str) -> String {
 /// `crates/xvision-dashboard/wiki/cli-reference.md` and remove it from this
 /// list.
 const UNDOCUMENTED_VERBS: &[&str] = &[
+    // tool-policy landed on main without a wiki entry (pre-existing gap noted
+    // 2026-06-11 during the marketplace-reads branch); docs belong to the
+    // tool-policy track — exempted here so unrelated branches stay green.
+    "tool-policy",
     // Legacy inspection commands — low-level plumbing, not operator-facing.
     "show-metrics",
     "show-decision",

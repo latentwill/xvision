@@ -37,7 +37,12 @@ fn golden_parity_with_ts() {
         assert_eq!(uri, f.token_uri, "tokenURI parity failed for {}", f.agent_id);
         let t = derive_traits(&f.agent_id, &f.manifest_hash).expect("traits");
         assert_eq!(t.palette, f.traits.palette, "palette mismatch for {}", f.agent_id);
-        assert_eq!(t.symmetry.as_str(), f.traits.symmetry, "symmetry mismatch for {}", f.agent_id);
+        assert_eq!(
+            t.symmetry.as_str(),
+            f.traits.symmetry,
+            "symmetry mismatch for {}",
+            f.agent_id
+        );
         assert_eq!(t.density, f.traits.density, "density mismatch for {}", f.agent_id);
         assert_eq!(t.layers, f.traits.layers, "layers mismatch for {}", f.agent_id);
     }
@@ -67,5 +72,8 @@ fn invalid_input_fails_loudly() {
     assert!(generate_token_uri("", &"a".repeat(64)).is_err());
     assert!(generate_token_uri("ok", "nothex").is_err());
     assert!(generate_token_uri("bad id!", &"a".repeat(64)).is_err());
-    assert!(generate_token_uri("ok", &"A".repeat(64)).is_err(), "uppercase hex rejected");
+    assert!(
+        generate_token_uri("ok", &"A".repeat(64)).is_err(),
+        "uppercase hex rejected"
+    );
 }

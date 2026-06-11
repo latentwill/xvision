@@ -91,6 +91,18 @@ describe("LineageRoute", () => {
     expect(screen.getByTestId("x402-badge")).toBeInTheDocument();
   });
 
+  it("renders no verification badge for unverified listings", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...(await new FixtureMarketplaceData().getListing("btc-momentum-v3")),
+      verification: "unverified",
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-hero");
+    expect(screen.queryByTestId("verified-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText(/unverified/i)).not.toBeInTheDocument();
+  });
+
   it("shows buyer count: N humans + M agents", async () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-info-stack");

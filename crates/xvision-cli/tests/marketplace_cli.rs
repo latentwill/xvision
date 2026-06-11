@@ -114,7 +114,10 @@ fn marketplace_onchain_buy_proceeds_to_env_validation() {
         .output()
         .expect("xvn marketplace buy");
 
-    assert!(!out.status.success(), "onchain buy without MANTLE_PRIVATE_KEY must fail");
+    assert!(
+        !out.status.success(),
+        "onchain buy without MANTLE_PRIVATE_KEY must fail"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Must reach the driver env check — not an EIP-3009 gate message
     assert!(
@@ -258,4 +261,122 @@ fn marketplace_buy_mock_unchanged() {
         !stderr.contains("EIP-3009"),
         "mock driver must not hit the onchain buy gate: {stderr}"
     );
+}
+
+// ── chain-backed reads: list (onchain) + show-token ─────────────────────────
+
+/// `list` under MARKETPLACE_DRIVER=onchain without XVN_LISTING_REGISTRY must
+/// fail at env validation and name the exact var. Read-only: must NOT demand
+/// MANTLE_PRIVATE_KEY.
+#[test]
+fn marketplace_list_onchain_missing_listing_registry_names_var() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "list"])
+        .env("XVN_HOME", dir.path())
+        .env("MARKETPLACE_DRIVER", "onchain")
+        .env_remove("MANTLE_PRIVATE_KEY")
+        .env_remove("XVN_LISTING_REGISTRY")
+        .env_remove("XVN_IDENTITY_REGISTRY")
+        .output()
+        .expect("xvn marketplace list");
+
+    assert!(!out.status.success(), "onchain list without registries must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("XVN_LISTING_REGISTRY"),
+        "expected XVN_LISTING_REGISTRY in stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("MANTLE_PRIVATE_KEY"),
+        "read-only list must not require a signer key: {stderr}"
+    );
+}
+
+/// `list` under MARKETPLACE_DRIVER=onchain with only the listing registry set
+/// must name XVN_IDENTITY_REGISTRY (needed for tokenURI → agent_id).
+#[test]
+fn marketplace_list_onchain_missing_identity_registry_names_var() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "list"])
+        .env("XVN_HOME", dir.path())
+        .env("MARKETPLACE_DRIVER", "onchain")
+        .env(
+            "XVN_LISTING_REGISTRY",
+            "0x64b5ae5B91CB2846e7dA8cE883f2023b98E2cD22",
+        )
+        .env_remove("XVN_IDENTITY_REGISTRY")
+        .output()
+        .expect("xvn marketplace list");
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("XVN_IDENTITY_REGISTRY"),
+        "expected XVN_IDENTITY_REGISTRY in stderr: {stderr}"
+    );
+}
+
+/// Without MARKETPLACE_DRIVER=onchain, `list` keeps reading the local fixture
+/// (default path unchanged).
+#[test]
+fn marketplace_list_fixture_default_unchanged() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "list"])
+        .env("XVN_HOME", dir.path())
+        .env_remove("MARKETPLACE_DRIVER")
+        .env_remove("XVN_MARKETPLACE_FIXTURE")
+        .output()
+        .expect("xvn marketplace list");
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("(no listings)"), "fixture path default: {stdout}");
+}
+
+/// `show-token` without XVN_IDENTITY_REGISTRY must fail at env validation and
+/// name the exact var. Read-only verb: works without MARKETPLACE_DRIVER and
+/// without a signer key.
+#[test]
+fn marketplace_show_token_missing_identity_registry_names_var() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "show-token", "--token-id", "1"])
+        .env("XVN_HOME", dir.path())
+        .env_remove("MARKETPLACE_DRIVER")
+        .env_remove("MANTLE_PRIVATE_KEY")
+        .env_remove("XVN_IDENTITY_REGISTRY")
+        .output()
+        .expect("xvn marketplace show-token");
+
+    assert!(!out.status.success(), "show-token without registry must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("XVN_IDENTITY_REGISTRY"),
+        "expected XVN_IDENTITY_REGISTRY in stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("MANTLE_PRIVATE_KEY"),
+        "read-only show-token must not require a signer key: {stderr}"
+    );
+}
+
+/// `--help` documents the read verbs' env contract.
+#[test]
+fn marketplace_help_documents_read_envs() {
+    let out = xvn()
+        .args(["marketplace", "--help"])
+        .output()
+        .expect("xvn marketplace --help");
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for needle in ["XVN_IDENTITY_REGISTRY", "show-token"] {
+        assert!(
+            stdout.contains(needle),
+            "expected `{needle}` in marketplace --help: {stdout}"
+        );
+    }
 }

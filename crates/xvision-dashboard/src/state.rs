@@ -124,6 +124,16 @@ pub struct AppState {
     /// safe checkpoint; `POST /cycles/:id/resume` clears it to continue.
     /// Entries are removed when the cycle ends (same lifecycle as cancel flags).
     autooptimizer_pauses: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
+    /// Marketplace indexer snapshot — written by the background poller
+    /// (`marketplace_index::spawn_indexer`), read by the
+    /// `/api/marketplace/*` read routes. Defaults to the empty snapshot; the
+    /// indexer only spawns when the chain env is configured (see
+    /// `IndexerCfg::from_env` + `server::serve`).
+    pub marketplace_snapshot: crate::marketplace_index::SharedSnapshot,
+    /// Whether the marketplace indexer task was actually spawned this
+    /// process. Distinct from snapshot freshness: `active` on the status
+    /// route requires BOTH this flag AND a completed first poll.
+    marketplace_indexer_active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AppState {
@@ -340,7 +350,23 @@ impl AppState {
             autooptimizer_tx,
             autooptimizer_cancels: Arc::new(Mutex::new(HashMap::new())),
             autooptimizer_pauses: Arc::new(Mutex::new(HashMap::new())),
+            marketplace_snapshot: Default::default(),
+            marketplace_indexer_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
+    }
+
+    /// Whether the marketplace indexer task was spawned this process.
+    pub fn marketplace_indexer_active(&self) -> bool {
+        self.marketplace_indexer_active
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Record that the marketplace indexer was spawned. Called once from
+    /// `server::serve` when the chain env is configured; also used by route
+    /// tests to simulate an active indexer.
+    pub fn mark_marketplace_indexer_active(&self) {
+        self.marketplace_indexer_active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Shared safety manager reference for route handlers.

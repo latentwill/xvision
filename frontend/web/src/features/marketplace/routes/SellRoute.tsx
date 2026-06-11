@@ -2,6 +2,7 @@
 import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
+import { ApiError } from "@/api/client";
 import type { ListableStrategy, PublishDraft } from "@/features/marketplace/data/types";
 import { Step1PickStrategy } from "./sell/Step1PickStrategy";
 import { Step2Configure } from "./sell/Step2Configure";
@@ -17,6 +18,7 @@ export function SellRoute() {
   const [draft, setDraft] = useState<PublishDraft | null>(null);
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [minting, setMinting] = useState(false);
+  const [mintError, setMintError] = useState<string | null>(null);
 
   const handleStrategySelect = useCallback(
     async (strategy: ListableStrategy) => {
@@ -42,9 +44,18 @@ export function SellRoute() {
   const handleMint = useCallback(async () => {
     if (!draft) return;
     setMinting(true);
+    setMintError(null);
     try {
       const tx = await mp.submitListing(draft);
-      navigate(`/marketplace/receipts/${tx.txHash}`);
+      // Phase-2 wart: txHash carries listing_id (not a real tx hash) until the
+      // confirmation path is wired (see publish.ts — TxRef.txHash = out.listing_id).
+      navigate(`/marketplace/lineage/${tx.txHash}`);
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? err.message
+          : "Publish failed — try again.";
+      setMintError(msg);
     } finally {
       setMinting(false);
     }
@@ -128,6 +139,14 @@ export function SellRoute() {
         </div>
         {step === 3 && draft && (
           <div className="px-5 pb-5">
+            {mintError && (
+              <div
+                data-testid="mint-error"
+                className="mb-4 rounded-[5px] border border-danger/40 bg-danger/10 px-4 py-3 font-mono text-[12px] text-danger"
+              >
+                {mintError}
+              </div>
+            )}
             <Step3Preview draft={draft} onMint={handleMint} minting={minting} />
           </div>
         )}
