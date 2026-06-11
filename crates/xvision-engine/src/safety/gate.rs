@@ -12,7 +12,8 @@
 //!      caught here.
 //!    - `AlpacaLiveSurface::submit_order` — stubbed for v1; gate fires before
 //!      the stub's own error.
-//!    - `OrderlyLiveSurface::submit_order` — stubbed for v1; gate fires first.
+//!    - `OrderlyLiveSurface::submit_order` — live Orderly perps (testnet
+//!      scope); gate fires before the order reaches the venue.
 //!    - `MockBrokerSurface::submit_order` — test surface; gate is skipped in
 //!      tests via `SafetyGate::allow_all()`.
 //!

@@ -59,7 +59,7 @@ use crate::executor::{ExecutionReceipt, Executor, ExecutorError};
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const ORDERLY_MAINNET_BASE: &str = "https://api-evm.orderly.org";
+pub(crate) const ORDERLY_MAINNET_BASE: &str = "https://api-evm.orderly.org";
 
 /// Map an `AssetSymbol` to its Orderly perp symbol. Uses the process-global
 /// asset registry when loaded, with a `"PERP_{TICKER}_USDC"` fallback for
