@@ -24,6 +24,7 @@ import {
   type WalletClient,
 } from "viem";
 import { apiFetch } from "@/api/client";
+import { WALLET_STORAGE_KEY } from "./wallet";
 
 // ---------------------------------------------------------------------------
 // Chain
@@ -127,6 +128,26 @@ async function connectedAccount(): Promise<Address> {
     throw new Error("No wallet account connected.");
   }
   return account;
+}
+
+/**
+ * The connected wallet address, or null when no wallet / not connected.
+ * Prefers the `useWallet` localStorage key (set on explicit connect),
+ * falling back to `eth_accounts` (already-authorized accounts; does not
+ * prompt). Never throws — callers turn null into a typed error.
+ */
+export async function currentAddress(): Promise<Address | null> {
+  if (!window.ethereum) return null;
+  const stored = localStorage.getItem(WALLET_STORAGE_KEY);
+  if (stored) return stored as Address;
+  try {
+    const accounts = (await window.ethereum.request({
+      method: "eth_accounts",
+    })) as string[];
+    return (accounts?.[0] as Address | undefined) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**

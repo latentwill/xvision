@@ -8,6 +8,8 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { useWallet } from "@/features/marketplace/lib/wallet";
+import { faucetUsdc } from "@/features/marketplace/lib/chain";
+import { InsufficientUsdcError } from "@/features/marketplace/lib/purchaseErrors";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
@@ -309,16 +311,21 @@ export function LineageRoute() {
     queryFn: () => mp.getViewer(),
   });
 
-  // DEPLOY WALL (C7 / AM6 + signer work): the real on-chain purchase is an
-  // EIP-3009 `buyWithAuthorization` that needs (a) a deployed Marketplace
-  // contract, (b) a wallet signer — `useWallet` currently exposes only an
-  // address, no signer/chain-id, and (c) a real MarketplaceData impl swapped in
-  // at MarketplaceLayout. Until all three land this stays the fixture
-  // `purchaseIntent`, which returns a fake TxRef and routes to the receipt.
-  // The real signing flow swaps in HERE; do NOT fake EIP-3009 signing.
+  // Real purchase via the MarketplaceData seam: ApiMarketplaceData signs an
+  // EIP-3009 TransferWithAuthorization and POSTs the gasless relay (falling
+  // back to approve+buy when the relay 503s); the fixture client still
+  // returns a fake TxRef for fixture slugs. Errors render inline below the
+  // Buy button (no popups); InsufficientUsdcError gets a faucet affordance.
   const buyMutation = useMutation({
     mutationFn: () => mp.purchaseIntent(detail!.id),
     onSuccess: (ref) => navigate(`/marketplace/receipts/${ref.txHash}`),
+  });
+
+  // Testnet affordance: mint the missing test USDC, then retry the purchase
+  // (which re-runs the balance gate with the fresh balance).
+  const faucetMutation = useMutation({
+    mutationFn: (needed6: bigint) => faucetUsdc(needed6),
+    onSuccess: () => buyMutation.mutate(),
   });
 
   const cloneMutation = useMutation({
@@ -478,8 +485,48 @@ export function LineageRoute() {
                   ? "Buy"
                   : "Connect wallet to buy"}
             </button>
+
+            {/* Inline purchase error (no popups). Faucet affordance when the
+                failure is an insufficient test-USDC balance. */}
+            {buyMutation.isError && !buyMutation.isPending && (
+              <div
+                data-testid="buy-error"
+                className="mt-2 rounded border border-danger/40 bg-danger/5 px-2.5 py-2"
+              >
+                <p className="font-mono text-[10.5px] text-danger leading-snug">
+                  {buyMutation.error instanceof Error
+                    ? buyMutation.error.message
+                    : "Purchase failed."}
+                </p>
+                {buyMutation.error instanceof InsufficientUsdcError && (
+                  <button
+                    data-testid="faucet-btn"
+                    onClick={() =>
+                      faucetMutation.mutate(
+                        (buyMutation.error as InsufficientUsdcError).neededUsdc6,
+                      )
+                    }
+                    disabled={faucetMutation.isPending}
+                    className="mt-1.5 px-2 py-1 rounded border border-gold/60 bg-gold/10 font-mono text-[10.5px] text-gold hover:bg-gold/20 transition-colors disabled:opacity-60"
+                  >
+                    {faucetMutation.isPending
+                      ? "Minting test USDC…"
+                      : "Get test USDC"}
+                  </button>
+                )}
+                {faucetMutation.isError && (
+                  <p className="mt-1 font-mono text-[10px] text-danger leading-snug">
+                    Faucet failed:{" "}
+                    {faucetMutation.error instanceof Error
+                      ? faucetMutation.error.message
+                      : "unknown error"}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="mt-2 font-mono text-[10px] text-text-3 leading-snug">
-              Testnet — simulated purchase. No real funds move.
+              Mantle Sepolia testnet — pays with test USDC.
             </div>
           </div>
 
