@@ -81,6 +81,24 @@ pub struct IndexerCfg {
     pub identity_registry: Address,
 }
 
+impl IndexerCfg {
+    /// Reads `XVN_RPC_URL`, `XVN_LISTING_REGISTRY`, `XVN_IDENTITY_REGISTRY`.
+    /// Returns `None` when any is missing or an address fails to parse —
+    /// the indexer then stays dormant (mirrors `ChainEnv::from_env` in
+    /// `routes/marketplace.rs`).
+    pub fn from_env() -> Option<Self> {
+        let rpc_url = std::env::var("XVN_RPC_URL").ok()?;
+        let listing_registry: Address = std::env::var("XVN_LISTING_REGISTRY").ok()?.parse().ok()?;
+        let identity_registry: Address =
+            std::env::var("XVN_IDENTITY_REGISTRY").ok()?.parse().ok()?;
+        Some(Self {
+            rpc_url,
+            listing_registry,
+            identity_registry,
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // tokenURI metadata decoding (pure)
 // ---------------------------------------------------------------------------
@@ -162,9 +180,11 @@ fn stringify_attribute(v: &serde_json::Value) -> String {
     }
 }
 
-/// Minimal standard-alphabet base64 decoder (strict: padding-aware, rejects
-/// invalid characters). Local because the dashboard crate has no base64 dep
-/// and `xvision_identity`'s encoder is private.
+/// Minimal standard-alphabet base64 decoder. Lenient about padding: trailing
+/// `=`/`==` is stripped and unpadded 2- or 3-char trailing groups decode
+/// fine; invalid characters and impossible lengths (trailing group of 1 char)
+/// are rejected. Local because the dashboard crate has no base64 dep and
+/// `xvision_identity`'s encoder is private.
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
     fn val(c: u8) -> Option<u32> {
         match c {
@@ -256,6 +276,10 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
         .await
         .context("totalListings()")?;
     let total: u64 = total_u256.try_into().unwrap_or(u64::MAX);
+    // Testnet-scale guard: cap the per-poll enumeration so a hostile/buggy
+    // registry can't make us issue unbounded RPC calls. Revisit with
+    // persistence/pagination past ~500 listings (per plan).
+    let total = total.min(10_000);
 
     let mut listings = Vec::with_capacity(total as usize);
     // Listing ids start at 1 (`_nextListingId = 1` in ListingRegistry.sol);
@@ -319,6 +343,7 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
 pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(30));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
             match poll_once(&cfg).await {
@@ -446,6 +471,19 @@ mod tests {
         );
         // Empty agent_id still produces ":{hash}".
         assert_eq!(gen_art_seed("", &hash), format!(":{hash}"));
+    }
+
+    // -- IndexerCfg::from_env ------------------------------------------------
+
+    #[test]
+    fn indexer_cfg_missing_env_is_none() {
+        // This test only REMOVES the vars (never sets them) — the same
+        // contract as `chain_env_missing_is_none` in routes/marketplace.rs,
+        // so the two cannot race under parallel test threads.
+        std::env::remove_var("XVN_RPC_URL");
+        std::env::remove_var("XVN_LISTING_REGISTRY");
+        std::env::remove_var("XVN_IDENTITY_REGISTRY");
+        assert!(IndexerCfg::from_env().is_none());
     }
 
     // -- hex64 ---------------------------------------------------------------

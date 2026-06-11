@@ -1,0 +1,144 @@
+//! Integration tests for the `/api/marketplace/*` read routes — hand-built
+//! snapshots injected into `AppState`, no chain.
+
+mod support;
+
+use axum_test::TestServer;
+use serde_json::Value;
+use tempfile::TempDir;
+use xvision_dashboard::marketplace_index::{IndexedListing, MarketplaceSnapshot};
+use xvision_dashboard::server::build_router;
+use xvision_dashboard::AppState;
+
+const ALICE: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn listing(listing_id: u64, agent_nft_id: &str, seller: &str, revoked: bool) -> IndexedListing {
+    IndexedListing {
+        listing_id,
+        agent_nft_id: agent_nft_id.to_string(),
+        agent_id: format!("agent-{agent_nft_id}"),
+        seller: seller.to_string(),
+        content_hash: "ab".repeat(32),
+        content_uri: format!("xvn://strategy/agent-{agent_nft_id}"),
+        tier: 0,
+        price_usdc: 49.0,
+        transferable_license: false,
+        revoked,
+        gen_art_seed: format!("agent-{agent_nft_id}:{}", "ab".repeat(32)),
+        name: format!("xvn strategy {agent_nft_id}"),
+        symmetry: "Radial".into(),
+        palette: "Ember".into(),
+    }
+}
+
+async fn boot() -> (TestServer, AppState, TempDir) {
+    let (state, tmp) = support::state_with_tempdir().await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    (server, state, tmp)
+}
+
+async fn inject_snapshot(state: &AppState, listings: Vec<IndexedListing>) {
+    let mut snap = state.marketplace_snapshot.write().await;
+    *snap = MarketplaceSnapshot {
+        total_onchain: listings.len() as u64,
+        listings,
+        last_poll_unix: 1_700_000_000,
+        last_error: None,
+    };
+}
+
+// ── status ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn status_dormant_shape() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server.get("/api/marketplace/status").await;
+    response.assert_status_ok();
+    let body: Value = response.json();
+    assert_eq!(body["active"], false);
+    assert_eq!(body["last_poll_unix"], 0);
+    assert_eq!(body["total_onchain"], 0);
+    assert!(body["last_error"].is_null());
+}
+
+#[tokio::test]
+async fn status_active_after_spawn_and_first_poll() {
+    let (server, state, _tmp) = boot().await;
+    state.mark_marketplace_indexer_active();
+
+    // Spawned but no poll completed yet → still not active.
+    let body: Value = server.get("/api/marketplace/status").await.json();
+    assert_eq!(body["active"], false);
+
+    inject_snapshot(&state, vec![listing(1, "7", ALICE, false)]).await;
+    let body: Value = server.get("/api/marketplace/status").await.json();
+    assert_eq!(body["active"], true);
+    assert_eq!(body["last_poll_unix"], 1_700_000_000);
+    assert_eq!(body["total_onchain"], 1);
+}
+
+// ── listings ────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn listings_filter_revoked_by_default_include_with_flag() {
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(
+        &state,
+        vec![listing(1, "7", ALICE, false), listing(2, "8", ALICE, true)],
+    )
+    .await;
+
+    let body: Value = server.get("/api/marketplace/listings").await.json();
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["listing_id"], 1);
+    assert_eq!(body["total"], 1);
+
+    let body: Value = server
+        .get("/api/marketplace/listings?include_revoked=1")
+        .await
+        .json();
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+    assert_eq!(body["total"], 2);
+}
+
+// ── listing detail ──────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn listing_detail_found_and_404() {
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![listing(1, "7", ALICE, false)]).await;
+
+    let response = server.get("/api/marketplace/listings/1").await;
+    response.assert_status_ok();
+    let body: Value = response.json();
+    assert_eq!(body["listing_id"], 1);
+    assert_eq!(body["agent_id"], "agent-7");
+
+    let response = server.get("/api/marketplace/listings/999").await;
+    response.assert_status_not_found();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "not_found");
+}
+
+// ── wallet ──────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn wallet_bad_address_is_400() {
+    let (server, state, _tmp) = boot().await;
+    state.mark_marketplace_indexer_active();
+    let response = server.get("/api/marketplace/wallet/not-an-address").await;
+    response.assert_status_bad_request();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "validation");
+    assert_eq!(body["field"], "address");
+}
+
+#[tokio::test]
+async fn wallet_503_when_indexer_dormant() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server.get(&format!("/api/marketplace/wallet/{ALICE}")).await;
+    response.assert_status_service_unavailable();
+    let body: Value = response.json();
+    assert_eq!(body["code"], "service_unavailable");
+}
