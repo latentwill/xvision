@@ -1,15 +1,22 @@
 //! `POST /api/marketplace/publish` — mint a strategy's identity NFT with its
 //! Bitfields v3 genart tokenURI, then create the marketplace listing.
 //!
-//! Flow: load strategy → canonical JSON → manifest hash (keccak256) → genart
-//! tokenURI → `IdentityClient::register` (mints the ERC-721 on the
-//! IdentityRegistry) → `Erc8004MantleDriver::publish_listing` (creates the
-//! listing in the ListingRegistry).
+//! Flow: parse/validate body → load strategy → hash → tokenURI →
+//! `ChainEnv::from_env` → signer parse → `registry_addresses_from_env` →
+//! `MarketplaceAddresses::from_env` → construct driver → connect + register
+//! (mint) → `publish_listing`. All config errors surface before the mint so
+//! no orphan NFTs are created by a missing env var.
 //!
 //! Chain access is env-gated: without `XVN_RPC_URL` / `XVN_CHAIN_ID` /
 //! `XVN_PUBLISHER_PK` (plus registry addresses) the route returns 503 so dev
 //! boxes degrade loudly. All pure logic (tier mapping, USDC scaling, env
 //! gating) is unit-testable without a chain.
+//!
+//! Idempotency: deliberately none in v1 (testnet). Re-publishing the same
+//! strategy mints a new NFT and listing; double-click protection is the
+//! frontend's job. Revisit with a publish-receipt store before mainnet.
+
+use std::fmt;
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
@@ -56,11 +63,21 @@ pub struct PublishOut {
 }
 
 /// Chain connection env config. All three are required for any on-chain work.
-#[derive(Debug)]
 struct ChainEnv {
     rpc_url: String,
     chain_id: u64,
     publisher_pk: String,
+}
+
+/// Manual Debug impl — redacts the private key so it cannot appear in logs.
+impl fmt::Debug for ChainEnv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChainEnv")
+            .field("rpc_url", &self.rpc_url)
+            .field("chain_id", &self.chain_id)
+            .field("publisher_pk", &"<redacted>")
+            .finish()
+    }
 }
 
 impl ChainEnv {
@@ -151,7 +168,9 @@ pub async fn post_publish(
         }
     })?;
 
-    // e. Chain gate — degrade loudly without env config.
+    // e. Chain gate — degrade loudly without env config. All config is
+    //    validated here, before any chain write, so a missing env var cannot
+    //    strand an orphan mint.
     let chain = ChainEnv::from_env().ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "chain publishing not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK"
@@ -161,8 +180,6 @@ pub async fn post_publish(
     let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
         DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
     })?;
-
-    // f. Mint the identity NFT with the genart tokenURI.
     let registry_addresses = registry_addresses_from_env().ok_or_else(|| {
         DashboardError::ServiceUnavailable(
             "identity registry not configured: set XVN_IDENTITY_REGISTRY (and optionally \
@@ -170,6 +187,23 @@ pub async fn post_publish(
                 .into(),
         )
     })?;
+    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "marketplace not configured: set XVN_LISTING_REGISTRY (and related XVN_MARKETPLACE_* \
+             vars)"
+                .into(),
+        )
+    })?;
+    let driver = Erc8004MantleDriver::with_signer(
+        marketplace_addresses,
+        chain.rpc_url.clone(),
+        chain.chain_id,
+        signer.clone(),
+    );
+
+    // f. Mint the identity NFT with the genart tokenURI.
+    //    All config has been validated above — no config error can occur
+    //    after this point.
     let identity_client = IdentityClient::connect(&chain.rpc_url, registry_addresses, chain.chain_id)
         .await
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity connect: {e}")))?;
@@ -182,19 +216,6 @@ pub async fn post_publish(
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("identity register: {e}")))?;
 
     // g. Create the marketplace listing.
-    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
-        DashboardError::ServiceUnavailable(
-            "marketplace not configured: set XVN_LISTING_REGISTRY (and related XVN_MARKETPLACE_* \
-             vars)"
-                .into(),
-        )
-    })?;
-    let driver = Erc8004MantleDriver::with_signer(
-        marketplace_addresses,
-        chain.rpc_url.clone(),
-        chain.chain_id,
-        signer,
-    );
     let content_hash: B256 = manifest_hash.parse().map_err(|e| {
         DashboardError::Internal(anyhow::anyhow!("manifest hash is not valid B256 hex: {e}"))
     })?;
