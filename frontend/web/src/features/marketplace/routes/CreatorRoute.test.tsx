@@ -2,7 +2,7 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
 import { CreatorRoute } from "./CreatorRoute";
@@ -169,5 +169,113 @@ describe("CreatorRoute", () => {
     renderCreator();
     await screen.findByText("@ed");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+// ── On-chain creator page (0x… 40-hex address params) ────────────────────────
+describe("CreatorRoute with a real wallet address", () => {
+  const ADDR = "0x7c2E000000000000000000000000000000000007";
+
+  const walletView = {
+    address: ADDR.toLowerCase(),
+    strategies: [],
+    licenses: [],
+    listings: [
+      {
+        listing_id: 3,
+        agent_nft_id: "3",
+        agent_id: "01HSTRAT",
+        seller: ADDR.toLowerCase(),
+        content_hash: "ab".repeat(32),
+        content_uri: "ipfs://bafytestcid",
+        tier: 1,
+        price_usdc: 49,
+        transferable_license: false,
+        revoked: false,
+        gen_art_seed: "seed-3",
+        name: "BTC Dip Buyer",
+        symmetry: "radial",
+        palette: "gold",
+        attestation_count: 0,
+        units_sold: 2,
+        earned_usdc: 98,
+      },
+      {
+        listing_id: 4,
+        agent_nft_id: "4",
+        agent_id: "01HDEAD",
+        seller: ADDR.toLowerCase(),
+        content_hash: "cd".repeat(32),
+        content_uri: "ipfs://bafyrevoked",
+        tier: 0,
+        price_usdc: 0,
+        transferable_license: false,
+        revoked: true,
+        gen_art_seed: "seed-4",
+        name: "Dead Listing",
+        symmetry: "radial",
+        palette: "gold",
+        attestation_count: 0,
+        units_sold: 0,
+        earned_usdc: 0,
+      },
+    ],
+  };
+
+  function stubWalletFetch(impl?: () => Promise<Response>) {
+    const fetchMock = vi.fn(
+      impl ??
+        (async () =>
+          new Response(JSON.stringify(walletView), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches the wallet view and renders the truncated address header", async () => {
+    const fetchMock = stubWalletFetch();
+    renderCreator(ADDR);
+    expect(await screen.findByTestId("onchain-creator-page")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/marketplace/wallet/${ADDR}`,
+      expect.anything(),
+    );
+    // truncated 0x7c2E…0007
+    expect(screen.getByText(/0x7c2E…0007/)).toBeInTheDocument();
+  });
+
+  it("renders non-revoked listings with name + price, linking to detail", async () => {
+    stubWalletFetch();
+    renderCreator(ADDR);
+    const card = await screen.findByTestId("onchain-creator-listing");
+    expect(card).toHaveTextContent("BTC Dip Buyer");
+    expect(card).toHaveTextContent("49 USDC");
+    expect(card).toHaveAttribute("href", "/marketplace/lineage/3");
+    // revoked listing is not shown
+    expect(screen.queryByText("Dead Listing")).not.toBeInTheDocument();
+  });
+
+  it("shows the not-found state when the wallet route errors", async () => {
+    stubWalletFetch(async () =>
+      new Response(JSON.stringify({ code: "internal", message: "boom" }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    renderCreator(ADDR);
+    expect(await screen.findByText(/creator not found/i)).toBeInTheDocument();
+  });
+
+  it("non-address params never hit the wallet route (fixture path untouched)", async () => {
+    const fetchMock = stubWalletFetch();
+    renderCreator("@ed");
+    expect(await screen.findByText("@ed")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("onchain-creator-page")).not.toBeInTheDocument();
   });
 });
