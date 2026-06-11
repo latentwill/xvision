@@ -31,6 +31,9 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
     (c) => c.state === "evaluating" || c.state === "queued",
   );
   const [hover, setHover] = useState<Hover>(null);
+  // lastHovered is never cleared — the readout stays populated after the mouse
+  // leaves the SVG so the user can move to the "Open cycle →" button.
+  const [lastHovered, setLastHovered] = useState<Hover>(null);
   const [pinned, setPinned] = useState<Hover>(null);
   const navigate = useNavigate();
 
@@ -52,7 +55,7 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
   const sy = (y: number) =>
     H - PAD - (y1 === y0 ? 0.5 : (y - y0) / (y1 - y0)) * (H - 2 * PAD);
   const keptCount = layout.lines.reduce((n, l) => n + l.points.length - 1, 0);
-  const active = pinned ?? hover;
+  const active = pinned ?? lastHovered;
 
   return (
     <section className="rounded-md border border-border bg-surface-card p-5 space-y-3">
@@ -70,7 +73,7 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
         aria-label="Lineage river"
         viewBox={`0 0 ${W} ${H}`}
         className="w-full"
-        onMouseLeave={() => setHover(null)}
+        onMouseLeave={() => setHover(null) /* only clears in-chart highlight; readout stays */}
       >
         {layout.stubs.map((s) => (
           <line
@@ -85,7 +88,7 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
             opacity={0.35 + 0.65 * s.ageRank} // fade with age: oldest stubs are faintest
             strokeDasharray={s.kind === "suspect" ? "3 2" : undefined}
             strokeWidth={hover?.kind === "stub" && hover.stub.hash === s.hash ? 2.5 : 1.2}
-            onMouseOver={() => setHover({ kind: "stub", stub: s })}
+            onMouseOver={() => { const h = { kind: "stub" as const, stub: s }; setHover(h); setLastHovered(h); }}
             onClick={() => setPinned({ kind: "stub", stub: s })}
             style={{ cursor: "pointer" }}
           />
@@ -115,7 +118,7 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
                 cy={sy(p.y)}
                 r={l.champion ? 3.5 : 2.5}
                 className={l.champion ? "fill-gold" : "fill-gold-soft"}
-                onMouseOver={() => setHover({ kind: "point", point: p, champion: l.champion })}
+                onMouseOver={() => { const h = { kind: "point" as const, point: p, champion: l.champion }; setHover(h); setLastHovered(h); }}
                 onClick={() => setPinned({ kind: "point", point: p, champion: l.champion })}
                 style={{ cursor: "pointer" }}
               />

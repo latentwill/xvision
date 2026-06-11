@@ -11,20 +11,31 @@ export function ExpandableArtifact({
   summary,
   defaultOpen = false,
   writerModel,
+  open: controlledOpen,
+  onToggle,
 }: {
   hash: string;
   summary: ReactNode;
   defaultOpen?: boolean;
   writerModel?: string | null;
+  /** Controlled open state. When provided (with onToggle), the internal
+   *  useState path is bypassed — used by ExperimentBoard to lift state. */
+  open?: boolean;
+  onToggle?: () => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
+  const toggle = isControlled
+    ? () => onToggle?.()
+    : () => setUncontrolledOpen((v) => !v);
 
   return (
     <div className="rounded-sm border border-border bg-surface-card">
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[12px] hover:bg-surface-elev"
       >
         <span className="min-w-0 truncate">{summary}</span>

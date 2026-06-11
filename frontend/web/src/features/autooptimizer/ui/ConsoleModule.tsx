@@ -1,7 +1,13 @@
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
-import { useCycleEvents, useCycleRuns, useCycleRun, autooptimizerKeys } from "../api";
+import {
+  useCycleEvents,
+  useCycleRuns,
+  useCycleRun,
+  useOptimizerStatus,
+  autooptimizerKeys,
+} from "../api";
 import { normalizePersisted } from "../selectors/narrateEvent";
 import { boardFromNodes, buildBoardState } from "../selectors/buildBoardState";
 import { PhaseRibbon } from "./PhaseRibbon";
@@ -88,7 +94,11 @@ export function ConsoleModule({
   // (and nothing usable in the stream buffer either).
   const eventsUnavailable =
     !live && replayId != null && persistedEmpty && !useStreamBuffer;
-  const fallbackRun = useCycleRun(eventsUnavailable ? replayId : undefined);
+  // Fetched unconditionally in replay mode: it's one cached query (CycleDetail
+  // shares the key) and gives the header its strategy identity; it doubles as
+  // the node-derived board fallback when the event log is unavailable.
+  const replayRun = useCycleRun(replayId ?? undefined);
+  const status = useOptimizerStatus();
 
   const events = useMemo(() => {
     if (live) return stream.events;
@@ -98,15 +108,33 @@ export function ConsoleModule({
 
   const board = useMemo(() => {
     const fromEvents = buildBoardState(events);
-    if (eventsUnavailable && fallbackRun.data) {
+    if (eventsUnavailable && replayRun.data) {
       return {
         ...fromEvents,
-        cards: boardFromNodes(fallbackRun.data.nodes),
+        cards: boardFromNodes(replayRun.data.nodes),
         cycleId: replayId,
       };
     }
     return fromEvents;
-  }, [events, eventsUnavailable, fallbackRun.data, replayId]);
+  }, [events, eventsUnavailable, replayRun.data, replayId]);
+
+  // Header strategy identity for replay: the parent strategy is the most
+  // common parent_hash among the cycle's lineage nodes.
+  const replayStrategyHash = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const n of replayRun.data?.nodes ?? []) {
+      if (n.parent_hash) counts.set(n.parent_hash, (counts.get(n.parent_hash) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    let bestCount = 0;
+    for (const [hash, count] of counts) {
+      if (count > bestCount) {
+        best = hash;
+        bestCount = count;
+      }
+    }
+    return best ? best.slice(0, 8) : null;
+  }, [replayRun.data]);
 
   if (!live && !cycleId && !cycles.isLoading && (cycles.data?.length ?? 0) === 0) {
     return <NeverRanExplainer launchAction={launchAction} />;
@@ -114,6 +142,9 @@ export function ConsoleModule({
 
   const replaySummary = cycles.data?.find((c) => c.cycle_id === replayId);
   const lastCycleAgo = formatRelativeTime(replaySummary?.last_created_at);
+  const liveCycleId = board.cycleId ?? stream.activeCycleId;
+  const liveStrategyId = status?.active_session?.strategy_id;
+  const replayId8 = replayId ? replayId.slice(0, 8) : null;
 
   return (
     <section className="space-y-4 rounded-md border border-border bg-surface-card p-5">
@@ -121,10 +152,32 @@ export function ConsoleModule({
         <div className="text-[11px] uppercase tracking-widest text-text-4">
           {live ? (
             <span className="text-gold">
-              Live · cycle {board.cycleId ?? stream.activeCycleId ?? "…"}
+              Live · cycle{" "}
+              <span className="font-mono">{liveCycleId ? liveCycleId.slice(0, 8) : "…"}</span>
+              {liveStrategyId ? (
+                <>
+                  {" · "}
+                  <span className="font-mono">{liveStrategyId}</span>
+                </>
+              ) : null}
             </span>
           ) : (
-            <>Last cycle{lastCycleAgo ? ` · ${lastCycleAgo}` : ""}</>
+            <>
+              Last cycle
+              {replayId8 ? (
+                <>
+                  {" · "}
+                  <span className="font-mono">{replayId8}</span>
+                </>
+              ) : null}
+              {replayStrategyHash ? (
+                <>
+                  {" · strategy "}
+                  <span className="font-mono">{replayStrategyHash}</span>
+                </>
+              ) : null}
+              {lastCycleAgo ? ` · ${lastCycleAgo}` : null}
+            </>
           )}
         </div>
         {/* Intentional extension point — CycleDetail / home may populate this in the live/replay header. */}
@@ -136,13 +189,9 @@ export function ConsoleModule({
         defaultOpenHash={defaultOpenHash}
         expandBoard={expandBoard}
       />
-      {eventsUnavailable ? (
-        <p className="font-mono text-[12px] text-text-4">
-          Event log unavailable for this cycle.
-        </p>
-      ) : (
-        <NarratedFeed events={events} maxItems={feedMaxItems} />
-      )}
+      {/* No feed when the event log is unavailable — the node-derived board
+          alone is the content; never surface an apology line. */}
+      {!eventsUnavailable && <NarratedFeed events={events} maxItems={feedMaxItems} />}
     </section>
   );
 }
