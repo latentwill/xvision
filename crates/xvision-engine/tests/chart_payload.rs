@@ -514,3 +514,160 @@ async fn build_scenario_preview_uncached_returns_not_cached_status() {
     // must produce the same key.
     assert!(!payload.cache_key.is_empty());
 }
+
+// ── include-set payload variants (pulse chart views) ────────────────────────
+
+use chrono::Utc;
+use xvision_engine::api::chart::IncludeSet;
+
+/// Seed a completed backtest run with decisions + an equity curve against
+/// the canonical scenario, with bars cached for ETH/USD.
+async fn seed_backtest_run_with_equity(ctx: &ApiContext) -> String {
+    let scenario = xvision_engine::api::scenario::get(ctx, "crypto-bull-q1-2025")
+        .await
+        .unwrap();
+    let cache_key = xvision_engine::eval::bars::compute_cache_key(
+        "ETH/USD",
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+    seed_cached_bars(ctx, &cache_key, "ETH/USD", 8).await;
+
+    let store = RunStore::new(ctx.db.clone());
+    let run = Run::new_queued("pulse-test-strategy".into(), scenario.id.clone(), RunMode::Backtest);
+    store.create(&run).await.unwrap();
+    store
+        .record_decision(&hold_decision_for_asset(&run.id, "ETH/USD"))
+        .await
+        .unwrap();
+
+    // Equity samples aligned to the first three seeded bar hours
+    // (seed_cached_bars starts at 2025-01-01T00:00Z, hourly).
+    let t0 = chrono::TimeZone::with_ymd_and_hms(&Utc, 2025, 1, 1, 0, 0, 0).unwrap();
+    let samples: Vec<(chrono::DateTime<Utc>, f64)> = (0..3)
+        .map(|i| (t0 + chrono::Duration::hours(i), 100_000.0 + i as f64 * 500.0))
+        .collect();
+    store.record_equity_batch(&run.id, &samples).await.unwrap();
+    run.id
+}
+
+#[tokio::test]
+async fn include_equity_only_skips_bars_indicators_markers() {
+    let ctx = test_ctx().await;
+    let run_id = seed_backtest_run_with_equity(&ctx).await;
+
+    let payload = xvision_engine::api::chart::build_run_payload_with(
+        &ctx,
+        &run_id,
+        IncludeSet::parse("equity"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(payload.equity.len(), 3, "equity always ships");
+    assert_eq!(payload.drawdown.len(), 3, "drawdown derives from equity");
+    assert!(payload.bars.is_empty(), "equity-only must not ship bars");
+    assert!(payload.indicators.sma_20.is_empty(), "indicators skipped");
+    assert!(payload.indicators.macd.line.is_empty(), "indicators skipped");
+    assert!(payload.markers.holds.is_empty(), "markers skipped");
+    assert!(payload.position.is_empty(), "position skipped");
+    assert!(payload.baseline_equity.is_none(), "baseline not requested");
+}
+
+#[tokio::test]
+async fn include_bars_markers_skips_indicators_but_ships_candles() {
+    let ctx = test_ctx().await;
+    let run_id = seed_backtest_run_with_equity(&ctx).await;
+
+    let payload = xvision_engine::api::chart::build_run_payload_with(
+        &ctx,
+        &run_id,
+        IncludeSet::parse("bars,markers"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(payload.bars.len(), 8, "bars ship");
+    assert_eq!(payload.markers.holds.len(), 1, "markers ship");
+    assert!(payload.indicators.sma_20.is_empty(), "indicators skipped");
+    assert!(payload.indicators.rsi_14.is_empty(), "indicators skipped");
+    assert!(!payload.equity.is_empty(), "equity always ships");
+}
+
+#[tokio::test]
+async fn include_baseline_ships_aligned_buy_and_hold() {
+    let ctx = test_ctx().await;
+    let run_id = seed_backtest_run_with_equity(&ctx).await;
+
+    let payload = xvision_engine::api::chart::build_run_payload_with(
+        &ctx,
+        &run_id,
+        IncludeSet::parse("equity,baseline"),
+    )
+    .await
+    .unwrap();
+
+    let baseline = payload.baseline_equity.expect("baseline requested");
+    assert_eq!(baseline.len(), payload.equity.len(), "aligned to equity");
+    for (b, e) in baseline.iter().zip(payload.equity.iter()) {
+        assert_eq!(b.time, e.time, "baseline sampled at equity timestamps");
+    }
+    // seed_cached_bars closes are base+1 with base=100+i → first close 101,
+    // second 102: baseline[1] = 100k * 102/101.
+    assert!((baseline[0].equity_usd - 100_000.0).abs() < 1e-6);
+    assert!((baseline[1].equity_usd - 100_000.0 * (102.0 / 101.0)).abs() < 1e-6);
+    assert!(payload.bars.is_empty(), "baseline mode does not SHIP bars");
+}
+
+#[tokio::test]
+async fn live_run_baseline_is_null_not_error() {
+    // A run with bars cached but NO equity seeded: compute_baseline_equity
+    // returns None when the equity slice is empty. This verifies that
+    // requesting baseline does not error — it degrades to None gracefully.
+    let ctx = test_ctx().await;
+    let scenario = xvision_engine::api::scenario::get(&ctx, "crypto-bull-q1-2025")
+        .await
+        .unwrap();
+    let cache_key = xvision_engine::eval::bars::compute_cache_key(
+        "ETH/USD",
+        scenario.granularity,
+        scenario.time_window.start,
+        scenario.time_window.end,
+        "alpaca-historical-v1",
+    );
+    seed_cached_bars(&ctx, &cache_key, "ETH/USD", 4).await;
+
+    let store = RunStore::new(ctx.db.clone());
+    let run = Run::new_queued("live-strategy".into(), scenario.id.clone(), RunMode::Backtest);
+    store.create(&run).await.unwrap();
+    store
+        .record_decision(&hold_decision_for_asset(&run.id, "ETH/USD"))
+        .await
+        .unwrap();
+    // Intentionally NO equity seeded — baseline must degrade to None.
+
+    let payload = xvision_engine::api::chart::build_run_payload_with(
+        &ctx,
+        &run.id,
+        IncludeSet::parse("equity,baseline"),
+    )
+    .await
+    .unwrap();
+    assert!(payload.baseline_equity.is_none(), "no equity → baseline is None, not an error");
+    assert!(payload.equity.is_empty(), "no equity seeded");
+}
+
+#[tokio::test]
+async fn full_payload_unchanged_and_baseline_absent() {
+    let ctx = test_ctx().await;
+    let run_id = seed_backtest_run_with_equity(&ctx).await;
+
+    let payload = xvision_engine::api::chart::build_run_payload(&ctx, &run_id)
+        .await
+        .unwrap();
+    assert_eq!(payload.bars.len(), 8);
+    assert_eq!(payload.markers.holds.len(), 1);
+    assert!(payload.baseline_equity.is_none(), "full mode never computes baseline");
+}

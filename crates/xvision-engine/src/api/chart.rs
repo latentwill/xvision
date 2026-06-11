@@ -40,6 +40,9 @@ pub struct RunChartPayload {
     pub drawdown: Vec<DrawdownPoint>,
     pub position: Vec<PositionPoint>,
     pub markers: ChartMarkers,
+    /// Buy-and-hold comparison curve — present only when the request's
+    /// `include` set contains `baseline` and the run has cached bars.
+    pub baseline_equity: Option<Vec<ChartEquityPoint>>,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -75,7 +78,7 @@ pub struct IndicatorPoint {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Indicators {
     pub sma_20: Vec<IndicatorPoint>,
     pub sma_30: Vec<IndicatorPoint>,
@@ -101,7 +104,7 @@ pub struct Indicators {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BollingerSeries {
     pub upper: Vec<IndicatorPoint>,
     pub middle: Vec<IndicatorPoint>,
@@ -113,7 +116,7 @@ pub struct BollingerSeries {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DonchianSeries {
     pub upper: Vec<IndicatorPoint>,
     pub lower: Vec<IndicatorPoint>,
@@ -124,7 +127,7 @@ pub struct DonchianSeries {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MacdSeries {
     pub line: Vec<IndicatorPoint>,
     pub signal: Vec<IndicatorPoint>,
@@ -282,6 +285,7 @@ pub struct CompareRunSeries {
 /// Parsed from an explicit allowlist; unknown tokens are ignored and an
 /// empty/unrecognized set degrades to equity-only. Indicators are NOT a
 /// public token — they ship only on the full (no-param) payload.
+/// Construct via `parse` or `full` — avoid struct literals, which can bypass the needs_* invariants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IncludeSet {
     pub equity: bool,
@@ -442,6 +446,14 @@ async fn resolve_run_asset_for_chart(
 }
 
 pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunChartPayload> {
+    build_run_payload_with(ctx, run_id, IncludeSet::full()).await
+}
+
+pub async fn build_run_payload_with(
+    ctx: &ApiContext,
+    run_id: &str,
+    include: IncludeSet,
+) -> ApiResult<RunChartPayload> {
     let store = RunStore::new(ctx.db.clone());
 
     // 1. Load the run (maps "run not found" to NotFound).
@@ -454,24 +466,30 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
         }
     })?;
 
-    // Live runs have no scenario; return a metric-only payload without bars.
+    // Read equity + drawdown before either early-return path.
+    let equity: Vec<ChartEquityPoint> = store
+        .read_equity_curve(run_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .into_iter()
+        .map(|(ts, equity_usd)| ChartEquityPoint {
+            time: ts.timestamp(),
+            equity_usd,
+        })
+        .collect();
+    let drawdown = compute_drawdown(&equity);
+
+    // Live runs / empty scenario: return a metric-only payload without bars.
     if run.mode == RunMode::Live || run.scenario_id.is_empty() {
         let decisions = store
             .read_decisions(run_id)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        let equity: Vec<ChartEquityPoint> = store
-            .read_equity_curve(run_id)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?
-            .into_iter()
-            .map(|(ts, equity_usd)| ChartEquityPoint {
-                time: ts.timestamp(),
-                equity_usd,
-            })
-            .collect();
-        let drawdown = compute_drawdown(&equity);
-        let markers = split_markers(&decisions, &[]);
+        let markers = if include.markers {
+            split_markers(&decisions, &[])
+        } else {
+            ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] }
+        };
         return Ok(RunChartPayload {
             run_id: run_id.into(),
             scenario_id: run.scenario_id.clone(),
@@ -482,11 +500,30 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
                 end: Default::default(),
             },
             bars: vec![],
-            indicators: compute_indicators(&[]),
+            indicators: Indicators::default(),
             equity,
             drawdown,
             position: vec![],
             markers,
+            baseline_equity: None,
+        });
+    }
+
+    // Slim early-return path: equity-only (no bars needed).
+    if !include.needs_bars() {
+        return Ok(RunChartPayload {
+            run_id: run_id.into(),
+            scenario_id: run.scenario_id.clone(),
+            asset: String::new(),
+            granularity: String::new(),
+            time_window: TimeWindow { start: Default::default(), end: Default::default() },
+            bars: vec![],
+            indicators: Indicators::default(),
+            equity,
+            drawdown,
+            position: vec![],
+            markers: ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] },
+            baseline_equity: None,
         });
     }
 
@@ -541,31 +578,34 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
         )));
     }
 
-    // 5. Convert bars to chart shape.
-    let chart_bars: Vec<ChartBar> = bars.iter().map(bar_to_chart_bar).collect();
-
-    // 6. Compute indicators. All functions return full-length vectors with
-    //    leading NaN warmup; `series()` drops NaN entries before returning.
-    let indicators = compute_indicators(&bars);
-
-    // 7. Equity curve.
-    let equity: Vec<ChartEquityPoint> = store
-        .read_equity_curve(run_id)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .into_iter()
-        .map(|(ts, equity_usd)| ChartEquityPoint {
-            time: ts.timestamp(),
-            equity_usd,
-        })
-        .collect();
-
-    // 8. Drawdown derived from equity.
-    let drawdown = compute_drawdown(&equity);
-
-    // 9. Decisions → position series + markers.
-    let position = compute_position(&decisions, &bars);
-    let markers = split_markers(&decisions, &bars);
+    // Include-gated assembly.
+    let chart_bars: Vec<ChartBar> = if include.bars {
+        bars.iter().map(bar_to_chart_bar).collect()
+    } else {
+        vec![]
+    };
+    // Indicators (and position spans) compute only on the full, no-include-param payload.
+    let indicators = if include.needs_indicators() {
+        compute_indicators(&bars)
+    } else {
+        Indicators::default()
+    };
+    let position = if include.needs_indicators() {
+        // Position spans ship with the full payload only (run-detail page).
+        compute_position(&decisions, &bars)
+    } else {
+        vec![]
+    };
+    let markers = if include.markers {
+        split_markers(&decisions, &bars)
+    } else {
+        ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] }
+    };
+    let baseline_equity = if include.baseline {
+        compute_baseline_equity(&bars, &equity)
+    } else {
+        None
+    };
 
     // 10. Granularity string (human-readable).
     let granularity_str = scenario.granularity.as_alpaca_str().to_string();
@@ -582,6 +622,7 @@ pub async fn build_run_payload(ctx: &ApiContext, run_id: &str) -> ApiResult<RunC
         drawdown,
         position,
         markers,
+        baseline_equity,
     })
 }
 
@@ -679,7 +720,6 @@ fn compute_drawdown(equity: &[ChartEquityPoint]) -> Vec<DrawdownPoint> {
 /// convention as the scenario-preview baseline at `build_scenario_preview`),
 /// sampled at the equity curve's timestamps so both series share one time
 /// axis. Returns `None` when either input is empty.
-#[allow(dead_code)] // wired in by build_run_payload_with (Task 3)
 fn compute_baseline_equity(
     bars: &[MarketBar],
     equity: &[ChartEquityPoint],
@@ -687,6 +727,7 @@ fn compute_baseline_equity(
     if bars.is_empty() || equity.is_empty() {
         return None;
     }
+    // Precondition: bars are time-ordered (enforced by load_bars → validate_bar_series).
     let initial = 100_000.0;
     let first_close = bars[0].close.max(f64::EPSILON);
     let times: Vec<i64> = bars.iter().map(|b| b.timestamp.timestamp()).collect();
@@ -1671,5 +1712,16 @@ mod baseline_tests {
         let equity = vec![eq_point(0, 1.0)];
         assert!(compute_baseline_equity(&[], &equity).is_none());
         assert!(compute_baseline_equity(&bars, &[]).is_none());
+    }
+
+    #[test]
+    fn baseline_holds_last_close_after_final_bar() {
+        let bars = vec![bar(0, 100.0), bar(1, 110.0)];
+        let late = ChartEquityPoint {
+            time: bars[1].timestamp.timestamp() + 7_200,
+            equity_usd: 100_000.0,
+        };
+        let baseline = compute_baseline_equity(&bars, &[late]).unwrap();
+        assert!((baseline[0].equity_usd - 110_000.0).abs() < 1e-6);
     }
 }
