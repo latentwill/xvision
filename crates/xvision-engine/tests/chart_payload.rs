@@ -688,7 +688,7 @@ async fn empty_scenario_early_return_baseline_is_null_not_error() {
     .await
     .unwrap();
     sqlx::query(
-        "CREATE TRIGGER runs_scenario_id_fk_insert \
+        "CREATE TRIGGER IF NOT EXISTS runs_scenario_id_fk_insert \
          BEFORE INSERT ON eval_runs \
          WHEN NEW.scenario_id IS NOT NULL \
          BEGIN \

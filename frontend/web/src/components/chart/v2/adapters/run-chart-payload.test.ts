@@ -34,6 +34,7 @@ function payload(overrides: Partial<RunChartPayload> = {}): RunChartPayload {
       atr_14: [],
     },
     equity: [],
+    baseline_equity: null,
     drawdown: [],
     position: [],
     markers: { trades: [], vetoes: [], holds: [] },
@@ -92,5 +93,21 @@ describe("runChartPayloadToV2", () => {
     );
 
     expect(v2.candles.time).toEqual([100, 200]);
+  });
+
+  it("passes server drawdown_pct through for v2 consumers", () => {
+    const v2 = runChartPayloadToV2(
+      payload({
+        drawdown: [
+          { time: 100, drawdown_pct: 0 },
+          { time: 200, drawdown_pct: 4.2 },
+        ],
+      }),
+    );
+
+    expect(v2.drawdown).toEqual([
+      { time: 100, value: 0 },
+      { time: 200, value: 4.2 },
+    ]);
   });
 });
