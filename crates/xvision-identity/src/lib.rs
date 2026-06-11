@@ -45,5 +45,8 @@ pub use attestation::{
 };
 pub use client::{IdentityClient, IdentityError, RegistryAddresses, TokenId, TxHash};
 pub use contracts::MarketplaceAddresses;
-pub use genart::{generate_svg, generate_token_uri};
+pub use genart::{
+    derive_traits, generate_svg, generate_token_uri, manifest_hash_hex, GenartError, Symmetry,
+    Traits,
+};
 pub use manifest::{AgentManifest, ReputationEntry, StrategyConfigSummary, TradeOutcome};
