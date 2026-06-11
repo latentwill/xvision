@@ -177,6 +177,34 @@ describe("StripDockSlot", () => {
     expect(strip.textContent ?? "").toMatch(/32\.0s/);
   });
 
+  test("live-money run renders the LIVE capsule prefix; default renders EVAL", async () => {
+    vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
+      makeDetail({ is_live_money: true, eval_mode: "live" }),
+    );
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "collapsed",
+      mode: "live",
+    });
+    renderSlot();
+    const label = await screen.findByTestId("capsule-kind-label");
+    expect(label).toHaveTextContent("LIVE");
+  });
+
+  test("non-live run keeps the EVAL capsule prefix", async () => {
+    vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
+      makeDetail({ eval_mode: "backtest" }),
+    );
+    useTraceDock.setState({
+      activeRunId: "run_abc1234",
+      height: "collapsed",
+      mode: "live",
+    });
+    renderSlot();
+    const label = await screen.findByTestId("capsule-kind-label");
+    expect(label).toHaveTextContent("EVAL");
+  });
+
   test("does NOT poll sibling eval-runs when the focused agent-run has no financial_eval_id", async () => {
     vi.mocked(agentRunsApi.getAgentRun).mockResolvedValue(
       makeDetail({ financial_eval_id: null }),

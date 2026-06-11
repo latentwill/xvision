@@ -11,10 +11,13 @@ import {
 import {
   classifyRunLiveness,
   deriveStripStatus,
+  filterRunsForStrip,
   isLiveRun,
   isStaleRun,
   livenessCounts,
   pickDefaultRun,
+  stripFilterBucket,
+  stripFilterCounts,
 } from "./strip-status";
 
 function mkRun(over: Partial<AgentRunSummary> = {}): AgentRunSummary {
@@ -319,5 +322,93 @@ describe("strip metric persistence", () => {
     saveStripMetric("sharpe");
     expect(loadStripMetric()).toBe("sharpe");
     expect(localStorage.getItem(STRIP_METRIC_STORAGE_KEY)).toBe("sharpe");
+  });
+});
+
+describe("strip filter chips (stripFilterBucket / filterRunsForStrip / stripFilterCounts)", () => {
+  test("live + not paused -> LIVE bucket", () => {
+    expect(stripFilterBucket(mkLiveRun())).toBe("LIVE");
+  });
+  test("live + paused -> PAUSED bucket", () => {
+    expect(stripFilterBucket(mkLiveRun({ paused: true }))).toBe("PAUSED");
+  });
+  test("terminal runs -> STOPPED bucket", () => {
+    for (const s of [
+      "completed",
+      "failed",
+      "cancelled",
+      "interrupted",
+      "agent_failure",
+    ] as const) {
+      expect(stripFilterBucket(mkLiveRun({ status: s }))).toBe("STOPPED");
+    }
+  });
+  test("stale orphan (parent eval terminal) -> STOPPED, never LIVE", () => {
+    const stale = mkLiveRun({ eval_run_status: "completed" });
+    expect(stripFilterBucket(stale)).toBe("STOPPED");
+  });
+  test("running backtest/paper run -> STOPPED, never LIVE even when status=running", () => {
+    const paper = mkRun({ status: "running", eval_mode: "backtest" });
+    expect(stripFilterBucket(paper)).toBe("STOPPED");
+    // Parentless orphan with no live-money signal.
+    expect(stripFilterBucket(mkRun({ status: "running" }))).toBe("STOPPED");
+    // is_live_money=false explicitly.
+    expect(
+      stripFilterBucket(mkRun({ status: "running", is_live_money: false })),
+    ).toBe("STOPPED");
+  });
+  test("paused flag on a NON-live run does not produce PAUSED", () => {
+    expect(stripFilterBucket(mkRun({ paused: true }))).toBe("STOPPED");
+  });
+
+  test("filterRunsForStrip: ALL passes everything through unchanged", () => {
+    const runs = [mkLiveRun({ run_id: "a" }), mkRun({ run_id: "b" })];
+    expect(filterRunsForStrip(runs, "ALL")).toEqual(runs);
+  });
+  test("filterRunsForStrip: LIVE keeps only genuinely-live active runs", () => {
+    const live = mkLiveRun({ run_id: "live" });
+    const paused = mkLiveRun({ run_id: "paused", paused: true });
+    const backtest = mkRun({ run_id: "bt", eval_mode: "backtest" });
+    const dead = mkLiveRun({ run_id: "dead", status: "completed" });
+    expect(
+      filterRunsForStrip([live, paused, backtest, dead], "LIVE").map(
+        (r) => r.run_id,
+      ),
+    ).toEqual(["live"]);
+  });
+  test("filterRunsForStrip: PAUSED / STOPPED buckets", () => {
+    const live = mkLiveRun({ run_id: "live" });
+    const paused = mkLiveRun({ run_id: "paused", paused: true });
+    const stale = mkLiveRun({ run_id: "stale", eval_run_status: "cancelled" });
+    const dead = mkLiveRun({ run_id: "dead", status: "failed" });
+    const all = [live, paused, stale, dead];
+    expect(filterRunsForStrip(all, "PAUSED").map((r) => r.run_id)).toEqual([
+      "paused",
+    ]);
+    expect(filterRunsForStrip(all, "STOPPED").map((r) => r.run_id)).toEqual([
+      "stale",
+      "dead",
+    ]);
+  });
+
+  test("stripFilterCounts: ALL is total; buckets partition it", () => {
+    const runs = [
+      mkLiveRun({ run_id: "a" }),
+      mkLiveRun({ run_id: "b" }),
+      mkLiveRun({ run_id: "c", paused: true }),
+      mkRun({ run_id: "d", eval_mode: "backtest" }),
+      mkLiveRun({ run_id: "e", status: "completed" }),
+    ];
+    const counts = stripFilterCounts(runs);
+    expect(counts).toEqual({ ALL: 5, LIVE: 2, PAUSED: 1, STOPPED: 2 });
+    expect(counts.LIVE + counts.PAUSED + counts.STOPPED).toBe(counts.ALL);
+  });
+  test("stripFilterCounts: empty list", () => {
+    expect(stripFilterCounts([])).toEqual({
+      ALL: 0,
+      LIVE: 0,
+      PAUSED: 0,
+      STOPPED: 0,
+    });
   });
 });

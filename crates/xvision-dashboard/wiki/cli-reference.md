@@ -227,54 +227,65 @@ and maintain the migrated trajectory SQLite tables plus the frame blob store.
 
 ### `xvn optimize …`
 
-Offline DSPy prompt/demonstration optimizer (Phase 3.6). Runs an optimization
-pass over a corpus for one agent slot/capability, persists the candidates and
-the winning snapshot to the optimization store, and lets you accept a snapshot
-as a **child agent** with a recorded lineage edge. By default resolves the
-agent's bound `provider`/`model` from the store — pass `--test-model` to use
-`dummy/dummy` instead (CI / offline). The engine and the slim runtime image
-carry **no DSPy dependency** — see [Optimizer](/docs?slug=optimizer) for the
-offline-only invariant.
+**The Optimizer cycle now has ONE CLI home: `xvn optimize`.** This is the
+operator-surface verb for the AutoOptimizer subsystem (developer-surface
+codename `autooptimizer`). It runs the evening optimizer cycle: propose
+candidate experiments against a parent strategy, backtest them on the day +
+untouched windows, apply the decision gate, and (optionally) compile the DSPy
+flywheel.
+
+> **Consolidation (2026-06-11).** Two changes landed together:
+> 1. The old top-level **`xvn optimizer`** verb **no longer exists** — its
+>    surface folded into `xvn optimize`.
+> 2. The **standalone DSPy prompt-optimizer CLI verbs were removed**
+>    (`run --agent/--slot/--capability/--corpus/--optimizer/--metric`,
+>    `inspect --run`, `export-demos`, `import-demos`, `accept-as-child-agent`,
+>    `revert-accepted`, `explain-missing-data`, `memory-demos`,
+>    `memory-demos-gate`, and the old `distill/gate/activate/retire/
+>    promote/demote`). The DSPy flywheel now runs **inside the cycle
+>    automatically** and emits `CycleProgressEvent::FlywheelCompiled`. The
+>    engine `optimization/` module and the `Optimizer*` types are **unchanged**
+>    — only the CLI verbs went away.
+
+**Running `xvn optimize` with no subcommand runs the full cycle.** The aliases
+`xvn optimize run` and `xvn optimize run-cycle` do the same thing.
 
 | Verb | Effect |
 |---|---|
-| `run --agent <id> --slot <name> --capability <cap> --corpus <q\|path> --optimizer <opt> --metric <name> --rng-seed <n> [--max-rounds <n>] [--dry-run] [--test-model] [--json] [--xvn-home <path>]` | Run an optimization pass for one agent slot/capability. Persists `optimization_runs`/`candidates`/`demos`/`snapshots` rows unless `--dry-run`. |
-| `inspect <run-id> [--json]` | Show a persisted run, its candidate table (instructions + metric values, `selected` flag), and snapshots. Exit `4` if the run id is unknown. |
-| `export-demos <snapshot-id\|demo-set> [--output <path>]` | Export a snapshot's (or demo set's) demonstrations as canonical content-addressed JSON. |
-| `import-demos <path>` | Import a demos JSON file into the content-addressed demo store. |
-| `accept-as-child-agent <snapshot-id>` | Train a child agent from a snapshot's winning instruction; records the `agent_lineage` edge (`parent → child`) and sets the accept flag. |
-| `revert-accepted <snapshot-id>` | Clear the accept flag and the lineage edge for a previously accepted snapshot. |
-| `explain-missing-data <corpus>` | Explain why a corpus query produced no usable training data (query guidance; does not run an optimization). |
-| `memory-demos --agent <id> [--slot <name>] [--namespace <ns>\|--memory-agent <id>] [--demo-source frozen-snapshot\|fresh-recorder\|manual-csv] [--untouched-split 70/15/15] [--cohort-query <q>] [--prior-pattern <id> …] [--auto-priors] [--yes] [--json]` | Compile Observation examples and optional background Patterns into a child-agent prompt prefix. Without `--yes`, previews the deterministic split/hash plan only. |
-| `memory-demos-gate <optimization-id> --parent-dev-score <n> --child-dev-score <n> --baseline-untouched-score <n> --candidate-untouched-score <n> [--dev-metric <m>] [--untouched-metric <m>] [--min-improvement <n>] [--reason <text>] [--json]` | Record the dev/untouched-period gate verdict for a memory-demo optimization. |
+| `xvn optimize` (default) / `run` / `run-cycle` | Run the full optimizer cycle: propose → backtest (day + untouched windows) → gate → optional DSPy flywheel. Reads `$XVN_HOME/autooptimizer.toml` (or `--config <path>`, which **replaces** that file). See [Optimizer config](/docs?slug=autooptimizer-config). |
+| `ls [--json]` | List cycle history (most recent first). |
+| `show <cycle_id> [--json]` | Show one cycle's detail: experiments, gate verdicts, scores. |
+| `lineage ls [--json]` | List the strategy lineage (parent → child edges, statuses). |
+| `lineage show <id> [--json]` | Show one lineage node / subtree. |
+| `unlock` | Clear a wedged cycle lock (e.g. after a crashed/OOM'd cycle stranded the lock). |
+| `mutate-once` | Run a single experiment proposal (no full cycle) — handy for smoke-testing the writer. |
+| `demo` | Run a self-contained demo cycle. |
 
-`--capability` accepts `trader`, `filter`, `decision_grader`, `intern`, or
-`chat_authoring`. `--optimizer` accepts `mipro`, `gepa`, or `copro`.
-`--corpus` is either a saved-query string or a path to a corpus JSON file.
-`--metric` is the objective name (e.g. `delta_sharpe`, `grader_score`).
-`--rng-seed` makes demo sampling + search order reproducible: the same seed +
-inputs yields the same winning candidate.
-
-`xvn optimize run --json` emits a single object with the run id, the chosen
-optimizer/metric, the `signature_hash`, the `candidate_count`,
-`selected_candidate_index`, the `snapshot_id`, the content-addressed
-`demo_set`, and `status`. The reproduction recipe (corpus query, seed, model,
-optimizer, optimizer version, signature hash, metric) is persisted so any run
-can be re-derived from its inputs.
+Common flags on the cycle (`run` / default): `--config <path>` (replace the
+default config file), `--experiments-per-cycle <n>`, `--objective
+<sharpe\|total_return\|max_drawdown\|win_rate>`, `--min-improvement <f>`,
+`--day-start`/`--day-end`, `--baseline-start`/`--baseline-end`, `--budget <n>`.
+See [Optimizer config](/docs?slug=autooptimizer-config) for which knobs are
+config fields vs CLI-only flags. A bad config surfaces a **field-level** parse
+error naming the offending TOML key.
 
 ```
-# deterministic, no-network run (default model)
-xvn optimize run \
-  --agent 01AGENTV --slot trader --capability trader \
-  --corpus ./corpus.json --optimizer mipro --metric delta_sharpe \
-  --rng-seed 42 --json
+# run the full cycle (default action) with the default config
+xvn optimize
 
-# validate corpus + capability without writing to the store
-xvn optimize run … --dry-run
+# same, explicit; with an alternate config file (REPLACES the default)
+xvn optimize run --config ./my-autooptimizer.toml
 
-xvn optimize inspect <run-id> --json
-xvn optimize accept-as-child-agent <snapshot-id>
-xvn optimize revert-accepted <snapshot-id>
+# cycle history + detail
+xvn optimize ls --json
+xvn optimize show <cycle_id> --json
+
+# lineage
+xvn optimize lineage ls
+xvn optimize lineage show <id>
+
+# clear a stranded lock from a crashed cycle
+xvn optimize unlock
 ```
 
 `xvn optimize` returns a distinct exit code per failure class so an agent can
@@ -303,17 +314,11 @@ that can be recalled in every scenario.
 
 ---
 
-### `xvn optimizer …`
-
-Offline distillation surface for activating Observation cohorts into staged or
-active Patterns. Optimizer never runs inside a live decision cycle.
-
-| Verb | Effect |
-|---|---|
-| `run --namespace <ns> [--agent <id>] [--scenario <id>] [--min-observations <n>] [--candidate-text <text>] [--json]` | Read qualifying Observations, create an optimizer run, and stage a candidate Pattern with source Observation ids. |
-| `inspect <run-id> [--json]` | Show one run, its source Observation ids, Pattern candidate, gate state, status, and any Finding text. |
-| `activate <run-id> [--json]` | Activate a gated/staged candidate Pattern into the recall-active Pattern kind. |
-| `retire <run-id> [--reason <text>] [--json]` | Soft-retire the associated Pattern and record the retirement reason. |
+> **`xvn optimizer …` was removed (2026-06-11).** The top-level `xvn optimizer`
+> verb no longer exists. The Optimizer cycle is now driven entirely by
+> [`xvn optimize`](#xvn-optimize-) (default action runs the cycle). The old
+> Observation-cohort distillation that lived here now runs **inside the cycle's
+> DSPy flywheel** automatically; there is no separate operator verb for it.
 
 ### `xvn flywheel …`
 
@@ -338,6 +343,25 @@ Read-only operator telemetry for the memory + Optimizer + DSPy-optimizer loop.
 | `remove --name <name>` | Remove a provider; refused if any slot references it. |
 | `refresh-models [--name <name>]` | Hit `/v1/models` and write the catalog to disk; omit `--name` to refresh all. |
 | `models --name <name>` | Print the cached model catalog for a provider (does not fetch). |
+
+---
+
+### `xvn tool-policy …`
+
+Inspect and override the chat-rail tool policies — which tools the model may
+invoke, and whether a Write tool runs without an approval round-trip. Business
+logic lives in `xvision_engine::api::tool_policy`; this verb is a thin CLI shim.
+Each policy has an `enabled` flag (the tool is visible to the model and may run)
+and an `auto_approve` flag (a Write-class tool in Act mode runs without an
+approval round-trip). Scope is `global` (workspace-wide, the default) or a user
+id for per-user overrides.
+
+| Verb | Effect |
+|---|---|
+| `list [--scope <global\|user-id>]` | List effective policies for all known tools (overrides + class defaults). |
+| `show <tool-name> [--scope <global\|user-id>]` | Show the effective policy for one tool (e.g. `create_strategy`, `run_eval`). |
+| `set <tool-name> --enabled <bool> --auto-approve <bool> [--scope <global\|user-id>]` | Upsert an override for one tool. |
+| `reset <tool-name> [--scope <global\|user-id>]` | Remove an override, reverting the tool to its class default. |
 
 ---
 
@@ -388,7 +412,7 @@ text:
 
 | Code | Name | Meaning |
 |---|---|---|
-| 10 | OptMissingData | The corpus query resolved to no usable training data. Use `xvn optimize explain-missing-data` for guidance. |
+| 10 | OptMissingData | The corpus / training query resolved to no usable training data. |
 | 11 | OptMissingCapability | The requested capability has no optimizer signature (typed `missing_capability_optimizer`). |
 | 12 | OptProvider | The model provider could not be reached / is not configured. |
 | 13 | OptMetric | The objective metric failed to evaluate (e.g. unknown metric name). |

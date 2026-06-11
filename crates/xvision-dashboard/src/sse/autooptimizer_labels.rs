@@ -32,6 +32,8 @@ pub fn display_label(event: &CycleProgressEvent) -> &'static str {
         CycleFinished { .. } => "Optimizer run finished",
         PhaseStarted { .. } => "Phase started",
         PhaseFinished { .. } => "Phase finished",
+        EvalProgress { .. } => "Backtest progress",
+        Heartbeat { .. } => "Working…",
         SessionStateChanged { .. } => "Run state changed",
         FlywheelCompiled { .. } => "Findings compiled into prompt pattern",
     }
@@ -56,6 +58,8 @@ pub fn event_kind(event: &CycleProgressEvent) -> &'static str {
         CycleFinished { .. } => "cycle_finished",
         PhaseStarted { .. } => "phase_started",
         PhaseFinished { .. } => "phase_finished",
+        EvalProgress { .. } => "eval_progress",
+        Heartbeat { .. } => "heartbeat",
         SessionStateChanged { .. } => "session_state_changed",
         FlywheelCompiled { .. } => "flywheel_compiled",
     }
@@ -85,6 +89,8 @@ mod tests {
             session_id: "".into(),
             cycle_id: "c1".into(),
             parent_hash: "abc".into(),
+            child_hash: "".into(),
+            mutator_model: "".into(),
         }
     }
     fn mutation_gated_passed() -> CycleProgressEvent {
@@ -94,6 +100,7 @@ mod tests {
             child_hash: "def".into(),
             passed: true,
             outcome: "kept".into(),
+            delta_day: None,
         }
     }
     fn mutation_gated_suspect() -> CycleProgressEvent {
@@ -103,6 +110,7 @@ mod tests {
             child_hash: "def".into(),
             passed: false,
             outcome: "suspect".into(),
+            delta_day: None,
         }
     }
     fn mutation_gated_dropped() -> CycleProgressEvent {
@@ -112,6 +120,7 @@ mod tests {
             child_hash: "def".into(),
             passed: false,
             outcome: "dropped".into(),
+            delta_day: None,
         }
     }
     fn honesty_check_run() -> CycleProgressEvent {
@@ -181,6 +190,21 @@ mod tests {
             pattern_id: "p1".into(),
         }
     }
+    fn eval_progress() -> CycleProgressEvent {
+        CycleProgressEvent::EvalProgress {
+            session_id: "".into(),
+            cycle_id: "c1".into(),
+            decisions: 42,
+            elapsed_s: 45,
+        }
+    }
+    fn heartbeat() -> CycleProgressEvent {
+        CycleProgressEvent::Heartbeat {
+            session_id: "".into(),
+            cycle_id: "c1".into(),
+            elapsed_s: 60,
+        }
+    }
     #[test]
     fn display_label_covers_all_variants() {
         assert_eq!(display_label(&cycle_started()), "Optimizer run started");
@@ -195,6 +219,8 @@ mod tests {
         assert_eq!(display_label(&cycle_finished()), "Optimizer run finished");
         assert_eq!(display_label(&phase_started()), "Phase started");
         assert_eq!(display_label(&phase_finished()), "Phase finished");
+        assert_eq!(display_label(&eval_progress()), "Backtest progress");
+        assert_eq!(display_label(&heartbeat()), "Working…");
         assert_eq!(display_label(&session_state_changed()), "Run state changed");
         assert_eq!(
             display_label(&flywheel_compiled()),
@@ -216,6 +242,8 @@ mod tests {
         assert_eq!(event_kind(&cycle_finished()), "cycle_finished");
         assert_eq!(event_kind(&phase_started()), "phase_started");
         assert_eq!(event_kind(&phase_finished()), "phase_finished");
+        assert_eq!(event_kind(&eval_progress()), "eval_progress");
+        assert_eq!(event_kind(&heartbeat()), "heartbeat");
         assert_eq!(event_kind(&session_state_changed()), "session_state_changed");
         assert_eq!(event_kind(&flywheel_compiled()), "flywheel_compiled");
     }

@@ -112,6 +112,23 @@ pub struct AutoOptimizerConfig {
     #[serde(default)]
     pub regime_set: Vec<RegimeWindow>,
 
+    /// B19: optional pool of (day, baseline-untouched) window pairs the cycle
+    /// SAMPLES round-robin across candidates, so different candidates are
+    /// evaluated on different regimes and a strategy tuned to a single fixed
+    /// window can no longer dominate the whole cycle (overfitting guard).
+    ///
+    /// This is DISTINCT from `regime_set`: `regime_set` evaluates every regime
+    /// for every candidate (exhaustive, gate requires improvement across all
+    /// regimes); `scenario_pool` picks ONE pair per candidate via
+    /// `pool[mutation_idx % pool.len()]` (sampling). Both can be empty.
+    ///
+    /// Empty (the default) ⇒ the cycle uses the single
+    /// `day_window`/`baseline_untouched_window` pair for every candidate,
+    /// exactly as before (100% back-compat). When non-empty, the single pair is
+    /// the fallback only when the pool is empty; the pool drives sampling.
+    #[serde(default)]
+    pub scenario_pool: Vec<ScenarioWindowPair>,
+
     /// Trade-direction mode the random-baseline edge metric mirrors. The
     /// per-cycle `edge_over_random` / `parent_edge` / `edge_delta` numbers
     /// compare child/parent against a fixed-seed random agent that picks
@@ -194,6 +211,18 @@ pub struct RegimeWindow {
     pub baseline: ScenarioWindow,
 }
 
+/// B19: one labeled (day, baseline-untouched) window pair in the round-robin
+/// `scenario_pool`. Mirrors `RegimeWindow` but without a directional `side`
+/// (the pool is sampled, not gated-across), and reuses the `NaiveDate`-backed
+/// `DayWindow`/`BaselineUntouchedWindow` types so each pair synthesizes its
+/// scenarios through the exact same builders as the top-level single pair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioWindowPair {
+    pub label: String,
+    pub day: DayWindow,
+    pub baseline: BaselineUntouchedWindow,
+}
+
 impl Default for AutoOptimizerConfig {
     fn default() -> Self {
         Self {
@@ -228,6 +257,7 @@ impl Default for AutoOptimizerConfig {
             tournament_enabled: false,
             objective: crate::autooptimizer::gate::Objective::default(),
             regime_set: vec![],
+            scenario_pool: vec![],
             baseline_direction: TradeDirection::Both,
             gepa_enabled: false,
             gepa_candidates: default_gepa_candidates(),
@@ -313,11 +343,105 @@ pub fn validate_regime_set(regimes: &[RegimeWindow]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// B19: validate a `scenario_pool` for structural correctness, mirroring
+/// `validate_regime_set`:
+///
+/// 1. Unique `label`s (labels appear in observability logs; duplicates make the
+///    round-robin trace ambiguous).
+/// 2. Each pair's `day` and `baseline` ranges are well-ordered and disjoint
+///    (overlap would mix train and held-out data, invalidating the per-candidate
+///    gate comparison).
+/// 3. Each `day` window span is within `MAX_WINDOW_DAYS` (same OOM trap as the
+///    top-level day window — the whole window's bars load per candidate).
+///
+/// Returns `Ok(())` when the pool is empty (back-compat: empty = single-pair path).
+pub fn validate_scenario_pool(pool: &[ScenarioWindowPair]) -> anyhow::Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for p in pool {
+        if !seen.insert(p.label.as_str()) {
+            bail!(
+                "duplicate scenario_pool label '{}' — labels must be unique",
+                p.label
+            );
+        }
+    }
+
+    for p in pool {
+        if p.day.start >= p.day.end {
+            bail!(
+                "scenario_pool '{}': day window start ({}) must be before end ({})",
+                p.label,
+                p.day.start,
+                p.day.end,
+            );
+        }
+        if p.baseline.start >= p.baseline.end {
+            bail!(
+                "scenario_pool '{}': baseline window start ({}) must be before end ({})",
+                p.label,
+                p.baseline.start,
+                p.baseline.end,
+            );
+        }
+
+        let day_span = (p.day.end - p.day.start).num_days();
+        if day_span > MAX_WINDOW_DAYS {
+            bail!(
+                "scenario_pool '{}': day window span ({} days, {} – {}) exceeds the {}-day cap; \
+                 shrink this pair's day window \
+                 (a window this large loads too many bars per candidate and can OOM the cycle)",
+                p.label,
+                day_span,
+                p.day.start,
+                p.day.end,
+                MAX_WINDOW_DAYS,
+            );
+        }
+        let baseline_span = (p.baseline.end - p.baseline.start).num_days();
+        if baseline_span > MAX_WINDOW_DAYS {
+            bail!(
+                "scenario_pool '{}': baseline window span ({} days, {} – {}) exceeds the {}-day cap; \
+                 shrink this pair's baseline window",
+                p.label,
+                baseline_span,
+                p.baseline.start,
+                p.baseline.end,
+                MAX_WINDOW_DAYS,
+            );
+        }
+
+        // Overlap when: day_start < base_end AND base_start < day_end.
+        let overlaps = p.day.start < p.baseline.end && p.baseline.start < p.day.end;
+        if overlaps {
+            bail!(
+                "scenario_pool '{}': day window ({} – {}) overlaps with baseline ({} – {}); \
+                 they must be disjoint to keep train and held-out data separate",
+                p.label,
+                p.day.start,
+                p.day.end,
+                p.baseline.start,
+                p.baseline.end,
+            );
+        }
+    }
+
+    Ok(())
+}
+
 impl AutoOptimizerConfig {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("reading autooptimizer config at {}", path.display()))?;
-        toml::from_str(&raw).with_context(|| format!("parsing autooptimizer config at {}", path.display()))
+        // U1/U15: embed the toml deserialization error text (field path +
+        // line/col) DIRECTLY in the returned error message. `with_context`
+        // alone would only surface in the error *chain*, which the CLI prints
+        // as `{e}` (outermost frame only) — so the operator saw
+        // "parsing autooptimizer config at <path>" with no field-level signal.
+        // Inlining `{e}` here guarantees the offending field is visible no
+        // matter how the caller formats the error.
+        toml::from_str(&raw).map_err(|e| {
+            anyhow::anyhow!("parsing autooptimizer config at {}: {e}", path.display())
+        })
     }
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
@@ -422,6 +546,8 @@ impl AutoOptimizerConfig {
         // Fix 3: validate regime_set so duplicate/overlapping windows are caught
         // at config-load time, before any cycle is launched.
         validate_regime_set(&self.regime_set)?;
+        // B19: same structural validation for the round-robin scenario_pool.
+        validate_scenario_pool(&self.scenario_pool)?;
         Ok(())
     }
 }
@@ -663,5 +789,219 @@ mod tests {
         assert_eq!(cfg2.regime_set.len(), 1);
         assert_eq!(cfg2.regime_set[0].label, "bull");
         assert!(matches!(cfg2.regime_set[0].side, RegimeSide::Bull));
+    }
+
+    // ── B19: scenario_pool ────────────────────────────────────────────────
+
+    #[test]
+    fn scenario_pool_defaults_empty_and_parses_toml() {
+        // Absence of the key ⇒ empty vec (back-compat: existing autooptimizer.toml
+        // files keep the single-pair behavior).
+        let cfg = AutoOptimizerConfig::default();
+        assert!(
+            cfg.scenario_pool.is_empty(),
+            "scenario_pool must default empty (back-compat)"
+        );
+
+        // A config with two [[scenario_pool]] entries deserializes into a
+        // Vec<ScenarioWindowPair>.
+        let cfg2: AutoOptimizerConfig = toml::from_str(
+            r#"
+            min_improvement = 0.05
+
+            [day_window]
+            start = "2025-01-01"
+            end   = "2025-04-01"
+
+            [baseline_untouched_window]
+            start = "2025-04-01"
+            end   = "2025-05-01"
+
+            [mutator]
+            provider   = "test"
+            model      = "test-model"
+            max_retries = 2
+
+            [[scenario_pool]]
+            label = "q1-2024"
+            [scenario_pool.day]
+            start = "2024-01-01"
+            end   = "2024-03-01"
+            [scenario_pool.baseline]
+            start = "2024-03-01"
+            end   = "2024-04-01"
+
+            [[scenario_pool]]
+            label = "q3-2024"
+            [scenario_pool.day]
+            start = "2024-07-01"
+            end   = "2024-09-01"
+            [scenario_pool.baseline]
+            start = "2024-09-01"
+            end   = "2024-10-01"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(cfg2.scenario_pool.len(), 2);
+        assert_eq!(cfg2.scenario_pool[0].label, "q1-2024");
+        assert_eq!(cfg2.scenario_pool[1].label, "q3-2024");
+        assert_eq!(
+            cfg2.scenario_pool[0].day.start,
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        );
+        assert_eq!(
+            cfg2.scenario_pool[1].baseline.end,
+            NaiveDate::from_ymd_opt(2024, 10, 1).unwrap()
+        );
+        // The full config must also pass validation.
+        assert!(cfg2.validate().is_ok(), "two disjoint pairs must validate");
+    }
+
+    fn make_pair(
+        label: &str,
+        day_start: &str,
+        day_end: &str,
+        base_start: &str,
+        base_end: &str,
+    ) -> ScenarioWindowPair {
+        ScenarioWindowPair {
+            label: label.to_string(),
+            day: DayWindow {
+                start: day_start.parse().unwrap(),
+                end: day_end.parse().unwrap(),
+            },
+            baseline: BaselineUntouchedWindow {
+                start: base_start.parse().unwrap(),
+                end: base_end.parse().unwrap(),
+            },
+        }
+    }
+
+    #[test]
+    fn validate_scenario_pool_empty_is_ok() {
+        assert!(validate_scenario_pool(&[]).is_ok());
+    }
+
+    #[test]
+    fn validate_scenario_pool_unique_disjoint_is_ok() {
+        let pool = vec![
+            make_pair("a", "2024-01-01", "2024-03-01", "2024-03-01", "2024-04-01"),
+            make_pair("b", "2024-07-01", "2024-09-01", "2024-09-01", "2024-10-01"),
+        ];
+        assert!(validate_scenario_pool(&pool).is_ok());
+    }
+
+    #[test]
+    fn validate_scenario_pool_duplicate_label_is_err() {
+        let pool = vec![
+            make_pair("dup", "2024-01-01", "2024-03-01", "2024-03-01", "2024-04-01"),
+            make_pair("dup", "2024-07-01", "2024-09-01", "2024-09-01", "2024-10-01"),
+        ];
+        let err = validate_scenario_pool(&pool).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate scenario_pool label 'dup'"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_scenario_pool_overlap_is_err() {
+        // day 2024-01→2024-04 overlaps baseline 2024-03→2024-05 in March.
+        let pool = vec![make_pair(
+            "ovl",
+            "2024-01-01",
+            "2024-04-01",
+            "2024-03-01",
+            "2024-05-01",
+        )];
+        let err = validate_scenario_pool(&pool).unwrap_err();
+        assert!(err.to_string().contains("overlaps"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_scenario_pool_overlong_day_window_is_err() {
+        let pool = vec![make_pair(
+            "toolong",
+            "2024-01-01",
+            "2025-09-01",
+            "2025-09-01",
+            "2025-10-01",
+        )];
+        let err = validate_scenario_pool(&pool).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("toolong") && msg.contains("120"),
+            "message must name the pair label and the cap; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn from_path_error_embeds_offending_field_name() {
+        // U1/U15: a config with an unknown / mistyped field must surface the
+        // toml field path (and line) DIRECTLY in the returned error message —
+        // not only deep in the error chain — so an operator who runs
+        // `xvn optimize run` and the CLI prints `{e}` still sees which field is
+        // wrong. We assert on the embedded toml text, which names the field.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ar-config-test-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("autooptimizer.toml");
+        // `day_window.start` is a date field; a table value is a type error,
+        // and an unknown top-level key trips deny-unknown style messages — use
+        // a clearly-wrong scalar type for a known field so toml names it.
+        std::fs::write(
+            &path,
+            r#"
+min_improvement = "not-a-number"
+
+[day_window]
+start = "2025-01-01"
+end   = "2025-04-01"
+
+[baseline_untouched_window]
+start = "2025-04-01"
+end   = "2025-05-01"
+
+[mutator]
+provider    = "test"
+model       = "test-model"
+max_retries = 2
+"#,
+        )
+        .unwrap();
+
+        let err = AutoOptimizerConfig::from_path(&path).unwrap_err();
+        let msg = err.to_string();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            msg.contains("parsing autooptimizer config at"),
+            "message must name the config path; got: {msg}"
+        );
+        assert!(
+            msg.contains("min_improvement"),
+            "message must embed the offending field name from the toml error; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_config_runs_scenario_pool_validation() {
+        // An invalid pool must fail the top-level cfg.validate().
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.scenario_pool = vec![make_pair(
+            "ovl",
+            "2024-01-01",
+            "2024-04-01",
+            "2024-03-01",
+            "2024-05-01",
+        )];
+        assert!(
+            cfg.validate().is_err(),
+            "cfg.validate() must propagate scenario_pool validation errors"
+        );
     }
 }

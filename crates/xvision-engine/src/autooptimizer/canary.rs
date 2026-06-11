@@ -127,13 +127,21 @@ pub async fn run_honesty_check(
     // are labeled, so their by-design broker rejections are demoted to expected
     // honesty-check noise.
     let parent_day = paper_tester.run(base, day_scenario).await?;
-    let child_day = paper_tester
-        .run_canary(&sabotaged, day_scenario, variant_label)
-        .await?;
+    let child_day = neutralize_zero_trade_canary(
+        paper_tester
+            .run_canary(&sabotaged, day_scenario, variant_label)
+            .await?,
+        variant_label,
+        day_scenario.id.as_str(),
+    );
     let parent_untouched = paper_tester.run(base, baseline_scenario).await?;
-    let child_untouched = paper_tester
-        .run_canary(&sabotaged, baseline_scenario, variant_label)
-        .await?;
+    let child_untouched = neutralize_zero_trade_canary(
+        paper_tester
+            .run_canary(&sabotaged, baseline_scenario, variant_label)
+            .await?,
+        variant_label,
+        baseline_scenario.id.as_str(),
+    );
 
     let gate_in = gate_input_builder(&parent_day, &child_day, &parent_untouched, &child_untouched);
     let gate_verdict = evaluate(&gate_in);
@@ -161,6 +169,44 @@ pub async fn run_honesty_check(
         sabotage_variant: variant_label.to_string(),
         message,
     })
+}
+
+/// B28: map a zero-trade canary (sabotage) backtest to a NEUTRAL
+/// (no-improvement) [`MetricsSummary`] the gate will reject.
+///
+/// A deliberately-sabotaged strategy frequently completes **zero trades** — the
+/// `kill-trades` variant zero-sizes every order, so every order is rejected by
+/// broker-rule validation and no fill is recorded. Such a run still completes
+/// successfully (`RunStatus::Completed`) with `n_trades == 0` and all-zero
+/// metrics; it does NOT error and does NOT leave `metrics_json` NULL. We map
+/// that specific zero-trade case to an explicit neutral sentinel so the gate
+/// reliably rejects the sabotage and the honesty check PASSES — independent of
+/// objective (0.0 is the no-improvement sentinel for return / sharpe / win-rate).
+///
+/// **Narrow by design (B28 follow-up).** ONLY the zero-trade case is
+/// neutralised here. Genuine canary backtest errors (provider outage, panic,
+/// malformed scenario) are NOT swallowed — the caller `?`-propagates them so a
+/// real infrastructure fault fails the cycle loudly instead of being silently
+/// scored as a passed honesty check. This does not re-introduce the original
+/// stale-lock symptom: `run_cycle_cmd` releases the cycle lock unconditionally
+/// *before* propagating any `run_cycle` error (see
+/// `xvision-cli/.../optimize.rs`).
+fn neutralize_zero_trade_canary(
+    metrics: MetricsSummary,
+    variant_label: &str,
+    scenario_id: &str,
+) -> MetricsSummary {
+    if metrics.n_trades == 0 {
+        tracing::info!(
+            target: "xvision::autooptimizer",
+            sabotage_variant = variant_label,
+            scenario_id,
+            "honesty-check canary completed zero trades; scoring it as a neutral \
+             no-improvement result so the gate rejects it and the cycle completes (B28)"
+        );
+        return MetricsSummary::default();
+    }
+    metrics
 }
 
 fn apply_sabotage_kill_trades(s: &mut Strategy) {

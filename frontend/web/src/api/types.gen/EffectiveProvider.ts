@@ -24,7 +24,15 @@ kind: string, base_url: string,
 /**
  * Env var holding the API key. Empty string for no-auth endpoints.
  */
-api_key_env: string, 
+api_key_env: string,
+/**
+ * The env var the daemon reads this provider's key from BY CONVENTION
+ * (`default_api_key_env_for`), independent of whether the operator has
+ * overridden `api_key_env`. Surfaced so `provider list` / error messages
+ * can NAME the variable an operator must export when a key is missing
+ * (QA U8). Empty for no-auth local kinds.
+ */
+expected_api_key_env: string,
 /**
  * Whether the provider is enabled in the workspace config. Today this
  * is always `true` for every non-synthetic row — there is no separate

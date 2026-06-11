@@ -18,6 +18,7 @@ pub mod eval_runs;
 pub mod flywheel;
 pub mod focus;
 pub mod health;
+pub mod live_broker;
 pub mod marketplace;
 pub mod marketplace_read;
 pub mod memory;

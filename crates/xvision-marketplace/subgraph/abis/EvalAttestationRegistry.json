@@ -1,0 +1,13 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "listingId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "attester", "type": "address" },
+      { "indexed": false, "internalType": "bytes32", "name": "evalResultHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes32", "name": "schema", "type": "bytes32" }
+    ],
+    "name": "AttestationPosted",
+    "type": "event"
+  }
+]

@@ -160,6 +160,7 @@
 //  R68. GET  /api/marketplace/receipts/:tx_hash
 //  R69. GET  /api/marketplace/listings/:id/bundle
 //  R70. GET  /api/marketplace/listings/:id/attestations
+//  R71. GET  /api/live/venue-account     (live venue status snapshot)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -191,7 +192,8 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    live_broker as live_broker_route, marketplace as marketplace_route,
+    marketplace_read as marketplace_read_route, memory as memory_route,
     optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
     settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
     tools as tools_route,
@@ -225,6 +227,7 @@ fn readonly_router(state: AppState) -> Router {
             get(diagnostics_route::agent),
         )
         .route("/api/assets", get(assets_route::list))
+        .route("/api/live/venue-account", get(live_broker_route::venue_account))
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))
@@ -334,6 +337,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/lineage",
             get(autooptimizer_route::list_lineage),
         )
+        // Lineage-river chart: all lineage nodes joined with gate scores (read-only LEFT JOIN; spec §8.2).
+        .route(
+            "/api/autooptimizer/river",
+            get(autooptimizer_route::get_river),
+        )
         .route(
             "/api/autooptimizer/run-defaults",
             get(autooptimizer_cycle::run_defaults),
@@ -382,6 +390,11 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cost",
             get(autooptimizer_route::get_cycle_cost_handler),
+        )
+        // Replay source for the ConsoleModule: persisted event log of a completed cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/events",
+            get(autooptimizer_cycle::get_cycle_events),
         )
         // P3-W1: per-cycle aggregate statistics (kept/suspect/dropped/cost/cum_cost).
         // Registered before the /:id catch-all.

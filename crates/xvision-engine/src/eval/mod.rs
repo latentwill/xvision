@@ -64,6 +64,7 @@ pub use compare::{
 };
 pub use cost::{
     aggregate_eval_run_inference_cost, compute_token_cost_usd, compute_token_cost_usd_from_catalog,
+    provider_reports_zero_cost,
 };
 pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};

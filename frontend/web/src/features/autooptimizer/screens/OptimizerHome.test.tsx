@@ -5,14 +5,15 @@ import { renderWithProviders } from "../test-utils";
 import { OptimizerHome } from "./OptimizerHome";
 import * as apiModule from "../api";
 import * as cycleEventStreamModule from "../hooks/useCycleEventStream";
+import type { CycleRunSummary, StatsRow } from "../api";
 
-// ─── ScheduleStrip module mock — keep OptimizerHome tests focused ─────────────
-// ScheduleStrip has its own test file; here we just confirm it renders dynamically.
-vi.mock("../ui/ScheduleStrip", () => ({
-  ScheduleStrip: () => <div data-testid="schedule-strip-mock">schedule-strip</div>,
+// The launch panel has its own tests. Stub it so opening the launcher
+// doesn't pull the strategies network stack into this suite.
+vi.mock("../ui/LaunchPanel", () => ({
+  LaunchPanel: () => <div data-testid="launch-panel">launch-panel</div>,
 }));
 
-// Mock uPlot — charts render inside OptimizerHome after P3 additions
+// Mock uPlot — EdgeVsRandomChart renders inside the charts row.
 vi.mock("uplot", () => ({
   default: class {
     constructor() {}
@@ -42,337 +43,47 @@ afterEach(() => {
   });
 });
 
-// Default flywheel mock — disabled unless overridden per test
-const defaultFlywheelMock = () =>
-  vi.spyOn(apiModule, "useFlywheel").mockReturnValue({
-    data: { enabled: false },
-    isLoading: false,
-    isError: false,
-  } as unknown as ReturnType<typeof apiModule.useFlywheel>);
-
-// Default stats mock — empty rows
-const defaultStatsMock = () =>
-  vi.spyOn(apiModule, "useOptimizerStats").mockReturnValue({
-    data: [],
-    isLoading: false,
-    isError: false,
-  } as unknown as ReturnType<typeof apiModule.useOptimizerStats>);
-
-// Default cycle event stream mock — no active cycle
-const defaultCycleEventStreamMock = () =>
-  vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
-    events: [],
-    connected: false,
-    isRunning: false,
-    activeCycleId: null,
-  });
-
 afterEach(() => vi.restoreAllMocks());
 
-// Suppress EventSource errors in jsdom
-beforeEach(() => {
-  // @ts-expect-error jsdom EventSource stub
-  global.EventSource = vi.fn().mockImplementation(() => ({
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    close: vi.fn(),
-  }));
-  defaultFlywheelMock();
-  defaultStatsMock();
-  defaultCycleEventStreamMock();
-});
+// ─── React-query result helper ────────────────────────────────────────────────
 
-describe("OptimizerHome — status hero", () => {
-  it("shows Idle pill when status returns null active_session", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
-      active_session: null,
-      last_event_seq: 0,
-    });
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+const q = <T,>(data: T) =>
+  ({ data, isLoading: false, isError: false, isSuccess: true }) as never;
 
-    renderWithProviders(<OptimizerHome />);
-
-    expect(await screen.findByText("Idle")).toBeInTheDocument();
-    // Pause/Cancel must NOT be visible when idle
-    expect(screen.queryByRole("button", { name: /pause/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
-  });
-
-  it("shows Running pill and Pause + Cancel buttons when a session is active", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
-      active_session: {
-        session_id: "sess_01ABCDEFGHIJ",
-        strategy_id: "strat-xyz",
-        state: "running",
-        mode: "explore",
-        cycles_completed: 3,
-        kept_count: 1,
-        suspect_count: 0,
-        dropped_count: 2,
-      },
-      last_event_seq: 10,
-    });
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    // activeCycleId must be set for Pause/Cancel buttons to render
-    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
-      events: [],
-      connected: true,
-      isRunning: true,
-      activeCycleId: "cycle_RUNNING",
-    });
-
-    renderWithProviders(<OptimizerHome />);
-
-    expect(await screen.findByText("Running")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /pause/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
-  });
-
-  it("does not import or call deriveCycleState", () => {
-    // Static check: the module should not export deriveCycleState
-    // (it was removed from LiveCycleView and never exported from api.ts)
-    expect((apiModule as Record<string, unknown>).deriveCycleState).toBeUndefined();
-  });
-
-  it("renders recent runs list from useSessionList", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
-      active_session: null,
-      last_event_seq: 0,
-    });
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [
-        {
-          session_id: "sess_AAA",
-          strategy_id: "alpha-strategy",
-          state: "finished",
-          mode: "explore",
-          cycles_completed: 10,
-          kept_count: 4,
-          cost_usd: 0.12,
-          finished_at: new Date(Date.now() - 3600_000).toISOString(),
-        },
-        {
-          session_id: "sess_BBB",
-          strategy_id: "beta-strategy",
-          state: "failed",
-          mode: "exploit",
-          cycles_completed: 2,
-          kept_count: 0,
-        },
-      ],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-
-    const user = userEvent.setup();
-    renderWithProviders(<OptimizerHome />);
-
-    // History ledger defaults to the Cycles view; switch to Runs to see sessions.
-    const runsToggle = await screen.findByRole("button", { name: "Runs" });
-    await user.click(runsToggle);
-
-    expect(await screen.findByText("alpha-strategy")).toBeInTheDocument();
-    expect(screen.getByText("beta-strategy")).toBeInTheDocument();
-  });
-});
-
-describe("OptimizerHome — FlywheelStrip integration", () => {
-  const idleStatus = {
-    active_session: null,
-    last_event_seq: 0,
-  };
-
-  it("renders FlywheelStrip when useFlywheel returns enabled=true", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    vi.spyOn(apiModule, "useFlywheel").mockReturnValue({
-      data: {
-        enabled: true,
-        cohort_count: 5,
-        threshold: 20,
-        compiled_pattern_count: 1,
-        latest_optimization_run_id: "run_XYZ",
-        last_prompt_compile: null,
-      },
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useFlywheel>);
-
-    renderWithProviders(<OptimizerHome />);
-
-    expect(await screen.findByText(/Observations toward next prompt compile/i)).toBeInTheDocument();
-  });
-
-  it("renders the Zone 4 outcome strip from the active session counts", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-
-    renderWithProviders(<OptimizerHome />);
-
-    expect(await screen.findByText("Kept")).toBeInTheDocument();
-    expect(screen.getByText("Suspect")).toBeInTheDocument();
-    expect(screen.getByText("Dropped")).toBeInTheDocument();
-    // dropped_count = 2 in the running fixture
-    expect(screen.getByText("2")).toBeInTheDocument();
-  });
-
-  it("hides the outcome strip when there is no active session", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-
-    renderWithProviders(<OptimizerHome />);
-
-    await screen.findByText("Idle");
-    expect(screen.queryByText("Suspect")).toBeNull();
-  });
-
-  it("does not render FlywheelStrip when useFlywheel returns enabled=false", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    // useFlywheel already mocked to disabled in beforeEach
-
-    renderWithProviders(<OptimizerHome />);
-
-    // Give async rendering a tick
-    await screen.findByText("Idle");
-    expect(screen.queryByText(/Observations toward next prompt compile/i)).toBeNull();
-  });
-});
-
-describe("OptimizerHome — outcome mix toggle (P3-W3)", () => {
-  const idleStatus = {
-    active_session: null,
-    last_event_seq: 0,
-  };
-
-  function setupIdleMocks() {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-  }
-
-  it("renders the 'Show outcome mix' toggle button", async () => {
-    setupIdleMocks();
-    renderWithProviders(<OptimizerHome />);
-    expect(
-      await screen.findByRole("button", { name: /show outcome mix/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("OutcomeStackedChart is hidden by default", async () => {
-    setupIdleMocks();
-    renderWithProviders(<OptimizerHome />);
-    await screen.findByRole("button", { name: /show outcome mix/i });
-    // The stacked chart data-attribute should not be visible initially
-    const chart = document.querySelector("[data-chart='outcome-stacked']");
-    expect(chart).toBeNull();
-  });
-
-  it("clicking 'Show outcome mix' reveals OutcomeStackedChart", async () => {
-    setupIdleMocks();
-    const user = userEvent.setup();
-    renderWithProviders(<OptimizerHome />);
-    const btn = await screen.findByRole("button", { name: /show outcome mix/i });
-    await user.click(btn);
-    // After click the chart container should be present
-    expect(document.querySelector("[data-chart='outcome-stacked']")).toBeInTheDocument();
-  });
-
-  it("clicking toggle again hides OutcomeStackedChart", async () => {
-    setupIdleMocks();
-    const user = userEvent.setup();
-    renderWithProviders(<OptimizerHome />);
-    const btn = await screen.findByRole("button", { name: /show outcome mix/i });
-    await user.click(btn);
-    expect(document.querySelector("[data-chart='outcome-stacked']")).toBeInTheDocument();
-    await user.click(btn);
-    expect(document.querySelector("[data-chart='outcome-stacked']")).toBeNull();
-  });
-});
-
-describe("OptimizerHome — ScheduleStrip integration (P5-W3)", () => {
-  function setupIdleMocks() {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
-      active_session: null,
-      last_event_seq: 0,
-    });
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-  }
-
-  it("renders ScheduleStrip (not hardcoded 'No scheduled run' string)", async () => {
-    setupIdleMocks();
-    renderWithProviders(<OptimizerHome />);
-    // The mock schedule-strip placeholder should be present
-    expect(await screen.findByTestId("schedule-strip-mock")).toBeInTheDocument();
-  });
-
-  it("does NOT contain a hardcoded 'No scheduled run' string in the DOM from OptimizerHome itself", async () => {
-    setupIdleMocks();
-    renderWithProviders(<OptimizerHome />);
-    await screen.findByTestId("schedule-strip-mock");
-    // The literal hardcoded string must NOT appear outside the ScheduleStrip component
-    // (the mock replaces ScheduleStrip, so anything with this text would be hardcoded)
-    expect(screen.queryByText("No scheduled run · Set one")).toBeNull();
-  });
-});
-
-// ─── Helpers shared across new tests ─────────────────────────────────────────
-
-function mockMutations() {
-  const pauseMutateMock = vi.fn();
-  const resumeMutateMock = vi.fn();
-  const cancelMutateMock = vi.fn();
-
-  vi.spyOn(apiModule, "usePauseCycle").mockReturnValue({
-    mutate: pauseMutateMock,
-    isPending: false,
-  } as unknown as ReturnType<typeof apiModule.usePauseCycle>);
-
-  vi.spyOn(apiModule, "useResumeCycle").mockReturnValue({
-    mutate: resumeMutateMock,
-    isPending: false,
-  } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
-
-  vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
-    mutate: cancelMutateMock,
-    isPending: false,
-  } as unknown as ReturnType<typeof apiModule.useCancelSession>);
-
-  return { pauseMutateMock, resumeMutateMock, cancelMutateMock };
-}
+// ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const ACTIVE_CYCLE_ID = "cycle_ABCDEFGH";
+
+const HOURS_3_AGO = new Date(Date.now() - 3 * 3600_000).toISOString();
+const HOURS_2_AGO = new Date(Date.now() - 2 * 3600_000).toISOString();
+
+const lastCycle: CycleRunSummary = {
+  cycle_id: "c-77",
+  node_count: 14,
+  active_count: 2,
+  rejected_count: 12,
+  first_created_at: HOURS_3_AGO,
+  last_created_at: HOURS_3_AGO,
+  cost_usd: 4.5,
+  input_tokens: 30_000_000,
+  output_tokens: 1_800_000,
+};
+
+const statsRows: StatsRow[] = [
+  {
+    cycle_id: "c-77",
+    session_id: "s-1",
+    ts: HOURS_2_AGO,
+    kept: 2,
+    suspect: 0,
+    dropped: 12,
+    best_delta_holdout: 0.21,
+    cost_usd: 4.5,
+    cum_cost_usd: 4.5,
+  },
+];
+
+const idleStatus = { active_session: null, last_event_seq: 0 };
 
 const runningSessionStatus = {
   active_session: {
@@ -389,245 +100,294 @@ const runningSessionStatus = {
 };
 
 const pausedSessionStatus = {
-  active_session: {
-    session_id: "sess_01ABCDEFGHIJ",
-    strategy_id: "strat-xyz",
-    state: "paused",
-    mode: "explore",
-    cycles_completed: 3,
-    kept_count: 1,
-    suspect_count: 0,
-    dropped_count: 2,
-  },
+  active_session: { ...runningSessionStatus.active_session, state: "paused" },
   last_event_seq: 10,
 };
 
-describe("OptimizerHome — LiveCycleView removed (Level-2 IA fix)", () => {
-  function setupRunning() {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
-      events: [],
-      connected: true,
-      isRunning: true,
-      activeCycleId: ACTIVE_CYCLE_ID,
-    });
-    return mockMutations();
-  }
+// ─── Default mocks ────────────────────────────────────────────────────────────
 
-  function setupPaused() {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(pausedSessionStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
+function mockMutations() {
+  const pauseMutateMock = vi.fn();
+  const resumeMutateMock = vi.fn();
+  const cancelMutateMock = vi.fn();
+  vi.spyOn(apiModule, "usePauseCycle").mockReturnValue({
+    mutate: pauseMutateMock,
+    isPending: false,
+  } as unknown as ReturnType<typeof apiModule.usePauseCycle>);
+  vi.spyOn(apiModule, "useResumeCycle").mockReturnValue({
+    mutate: resumeMutateMock,
+    isPending: false,
+  } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
+  vi.spyOn(apiModule, "useCancelCycle").mockReturnValue({
+    mutate: cancelMutateMock,
+    isPending: false,
+  } as unknown as ReturnType<typeof apiModule.useCancelCycle>);
+  return { pauseMutateMock, resumeMutateMock, cancelMutateMock };
+}
+
+beforeEach(() => {
+  // @ts-expect-error jsdom EventSource stub
+  global.EventSource = vi.fn().mockImplementation(() => ({
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    close: vi.fn(),
+  }));
+  vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(idleStatus);
+  vi.spyOn(apiModule, "useOptimizerStats").mockReturnValue(q([]));
+  vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([]));
+  vi.spyOn(apiModule, "useCycleRun").mockReturnValue(q(undefined));
+  vi.spyOn(apiModule, "useCycleEvents").mockReturnValue(q([]));
+  vi.spyOn(apiModule, "useLineageNodes").mockReturnValue(q([]));
+  vi.spyOn(apiModule, "useSchedule").mockReturnValue(q(null));
+  vi.spyOn(apiModule, "useRiver").mockReturnValue(q([]));
+  vi.spyOn(apiModule, "useLadder").mockReturnValue(q([]));
+  vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+    events: [],
+    connected: false,
+    isRunning: false,
+    activeCycleId: null,
+  });
+});
+
+function setupIdleWithHistory() {
+  vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([lastCycle]));
+  vi.spyOn(apiModule, "useOptimizerStats").mockReturnValue(q(statsRows));
+  return mockMutations();
+}
+
+function setupRunning() {
+  vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
+  vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([lastCycle]));
+  vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+    events: [],
+    connected: true,
+    isRunning: true,
+    activeCycleId: ACTIVE_CYCLE_ID,
+  });
+  return mockMutations();
+}
+
+function setupPaused() {
+  vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(pausedSessionStatus);
+  vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([lastCycle]));
+  vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
+    events: [],
+    connected: true,
+    isRunning: false,
+    activeCycleId: ACTIVE_CYCLE_ID,
+  });
+  return mockMutations();
+}
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe("OptimizerHome — idle with history", () => {
+  it("renders the editorial headline, Launch action, console replay, charts, writers and history", async () => {
+    setupIdleWithHistory();
+    renderWithProviders(<OptimizerHome />);
+
+    // Editorial headline
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /Last ran .* — kept 2 of 14 experiments/ }),
+    ).toBeInTheDocument();
+    // Contextual action
+    expect(screen.getByRole("button", { name: /launch run/i })).toBeInTheDocument();
+    // Console module replay label
+    expect(screen.getByText(/Last cycle/)).toBeInTheDocument();
+    // Charts row: river section label (LineageRiver renders its own)
+    expect(screen.getByText(/Lineage · Sharpe over generations/)).toBeInTheDocument();
+    // Writers panel
+    expect(screen.getByText("Experiment writers")).toBeInTheDocument();
+    // Cycle history table
+    expect(screen.getByRole("link", { name: "c-77" })).toBeInTheDocument();
+    // No "waiting for…" state, ever
+    expect(screen.queryByText(/waiting for/i)).toBeNull();
+  });
+
+  it("clicking Launch run toggles the inline launch panel", async () => {
+    setupIdleWithHistory();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+    expect(screen.queryByTestId("launch-panel")).toBeNull();
+    await user.click(await screen.findByRole("button", { name: /launch run/i }));
+    expect(screen.getByTestId("launch-panel")).toBeInTheDocument();
+  });
+
+  it("renders the weekly digest with tokens and the freshness stamp", async () => {
+    setupIdleWithHistory();
+    renderWithProviders(<OptimizerHome />);
+    expect(await screen.findByText("14 experiments")).toBeInTheDocument();
+    expect(screen.getByText(/2 kept/)).toBeInTheDocument();
+    expect(screen.getByText(/31\.8M tokens/)).toBeInTheDocument();
+    expect(screen.getByText(/\$4\.50 spend/)).toBeInTheDocument();
+    // Honesty chip: freshness stamp from the newest StatsRow ts
+    expect(screen.getByText(/as of 2h ago/)).toBeInTheDocument();
+  });
+
+  it("charts-row section header carries sample sizes (attempts + cycles)", async () => {
+    setupIdleWithHistory();
+    renderWithProviders(<OptimizerHome />);
+    expect(await screen.findByText(/14 attempts/)).toBeInTheDocument();
+    expect(screen.getByText(/1 cycle\b/)).toBeInTheDocument();
+  });
+});
+
+describe("OptimizerHome — running", () => {
+  it("shows the running headline with Pause + Cancel and no Launch", async () => {
+    const { pauseMutateMock, cancelMutateMock } = setupRunning();
+    const user = userEvent.setup();
+    renderWithProviders(<OptimizerHome />);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /A run is in progress\./ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /launch run/i })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /pause/i }));
+    expect(pauseMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
+    // Cancel targets the MOUNTED cycle-level route (POST /cycles/:id/cancel),
+    // not the unmounted /sessions/:id/cancel surface.
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(cancelMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
+
+    expect(screen.queryByText(/waiting for/i)).toBeNull();
+  });
+
+  it("Pause/Cancel still work after a page reload mid-run (empty stream buffer, cycle id from status)", async () => {
+    // After a reload the SSE buffer is empty — activeCycleId from the stream
+    // is null. StatusResponse.active_cycle_id is the fallback target.
+    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
+      ...runningSessionStatus,
+      active_cycle_id: "cycle_FROMSTATUS",
+    });
+    vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([lastCycle]));
     vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
       events: [],
       connected: true,
       isRunning: false,
-      activeCycleId: ACTIVE_CYCLE_ID,
+      activeCycleId: null,
     });
-    return mockMutations();
-  }
-
-  it("does NOT render 'Live · cycle in progress' text at any time", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
-      active_session: null,
-      last_event_seq: 0,
-    });
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    mockMutations();
-
-    renderWithProviders(<OptimizerHome />);
-    await screen.findByText("Idle");
-
-    expect(screen.queryByText(/Live · cycle in progress/i)).toBeNull();
-  });
-
-  it("does NOT render LiveCycleView content when optimizer is running (no 'Live' heading)", async () => {
-    setupRunning();
-    renderWithProviders(<OptimizerHome />);
-    await screen.findByText("Running");
-    // LiveCycleView's "Live" / "Waiting for connection…" header must not appear when active
-    expect(screen.queryByText(/^Live$/i)).toBeNull();
-    expect(screen.queryByText(/Waiting for connection/i)).toBeNull();
-  });
-
-  it("shows 'Watch live →' link when optimizer is running", async () => {
-    setupRunning();
-    renderWithProviders(<OptimizerHome />);
-    const link = await screen.findByRole("link", { name: /watch live/i });
-    expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute("href", "/optimizer/run/sess_01ABCDEFGHIJ");
-  });
-
-  it("shows 'Watch live →' link when optimizer is paused", async () => {
-    setupPaused();
-    renderWithProviders(<OptimizerHome />);
-    const link = await screen.findByRole("link", { name: /watch live/i });
-    expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute("href", "/optimizer/run/sess_01ABCDEFGHIJ");
-  });
-
-  it("shows 'Watch live →' link when optimizer is cancelling", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
-      active_session: {
-        session_id: "sess_01ABCDEFGHIJ",
-        strategy_id: "strat-xyz",
-        state: "cancelling",
-        mode: "explore",
-        cycles_completed: 3,
-        kept_count: 1,
-        suspect_count: 0,
-        dropped_count: 2,
-      },
-      last_event_seq: 10,
-    });
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    mockMutations();
-
-    renderWithProviders(<OptimizerHome />);
-    const link = await screen.findByRole("link", { name: /watch live/i });
-    expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute("href", "/optimizer/run/sess_01ABCDEFGHIJ");
-  });
-
-  it("hides Pause and Cancel action buttons when state is cancelling", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue({
-      active_session: {
-        session_id: "sess_01ABCDEFGHIJ",
-        strategy_id: "strat-xyz",
-        state: "cancelling",
-        mode: "explore",
-        cycles_completed: 3,
-        kept_count: 1,
-        suspect_count: 0,
-        dropped_count: 2,
-      },
-      last_event_seq: 10,
-    });
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    mockMutations();
-
-    renderWithProviders(<OptimizerHome />);
-    await screen.findByText("Cancelling");
-    expect(screen.queryByRole("button", { name: /pause/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
-  });
-
-  it("Pause button calls usePauseCycle mutate with cycleId when running", async () => {
-    const { pauseMutateMock } = setupRunning();
+    const { pauseMutateMock, cancelMutateMock } = mockMutations();
     const user = userEvent.setup();
     renderWithProviders(<OptimizerHome />);
-    const pauseBtn = await screen.findByRole("button", { name: /pause/i });
-    await user.click(pauseBtn);
-    expect(pauseMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
-  });
 
-  it("Cancel button calls useCancelSession mutate with sessionId when running", async () => {
-    const { cancelMutateMock } = setupRunning();
+    await screen.findByRole("heading", { level: 1, name: /A run is in progress\./ });
+    await user.click(screen.getByRole("button", { name: /pause/i }));
+    expect(pauseMutateMock).toHaveBeenCalledWith("cycle_FROMSTATUS");
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(cancelMutateMock).toHaveBeenCalledWith("cycle_FROMSTATUS");
+  });
+});
+
+describe("OptimizerHome — paused", () => {
+  it("shows the paused headline with Resume + Cancel and no Launch", async () => {
+    const { resumeMutateMock, cancelMutateMock } = setupPaused();
     const user = userEvent.setup();
     renderWithProviders(<OptimizerHome />);
-    const cancelBtn = await screen.findByRole("button", { name: /cancel/i });
-    await user.click(cancelBtn);
-    expect(cancelMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
-  });
 
-  it("Resume button calls useResumeCycle mutate with cycleId when paused", async () => {
-    const { resumeMutateMock } = setupPaused();
-    const user = userEvent.setup();
-    renderWithProviders(<OptimizerHome />);
-    const resumeBtn = await screen.findByRole("button", { name: /resume/i });
-    await user.click(resumeBtn);
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /A run is paused\./ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /launch run/i })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /resume/i }));
     expect(resumeMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
-  });
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(cancelMutateMock).toHaveBeenCalledWith(ACTIVE_CYCLE_ID);
 
-  it("Cancel button calls useCancelSession mutate with sessionId when paused", async () => {
-    const { cancelMutateMock } = setupPaused();
-    const user = userEvent.setup();
+    expect(screen.queryByText(/waiting for/i)).toBeNull();
+  });
+});
+
+describe("OptimizerHome — ?session= scoping", () => {
+  it("passes session_id to useOptimizerStats and shows a clearable scope chip", async () => {
+    const statsSpy = vi
+      .spyOn(apiModule, "useOptimizerStats")
+      .mockReturnValue(q(statsRows));
+    vi.spyOn(apiModule, "useCycleRuns").mockReturnValue(q([lastCycle]));
+    mockMutations();
+
+    renderWithProviders(<OptimizerHome />, { route: "/optimizer?session=sess-1" });
+
+    expect(await screen.findByText(/Session sess-1/)).toBeInTheDocument();
+    expect(statsSpy).toHaveBeenCalledWith({ session_id: "sess-1" });
+    const clear = screen.getByRole("link", { name: /clear session filter/i });
+    expect(clear).toHaveAttribute("href", "/optimizer");
+    expect(screen.queryByText(/waiting for/i)).toBeNull();
+  });
+});
+
+describe("OptimizerHome — never ran", () => {
+  it("shows the never-ran headline and the four-phase explainer", async () => {
+    mockMutations();
     renderWithProviders(<OptimizerHome />);
-    const cancelBtn = await screen.findByRole("button", { name: /cancel/i });
-    await user.click(cancelBtn);
-    expect(cancelMutateMock).toHaveBeenCalledWith("sess_01ABCDEFGHIJ");
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: /The optimizer hasn't run yet\./,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Each cycle runs four phases/)).toBeInTheDocument();
+    expect(screen.getByText("Propose")).toBeInTheDocument();
+    expect(screen.getByText("Keep")).toBeInTheDocument();
+    expect(screen.queryByText(/waiting for/i)).toBeNull();
   });
 
-  it("Pause button is disabled while pauseMutation.isPending", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
-      events: [],
-      connected: true,
-      isRunning: true,
-      activeCycleId: ACTIVE_CYCLE_ID,
+  it("(M-5) renders exactly one Launch run button — ConsoleModule is the sole owner in never-ran state", async () => {
+    mockMutations();
+    renderWithProviders(<OptimizerHome />);
+
+    await screen.findByRole("heading", {
+      level: 1,
+      name: /The optimizer hasn't run yet\./,
     });
-    vi.spyOn(apiModule, "usePauseCycle").mockReturnValue({
-      mutate: vi.fn(),
-      isPending: true,
-    } as unknown as ReturnType<typeof apiModule.usePauseCycle>);
-    vi.spyOn(apiModule, "useResumeCycle").mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-    } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
-    vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-    } as unknown as ReturnType<typeof apiModule.useCancelSession>);
+    expect(screen.getAllByRole("button", { name: /launch run/i })).toHaveLength(1);
+  });
+});
 
+describe("OptimizerHome — schedule subtitle", () => {
+  it("idle with an enabled schedule shows 'next run <relative time>'", async () => {
+    setupIdleWithHistory();
+    vi.spyOn(apiModule, "useSchedule").mockReturnValue(
+      q({
+        id: 1,
+        enabled: true,
+        time_local: "21:00",
+        strategy_id: "strat-xyz",
+        last_run_at: null,
+        next_run_at: new Date(Date.now() + 5 * 3600_000).toISOString(),
+      }),
+    );
     renderWithProviders(<OptimizerHome />);
-    const pauseBtn = await screen.findByRole("button", { name: /pause/i });
-    expect(pauseBtn).toBeDisabled();
+    expect(await screen.findByText(/next run in 5h/i)).toBeInTheDocument();
   });
 
-  it("Cancel button is disabled while cancelMutation.isPending", async () => {
-    vi.spyOn(apiModule, "useOptimizerStatus").mockReturnValue(runningSessionStatus);
-    vi.spyOn(apiModule, "useSessionList").mockReturnValue({
-      data: [],
-      isLoading: false,
-      isError: false,
-    } as unknown as ReturnType<typeof apiModule.useSessionList>);
-    vi.spyOn(cycleEventStreamModule, "useCycleEventStream").mockReturnValue({
-      events: [],
-      connected: true,
-      isRunning: true,
-      activeCycleId: ACTIVE_CYCLE_ID,
-    });
-    vi.spyOn(apiModule, "usePauseCycle").mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-    } as unknown as ReturnType<typeof apiModule.usePauseCycle>);
-    vi.spyOn(apiModule, "useResumeCycle").mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-    } as unknown as ReturnType<typeof apiModule.useResumeCycle>);
-    vi.spyOn(apiModule, "useCancelSession").mockReturnValue({
-      mutate: vi.fn(),
-      isPending: true,
-    } as unknown as ReturnType<typeof apiModule.useCancelSession>);
-
+  it("does not show 'next run' when the schedule is disabled", async () => {
+    setupIdleWithHistory();
+    vi.spyOn(apiModule, "useSchedule").mockReturnValue(
+      q({
+        id: 1,
+        enabled: false,
+        time_local: "21:00",
+        strategy_id: "strat-xyz",
+        last_run_at: null,
+        next_run_at: new Date(Date.now() + 5 * 3600_000).toISOString(),
+      }),
+    );
     renderWithProviders(<OptimizerHome />);
-    const cancelBtn = await screen.findByRole("button", { name: /cancel/i });
-    expect(cancelBtn).toBeDisabled();
+    await screen.findByRole("heading", { level: 1, name: /Last ran/ });
+    expect(screen.queryByText(/next run/i)).toBeNull();
+  });
+});
+
+describe("OptimizerHome — dropped surfaces", () => {
+  it("renders no flywheel / schedule strips or phase-stepper project labels", async () => {
+    setupIdleWithHistory();
+    renderWithProviders(<OptimizerHome />);
+    await screen.findByRole("heading", { level: 1, name: /Last ran/ });
+    expect(screen.queryByText(/Observations toward next prompt compile/i)).toBeNull();
+    expect(screen.queryByText(/No scheduled run/i)).toBeNull();
+    expect(screen.queryByText(/Show outcome mix/i)).toBeNull();
   });
 });

@@ -912,6 +912,7 @@ mod tests {
             paused: false,
             paused_at: None,
             flatten_requested: false,
+            live_config: None,
         }
     }
 

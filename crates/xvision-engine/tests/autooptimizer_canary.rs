@@ -7,7 +7,7 @@ use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmRespo
 use xvision_engine::autooptimizer::canary::{build_sabotaged_strategy, run_honesty_check};
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::eval_adapter::PaperTestRunner;
-use xvision_engine::autooptimizer::gate::{GateInput, GateVerdict};
+use xvision_engine::autooptimizer::gate::{GateInput, GateVerdict, Objective};
 use xvision_engine::autooptimizer::mutator::Mutator;
 use xvision_engine::eval::{
     AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
@@ -138,6 +138,10 @@ impl PaperTestRunner for ConstMetricsTester {
     async fn run(&self, _strategy: &Strategy, _scenario: &Scenario) -> anyhow::Result<MetricsSummary> {
         Ok(MetricsSummary {
             sharpe: self.sharpe,
+            // A run with a non-zero sharpe must have actually traded; keep
+            // n_trades > 0 so the B28 zero-trade neutralization does not apply
+            // and these metrics reach the gate verbatim.
+            n_trades: 5,
             ..MetricsSummary::default()
         })
     }
@@ -157,6 +161,164 @@ fn gate_builder(
         min_improvement: 0.1,
         objective: Default::default(),
     }
+}
+
+/// B28 regression scaffolding: a tester whose legitimate (parent) runs succeed
+/// with real metrics, and whose CANARY runs complete with ZERO trades — exactly
+/// what a `kill-trades` sabotage produces in production. Every order is $0
+/// notional → rejected by broker-rule validation → no fill, but the backtest
+/// still COMPLETES (`RunStatus::Completed`) with `n_trades == 0` and all-zero
+/// metrics. It does NOT error and does NOT leave `metrics_json` NULL.
+struct ZeroTradeCanaryTester {
+    parent_total_return: f64,
+}
+
+#[async_trait]
+impl PaperTestRunner for ZeroTradeCanaryTester {
+    async fn run(&self, _strategy: &Strategy, _scenario: &Scenario) -> anyhow::Result<MetricsSummary> {
+        Ok(MetricsSummary {
+            total_return_pct: self.parent_total_return,
+            sharpe: self.parent_total_return,
+            n_trades: 7,
+            ..MetricsSummary::default()
+        })
+    }
+
+    async fn run_canary(
+        &self,
+        _strategy: &Strategy,
+        _scenario: &Scenario,
+        _sabotage_variant: &str,
+    ) -> anyhow::Result<MetricsSummary> {
+        // Real zero-trade canary: the run completes successfully with no fills.
+        Ok(MetricsSummary {
+            n_trades: 0,
+            ..MetricsSummary::default()
+        })
+    }
+}
+
+/// B28 (narrowed): a tester whose CANARY run hits a GENUINE backtest error —
+/// NOT a zero-trade completion. The neutral fallback is zero-trade-only, so this
+/// must PROPAGATE rather than be masked as a passed honesty check.
+struct ErroringCanaryTester {
+    parent_total_return: f64,
+}
+
+#[async_trait]
+impl PaperTestRunner for ErroringCanaryTester {
+    async fn run(&self, _strategy: &Strategy, _scenario: &Scenario) -> anyhow::Result<MetricsSummary> {
+        Ok(MetricsSummary {
+            total_return_pct: self.parent_total_return,
+            sharpe: self.parent_total_return,
+            n_trades: 7,
+            ..MetricsSummary::default()
+        })
+    }
+
+    async fn run_canary(
+        &self,
+        _strategy: &Strategy,
+        _scenario: &Scenario,
+        _sabotage_variant: &str,
+    ) -> anyhow::Result<MetricsSummary> {
+        anyhow::bail!("provider_outage: 503 from inference endpoint (genuine fault, not zero-trade)")
+    }
+}
+
+fn gate_builder_total_return(
+    parent_day: &MetricsSummary,
+    child_day: &MetricsSummary,
+    parent_untouched: &MetricsSummary,
+    child_untouched: &MetricsSummary,
+) -> GateInput {
+    GateInput {
+        parent_day_metrics: parent_day.clone(),
+        child_day_metrics: child_day.clone(),
+        parent_untouched_metrics: parent_untouched.clone(),
+        child_untouched_metrics: child_untouched.clone(),
+        min_improvement: 0.1,
+        objective: Objective::TotalReturn,
+    }
+}
+
+/// B28: a zero-trade sabotage canary under `--objective total_return` must NOT
+/// take down the cycle. The canary completes with `n_trades == 0`; it is scored
+/// as a neutral (no-improvement) sentinel so the gate correctly rejects it and
+/// the honesty check PASSES and completes (the completion record is written and
+/// the cycle lock is released normally).
+#[tokio::test]
+async fn run_honesty_check_total_return_zero_trade_canary_passes() {
+    let base = make_strategy();
+    let mutator = make_mutator();
+    let scenario = make_scenario();
+    let config = AutoOptimizerConfig::default();
+    // Parent legitimately makes a positive total_return; canary trades zero.
+    let tester = ZeroTradeCanaryTester {
+        parent_total_return: 5.0,
+    };
+
+    let result = run_honesty_check(
+        &base,
+        &mutator,
+        &tester,
+        gate_builder_total_return,
+        &scenario,
+        &scenario,
+        &config,
+        0, // seed 0 → kill-trades (zeroed position sizing → zero trades)
+    )
+    .await
+    .expect("zero-trade canary must NOT error out the honesty check (B28)");
+
+    assert!(
+        result.passed_check,
+        "honesty check must PASS: a zero-trade sabotage must be rejected, not look good"
+    );
+    assert!(
+        matches!(result.gate_verdict, GateVerdict::Fail { .. }),
+        "gate verdict must reject the neutral-scored sabotage canary"
+    );
+    assert_eq!(result.sabotage_variant, "kill-trades");
+}
+
+/// B28 (narrowed): the neutral fallback is zero-trade-ONLY. A GENUINE canary
+/// backtest error (provider outage, panic, malformed scenario) must PROPAGATE
+/// out of `run_honesty_check` rather than be silently scored as a passed honesty
+/// check. Masking real faults as "honesty check passed" would hide broken
+/// infrastructure; the cycle lock is still released because `run_cycle_cmd`
+/// releases it unconditionally before propagating the error.
+#[tokio::test]
+async fn run_honesty_check_propagates_genuine_canary_error() {
+    let base = make_strategy();
+    let mutator = make_mutator();
+    let scenario = make_scenario();
+    let config = AutoOptimizerConfig::default();
+    let tester = ErroringCanaryTester {
+        parent_total_return: 5.0,
+    };
+
+    let result = run_honesty_check(
+        &base,
+        &mutator,
+        &tester,
+        gate_builder_total_return,
+        &scenario,
+        &scenario,
+        &config,
+        0,
+    )
+    .await;
+
+    assert!(
+        result.is_err(),
+        "a genuine canary error must propagate, not be masked as a passed honesty check"
+    );
+    let msg = format!("{:#}", result.unwrap_err());
+    assert!(
+        msg.contains("provider_outage"),
+        "propagated error should be the genuine fault; got: {msg}"
+    );
 }
 
 #[test]

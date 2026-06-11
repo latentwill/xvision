@@ -1,7 +1,27 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
+import { renderHook, waitFor } from "@testing-library/react";
+import { createElement, type ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
 
-import { formatGateVerdict, getCycleRun, listLineageNodes, type CycleRunDetail } from "./api";
+import {
+  formatGateVerdict,
+  getCycleRun,
+  listLineageNodes,
+  useCycleEvents,
+  useRiver,
+  type CycleRunDetail,
+} from "./api";
 import * as client from "@/api/client";
+import { makeClient } from "./test-utils";
+
+// ─── Hook test helpers ────────────────────────────────────────────────────────
+
+function makeWrapper() {
+  const queryClient = makeClient();
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children);
+  };
+}
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -56,5 +76,64 @@ describe("formatGateVerdict", () => {
   it("never throws on an unexpected shape", () => {
     expect(() => formatGateVerdict(42 as unknown)).not.toThrow();
     expect(() => formatGateVerdict({ weird: true } as unknown)).not.toThrow();
+  });
+});
+
+// ─── useCycleEvents ───────────────────────────────────────────────────────────
+
+describe("useCycleEvents", () => {
+  it("fetches persisted events for a cycle", async () => {
+    const fixture = [
+      {
+        seq: 1,
+        session_id: "s",
+        cycle_id: "cyc-1",
+        kind: "cycle_started",
+        payload_json: "{}",
+        ts: "2026-06-11T00:00:00Z",
+      },
+    ];
+    const spy = vi.spyOn(client, "apiFetch").mockResolvedValue(fixture);
+    const wrapper = makeWrapper();
+    const { result } = renderHook(() => useCycleEvents("cyc-1"), { wrapper });
+    await waitFor(() => expect(result.current.data).toHaveLength(1));
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining("/api/autooptimizer/cycles/cyc-1/events"),
+    );
+  });
+
+  it("is disabled (idle) without a cycle id", () => {
+    const wrapper = makeWrapper();
+    const { result } = renderHook(() => useCycleEvents(null), { wrapper });
+    expect(result.current.fetchStatus).toBe("idle");
+  });
+});
+
+// ─── useRiver ────────────────────────────────────────────────────────────────
+
+describe("useRiver", () => {
+  it("fetches river nodes", async () => {
+    const fixture = [
+      {
+        bundle_hash: "h",
+        parent_hash: null,
+        cycle_id: "c",
+        status: "active",
+        created_at: "t",
+        child_day_score: 1.2,
+        delta_day: 0.1,
+      },
+    ];
+    vi.spyOn(client, "apiFetch").mockResolvedValue(fixture);
+    const wrapper = makeWrapper();
+    const { result } = renderHook(() => useRiver(), { wrapper });
+    await waitFor(() => expect(result.current.data?.[0].bundle_hash).toBe("h"));
+  });
+
+  it("surfaces isError without retry on older backends (404)", async () => {
+    vi.spyOn(client, "apiFetch").mockRejectedValue(new Error("404 Not Found"));
+    const wrapper = makeWrapper();
+    const { result } = renderHook(() => useRiver(), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
   });
 });

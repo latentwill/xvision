@@ -7,6 +7,10 @@ const SSE_EVENT_NAMES = [
   "mutation_proposed",
   "no_candidate",
   "mutation_gated",
+  // Three-way gate outcomes emitted by event_kind() in autooptimizer_labels.rs:
+  "mutation_gated_passed",
+  "mutation_gated_suspect",
+  "mutation_gated_dropped",
   "honesty_check_run",
   "judge_finding",
   "cycle_finished",

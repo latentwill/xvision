@@ -15,6 +15,12 @@ strategy id. Required author-facing fields are:
 - `timeframe`
 - `conditions`
 
+> **`asset_scope` MUST be a JSON array** (U10). Write `["BTC/USD"]`, not a bare
+> string `"BTC/USD"`. A bare string is rejected by the parser even though it
+> "reads" like a single symbol. The array form holds exactly one symbol in v1.
+> To see the canonical filter shape and accepted tokens from the CLI, run
+> `xvn strategy filter-catalog --json`.
+
 The runtime defaults are `status: "draft"`, `scan_cadence: "bar_close"`,
 `cooldown_bars: 0`, `max_wakeups_per_day: null`,
 `wake_when_in_position: "on_invalidation_or_target_only"`, and
@@ -34,6 +40,20 @@ position is open:
   true drives a trader-LLM call on every in-position bar. Opt-in only.
 - `never` — never wake while holding; exits rely entirely on the deterministic
   `risk.stop_loss_atr_multiple`.
+
+> **Gotcha — `on_invalidation_or_target_only` suppresses re-fires while in a
+> position (U11).** With the default `on_invalidation_or_target_only`, the
+> filter will **NOT re-fire while a position is open in that asset** (it wakes
+> only on a fresh trip of the condition tree). If your entry condition stays
+> true after the entry and you have no distinct exit signal, the trader is
+> never re-invoked to close — so a whole backtest can complete with only **1–2
+> decisions**. Use this default only when you also have a reliable exit signal
+> (a target/invalidation condition or `risk.stop_loss_atr_multiple`). When this
+> setting gates a would-be re-fire, the eval now emits a `filter_blocked` event
+> with `reason = position_open`, so a sparse-decision run is visible in the run
+> detail's filter events. If you need re-evaluation on every in-position bar,
+> set `wake_when_in_position: "always"` (expensive — one trader-LLM call per
+> in-position bar).
 
 Filters may also include optional LLM trigger metadata:
 

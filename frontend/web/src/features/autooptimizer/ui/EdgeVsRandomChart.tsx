@@ -22,6 +22,16 @@ export interface EdgeVsRandomChartProps {
   height?: number;
 }
 
+// Resolved token hex values (from styles/tokens.css — dark theme).
+// uPlot draws to canvas and cannot resolve CSS custom properties, so we
+// pass concrete hex values here. Update if tokens.css changes.
+const TOKEN_TEXT_3 = "#9aa3b2"; // --text-3
+const TOKEN_BORDER = "#2c313b"; // --border
+const TOKEN_GOLD = "#00e676"; // --gold
+
+const EXPLAINER =
+  "Each cycle's best experiment edge vs a random-baseline strategy — above 0 means the optimizer beats chance.";
+
 export function EdgeVsRandomChart({ rows, height = 140 }: EdgeVsRandomChartProps) {
   const hostRef = useRef<HTMLDivElement>(null);
 
@@ -50,15 +60,15 @@ export function EdgeVsRandomChart({ rows, height = 140 }: EdgeVsRandomChartProps
     legend: { show: false },
     axes: [
       {
-        stroke: "var(--text-3)",
-        ticks: { stroke: "var(--border)" },
-        grid: { stroke: "var(--border)" },
+        stroke: TOKEN_TEXT_3,
+        ticks: { stroke: TOKEN_BORDER },
+        grid: { stroke: TOKEN_BORDER },
         values: (_u, vals) => vals.map((v) => (v == null ? "" : `#${v + 1}`)),
       },
       {
-        stroke: "var(--text-3)",
-        ticks: { stroke: "var(--border)" },
-        grid: { stroke: "var(--border)" },
+        stroke: TOKEN_TEXT_3,
+        ticks: { stroke: TOKEN_BORDER },
+        grid: { stroke: TOKEN_BORDER },
         values: (_u, vals) => vals.map((v) => fmt(v as number | null)),
       },
     ],
@@ -67,9 +77,9 @@ export function EdgeVsRandomChart({ rows, height = 140 }: EdgeVsRandomChartProps
       {},
       {
         label: "Parent edge",
-        stroke: "var(--gold)",
+        stroke: TOKEN_GOLD,
         width: 2,
-        points: { show: true, size: 5, fill: "var(--gold)" },
+        points: { show: true, size: 5, fill: TOKEN_GOLD },
       },
       {
         label: "Candidate edge",
@@ -80,7 +90,7 @@ export function EdgeVsRandomChart({ rows, height = 140 }: EdgeVsRandomChartProps
       {
         // Random/noise floor.
         label: "Random",
-        stroke: "var(--text-3)",
+        stroke: TOKEN_TEXT_3,
         width: 1,
         dash: [4, 4],
         points: { show: false },
@@ -98,11 +108,23 @@ export function EdgeVsRandomChart({ rows, height = 140 }: EdgeVsRandomChartProps
 
   if (!hasData) {
     return (
-      <div className="flex items-center justify-center py-8 text-[12px] text-text-3">
-        Edge vs random appears once cycles run with a baseline
+      <div className="space-y-1 py-4">
+        <p className="text-[11px] text-text-3" data-testid="edge-vs-random-explainer">
+          {EXPLAINER}
+        </p>
+        <p className="text-[11px] text-text-4">
+          Appears once cycles run with a baseline.
+        </p>
       </div>
     );
   }
 
-  return <div data-chart="edge-vs-random" ref={hostRef} style={{ width: "100%" }} />;
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] text-text-3" data-testid="edge-vs-random-explainer">
+        {EXPLAINER}
+      </p>
+      <div data-chart="edge-vs-random" ref={hostRef} style={{ width: "100%" }} />
+    </div>
+  );
 }

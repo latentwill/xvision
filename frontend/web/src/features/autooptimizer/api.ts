@@ -56,7 +56,11 @@ export type DiversityEntry = {
   created_at: string;
 };
 
-/** SSE event from the /api/autooptimizer/events stream. */
+/** SSE event from the /api/autooptimizer/events stream.
+ *
+ * Wire shape (progress.rs) is serde-tagged with per-kind fields flattened at
+ * the top level (`passed`, `outcome`, `delta_day`, `parent_count`, …), so the
+ * type carries an open index signature beyond the shared base fields. */
 export type CycleProgressEvent = {
   event_type?: string;
   type?: string;
@@ -69,6 +73,7 @@ export type CycleProgressEvent = {
   ts?: string;
   payload?: Record<string, unknown> | null;
   data?: Record<string, unknown> | null;
+  [key: string]: unknown;
 };
 
 export type StartRunCycleRequest = {
@@ -163,11 +168,16 @@ export type CycleNodeDetail = LineageNode & {
   metrics_untouched?: RegimeMetrics | null;
   /** Per-regime evaluation results; empty for single-window cycles or pre-Phase-2 nodes. */
   regime_results: RegimeResult[];
+  /** Day-window Sharpe delta from the gate verdict. Null for nodes without a gate result. */
+  delta_day?: number | null;
 };
 
 /** One historic optimizer cycle (grouped from lineage) with F23 tokens + cost. */
 export type CycleRunSummary = {
   cycle_id: string;
+  /** The strategy (agent_id) this cycle optimized, resolved via the
+   *  events→session bridge. Absent for pre-bridge / sessionless CLI cycles. */
+  strategy_id?: string | null;
   node_count: number;
   active_count: number;
   /** Quarantined (Suspect) nodes — partial-pass across regimes. */
@@ -191,8 +201,19 @@ export type CycleRunDetail = CycleRunSummary & {
   } | null;
 };
 
-export async function listCycleRuns(): Promise<CycleRunSummary[]> {
-  return apiFetch<CycleRunSummary[]>("/api/autooptimizer/cycles");
+/** Pagination options for the historic-cycles list. The backend caps each
+ *  page server-side (default 50); the UI passes an explicit page size so the
+ *  history list never renders unbounded rows (UI3). */
+export type CycleRunsQuery = { limit?: number; offset?: number };
+
+export async function listCycleRuns(q?: CycleRunsQuery): Promise<CycleRunSummary[]> {
+  const params = new URLSearchParams();
+  if (q?.limit != null) params.set("limit", String(q.limit));
+  if (q?.offset != null) params.set("offset", String(q.offset));
+  const qs = params.toString();
+  return apiFetch<CycleRunSummary[]>(
+    qs ? `/api/autooptimizer/cycles?${qs}` : "/api/autooptimizer/cycles",
+  );
 }
 
 export async function getCycleRun(cycleId: string): Promise<CycleRunDetail> {
@@ -312,6 +333,17 @@ export function useResumeCycle() {
   });
 }
 
+/** useMutation hook: cancel the in-flight cycle (mounted cycle-level route),
+ *  then refresh status. Use this instead of `useCancelSession` — the
+ *  session-level `/sessions/:id/cancel` route is not mounted. */
+export function useCancelCycle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cycleId: string) => cancelRunCycle(cycleId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["optimizer/status"] }),
+  });
+}
+
 // ─── Session-level control mutations (P4) ────────────────────────────────────
 
 /** Pause a running optimizer session. */
@@ -376,6 +408,9 @@ export const autooptimizerKeys = {
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
   blob: (hash: string | null | undefined) =>
     [...autooptimizerKeys.all, "blob", hash ?? ""] as const,
+  cycleEvents: (cycleId: string | null | undefined) =>
+    [...autooptimizerKeys.all, "cycle-events", cycleId ?? ""] as const,
+  river: () => [...autooptimizerKeys.all, "river"] as const,
 };
 
 // ─── TanStack Query hooks ─────────────────────────────────────────────────────
@@ -388,11 +423,16 @@ export function useLineageNodes(q?: LineageQuery) {
   });
 }
 
-/** F23: historic cycles with per-cycle tokens + realized cost. */
-export function useCycleRuns() {
+/** F23: historic cycles with per-cycle tokens + realized cost.
+ *
+ * UI3: pass `{ limit }` to cap the page. The query key folds the params in so
+ * a different page size doesn't collide with the unscoped list cache. Calling
+ * with no args keeps the original (unscoped) key, so existing consumers and
+ * `invalidateQueries({ queryKey: autooptimizerKeys.cycles() })` still match. */
+export function useCycleRuns(q?: CycleRunsQuery) {
   return useQuery({
-    queryKey: autooptimizerKeys.cycles(),
-    queryFn: listCycleRuns,
+    queryKey: q ? [...autooptimizerKeys.cycles(), q] : autooptimizerKeys.cycles(),
+    queryFn: () => listCycleRuns(q),
     staleTime: 30_000,
   });
 }
@@ -784,6 +824,59 @@ export async function promoteStrategy(hash: string): Promise<{ strategy_id: stri
     `/api/optimizer/strategy/${encodeURIComponent(hash)}/promote`,
     { method: "POST" },
   );
+}
+
+// ─── useCycleEvents + useRiver (optimizer redesign — Task 3) ─────────────────
+
+/** A persisted optimizer cycle event row from the `/cycles/:id/events` endpoint. */
+export type PersistedCycleEvent = {
+  seq: number;
+  session_id: string;
+  cycle_id: string | null;
+  kind: string;
+  payload_json: string;
+  ts: string;
+};
+
+/** A lineage node enriched with gate scores for the lineage-river chart. */
+export type RiverNode = {
+  bundle_hash: string;
+  parent_hash: string | null;
+  cycle_id: string | null;
+  status: LineageStatus | string;
+  created_at: string;
+  child_day_score: number | null;
+  delta_day: number | null;
+};
+
+/**
+ * Fetch the persisted event log for a completed cycle (oldest-first).
+ * Enabled only when `cycleId` is non-null. Returns an empty array gracefully
+ * on backends that don't yet have the events table (fresh install).
+ */
+export function useCycleEvents(cycleId: string | null) {
+  return useQuery<PersistedCycleEvent[]>({
+    queryKey: autooptimizerKeys.cycleEvents(cycleId),
+    queryFn: () =>
+      apiFetch<PersistedCycleEvent[]>(`/api/autooptimizer/cycles/${cycleId}/events`),
+    enabled: !!cycleId,
+    staleTime: 60_000,
+    retry: false, // endpoint may not exist on older backends
+  });
+}
+
+/**
+ * Fetch all lineage nodes joined with their gate scores for the river chart.
+ * Refetches every 15 s when `opts.refetchIntervalWhileRunning` is true.
+ */
+export function useRiver(opts?: { refetchIntervalWhileRunning?: boolean }) {
+  return useQuery<RiverNode[]>({
+    queryKey: autooptimizerKeys.river(),
+    queryFn: () => apiFetch<RiverNode[]>("/api/autooptimizer/river"),
+    staleTime: 30_000,
+    refetchInterval: opts?.refetchIntervalWhileRunning ? 15_000 : false,
+    retry: false, // endpoint may not exist on older backends — consumers render their empty states
+  });
 }
 
 // ─── Operator label helpers ───────────────────────────────────────────────────

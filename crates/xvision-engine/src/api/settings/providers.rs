@@ -114,6 +114,13 @@ pub struct EffectiveProvider {
     pub base_url: String,
     /// Env var holding the API key. Empty string for no-auth endpoints.
     pub api_key_env: String,
+    /// The env var the daemon reads this provider's key from BY CONVENTION
+    /// (`default_api_key_env_for`), independent of whether the operator has
+    /// overridden `api_key_env`. Surfaced so `provider list` / error
+    /// messages can NAME the variable an operator must export when a key is
+    /// missing (QA U8). Empty for no-auth local kinds.
+    #[serde(default)]
+    pub expected_api_key_env: String,
     /// Whether the provider is enabled in the workspace config. Today this
     /// is always `true` for every non-synthetic row — there is no separate
     /// `enabled` toggle — but the field is surfaced so future toggles plug
@@ -1472,6 +1479,7 @@ fn effective_from_entry(entry: &ProviderEntry, secrets: &ProvidersSecretsFile) -
         kind: kind_to_str(entry.kind).into(),
         base_url: entry.base_url.clone(),
         api_key_env: entry.api_key_env.clone(),
+        expected_api_key_env: default_api_key_env_for(entry.kind, &entry.name),
         enabled,
         has_key,
         models,
@@ -1581,7 +1589,60 @@ fn write_default_llm(
 
 /// Conventional env var name for a (kind, name) tuple. Matches the names
 /// most SDKs / docs use so existing shell setups still work.
-fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
+/// The env var the daemon reads this provider's API key from, by
+/// convention, when the operator hasn't overridden `api_key_env`.
+///
+/// Made `pub` so operator-facing surfaces can NAME the expected variable
+/// in error messages and listings (QA U8): the `xvn optimize`/`provider`
+/// CLI and `provider list` render this so a missing-key failure tells the
+/// operator exactly which `XVN_PROVIDER_…_KEY` to export. No-auth local
+/// kinds (local-candle / ollama / llama-cpp / vllm) return `""` because
+/// they need no key by default.
+/// Build the operator-facing "provider key not found" message for a
+/// resolved provider, NAMING the env var the operator must export (QA U8).
+///
+/// Prefers the provider's configured `api_key_env`; falls back to the
+/// kind/name convention via [`default_api_key_env_for`] when the row has
+/// no explicit `api_key_env` (e.g. an Ollama row that nonetheless needs a
+/// key for its custom endpoint). Renders, for an Ollama provider whose
+/// env is `XVN_PROVIDER_OLLAMA_LOCAL_KEY`:
+///
+/// ```text
+/// Ollama provider key not found in environment. Set
+/// XVN_PROVIDER_OLLAMA_LOCAL_KEY=<key> or add it to providers.toml
+/// ```
+///
+/// Exposed for the `xvn optimize` / dispatch path (consolidation agent),
+/// which previously emitted an error that didn't tell the operator which
+/// variable to set.
+pub fn missing_provider_key_message(kind: ProviderKind, name: &str, api_key_env: &str) -> String {
+    let env_var = if api_key_env.trim().is_empty() {
+        default_api_key_env_for(kind, name)
+    } else {
+        api_key_env.trim().to_string()
+    };
+    // Human-readable kind label for the leading clause.
+    let label = match kind {
+        ProviderKind::Anthropic => "Anthropic",
+        ProviderKind::OpenaiCompat => "OpenAI-compatible",
+        ProviderKind::LocalCandle => "local-candle",
+        ProviderKind::Ollama => "Ollama",
+        ProviderKind::LlamaCpp => "llama.cpp",
+        ProviderKind::Vllm => "vLLM",
+    };
+    if env_var.is_empty() {
+        format!(
+            "{label} provider `{name}` key not found in environment, and this provider has no \
+             api_key_env configured. Set one in Settings → Providers or add the key to providers.toml"
+        )
+    } else {
+        format!(
+            "{label} provider key not found in environment. Set {env_var}=<key> or add it to providers.toml"
+        )
+    }
+}
+
+pub fn default_api_key_env_for(kind: ProviderKind, name: &str) -> String {
     match kind {
         ProviderKind::Anthropic => "ANTHROPIC_API_KEY".to_string(),
         ProviderKind::OpenaiCompat if name == "openai" => "OPENAI_API_KEY".to_string(),
@@ -2460,5 +2521,77 @@ api_key_env = "K"
         // No secrets file written at all (NotFound → default empty map).
         let resolved = resolve_provider_key_value(dir.path(), &entry).await.unwrap();
         assert!(resolved.is_none(), "got {resolved:?}");
+    }
+
+    // --- QA U8: env-var naming -------------------------------------------
+
+    #[test]
+    fn default_api_key_env_for_is_pub_and_returns_convention() {
+        // Visibility: callable from this test, which exercises the `pub`
+        // export operator surfaces depend on (provider list / error text).
+        // openai-compat default → XVN_PROVIDER_<NAME>_KEY with `-`→`_`.
+        assert_eq!(
+            default_api_key_env_for(ProviderKind::OpenaiCompat, "ollama-local"),
+            "XVN_PROVIDER_OLLAMA_LOCAL_KEY"
+        );
+        assert_eq!(
+            default_api_key_env_for(ProviderKind::Anthropic, "anthropic"),
+            "ANTHROPIC_API_KEY"
+        );
+        // No-auth local kinds have no default env var.
+        assert_eq!(default_api_key_env_for(ProviderKind::Ollama, "ollama"), "");
+        assert_eq!(default_api_key_env_for(ProviderKind::LocalCandle, "x"), "");
+    }
+
+    #[test]
+    fn missing_provider_key_message_names_configured_env_var() {
+        // The configured api_key_env wins and is named verbatim.
+        let msg = missing_provider_key_message(
+            ProviderKind::Ollama,
+            "ollama-local",
+            "XVN_PROVIDER_OLLAMA_LOCAL_KEY",
+        );
+        assert!(
+            msg.contains("Ollama provider key not found in environment")
+                && msg.contains("Set XVN_PROVIDER_OLLAMA_LOCAL_KEY=<key>")
+                && msg.contains("providers.toml"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[test]
+    fn missing_provider_key_message_falls_back_to_convention() {
+        // Empty api_key_env → derive the convention via default_api_key_env_for.
+        let msg = missing_provider_key_message(ProviderKind::OpenaiCompat, "deepseek", "");
+        assert!(
+            msg.contains("Set XVN_PROVIDER_DEEPSEEK_KEY=<key>"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[test]
+    fn missing_provider_key_message_handles_no_env_local_kind() {
+        // A local kind with no api_key_env has no var to name — message
+        // must stay actionable rather than printing `Set =<key>`.
+        let msg = missing_provider_key_message(ProviderKind::Ollama, "ollama", "");
+        assert!(
+            !msg.contains("Set =<key>") && msg.contains("Settings → Providers"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[test]
+    fn effective_provider_carries_expected_api_key_env() {
+        // effective_from_entry must populate the new field used by
+        // `provider list` to name the var (QA U8).
+        let entry = ProviderEntry {
+            name: "ollama-local".into(),
+            kind: ProviderKind::OpenaiCompat,
+            base_url: "http://localhost:11434/v1".into(),
+            api_key_env: String::new(),
+            enabled_models: vec![],
+        };
+        let ep = effective_from_entry(&entry, &ProvidersSecretsFile::default());
+        assert_eq!(ep.expected_api_key_env, "XVN_PROVIDER_OLLAMA_LOCAL_KEY");
     }
 }

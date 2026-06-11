@@ -319,6 +319,17 @@ impl Executor {
         }
     }
 
+    /// Attach a progress `ProgressTx` to an EXISTING executor, builder-style,
+    /// without resetting the other fields. `with_progress` (the constructor)
+    /// resets every field, so chaining it after `with_bars`/`with_event_bus`
+    /// would wipe the injected bars/bus. This setter is the chainable form the
+    /// optimizer paper-tester adapter (U5) uses:
+    ///   `Executor::with_bars(bars).with_event_bus(bus).with_progress_tx(tx)`.
+    pub fn with_progress_tx(mut self, progress: ProgressTx) -> Self {
+        self.progress = Some(progress);
+        self
+    }
+
     /// Attach a live-stream event bus to an existing executor. Builder-style
     /// so callers can chain after `with_bars` / `with_progress`:
     ///   `Executor::with_bars(bars).with_event_bus(bus)`.
@@ -893,15 +904,37 @@ impl Executor {
         // to one asset per timestamp and is byte-identical to the old
         // per-bar path. `timeline_idx` drives the RunTick progress %.
         let mut timeline_idx: usize = 0;
+        // B25: equity samples are buffered in-memory during the backtest loop and
+        // flushed in a single transaction at the end of the run. This collapses
+        // ~2 000 auto-commit INSERTs (one per timestamp) into one fsync,
+        // eliminating the WAL checkpoint stall that inflated the second eval
+        // window by ~3×. The Vec is pre-allocated to the timeline length so no
+        // reallocation occurs during iteration.
+        let mut equity_samples_buf: Vec<(chrono::DateTime<chrono::Utc>, f64)> =
+            Vec::with_capacity(timeline.len());
         // F36 (capture-on-interrupt): persist accumulated metrics+tokens every
         // PARTIAL_PERSIST_INTERVAL so a run that never reaches `finalize`
         // (cancelled / timed out / crashed) isn't left with NULL metrics. The
         // cancel checkpoint below also persists a final snapshot before bailing.
         let mut last_partial_persist = Instant::now();
+        // U5: wall-clock heartbeat so a long backtest (e.g. the optimizer's
+        // parent baseline eval) doesn't go silent for 10–20 minutes. Mirrors
+        // the `PARTIAL_PERSIST_INTERVAL` pattern — a constant-time `Instant`
+        // check at the TOP of the loop, independent of the cadence early-continue
+        // below, so it fires on wall-clock time rather than per-decision.
+        let mut last_heartbeat = Instant::now();
         for (&ts, assets_at_ts) in &timeline {
             // Update the logical clock to this timestamp before any
             // decision-side work. Live impls ignore this.
             clock.advance_to(ts);
+            if last_heartbeat.elapsed() >= EVAL_HEARTBEAT_INTERVAL {
+                self.emit(ProgressEvent::EvalHeartbeat {
+                    run_id: run.id.clone(),
+                    decisions: decision_idx as u64,
+                    elapsed_s: run_started.elapsed().as_secs(),
+                });
+                last_heartbeat = Instant::now();
+            }
             if store.is_terminal(&run.id).await? {
                 // F36: capture the partial metrics+tokens accumulated up to the
                 // interrupt before bailing.
@@ -1005,6 +1038,22 @@ impl Executor {
                         .await?;
                     if !evaluation.outcome.decision.is_active() {
                         filter_gated = true;
+                        // U11: surface the specific "blocked because a position
+                        // is open" case on the live progress stream so operators
+                        // can tell it apart from "filter simply didn't fire". The
+                        // suppressed_in_position reason is already recorded in the
+                        // persisted FilterEventV1 ledger via `hook.record`; this
+                        // additional event rides the same ProgressTx for live
+                        // CLI/dashboard consumers.
+                        if matches!(
+                            evaluation.outcome.decision,
+                            xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                        ) {
+                            self.emit(ProgressEvent::FilterBlocked {
+                                run_id: run.id.clone(),
+                                reason: "in_position".to_string(),
+                            });
+                        }
                     } else {
                         filter_trigger_context = evaluation.trigger_context.clone();
                     }
@@ -2634,7 +2683,8 @@ impl Executor {
                 marks.insert(a, mark);
             }
             equity = book.equity(&marks);
-            store.record_equity(&run.id, ts, equity).await?;
+            // B25: buffer instead of per-row INSERT; flushed in one tx below.
+            equity_samples_buf.push((ts, equity));
             self.emit_chart(
                 &run.id,
                 RunChartEvent::Equity(ChartEquityPoint {
@@ -2662,6 +2712,13 @@ impl Executor {
 
             timeline_idx += 1;
         }
+
+        // B25: flush all buffered equity samples in a single transaction now
+        // that the timeline loop is complete. This is the sole DB write for
+        // the entire equity series, replacing ~2 000 auto-commit INSERTs.
+        store
+            .record_equity_batch(&run.id, &equity_samples_buf)
+            .await?;
 
         if store.is_terminal(&run.id).await? {
             // F36: capture the (now near-complete) accumulators before bailing.
@@ -2943,6 +3000,10 @@ impl Executor {
         let multi_filter_config = crate::agent::filter_dispatch::MultiFilterConfig::default();
         let cadence_min = strategy.manifest.decision_cadence_minutes.max(1);
         let bar_period_minutes = cadence_min;
+        // B25: buffer equity samples during the live loop; flushed in one
+        // transaction after the loop so we don't issue one auto-commit INSERT
+        // per bar (WAL checkpoint stall, B25).
+        let mut equity_samples_buf: Vec<(chrono::DateTime<chrono::Utc>, f64)> = Vec::new();
         // R3 risk-veto: run-level daily-loss accumulator state (mirrors the
         // backtest path at lines ~817–818). These are NOT per-asset — the
         // daily kill check applies to the whole run's realized PnL.
@@ -3247,7 +3308,8 @@ impl Executor {
             // PK. The latest pooled NAV at a timestamp wins; a single-asset
             // run never repeats a timestamp, so this matches L1's one row
             // per bar.
-            store.record_equity_upsert(&run.id, decision_ts, equity).await?;
+            // B25: buffer instead of per-row upsert; flushed in one tx below.
+            equity_samples_buf.push((decision_ts, equity));
             self.emit_chart(
                 &run.id,
                 RunChartEvent::Equity(ChartEquityPoint {
@@ -3289,6 +3351,15 @@ impl Executor {
             }
         }
         drop(runtime);
+
+        // B25: flush all buffered equity samples in a single upsert transaction.
+        // The upsert variant is used here (not plain batch insert) because the
+        // live loop can have two assets land at the same timestamp, making the
+        // last-writer-wins ON CONFLICT semantics necessary — identical to the
+        // per-row `record_equity_upsert` it replaces.
+        store
+            .record_equity_upsert_batch(&run.id, &equity_samples_buf)
+            .await?;
 
         if store.is_terminal(&run.id).await? {
             let partial = compute_run_metrics(
@@ -4904,6 +4975,13 @@ fn fill_side_for_action(action: &str, pre_fill_position: f64) -> &'static str {
 /// a run, so an interrupt loses at most this much progress. Bounds the periodic
 /// recompute cost regardless of run length.
 const PARTIAL_PERSIST_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// U5: how often the backtest decision loop emits a `ProgressEvent::EvalHeartbeat`
+/// so a live subscriber (CLI watch, dashboard SSE, optimizer cycle re-emit
+/// bridge) sees forward progress during a long, otherwise-silent backtest.
+/// Checked on wall-clock time at the top of the loop, independent of the
+/// strategy cadence early-continue.
+const EVAL_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// F36: snapshot the accumulators into a partial [`MetricsSummary`] and persist
 /// it (best-effort, no status change) so a cancelled/timed-out/crashed run keeps

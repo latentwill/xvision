@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# smoke-autooptimizer.sh — end-to-end autooptimizer smoke test
+# smoke-autooptimizer.sh — end-to-end optimizer smoke test
 #
-# Verifies: evening-cycle --mock -> demo replay ->
-#           banned-term grep on autooptimizer/memory/flywheel --help output.
+# Retargeted 2026-06-11: the cycle verb consolidated to `xvn optimize` (the old
+# `xvn optimizer` verb was removed). This script now drives `xvn optimize run`
+# (the full cycle, default action) instead of the never-shipped
+# `optimizer evening-cycle`, `xvn optimize demo`, and runs the banned-term grep
+# on `xvn optimize --help`.
+#
+# Verifies: optimize run --mock -> demo replay ->
+#           banned-term grep on optimize/memory/flywheel --help output.
 #
 # Requires: compiled xvn binary in PATH or $XVN_BIN
 # Usage:    ./scripts/smoke-autooptimizer.sh [--xvn-bin <path>]
@@ -69,13 +75,14 @@ CONFIG="$WORK/autooptimizer.toml"
 cat > "$CONFIG" <<'TOML'
 min_improvement = 0.1
 
-[baseline_untouched_window]
-start = "2025-09-01"
-end   = "2025-12-01"
-
+# Compact windows (<=120-day span each) so the config passes validation.
 [day_window]
-start = "2024-01-01"
-end   = "2025-09-01"
+start = "2025-01-01"
+end   = "2025-04-01"
+
+[baseline_untouched_window]
+start = "2025-04-01"
+end   = "2025-05-01"
 
 [mutator]
 provider   = "test"
@@ -118,8 +125,8 @@ JSON
 
 DB="$WORK/lineage.db"
 
-echo "--- xvn optimizer evening-cycle --mock ---"
-"$XVN" optimizer evening-cycle \
+echo "--- xvn optimize run --mock ---"
+"$XVN" optimize run \
   --config "$CONFIG" \
   --db "$DB" \
   --strategy "$STRATEGY_ID" \
@@ -147,20 +154,20 @@ echo "Cycle seal tables in DB: $CYCLE_SEAL_TABLES"
 
 # ── 3. demo replay ───────────────────────────────────────────────────────────
 
-echo "--- xvn optimizer demo ---"
-"$XVN" optimizer demo \
+echo "--- xvn optimize demo ---"
+"$XVN" optimize demo \
   --fixture "$REPO_ROOT/data/probes/autooptimizer/replay-fixture.json" \
   >/dev/null
 
 # ── 4. Banned-term grep on CLI help ──────────────────────────────────────────
 
-echo "--- Banned-term check (autooptimizer/memory/flywheel --help) ---"
+echo "--- Banned-term check (optimize/memory/flywheel --help) ---"
 
 OVERALL_BANNED_FAIL=0
 set +e
 
-AR_HELP="$("$XVN" optimizer --help 2>&1; true)"
-check_banned_terms "autooptimizer" "$AR_HELP" || OVERALL_BANNED_FAIL=1
+AR_HELP="$("$XVN" optimize --help 2>&1; true)"
+check_banned_terms "optimize" "$AR_HELP" || OVERALL_BANNED_FAIL=1
 
 MEM_HELP="$("$XVN" memory --help 2>&1; true)"
 check_banned_terms "memory" "$MEM_HELP" || OVERALL_BANNED_FAIL=1
@@ -180,6 +187,6 @@ fi
 
 echo ""
 echo "=== SMOKE TEST COMPLETE ==="
-echo "    evening-cycle:  PASS"
+echo "    optimize run:   PASS"
 echo "    demo:           PASS"
 echo "    banned-terms:   PASS"
