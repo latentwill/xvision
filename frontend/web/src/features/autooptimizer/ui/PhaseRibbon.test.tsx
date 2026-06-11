@@ -56,11 +56,35 @@ describe("PhaseRibbon", () => {
     renderWithProviders(<PhaseRibbon phase="done" />);
     // No active phase
     expect(document.querySelectorAll("[aria-current='step']").length).toBe(0);
-    // All four phases should appear (still rendered)
+    // All four phases should appear (still rendered), each with a ✓ prefix
+    expect(screen.getByText("✓ Propose")).toBeInTheDocument();
+    expect(screen.getByText("✓ Eval")).toBeInTheDocument();
+    expect(screen.getByText("✓ Gate")).toBeInTheDocument();
+    expect(screen.getByText("✓ Keep")).toBeInTheDocument();
+  });
+
+  it("phase=done renders the trailing 'Cycle complete' caption chip", () => {
+    renderWithProviders(<PhaseRibbon phase="done" />);
+    expect(screen.getByText("Cycle complete")).toBeInTheDocument();
+  });
+
+  it("non-done phases do not render the 'Cycle complete' chip or ✓ prefixes", () => {
+    renderWithProviders(<PhaseRibbon phase="eval" />);
+    expect(screen.queryByText("Cycle complete")).not.toBeInTheDocument();
+    // Propose is past, but the ✓ prefix is reserved for the all-done state
     expect(screen.getByText("Propose")).toBeInTheDocument();
-    expect(screen.getByText("Eval")).toBeInTheDocument();
-    expect(screen.getByText("Gate")).toBeInTheDocument();
-    expect(screen.getByText("Keep")).toBeInTheDocument();
+    expect(screen.queryByText(/✓/)).not.toBeInTheDocument();
+  });
+
+  it("phase=idle renders the 'No cycle running' caption", () => {
+    renderWithProviders(<PhaseRibbon phase="idle" />);
+    expect(screen.getByText("No cycle running")).toBeInTheDocument();
+    expect(screen.queryByText("Cycle complete")).not.toBeInTheDocument();
+  });
+
+  it("non-idle phases do not render the 'No cycle running' caption", () => {
+    renderWithProviders(<PhaseRibbon phase="done" />);
+    expect(screen.queryByText("No cycle running")).not.toBeInTheDocument();
   });
 
   it("phase=done marks all phases as completed (not active)", () => {
@@ -70,6 +94,7 @@ describe("PhaseRibbon", () => {
     expect(items.length).toBe(4);
     for (const item of items) {
       expect(item).not.toHaveAttribute("aria-current", "step");
+      expect(item).toHaveTextContent("✓");
     }
   });
 

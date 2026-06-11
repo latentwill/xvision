@@ -342,6 +342,7 @@ mod tests {
             kind: kind.to_string(),
             base_url: base_url.to_string(),
             api_key_env: String::new(),
+            expected_api_key_env: String::new(),
             enabled: true,
             has_key,
             models: Vec::new(),

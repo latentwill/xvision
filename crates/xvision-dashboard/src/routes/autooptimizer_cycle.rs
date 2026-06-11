@@ -116,6 +116,8 @@ fn event_ids(ev: &CycleProgressEvent) -> (String, Option<String>) {
         CycleFinished { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
         PhaseStarted { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
         PhaseFinished { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        EvalProgress { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        Heartbeat { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
         SessionStateChanged { session_id, .. } => (session_id.clone(), None),
         FlywheelCompiled { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
     }

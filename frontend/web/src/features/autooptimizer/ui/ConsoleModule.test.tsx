@@ -4,7 +4,7 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders } from "../test-utils";
 import { ConsoleModule } from "./ConsoleModule";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
-import { useCycleEvents, useCycleRuns, useCycleRun } from "../api";
+import { useCycleEvents, useCycleRuns, useCycleRun, useOptimizerStatus } from "../api";
 
 // Mock ExpandableArtifact so board cards / feed lines don't pull the full
 // experiment-detail network stack (same idiom as NarratedFeed.test.tsx).
@@ -13,15 +13,17 @@ vi.mock("./ExpandableArtifact", () => ({
     hash,
     summary,
     defaultOpen,
+    open,
   }: {
     hash: string;
     summary: React.ReactNode;
     defaultOpen?: boolean;
+    open?: boolean;
   }) => (
     <div
       data-testid={`artifact-${hash}`}
       role="button"
-      aria-expanded={defaultOpen ? "true" : "false"}
+      aria-expanded={(open ?? defaultOpen) ? "true" : "false"}
     >
       {summary}
     </div>
@@ -39,6 +41,7 @@ vi.mock("../api", async (importActual) => {
     useCycleEvents: vi.fn(),
     useCycleRuns: vi.fn(),
     useCycleRun: vi.fn(),
+    useOptimizerStatus: vi.fn(),
   };
 });
 
@@ -46,6 +49,7 @@ const mockStream = vi.mocked(useCycleEventStream);
 const mockEvents = vi.mocked(useCycleEvents);
 const mockRuns = vi.mocked(useCycleRuns);
 const mockRun = vi.mocked(useCycleRun);
+const mockStatus = vi.mocked(useOptimizerStatus);
 
 // React-query result shapes (only the fields ConsoleModule reads).
 const q = <T,>(data: T) =>
@@ -156,16 +160,31 @@ beforeEach(() => {
   mockRuns.mockReturnValue(q([]));
   mockEvents.mockReturnValue(q([]));
   mockRun.mockReturnValue(q(undefined));
+  mockStatus.mockReturnValue(undefined);
 });
 
 describe("ConsoleModule", () => {
   it("live mode renders ribbon, board and feed from the stream", () => {
     setStream({ events: liveEvents, connected: true, isRunning: true, activeCycleId: "c-live" });
     mockRuns.mockReturnValue(q([cycleSummary]));
+    mockStatus.mockReturnValue({
+      active_session: {
+        session_id: "sess-1",
+        strategy_id: "strat-abc",
+        state: "running",
+        mode: "explore",
+        cycles_completed: 0,
+        kept_count: 0,
+        suspect_count: 0,
+        dropped_count: 0,
+      },
+      last_event_seq: 4,
+    });
 
     renderWithProviders(<ConsoleModule />);
 
-    expect(screen.getByText(/Live · cycle c-live/i)).toBeInTheDocument();
+    const liveHeader = screen.getByText(/Live · cycle/i);
+    expect(liveHeader).toHaveTextContent("Live · cycle c-live · strat-abc");
     // ribbon: one phase active (after a gated event → "gate")
     const active = document.querySelector('[aria-current="step"]');
     expect(active).not.toBeNull();
@@ -178,19 +197,36 @@ describe("ConsoleModule", () => {
     expect(screen.queryByText(/waiting for/i)).not.toBeInTheDocument();
   });
 
-  it("idle mode replays the last completed cycle with a label", async () => {
+  it("idle mode replays the last completed cycle with full identity in the header", async () => {
     setStream({ isRunning: false, connected: true });
     mockRuns.mockReturnValue(q([cycleSummary]));
     mockEvents.mockReturnValue(q(persistedEvents));
+    mockRun.mockReturnValue(q(cycleDetail));
 
     renderWithProviders(<ConsoleModule />);
 
-    expect(await screen.findByText(/Last cycle · 2h ago/i)).toBeInTheDocument();
+    // cycle id (8-char) + parent strategy hash (most common parent_hash, 8 chars) + relative time
+    expect(await screen.findByText(/Last cycle/i)).toHaveTextContent(
+      "Last cycle · cyc-1 · strategy ffff0000 · 2h ago",
+    );
     // ribbon all done: no active step
     expect(document.querySelector('[aria-current="step"]')).toBeNull();
     // feed rendered from the persisted events
     expect(screen.getAllByText(/kept/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/waiting for/i)).not.toBeInTheDocument();
+  });
+
+  it("replay header omits the strategy segment when nodes aren't available", () => {
+    setStream({ isRunning: false, connected: true });
+    mockRuns.mockReturnValue(q([cycleSummary]));
+    mockEvents.mockReturnValue(q(persistedEvents));
+    mockRun.mockReturnValue(q(undefined)); // detail not loaded / no nodes
+
+    renderWithProviders(<ConsoleModule />);
+
+    const header = screen.getByText(/Last cycle/i);
+    expect(header).toHaveTextContent("Last cycle · cyc-1 · 2h ago");
+    expect(header).not.toHaveTextContent(/strategy/i);
   });
 
   it("respects an explicit cycleId prop (replay even while a run is live)", () => {
@@ -249,8 +285,10 @@ describe("ConsoleModule", () => {
     expect(screen.getByTestId("artifact-cccc3333dd")).toHaveTextContent(/suspect/i);
     // ?exp= deep links still work: defaultOpenHash forwarded to the board
     expect(screen.getByTestId("artifact-bbbb2222cc")).toHaveAttribute("aria-expanded", "true");
-    // feed area is never blank
-    expect(screen.getByText("Event log unavailable for this cycle.")).toBeInTheDocument();
+    // no apology copy — the node-derived board IS the content
+    expect(
+      screen.queryByText("Event log unavailable for this cycle."),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/waiting for/i)).not.toBeInTheDocument();
   });
 
@@ -320,7 +358,9 @@ describe("ConsoleModule", () => {
     renderWithProviders(<ConsoleModule />);
 
     expect(screen.getByTestId("artifact-aaaa1111bb")).toBeInTheDocument();
-    expect(screen.getByText("Event log unavailable for this cycle.")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Event log unavailable for this cycle."),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText(/waiting for/i)).not.toBeInTheDocument();
   });
 });

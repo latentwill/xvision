@@ -120,7 +120,7 @@ fn mutate_once_cmd<'a>(
     extra: &[&'a str],
 ) -> Vec<&'a str> {
     let mut args = vec![
-        "optimizer",
+        "optimize",
         "mutate-once",
         hash,
         "--config",

@@ -178,6 +178,34 @@ pub enum CycleProgressEvent {
         phase: Phase,
         duration_ms: u64,
     },
+    /// U5: periodic heartbeat re-emitted from the underlying eval executor's
+    /// progress stream while a long backtest (e.g. the parent baseline) is in
+    /// flight, so the cycle output stream doesn't go silent for 10–20 minutes
+    /// between `ParentSelected` and the next phase boundary. Operators were
+    /// cancelling cycles that looked hung at this point. Throttled to ~30s wall
+    /// clock at the re-emit site. `decisions` is the count of trader decisions
+    /// the eval has emitted so far (0 if not known); `elapsed_s` is wall-clock
+    /// seconds since the eval started. Operator label: "Eval progress".
+    EvalProgress {
+        #[serde(default)]
+        session_id: String,
+        cycle_id: String,
+        #[serde(default)]
+        decisions: usize,
+        #[serde(default)]
+        elapsed_s: u64,
+    },
+    /// U5: a bare heartbeat with no decision count — emitted when the eval
+    /// executor signals liveness (a tick) but no new decision has landed. Cheap
+    /// "still alive" signal so the CLI/dashboard can render a spinner that
+    /// advances instead of a frozen screen. Operator label: "Working".
+    Heartbeat {
+        #[serde(default)]
+        session_id: String,
+        cycle_id: String,
+        #[serde(default)]
+        elapsed_s: u64,
+    },
     /// Fired when the optimizer session state changes (e.g. running, finished, failed).
     SessionStateChanged { session_id: String, state: String },
     /// Fired after the DSPy flywheel compiles findings into a prompt pattern.
@@ -285,6 +313,67 @@ mod tests {
         match parsed {
             CycleProgressEvent::MutationGated { delta_day, .. } => {
                 assert_eq!(delta_day, None, "delta_day should default to None");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    /// U5: EvalProgress serializes as "eval_progress" (snake_case) with the
+    /// new fields at the top level; old JSON missing them defaults cleanly.
+    #[test]
+    fn test_eval_progress_wire_and_backcompat() {
+        let event = CycleProgressEvent::EvalProgress {
+            session_id: "s1".into(),
+            cycle_id: "c1".into(),
+            decisions: 42,
+            elapsed_s: 45,
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(v["type"], "eval_progress");
+        assert_eq!(v["decisions"], 42);
+        assert_eq!(v["elapsed_s"], 45);
+
+        // Old JSON without session_id/decisions/elapsed_s still deserializes.
+        let old_json = r#"{"type":"eval_progress","cycle_id":"c1"}"#;
+        let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
+        match parsed {
+            CycleProgressEvent::EvalProgress {
+                session_id,
+                cycle_id,
+                decisions,
+                elapsed_s,
+            } => {
+                assert_eq!(session_id, "");
+                assert_eq!(cycle_id, "c1");
+                assert_eq!(decisions, 0);
+                assert_eq!(elapsed_s, 0);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    /// U5: Heartbeat serializes as "heartbeat" and round-trips with defaults.
+    #[test]
+    fn test_heartbeat_wire_and_backcompat() {
+        let event = CycleProgressEvent::Heartbeat {
+            session_id: "s1".into(),
+            cycle_id: "c1".into(),
+            elapsed_s: 60,
+        };
+        let v = serde_json::to_value(&event).unwrap();
+        assert_eq!(v["type"], "heartbeat");
+        assert_eq!(v["elapsed_s"], 60);
+
+        let old_json = r#"{"type":"heartbeat","cycle_id":"c1"}"#;
+        let parsed: CycleProgressEvent = serde_json::from_str(old_json).unwrap();
+        match parsed {
+            CycleProgressEvent::Heartbeat {
+                session_id,
+                elapsed_s,
+                ..
+            } => {
+                assert_eq!(session_id, "");
+                assert_eq!(elapsed_s, 0);
             }
             _ => panic!("wrong variant"),
         }

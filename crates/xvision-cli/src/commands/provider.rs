@@ -144,6 +144,32 @@ enum ProviderAction {
     },
 }
 
+/// Source persisted provider secrets from `$XVN_HOME/secrets/providers.toml`
+/// into the process env BEFORE any provider/key lookup (QA U8).
+///
+/// The dashboard already calls
+/// `xvision_engine::api::settings::providers::load_providers_secrets_into_env`
+/// at daemon startup (`state.rs`); the CLI did not, so an Ollama (or any)
+/// provider whose key lives only in the secrets file — never exported to
+/// env — failed with an opaque "no API key" error and forced operators to
+/// prefix every command with `XVN_PROVIDER_OLLAMA_LOCAL_KEY=… xvn …`.
+///
+/// This helper mirrors the dashboard path: it is **idempotent** (the
+/// engine helper skips any var already set, so an explicit env export
+/// still wins) and **best-effort** (a missing/unreadable secrets file is
+/// not fatal — the command proceeds and any genuinely-missing key surfaces
+/// later with the now-actionable, env-var-naming error).
+///
+/// MUST be called once, early, from the CLI bootstrap (`Cli::run`) BEFORE
+/// any `ApiContext::open` / env key lookup. Exposed here (rather than
+/// inlined into `lib.rs`) so the bootstrap owner wires a single named call.
+pub async fn load_secrets_into_env_best_effort(xvn_home: &std::path::Path) {
+    // Best-effort: any error (missing/unreadable providers.toml) is non-fatal —
+    // a genuinely-missing key still surfaces downstream with an actionable,
+    // env-var-naming error. We deliberately swallow the result here.
+    let _ = providers::load_providers_secrets_into_env(xvn_home).await;
+}
+
 pub async fn run(cmd: ProviderCmd) -> Result<()> {
     let xvn_home = resolve_xvn_home()?;
     let config_path = runtime_config_path(&xvn_home);
@@ -289,18 +315,27 @@ async fn list_legacy(ctx: &ApiContext, config_path: &std::path::Path) -> Result<
 
 fn print_effective_table(rows: &[EffectiveProvider]) {
     println!(
-        "{:<18} {:<14} {:<8} {:<8} {:<7} {}",
-        "PROVIDER", "KIND", "ENABLED", "KEY", "MODELS", "LAUNCHABLE"
+        "{:<18} {:<14} {:<8} {:<8} {:<7} {:<11} {}",
+        "PROVIDER", "KIND", "ENABLED", "KEY", "MODELS", "LAUNCHABLE", "EXPECTED_ENV"
     );
     for r in rows {
+        // Name the env var an operator must export to give this provider a
+        // key (QA U8). No-auth local kinds report an empty expected env, so
+        // render a clear "(none)" rather than a blank gap.
+        let expected_env = if r.expected_api_key_env.is_empty() {
+            "(none)".to_string()
+        } else {
+            r.expected_api_key_env.clone()
+        };
         println!(
-            "{:<18} {:<14} {:<8} {:<8} {:<7} {}",
+            "{:<18} {:<14} {:<8} {:<8} {:<7} {:<11} {}",
             r.provider,
             r.kind,
             if r.enabled { "yes" } else { "no" },
             if r.has_key { "set" } else { "missing" },
             r.models.len(),
             if r.launchable { "yes" } else { "no" },
+            expected_env,
         );
     }
 }

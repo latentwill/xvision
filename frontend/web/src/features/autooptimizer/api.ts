@@ -175,6 +175,9 @@ export type CycleNodeDetail = LineageNode & {
 /** One historic optimizer cycle (grouped from lineage) with F23 tokens + cost. */
 export type CycleRunSummary = {
   cycle_id: string;
+  /** The strategy (agent_id) this cycle optimized, resolved via the
+   *  events→session bridge. Absent for pre-bridge / sessionless CLI cycles. */
+  strategy_id?: string | null;
   node_count: number;
   active_count: number;
   /** Quarantined (Suspect) nodes — partial-pass across regimes. */
@@ -198,8 +201,19 @@ export type CycleRunDetail = CycleRunSummary & {
   } | null;
 };
 
-export async function listCycleRuns(): Promise<CycleRunSummary[]> {
-  return apiFetch<CycleRunSummary[]>("/api/autooptimizer/cycles");
+/** Pagination options for the historic-cycles list. The backend caps each
+ *  page server-side (default 50); the UI passes an explicit page size so the
+ *  history list never renders unbounded rows (UI3). */
+export type CycleRunsQuery = { limit?: number; offset?: number };
+
+export async function listCycleRuns(q?: CycleRunsQuery): Promise<CycleRunSummary[]> {
+  const params = new URLSearchParams();
+  if (q?.limit != null) params.set("limit", String(q.limit));
+  if (q?.offset != null) params.set("offset", String(q.offset));
+  const qs = params.toString();
+  return apiFetch<CycleRunSummary[]>(
+    qs ? `/api/autooptimizer/cycles?${qs}` : "/api/autooptimizer/cycles",
+  );
 }
 
 export async function getCycleRun(cycleId: string): Promise<CycleRunDetail> {
@@ -409,11 +423,16 @@ export function useLineageNodes(q?: LineageQuery) {
   });
 }
 
-/** F23: historic cycles with per-cycle tokens + realized cost. */
-export function useCycleRuns() {
+/** F23: historic cycles with per-cycle tokens + realized cost.
+ *
+ * UI3: pass `{ limit }` to cap the page. The query key folds the params in so
+ * a different page size doesn't collide with the unscoped list cache. Calling
+ * with no args keeps the original (unscoped) key, so existing consumers and
+ * `invalidateQueries({ queryKey: autooptimizerKeys.cycles() })` still match. */
+export function useCycleRuns(q?: CycleRunsQuery) {
   return useQuery({
-    queryKey: autooptimizerKeys.cycles(),
-    queryFn: listCycleRuns,
+    queryKey: q ? [...autooptimizerKeys.cycles(), q] : autooptimizerKeys.cycles(),
+    queryFn: () => listCycleRuns(q),
     staleTime: 30_000,
   });
 }

@@ -306,3 +306,47 @@ release.
 
 Affected sections of this lock: §5 (Memory layer table), §10 (CLI
 verb structure table). Operator approval recorded 2026-05-27.
+
+### Amendment 2026-06-11 — optimizer CLI consolidation
+
+The Optimizer subsystem's operator CLI was consolidated to a single home.
+
+**Changes:**
+
+- The cycle CLI verb changed from **`xvn optimizer`** to **`xvn optimize`**.
+  Running `xvn optimize` with **no subcommand** runs the full cycle (aliases:
+  `xvn optimize run` / `xvn optimize run-cycle`). Subcommands: `ls` (cycle
+  history), `show <cycle_id>` (cycle detail), `lineage ls|show`, `unlock`
+  (clear a wedged cycle lock), `mutate-once`, `demo`.
+- The top-level **`xvn optimizer` verb was removed.** It no longer exists.
+- The standalone **DSPy prompt-optimizer CLI verbs were removed** and folded
+  into the cycle: `run --agent/--slot/--capability/--corpus/--optimizer/
+  --metric`, `inspect --run`, `export-demos`, `import-demos`,
+  `accept-as-child-agent`, `revert-accepted`, `explain-missing-data`,
+  `memory-demos`, `memory-demos-gate`, and the old `distill/gate/activate/
+  retire/promote/demote`. The DSPy flywheel now runs **inside the cycle
+  automatically** and emits the `flywheel_compiled` / `CycleProgressEvent::
+  FlywheelCompiled` event (already locked in the §"Optimizer UI Overhaul wave
+  (2026-06-07)" table as "Findings compiled into prompt pattern").
+
+**What did NOT change:** the developer-surface codename stays `autooptimizer` /
+`AutoOptimizer` (module, types, `autooptimizer_*` tables, `/api/autooptimizer/*`
+routes, frontend `features/autooptimizer/`). The DSPy **engine** `optimization/`
+module and the `Optimizer*` types remain intact and are never renamed — only the
+DSPy *CLI verbs* were removed.
+
+**Rationale:** operator decision — one operator surface for the cycle, to reduce
+agent confusion and wasted tokens spent disambiguating `optimizer` vs `optimize`
+and the now-redundant standalone DSPy verbs.
+
+**Supersession:** this supersedes the prior **"CLI verb `xvn optimizer`"** row
+in the 2026-06-01 amendment (top of this doc) and §10 ("CLI verb structure").
+Read every operator-surface reference to `xvn optimizer` as `xvn optimize`. The
+`xvn autooptimizer …` developer-surface verb rows in §10 are unaffected by this
+amendment (they concern the developer-surface verb naming, not the consolidated
+operator surface).
+
+Affected sections of this lock: the 2026-06-01 amendment header (top), §10 (CLI
+verb structure). Cross-reference: the project `/CLAUDE.md` "Operator-facing
+names (autooptimizer subsurface)" section carries the matching amendment.
+Operator approval recorded 2026-06-11.
