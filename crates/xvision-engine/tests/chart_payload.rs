@@ -521,8 +521,8 @@ use chrono::Utc;
 use xvision_engine::api::chart::IncludeSet;
 
 /// Seed a completed backtest run with decisions + an equity curve against
-/// the canonical scenario, with bars cached for ETH/USD.
-async fn seed_backtest_run_with_equity(ctx: &ApiContext) -> String {
+/// the canonical scenario, with `bar_count` bars cached for ETH/USD.
+async fn seed_backtest_run_with_equity(ctx: &ApiContext, bar_count: usize) -> String {
     let scenario = xvision_engine::api::scenario::get(ctx, "crypto-bull-q1-2025")
         .await
         .unwrap();
@@ -533,7 +533,7 @@ async fn seed_backtest_run_with_equity(ctx: &ApiContext) -> String {
         scenario.time_window.end,
         "alpaca-historical-v1",
     );
-    seed_cached_bars(ctx, &cache_key, "ETH/USD", 8).await;
+    seed_cached_bars(ctx, &cache_key, "ETH/USD", bar_count).await;
 
     let store = RunStore::new(ctx.db.clone());
     let run = Run::new_queued("pulse-test-strategy".into(), scenario.id.clone(), RunMode::Backtest);
@@ -556,7 +556,7 @@ async fn seed_backtest_run_with_equity(ctx: &ApiContext) -> String {
 #[tokio::test]
 async fn include_equity_only_skips_bars_indicators_markers() {
     let ctx = test_ctx().await;
-    let run_id = seed_backtest_run_with_equity(&ctx).await;
+    let run_id = seed_backtest_run_with_equity(&ctx, 8).await;
 
     let payload = xvision_engine::api::chart::build_run_payload_with(
         &ctx,
@@ -579,7 +579,7 @@ async fn include_equity_only_skips_bars_indicators_markers() {
 #[tokio::test]
 async fn include_bars_markers_skips_indicators_but_ships_candles() {
     let ctx = test_ctx().await;
-    let run_id = seed_backtest_run_with_equity(&ctx).await;
+    let run_id = seed_backtest_run_with_equity(&ctx, 8).await;
 
     let payload = xvision_engine::api::chart::build_run_payload_with(
         &ctx,
@@ -599,7 +599,7 @@ async fn include_bars_markers_skips_indicators_but_ships_candles() {
 #[tokio::test]
 async fn include_baseline_ships_aligned_buy_and_hold() {
     let ctx = test_ctx().await;
-    let run_id = seed_backtest_run_with_equity(&ctx).await;
+    let run_id = seed_backtest_run_with_equity(&ctx, 8).await;
 
     let payload = xvision_engine::api::chart::build_run_payload_with(
         &ctx,
@@ -669,8 +669,7 @@ async fn empty_scenario_early_return_baseline_is_null_not_error() {
     // runs_scenario_id_fk_insert trigger rejects (empty string IS NOT NULL, so
     // the trigger fires and can't find "" in scenarios). We bypass it by
     // dropping the trigger, inserting directly via raw SQL, then restoring the
-    // trigger — the same technique used in eval_early_stop.rs and similar
-    // integration tests.
+    // trigger — the same technique used in `src/api/mod.rs::migrate_eval_runs_live_config`.
     let ctx = test_ctx().await;
     let run = Run::new_queued("metadata-only-strategy".into(), String::new(), RunMode::Backtest);
     sqlx::query("DROP TRIGGER IF EXISTS runs_scenario_id_fk_insert")
@@ -718,14 +717,13 @@ async fn empty_scenario_early_return_baseline_is_null_not_error() {
 #[tokio::test]
 async fn full_payload_unchanged_and_baseline_absent() {
     let ctx = test_ctx().await;
-    let run_id = seed_backtest_run_with_equity(&ctx).await;
+    let run_id = seed_backtest_run_with_equity(&ctx, 64).await;
 
     let payload = xvision_engine::api::chart::build_run_payload(&ctx, &run_id)
         .await
         .unwrap();
-    assert_eq!(payload.bars.len(), 8);
-    assert!(!payload.indicators.ema_20.is_empty() || payload.bars.len() < 20,
-        "full payload computes indicators (empty only from warmup)");
+    assert_eq!(payload.bars.len(), 64);
+    assert!(!payload.indicators.ema_20.is_empty(), "full payload computes indicators");
     assert_eq!(payload.markers.holds.len(), 1);
     assert!(payload.baseline_equity.is_none(), "full mode never computes baseline");
 }

@@ -285,7 +285,6 @@ pub struct CompareRunSeries {
 /// Parsed from an explicit allowlist; unknown tokens are ignored and an
 /// empty/unrecognized set degrades to equity-only. Indicators are NOT a
 /// public token — they ship only on the full (no-param) payload.
-/// Construct via `parse` or `full` — avoid struct literals, which can bypass the needs_* invariants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IncludeSet {
     pub equity: bool,
@@ -510,6 +509,10 @@ pub async fn build_run_payload_with(
     }
 
     // Slim early-return path: equity-only (no bars needed).
+    // Empty `asset` and `granularity` are intentional here — slim consumers
+    // such as the home Pulse band take run metadata from the runs list, not
+    // this payload; loading bars just to echo back asset/granularity strings
+    // would defeat the point of the slim path.
     if !include.needs_bars() {
         return Ok(RunChartPayload {
             run_id: run_id.into(),
