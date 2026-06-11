@@ -23,6 +23,7 @@
 import { apiFetch } from "@/api/client";
 import { currentAddress, mantleSepolia, walletClient } from "./chain";
 import { WalletRequiredError } from "./purchaseErrors";
+import { SEALED_GATE_ACTION_SRC } from "./sealedGateCode";
 
 // ---------------------------------------------------------------------------
 // Lit config (from /api/marketplace/status)
@@ -31,6 +32,12 @@ import { WalletRequiredError } from "./purchaseErrors";
 /** The `lit` block of `GET /api/marketplace/status` (null when unconfigured). */
 export interface LitConfig {
   api_base: string;
+  /**
+   * Authorization-hash reference for the gate action — the CID the operator
+   * registered in the PKP's authorized group. NOT sent on execution: the gate
+   * source is sent inline as `code` (see `invokeGateAction`), and Lit hashes
+   * those inline bytes to this same CID. Kept for the operator's group binding.
+   */
   gate_action_cid: string;
   pkp_id: string;
 }
@@ -117,24 +124,32 @@ export interface GateJsParams {
 
 /**
  * Read the scoped Lit client key the operator sets at build time
- * (`VITE_LIT_CLIENT_KEY`). Read dynamically (not destructured) so test setups
- * can flip it with `vi.stubEnv` between cases.
+ * (`VITE_LIT_CLIENT_KEY`). MUST stay the literal `import.meta.env.VITE_…`
+ * expression (typed via src/vite-env.d.ts): Vite's define replacement only
+ * rewrites this exact form — an alias read survives to production bundles as
+ * a runtime lookup, where browsers have no `import.meta.env` (the bug that
+ * disabled the marketplace subgraph client, fixed in PR #926). Vitest keeps
+ * env live and the read happens at call time, so `vi.stubEnv` still works.
  */
 export function litClientKey(): string | undefined {
-  const meta = import.meta as unknown as {
-    env?: Record<string, string | undefined>;
-  };
-  return meta.env?.VITE_LIT_CLIENT_KEY;
+  return import.meta.env.VITE_LIT_CLIENT_KEY;
 }
 
 /**
  * Invoke the pinned gate action against the Lit ("Chipotle") API.
  *
  * Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct). There is a SINGLE
- * endpoint for running a pinned action:
+ * endpoint for running an action:
  *   POST {api_base}/core/v1/lit_action
  *   header X-Api-Key: <VITE_LIT_CLIENT_KEY>
- *   body   { ipfs_id: <gate CID>, js_params: {<gate params>} }
+ *   body   { code: <gate action JS source>, js_params: {<gate params>} }
+ * The body accepts EITHER `{ ipfs_id, js_params }` (resolve a cached action by
+ * CID — but Lit's CID cache is in-memory / non-durable) OR `{ code, js_params }`
+ * (run the JS inline — always works). We ALWAYS send the gate source inline as
+ * `code` ([SEALED_GATE_ACTION_SRC], byte-identical to the pinned deploy file).
+ * Authorization is unchanged: Lit hashes the inline bytes to the CID and checks
+ * the operator's group binding, so `litCfg.gate_action_cid` is still the
+ * authorization-hash reference the operator registers — we just don't send it.
  * The response is an envelope `{ response, logs, has_error }` where `response`
  * is the gate action's return value — delivered EITHER as a JSON object
  * (`{plaintext}` / `{error}`) OR as a JSON STRING that itself parses to that
@@ -164,7 +179,13 @@ export async function invokeGateAction(
       "x-api-key": key,
     },
     body: JSON.stringify({
-      ipfs_id: litCfg.gate_action_cid,
+      // Send the gate action source INLINE as `code` (not by
+      // `litCfg.gate_action_cid` / `ipfs_id`): Lit's CID-keyed cache is
+      // non-durable, so inline `code` is the only reliable path. The bytes are
+      // byte-identical to the pinned deploy file, so the CID Lit computes over
+      // them matches the operator's registered group binding (authorization
+      // unchanged).
+      code: SEALED_GATE_ACTION_SRC,
       js_params: jsParams,
     }),
   });
