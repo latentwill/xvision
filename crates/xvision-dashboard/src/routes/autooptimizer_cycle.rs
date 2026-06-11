@@ -123,11 +123,23 @@ fn event_ids(ev: &CycleProgressEvent) -> (String, Option<String>) {
 
 /// Persist a `CycleProgressEvent` to `autooptimizer_events`. Best-effort:
 /// any storage error is logged as a warning and never propagates to the caller.
+///
+/// Dashboard-launched cycles run outside a session: `run_cycle` emits events
+/// with an EMPTY `session_id`. Persisting "" would orphan the rows —
+/// `prune_old_events` retains only session_ids present in
+/// `autooptimizer_session_state` (plus `cycle:`-prefixed keys), so "" rows
+/// would be deleted on the next prune, silently breaking cycle replay.
+/// Substitute the stable fallback key `cycle:<cycle_id>` instead.
 async fn persist_progress_event(pool: &sqlx::SqlitePool, ev: &CycleProgressEvent) {
     use crate::sse::autooptimizer_labels::event_kind;
     let (session_id, cycle_id) = event_ids(ev);
+    let session_key = if session_id.is_empty() {
+        format!("cycle:{}", cycle_id.as_deref().unwrap_or("unknown"))
+    } else {
+        session_id
+    };
     let payload = serde_json::to_string(ev).unwrap_or_else(|_| "{}".into());
-    if let Err(e) = events_store::append_event(pool, &session_id, cycle_id.as_deref(), event_kind(ev), &payload).await {
+    if let Err(e) = events_store::append_event(pool, &session_key, cycle_id.as_deref(), event_kind(ev), &payload).await {
         tracing::warn!(error = %e, "persist optimizer cycle event failed (best-effort)");
     }
 }
@@ -1673,6 +1685,67 @@ mod persist_tests {
 
         assert_eq!(row.0, "session_state_changed");
         assert!(row.1.is_none(), "cycle_id should be NULL for SessionStateChanged");
+    }
+
+    /// Dashboard-launched cycles: `run_cycle` emits events with an EMPTY
+    /// session_id. Persisting them under "" would orphan the rows —
+    /// `prune_old_events` keeps only session_ids present in
+    /// `autooptimizer_session_state`, so "" rows would be silently deleted on
+    /// the next prune. The fallback key `cycle:<cycle_id>` keeps them
+    /// attributable and prune-safe (prune retains `cycle:`-prefixed keys).
+    #[tokio::test]
+    async fn test_persist_progress_event_empty_session_uses_cycle_fallback() {
+        let pool = open_pool().await;
+        create_events_table(&pool).await;
+
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
+            serde_json::from_str(
+                r#"{
+                    "type": "mutation_gated",
+                    "session_id": "",
+                    "cycle_id": "cyc-dash-1",
+                    "child_hash": "abc123",
+                    "passed": true,
+                    "outcome": "kept"
+                }"#,
+            )
+            .unwrap();
+
+        persist_progress_event(&pool, &ev).await;
+
+        let row: (String, Option<String>) =
+            sqlx::query_as("SELECT session_id, cycle_id FROM autooptimizer_events LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            row.0, "cycle:cyc-dash-1",
+            "empty session_id must persist under the cycle: fallback key"
+        );
+        assert_eq!(row.1.as_deref(), Some("cyc-dash-1"));
+    }
+
+    /// A non-empty session_id is stored verbatim (no fallback rewrite).
+    #[tokio::test]
+    async fn test_persist_progress_event_keeps_real_session_id() {
+        let pool = open_pool().await;
+        create_events_table(&pool).await;
+
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
+            serde_json::from_str(
+                r#"{"type":"session_state_changed","session_id":"sess-9","state":"running"}"#,
+            )
+            .unwrap();
+
+        persist_progress_event(&pool, &ev).await;
+
+        let session_id: String =
+            sqlx::query_scalar("SELECT session_id FROM autooptimizer_events LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_id, "sess-9");
     }
 }
 
