@@ -208,7 +208,7 @@ pub async fn post_publish(
             transferable_license: body.transferable_license,
         })
         .await
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("publish listing: {e}")))?;
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("publish listing failed after minting identity NFT token_id={}: {e}", token_id)))?;
 
     // h. 201 + receipt.
     Ok((
