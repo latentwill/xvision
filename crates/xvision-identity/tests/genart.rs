@@ -28,21 +28,24 @@ fn fixtures() -> Vec<Fixture> {
 
 #[test]
 fn golden_parity_with_ts() {
-    for f in fixtures() {
+    let fs = fixtures();
+    assert_eq!(fs.len(), 24, "expected 24 golden fixtures");
+    for f in fs {
         let svg = generate_svg(&f.agent_id, &f.manifest_hash).expect("svg");
         assert_eq!(svg, f.svg, "SVG parity failed for {}", f.agent_id);
         let uri = generate_token_uri(&f.agent_id, &f.manifest_hash).expect("uri");
         assert_eq!(uri, f.token_uri, "tokenURI parity failed for {}", f.agent_id);
         let t = derive_traits(&f.agent_id, &f.manifest_hash).expect("traits");
-        assert_eq!(t.palette, f.traits.palette);
-        assert_eq!(t.symmetry.as_str(), f.traits.symmetry);
-        assert_eq!(t.density, f.traits.density);
-        assert_eq!(t.layers, f.traits.layers);
+        assert_eq!(t.palette, f.traits.palette, "palette mismatch for {}", f.agent_id);
+        assert_eq!(t.symmetry.as_str(), f.traits.symmetry, "symmetry mismatch for {}", f.agent_id);
+        assert_eq!(t.density, f.traits.density, "density mismatch for {}", f.agent_id);
+        assert_eq!(t.layers, f.traits.layers, "layers mismatch for {}", f.agent_id);
     }
 }
 
 #[test]
 fn density_floor_holds_for_1000_seeds() {
+    // floor is enforced pre-symmetry; post-symmetry density may differ but these 1000 seeds pin the observed behavior (TS-normative)
     let hash = "c".repeat(64);
     for i in 0..1000 {
         let t = derive_traits(&format!("01HXVNPROP{i}"), &hash).expect("traits");

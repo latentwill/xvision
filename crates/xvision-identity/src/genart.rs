@@ -203,7 +203,7 @@ fn raw_grid(seed_str: &str, transparent_states: i32) -> [i8; N * N] {
                 if s < transparent_states {
                     continue;
                 }
-                grid[(y as usize) * N + x as usize] = ((s - transparent_states) % PAL_LEN) as i8;
+                grid[(y as usize) * N + x as usize] = ((s - transparent_states) % PAL_LEN) as i8; // no-op for s-transparent in [0,5]; kept for line-parity with the TS twin
             }
         }
     }
@@ -347,9 +347,8 @@ pub fn derive_traits(agent_id: &str, manifest_hash: &str) -> Result<Traits, Gena
     Ok(build_grid(agent_id, manifest_hash)?.traits)
 }
 
-/// Generates the normative single-line SVG (stroke-path encoding) for the agent.
-pub fn generate_svg(agent_id: &str, manifest_hash: &str) -> Result<String, GenartError> {
-    let built = build_grid(agent_id, manifest_hash)?;
+/// Generates SVG from an already-built grid. Private helper for `generate_svg` and `generate_token_uri`.
+fn svg_from_built(built: &BuiltGrid) -> String {
     let palette = built.palette;
     let mut out = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {N} {N}\" width=\"560\" height=\"560\" shape-rendering=\"crispEdges\"><rect width=\"{N}\" height=\"{N}\" fill=\"{}\"/>",
@@ -381,23 +380,29 @@ pub fn generate_svg(agent_id: &str, manifest_hash: &str) -> Result<String, Genar
         }
     }
     out.push_str("</svg>");
-    Ok(out)
+    out
+}
+
+/// Generates the normative single-line SVG (stroke-path encoding) for the agent.
+pub fn generate_svg(agent_id: &str, manifest_hash: &str) -> Result<String, GenartError> {
+    let built = build_grid(agent_id, manifest_hash)?;
+    Ok(svg_from_built(&built))
 }
 
 /// Generates the `data:application/json;base64,…` tokenURI for the agent.
 pub fn generate_token_uri(agent_id: &str, manifest_hash: &str) -> Result<String, GenartError> {
-    let traits = derive_traits(agent_id, manifest_hash)?;
-    let svg = generate_svg(agent_id, manifest_hash)?;
+    let built = build_grid(agent_id, manifest_hash)?;
+    let svg = svg_from_built(&built);
     let svg_b64 = base64_encode(svg.as_bytes());
     let short = &agent_id[..agent_id.len().min(8)];
     // agent_id already validated to [0-9A-Za-z_-]{1,64} — safe to interpolate raw.
     // Field order is normative — the TS twin emits the identical byte string.
     let json = format!(
         "{{\"name\":\"xvn strategy {short}\",\"image\":\"data:image/svg+xml;base64,{svg_b64}\",\"agent_id\":\"{agent_id}\",\"attributes\":[{{\"trait_type\":\"Symmetry\",\"value\":\"{}\"}},{{\"trait_type\":\"Palette\",\"value\":\"{}\"}},{{\"trait_type\":\"Density\",\"value\":{}}},{{\"trait_type\":\"Layers\",\"value\":{}}}]}}",
-        traits.symmetry.as_str(),
-        traits.palette,
-        traits.density,
-        traits.layers,
+        built.traits.symmetry.as_str(),
+        built.traits.palette,
+        built.traits.density,
+        built.traits.layers,
     );
     Ok(format!("data:application/json;base64,{}", base64_encode(json.as_bytes())))
 }
