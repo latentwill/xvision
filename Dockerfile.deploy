@@ -28,6 +28,13 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     cd frontend/web && pnpm install --frozen-lockfile
 
 COPY frontend/web/ frontend/web/
+# Marketplace subgraph endpoint (public Goldsky read API — non-secret by design).
+# Baked at build so the SPA's MarketplaceData uses the live subgraph; override
+# per-deploy with `--build-arg VITE_MARKETPLACE_SUBGRAPH_URL=...`. Empty string →
+# the fixture client (see MarketplaceLayout). `live` is a stable Goldsky tag that
+# repoints to the latest deployed version.
+ARG VITE_MARKETPLACE_SUBGRAPH_URL=https://api.goldsky.com/api/public/project_cmq8zp6etzmv101xwaeih73lr/subgraphs/xvision-marketplace/live/gn
+ENV VITE_MARKETPLACE_SUBGRAPH_URL=$VITE_MARKETPLACE_SUBGRAPH_URL
 # Vite's `outDir` in vite.config.ts is `../../crates/xvision-dashboard/static`
 # (relative to frontend/web), so the static dir lands at the workspace path
 # rust-embed expects.
