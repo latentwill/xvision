@@ -119,12 +119,21 @@ client-side vs fetched plaintext).
 2. Fund min $5 (card or crypto; LITKEY on Base = 25% off). Typical decrypt-sized
    Lit Actions should cost about the 1-second minimum thereafter.
 3. Create a **vault PKP**; note `pkpId`.
-4. Commit `contracts/lit-actions/sealed-gate.js`, submit/register it with Lit, and record
-   the computed action CID. Mirror/pin the source to IPFS for audit if the current Lit
-   toolchain supports that path.
-5. Create a **group** binding {PKP, gate-action CID, a tightly-scoped usage API key}.
-6. Set dashboard env: `XVN_LIT_API_BASE`, `XVN_LIT_API_KEY`, `XVN_LIT_PKP_ID`,
-   `XVN_LIT_GATE_ACTION_CID`. Sealed publishing unlocks; absent → stays 400.
+4. Compute the action CIDs for BOTH `sealed-gate.deploy.js` and `sealed-encrypt.deploy.js`.
+   **Use CIDv0 (`Qm…`), NOT CIDv1 (`bafkrei…`)** — Lit canonicalizes actions to v0, so a
+   v1 CID will never match and authorization fails with "API key not authorized to execute
+   the specified action". Default `ipfs add <file>` already yields v0; do NOT pass
+   `--cid-version=1`. (The client sends the action **source inline** at runtime, so the
+   actions do NOT need to be IPFS-reachable — the CID is purely the authorization hash. A
+   pin is optional, for audit only.)
+5. Create a **group** binding {PKP, BOTH action v0 CIDs (gate + encrypt), a tightly-scoped
+   usage API key with `execute_in_groups` set to this group}. Registering a CID under
+   "IPFS Actions" alone does NOT authorize it — the group binding is what grants execution
+   and PKP use.
+6. Set dashboard env (server): `XVN_LIT_API_BASE`, `XVN_LIT_API_KEY`, `XVN_LIT_PKP_ID`,
+   `XVN_LIT_GATE_ACTION_CID`, `XVN_LIT_ENCRYPT_ACTION_CID` (the v0 CIDs). Frontend build:
+   `VITE_LIT_CLIENT_KEY` = the scoped usage key (must be a literal env read so Vite bakes
+   it). Sealed publishing unlocks when the server vars are present; absent → stays 400.
 
 ## 8. Implementation phasing (separate plan after this design is approved)
 1. `SealedBundleCrypto` trait + Lit HTTP client + config + tests (Noop + escrow).
