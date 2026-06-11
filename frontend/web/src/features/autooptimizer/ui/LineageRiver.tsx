@@ -23,7 +23,10 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
   const stream = useCycleEventStream();
   const river = useRiver({ refetchIntervalWhileRunning: stream.isRunning });
   const layout = useMemo(() => buildRiverLayout(river.data ?? []), [river.data]);
-  const board = buildBoardState(stream.isRunning ? stream.events : []);
+  const board = useMemo(
+    () => buildBoardState(stream.isRunning ? stream.events : []),
+    [stream.events, stream.isRunning],
+  );
   const inflight = board.cards.filter(
     (c) => c.state === "evaluating" || c.state === "queued",
   );
@@ -67,6 +70,7 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
         aria-label="Lineage river"
         viewBox={`0 0 ${W} ${H}`}
         className="w-full"
+        onMouseLeave={() => setHover(null)}
       >
         {layout.stubs.map((s) => (
           <line
@@ -125,7 +129,11 @@ export function LineageRiver({ hasHistory = false }: { hasHistory?: boolean }) {
                 cy={sy(l.points.at(-1)!.y)}
                 r={6}
                 className="fill-transparent"
+                tabIndex={0}
                 onClick={() => navigate(`/optimizer/strategy/${l.points.at(-1)!.hash}`)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") navigate(`/optimizer/strategy/${l.points.at(-1)!.hash}`);
+                }}
                 style={{ cursor: "pointer" }}
               />
             )}

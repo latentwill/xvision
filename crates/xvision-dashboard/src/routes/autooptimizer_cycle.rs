@@ -1645,6 +1645,9 @@ mod cycle_events_tests {
 
     /// Spin up a fresh `AppState` backed by a temp dir.
     /// Mirrors the `fresh_state` pattern in `routes/agent_runs.rs`.
+    /// Note: `AppState::new` calls `ApiContext::open` which runs engine migrations,
+    /// including `migrate_autooptimizer_sessions` — so the pool already has
+    /// `autooptimizer_events` after this returns.
     async fn fresh_state() -> (crate::state::AppState, TempDir) {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
@@ -1658,23 +1661,6 @@ mod cycle_events_tests {
         (state, tmp)
     }
 
-    /// Creates `autooptimizer_events` in the given pool (mirrors migration 057 DDL).
-    async fn create_events_table(pool: &sqlx::SqlitePool) {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS autooptimizer_events (
-                seq          INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id   TEXT NOT NULL,
-                cycle_id     TEXT,
-                kind         TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                ts           TEXT NOT NULL
-            )",
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-    }
-
     // ── test_get_cycle_events_returns_ordered_events ──────────────────────────
 
     /// Seeding 5 rows (4 for cyc-1, 1 for cyc-2) must return exactly the 4
@@ -1682,7 +1668,8 @@ mod cycle_events_tests {
     #[tokio::test]
     async fn test_get_cycle_events_returns_ordered_events() {
         let (state, _tmp) = fresh_state().await;
-        create_events_table(&state.pool).await;
+        // `fresh_state` already creates the table via engine migrations.
+        super::persist_tests::create_events_table(&state.pool).await;
 
         for (kind, cycle) in [
             ("cycle_started", "cyc-1"),
@@ -1714,12 +1701,20 @@ mod cycle_events_tests {
 
     // ── test_get_cycle_events_missing_table_returns_empty ─────────────────────
 
-    /// When `autooptimizer_events` does not exist (fresh install), the handler
-    /// must return an empty list — never an error.
+    /// When `autooptimizer_events` does not exist (fresh install / pre-migration
+    /// DB), the handler must return an empty list — never an error.
+    ///
+    /// `fresh_state` runs engine migrations which CREATE the table, so we must
+    /// explicitly DROP it afterward to exercise the missing-table guard branch in
+    /// `get_cycle_events`.
     #[tokio::test]
     async fn test_get_cycle_events_missing_table_returns_empty() {
         let (state, _tmp) = fresh_state().await;
-        // No create_events_table — table is absent.
+        // Drop the table so the guard branch is genuinely exercised.
+        sqlx::query("DROP TABLE IF EXISTS autooptimizer_events")
+            .execute(&state.pool)
+            .await
+            .unwrap();
         let resp = get_cycle_events(Path("cyc-x".into()), State(state))
             .await
             .unwrap();

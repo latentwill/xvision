@@ -38,7 +38,7 @@ export function NarratedFeed({
           </span>
         );
         return (
-          <li key={i}>
+          <li key={e.ts ? `${e.ts}-${i}` : i}>
             {n.hash ? (
               <ExpandableArtifact hash={n.hash} summary={line} />
             ) : (

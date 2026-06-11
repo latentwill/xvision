@@ -34,7 +34,6 @@ function walkLine(
   start: RiverNode,
   x0: number,
   childrenOf: Map<string, RiverNode[]>,
-  pos: Map<string, RiverPoint>,
   stubs: RiverStub[],
 ): RiverLine {
   const points: RiverPoint[] = [];
@@ -42,7 +41,6 @@ function walkLine(
   let x = x0;
   while (cur) {
     const p: RiverPoint = { hash: cur.bundle_hash, x, y: yOf(cur), cycleId: cur.cycle_id };
-    pos.set(cur.bundle_hash, p);
     points.push(p);
     const kids: RiverNode[] = childrenOf.get(cur.bundle_hash) ?? [];
     // Rejected/quarantined children become stubs off this point
@@ -93,7 +91,6 @@ export function buildRiverLayout(nodes: RiverNode[]): RiverLayout {
     }
   }
 
-  const pos = new Map<string, RiverPoint>();
   const lines: RiverLine[] = [];
   const stubs: RiverStub[] = [];
 
@@ -101,7 +98,7 @@ export function buildRiverLayout(nodes: RiverNode[]): RiverLayout {
   // beyond the first start new sub-lines via walkLine.
   for (const root of roots) {
     // Walk the primary chain for this root
-    const primaryLine = walkLine(root, 0, childrenOf, pos, stubs);
+    const primaryLine = walkLine(root, 0, childrenOf, stubs);
     lines.push(primaryLine);
 
     // For every point in the primary line, check for extra active children
@@ -115,7 +112,7 @@ export function buildRiverLayout(nodes: RiverNode[]): RiverLayout {
       // The first active child is already part of the primary chain (walked above).
       // Extra active children beyond the first get their own sub-lines.
       for (const extra of activeKids.slice(1)) {
-        const subLine = walkLine(extra, p.x + 1, childrenOf, pos, stubs);
+        const subLine = walkLine(extra, p.x + 1, childrenOf, stubs);
         lines.push(subLine);
       }
     }

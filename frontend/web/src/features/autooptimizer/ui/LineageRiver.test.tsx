@@ -254,6 +254,27 @@ describe("LineageRiver", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("clears hover readout when the mouse leaves the svg", () => {
+    mockRiver(FIXTURE);
+    const { container } = renderWithProviders(<LineageRiver />);
+    const rejected = container.querySelector('[data-hash="rejoldd333"]')!;
+    fireEvent.mouseOver(rejected);
+    expect(screen.getByText(/rejoldd3/)).toBeInTheDocument();
+    const svg = screen.getByRole("img", { name: "Lineage river" });
+    fireEvent.mouseLeave(svg);
+    expect(screen.queryByText(/rejoldd3/)).not.toBeInTheDocument();
+  });
+
+  it("navigates to strategy on Enter keydown on river-live-end", async () => {
+    const user = userEvent.setup();
+    mockRiver(FIXTURE);
+    renderWithProviders(<LineageRiver />);
+    const end = screen.getByTestId("river-live-end");
+    end.focus();
+    await user.keyboard("{Enter}");
+    expect(mockNavigate).toHaveBeenCalledWith("/optimizer/strategy/keptkept22");
+  });
+
   it("never emits NaN in any path d attribute for degenerate single-node data", () => {
     mockRiver(SINGLE_NODE);
     const { container } = renderWithProviders(<LineageRiver />);
