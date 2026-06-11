@@ -148,19 +148,11 @@ pub async fn post_publish(
     Json(body): Json<PublishBody>,
 ) -> Result<(StatusCode, Json<PublishOut>), DashboardError> {
     // Validate the cheap, pure inputs before touching the store or chain.
+    // Sealed-tier publishing IS supported (server-side encrypt-at-publish +
+    // ciphertext pin); the tier-specific gating (require Lit, then an IPFS pin
+    // backend) happens at the content_uri step below, after the chain gate and
+    // before the mint, so an encrypt/pin failure leaves nothing on chain.
     let tier = tier_code(&body.tier)?;
-    // Sealed-tier guard — BEFORE any store/chain/pin work. Sealed listings
-    // promise an encrypted bundle, but encryption is unimplemented:
-    // publishing today would pin the full strategy plaintext to public IPFS.
-    if tier == 1 {
-        return Err(DashboardError::Validation {
-            field: "tier".into(),
-            msg: "sealed-tier publishing is not yet supported: bundle encryption is \
-                  unimplemented and publishing would pin the full strategy plaintext to \
-                  public IPFS (tracked: xvision-cgz)"
-                .into(),
-        });
-    }
     let price_usdc = usdc6(body.price_usdc)?;
 
     // a. Load the strategy (404s via ApiError::NotFound when absent).
