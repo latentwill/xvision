@@ -150,6 +150,22 @@ Commit: `feat(cli): chain-backed marketplace list + identity token show`.
 
 ---
 
+## Phase 1 outcome (2026-06-11)
+
+All eight tasks landed on `feat/marketplace-reads-real`. Live verification on
+Mantle Sepolia: indexer active (2 listings indexed, graceful degradation on the
+pre-genart `agentNftId=0` listing), wallet route correct for the operator wallet
+(2 strategies, licenses ×2/×1), `xvn marketplace list` + `show-token` working
+(`show-token --svg-out` byte-identical to the onchain tokenURI decode), and the
+full publish→revoke management cycle (throwaway listing #3 minted, revoked via
+the new route, hidden from the default listings view after re-poll).
+
+Two operator decisions taken mid-phase: verification badges are positive-only
+(unverified renders nothing — locked by regression tests); attestation display
+itself remains Phase 4. Engineering note: this branch builds on a dedicated
+`CARGO_TARGET_DIR` (`~/.cargo-target/xvision-mreads`) after shared-target-dir
+artifact collisions with concurrent sessions (see beads memory).
+
 ## Phase 1 self-review notes
 
 - **Spec coverage:** user's three asks map to Task 4 (real listing page data), Task 5 (wallet page incl. licenses + owned strategies), Tasks 3+5 (manage listings = revoke; `updateListing` deliberately deferred to Phase 4 — re-pricing UX needs design).

@@ -160,11 +160,7 @@ pub struct OwnershipFacts {
 /// Address comparison is case-insensitive (the snapshot stores sellers as
 /// lowercase `0x…`, but the caller may pass checksummed input). Ordering is
 /// deterministic: snapshot listing order, first occurrence per token.
-pub fn wallet_view(
-    snapshot: &MarketplaceSnapshot,
-    address: &str,
-    ownership: &OwnershipFacts,
-) -> WalletView {
+pub fn wallet_view(snapshot: &MarketplaceSnapshot, address: &str, ownership: &OwnershipFacts) -> WalletView {
     let address_lc = address.to_lowercase();
 
     // Owned strategies: one entry per unique owned token, metadata from the
@@ -172,8 +168,7 @@ pub fn wallet_view(
     let mut seen_tokens = HashSet::new();
     let mut strategies = Vec::new();
     for l in &snapshot.listings {
-        if !ownership.owned_token_ids.contains(&l.agent_nft_id)
-            || !seen_tokens.insert(l.agent_nft_id.clone())
+        if !ownership.owned_token_ids.contains(&l.agent_nft_id) || !seen_tokens.insert(l.agent_nft_id.clone())
         {
             continue;
         }
@@ -223,9 +218,7 @@ pub fn wallet_view(
 
 /// Validates a `0x` + 40-hex-char Ethereum address (any case).
 fn is_eth_address(s: &str) -> bool {
-    s.len() == 42
-        && s.starts_with("0x")
-        && s.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
+    s.len() == 42 && s.starts_with("0x") && s.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
 }
 
 /// Reads the optional `XVN_LICENSE_TOKEN` address. `None` → license lookups

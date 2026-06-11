@@ -131,9 +131,7 @@ async fn revoke_without_chain_env_is_503() {
     std::env::remove_var("XVN_PUBLISHER_PK");
 
     let (server, _state, _tmp) = boot().await;
-    let response = server
-        .post("/api/marketplace/listings/5/revoke")
-        .await;
+    let response = server.post("/api/marketplace/listings/5/revoke").await;
     response.assert_status_service_unavailable();
     let body: Value = response.json();
     assert_eq!(body["code"], "service_unavailable");

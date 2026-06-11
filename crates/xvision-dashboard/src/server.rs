@@ -184,11 +184,10 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    marketplace as marketplace_route, marketplace_read as marketplace_read_route,
-    memory as memory_route,
-    optimizations as optimizations_route, safety as safety_route, scenarios,
-    search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, tools as tools_route,
+    marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
+    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    tools as tools_route,
     version::version,
     wizard,
 };
@@ -899,10 +898,7 @@ pub async fn serve(
                 "marketplace indexer active",
             );
             state.mark_marketplace_indexer_active();
-            let _indexer = crate::marketplace_index::spawn_indexer(
-                state.marketplace_snapshot.clone(),
-                cfg,
-            );
+            let _indexer = crate::marketplace_index::spawn_indexer(state.marketplace_snapshot.clone(), cfg);
         }
         None => tracing::info!(
             "marketplace indexer dormant (XVN_RPC_URL/XVN_LISTING_REGISTRY/XVN_IDENTITY_REGISTRY unset)"
