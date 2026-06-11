@@ -1,5 +1,7 @@
 // genart.ts — Bitfields v3 SVG + tokenURI. Byte-identical twin of
 // crates/xvision-identity/src/genart.rs; parity enforced by tests/fixtures/genart_v3.json.
+// SVG body uses stroke-path encoding: one <path> per palette index with ≥1 run,
+// in ascending palette-index order; each run: M{x} {y}.5h{w}.
 import { N, buildGrid, type Traits } from "./genartGrid";
 
 function base64Encode(data: Uint8Array): string {
@@ -32,6 +34,8 @@ export function generateSvg(agentId: string, manifestHash: string): string {
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${N} ${N}" width="560" height="560" shape-rendering="crispEdges">`,
     `<rect width="${N}" height="${N}" fill="${palette[0]}"/>`,
   ];
+  // Build per-palette-index run lists in row-major order
+  const dStrings: string[] = new Array(palette.length).fill("");
   for (let y = 0; y < N; y++) {
     let x = 0;
     while (x < N) {
@@ -39,8 +43,14 @@ export function generateSvg(agentId: string, manifestHash: string): string {
       if (v < 0) { x++; continue; }
       let x2 = x + 1;
       while (x2 < N && grid[y * N + x2] === v) x2++;
-      parts.push(`<rect x="${x}" y="${y}" width="${x2 - x}" height="1" fill="${palette[v]}"/>`);
+      dStrings[v] += `M${x} ${y}.5h${x2 - x}`;
       x = x2;
+    }
+  }
+  // Emit one <path> per palette index with ≥1 run, ascending index order
+  for (let i = 0; i < palette.length; i++) {
+    if (dStrings[i].length > 0) {
+      parts.push(`<path stroke="${palette[i]}" stroke-width="1" d="${dStrings[i]}"/>`);
     }
   }
   parts.push("</svg>");
