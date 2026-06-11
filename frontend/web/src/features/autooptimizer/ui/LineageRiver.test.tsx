@@ -254,7 +254,9 @@ describe("LineageRiver", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("clears hover readout when the mouse leaves the svg", () => {
+  it("readout stays populated when the mouse leaves the svg (sticky last-hovered)", () => {
+    // The readout must not vanish when the user moves the mouse off the branch
+    // toward the "Open cycle →" button — only the in-chart stroke highlight clears.
     mockRiver(FIXTURE);
     const { container } = renderWithProviders(<LineageRiver />);
     const rejected = container.querySelector('[data-hash="rejoldd333"]')!;
@@ -262,7 +264,24 @@ describe("LineageRiver", () => {
     expect(screen.getByText(/rejoldd3/)).toBeInTheDocument();
     const svg = screen.getByRole("img", { name: "Lineage river" });
     fireEvent.mouseLeave(svg);
-    expect(screen.queryByText(/rejoldd3/)).not.toBeInTheDocument();
+    // Readout content still present after mouseleave
+    expect(screen.getByText(/rejoldd3/)).toBeInTheDocument();
+    expect(screen.getByText("Rejected")).toBeInTheDocument();
+  });
+
+  it("'Open cycle →' button remains clickable after moving mouse off the branch", async () => {
+    const user = userEvent.setup();
+    mockRiver(FIXTURE);
+    const { container } = renderWithProviders(<LineageRiver />);
+    const rejected = container.querySelector('[data-hash="rejoldd333"]')!;
+    fireEvent.mouseOver(rejected);
+    const svg = screen.getByRole("img", { name: "Lineage river" });
+    fireEvent.mouseLeave(svg);
+    // Button is still present and clickable after mouse left the SVG
+    const btn = screen.getByRole("button", { name: /Open cycle/ });
+    expect(btn).toBeInTheDocument();
+    await user.click(btn);
+    expect(mockNavigate).toHaveBeenCalledWith("/optimizer/cycle/cyc-1?exp=rejoldd333");
   });
 
   it("navigates to strategy on Enter keydown on river-live-end", async () => {
