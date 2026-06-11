@@ -58,10 +58,10 @@ export function PulseHoldChart({
       },
       {
         label: "Buy & Hold",
-        // theme.surface.gridStrong is a muted grid line color (#2A2A2A dark /
-        // #E3E6EA light) — intentionally neutral to avoid red (which reads as
-        // loss) while remaining legible as a secondary reference line.
-        stroke: theme.surface.gridStrong,
+        // axisText is the muted-but-legible grey the axes use — neutral (no
+        // loss-red), and unlike gridStrong it stays visible on the dark
+        // panel background (gridStrong vanished in the live smoke test).
+        stroke: theme.surface.axisText,
         width: 1,
         dash: [4, 4],
         points: { show: false },
