@@ -179,7 +179,7 @@ impl OrderlyAccount {
 }
 
 /// Position snapshot.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OrderlyPosition {
     pub symbol: String,
     /// Positive = long, negative = short (BTC units).
@@ -187,6 +187,17 @@ pub struct OrderlyPosition {
     pub average_open_price: f64,
     pub mark_price: f64,
     pub unsettled_pnl: f64,
+}
+
+/// Account + positions snapshot for operator-facing venue status surfaces
+/// (dashboard live page, CLI). Serializable so the engine API can pass it
+/// through to HTTP handlers unchanged.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VenueSnapshot {
+    pub equity_usd: f64,
+    pub usdc_holding: f64,
+    pub unrealized_pnl: f64,
+    pub positions: Vec<OrderlyPosition>,
 }
 
 /// Order side.
@@ -585,6 +596,19 @@ impl<A: OrderlyApi> OrderlyExecutor<A> {
     #[cfg(test)]
     pub(crate) fn with_api(api: A) -> Self {
         Self { api }
+    }
+
+    /// Read-only account + positions snapshot for status surfaces (dashboard
+    /// live page, CLI). Fetches account and positions concurrently; no
+    /// orders are placed.
+    pub async fn venue_snapshot(&self) -> Result<VenueSnapshot, ExecutorError> {
+        let (account, positions) = tokio::try_join!(self.api.get_account(), self.api.get_positions())?;
+        Ok(VenueSnapshot {
+            equity_usd: account.equity(),
+            usdc_holding: account.usdc_holding,
+            unrealized_pnl: account.unrealized_pnl,
+            positions,
+        })
     }
 
     async fn await_fill(&self, order_id: u64) -> Result<OrderlyOrder, ExecutorError> {
@@ -1671,6 +1695,39 @@ mod tests {
             3,
             "PERP_*_USDC markets resolve via fallback; only truly malformed symbols are filtered"
         );
+    }
+
+    // ── venue_snapshot ────────────────────────────────────────────────────────
+
+    /// `venue_snapshot()` must combine equity (holding + uPnL) with the raw
+    /// position rows and serialize cleanly.
+    #[tokio::test]
+    async fn venue_snapshot_combines_account_and_positions() {
+        let filler = fixture_filled_order(1, None);
+        let api = MockOrderlyApi::new(
+            OrderlyAccount {
+                usdc_holding: 1_000.0,
+                unrealized_pnl: 25.5,
+            },
+            vec![fixture_btc_position(0.5)],
+            filler.clone(),
+            filler,
+        );
+        let executor = OrderlyExecutor::with_api(api);
+
+        let snap = executor.venue_snapshot().await.expect("snapshot must succeed");
+
+        assert_eq!(snap.usdc_holding, 1_000.0);
+        assert_eq!(snap.unrealized_pnl, 25.5);
+        assert_eq!(snap.equity_usd, 1_025.5);
+        assert_eq!(snap.positions.len(), 1);
+        assert_eq!(snap.positions[0].symbol, "PERP_BTC_USDC");
+        assert_eq!(snap.positions[0].position_qty, 0.5);
+
+        let json = serde_json::to_value(&snap).expect("VenueSnapshot must serialize");
+        assert_eq!(json["equity_usd"], 1_025.5);
+        assert_eq!(json["positions"][0]["symbol"], "PERP_BTC_USDC");
+        assert_eq!(json["positions"][0]["mark_price"], 71_000.0);
     }
 
     // Helper used by the new multi-asset tests above. Returns a generic
