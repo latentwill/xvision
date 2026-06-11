@@ -786,6 +786,59 @@ export async function promoteStrategy(hash: string): Promise<{ strategy_id: stri
   );
 }
 
+// ─── useCycleEvents + useRiver (optimizer redesign — Task 3) ─────────────────
+
+/** A persisted optimizer cycle event row from the `/cycles/:id/events` endpoint. */
+export type PersistedCycleEvent = {
+  seq: number;
+  session_id: string;
+  cycle_id: string | null;
+  kind: string;
+  payload_json: string;
+  ts: string;
+};
+
+/** A lineage node enriched with gate scores for the lineage-river chart. */
+export type RiverNode = {
+  bundle_hash: string;
+  parent_hash: string | null;
+  cycle_id: string | null;
+  status: LineageStatus | string;
+  created_at: string;
+  child_day_score: number | null;
+  delta_day: number | null;
+};
+
+/**
+ * Fetch the persisted event log for a completed cycle (oldest-first).
+ * Enabled only when `cycleId` is non-null. Returns an empty array gracefully
+ * on backends that don't yet have the events table (fresh install).
+ */
+export function useCycleEvents(cycleId: string | null) {
+  return useQuery<PersistedCycleEvent[]>({
+    queryKey: ["optimizer/cycle-events", cycleId],
+    queryFn: () =>
+      apiFetch<PersistedCycleEvent[]>(`/api/autooptimizer/cycles/${cycleId}/events`),
+    enabled: !!cycleId,
+    staleTime: 60_000,
+    retry: false, // endpoint may not exist on older backends
+  });
+}
+
+/**
+ * Fetch all lineage nodes joined with their gate scores for the river chart.
+ * Refetches every 15 s when `opts.refetchIntervalWhileRunning` is true.
+ */
+export function useRiver(opts?: { refetchIntervalWhileRunning?: boolean }) {
+  return useQuery<RiverNode[]>({
+    queryKey: ["optimizer/river"],
+    queryFn: () => apiFetch<RiverNode[]>("/api/autooptimizer/river"),
+    staleTime: 30_000,
+    refetchInterval: opts?.refetchIntervalWhileRunning ? 15_000 : false,
+    retry: false, // endpoint may not exist on older backends — consumers render their empty states
+  });
+}
+
 // ─── Operator label helpers ───────────────────────────────────────────────────
 
 /** Map developer status string to operator-facing label (terminology lock). */
