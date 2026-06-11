@@ -41,7 +41,7 @@ function statusPillClass(status: string): string {
     case "queued":
       return "bg-yellow-500/15 text-yellow-700 dark:text-yellow-300";
     default:
-      return "bg-muted text-muted-foreground";
+      return "bg-surface-elev text-text-3";
   }
 }
 
@@ -61,11 +61,11 @@ function RunRow({ run }: { run: RunSummary }) {
   const stuck = isStuck(run);
 
   return (
-    <div className="flex items-center gap-3 py-2 px-3 rounded-md hover:bg-muted/40 transition-colors min-w-0">
+    <div className="flex items-center gap-3 py-2 px-3 rounded-md hover:bg-surface-hover transition-colors min-w-0">
       {/* Strategy name links to run detail */}
       <Link
         to={`/eval-runs/${run.id}`}
-        className="text-[13px] font-medium text-foreground hover:underline truncate min-w-0 flex-1"
+        className="text-[13px] font-medium text-text hover:underline truncate min-w-0 flex-1"
       >
         {strategyName}
       </Link>
@@ -78,7 +78,7 @@ function RunRow({ run }: { run: RunSummary }) {
       </span>
 
       {/* Elapsed time */}
-      <span className="shrink-0 text-[12px] text-muted-foreground font-mono tabular-nums">
+      <span className="shrink-0 text-[12px] text-text-3 font-mono tabular-nums">
         {formatElapsed(run.started_at)}
       </span>
 
@@ -95,7 +95,7 @@ function RunRow({ run }: { run: RunSummary }) {
         type="button"
         disabled={cancel.isPending}
         onClick={() => cancel.mutate()}
-        className="shrink-0 text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-muted-foreground/40 transition-colors"
+        className="shrink-0 text-[12px] text-text-3 hover:text-text disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-border-strong transition-colors"
         aria-label={`Cancel ${strategyName}`}
       >
         {cancel.isPending ? "Cancelling…" : "Cancel"}
@@ -131,7 +131,7 @@ function OptimizerCycleRow({
       </span>
       <Link
         to={`/optimizer/run/${session.session_id}`}
-        className="text-[13px] font-medium text-foreground hover:underline truncate min-w-0 flex-1"
+        className="text-[13px] font-medium text-text hover:underline truncate min-w-0 flex-1"
       >
         {session.strategy_id}
       </Link>
@@ -140,7 +140,7 @@ function OptimizerCycleRow({
       >
         {session.state}
       </span>
-      <span className="shrink-0 text-[12px] text-muted-foreground font-mono tabular-nums">
+      <span className="shrink-0 text-[12px] text-text-3 font-mono tabular-nums">
         {session.cycles_completed} cycles
       </span>
       {isPaused ? (
@@ -148,7 +148,7 @@ function OptimizerCycleRow({
           type="button"
           disabled={busy || !cycleId}
           onClick={() => cycleId && resume.mutate(cycleId)}
-          className="shrink-0 text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-muted-foreground/40 transition-colors"
+          className="shrink-0 text-[12px] text-text-3 hover:text-text disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-border-strong transition-colors"
           aria-label="Resume optimizer cycle"
         >
           {resume.isPending ? "Resuming…" : "Resume"}
@@ -158,7 +158,7 @@ function OptimizerCycleRow({
           type="button"
           disabled={busy || !cycleId}
           onClick={() => cycleId && pause.mutate(cycleId)}
-          className="shrink-0 text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-muted-foreground/40 transition-colors"
+          className="shrink-0 text-[12px] text-text-3 hover:text-text disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-border-strong transition-colors"
           aria-label="Pause optimizer cycle"
         >
           {pause.isPending ? "Pausing…" : "Pause"}
@@ -199,20 +199,15 @@ export function ActiveTasksStrip() {
   if (data !== undefined && total === 0) return null;
 
   return (
-    <div
-      data-testid="active-tasks-strip"
-      className="w-full rounded-md border border-border bg-card"
-    >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <span className="text-[12px] font-semibold text-muted-foreground uppercase tracking-wide">
-          Active tasks
-        </span>
-        <span className="text-[11px] text-muted-foreground">
+    <div data-testid="active-tasks-strip" className="w-full">
+      <div className="flex items-center justify-between px-5 pt-2.5 pb-1">
+        <span className="caps">Active tasks</span>
+        <span className="text-[11px] text-text-4 font-mono tabular-nums">
           {total} in flight
         </span>
       </div>
 
-      <div className="divide-y divide-border/50">
+      <div className="divide-y divide-border-soft/60 px-2 pb-1.5">
         {showCycle && session !== null && (
           <OptimizerCycleRow session={session} cycleId={activeCycleId} />
         )}

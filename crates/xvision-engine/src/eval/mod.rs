@@ -14,6 +14,8 @@ pub mod batch_store;
 pub mod behavior;
 pub mod broker_rules;
 pub mod candle_integrity;
+#[cfg(feature = "chain-attest")]
+pub mod chain_attestation;
 pub mod compare;
 pub mod concurrency;
 pub mod cost;
@@ -62,6 +64,7 @@ pub use compare::{
 };
 pub use cost::{
     aggregate_eval_run_inference_cost, compute_token_cost_usd, compute_token_cost_usd_from_catalog,
+    provider_reports_zero_cost,
 };
 pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};

@@ -208,7 +208,7 @@ export function resumeRun(id: string): Promise<RunSummary> {
 /// broker positions on the next cycle WITHOUT terminating the run. Hits
 /// `POST /api/eval/runs/:id/flatten`; the returned `RunSummary` has
 /// `flatten_requested: true` (cleared by the executor once it acts). Mirrors
-/// `pauseRun` / `cancelRun`. The cockpit fires this from the [Flatten
+/// `pauseRun` / `cancelRun`. Live Trading fires this from the [Flatten
 /// positions] inline action after a pause (spec §2.7).
 export function flattenRun(id: string): Promise<RunSummary> {
   const trace = createTrace("eval", { run_id: id });

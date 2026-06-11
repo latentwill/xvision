@@ -348,4 +348,28 @@ contract MarketplaceTest is BaseTest {
         market.setFeeRecipient(nr);
         assertEq(market.feeRecipient(), nr);
     }
+
+    // ---- setUsdc (UUPS re-point of the sale currency) -------------------
+
+    function test_setUsdc() public {
+        address oldToken = market.usdc();
+        address newToken = makeAddr("newUsdc");
+
+        vm.expectEmit(true, true, false, false, address(market));
+        emit IMarketplace.UsdcChanged(oldToken, newToken);
+        market.setUsdc(newToken);
+
+        assertEq(market.usdc(), newToken);
+    }
+
+    function test_setUsdc_revert_zeroAddress() public {
+        vm.expectRevert(Marketplace.ZeroAddress.selector);
+        market.setUsdc(address(0));
+    }
+
+    function test_setUsdc_onlyOwner() public {
+        vm.prank(makeAddr("intruder"));
+        vm.expectRevert(); // OwnableUnauthorizedAccount
+        market.setUsdc(makeAddr("newUsdc"));
+    }
 }

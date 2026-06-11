@@ -50,9 +50,9 @@ export function OptimizerDigestStrip() {
   return (
     <div
       data-testid="optimizer-digest-strip"
-      className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground border-b border-border/50"
+      className="flex items-center gap-2 px-5 py-2.5 text-[12px] text-text-3 border-t border-border-soft"
     >
-      <span className="font-medium text-foreground/70">Last run:</span>
+      <span className="font-medium text-text-2">Last run:</span>
       <span>
         {session.cycles_completed} experiments · {session.kept_count} kept ·{" "}
         {suspectLabel} ·{" "}

@@ -87,9 +87,11 @@ export function MemorySettingsCard() {
   ];
 
   // Total live observations across namespaces. `live_observations` is a
-  // ts-rs `bigint` (u64); sum as BigInt then narrow for display.
+  // ts-rs `bigint` (u64) in the generated types, but JSON.parse delivers a
+  // plain number at runtime — mixing it with a 0n accumulator throws
+  // "Cannot mix BigInt and other types" and crashes the whole settings page.
   const totalLiveObservations =
-    status?.namespaces.reduce((acc, n) => acc + n.live_observations, 0n) ?? 0n;
+    status?.namespaces.reduce((acc, n) => acc + Number(n.live_observations), 0) ?? 0;
 
   const busy = mutation.isPending || settingsQuery.isLoading;
 

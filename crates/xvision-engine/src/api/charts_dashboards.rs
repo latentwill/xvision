@@ -92,6 +92,14 @@ pub struct MultiStrategyEquityBundle {
     pub strategies: Vec<MultiStrategyBundleEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lead: Option<String>,
+    /// `Some(true)` when this bundle is the bundled fixture stub served
+    /// during cold starts (no strategies / no completed backtest runs on
+    /// disk). The frontend surfaces a visible "Sample data" label when set,
+    /// so a demo never presents fixture equity curves as real (hackathon
+    /// fixture-disclosure rule, task T3.2). Omitted (`None`) for real
+    /// builder output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_fixture: Option<bool>,
 }
 
 /// B0 stub. Returns the deterministic fixture bundled with the
@@ -100,8 +108,13 @@ pub fn build_dashboard_overview_stub() -> ApiResult<MultiStrategyEquityBundle> {
     const FIXTURE_JSON: &str = include_str!(
         "../../../../frontend/web/src/components/chart/v2/__fixtures__/multi-strategy-equity.json"
     );
-    serde_json::from_str::<MultiStrategyEquityBundle>(FIXTURE_JSON)
-        .map_err(|err| ApiError::Internal(format!("charts_dashboards stub fixture parse failed: {err}")))
+    let mut bundle = serde_json::from_str::<MultiStrategyEquityBundle>(FIXTURE_JSON)
+        .map_err(|err| ApiError::Internal(format!("charts_dashboards stub fixture parse failed: {err}")))?;
+    // Tag the stub so the frontend can render a visible "Sample data"
+    // disclosure label (T3.2). Every cold-start fallback flows through
+    // here, so all stub responses inherit the flag.
+    bundle.is_fixture = Some(true);
+    Ok(bundle)
 }
 
 /// B1 real builder. Loads all strategies from disk, pairs each with its
@@ -320,6 +333,8 @@ pub async fn build_dashboard_overview(ctx: &ApiContext) -> ApiResult<MultiStrate
         time: shared_time,
         strategies: bundle_strategies,
         lead,
+        // Real builder output — not fixture data.
+        is_fixture: None,
     })
 }
 
@@ -411,6 +426,22 @@ mod tests {
             );
         }
         assert_eq!(bundle.lead.as_deref(), Some("fib"));
+    }
+
+    #[test]
+    fn stub_is_tagged_as_fixture_and_serializes_camel_case() {
+        // T3.2 fixture-disclosure: the cold-start stub must carry
+        // `is_fixture = Some(true)` so the frontend can show a visible
+        // "Sample data" label, and it must serialize as `isFixture` for
+        // the camelCase frontend contract.
+        let bundle = build_dashboard_overview_stub().expect("stub parses");
+        assert_eq!(bundle.is_fixture, Some(true));
+
+        let json = serde_json::to_string(&bundle).unwrap();
+        assert!(
+            json.contains("\"isFixture\":true"),
+            "stub must serialize isFixture:true, got: {json}"
+        );
     }
 
     #[test]

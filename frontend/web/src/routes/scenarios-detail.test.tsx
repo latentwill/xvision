@@ -77,6 +77,26 @@ vi.mock("@/api/cli", async () => {
   };
 });
 
+// Mock the assets API so AssetPicker renders with known assets (BTC/USD + ETH/USD).
+vi.mock("@/api/assets", () => ({
+  useAssets: () => ({
+    data: [
+      { symbol: "BTC/USD", category: "Crypto", data: "alpaca", venues: {}, enabled: true },
+      { symbol: "ETH/USD", category: "Crypto", data: "alpaca", venues: {}, enabled: true },
+    ],
+    isPending: false,
+    isError: false,
+  }),
+  useAlpacaAssets: () => ({
+    data: [
+      { symbol: "BTC/USD", category: "Crypto", data: "alpaca", venues: {}, enabled: true },
+      { symbol: "ETH/USD", category: "Crypto", data: "alpaca", venues: {}, enabled: true },
+    ],
+    isPending: false,
+    isError: false,
+  }),
+}));
+
 const scenario = {
   id: "crypto-rangebound-q2-2025",
   display_name: "Crypto range bound",
@@ -394,8 +414,12 @@ describe("ScenariosDetailRoute bars cache actions", () => {
       );
     });
 
-    const assetSelect = await screen.findByLabelText("Preview asset");
-    fireEvent.change(assetSelect, { target: { value: "ETH/USD" } });
+    // The asset picker is now a custom AssetPicker combobox (role="combobox").
+    // Click it to open, then click the ETH/USD option.
+    const assetPicker = await screen.findByRole("combobox", { name: "Asset picker" });
+    fireEvent.click(assetPicker);
+    const ethOption = await screen.findByRole("option", { name: /ETH\/USD/i });
+    fireEvent.click(ethOption);
 
     await waitFor(() => {
       expect(chartApi.getScenarioChart).toHaveBeenCalledWith(
@@ -416,8 +440,11 @@ describe("ScenariosDetailRoute bars cache actions", () => {
 
     renderRoute();
 
-    const assetSelect = await screen.findByLabelText("Preview asset");
-    fireEvent.change(assetSelect, { target: { value: "ETH/USD" } });
+    // The asset picker is a custom AssetPicker combobox (role="combobox").
+    const assetPicker = await screen.findByRole("combobox", { name: "Asset picker" });
+    fireEvent.click(assetPicker);
+    const ethOption = await screen.findByRole("option", { name: /ETH\/USD/i });
+    fireEvent.click(ethOption);
 
     fireEvent.click(await screen.findByRole("button", { name: "Fetch bars" }));
 
@@ -665,14 +692,15 @@ describe("RunsTab strategy name display", () => {
     expect(await screen.findByText(queuedRun.id)).toBeInTheDocument();
     expect(screen.getByText(failedRun.id)).toBeInTheDocument();
 
-    const statusFilter = screen
-      .getAllByRole("combobox")
-      .find((el) =>
-        Array.from((el as HTMLSelectElement).options).some(
-          (option) => option.value === "queued",
-        ),
-      ) as HTMLSelectElement;
-    fireEvent.change(statusFilter, { target: { value: "queued" } });
+    // Status filter is now a SignalSelectMenu button (not a native <select>).
+    // Click the "Status" trigger to open the listbox, then click "Pending"
+    // (the operator-facing label for the "queued" status value).
+    const statusTrigger = screen.getByRole("button", {
+      name: (name) => /Status/i.test(name) || /All statuses/i.test(name),
+    });
+    fireEvent.click(statusTrigger);
+    const pendingOption = await screen.findByRole("option", { name: /^Pending$/i });
+    fireEvent.click(pendingOption);
 
     await waitFor(() => {
       expect(screen.queryByText(failedRun.id)).not.toBeInTheDocument();

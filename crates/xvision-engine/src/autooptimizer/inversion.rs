@@ -119,6 +119,95 @@ mod tests {
         );
     }
 
+    fn parent_with_filter() -> Strategy {
+        // ADX filter with rhs=25.0 and max_wakeups_per_day=None (skipped on the
+        // wire). Used to test that filter-baseline normalization overwrites a
+        // wrong `before` with the parent's live value (B4).
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000G",
+                "display_name": "Filter Inversion Strategy",
+                "plain_summary": "Minimal strategy for filter-inversion baseline tests.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000G", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01, "max_concurrent_positions": 1,
+                "max_leverage": 1.0, "stop_loss_atr_multiple": 2.0, "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": {},
+            "activation_mode": "filter_gated",
+            "filter": {
+                "id": "01HZFILTER000000000000000G",
+                "strategy_id": "01HZTEST00000000000000000G",
+                "display_name": "ADX Filter",
+                "asset_scope": ["BTC/USD"],
+                "timeframe": "1h",
+                "conditions": { "all": [ { "lhs": "adx_14", "op": ">", "rhs": 25.0 } ] },
+                "cooldown_bars": 3
+            }
+        });
+        serde_json::from_value(v).expect("filter fixture must deserialise")
+    }
+
+    #[test]
+    fn normalize_filter_baseline_restores_parent_live_value_on_reverse() {
+        // B4: the experiment writer may guess a wrong `before` for a filter edit
+        // (e.g. because a nullable field was invisible). Normalizing overwrites
+        // `before` with the parent's live value so the reverse restores the parent
+        // exactly. `after` must stay untouched (lineage byte-identity).
+        let parent = parent_with_filter();
+        let mut forward = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".into(),
+                before: serde_json::json!(20.0), // WRONG: live value is 25.0
+                after: serde_json::json!(28.0),
+            }],
+            rationale: "t".into(),
+        };
+        let after_before = forward.filter[0].after.clone();
+        normalize_filter_baseline(&mut forward, &parent);
+        assert_eq!(
+            forward.filter[0].before,
+            serde_json::json!(25.0),
+            "before normalized to parent live value"
+        );
+        assert_eq!(
+            forward.filter[0].after, after_before,
+            "after must be untouched (lineage byte-identity)"
+        );
+
+        // The reverse restores the parent's live value into the child filter.
+        let reverse = invert_mutation(&forward);
+        let reverse_child = reverse.apply_to(&parent);
+        // The reverse sets rhs back to the (normalized) before = 25.0.
+        let live =
+            crate::autooptimizer::mutator::filter_tunable_paths(reverse_child.filter.as_ref().unwrap());
+        let rhs = live
+            .iter()
+            .find(|(p, _)| p == "conditions.0.rhs.numeric")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        assert_eq!(
+            rhs,
+            serde_json::json!(25.0),
+            "reverse must restore the parent's live rhs value (25.0)"
+        );
+    }
+
     #[test]
     fn invert_invert_prose_roundtrips() {
         // invert(invert(d)) == d — prose inversion is symmetric.
@@ -152,6 +241,37 @@ fn normalize_prose_baseline(forward: &mut MutationDiff, parent: &Strategy) {
         let role = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
         if let Some(parent_ref) = parent.agents.iter().find(|a| a.canonical_role() == role) {
             edit.before = parent_ref.prompt_override.clone().unwrap_or_default();
+        }
+    }
+}
+
+/// Rewrite each filter edit's `before` to the parent's CURRENT live value at
+/// that path, so the reverse mutation restores the parent's actual filter rather
+/// than whatever (possibly wrong/missing) `before` the experiment writer
+/// supplied.
+///
+/// Why this matters (B4): a nullable filter field (`max_wakeups_per_day`) is
+/// skipped from the serialized markdown when `None`, so the writer can't see its
+/// value and guesses a wrong `before`. The forward `after` is what's actually
+/// applied, so the forward child is fine — but the reverse diff sets the value
+/// back to `before`, which would then invert against the wrong baseline. The
+/// prose path solves the same problem via `normalize_prose_baseline`; this is
+/// its filter analogue. `after` is NEVER touched, so the forward child stays
+/// byte-identical (lineage hashing is unaffected).
+///
+/// Paths not present in the parent's live tunable-path set (e.g. an unknown
+/// path) are left as-is; the validator already governs path validity.
+fn normalize_filter_baseline(forward: &mut MutationDiff, parent: &Strategy) {
+    let Some(ref filter) = parent.filter else {
+        return;
+    };
+    let live: std::collections::HashMap<String, serde_json::Value> =
+        crate::autooptimizer::mutator::filter_tunable_paths(filter)
+            .into_iter()
+            .collect();
+    for edit in &mut forward.filter {
+        if let Some(current) = live.get(&edit.path) {
+            edit.before = current.clone();
         }
     }
 }
@@ -236,6 +356,11 @@ pub async fn run_inversion_pair(
     // to the gate's candidate; only the reverse direction is corrected.
     let mut forward_diff = forward_diff.clone();
     normalize_prose_baseline(&mut forward_diff, parent);
+    // B4: filter analogue of the prose baseline fix — overwrite each filter edit's
+    // `before` with the parent's live value so the reverse inverts against the
+    // correct baseline (a nullable field skipped from the markdown otherwise
+    // leaves the writer's `before` wrong). `after` is untouched.
+    normalize_filter_baseline(&mut forward_diff, parent);
     let reverse_diff = invert_mutation(&forward_diff);
     let forward_child = forward_diff.apply_to(parent);
     let reverse_child = reverse_diff.apply_to(parent);

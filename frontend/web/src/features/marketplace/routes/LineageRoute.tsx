@@ -4,10 +4,19 @@
 // No popups. Receipts drawer inline-expands via ?receipts=open.
 // Data: useQuery from @tanstack/react-query + useMarketplaceData() seam.
 // Per addendum §1: queryKey ["marketplace", "listing", name] / ["marketplace", "viewer"]
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiFetch } from "@/api/client";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
+import {
+  isOnChainListingId,
+  requirementsFromManifest,
+  useBundleManifest,
+} from "@/features/marketplace/data/bundle";
+import { RequirementChip } from "@/features/marketplace/components/RequirementChip";
 import { useWallet } from "@/features/marketplace/lib/wallet";
+import { faucetUsdc } from "@/features/marketplace/lib/chain";
+import { InsufficientUsdcError } from "@/features/marketplace/lib/purchaseErrors";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
@@ -283,6 +292,90 @@ function MoreFromCreatorCard({
   );
 }
 
+// ── Eval attestations (on-chain, permissionless self-attestation) ───────────
+// Wording: this section says "attested", never "verified" — v1 attestations
+// are permissionless self-attestations (anyone, including the seller, can
+// post one), so claiming "verified" would overstate the trust signal.
+// Fetched directly from the attestations route rather than threading the data
+// through `detail.onChain.attestations` — ApiMarketplaceData.getListing only
+// hits the listing route and has no attestation fetch, so populating the
+// OnChainReceipts shape there would mean a second fetch hidden inside the
+// data seam. The section owns its own query instead.
+
+/** Mirrors the backend `GET /api/marketplace/listings/:id/attestations` item. */
+interface AttestationItem {
+  attester: string;
+  posted_at_unix: number;
+  eval_result_uri: string;
+  eval_result_hash: string;
+  schema: string;
+}
+
+function truncMiddle(s: string): string {
+  if (s.length <= 12) return s;
+  return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
+function VerifiedEvalsSection({ listingId }: { listingId: string }) {
+  const { data } = useQuery({
+    queryKey: ["marketplace", "attestations", listingId],
+    queryFn: () =>
+      apiFetch<{ items: AttestationItem[] }>(
+        `/api/marketplace/listings/${listingId}/attestations`,
+      ),
+    retry: false,
+  });
+
+  if (!data || data.items.length === 0) return null;
+
+  return (
+    <section
+      data-testid="verified-evals"
+      className="mx-6 mt-6 rounded-md border border-border bg-surface-card"
+    >
+      <div className="px-4 py-3 border-b border-border">
+        <span className="text-[12px] font-medium text-foreground">
+          Eval attestations
+        </span>
+        <span className="ml-2 font-mono text-[10px] text-text-3">
+          on-chain eval attestations
+        </span>
+      </div>
+      <div>
+        {data.items.map((a, i) => (
+          <div
+            key={`${a.attester}-${a.posted_at_unix}-${i}`}
+            className={[
+              "flex items-center gap-3 px-4 py-2.5 flex-wrap",
+              i < data.items.length - 1 ? "border-b border-border-soft" : "",
+            ].join(" ")}
+          >
+            {/* v1: the registry carries no verdict field — every posted
+                attestation renders as a plain "attested" chip (a
+                self-attestation, not a third-party verification). */}
+            <span className="font-mono text-[10px] px-1.5 py-0.5 border border-gold/40 rounded-[3px] text-gold">
+              attested
+            </span>
+            <span className="font-mono text-[11.5px] text-text-2">
+              {truncMiddle(a.attester)}
+            </span>
+            <span className="font-mono text-[10.5px] text-text-3 min-w-0 truncate">
+              {a.eval_result_uri}
+            </span>
+            <span className="ml-auto font-mono text-[10.5px] text-text-3">
+              {new Date(a.posted_at_unix * 1000).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // ────────────────────────────────────────────────────
 // Main route component
 // ────────────────────────────────────────────────────
@@ -309,16 +402,27 @@ export function LineageRoute() {
     queryFn: () => mp.getViewer(),
   });
 
-  // DEPLOY WALL (C7 / AM6 + signer work): the real on-chain purchase is an
-  // EIP-3009 `buyWithAuthorization` that needs (a) a deployed Marketplace
-  // contract, (b) a wallet signer — `useWallet` currently exposes only an
-  // address, no signer/chain-id, and (c) a real MarketplaceData impl swapped in
-  // at MarketplaceLayout. Until all three land this stays the fixture
-  // `purchaseIntent`, which returns a fake TxRef and routes to the receipt.
-  // The real signing flow swaps in HERE; do NOT fake EIP-3009 signing.
+  // Verified manifest enrichment — real (numeric) on-chain listings only.
+  // Fixture listings never fetch; on any error this is null and the page
+  // renders exactly as before.
+  const manifest = useBundleManifest(detail?.id);
+  const requirements = requirementsFromManifest(manifest);
+
+  // Real purchase via the MarketplaceData seam: ApiMarketplaceData signs an
+  // EIP-3009 TransferWithAuthorization and POSTs the gasless relay (falling
+  // back to approve+buy when the relay 503s); the fixture client still
+  // returns a fake TxRef for fixture slugs. Errors render inline below the
+  // Buy button (no popups); InsufficientUsdcError gets a faucet affordance.
   const buyMutation = useMutation({
     mutationFn: () => mp.purchaseIntent(detail!.id),
     onSuccess: (ref) => navigate(`/marketplace/receipts/${ref.txHash}`),
+  });
+
+  // Testnet affordance: mint the missing test USDC, then retry the purchase
+  // (which re-runs the balance gate with the fresh balance).
+  const faucetMutation = useMutation({
+    mutationFn: (needed6: bigint) => faucetUsdc(needed6),
+    onSuccess: () => buyMutation.mutate(),
   });
 
   const cloneMutation = useMutation({
@@ -377,7 +481,7 @@ export function LineageRoute() {
           {/* Title row */}
           <div className="flex items-center flex-wrap gap-2">
             <h1 className="font-mono text-[30px] font-semibold tracking-tight leading-none">
-              {detail.id}
+              {manifest?.display_name || detail.id}
             </h1>
             <span className="font-mono text-[11px] text-text-3 px-1.5 py-0.5 rounded border border-border-strong">
               {detail.version}
@@ -391,11 +495,22 @@ export function LineageRoute() {
             ))}
           </div>
 
-          {/* Creator line */}
+          {/* Creator line — real listings link the seller address to the
+              creator page; fixture listings keep the plain text. */}
           <div className="font-mono text-[11.5px] text-text-3 flex items-center gap-1.5">
             <span>{detail.creator.handle ?? detail.creator.address.slice(0, 10)}</span>
             <span>·</span>
-            <span>{detail.creator.address.slice(0, 6)}…{detail.creator.address.slice(-4)}</span>
+            {isOnChainListingId(detail.id) ? (
+              <Link
+                data-testid="creator-link"
+                to={`/marketplace/creator/${detail.creator.address}`}
+                className="text-info hover:underline"
+              >
+                {detail.creator.address.slice(0, 6)}…{detail.creator.address.slice(-4)}
+              </Link>
+            ) : (
+              <span>{detail.creator.address.slice(0, 6)}…{detail.creator.address.slice(-4)}</span>
+            )}
             <span>·</span>
             <span>{detail.model}</span>
           </div>
@@ -478,8 +593,48 @@ export function LineageRoute() {
                   ? "Buy"
                   : "Connect wallet to buy"}
             </button>
+
+            {/* Inline purchase error (no popups). Faucet affordance when the
+                failure is an insufficient test-USDC balance. */}
+            {buyMutation.isError && !buyMutation.isPending && (
+              <div
+                data-testid="buy-error"
+                className="mt-2 rounded border border-danger/40 bg-danger/5 px-2.5 py-2"
+              >
+                <p className="font-mono text-[10.5px] text-danger leading-snug">
+                  {buyMutation.error instanceof Error
+                    ? buyMutation.error.message
+                    : "Purchase failed."}
+                </p>
+                {buyMutation.error instanceof InsufficientUsdcError && (
+                  <button
+                    data-testid="faucet-btn"
+                    onClick={() =>
+                      faucetMutation.mutate(
+                        (buyMutation.error as InsufficientUsdcError).neededUsdc6,
+                      )
+                    }
+                    disabled={faucetMutation.isPending}
+                    className="mt-1.5 px-2 py-1 rounded border border-gold/60 bg-gold/10 font-mono text-[10.5px] text-gold hover:bg-gold/20 transition-colors disabled:opacity-60"
+                  >
+                    {faucetMutation.isPending
+                      ? "Minting test USDC…"
+                      : "Get test USDC"}
+                  </button>
+                )}
+                {faucetMutation.isError && (
+                  <p className="mt-1 font-mono text-[10px] text-danger leading-snug">
+                    Faucet failed:{" "}
+                    {faucetMutation.error instanceof Error
+                      ? faucetMutation.error.message
+                      : "unknown error"}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="mt-2 font-mono text-[10px] text-text-3 leading-snug">
-              Testnet — simulated purchase. No real funds move.
+              Mantle Sepolia testnet — pays with test USDC.
             </div>
           </div>
 
@@ -503,8 +658,47 @@ export function LineageRoute() {
         </div>
       </section>
 
+      {/* ===== MANIFEST ENRICHMENT (real listings; renders nothing when the
+            bundle route 404s/errors or fields are absent) ===== */}
+      {manifest?.plain_summary && (
+        <section
+          data-testid="about-strategy"
+          className="mx-6 mt-6 rounded-md border border-border bg-surface-card p-4"
+        >
+          <div className="text-[12px] font-medium text-foreground mb-1.5">
+            About this strategy
+          </div>
+          <p className="text-[13px] leading-[1.5] text-text-2 whitespace-pre-wrap max-w-[640px]">
+            {manifest.plain_summary}
+          </p>
+        </section>
+      )}
+      {requirements.length > 0 && (
+        <section data-testid="requirements-row" className="mx-6 mt-6">
+          <div className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-3 mb-2">
+            Requirements
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {requirements.map((r) => (
+              <RequirementChip key={`${r.kind}:${r.name}`} requirement={r} />
+            ))}
+          </div>
+          <p className="mt-1.5 font-mono text-[10.5px] text-text-3">
+            you&apos;ll need these to run the strategy after purchase
+          </p>
+        </section>
+      )}
+
       {/* ===== INGREDIENT BANNER ===== */}
       <IngredientBanner ingredients={detail.ingredients} />
+
+      {/* ===== EVAL ATTESTATIONS (inline, only for attested on-chain
+            listings; verification === "verified" ⇔ attestation_count > 0
+            in the indexer mapping, so the fetch only fires when rows
+            exist) ===== */}
+      {/^\d+$/.test(detail.id) && detail.verification === "verified" && (
+        <VerifiedEvalsSection listingId={detail.id} />
+      )}
 
       {/* ===== BELOW THE FOLD (2-col) ===== */}
       <div className="grid gap-6 p-6" style={{ gridTemplateColumns: "1fr 380px" }}>

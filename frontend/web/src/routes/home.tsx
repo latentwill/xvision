@@ -1,40 +1,62 @@
-import { useQuery } from "@tanstack/react-query";
+// frontend/web/src/routes/home.tsx
+//
+// Home dashboard — "quant mission-control, calm density" (dashboard
+// redesign, docs/design/README.md). Four bento sections in one center
+// column, revealed with a single orchestrated stagger:
+//
+//   1. Pulse band      — equity + drawdown hero, KPI numerals, honest
+//                        execution-state chip, freshness stamp.
+//   2. Attention band  — honest live counts, in-flight tasks, critical
+//                        findings, awaiting-first-eval action, config nags.
+//   3. Optimizer panel — experiments accepted/rejected, writer ladder,
+//                        cycle trend, cumulative spend ("is the machine
+//                        doing good work?").
+//   4. Strategy leaderboard — top strategies by latest completed eval,
+//                        with sample-size honesty and the coverage footer.
+//
+// All ranking/aggregation logic lives in tested selectors under
+// `features/home/`; this route only wires queries to components.
+
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
-import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
-import { ActiveTasksStrip } from "@/components/home/ActiveTasksStrip";
-import { evalKeys, listRuns } from "@/api/eval";
-import { chartKeys, getRunChart } from "@/api/chart";
-import { strategyKeys, listStrategies } from "@/api/strategies";
-import { scenarioKeys, listScenarios } from "@/api/scenarios";
-import { agentKeys, listAgents } from "@/api/agents";
-import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
-import { isInflightRunStatus } from "@/lib/run-status";
-import { LiveSummaryStrip } from "@/components/home/LiveSummaryStrip";
-import { OptimizerDigestStrip } from "@/components/home/OptimizerDigestStrip";
-import { CriticalFindingsRow } from "@/components/home/CriticalFindingsRow";
-import { StrategyOutcomesSummary } from "@/components/home/StrategyOutcomesSummary";
-import { NagStrip } from "@/components/home/NagStrip";
+import { PulseBand } from "@/components/home/PulseBand";
+import { AttentionBand } from "@/components/home/AttentionBand";
+import { OptimizerPanel } from "@/components/home/OptimizerPanel";
+import { StrategyLeaderboard } from "@/components/home/StrategyLeaderboard";
 import type { AttentionItem } from "@/components/home/NagStrip";
+import { chartKeys, getRunChart } from "@/api/chart";
+import { evalKeys, listRuns } from "@/api/eval";
+import { strategyKeys, listStrategies } from "@/api/strategies";
+import { getBrokers, listProviders, settingsKeys } from "@/api/settings";
+import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
+import { livenessCounts } from "@/features/live/strip-status";
+import { pickHeroRun } from "@/features/home/pulse";
 import type {
   BrokerEntry,
   BrokersReport,
   ProviderRow,
-  RunSummary,
 } from "@/api/types.gen";
 
-// suppress unused-import lint — these are referenced by buildAttention keep-compat
-void isInflightRunStatus;
+// One page of recent runs feeds the pulse KPIs, leaderboard, and coverage
+// join. 100 keeps the hero/leaderboard meaningful on busy nodes (the server
+// caps at 200) without pulling the full ledger.
+const RUNS_PAGE = { limit: 100 } as const;
+
+// Same population (and cache entry) as LiveSummaryStrip: liveness is derived
+// from non-terminal agent runs only.
+const LIVENESS_PARAMS = { status: "running,queued", limit: 100 } as const;
 
 export function HomeRoute() {
-  const runs = useQuery({ queryKey: evalKeys.runs(), queryFn: () => listRuns() });
+  const runs = useQuery({
+    queryKey: evalKeys.runs(RUNS_PAGE),
+    queryFn: () => listRuns(RUNS_PAGE),
+  });
   const strategies = useQuery({
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
-  });
-  const agents = useQuery({
-    queryKey: agentKeys.list(),
-    queryFn: () => listAgents(),
   });
   const providers = useQuery({
     queryKey: settingsKeys.providers(),
@@ -44,21 +66,24 @@ export function HomeRoute() {
     queryKey: settingsKeys.brokers(),
     queryFn: getBrokers,
   });
+  const agentRuns = useQuery({
+    queryKey: agentRunKeys.list(LIVENESS_PARAMS),
+    queryFn: () => listAgentRuns(LIVENESS_PARAMS),
+    refetchInterval: 10_000,
+  });
 
-  const recent = (runs.data ?? []).slice(0, 5);
-  const latestChartableRun = recent.find(isChartableRun);
-  const latestRunId = latestChartableRun?.id ?? "";
-  // keep chart query alive so hook count stays stable across renders
-  useQuery({
-    queryKey: chartKeys.run(latestRunId),
-    queryFn: () => getRunChart(latestRunId),
-    enabled: !!latestRunId,
-  });
-  // scenario query kept for hook-count stability; will be used by W7 NagStrip
-  useQuery({
-    queryKey: scenarioKeys.list(),
-    queryFn: () => listScenarios(),
-  });
+  // Kill the runs→chart waterfall: start the slim hero-chart fetch the
+  // moment the runs page lands, before PulseBand mounts its own query.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const hero = pickHeroRun(runs.data ?? []);
+    if (!hero) return;
+    void queryClient.prefetchQuery({
+      queryKey: chartKeys.run(hero.id, ["equity"]),
+      queryFn: () => getRunChart(hero.id, ["equity"]),
+      staleTime: 30_000,
+    });
+  }, [runs.data, queryClient]);
 
   const attentionItems = buildAttention({
     providers: providers.data?.providers,
@@ -66,37 +91,51 @@ export function HomeRoute() {
   });
 
   const strategyCount = strategies.data?.length ?? 0;
-  // agentCount kept alive for future use
-  void agents.data;
+  const liveness = agentRuns.data ? livenessCounts(agentRuns.data) : null;
 
   return (
     <>
       <Topbar
         title="Dashboard"
-        sub={`cockpit · ${strategyCount} strategies`}
+        sub={`${strategyCount} strategies`}
       />
 
       <div className="space-y-5">
         <SafetyPauseBanner />
-        <HomeOutcomeStrip strategies={strategies.data ?? []} runs={runs.data ?? []} />
-        <ActiveTasksStrip />
-        <LiveSummaryStrip />
-        <OptimizerDigestStrip />
-        <CriticalFindingsRow runs={runs.data ?? []} />
-        <StrategyOutcomesSummary strategies={strategies.data ?? []} runs={runs.data ?? []} />
-        <NagStrip items={attentionItems} />
+
+        <div className="xvn-card-in" style={{ animationDelay: "0ms" }}>
+          <PulseBand
+            runs={runs.data ?? []}
+            strategies={strategies.data ?? []}
+            liveness={liveness}
+            runsPending={runs.isPending}
+          />
+        </div>
+
+        <div className="xvn-card-in" style={{ animationDelay: "70ms" }}>
+          <AttentionBand
+            runs={runs.data ?? []}
+            strategies={strategies.data ?? []}
+            nagItems={attentionItems}
+          />
+        </div>
+
+        <div className="xvn-card-in" style={{ animationDelay: "140ms" }}>
+          <OptimizerPanel />
+        </div>
+
+        <div className="xvn-card-in" style={{ animationDelay: "210ms" }}>
+          <StrategyLeaderboard
+            strategies={strategies.data ?? []}
+            runs={runs.data ?? []}
+          />
+        </div>
       </div>
     </>
   );
 }
 
-// ─── helpers ───────────────────────────────────────────────────────────────
-
-function isChartableRun(run: RunSummary): boolean {
-  return run.mode !== "live" && run.scenario_id.trim().length > 0;
-}
-
-// ─── attention rollup (nag items only — perf-drop/eval-failure moved to other sections) ──
+// ─── attention rollup (nag items only — perf-drop/eval-failure live in other sections) ──
 
 function buildAttention(input: {
   providers: ProviderRow[] | undefined;

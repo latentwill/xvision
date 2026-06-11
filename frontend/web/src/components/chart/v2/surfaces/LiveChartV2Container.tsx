@@ -17,7 +17,7 @@ import { LiveChartV2 } from "./LiveChartV2";
  * stream tick, so the chart updates live without LiveChartV2 needing its own
  * streaming hook.
  *
- * Stream source: when an injected `stream` is supplied (the LiveCockpit lifts a
+ * Stream source: when an injected `stream` is supplied (the live page lifts a
  * single `useRunStream(selectedId)` and shares it with the connection dot, the
  * account strip, the positions table, AND this container) the container
  * consumes it and opens NO EventSource of its own. When `stream` is omitted

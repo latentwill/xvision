@@ -32,6 +32,11 @@ pub enum MarketplaceError {
     #[error("ipfs: {0}")]
     Ipfs(String),
 
+    /// Sealed-bundle crypto failure (Lit Action request, encrypt/decrypt, or
+    /// the escrow fallback). See [`crate::sealed`].
+    #[error("sealed: {0}")]
+    Sealed(String),
+
     /// Referenced listing does not exist in the driver's view.
     #[error("unknown listing: {0}")]
     UnknownListing(u64),

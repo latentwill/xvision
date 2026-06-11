@@ -656,11 +656,10 @@ describe("EvalRunDetailRoute", () => {
   it("hides the review panel while the run is still active", async () => {
     vi.mocked(evalApi.getRun).mockResolvedValue(detail());
     renderDetail();
-    // The route renders an "Reviews are available after the run finishes"
-    // empty state until status === "completed".
+    // The route renders a placeholder until status === "completed".
     await screen.findByRole("button", { name: /stop eval run/i });
     expect(
-      screen.getByText(/reviews are available after the run finishes/i),
+      screen.getByText(/reviews are available once the run is no longer active/i),
     ).toBeInTheDocument();
     // listReviewsForRun must not fire for non-completed runs.
     expect(evalReviewApi.listReviewsForRun).not.toHaveBeenCalled();

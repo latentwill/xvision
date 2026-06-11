@@ -8008,6 +8008,7 @@ version = "0.21.0"
 dependencies = [
  "alloy",
  "anyhow",
+ "async-trait",
  "blake3",
  "chrono",
  "clap",
@@ -8030,6 +8031,7 @@ dependencies = [
  "xvision-execution",
  "xvision-filters",
  "xvision-harness",
+ "xvision-identity",
  "xvision-intern",
  "xvision-marketplace",
  "xvision-memory",
@@ -8060,6 +8062,7 @@ dependencies = [
 name = "xvision-dashboard"
 version = "0.21.0"
 dependencies = [
+ "alloy",
  "anyhow",
  "async-stream",
  "async-trait",
@@ -8087,9 +8090,12 @@ dependencies = [
  "tower-http",
  "tracing",
  "ulid",
+ "url",
  "xvision-core",
  "xvision-engine",
  "xvision-filters",
+ "xvision-identity",
+ "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
 ]
@@ -8151,6 +8157,7 @@ dependencies = [
  "similar",
  "sqlx",
  "statrs",
+ "sysinfo",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -8168,6 +8175,7 @@ dependencies = [
  "xvision-eval",
  "xvision-execution",
  "xvision-filters",
+ "xvision-identity",
  "xvision-memory",
  "xvision-observability",
  "xvision-risk",

@@ -2,12 +2,14 @@
 resolver = "2"
 members = ["crates/*", "xtask"]
 
-# `default-members` excludes xvision-identity from bare `cargo build` /
-# `cargo test` runs (no -p, no --workspace). The crate pulls in the heavy
-# alloy v2 stack which is only needed for the on-chain identity / reputation
-# flow on Mantle; gating it on opt-in keeps the hot dev loop fast for the
-# trading-pipeline core. Explicit `cargo build -p xvision-identity` and
-# `cargo test --workspace` still include it.
+# `default-members` omits xvision-identity / xvision-marketplace as direct
+# members, but since the marketplace routes landed, xvision-dashboard (a
+# default member) depends on both — so bare `cargo build` / `cargo test`
+# (no -p, no --workspace) now compiles the alloy v2 chain stack too. The
+# marketplace routes are env-gated at runtime (dormant → 503 without
+# XVN_RPC_URL etc.), so the chain stack compiles in but stays inert without
+# config. Explicit `cargo test --workspace` additionally runs the identity /
+# marketplace crates' own tests.
 default-members = [
     "crates/xvision-agent-client",
     "crates/xvision-core",

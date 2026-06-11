@@ -263,7 +263,7 @@ describe("ListingCard", () => {
     const { container } = render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, {
       wrapper: Wrapper,
     });
-    expect(container.querySelector('[data-genart="bitfields-v2"]')).not.toBeNull();
+    expect(container.querySelector('[data-genart="bitfields-v3"]')).not.toBeNull();
   });
 
   it("renders the Sparkline", () => {
@@ -281,6 +281,12 @@ describe("ListingCard", () => {
   it("renders VerifiedBadge for verified listings", () => {
     render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
     expect(screen.getByTitle(/backtested/i)).toBeInTheDocument();
+  });
+
+  it("renders no verification badge for unverified listings", () => {
+    render(<ListingCard row={FREE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
+    expect(screen.queryByTitle(/backtested/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unverified/i)).not.toBeInTheDocument();
   });
 
   it("renders X402Badge for x402 listings", () => {

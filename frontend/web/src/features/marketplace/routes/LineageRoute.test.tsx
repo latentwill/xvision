@@ -1,7 +1,7 @@
 // src/features/marketplace/routes/LineageRoute.test.tsx
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi, beforeAll, afterAll } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
@@ -89,6 +89,18 @@ describe("LineageRoute", () => {
     // VerifiedBadge and X402Badge rendered (fixture: verified + acceptsX402)
     expect(screen.getByTestId("verified-badge")).toBeInTheDocument();
     expect(screen.getByTestId("x402-badge")).toBeInTheDocument();
+  });
+
+  it("renders no verification badge for unverified listings", async () => {
+    const client = new FixtureMarketplaceData();
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...(await new FixtureMarketplaceData().getListing("btc-momentum-v3")),
+      verification: "unverified",
+    });
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-hero");
+    expect(screen.queryByTestId("verified-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText(/unverified/i)).not.toBeInTheDocument();
   });
 
   it("shows buyer count: N humans + M agents", async () => {
@@ -196,5 +208,204 @@ describe("LineageRoute", () => {
   it("shows an error state for an unknown strategy name", async () => {
     render(<Wrapper initialPath="/marketplace/lineage/does-not-exist" />);
     expect(await screen.findByText(/not found/i)).toBeInTheDocument();
+  });
+});
+
+// ── Eval attestations (on-chain) ─────────────────────────────────────────────
+describe("LineageRoute eval attestations", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const ATTESTER = "0xa83e000000000000000000000000000000000001";
+
+  async function verifiedNumericClient() {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing(
+      "btc-momentum-v3",
+    );
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...base,
+      id: "3",
+      verification: "verified",
+    });
+    return client;
+  }
+
+  it("fetches attestations for a verified on-chain listing and renders the section", async () => {
+    const client = await verifiedNumericClient();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              attester: ATTESTER,
+              posted_at_unix: 1760000000, // 2025-10-09
+              eval_result_uri: "xvn://eval/listing/3",
+              eval_result_hash: "0x" + "ab".repeat(32),
+              schema: "0x" + "00".repeat(32),
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Wrapper client={client} />);
+
+    expect(await screen.findByTestId("verified-evals")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/marketplace/listings/3/attestations",
+      expect.anything(),
+    );
+    // attester truncated in the middle
+    expect(screen.getByText(/0xa83e…0001/)).toBeInTheDocument();
+    // date derived from posted_at_unix
+    expect(screen.getByText(/2025/)).toBeInTheDocument();
+    // eval result uri rendered as text
+    expect(screen.getByText("xvn://eval/listing/3")).toBeInTheDocument();
+    // honest wording: self-attestations render as "attested", never "verified"
+    expect(screen.getByText("Eval attestations")).toBeInTheDocument();
+    expect(screen.getByText(/attested/i)).toBeInTheDocument();
+    expect(screen.queryByText(/endorsed/i)).not.toBeInTheDocument();
+  });
+
+  it("does not fetch or render the section for fixture (non-numeric) listings", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Wrapper />); // fixture detail: verified but slug id
+    await screen.findByTestId("lineage-page");
+
+    expect(screen.queryByTestId("verified-evals")).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch attestations for unverified on-chain listings", async () => {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing(
+      "btc-momentum-v3",
+    );
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...base,
+      id: "3",
+      verification: "unverified",
+    });
+    const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<Wrapper client={client} />);
+    await screen.findByTestId("lineage-page");
+
+    expect(screen.queryByTestId("verified-evals")).not.toBeInTheDocument();
+    // The bundle enrichment fetch may fire for numeric ids; the attestations
+    // route specifically must not.
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/marketplace/listings/3/attestations",
+      expect.anything(),
+    );
+  });
+});
+
+// ── Bundle manifest enrichment (real on-chain listings) ─────────────────────
+describe("LineageRoute bundle enrichment", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const SELLER = "0x7c2e000000000000000000000000000000000007";
+
+  async function numericClient() {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing(
+      "btc-momentum-v3",
+    );
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...base,
+      id: "3",
+      creator: { address: SELLER },
+      verification: "unverified",
+    });
+    return client;
+  }
+
+  function stubBundleFetch() {
+    const bundle = {
+      listing_id: 3,
+      content_uri: "ipfs://bafytestcid",
+      verified: true,
+      manifest: {
+        manifest: {
+          id: "01HSTRAT",
+          display_name: "BTC Dip Buyer",
+          plain_summary: "Buys BTC dips with a momentum confirmation gate.",
+          creator: "@ed",
+          attested_with: ["claude-haiku-4.5"],
+          required_tools: ["birdeye-mcp"],
+        },
+      },
+    };
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url).endsWith("/bundle")) {
+        return new Response(JSON.stringify(bundle), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("replaces the generic title with the manifest display_name", async () => {
+    stubBundleFetch();
+    render(<Wrapper client={await numericClient()} />);
+    expect(await screen.findByText("BTC Dip Buyer")).toBeInTheDocument();
+  });
+
+  it("renders the About section with the plain summary", async () => {
+    stubBundleFetch();
+    render(<Wrapper client={await numericClient()} />);
+    const about = await screen.findByTestId("about-strategy");
+    expect(about).toHaveTextContent("About this strategy");
+    expect(about).toHaveTextContent(/momentum confirmation gate/);
+  });
+
+  it("renders requirement chips for attested models + required tools, with the note", async () => {
+    stubBundleFetch();
+    render(<Wrapper client={await numericClient()} />);
+    const row = await screen.findByTestId("requirements-row");
+    expect(row).toHaveTextContent("claude-haiku-4.5");
+    expect(row).toHaveTextContent("birdeye-mcp");
+    expect(row).toHaveTextContent(/you'll need these to run the strategy after purchase/i);
+  });
+
+  it("links the seller address to the creator page for real listings", async () => {
+    stubBundleFetch();
+    render(<Wrapper client={await numericClient()} />);
+    const link = await screen.findByTestId("creator-link");
+    expect(link).toHaveAttribute("href", `/marketplace/creator/${SELLER}`);
+  });
+
+  it("renders no enrichment when the bundle route errors (fixture parity)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ code: "not_found", message: "nope" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Wrapper client={await numericClient()} />);
+    await screen.findByTestId("lineage-page");
+    expect(screen.queryByTestId("about-strategy")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("requirements-row")).not.toBeInTheDocument();
+  });
+
+  it("never fetches the bundle for fixture (slug) listings and keeps the fixture title", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<Wrapper />); // fixture slug listing
+    await screen.findByTestId("lineage-page");
+    expect(screen.getByText("btc-momentum-v3")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("creator-link")).not.toBeInTheDocument();
   });
 });

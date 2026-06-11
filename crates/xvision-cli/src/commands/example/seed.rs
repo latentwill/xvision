@@ -60,8 +60,8 @@ start = \"2025-09-01\"
 end = \"2025-12-01\"
 
 [day_window]
-start = \"2024-01-01\"
-end = \"2025-09-01\"
+start = \"2025-01-01\"
+end = \"2025-04-01\"
 
 [mutator]
 provider = \"{provider}\"

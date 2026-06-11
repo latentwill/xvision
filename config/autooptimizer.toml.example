@@ -15,9 +15,11 @@ end   = "2025-12-01"
 
 # In-sample date range used during each evening run.
 # Should not overlap with baseline_untouched_window.
+# Keep the span under MAX_WINDOW_DAYS (120) — larger windows are rejected
+# at validation because they OOM the backtest (loads every bar into memory).
 [day_window]
-start = "2024-01-01"
-end   = "2025-09-01"
+start = "2025-01-01"
+end   = "2025-04-01"
 
 # Optional: lower the minimum-improvement bar if no experiment passes for
 # several consecutive evenings. Remove this section to keep min_improvement fixed.

@@ -246,6 +246,19 @@ contract Marketplace is
         emit FeeRecipientChanged(old, newRecipient);
     }
 
+    /// @inheritdoc IMarketplace
+    /// @dev Re-points the sale currency (e.g. the Mantle Sepolia UUPS upgrade
+    ///      to the EIP-3009 MockUSDC). NOTE: in-flight listings keep their
+    ///      USDC-unit prices, but allowances/balances in the OLD token do not
+    ///      carry over — buyers must approve/hold the new token. V2: operator
+    ///      EOA; V4: governed.
+    function setUsdc(address newUsdc) external override onlyOwner {
+        if (newUsdc == address(0)) revert ZeroAddress();
+        address old = _usdc;
+        _usdc = newUsdc;
+        emit UsdcChanged(old, newUsdc);
+    }
+
     /// @notice Emergency stop for both buy paths. V2: operator EOA; V4: governed.
     ///         Pause cannot mint, burn, transfer, or change fees.
     function pause() external onlyOwner {

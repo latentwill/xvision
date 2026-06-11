@@ -12,6 +12,12 @@ pub(crate) struct Supervisor {
     // explicit shutdown. `take()` leaves None; Drop's guard sees None
     // and skips the second kill.
     child: Option<Child>,
+    // OS pid of the sidecar, captured at spawn time. `Child::id()` returns
+    // `None` once the child is reaped, so we snapshot it here while the
+    // process is live (U13: `eval cancel` needs this pid to SIGTERM the
+    // sidecar). `None` only if the OS never assigned a pid (should not happen
+    // for a successfully-spawned child).
+    pid: Option<u32>,
     pub(crate) socket_path: PathBuf,
 }
 
@@ -35,6 +41,10 @@ impl Supervisor {
             .kill_on_drop(true);
 
         let mut child = cmd.spawn()?;
+
+        // Capture the pid now — `Child::id()` returns `None` after the child is
+        // reaped, so a later read would miss it (U13).
+        let pid = child.id();
 
         // Wait for the structured `ready` event on stderr.
         let stderr = child.stderr.take().ok_or(AgentClientError::TransportClosed)?;
@@ -62,6 +72,7 @@ impl Supervisor {
         match ready {
             Ok(Ok(())) => Ok(Self {
                 child: Some(child),
+                pid,
                 socket_path: socket_path.to_path_buf(),
             }),
             _ => {
@@ -69,6 +80,13 @@ impl Supervisor {
                 Err(AgentClientError::TransportClosed)
             }
         }
+    }
+
+    /// OS pid of the sidecar, snapshotted at spawn time. `None` only if the
+    /// OS never assigned a pid. Used by `eval cancel` to SIGTERM the sidecar
+    /// (U13).
+    pub(crate) fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     pub(crate) async fn shutdown(mut self) -> Result<()> {

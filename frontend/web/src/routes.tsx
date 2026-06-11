@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { noteSuccessfulPageLoad } from "@/lib/chunk-reload";
+import { useLineageNode } from "./features/autooptimizer/api";
 
 const LoginRoute = lazy(() => import("./routes/login").then((m) => ({ default: m.LoginRoute })));
 
@@ -29,6 +30,7 @@ const EvalRunDetailRoute = lazy(() => import("./routes/eval-runs-detail").then((
 const AgentRunDetailRoute = lazy(() => import("./routes/agent-runs-detail").then((m) => ({ default: m.AgentRunDetailRoute })));
 const EvalCompareRoute = lazy(() => import("./routes/eval-compare").then((m) => ({ default: m.EvalCompareRoute })));
 const LiveRoute = lazy(() => import("./routes/live").then((m) => ({ default: m.LiveRoute })));
+const LiveRunDetailRoute = lazy(() => import("./routes/live-run-detail").then((m) => ({ default: m.LiveRunDetailRoute })));
 const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m.SetupRoute })));
 const DocsRoute = lazy(() => import("./routes/docs").then((m) => ({ default: m.DocsRoute })));
 const MemoryPage = lazy(() => import("./features/memory/MemoryPage").then((m) => ({ default: m.MemoryPage })));
@@ -41,6 +43,7 @@ const SettingsSkillsRoute = lazy(() => import("./routes/settings").then((m) => (
 const SettingsToolPolicyRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsToolPolicyRoute })));
 const SettingsWalletRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsWalletRoute })));
 const SettingsMarketplaceRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsMarketplaceRoute })));
+const SettingsIdentityRoute = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsIdentityRoute })));
 const SafetyRoute = lazy(() => import("./routes/safety").then((m) => ({ default: m.SafetyRoute })));
 const ChartLabLayout = lazy(() => import("./routes/chart-lab").then((m) => ({ default: m.ChartLabLayout })));
 const ChartLabOverview = lazy(() => import("./routes/chart-lab/ChartLabOverview").then((m) => ({ default: m.ChartLabOverview })));
@@ -60,8 +63,6 @@ const ChartsAnnotated = lazy(() => import("./routes/charts/ChartsAnnotated").the
 const ChartsHero = lazy(() => import("./routes/charts/ChartsHero").then((m) => ({ default: m.ChartsHero })));
 const OptimizerHome = lazy(() => import("./features/autooptimizer/screens/OptimizerHome").then((m) => ({ default: m.OptimizerHome })));
 const OptimizerCycle = lazy(() => import("./features/autooptimizer/screens/CycleDetail").then((m) => ({ default: m.CycleDetail })));
-const OptimizerExperiment = lazy(() => import("./features/autooptimizer/screens/ExperimentDetail").then((m) => ({ default: m.ExperimentDetail })));
-const OptimizerRunDetail = lazy(() => import("./features/autooptimizer/screens/RunDetail").then((m) => ({ default: m.RunDetail })));
 const OptimizerStrategyInspector = lazy(() =>
   import("./features/autooptimizer/screens/StrategyInspector").then((m) => ({
     default: m.StrategyInspector,
@@ -75,6 +76,7 @@ const LineageRoute = lazy(() => import("./features/marketplace/routes/LineageRou
 const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRoute").then((m) => ({ default: m.CreatorRoute })));
 const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
 const ReceiptRoute = lazy(() => import("./features/marketplace/routes/ReceiptRoute").then((m) => ({ default: m.ReceiptRoute })));
+const MarketplaceWalletRoute = lazy(() => import("./features/marketplace/routes/WalletRoute").then((m) => ({ default: m.WalletRoute })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -90,13 +92,30 @@ function RouteLoaded() {
   return null;
 }
 
-function OptimizerRunRoute() {
+/** Run detail folded into Home (session-scoped). Old /optimizer/run/:sessionId
+ *  deep-links land on Home with the session filter applied. */
+export function OptimizerRunRedirect() {
   const { sessionId } = useParams<{ sessionId: string }>();
   if (!sessionId) return <Navigate to="/optimizer" replace />;
-  return <OptimizerRunDetail sessionId={sessionId} />;
+  return <Navigate to={`/optimizer?session=${sessionId}`} replace />;
 }
 
-function LegacyDiffRedirect() {
+/** Experiment detail folded into CycleDetail (?exp= deep link). Looks up the
+ *  owning cycle for the hash, then forwards; unknown hashes fall back to the
+ *  optimizer home rather than a dead detail page. */
+export function ExperimentRedirect() {
+  const { hash } = useParams<{ hash: string }>();
+  const node = useLineageNode(hash ?? "");
+  if (node.isLoading) {
+    return <div className="p-6 text-[12px] text-text-3">Locating experiment…</div>;
+  }
+  if (node.data?.cycle_id) {
+    return <Navigate to={`/optimizer/cycle/${node.data.cycle_id}?exp=${hash}`} replace />;
+  }
+  return <Navigate to="/optimizer" replace />;
+}
+
+export function LegacyDiffRedirect() {
   const { hash } = useParams<{ hash: string }>();
   return <Navigate to={`/optimizer/experiment/${hash ?? ""}`} replace />;
 }
@@ -163,6 +182,9 @@ export const router = createBrowserRouter([
       // Backward-compat alias: deep links to /memory continue to work.
       { path: "memory", element: <Navigate to="/agents/memory" replace /> },
       { path: "live", element: page(<LiveRoute />) },
+      // Static "runs" segment outranks the `:id` param, so the live
+      // inspector wins over `/live/:id` for /live/runs/* deep links.
+      { path: "live/runs/:runId", element: page(<LiveRunDetailRoute />) },
       { path: "live/:id", element: page(<LiveRoute />) },
       { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },
@@ -214,6 +236,7 @@ export const router = createBrowserRouter([
           { path: "lineage/:name", element: page(<LineageRoute />) },
           { path: "creator/:handleOrAddr", element: page(<CreatorRoute />) },
           { path: "sell", element: page(<SellRoute />) },
+          { path: "wallet", element: page(<MarketplaceWalletRoute />) },
           { path: "receipts/:tx", element: page(<ReceiptRoute />) },
         ],
       },
@@ -222,8 +245,8 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: page(<OptimizerHome />) },
           { path: "cycle/:cycleId", element: page(<OptimizerCycle />) },
-          { path: "experiment/:hash", element: page(<OptimizerExperiment />) },
-          { path: "run/:sessionId", element: page(<OptimizerRunRoute />) },
+          { path: "experiment/:hash", element: <ExperimentRedirect /> },
+          { path: "run/:sessionId", element: <OptimizerRunRedirect /> },
           { path: "strategy/:hash", element: page(<OptimizerStrategyInspector />) },
         ],
       },
@@ -243,6 +266,7 @@ export const router = createBrowserRouter([
           { path: "wallet", element: page(<SettingsWalletRoute />) },
           { path: "marketplace", element: page(<SettingsMarketplaceRoute />) },
           { path: "tool-policy", element: page(<SettingsToolPolicyRoute />) },
+          { path: "identity", element: page(<SettingsIdentityRoute />) },
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },

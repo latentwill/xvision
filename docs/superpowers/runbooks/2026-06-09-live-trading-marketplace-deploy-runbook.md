@@ -76,14 +76,48 @@ Run from the local build host. Each step is gas-spending and/or irreversible whe
    under `crates/xvision-identity/abi/v1/` (AM7). The `sol!` bindings in `contracts.rs` were
    written ahead of deploy — reconcile them against the verified ABIs.
 8. [ ] **Provision IPFS pinning:** create the Pinata JWT and set it where `PinataDriver` reads it.
-9. [ ] **Deploy the subgraph** (C2) to the chosen host. The repo currently has only
-   `crates/xvision-marketplace/subgraph/schema.graphql` (entity `Agent`, post-AM3) — the
-   `subgraph.yaml` manifest + AssemblyScript mappings are **net-new** and must be authored
-   against the deployed addresses + ABIs.
+9. [x] **Deploy the subgraph** (C2). ✅ **DONE 2026-06-11** — authored
+   (`crates/xvision-marketplace/subgraph/`: manifest + minimal `abis/` + AssemblyScript mappings
+   for all six contracts, matchstick-tested) **and deployed to Goldsky** (the only host indexing
+   Mantle Sepolia today; The Graph doesn't list the chain). Live at
+   `xvision-marketplace/1.0.1` (stable tag `live`), network alias `mantle-sepolia`, startBlocks set
+   to each contract's creation block. Public read endpoint:
+   `https://api.goldsky.com/api/public/project_cmq8zp6etzmv101xwaeih73lr/subgraphs/xvision-marketplace/live/gn`.
+   Verified live: indexes agent #0/#1, listing #1 (1.0 USDC), and the two smoke-test buys.
+   The dashboard `MarketplaceData` browse/detail path reads it via
+   `VITE_MARKETPLACE_SUBGRAPH_URL` (baked by `Dockerfile.deploy`). See the subgraph `README.md`.
 10. [ ] **Stand up the Validation Registry signer** (C5) — the trusted validator service that
     gates listing publication.
 11. [ ] *(Optional — A6/A7)* provision a public read-only viewer (`xvn.market`) + a relay for
     Tier-B sealed-bundle decryption, if a public marketplace surface is wanted (deferrable if dashboard-only).
+
+### §2 addendum — 2026-06-10 Marketplace UUPS upgrade: setUsdc → MockUSDC3009
+
+The Marketplace proxy was re-pointed from the old non-3009 community mock USDC
+(`0xAcab8129E2cE587fD203FD770ec9ECAFA2C88080`) to the xvn-deployed EIP-3009
+MockUSDC3009 (`0x68AA91f73F359035875759e1d4C4949A27c84c88`) via a UUPS upgrade
+that added an `onlyOwner setUsdc(address)` (emits `UsdcChanged`), executed as a
+single `upgradeToAndCall` (script `contracts/script/UpgradeMarketplaceSetUsdc.s.sol`,
+chain-5003 guarded).
+
+- Proxy: `0x4b9450642f2b3Da248e90b4FEBaA8eCA87E78cE8` (unchanged)
+- Old impl: `0x42e6b4e03288b8274fa4a5a755b8be7cff1adeb0`
+- **New impl: `0x934453DE61f0AE3CF6692A9916E623c103153C5B`** (Sourcify
+  exact_match: <https://sourcify.dev/server/v2/contract/5003/0x934453DE61f0AE3CF6692A9916E623c103153C5B>)
+- Impl deploy tx: [`0x49b5e32048f4a946180bd3eb65a69a6ad0864444e02c9e0c180a84fb4faa2b84`](https://sepolia.mantlescan.xyz/tx/0x49b5e32048f4a946180bd3eb65a69a6ad0864444e02c9e0c180a84fb4faa2b84)
+- `upgradeToAndCall(newImpl, setUsdc(0x68AA…4c88))` tx: [`0x5103fba44d744f818e9cbf18ff1376c8a17f19a7f87e3edb9f9e9fd5e080b51a`](https://sepolia.mantlescan.xyz/tx/0x5103fba44d744f818e9cbf18ff1376c8a17f19a7f87e3edb9f9e9fd5e080b51a)
+- Verified post-upgrade: `usdc()` → `0x68AA…4c88`; EIP-1967 impl slot →
+  `0x9344…3C5B`; `protocolFeeBps()` (500) and `feeRecipient()` preserved.
+- Smoke (operator EOA, listing 1, price 1.0 USDC): `faucet`
+  [`0x1e22e7e2…d8eae5c0`](https://sepolia.mantlescan.xyz/tx/0x1e22e7e215c2c457d7a305ae4346f5d26b88c221bb9cca1fd1ce73e3d8eae5c0)
+  → `approve` [`0x470ddf54…f087f7d3aa`](https://sepolia.mantlescan.xyz/tx/0x470ddf5475bf866bd345ae69cf32461d29771bce40f38828662e27f087f7d3aa)
+  → `buy(1, operator)` [`0xba99628b…210347016`](https://sepolia.mantlescan.xyz/tx/0xba99628b04ea43ce8985c0fed3cdb57e6c9b73c7855801b47025e22210347016)
+  — license tokenId 1 minted, splits paid in the new token. The signed
+  EIP-3009 `buyWithAuthorization` path is covered with a real EIP-712
+  signature in `contracts/test/integration/UpgradeSetUsdc.t.sol`, which
+  mirrors this exact upgrade shape.
+- Note: in-flight listings keep their USDC-unit prices, but allowances and
+  balances in the OLD token do not carry over. Acceptable on testnet.
 
 ---
 
@@ -167,3 +201,31 @@ trustee" TBD), **timelock** wired, fee-recipient set, testnet→mainnet **migrat
 decided, and the **Alpaca-live cutover** (`VenueLabel::Live`) decision made. **Real money = V4.**
 The 2026-06-09 contract security audit (OZ + Trail-of-Bits skills) found no Critical/High; the
 deferred Lows above are the mainnet-hardening checklist.
+
+---
+
+## Addendum 2026-06-10 — USDC re-point (UUPS upgrade, executed)
+
+The original deploy initialized the Marketplace with a community mock USDC that
+has **no EIP-3009 support** (research confirmed no EIP-3009 USDC exists on
+Mantle Sepolia at all; Mantle MAINNET bridged USDC supports it natively). To
+keep the x402 path demoable:
+
+1. `MockUSDC3009` (full EIP-3009 + `faucet()`, cap 10,000e6/call) deployed at
+   [`0x68aA91F73f359035875759E1d4C4949A27c84C88`](https://sepolia.mantlescan.xyz/address/0x68AA91f73F359035875759e1d4C4949A27c84c88)
+   (PR #898, Sourcify exact_match).
+2. `Marketplace.setUsdc` added (onlyOwner, `UsdcChanged` event, storage layout
+   untouched) and the proxy upgraded atomically:
+   - New impl: [`0x1FE13b656d9571798F7B3074f54eaFBfDc88bC44`](https://sepolia.mantlescan.xyz/address/0x1fe13b656d9571798f7b3074f54eafbfdc88bc44)
+     (deploy tx `0xb18c3d04…bbfe2`)
+   - `upgradeToAndCall(newImpl, setUsdc(0x68aA…4c88))`:
+     [`0x7b990ce1…a9c83`](https://sepolia.mantlescan.xyz/tx/0x7b990ce18eb24cae6e2c28ff7d48963949a03be0af66349daab02aa4b01a9c83)
+   - Script: `contracts/script/UpgradeMarketplaceSetUsdc.s.sol` (chain-5003 guarded).
+3. Verified live: `usdc()` returns the new token; end-to-end on-chain smoke —
+   `faucet` → `approve` → `buy(listing 1)` minted license #1
+   ([buy tx](https://sepolia.mantlescan.xyz/tx/0x16c7cbda65fc882e3090d52a153950429f8a8facdac5dd53d6e5943b6a102964)).
+
+Caveat: listing prices are token-unit-denominated; old-token balances/allowances
+do not carry over (irrelevant on testnet — no prior sales). §2.3's EIP-3009
+probe is now resolved: **x402 works on Sepolia via MockUSDC3009; mainnet uses
+real bridged USDC unmodified.**

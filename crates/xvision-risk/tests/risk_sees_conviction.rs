@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 use chrono::Utc;
 use uuid::Uuid;
-use xvision_core::{Action, AssetSymbol, Direction, PortfolioState, RiskDecision, TraderDecision};
 use xvision_core::asset_registry::DataSource;
+use xvision_core::{Action, AssetSymbol, Direction, PortfolioState, RiskDecision, TraderDecision};
 use xvision_risk::{
     config::{Limits, RiskConfig, Stops},
     context::RiskEvalContext,

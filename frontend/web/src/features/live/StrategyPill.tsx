@@ -1,4 +1,4 @@
-// A single strategy pill in the Live cockpit strip (spec §2.4).
+// A single strategy pill in the Live Trading strip (spec §2.4).
 //
 // Shows: strategy name · status pill (ACTIVE/PAUSED/STOPPED) · one
 // configurable metric (color-coded) · SSE connection dot. Clicking the
@@ -7,6 +7,7 @@
 
 import type { AgentRunSummary } from "@/api/types-agent-runs";
 import type { LiveStatus } from "@/components/chart/use-run-stream";
+import { displayStrategyName, type NamedStrategy } from "@/lib/run-display";
 import { ConnectionDot } from "./ConnectionDot";
 import { TransportControls } from "./TransportControls";
 import { computeStripMetric, type StripMetricId } from "./strip-metrics";
@@ -17,6 +18,9 @@ const STATUS_STYLE: Record<StripStatus, string> = {
   ACTIVE: "bg-info/15 text-info",
   PAUSED: "bg-warn/15 text-warn",
   STOPPED: "bg-surface-elev text-text-3",
+  // Orphaned recorder row (parent eval run terminal) — render muted like a
+  // dead run, never with the live/info treatment.
+  STALE: "bg-surface-elev text-text-3",
 };
 
 const METRIC_TONE: Record<"pos" | "neg" | "neutral", string> = {
@@ -33,6 +37,7 @@ export interface StrategyPillProps {
   connStatus: LiveStatus;
   onSelect: () => void;
   walletDisabled: boolean;
+  strategies?: NamedStrategy[];
   // B-III transport seam — handlers + inline-expander UI state. Omitted ⇒
   // buttons render as disabled placeholders (B-I behavior).
   transport?: RunTransport;
@@ -45,10 +50,13 @@ export function StrategyPill({
   connStatus,
   onSelect,
   walletDisabled,
+  strategies,
   transport,
 }: StrategyPillProps) {
   const status = deriveStripStatus(run);
-  const name = run.objective || run.strategy_id || run.run_id.slice(0, 8);
+  const name = run.agent_id
+    ? displayStrategyName(run.agent_id, strategies)
+    : run.objective || run.strategy_id || run.run_id.slice(0, 8);
   const m = computeStripMetric(metric, run);
 
   // Keep the transport area visible (not hover-gated) whenever an inline

@@ -312,15 +312,26 @@ pub async fn compare(
     Ok(Json(report))
 }
 
-/// `GET /api/eval/runs/:id/chart` — build the chart payload for a single run.
-///
-/// Delegates to `chart_api::build_run_payload`. Returns `200 JSON RunChartPayload`
-/// or `404 { code: "not_found" }` when the run id is unknown.
+#[derive(Debug, Deserialize)]
+pub struct ChartParams {
+    pub include: Option<String>,
+}
+
+/// `GET /api/eval/runs/:id/chart?include=equity,baseline` — build the chart
+/// payload for a single run. Absent `include` returns the full payload
+/// (back-compat for the run-detail page); see `IncludeSet::parse` for the
+/// token allowlist.
 pub async fn chart(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(params): Query<ChartParams>,
 ) -> Result<Json<RunChartPayload>, DashboardError> {
-    let payload = chart_api::build_run_payload(&state.api_context(), &id).await?;
+    let include = params
+        .include
+        .as_deref()
+        .map(chart_api::IncludeSet::parse)
+        .unwrap_or_else(chart_api::IncludeSet::full);
+    let payload = chart_api::build_run_payload_with(&state.api_context(), &id, include).await?;
     Ok(Json(payload))
 }
 

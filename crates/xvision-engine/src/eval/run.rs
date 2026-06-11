@@ -269,7 +269,7 @@ pub struct ReviewModel {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct BaselineMetrics {
     /// Total return as a percentage of starting capital. E.g. `6.80` means +6.80%.
     pub return_pct: f64,
@@ -290,6 +290,8 @@ pub struct BaselineRelative {
     pub always_flat: f64,
     pub simple_trend: f64,
     pub simple_mean_reversion: f64,
+    /// Defaults to `0.0` when deserializing legacy rows that predate this field.
+    #[serde(default)]
     pub random_direction: f64,
 }
 
@@ -312,6 +314,9 @@ pub struct BaselinesReport {
     pub simple_trend: BaselineMetrics,
     pub simple_mean_reversion: BaselineMetrics,
     /// Coin-flip long/short at 100 bps per bar, seeded for reproducibility.
+    /// Defaults to `BaselineMetrics { return_pct: 0.0, sharpe: 0.0 }` when
+    /// deserializing legacy rows that predate this field.
+    #[serde(default)]
     pub random_direction: BaselineMetrics,
     /// `strategy_return_pct − baseline_return_pct` for each baseline.
     pub relative_to: BaselineRelative,
@@ -430,5 +435,51 @@ mod tests {
     fn run_mode_parse_unknown_returns_none() {
         assert_eq!(RunMode::parse("???"), None);
         assert_eq!(RunMode::parse(""), None);
+    }
+
+    /// B27 regression: old eval rows whose `metrics_json` was serialized before
+    /// `random_direction` was added to `BaselinesReport` / `BaselineRelative`
+    /// must deserialize cleanly (defaulting the missing field to zero / default
+    /// `BaselineMetrics`) rather than returning a serde error and dropping the
+    /// entire metrics blob.
+    #[test]
+    fn baselines_report_without_random_direction_deserializes_with_default() {
+        // Simulates the legacy JSON that triggered the WARN in row_to_run():
+        // a MetricsSummary that contains a `baselines` object missing the
+        // `random_direction` key in both BaselinesReport and BaselineRelative.
+        let legacy_json = r#"{
+            "total_return_pct": 5.0,
+            "sharpe": 1.2,
+            "max_drawdown_pct": 3.0,
+            "win_rate": 0.6,
+            "n_trades": 10,
+            "n_decisions": 20,
+            "baselines": {
+                "buy_hold":              {"return_pct": 2.0, "sharpe": 0.5},
+                "always_flat":           {"return_pct": 0.0, "sharpe": 0.0},
+                "simple_trend":          {"return_pct": 1.5, "sharpe": 0.8},
+                "simple_mean_reversion": {"return_pct": 1.0, "sharpe": 0.6},
+                "relative_to": {
+                    "buy_hold":              3.0,
+                    "always_flat":           5.0,
+                    "simple_trend":          3.5,
+                    "simple_mean_reversion": 4.0
+                }
+            }
+        }"#;
+
+        let result = serde_json::from_str::<MetricsSummary>(legacy_json);
+        assert!(result.is_ok(), "expected Ok but got: {:?}", result.err());
+        let ms = result.unwrap();
+        let baselines = ms.baselines.expect("baselines should be Some");
+        // random_direction should default to BaselineMetrics { return_pct: 0.0, sharpe: 0.0 }
+        assert_eq!(baselines.random_direction.return_pct, 0.0);
+        assert_eq!(baselines.random_direction.sharpe, 0.0);
+        // BaselineRelative.random_direction should default to 0.0
+        assert_eq!(baselines.relative_to.random_direction, 0.0);
+        // Other fields from the legacy JSON must survive intact
+        assert_eq!(ms.total_return_pct, 5.0);
+        assert_eq!(baselines.buy_hold.return_pct, 2.0);
+        assert_eq!(baselines.relative_to.buy_hold, 3.0);
     }
 }

@@ -73,6 +73,7 @@ function runPayload(runId = "run-1"): RunChartPayload {
     ],
     indicators: emptyIndicators,
     equity: [],
+    baseline_equity: null,
     drawdown: [],
     position: [],
     markers: { trades: [], vetoes: [], holds: [] },

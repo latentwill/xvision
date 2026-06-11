@@ -276,7 +276,7 @@ export type AgentRunSummary = {
   /**
    * Per-run pause flag (eval `RunSummary.paused`, migration 061). When the
    * agent-run summary endpoint joins the eval run record it is populated;
-   * absent on runs/endpoints that don't carry it yet. The Live cockpit
+   * absent on runs/endpoints that don't carry it yet. The Live Trading page
    * strip reads it to derive PAUSED vs ACTIVE. B-III wires the
    * pause/resume transport that flips it.
    */
@@ -287,10 +287,31 @@ export type AgentRunSummary = {
    */
   paused_at?: string | null;
   /**
+   * Mode of the parent eval run, normalized server-side to
+   * `"backtest" | "live"` (legacy `'paper'` rows read back as
+   * `"backtest"`). `null`/absent when the agent run has no parent eval
+   * run. Served by `GET /api/agent-runs` (LEFT JOIN onto `eval_runs`).
+   */
+  eval_mode?: "backtest" | "live" | null;
+  /**
+   * Raw status of the parent eval run
+   * (`queued|running|completed|failed|cancelled`). `null`/absent without
+   * a parent. Used to demote agent runs stuck in `running` whose parent
+   * eval run is already terminal — they render as STALE, never live.
+   */
+  eval_run_status?: string | null;
+  /**
+   * THE live-money discriminator (xvision-9pi): `true` iff the parent
+   * eval run has `mode = live` AND that eval run is non-terminal.
+   * Backtests, orphaned children of finished live runs, and parentless
+   * runs are all `false`. Only this signal may drive "live" UI.
+   */
+  is_live_money?: boolean;
+  /**
    * One-shot "flatten positions" request flag (eval `RunSummary.flatten_requested`,
    * migration 062). `true` ⇒ the live executor will close all open broker
    * positions on its next cycle and clear the flag, WITHOUT terminating the
-   * run. Absent on runs/endpoints that don't carry it yet. The Live cockpit
+   * run. Absent on runs/endpoints that don't carry it yet. The Live Trading page
    * (spec §2.7) reads it to show the pending-flatten state; B-III's transport
    * flips it via the [Flatten positions] inline action.
    */

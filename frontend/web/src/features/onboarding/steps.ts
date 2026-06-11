@@ -5,7 +5,7 @@ export const firstRunTourSteps: DriveStep[] = [
     popover: {
       title: "Welcome to xvn",
       description:
-        "A quick three-step tour of the surfaces you'll use most. You can dismiss at any step.",
+        "A quick tour of the surfaces you'll use most. You can dismiss at any step.",
     },
   },
   {

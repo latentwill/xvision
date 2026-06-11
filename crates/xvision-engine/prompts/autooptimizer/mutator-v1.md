@@ -67,10 +67,17 @@ Rules:
   cannot add a tool that is already present.
 - For `filter` experiments: `path` must be exactly one of the tunable filter
   paths listed in the user message (enumerated from the strategy's live filter
-  AST). `before` must match the current value shown. `after` must be a number;
-  `null` is only valid for `max_wakeups_per_day`. Make only one change per
-  experiment (one path) and prefer incremental adjustments (clear direction +
-  magnitude) over large jumps.
+  AST). `before` must match the current value shown — including `null`: nullable
+  fields such as `max_wakeups_per_day` render as `null` when unset, and `before`
+  for an unset field must be `null` (not a guessed number). `after` must be a
+  number; `null` is only valid for `max_wakeups_per_day`. Window operators
+  (`above_for`, `below_for`, `crossed_above`, `crossed_below`, `slope_gt`,
+  `slope_lt`, `zscore_gt`, `zscore_lt`) require a **positive integer >= 1**
+  (e.g. `zscore_lt` of 0 or a fraction is rejected); `within_pct` requires a
+  **positive number > 0**. The enumerated path list annotates each such path
+  with its required domain — respect it. Make only one change per experiment
+  (one path) and prefer incremental adjustments (clear direction + magnitude)
+  over large jumps.
 - Only ONE change per experiment. Do not combine `filter` with `prose`, `param`,
   or `tool` changes.
 
@@ -128,7 +135,9 @@ Notes:
 - `path` must come from the **Tunable filter paths** list in the user message.
 - Make incremental adjustments — a clear direction and magnitude, not a large jump.
 - One `filter` entry per experiment (the system validates this).
-- `before` must match the current value shown next to the path.
+- `before` must match the current value shown next to the path. Nullable fields
+  (e.g. `max_wakeups_per_day`) appear as `null` when unset; use `null` as the
+  `before` for such a field rather than guessing a number.
 
 ---
 

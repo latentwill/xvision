@@ -55,16 +55,9 @@ describe("Sidebar theme toggle", () => {
   });
 });
 
-// C8 — Marketplace is opt-in (default OFF). The sidebar entry only appears
-// once the user enables it in Settings → Marketplace.
-describe("Sidebar Marketplace entry (C8 opt-in gate)", () => {
-  it("hides the Marketplace entry by default (opt-in off)", () => {
-    renderSidebar();
-    expect(screen.queryByRole("link", { name: /^Marketplace$/ })).toBeNull();
-  });
-
-  it("shows the Marketplace entry when opt-in is enabled", () => {
-    localStorage.setItem("xvn_marketplace_optin", "1");
+// C8 opt-in gate was removed — Marketplace entry is now unconditional.
+describe("Sidebar Marketplace entry", () => {
+  it("shows the Marketplace entry unconditionally", () => {
     renderSidebar();
     expect(
       screen.getByRole("link", { name: /^Marketplace$/ }),
@@ -72,7 +65,7 @@ describe("Sidebar Marketplace entry (C8 opt-in gate)", () => {
   });
 });
 
-// Track B — Live Trading cockpit nav entry (reachability: the /live cockpit
+// Track B — Live Trading nav entry (reachability: the /live page
 // must be discoverable from the persistent sidebar, not deep-link only).
 describe("Sidebar Live Trading entry", () => {
   it("renders an unconditional Live Trading entry linking to /live", () => {

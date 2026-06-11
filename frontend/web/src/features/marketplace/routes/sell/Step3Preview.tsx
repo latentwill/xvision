@@ -1,7 +1,20 @@
 // src/features/marketplace/routes/sell/Step3Preview.tsx
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import type { PublishDraft } from "@/features/marketplace/data/types";
+import { getStrategy } from "@/api/strategies";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
+import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
 import { ListingPreviewCard } from "./ListingPreviewCard";
+
+/** What the operator wants published as the listing's public description.
+ *  `dirty` is true only when the textarea diverges from the stored
+ *  `manifest.plain_summary` — the caller PATCHes the strategy before
+ *  submitting the listing so the server-side manifest hash includes it. */
+export interface PublicDescription {
+  value: string;
+  dirty: boolean;
+}
 
 export function Step3Preview({
   draft,
@@ -9,11 +22,25 @@ export function Step3Preview({
   minting,
 }: {
   draft: PublishDraft;
-  onMint: () => void;
+  onMint: (description: PublicDescription) => void;
   minting: boolean;
 }) {
   const allPass = draft.listable.every((c) => c.ok);
   const mintDisabled = !allPass || minting;
+
+  // Prefill from the stored strategy's manifest.plain_summary. Errors (local
+  // engine unreachable, unknown id) leave the textarea empty but editable.
+  const { data: strategy } = useQuery({
+    queryKey: ["strategy", draft.strategyId, "publish-preview"],
+    queryFn: () => getStrategy(draft.strategyId),
+    retry: false,
+  });
+  const storedSummary = strategy?.manifest.plain_summary ?? "";
+  // null until the operator touches the field — so a late-arriving fetch
+  // can still prefill without clobbering edits.
+  const [edited, setEdited] = useState<string | null>(null);
+  const description = edited ?? storedSummary;
+  const dirty = edited !== null && edited !== storedSummary;
 
   return (
     <div data-testid="sell-step-3-body" className="flex flex-col gap-5">
@@ -37,12 +64,51 @@ export function Step3Preview({
         </ul>
       </div>
 
+      {/* Public description — saved to the strategy before the listing is
+          submitted so the published manifest carries it */}
+      <div>
+        <label
+          htmlFor="public-description"
+          className="block text-[11px] font-mono uppercase tracking-wide text-text-3 mb-2"
+        >
+          Public description
+        </label>
+        <textarea
+          id="public-description"
+          data-testid="public-description"
+          value={description}
+          onChange={(e) => setEdited(e.target.value)}
+          rows={3}
+          placeholder="What this strategy does, in plain English."
+          className="w-full px-3 py-2 bg-surface-elev border border-border rounded-md text-[13px] text-text leading-[1.45] focus:border-gold/60 focus:outline-none resize-y"
+        />
+        <p className="mt-1 text-[11px] text-text-3">
+          Published publicly to IPFS with your strategy — buyers and
+          non-buyers can read it.
+        </p>
+      </div>
+
       {/* Preview card */}
       <div>
         <p className="text-[11px] font-mono uppercase tracking-wide text-text-3 mb-2">
           Listing preview
         </p>
         <ListingPreviewCard listing={draft.preview} />
+      </div>
+
+      {/* Mint art preview — full-width inline section, no right-column */}
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-[11px] font-mono uppercase tracking-wide text-text-3">
+          Identity art preview
+        </p>
+        {/*
+         * Final minted seed is "{agent_id}:{manifest_hash}" computed server-side;
+         * strategyId-only preview is provisional.
+         */}
+        <GenArtPlaceholder seed={draft.strategyId} size={160} className="rounded-md" />
+        <p className="text-[11px] text-text-3 italic">
+          Identity art preview — finalizes at mint
+        </p>
       </div>
 
       {/* Failed checks warning (when minting is blocked) */}
@@ -70,7 +136,7 @@ export function Step3Preview({
       {/* Mint action */}
       <div className="flex items-center gap-4">
         <button
-          onClick={onMint}
+          onClick={() => onMint({ value: description, dirty })}
           disabled={mintDisabled}
           className={`px-4 py-2 rounded-md text-[13px] font-medium flex items-center gap-2 motion-safe:active:scale-[0.96] ${
             mintDisabled

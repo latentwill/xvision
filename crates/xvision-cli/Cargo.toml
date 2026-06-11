@@ -33,6 +33,10 @@ xvision-dashboard     = { path = "../xvision-dashboard" }
 xvision-observability = { path = "../xvision-observability" }
 xvision-memory        = { path = "../xvision-memory" }
 xvision-marketplace   = { path = "../xvision-marketplace" }
+# Chain-backed marketplace reads (list under MARKETPLACE_DRIVER=onchain,
+# show-token): contract bindings + the shared tokenURI decoder. Already in
+# the dependency graph transitively via xvision-marketplace.
+xvision-identity      = { path = "../xvision-identity" }
 alloy             = { workspace = true }
 ulid              = "1"
 dirs              = "5"
@@ -49,6 +53,7 @@ tracing-subscriber = { workspace = true }
 sqlx               = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tempfile = "3"
 tokio    = { workspace = true, features = ["rt", "macros"] }
 

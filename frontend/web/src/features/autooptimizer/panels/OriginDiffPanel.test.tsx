@@ -21,7 +21,7 @@ describe("OriginDiffPanel", () => {
   it("shows loading state", () => {
     vi.mocked(api.useOriginDiff).mockReturnValue({
       data: undefined, isLoading: true, isError: false,
-    } as ReturnType<typeof api.useOriginDiff>);
+    } as unknown as ReturnType<typeof api.useOriginDiff>);
     render(<OriginDiffPanel hash="abc123" />, { wrapper: wrap });
     expect(screen.getByText(/loading/i)).toBeTruthy();
   });
@@ -36,7 +36,7 @@ describe("OriginDiffPanel", () => {
         },
       },
       isLoading: false, isError: false,
-    } as ReturnType<typeof api.useOriginDiff>);
+    } as unknown as ReturnType<typeof api.useOriginDiff>);
     render(<OriginDiffPanel hash="abc123" />, { wrapper: wrap });
     expect(screen.getByText("sell high")).toBeTruthy();
   });
@@ -48,7 +48,7 @@ describe("OriginDiffPanel", () => {
         diff: { prose: [], params: [], tools: { added: [], removed: [] }, filter: [] },
       },
       isLoading: false, isError: false,
-    } as ReturnType<typeof api.useOriginDiff>);
+    } as unknown as ReturnType<typeof api.useOriginDiff>);
     render(<OriginDiffPanel hash="abc123" />, { wrapper: wrap });
     expect(screen.getByText(/no changes/i)).toBeTruthy();
   });

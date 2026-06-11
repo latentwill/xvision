@@ -285,12 +285,7 @@ pub fn strategy_diff(a: &Strategy, b: &Strategy) -> StrategyDiff {
 /// leaves and structural differences (one side is an object, the other
 /// is a scalar) are silently skipped — the function is a best-effort
 /// numeric diff, not a full structural JSON differ.
-fn diff_filter_values(
-    a: &serde_json::Value,
-    b: &serde_json::Value,
-    path: &str,
-    out: &mut Vec<FilterEdit>,
-) {
+fn diff_filter_values(a: &serde_json::Value, b: &serde_json::Value, path: &str, out: &mut Vec<FilterEdit>) {
     match (a, b) {
         (serde_json::Value::Object(map_a), serde_json::Value::Object(map_b)) => {
             for (key, val_b) in map_b {
@@ -299,10 +294,7 @@ fn diff_filter_values(
                 } else {
                     format!("{path}.{key}")
                 };
-                let val_a = map_a
-                    .get(key)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
+                let val_a = map_a.get(key).cloned().unwrap_or(serde_json::Value::Null);
                 diff_filter_values(&val_a, val_b, &child_path, out);
             }
         }
@@ -313,10 +305,7 @@ fn diff_filter_values(
                 } else {
                     format!("{path}.{i}")
                 };
-                let val_a = arr_a
-                    .get(i)
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
+                let val_a = arr_a.get(i).cloned().unwrap_or(serde_json::Value::Null);
                 diff_filter_values(&val_a, val_b, &child_path, out);
             }
         }
@@ -830,6 +819,12 @@ impl Mutator {
         config: &AutoOptimizerConfig,
         dsr_prefix: Option<&str>,
         exploration_seed: u64,
+        // Position of this writer within the cycle's mutations_per_parent loop
+        // (0-based). Used to rotate the focus KIND across writers so every kind
+        // is explored within a single cycle rather than leaving kind selection to
+        // hash chance. The exploration_seed still varies the specific target within
+        // the selected kind.
+        mutation_idx: usize,
         memory_context: Option<&str>,
         avoid: &std::collections::HashSet<ContentHash>,
         resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
@@ -886,9 +881,11 @@ impl Mutator {
                 &filter_paths,
                 last_errors.as_deref(),
                 attempt_seed,
+                mutation_idx,
                 memory_context,
                 avoid.len(),
                 &prose_roles,
+                attempt as usize,
             );
             let req = LlmRequest {
                 model: self.model.clone(),
@@ -903,7 +900,10 @@ impl Mutator {
                 // and a per-cycle exploration nonce in the prompt so successive
                 // cycles propose diverse candidates. Also jitter per attempt.
                 temperature: Some(exploration_temperature(attempt_seed)),
-                response_schema: None,
+                // B3: supply a constrained `mutation_diff` schema so OpenAI-compat
+                // dispatchers (Ollama) grammar-constrain the JSON. Without it the
+                // unconstrained json_object mode parse-fails ~40% on Ollama.
+                response_schema: Some(crate::agent::llm::ResponseSchema::mutation_diff()),
                 cache_control: None,
                 force_json: true,
             };
@@ -1034,6 +1034,31 @@ fn exploration_temperature(exploration_seed: u64) -> f64 {
     0.7 + (exploration_seed % 5) as f64 * 0.1
 }
 
+/// B17: per-path domain-constraint hint for the enumerated filter list, so the
+/// experiment writer learns the operator's value domain up front instead of
+/// repeatedly proposing out-of-domain values (e.g. `zscore_lt=0`) that the
+/// validator then rejects, wasting an attempt.
+///
+/// The validator (`validate_filter_edits`) stays the authoritative safety net;
+/// this only mirrors its constraints into the prompt. To avoid drift, the
+/// window-op set is the shared `FILTER_U32_WINDOW_OPS` from the validator.
+/// Returns `None` for paths with no special integer/positivity constraint (e.g.
+/// `conditions.<i>.rhs.numeric`), which must not get the integer marker.
+fn filter_path_constraint_hint(path: &str) -> Option<&'static str> {
+    // Parameterized operator paths look like `conditions.<i>.op.<suffix>`.
+    let suffix = path
+        .strip_prefix("conditions.")
+        .and_then(|rest| rest.split_once('.').map(|(_, t)| t))
+        .and_then(|tail| tail.strip_prefix("op."));
+    match suffix {
+        Some("within_pct") => Some("(positive number > 0)"),
+        Some(s) if crate::autooptimizer::validator::FILTER_U32_WINDOW_OPS.contains(&s) => {
+            Some("(positive integer >= 1)")
+        }
+        _ => None,
+    }
+}
+
 fn build_user_payload(
     program_md: &str,
     allowed_kinds: &[String],
@@ -1041,6 +1066,12 @@ fn build_user_payload(
     filter_paths: &[(String, serde_json::Value)],
     previous_errors: Option<&[ValidationError]>,
     exploration_seed: u64,
+    // Position of this writer in the outer mutations_per_parent loop (0-based).
+    // Drives balanced kind rotation across the cycle's N concurrent writers so
+    // every applicable kind gets a dedicated slot rather than competing via hash
+    // modulo (which can cluster). `exploration_seed` still diversifies the
+    // specific target chosen within the selected kind.
+    mutation_idx: usize,
     memory_context: Option<&str>,
     avoid_count: usize,
     // Issues 1/2 (QA 2026-06-08): the agent roles that can carry a
@@ -1048,6 +1079,12 @@ fn build_user_payload(
     // (rewrite an agent's prompt) and not only numeric levers. Empty when prose is
     // not an applicable kind for this strategy.
     prose_roles: &[String],
+    // B6: the propose retry attempt index (0-based). `mutation_idx` is fixed for
+    // the whole propose call, so on its own it re-focuses the SAME kind on every
+    // retry — a failing kind then consumes the entire attempt budget. Offsetting
+    // the kind index by `attempt` rotates successive retries onto DIFFERENT kinds.
+    // Target rotation within a kind still comes from `exploration_seed`.
+    attempt: usize,
 ) -> String {
     let kinds_text = allowed_kinds.join(", ");
     let param_allowed = allowed_kinds.iter().any(|k| k == "param");
@@ -1080,7 +1117,10 @@ fn build_user_payload(
              `before` must match the current value shown):\n{}",
             filter_paths
                 .iter()
-                .map(|(p, v)| format!("  - {p}: {v}"))
+                .map(|(p, v)| match filter_path_constraint_hint(p) {
+                    Some(hint) => format!("  - {p}: {v}  {hint}"),
+                    None => format!("  - {p}: {v}"),
+                })
                 .collect::<Vec<_>>()
                 .join("\n")
         )
@@ -1102,23 +1142,25 @@ fn build_user_payload(
     // real model (e.g. gemini-flash-lite) ignores — it collapses the constrained
     // experiment space to the single most obvious tweak every cycle, so repeat
     // cycles re-derived the byte-identical candidate and never explored. Instead,
-    // use the exploration seed to NAME a concrete focus the writer must experiment
-    // on. Different cycles ⇒ different seed ⇒ different focus ⇒ a materially
-    // different prompt ⇒ a different candidate, even from a fully deterministic
-    // model. (Pairs with the hard `already_tried` reject in `propose`, which
-    // guarantees a previously-seen candidate is never re-emitted.)
+    // NAME a concrete focus the writer must experiment on. (Pairs with the hard
+    // `already_tried` reject in `propose`, which guarantees a previously-seen
+    // candidate is never re-emitted.)
     //
     // Issues 1/2 (QA 2026-06-08): the focus must rotate across the applicable
     // mutation KINDS, not just param keys. The previous version only ever named a
     // `risk.*` param whenever `param` was allowed (the default), so a weak
     // experiment-writer was steered onto the numeric risk lever every single
     // cycle — prose (prompt) and filter levers were never focused and so never
-    // exercised (QA: gemma mutated only risk.* across all 7 cycles). Build one
-    // focus group per applicable, focusable kind in a fixed priority order, pick
-    // the KIND by `seed % n_kinds` (balanced kind-level rotation, independent of
-    // how many param keys exist), then pick a concrete target within that kind by
-    // `seed / n_kinds`. This guarantees prose and filter each get focused on a
-    // fixed cadence rather than losing every cycle to the 6 risk.* keys.
+    // exercised (QA: gemma mutated only risk.* across all 7 cycles).
+    //
+    // KIND rotation via mutation_idx (writer position in the outer
+    // mutations_per_parent loop): writer 0 → kinds[0], writer 1 → kinds[1], etc.,
+    // cycling through all applicable kinds. This guarantees that within a single
+    // cycle of N writers, every kind gets proportional coverage regardless of hash
+    // values. The exploration_seed then picks the SPECIFIC TARGET within the
+    // selected kind (which param key, which filter path, which agent role) — so
+    // different cycles land on different concrete levers even for the same writer
+    // position.
     let mut focus_groups: Vec<(&str, Vec<String>)> = Vec::new();
     if allowed_kinds.iter().any(|k| k == "prose") && !prose_roles.is_empty() {
         focus_groups.push(("prose", prose_roles.to_vec()));
@@ -1136,8 +1178,13 @@ fn build_user_payload(
         )
     } else {
         let n_kinds = focus_groups.len();
-        let (kind, targets) = &focus_groups[(exploration_seed as usize) % n_kinds];
-        let target = &targets[((exploration_seed as usize) / n_kinds) % targets.len()];
+        // B6: offset the kind index by the retry `attempt` so successive retries
+        // within one propose call focus DIFFERENT kinds instead of re-hammering the
+        // same (often failing) kind until the budget is gone. When n_kinds == 1
+        // (e.g. param-only) the offset is a no-op. The target WITHIN a kind is
+        // still chosen by `exploration_seed` below, keeping that rotation intact.
+        let (kind, targets) = &focus_groups[(mutation_idx + attempt) % n_kinds];
+        let target = &targets[(exploration_seed as usize) % targets.len()];
         match *kind {
             "prose" => format!(
                 "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
@@ -1426,7 +1473,19 @@ mod tests {
         let keys = vec!["risk.max_leverage".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![];
         let ctx = "param risk.max_leverage 1.0→3.0 ⇒ ΔSharpe -0.30 (rejected)";
-        let with = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some(ctx), 0, &[]);
+        let with = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            Some(ctx),
+            0,
+            &[],
+            0,
+        );
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
             "memory section header missing: {with}"
@@ -1439,7 +1498,7 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0, &[]);
+        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0);
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1449,7 +1508,19 @@ mod tests {
             "F32 exploration section must remain when no memory: {without}"
         );
 
-        let empty = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, Some("   "), 0, &[]);
+        let empty = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            Some("   "),
+            0,
+            &[],
+            0,
+        );
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
             "blank memory context must be treated as absent: {empty}"
@@ -1464,7 +1535,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, None, 0, &[]);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0);
         assert!(
             payload.contains("Tunable filter paths"),
             "filter section header must be present: {payload}"
@@ -1487,13 +1558,72 @@ mod tests {
             &filter_paths,
             None,
             5,
+            0,
             None,
             0,
             &[],
+            0,
         );
         assert!(
             !no_filter_payload.contains("Tunable filter paths"),
             "filter section must be absent when filter not in allowed kinds: {no_filter_payload}"
+        );
+    }
+
+    #[test]
+    fn build_user_payload_annotates_filter_path_domain_constraints() {
+        // B17: window-op filter paths (e.g. zscore_lt) require a positive integer
+        // >= 1; `within_pct` requires a positive number > 0. The mutator must state
+        // these per-path constraints in the enumerated filter list so the model
+        // stops proposing zscore_lt=0 (which the validator correctly rejects,
+        // wasting an attempt). A plain numeric path (rhs.numeric) must NOT get the
+        // integer marker.
+        let kinds = vec!["filter".to_string()];
+        let keys: Vec<String> = vec![];
+        let filter_paths = vec![
+            ("conditions.0.op.zscore_lt".to_string(), serde_json::json!(3)),
+            ("conditions.1.op.within_pct".to_string(), serde_json::json!(1.5)),
+            ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
+        ];
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0);
+
+        // The window-op path must be listed AND annotated as a positive integer.
+        assert!(
+            payload.contains("conditions.0.op.zscore_lt"),
+            "zscore_lt path must be listed: {payload}"
+        );
+        assert!(
+            payload.contains("positive integer"),
+            "window-op path must be annotated 'positive integer': {payload}"
+        );
+        // within_pct must be annotated as a positive number.
+        assert!(
+            payload.contains("positive number"),
+            "within_pct path must be annotated 'positive number': {payload}"
+        );
+        // A plain numeric path must NOT carry the integer marker. Isolate the line
+        // for rhs.numeric and confirm it lacks the "positive integer" hint.
+        let numeric_line = payload
+            .lines()
+            .find(|l| l.contains("conditions.2.rhs.numeric"))
+            .expect("rhs.numeric line present");
+        assert!(
+            !numeric_line.contains("positive integer"),
+            "plain numeric path must not get the integer marker: {numeric_line}"
+        );
+    }
+
+    #[test]
+    fn prompt_template_states_window_op_positive_integer_constraint() {
+        // B17 prompt guard: the system prompt template must tell the model that
+        // window operators (e.g. zscore_lt) require a positive integer >= 1.
+        assert!(
+            PROMPT_TEMPLATE.contains("zscore_lt"),
+            "prompt must mention a window op such as zscore_lt"
+        );
+        assert!(
+            PROMPT_TEMPLATE.contains("positive integer"),
+            "prompt must state the positive-integer constraint for window ops"
         );
     }
 
@@ -1511,7 +1641,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, None, 0, &[]);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0);
 
         // Param key list and risk.* references must be absent.
         assert!(
@@ -1558,9 +1688,11 @@ mod tests {
                 &filter_paths,
                 None,
                 seed,
+                seed as usize,
                 None,
                 0,
                 &prose_roles,
+                0,
             );
             // Exactly one lever is focused per cycle (the three directive
             // signatures are mutually exclusive).
@@ -1590,7 +1722,19 @@ mod tests {
         let keys = vec!["risk.max_leverage".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![];
         for seed in 0..4u64 {
-            let p = build_user_payload("prog", &kinds, &keys, &filter_paths, None, seed, None, 0, &[]);
+            let p = build_user_payload(
+                "prog",
+                &kinds,
+                &keys,
+                &filter_paths,
+                None,
+                seed,
+                seed as usize,
+                None,
+                0,
+                &[],
+                0,
+            );
             assert!(
                 !p.contains("agent's system prompt"),
                 "prose must not be focused when no agent roles are available (seed {seed}): {p}"
@@ -1958,9 +2102,11 @@ mod tests {
             &filter_paths,
             None,
             base_seed.wrapping_add(0),
+            0,
             None,
             0,
             &[],
+            0,
         );
         let p1 = build_user_payload(
             "prog",
@@ -1969,9 +2115,11 @@ mod tests {
             &filter_paths,
             None,
             base_seed.wrapping_add(1),
+            0,
             None,
             0,
             &[],
+            0,
         );
         // The focus directive must name a different key for attempt 0 vs attempt 1.
         // Since `build_user_payload` embeds the focus in the exploration_section,
@@ -1994,6 +2142,54 @@ mod tests {
         assert!(
             p1.contains(key1.as_str()),
             "attempt 1 payload must mention the focus key for seed 10: {p1}"
+        );
+    }
+
+    #[test]
+    fn retry_rotates_focus_kind_across_attempts() {
+        // B6: the experiment writer must NOT re-focus the SAME mutation kind on
+        // every retry. With `mutation_idx` held fixed for the whole propose call,
+        // the kind index used to be `focus_groups[mutation_idx % n_kinds]` — a
+        // constant — so every retry kept hammering the same kind and the budget
+        // was consumed by one failing kind. The `attempt` arg now offsets the kind
+        // index so successive attempts focus DIFFERENT kinds.
+        let kinds = vec!["prose".to_string(), "filter".to_string(), "param".to_string()];
+        let keys = vec!["risk.stop_loss_atr_multiple".to_string()];
+        let filter_paths = vec![("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0))];
+        let prose_roles = vec!["trader".to_string()];
+
+        // Hold mutation_idx FIXED at a value that (with attempt 0) maps to param,
+        // then vary the new attempt arg across 0,1,2 and collect the focused kind.
+        // focus_groups order is [prose, filter, param]; mutation_idx=2 => param at
+        // attempt 0.
+        let mutation_idx = 2usize;
+        let mut focused_kinds = std::collections::BTreeSet::new();
+        for attempt in 0..3usize {
+            let p = build_user_payload(
+                "prog",
+                &kinds,
+                &keys,
+                &filter_paths,
+                None,
+                7, // exploration_seed fixed: only the kind index should change
+                mutation_idx,
+                None,
+                0,
+                &prose_roles,
+                attempt,
+            );
+            // Detect kind via the existing directive substrings the tests already use.
+            if p.contains("agent system prompt") || p.contains("agent's system prompt") {
+                focused_kinds.insert("prose");
+            } else if p.contains("filter path") {
+                focused_kinds.insert("filter");
+            } else if p.contains("parameter `") {
+                focused_kinds.insert("param");
+            }
+        }
+        assert!(
+            focused_kinds.len() >= 2,
+            "across attempts 0,1,2 (mutation_idx fixed) at least 2 distinct kinds must be focused, saw: {focused_kinds:?}"
         );
     }
 }

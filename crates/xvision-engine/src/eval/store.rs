@@ -1113,6 +1113,80 @@ impl RunStore {
         Ok(())
     }
 
+    /// Batch-insert a slice of equity samples for a single run inside one
+    /// transaction. This is the hot-path replacement for the per-timestamp
+    /// [`Self::record_equity`] calls in the backtest loop: ~2 000 auto-commit
+    /// INSERTs collapse into a single fsync, eliminating the WAL checkpoint
+    /// stall that inflated the second eval window by ~3×.
+    ///
+    /// Ordering is preserved (samples are inserted in slice order). If the
+    /// slice is empty the call is a no-op. The transaction is committed only
+    /// after all rows succeed; on error the entire batch is rolled back.
+    pub async fn record_equity_batch(&self, run_id: &str, samples: &[(DateTime<Utc>, f64)]) -> Result<()> {
+        if samples.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .with_context(|| format!("begin equity batch tx run_id={run_id}"))?;
+        for (timestamp, equity_usd) in samples {
+            sqlx::query(
+                "INSERT INTO eval_equity_samples (run_id, timestamp, equity_usd) \
+                 VALUES (?, ?, ?)",
+            )
+            .bind(run_id)
+            .bind(timestamp.to_rfc3339())
+            .bind(equity_usd)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("insert equity batch row run_id={run_id} ts={timestamp}"))?;
+        }
+        tx.commit()
+            .await
+            .with_context(|| format!("commit equity batch tx run_id={run_id}"))?;
+        Ok(())
+    }
+
+    /// Batch-upsert a slice of equity samples for a single run inside one
+    /// transaction. Mirrors [`Self::record_equity_batch`] but uses the
+    /// `ON CONFLICT … DO UPDATE` upsert semantics required by the multi-asset
+    /// live loop where two assets can land at the same bar timestamp: the
+    /// latest pooled NAV value wins, consistent with the per-row
+    /// [`Self::record_equity_upsert`] behaviour.
+    pub async fn record_equity_upsert_batch(
+        &self,
+        run_id: &str,
+        samples: &[(DateTime<Utc>, f64)],
+    ) -> Result<()> {
+        if samples.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .with_context(|| format!("begin equity upsert batch tx run_id={run_id}"))?;
+        for (timestamp, equity_usd) in samples {
+            sqlx::query(
+                "INSERT INTO eval_equity_samples (run_id, timestamp, equity_usd) \
+                 VALUES (?, ?, ?) \
+                 ON CONFLICT(run_id, timestamp) DO UPDATE SET equity_usd = excluded.equity_usd",
+            )
+            .bind(run_id)
+            .bind(timestamp.to_rfc3339())
+            .bind(equity_usd)
+            .execute(&mut *tx)
+            .await
+            .with_context(|| format!("upsert equity batch row run_id={run_id} ts={timestamp}"))?;
+        }
+        tx.commit()
+            .await
+            .with_context(|| format!("commit equity upsert batch tx run_id={run_id}"))?;
+        Ok(())
+    }
+
     /// Read all supervisor_notes for a run, ordered by `created_at`.
     /// Tuple shape: `(role, severity, content)`. Intended for tests; the
     /// engine doesn't read these back at runtime today.
@@ -1793,21 +1867,33 @@ fn is_missing_column_error(e: &sqlx::Error) -> bool {
     }
 }
 
+/// Parse a timestamp stored by SQLite, accepting RFC3339 (`"2026-06-09T00:58:16Z"`) and
+/// the bare format SQLite uses when no explicit affinity is set (`"2026-06-09 00:58:16"`).
+fn parse_ts(s: &str) -> Result<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.with_timezone(&Utc));
+    }
+    // Bare SQLite datetime: "YYYY-MM-DD HH:MM:SS" — treat as UTC.
+    let naive = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .with_context(|| format!("unrecognised timestamp format: {s:?}"))?;
+    Ok(naive.and_utc())
+}
+
 fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
     let started_at_str: String = row.try_get("started_at").context("read started_at")?;
-    let started_at = DateTime::parse_from_rfc3339(&started_at_str)
-        .with_context(|| format!("parse started_at {started_at_str:?}"))?
-        .with_timezone(&Utc);
+    let started_at =
+        parse_ts(&started_at_str).with_context(|| format!("parse started_at {started_at_str:?}"))?;
 
     let completed_at: Option<DateTime<Utc>> = row
         .try_get::<Option<String>, _>("completed_at")
         .context("read completed_at")?
-        .map(|s| {
-            DateTime::parse_from_rfc3339(&s)
-                .map(|t| t.with_timezone(&Utc))
-                .with_context(|| format!("parse completed_at {s:?}"))
-        })
-        .transpose()?;
+        .and_then(|s| match parse_ts(&s) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::warn!(error = %e, "row_to_run: completed_at failed to parse; treating as null");
+                None
+            }
+        });
 
     let mode_str: String = row.try_get("mode").context("read mode")?;
     let mode = RunMode::parse(&mode_str).ok_or_else(|| anyhow::anyhow!("unknown RunMode {mode_str:?}"))?;
@@ -1956,5 +2042,175 @@ fn is_missing_table_error(e: &sqlx::Error) -> bool {
     match e {
         sqlx::Error::Database(db) => db.message().contains("no such table"),
         _ => false,
+    }
+}
+
+// ── B25 batch-equity tests ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod equity_batch_tests {
+    use chrono::{DateTime, TimeZone, Utc};
+    use sqlx::SqlitePool;
+
+    use crate::eval::store::RunStore;
+
+    /// Open an in-memory SQLite pool that contains only the two tables needed
+    /// by these tests: `eval_runs` and `eval_equity_samples`. We apply
+    /// migrations 002 and 014 (renames `strategy_bundle_hash` → `agent_id`),
+    /// then seed `eval_runs` with a raw INSERT that covers only the NOT NULL
+    /// columns the table actually has at that point, bypassing the full
+    /// `RunStore::create` path (which would require every subsequent migration
+    /// that added extra columns to be applied as well).
+    async fn test_pool_with_run(run_id: &str) -> SqlitePool {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        for sql in [
+            include_str!("../../migrations/002_eval.sql"),
+            include_str!("../../migrations/014_eval_agent_id.sql"),
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        // Minimal eval_run row — only columns that are NOT NULL without a
+        // default in the 002+014 schema.
+        sqlx::query(
+            "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
+             VALUES (?, 'agent-test', 'test-scenario', 'backtest', 'completed', '2024-01-01T00:00:00Z')",
+        )
+        .bind(run_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    fn ts(offset_secs: i64) -> DateTime<Utc> {
+        Utc.timestamp_opt(1_700_000_000 + offset_secs, 0)
+            .single()
+            .unwrap()
+    }
+
+    /// `record_equity_batch` inserts all rows and `read_equity_curve` returns
+    /// them in ascending timestamp order with the correct values.
+    #[tokio::test]
+    async fn batch_insert_round_trips_in_order() {
+        let pool = test_pool_with_run("run-batch-01").await;
+        let store = RunStore::new(pool);
+
+        let samples: Vec<(DateTime<Utc>, f64)> = (0..5)
+            .map(|i| (ts(i * 60), 10_000.0 + i as f64 * 100.0))
+            .collect();
+
+        store
+            .record_equity_batch("run-batch-01", &samples)
+            .await
+            .expect("record_equity_batch should succeed");
+
+        let curve = store.read_equity_curve("run-batch-01").await.unwrap();
+        assert_eq!(curve.len(), 5, "expected 5 equity rows");
+        for (i, (got_ts, got_eq)) in curve.iter().enumerate() {
+            let (want_ts, want_eq) = samples[i];
+            assert_eq!(*got_ts, want_ts, "timestamp mismatch at index {i}");
+            assert!(
+                (got_eq - want_eq).abs() < 1e-9,
+                "equity mismatch at index {i}: got {got_eq} want {want_eq}"
+            );
+        }
+    }
+
+    /// `record_equity_batch` on an empty slice is a no-op (no panic, no rows).
+    #[tokio::test]
+    async fn batch_insert_empty_slice_is_noop() {
+        let pool = test_pool_with_run("run-batch-empty").await;
+        let store = RunStore::new(pool);
+
+        store
+            .record_equity_batch("run-batch-empty", &[])
+            .await
+            .expect("empty batch should succeed");
+
+        let curve = store.read_equity_curve("run-batch-empty").await.unwrap();
+        assert!(curve.is_empty(), "expected zero rows for empty batch");
+    }
+
+    /// `record_equity_upsert_batch` respects last-writer-wins semantics: if
+    /// the same timestamp appears twice across two calls, the second value wins
+    /// (ON CONFLICT DO UPDATE), matching the per-row `record_equity_upsert`
+    /// contract used by the multi-asset live loop.
+    #[tokio::test]
+    async fn upsert_batch_last_writer_wins_on_conflict() {
+        let pool = test_pool_with_run("run-upsert-01").await;
+        let store = RunStore::new(pool);
+
+        let t0 = ts(0);
+        let t1 = ts(60);
+
+        // First pass: two rows.
+        let first = vec![(t0, 10_000.0), (t1, 10_100.0)];
+        store
+            .record_equity_upsert_batch("run-upsert-01", &first)
+            .await
+            .unwrap();
+
+        // Second pass: same timestamps, updated values.
+        let second = vec![(t0, 9_900.0), (t1, 10_200.0)];
+        store
+            .record_equity_upsert_batch("run-upsert-01", &second)
+            .await
+            .unwrap();
+
+        let curve = store.read_equity_curve("run-upsert-01").await.unwrap();
+        assert_eq!(curve.len(), 2, "upsert should yield exactly 2 rows");
+        assert!(
+            (curve[0].1 - 9_900.0).abs() < 1e-9,
+            "t0 should hold the second-pass value 9900.0, got {}",
+            curve[0].1
+        );
+        assert!(
+            (curve[1].1 - 10_200.0).abs() < 1e-9,
+            "t1 should hold the second-pass value 10200.0, got {}",
+            curve[1].1
+        );
+    }
+
+    /// Batch path produces identical rows to the original per-row
+    /// `record_equity` path: buffering + flushing must be lossless.
+    #[tokio::test]
+    async fn batch_matches_per_row_output() {
+        // Two separate pools/runs so we can compare the two write paths.
+        let pool_old = test_pool_with_run("run-per-row").await;
+        let pool_new = test_pool_with_run("run-batch").await;
+        let store_old = RunStore::new(pool_old);
+        let store_new = RunStore::new(pool_new);
+
+        let samples: Vec<(DateTime<Utc>, f64)> = (0..10)
+            .map(|i| (ts(i * 300), 10_000.0 + i as f64 * 50.0))
+            .collect();
+
+        // Old per-row path.
+        for &(ts_val, eq) in &samples {
+            store_old.record_equity("run-per-row", ts_val, eq).await.unwrap();
+        }
+        // New batch path.
+        store_new
+            .record_equity_batch("run-batch", &samples)
+            .await
+            .unwrap();
+
+        let old_curve = store_old.read_equity_curve("run-per-row").await.unwrap();
+        let new_curve = store_new.read_equity_curve("run-batch").await.unwrap();
+
+        assert_eq!(
+            old_curve.len(),
+            new_curve.len(),
+            "row counts must match: old={} new={}",
+            old_curve.len(),
+            new_curve.len()
+        );
+        for (i, ((ot, oe), (nt, ne))) in old_curve.iter().zip(new_curve.iter()).enumerate() {
+            assert_eq!(ot, nt, "timestamp mismatch at index {i}");
+            assert!(
+                (oe - ne).abs() < 1e-9,
+                "equity mismatch at index {i}: old={oe} new={ne}"
+            );
+        }
     }
 }

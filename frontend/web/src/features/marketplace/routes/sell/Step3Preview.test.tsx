@@ -1,9 +1,29 @@
 // src/features/marketplace/routes/sell/Step3Preview.test.tsx
-import { render, screen } from "@testing-library/react";
+import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Step3Preview } from "./Step3Preview";
 import type { PublishDraft } from "@/features/marketplace/data/types";
+
+// Step3Preview prefills the public description from the stored strategy.
+vi.mock("@/api/strategies", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/strategies")>();
+  return { ...actual, getStrategy: vi.fn() };
+});
+import { getStrategy } from "@/api/strategies";
+const mockedGetStrategy = vi.mocked(getStrategy);
+
+function render(ui: React.ReactElement) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // default: local engine unreachable — textarea starts empty
+  mockedGetStrategy.mockRejectedValue(new Error("engine unreachable"));
+});
 
 const happyDraft: PublishDraft = {
   strategyId: "local-btc-momentum",
@@ -50,7 +70,7 @@ describe("Step3Preview", () => {
 
   it("renders the gen-art placeholder inside the preview card", () => {
     const { container } = render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
-    expect(container.querySelector('[data-genart="bitfields-v2"]')).not.toBeNull();
+    expect(container.querySelector('[data-genart="bitfields-v3"]')).not.toBeNull();
   });
 
   it("lists all ingredients with their kind label", () => {
@@ -92,6 +112,80 @@ describe("Step3Preview", () => {
     render(<Step3Preview draft={happyDraft} onMint={onMint} minting={false} />);
     await userEvent.click(screen.getByRole("button", { name: /Mint/ }));
     expect(onMint).toHaveBeenCalledOnce();
+  });
+
+  // ── public description editor ──────────────────────────────────────────────
+  describe("public description", () => {
+    function strategyWithSummary(summary: string) {
+      return {
+        manifest: { plain_summary: summary },
+      } as Awaited<ReturnType<typeof getStrategy>>;
+    }
+
+    it("prefills from the stored strategy's manifest.plain_summary", async () => {
+      mockedGetStrategy.mockResolvedValue(strategyWithSummary("Buys dips."));
+      render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
+      await waitFor(() => {
+        expect(screen.getByTestId("public-description")).toHaveValue("Buys dips.");
+      });
+      expect(mockedGetStrategy).toHaveBeenCalledWith("local-btc-momentum");
+    });
+
+    it("shows the IPFS-publication helper text", () => {
+      render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
+      expect(
+        screen.getByText(/Published publicly to IPFS with your strategy/i),
+      ).toBeInTheDocument();
+    });
+
+    it("renders an empty editable textarea when the strategy fetch fails", async () => {
+      render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
+      const ta = screen.getByTestId("public-description");
+      expect(ta).toHaveValue("");
+      expect(ta).toBeEnabled();
+    });
+
+    it("Mint passes dirty: false when the description is untouched", async () => {
+      mockedGetStrategy.mockResolvedValue(strategyWithSummary("Buys dips."));
+      const onMint = vi.fn();
+      render(<Step3Preview draft={happyDraft} onMint={onMint} minting={false} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("public-description")).toHaveValue("Buys dips."),
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Mint/ }));
+      expect(onMint).toHaveBeenCalledWith({ value: "Buys dips.", dirty: false });
+    });
+
+    it("Mint passes the edited text with dirty: true", async () => {
+      mockedGetStrategy.mockResolvedValue(strategyWithSummary("Buys dips."));
+      const onMint = vi.fn();
+      render(<Step3Preview draft={happyDraft} onMint={onMint} minting={false} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("public-description")).toHaveValue("Buys dips."),
+      );
+      const ta = screen.getByTestId("public-description");
+      await userEvent.clear(ta);
+      await userEvent.type(ta, "Buys dips with confirmation.");
+      await userEvent.click(screen.getByRole("button", { name: /Mint/ }));
+      expect(onMint).toHaveBeenCalledWith({
+        value: "Buys dips with confirmation.",
+        dirty: true,
+      });
+    });
+
+    it("reverting an edit back to the stored text passes dirty: false", async () => {
+      mockedGetStrategy.mockResolvedValue(strategyWithSummary("Buys dips."));
+      const onMint = vi.fn();
+      render(<Step3Preview draft={happyDraft} onMint={onMint} minting={false} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("public-description")).toHaveValue("Buys dips."),
+      );
+      const ta = screen.getByTestId("public-description");
+      await userEvent.clear(ta);
+      await userEvent.type(ta, "Buys dips.");
+      await userEvent.click(screen.getByRole("button", { name: /Mint/ }));
+      expect(onMint).toHaveBeenCalledWith({ value: "Buys dips.", dirty: false });
+    });
   });
 
   it("preview card shows asset pill for BTC", () => {

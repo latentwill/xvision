@@ -1,4 +1,12 @@
 // src/features/marketplace/components/VerifiedBadge.tsx
+//
+// NOTE on wording: for API (on-chain) listings, `verification === "verified"`
+// is derived from `attestation_count > 0` — and v1 attestations are
+// permissionless SELF-attestations (anyone, including the seller, can post
+// one). The badge label therefore overstates the trust signal on those
+// surfaces; the attestation-specific UI (LineageRoute "Eval attestations"
+// section) already says "attested". Parametrize/rename this label when the
+// registry grows third-party verification.
 export function VerifiedBadge({ "data-testid": testId }: { "data-testid"?: string } = {}) {
   return (
     <span

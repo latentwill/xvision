@@ -89,3 +89,294 @@ fn marketplace_help_exits_zero() {
         "expected subcommand list in help: {stdout}"
     );
 }
+
+// ── MARKETPLACE_DRIVER=onchain (T2.3) ────────────────────────────────────────
+
+/// `buy` with MARKETPLACE_DRIVER=onchain and no MANTLE_PRIVATE_KEY must fail
+/// at the env-validation stage (not an EIP-3009 gate — that gate was removed
+/// when MockUSDC3009 was deployed on Mantle Sepolia 2026-06-10).
+#[test]
+fn marketplace_onchain_buy_proceeds_to_env_validation() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args([
+            "marketplace",
+            "buy",
+            "--listing-id",
+            "1",
+            "--buyer",
+            "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553",
+        ])
+        .env("XVN_HOME", dir.path())
+        .env("MARKETPLACE_DRIVER", "onchain")
+        .env_remove("MANTLE_PRIVATE_KEY")
+        .env_remove("XVN_LISTING_REGISTRY")
+        .output()
+        .expect("xvn marketplace buy");
+
+    assert!(
+        !out.status.success(),
+        "onchain buy without MANTLE_PRIVATE_KEY must fail"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Must reach the driver env check — not an EIP-3009 gate message
+    assert!(
+        stderr.contains("MANTLE_PRIVATE_KEY"),
+        "expected MANTLE_PRIVATE_KEY env error in stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("not yet available"),
+        "stale gate message must not appear in stderr: {stderr}"
+    );
+}
+
+/// Missing signer key under MARKETPLACE_DRIVER=onchain must name the exact
+/// env var and hint at the 1Password retrieval pattern.
+#[test]
+fn marketplace_onchain_missing_key_names_var_and_op_hint() {
+    let dir = tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    fs::write(&manifest_path, r#"{"agent_id":"01TEST"}"#).unwrap();
+
+    let out = xvn()
+        .args([
+            "marketplace",
+            "publish",
+            "--agent-id",
+            "01TEST",
+            "--price",
+            "10.0",
+            "--manifest-path",
+            manifest_path.to_str().unwrap(),
+        ])
+        .env("XVN_HOME", dir.path())
+        .env("MARKETPLACE_DRIVER", "onchain")
+        .env_remove("MANTLE_PRIVATE_KEY")
+        .env(
+            "XVN_LISTING_REGISTRY",
+            "0x64b5ae5B91CB2846e7dA8cE883f2023b98E2cD22",
+        )
+        .output()
+        .expect("xvn marketplace publish");
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("MANTLE_PRIVATE_KEY"),
+        "expected MANTLE_PRIVATE_KEY in stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("op read"),
+        "expected `op read` hint in stderr: {stderr}"
+    );
+}
+
+/// Missing listing-registry address under MARKETPLACE_DRIVER=onchain must
+/// name the exact env var.
+#[test]
+fn marketplace_onchain_missing_addresses_names_var() {
+    let dir = tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    fs::write(&manifest_path, r#"{"agent_id":"01TEST"}"#).unwrap();
+
+    let out = xvn()
+        .args([
+            "marketplace",
+            "publish",
+            "--agent-id",
+            "01TEST",
+            "--price",
+            "10.0",
+            "--manifest-path",
+            manifest_path.to_str().unwrap(),
+        ])
+        .env("XVN_HOME", dir.path())
+        .env("MARKETPLACE_DRIVER", "onchain")
+        .env(
+            "MANTLE_PRIVATE_KEY",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .env_remove("XVN_LISTING_REGISTRY")
+        .output()
+        .expect("xvn marketplace publish");
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("XVN_LISTING_REGISTRY"),
+        "expected XVN_LISTING_REGISTRY in stderr: {stderr}"
+    );
+}
+
+/// `xvn marketplace --help` documents the onchain driver env contract,
+/// including the 1Password retrieval pattern for the signer key.
+#[test]
+fn marketplace_help_documents_onchain_driver() {
+    let out = xvn()
+        .args(["marketplace", "--help"])
+        .output()
+        .expect("xvn marketplace --help");
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for needle in [
+        "MARKETPLACE_DRIVER",
+        "MANTLE_PRIVATE_KEY",
+        "XVN_LISTING_REGISTRY",
+        "op read",
+    ] {
+        assert!(
+            stdout.contains(needle),
+            "expected `{needle}` in marketplace --help: {stdout}"
+        );
+    }
+}
+
+/// Without MARKETPLACE_DRIVER=onchain, buy stays on the mock driver and
+/// behaves as before (unknown listing → not-found, not the EIP-3009 gate).
+#[test]
+fn marketplace_buy_mock_unchanged() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args([
+            "marketplace",
+            "buy",
+            "--listing-id",
+            "999",
+            "--buyer",
+            "0xb5d2a3734aF76eFb7bC258b35c970F1Cc9c4E553",
+        ])
+        .env("XVN_HOME", dir.path())
+        .env_remove("MARKETPLACE_DRIVER")
+        .output()
+        .expect("xvn marketplace buy");
+
+    assert!(!out.status.success(), "unknown listing should fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "expected not-found error on mock driver: {stderr}"
+    );
+    assert!(
+        !stderr.contains("EIP-3009"),
+        "mock driver must not hit the onchain buy gate: {stderr}"
+    );
+}
+
+// ── chain-backed reads: list (onchain) + show-token ─────────────────────────
+
+/// `list` under MARKETPLACE_DRIVER=onchain without XVN_LISTING_REGISTRY must
+/// fail at env validation and name the exact var. Read-only: must NOT demand
+/// MANTLE_PRIVATE_KEY.
+#[test]
+fn marketplace_list_onchain_missing_listing_registry_names_var() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "list"])
+        .env("XVN_HOME", dir.path())
+        .env("MARKETPLACE_DRIVER", "onchain")
+        .env_remove("MANTLE_PRIVATE_KEY")
+        .env_remove("XVN_LISTING_REGISTRY")
+        .env_remove("XVN_IDENTITY_REGISTRY")
+        .output()
+        .expect("xvn marketplace list");
+
+    assert!(!out.status.success(), "onchain list without registries must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("XVN_LISTING_REGISTRY"),
+        "expected XVN_LISTING_REGISTRY in stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("MANTLE_PRIVATE_KEY"),
+        "read-only list must not require a signer key: {stderr}"
+    );
+}
+
+/// `list` under MARKETPLACE_DRIVER=onchain with only the listing registry set
+/// must name XVN_IDENTITY_REGISTRY (needed for tokenURI → agent_id).
+#[test]
+fn marketplace_list_onchain_missing_identity_registry_names_var() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "list"])
+        .env("XVN_HOME", dir.path())
+        .env("MARKETPLACE_DRIVER", "onchain")
+        .env(
+            "XVN_LISTING_REGISTRY",
+            "0x64b5ae5B91CB2846e7dA8cE883f2023b98E2cD22",
+        )
+        .env_remove("XVN_IDENTITY_REGISTRY")
+        .output()
+        .expect("xvn marketplace list");
+
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("XVN_IDENTITY_REGISTRY"),
+        "expected XVN_IDENTITY_REGISTRY in stderr: {stderr}"
+    );
+}
+
+/// Without MARKETPLACE_DRIVER=onchain, `list` keeps reading the local fixture
+/// (default path unchanged).
+#[test]
+fn marketplace_list_fixture_default_unchanged() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "list"])
+        .env("XVN_HOME", dir.path())
+        .env_remove("MARKETPLACE_DRIVER")
+        .env_remove("XVN_MARKETPLACE_FIXTURE")
+        .output()
+        .expect("xvn marketplace list");
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("(no listings)"), "fixture path default: {stdout}");
+}
+
+/// `show-token` without XVN_IDENTITY_REGISTRY must fail at env validation and
+/// name the exact var. Read-only verb: works without MARKETPLACE_DRIVER and
+/// without a signer key.
+#[test]
+fn marketplace_show_token_missing_identity_registry_names_var() {
+    let dir = tempdir().unwrap();
+    let out = xvn()
+        .args(["marketplace", "show-token", "--token-id", "1"])
+        .env("XVN_HOME", dir.path())
+        .env_remove("MARKETPLACE_DRIVER")
+        .env_remove("MANTLE_PRIVATE_KEY")
+        .env_remove("XVN_IDENTITY_REGISTRY")
+        .output()
+        .expect("xvn marketplace show-token");
+
+    assert!(!out.status.success(), "show-token without registry must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("XVN_IDENTITY_REGISTRY"),
+        "expected XVN_IDENTITY_REGISTRY in stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("MANTLE_PRIVATE_KEY"),
+        "read-only show-token must not require a signer key: {stderr}"
+    );
+}
+
+/// `--help` documents the read verbs' env contract.
+#[test]
+fn marketplace_help_documents_read_envs() {
+    let out = xvn()
+        .args(["marketplace", "--help"])
+        .output()
+        .expect("xvn marketplace --help");
+
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    for needle in ["XVN_IDENTITY_REGISTRY", "show-token"] {
+        assert!(
+            stdout.contains(needle),
+            "expected `{needle}` in marketplace --help: {stdout}"
+        );
+    }
+}

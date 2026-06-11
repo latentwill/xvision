@@ -191,6 +191,16 @@ pub struct CachedBacktestPaperTester {
     ctx: ApiContext,
     dispatch: Arc<dyn LlmDispatch + Send + Sync>,
     tools: Arc<ToolRegistry>,
+    /// U5/UI4: optional progress bus shared with the backtest executor. When
+    /// set, each `run`/`run_canary` constructs the executor with
+    /// `.with_progress(bus.sender())`, so the executor emits
+    /// `ProgressEvent::EvalHeartbeat`/`RunTick` while the (potentially long)
+    /// parent baseline backtest is in flight. The cycle orchestrator subscribes
+    /// via [`Self::subscribe`] before each paper-test call and re-emits a
+    /// throttled `CycleProgressEvent::EvalProgress`/`Heartbeat` through the
+    /// cycle's progress callback (see `cycle.rs`). `None` keeps the legacy
+    /// silent behavior for callers that don't want progress.
+    progress_bus: Option<Arc<crate::eval::progress::ProgressBus>>,
 }
 
 impl CachedBacktestPaperTester {
@@ -207,7 +217,29 @@ impl CachedBacktestPaperTester {
         dispatch: Arc<dyn LlmDispatch + Send + Sync>,
         tools: Arc<ToolRegistry>,
     ) -> Self {
-        Self { ctx, dispatch, tools }
+        Self {
+            ctx,
+            dispatch,
+            tools,
+            progress_bus: None,
+        }
+    }
+
+    /// U5: attach a shared progress bus so the backtest executor emits
+    /// liveness events the cycle can bridge into `CycleProgressEvent`. Builder
+    /// style so the existing `new` call sites are unchanged.
+    pub fn with_progress_bus(mut self, bus: Arc<crate::eval::progress::ProgressBus>) -> Self {
+        self.progress_bus = Some(bus);
+        self
+    }
+
+    /// Subscribe to the attached progress bus, if any. The cycle orchestrator
+    /// calls this BEFORE each `paper_tester.run(...)` so it doesn't miss the
+    /// early `RunStarted`/`RunTick` events, then drains the receiver on a
+    /// throttle to re-emit `CycleProgressEvent::EvalProgress`. Returns `None`
+    /// when no bus was attached (the legacy silent path).
+    pub fn subscribe(&self) -> Option<crate::eval::progress::ProgressRx> {
+        self.progress_bus.as_ref().map(|b| b.subscribe())
     }
 }
 
@@ -230,7 +262,14 @@ impl CachedBacktestPaperTester {
         dispatch_override: Option<Arc<dyn LlmDispatch>>,
     ) -> Result<MetricsSummary> {
         ensure_scenario_persisted(&self.ctx, scenario).await?;
-        let executor = build_cached_backtest_executor(&self.ctx, strategy, scenario, canary).await?;
+        let executor = build_cached_backtest_executor(
+            &self.ctx,
+            strategy,
+            scenario,
+            canary,
+            self.progress_bus.as_deref(),
+        )
+        .await?;
         let store = RunStore::new(self.ctx.db.clone());
         let mut run = Run::new_queued(
             strategy.manifest.id.clone(),
@@ -443,6 +482,7 @@ async fn build_cached_backtest_executor(
     strategy: &Strategy,
     scenario: &Scenario,
     canary: Option<&str>,
+    progress_bus: Option<&crate::eval::progress::ProgressBus>,
 ) -> Result<Executor> {
     let active = active_assets(&strategy.manifest.asset_universe, None)?;
     let first_asset = *active.first().context("strategy asset_universe resolved empty")?;
@@ -473,6 +513,12 @@ async fn build_cached_backtest_executor(
     // by-design broker-rule rejections as expected honesty-check noise.
     if let Some(variant) = canary {
         executor = executor.with_canary_sabotage(variant);
+    }
+    // U5: wire the executor's progress channel to the shared bus so the
+    // optimizer cycle can observe liveness (EvalHeartbeat/RunTick) during the
+    // parent baseline backtest and re-emit it as CycleProgressEvent::EvalProgress.
+    if let Some(bus) = progress_bus {
+        executor = executor.with_progress_tx(bus.sender());
     }
 
     Ok(executor)

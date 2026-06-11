@@ -1,4 +1,4 @@
-// Live cockpit account stat strip (Task B-II / spec §2.6 — B3).
+// Live Trading account stat strip (Task B-II / spec §2.6 — B3).
 //
 // Four stats in a single full-width horizontal row, rendered INLINE below the
 // chart inside the existing seam (NO right-side box — the chat rail owns the

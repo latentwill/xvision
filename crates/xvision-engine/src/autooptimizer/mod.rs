@@ -31,12 +31,11 @@ pub mod cycle_runs;
 pub mod diversity;
 pub mod dspy_bridge;
 pub mod dspy_flywheel;
-pub mod gepa;
-pub mod pattern_snapshot;
 pub mod eval_adapter;
 pub mod events_store;
 pub mod evidence;
 pub mod gate;
+pub mod gepa;
 pub mod inversion;
 pub mod judge;
 pub mod lineage;
@@ -45,6 +44,7 @@ pub mod metering_dispatch;
 pub mod mutator;
 pub mod mutator_ladder;
 pub mod parent_policy;
+pub mod pattern_snapshot;
 pub mod preflight;
 pub mod program_view;
 pub mod progress;
@@ -60,10 +60,11 @@ pub mod validator;
 pub use blob_store::BlobStore;
 pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult, SabotageVariant};
 pub use config::{
-    AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig, TradeDirection,
+    AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig,
+    ScenarioWindowPair, TradeDirection,
 };
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
-pub use cycle::{run_cycle, CycleConfig, CycleResult};
+pub use cycle::{run_cycle, select_scenario_pair, CycleConfig, CycleResult};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
 pub use cycle_runs::{
     get_cycle_run, list_cycle_runs, CycleNodeDetail, CycleRunDetail, CycleRunSummary, HonestyCheckRecord,
@@ -82,7 +83,7 @@ pub use gate::{evaluate, GateInput, GateVerdict};
 pub use inversion::{invert_mutation, run_inversion_pair, InversionPairResult};
 pub use lineage::{LineageNode, LineageStatus, LineageStore};
 pub use local_dispatch::AutoOptimizerLocalDispatch;
-pub use metering_dispatch::{CostMeteringDispatch, CycleMeter};
+pub use metering_dispatch::{CostMeteringDispatch, CycleMeter, MaxTokensCapDispatch};
 pub use mutator::{MutationDiff, MutationKind, Mutator, ParamChange, ProseEdit, ToolDiff};
 pub use mutator_ladder::{compute_ladder, record_outcome, record_proposal, MutatorScore};
 pub use parent_policy::{select_parents, ParentPolicy, ScoreField};

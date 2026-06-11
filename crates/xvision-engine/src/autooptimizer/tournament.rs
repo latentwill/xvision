@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::llm::{LlmDispatch, LlmRequest, Message};
+use crate::agent::llm::{LlmDispatch, LlmRequest, Message, ResponseSchema};
 use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::mutator::{empty_mutation, MutationDiff, Mutator};
 use crate::autooptimizer::program_view;
@@ -128,7 +128,10 @@ impl TournamentRunner {
                 max_tokens: None,
                 tools: vec![],
                 temperature: None,
-                response_schema: None,
+                // B3: constrain to the `mutation_diff` schema so OpenAI-compat
+                // dispatchers (Ollama) grammar-constrain the JSON output, matching
+                // the single-shot mutator path.
+                response_schema: Some(ResponseSchema::mutation_diff()),
                 cache_control: None,
                 force_json: true,
             };
@@ -479,7 +482,10 @@ mod tests {
         ]);
         let runner = make_runner(dispatch);
         let strategy = stub_strategy();
-        let candidates = runner.generate_candidates(&strategy, &config, None).await.unwrap();
+        let candidates = runner
+            .generate_candidates(&strategy, &config, None)
+            .await
+            .unwrap();
         assert_eq!(candidates.len(), 3);
         assert_eq!(candidates[0].kind, CandidateKind::Incumbent);
         assert_eq!(candidates[1].kind, CandidateKind::Adversarial);
@@ -521,6 +527,62 @@ mod tests {
         assert!(
             result.incumbent_wins,
             "incumbent should win when ranked first by all judges"
+        );
+    }
+
+    /// Capturing dispatch for B3: records every request so the test can assert the
+    /// tournament's proposal request carries the constrained `mutation_diff`
+    /// schema. Always returns the same canned valid diff.
+    struct CapturingDispatch {
+        canned: String,
+        captured: std::sync::Mutex<Vec<LlmRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmDispatch for CapturingDispatch {
+        async fn complete(&self, req: LlmRequest) -> Result<crate::agent::llm::LlmResponse> {
+            self.captured.lock().unwrap().push(req);
+            Ok(crate::agent::llm::LlmResponse {
+                content: vec![crate::agent::llm::ContentBlock::Text {
+                    text: self.canned.clone(),
+                }],
+                stop_reason: crate::agent::llm::StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn tournament_proposal_request_carries_mutation_diff_schema() {
+        // B3: the tournament's propose_diff path must request the constrained
+        // `mutation_diff` schema (mirrors the single-shot mutator).
+        let dispatch = Arc::new(CapturingDispatch {
+            canned: valid_diff_json(),
+            captured: std::sync::Mutex::new(Vec::new()),
+        });
+        let runner = TournamentRunner {
+            dispatch: dispatch.clone() as Arc<dyn LlmDispatch + Send + Sync>,
+            model: "test-model".into(),
+            provider: "test".into(),
+            max_retries: 0,
+        };
+        let strategy = stub_strategy();
+        let config = AutoOptimizerConfig::default();
+        let _ = runner
+            .propose_diff(&strategy, &config, "sys", None)
+            .await
+            .expect("propose_diff should succeed on a valid diff");
+
+        let captured = dispatch.captured.lock().unwrap();
+        let schema = captured[0]
+            .response_schema
+            .as_ref()
+            .expect("tournament request must carry a response_schema (B3)");
+        assert_eq!(schema.name, "mutation_diff");
+        assert!(
+            schema.schema.pointer("/properties/kind").is_some(),
+            "mutation_diff schema must enumerate `kind`"
         );
     }
 }

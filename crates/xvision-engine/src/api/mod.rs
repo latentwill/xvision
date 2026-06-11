@@ -38,6 +38,7 @@ pub mod eval;
 pub mod experiment;
 pub mod flywheel;
 pub mod health;
+pub mod live_broker;
 pub mod memory;
 pub mod optimize;
 pub mod safety;

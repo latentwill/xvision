@@ -28,6 +28,13 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     cd frontend/web && pnpm install --frozen-lockfile
 
 COPY frontend/web/ frontend/web/
+# Marketplace subgraph endpoint (public Goldsky read API — non-secret by design).
+# Baked at build so the SPA's MarketplaceData uses the live subgraph; override
+# per-deploy with `--build-arg VITE_MARKETPLACE_SUBGRAPH_URL=...`. Empty string →
+# the fixture client (see MarketplaceLayout). `live` is a stable Goldsky tag that
+# repoints to the latest deployed version.
+ARG VITE_MARKETPLACE_SUBGRAPH_URL=https://api.goldsky.com/api/public/project_cmq8zp6etzmv101xwaeih73lr/subgraphs/xvision-marketplace/live/gn
+ENV VITE_MARKETPLACE_SUBGRAPH_URL=$VITE_MARKETPLACE_SUBGRAPH_URL
 # Vite's `outDir` in vite.config.ts is `../../crates/xvision-dashboard/static`
 # (relative to frontend/web), so the static dir lands at the workspace path
 # rust-embed expects.
@@ -96,7 +103,7 @@ COPY --from=planner /xvision/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_IDENTITY" = "1" ]; then \
-        cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json --workspace ; \
+        cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json --workspace --features xvision-engine/chain-attest ; \
     else \
         cargo chef cook --profile "$BUILD_PROFILE" --recipe-path recipe.json ; \
     fi
@@ -108,7 +115,7 @@ COPY --from=frontend /xvision/crates/xvision-dashboard/static/ crates/xvision-da
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     if [ "$WITH_IDENTITY" = "1" ]; then \
-        cargo build --profile "$BUILD_PROFILE" --workspace --bin xvn ; \
+        cargo build --profile "$BUILD_PROFILE" --workspace --bin xvn --features xvision-engine/chain-attest ; \
     else \
         cargo build --profile "$BUILD_PROFILE" --bin xvn ; \
     fi && \

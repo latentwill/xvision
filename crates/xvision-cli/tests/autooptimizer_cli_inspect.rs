@@ -77,7 +77,7 @@ async fn lineage_ls_empty_store() {
     setup_lineage_db(&db_path).await;
 
     let out = xvn(
-        &["optimizer", "lineage", "ls", "--db", &db_path.to_string_lossy()],
+        &["optimize", "lineage", "ls", "--db", &db_path.to_string_lossy()],
         dir.path(),
     );
     assert_ok(&out);
@@ -101,7 +101,7 @@ async fn lineage_ls_status_filter() {
 
     let out = xvn(
         &[
-            "optimizer",
+            "optimize",
             "lineage",
             "ls",
             "--db",
@@ -134,7 +134,7 @@ async fn lineage_show_known_hash() {
 
     let out = xvn(
         &[
-            "optimizer",
+            "optimize",
             "lineage",
             "show",
             &hash,
@@ -152,7 +152,7 @@ async fn lineage_show_known_hash() {
     let bad_hash = "dd".repeat(32);
     let out = xvn(
         &[
-            "optimizer",
+            "optimize",
             "lineage",
             "show",
             &bad_hash,

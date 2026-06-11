@@ -27,7 +27,25 @@ export type StrategyListItem = {
   activation_mode?: ActivationMode;
   asset_universe?: string[];
   execution_mode?: string;
+  /// blake3 content hash (hex) of the strategy bundle — the id older
+  /// CLI-launched eval runs carry in `run.agent_id`, and the key of
+  /// autooptimizer `lineage_nodes`. Optional: absent on pre-upgrade servers.
+  bundle_hash?: string;
+  /// `"optimizer"` when this strategy's bundle hash appears in the
+  /// autooptimizer lineage (it is evaluated inside optimizer cycles).
+  /// Treat absent as `"user"`.
+  origin?: StrategyOrigin;
+  /// Server-computed: true when at least one COMPLETED eval run references
+  /// this strategy (by ULID or bundle hash), over the FULL eval_runs table —
+  /// not just the page the client fetched.
+  evaluated?: boolean;
+  /// `completed_at` (RFC3339) of the most recent completed eval run.
+  last_eval_completed_at?: string | null;
 };
+
+/// Mirrors the generated `types.gen/StrategyOrigin.ts`; kept inline so this
+/// hand-rolled module stays self-contained (see header comment).
+export type StrategyOrigin = "user" | "optimizer";
 
 export type ProviderModelPair = {
   provider: string;

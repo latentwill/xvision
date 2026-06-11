@@ -33,10 +33,13 @@
 pub mod adapter;
 pub mod error;
 pub mod ipfs;
+pub mod sealed;
 
 pub use adapter::{
     AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, ListingRef, MockDriver, PublishRequest,
     SaleReceipt, TransferAuthorization,
 };
 pub use error::MarketplaceError;
-pub use ipfs::{IpfsStore, PinataDriver};
+pub use ipfs::{IpfsStore, KuboStore, PinataDriver};
+pub use sealed::{EscrowSealed, LitChipotleClient, NoopSealed, SealedBundleCrypto};
+pub use xvision_identity::MarketplaceAddresses;

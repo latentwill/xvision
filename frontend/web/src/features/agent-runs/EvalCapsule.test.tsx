@@ -167,6 +167,30 @@ describe("EvalCapsule", () => {
     expect(onSwitchFocus).not.toHaveBeenCalled();
   });
 
+  test("prefix label reads EVAL by default and LIVE (gold tint) for kind=live", () => {
+    const api = renderCapsule(<EvalCapsule focused={focused()} siblings={[]} />);
+    expect(screen.getByTestId("capsule-kind-label")).toHaveTextContent("EVAL");
+
+    rerenderCapsule(
+      api,
+      <EvalCapsule focused={focused({ kind: "live" })} siblings={[]} />,
+    );
+    const label = screen.getByTestId("capsule-kind-label");
+    expect(label).toHaveTextContent("LIVE");
+    expect(label).toHaveStyle({ color: "var(--gold)" });
+  });
+
+  test("kind=live focused row's short tag routes to /live/runs/<id>", () => {
+    renderCapsule(
+      <EvalCapsule
+        focused={focused({ id: "run_live1", kind: "live" })}
+        siblings={[]}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /open eval run mr·flash/i });
+    expect(link).toHaveAttribute("href", "/live/runs/run_live1");
+  });
+
   test("renders an N ERR chip on the collapsed toggle when siblings have errors", () => {
     renderCapsule(
       <EvalCapsule

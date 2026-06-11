@@ -191,6 +191,17 @@ describe("StrategyDetailRoute (edit cycle stability)", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input.toString();
         const method = init?.method ?? "GET";
+        if (url.endsWith("/diagnostics") && method === "GET") {
+          return new Response(
+            JSON.stringify({
+              launchable: true,
+              has_decision_path: true,
+              unregistered_tools: [],
+              per_agent: [],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
         if (url.startsWith("/api/strategy/") && method === "GET") {
           return new Response(JSON.stringify(state), {
             status: 200,

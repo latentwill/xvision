@@ -1,4 +1,4 @@
-// Shared display helpers for the Live cockpit (Task B-III DRY cleanup).
+// Shared display helpers for Live Trading (Task B-III DRY cleanup).
 //
 // B-II duplicated these formatters + the `barsByAsset` adapter across
 // `LiveAccountStrip` and `LivePositionsTable`. Hoisted here so both import

@@ -1,20 +1,26 @@
-//! `xvn optimize` — canonical optimizer CLI (strategy optimizer + DSPy optimizer).
+//! `xvn optimize` — the AutoOptimizer strategy-experiment cycle.
 //!
-//! `xvn optimizer` (autooptimizer.rs) is the deprecated predecessor of the
-//! cycle commands. All real cycle implementations live here; autooptimizer.rs
-//! delegates here for `run-cycle`, `mutate-once`, and `demo`.
+//! `xvn optimize` (no subcommand) runs the full **strategy-experiment optimizer cycle** (parent selection → candidate experiment → gate → judge). This is the
+//! one and only CLI home for the AutoOptimizer cycle; the previously-separate
+//! `xvn optimizer` verb has been folded in here.
+//!
+//! The cycle now subsumes the prompt-optimization (DSPy) flywheel internally
+//! (it runs during the cycle and emits `CycleProgressEvent::FlywheelCompiled`),
+//! so there are NO standalone DSPy prompt-optimizer subcommands on this verb —
+//! `xvn optimize` is PURELY the AutoOptimizer cycle. The engine `optimization/`
+//! module and the DSPy `Optimizer*` types remain (the cycle's flywheel uses
+//! them); only the redundant manual CLI verbs were removed.
 //!
 //! ## Subcommands
 //!
-//! * **run** / **run-cycle** — run the full optimizer cycle against a strategy.
+//! * **run** / **run-cycle** — run the full optimizer cycle (default action when
+//!   no subcommand is given).
 //! * **mutate-once** — propose one experiment, gate it, and commit to lineage.
 //! * **demo** — replay a saved optimizer cycle from a fixture (no API keys).
-//! * **inspect** — show a persisted optimization run, its candidates, and snapshots.
-//! * **memory-demos** — compile an Observation demo pool into a child agent prompt prefix.
-//! * **memory-demos-gate** — record dev/holdout gate results for a memory-demo optimization.
-//! * **export-demos** / **import-demos** — export/import demo sets.
-//! * **accept-as-child-agent** / **revert-accepted** — lineage accept/revert.
-//! * **explain-missing-data** — explain why a corpus query produced no usable training data.
+//! * **ls** — list recent optimizer cycles from the lineage store (D3).
+//! * **show** — inspect a single cycle's gated candidates + counts.
+//! * **lineage** — lineage graph inspection (ls / show).
+//! * **unlock** — force-clear a wedged cycle lock.
 //!
 //! ## Exit codes (distinct per failure class)
 //!
@@ -31,8 +37,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use clap::{Args, Subcommand, ValueEnum};
-use serde::Serialize;
+use clap::{Args, Subcommand};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use ulid::Ulid;
@@ -41,16 +46,13 @@ use tokio::io::AsyncWriteExt;
 
 use xvision_core::config::{self, ConfigError, InternProvider, ProviderEntry, ProviderKind, RuntimeConfig};
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
-use xvision_engine::api::autooptimizer::{self, AutoOptimizerGateRequest, AutoOptimizerRunRequest};
 use xvision_engine::api::memory;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::autooptimizer::blob_store::BlobStore;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_cycle, CycleConfig};
-use xvision_engine::autooptimizer::cycle_runs::{
-    get_cycle_run, list_cycle_runs, CycleRunDetail, CycleRunSummary,
-};
+use xvision_engine::autooptimizer::cycle_runs::{get_cycle_run, list_cycle_runs, CycleRunDetail};
 use xvision_engine::autooptimizer::eval_adapter::{
     BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
 };
@@ -71,50 +73,138 @@ use xvision_engine::eval::run::MetricsSummary;
 use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
-use xvision_memory::embedder::Embedder;
 
-use xvision_engine::api::optimize::{MemoryDemoOptimizeRequest, OptimizationGateRequest};
-use xvision_engine::api::{agents as agents_api, optimize as memory_optimize};
-use xvision_engine::optimization::OptimizationStore;
+use xvision_engine::autooptimizer::events_store::persist_cycle_event;
 
-use crate::exit::{CliError, CliResult, XvnExit};
+use crate::exit::{CliError, CliResult};
 use crate::io::print_json;
 
 // ── Top-level command ─────────────────────────────────────────────────────────
 
-/// `xvn optimize` top-level command.
+/// `xvn optimize` top-level command — the AutoOptimizer strategy-experiment cycle.
+///
+/// With NO subcommand, `xvn optimize` runs the full optimizer cycle (equivalent
+/// to `xvn optimize run`). This verb is PURELY the AutoOptimizer cycle; the
+/// prompt-optimization (DSPy) flywheel runs inside the cycle automatically and
+/// has no standalone subcommands here.
 #[derive(Args, Debug)]
+#[command(long_about = "\
+xvn optimize — the AutoOptimizer strategy-experiment cycle.\n\
+\n\
+Running `xvn optimize` with NO subcommand runs the full optimizer cycle \
+(parent selection -> candidate experiment -> gate -> judge), the same as \
+`xvn optimize run`.\n\
+\n\
+The prompt-optimization (DSPy) flywheel is folded INTO the cycle and runs \
+automatically; it has no standalone subcommands on this verb.")]
 pub struct OptimizeCmd {
     #[command(subcommand)]
-    action: OptimizeAction,
+    action: Option<OptimizeAction>,
 }
 
 #[derive(Subcommand, Debug)]
 enum OptimizeAction {
-    /// Deprecated DSPy optimizer entry point.
-    Run(RunArgs),
-    /// Run the full optimizer cycle (same as run; --strategy is optional).
-    RunCycle(RunCycleArgs),
+    /// Run the full optimizer cycle (default action; --strategy is optional).
+    #[command(visible_alias = "run-cycle")]
+    Run(RunCycleArgs),
     /// Propose one experiment, gate it, and commit to lineage.
     MutateOnce(MutateOnceArgs),
     /// Replay a saved optimizer cycle from a fixture (no API keys required).
     Demo(DemoArgs),
-    /// Show a persisted optimization run, its candidates, and snapshots.
-    Inspect(InspectArgs),
-    /// Compile an Observation demo pool into a child agent prompt prefix.
-    MemoryDemos(MemoryDemosArgs),
-    /// Record dev/holdout gate results for a memory-demo optimization.
-    MemoryDemosGate(MemoryDemosGateArgs),
-    /// Export the demos of a snapshot (or demo set) as canonical JSON.
-    ExportDemos(ExportDemosArgs),
-    /// Import a demos JSON file into the content-addressed demo store.
-    ImportDemos(ImportDemosArgs),
-    /// Accept a snapshot as a child agent — records the lineage edge.
-    AcceptAsChildAgent(AcceptArgs),
-    /// Revert an accepted snapshot — clears the accept flag + lineage edge.
-    RevertAccepted(RevertArgs),
-    /// Explain why a corpus query produced no usable training data.
-    ExplainMissingData(ExplainArgs),
+    /// List recent optimizer cycles from the lineage store.
+    Ls(LsArgs),
+    /// Show a single optimizer cycle's gated candidates and counts.
+    Show(ShowArgs),
+    /// Lineage graph inspection (ls / show).
+    Lineage(LineageCmd),
+    /// Force-clear a wedged optimizer cycle lock (e.g. after a killed/crashed
+    /// run on a foreign host). Use when the cycle reports "already running" but
+    /// no cycle is actually live.
+    Unlock(UnlockArgs),
+}
+
+// ── Folded-in cycle args (from the former `xvn optimizer` surface) ───────────
+
+#[derive(Args, Debug)]
+pub struct UnlockArgs {
+    /// Path to the optimizer DB holding the lock (defaults to $XVN_HOME/xvn.db).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
+    #[arg(long)]
+    pub xvn_home: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct LsArgs {
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Max cycles to list.
+    #[arg(long, default_value_t = 50)]
+    pub limit: i64,
+    /// Cycles to skip (pagination).
+    #[arg(long, default_value_t = 0)]
+    pub offset: i64,
+    /// Emit a JSON array instead of the table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ShowArgs {
+    /// Cycle id to inspect.
+    pub cycle_id: String,
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Emit the cycle detail as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct LineageCmd {
+    #[command(subcommand)]
+    pub op: LineageOp,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LineageOp {
+    /// List lineage experiments.
+    Ls(LineageLsArgs),
+    /// Show a single experiment node and its ancestry.
+    Show(LineageShowArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct LineageLsArgs {
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    #[arg(long)]
+    pub cycle: Option<String>,
+    #[arg(long, default_value = "all")]
+    pub status: String,
+    #[arg(long, default_value_t = 50)]
+    pub limit: usize,
+}
+
+#[derive(Args, Debug)]
+pub struct LineageShowArgs {
+    pub bundle_hash: String,
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+}
+
+struct LineageRow {
+    bundle_hash: String,
+    parent_hash: Option<String>,
+    status: String,
+    cycle_id: Option<String>,
+    created_at: String,
+    gate_verdict: String,
 }
 
 // ── Cycle args (pub so autooptimizer.rs can delegate) ────────────────────────
@@ -138,7 +228,9 @@ pub struct MutateOnceArgs {
     /// Blob storage directory.
     #[arg(long)]
     pub blob_dir: Option<PathBuf>,
-    /// Use mock LLM dispatch (for tests and offline use).
+    /// Use mock LLM dispatch for ALL AI calls (paper-test, experiment writer,
+    /// judge). No API keys required. All AI responses are canned/deterministic.
+    /// For smoke-testing cycle wiring only — results have no signal value.
     #[arg(long)]
     pub mock: bool,
     /// Unix socket path of the dashboard IPC bridge (AR-3).
@@ -153,15 +245,19 @@ pub struct MutateOnceArgs {
     pub ipc_socket: Option<PathBuf>,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Default)]
 pub struct RunCycleArgs {
-    /// Path to autooptimizer.toml. Defaults to $XVN_HOME/autooptimizer.toml.
+    /// Path to autooptimizer.toml. When set, REPLACES the default
+    /// $XVN_HOME/autooptimizer.toml entirely (not merged). When unset, the
+    /// default path is loaded if it exists, else built-in defaults are used.
     #[arg(long)]
     pub config: Option<PathBuf>,
     /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
     #[arg(long)]
     pub db: Option<PathBuf>,
-    /// Use deterministic stub paper tester (no API keys). Safe for smoke testing.
+    /// Use mock LLM dispatch for ALL AI calls (paper-test, experiment writer,
+    /// judge). No API keys required. All AI responses are canned/deterministic.
+    /// For smoke-testing cycle wiring only — results have no signal value.
     #[arg(long)]
     pub mock: bool,
     /// Cycle/session id to use for this optimizer cycle. Generated when omitted.
@@ -221,6 +317,16 @@ pub struct RunCycleArgs {
         help = "Candidate experiments per parent this cycle (1..=64; overrides config)"
     )]
     pub experiments_per_cycle: Option<u32>,
+    /// Strict per-call output-token cap applied to candidate eval +
+    /// mutator/judge dispatches this cycle. When set, every LLM call's
+    /// provider `max_tokens` is forced to this value at dispatch time;
+    /// unset means no cycle-level cap (each slot keeps its own).
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Strict per-call output-token cap applied to candidate eval dispatches this cycle"
+    )]
+    pub max_output_tokens: Option<u32>,
 }
 
 #[derive(Args, Debug)]
@@ -234,291 +340,23 @@ pub struct DemoArgs {
     pub verbose: bool,
 }
 
-// ── DSPy Inspect args ─────────────────────────────────────────────────────────
-
-#[derive(Args, Debug)]
-struct InspectArgs {
-    /// Optimization run id.
-    #[arg(long)]
-    run: String,
-    #[arg(long)]
-    json: bool,
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-}
-
-// ── DSPy / memory-demo arg structs ───────────────────────────────────────────
-
-/// The optimizer search algorithm.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "lower")]
-enum OptimizerKind {
-    Mipro,
-    Gepa,
-    Copro,
-}
-
-impl OptimizerKind {
-    fn as_key(self) -> &'static str {
-        match self {
-            OptimizerKind::Mipro => "mipro",
-            OptimizerKind::Gepa => "gepa",
-            OptimizerKind::Copro => "copro",
-        }
-    }
-}
-
-/// Capability flag preserved for CLI compatibility with the deprecated
-/// `xvn optimize run` surface.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "snake_case")]
-enum CapabilityArg {
-    Trader,
-    Filter,
-    DecisionGrader,
-    Intern,
-    ChatAuthoring,
-}
-
-impl CapabilityArg {
-    fn as_key(self) -> &'static str {
-        match self {
-            CapabilityArg::Trader => "trader",
-            CapabilityArg::Filter => "filter",
-            CapabilityArg::DecisionGrader => "decision_grader",
-            CapabilityArg::Intern => "intern",
-            CapabilityArg::ChatAuthoring => "chat_authoring",
-        }
-    }
-}
-
-/// Demo exemplar for the corpus JSON format (inputs/outputs maps).
-/// Preserved as a local type so demo export/import files remain readable after
-/// the old optimizer crate is removed.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct SnapshotDemo {
-    pub inputs: serde_json::Map<String, serde_json::Value>,
-    pub outputs: serde_json::Map<String, serde_json::Value>,
-}
-
-#[derive(Args, Debug)]
-struct RunArgs {
-    /// Agent template id being optimized (pre-mint local ULID).
-    #[arg(long)]
-    agent: String,
-    /// Slot/role name within the agent (free text).
-    #[arg(long)]
-    slot: String,
-    /// Capability the slot fulfils.
-    #[arg(long, value_enum)]
-    capability: CapabilityArg,
-    /// Corpus: a saved-query string, or a path to a corpus JSON file.
-    #[arg(long)]
-    corpus: String,
-    /// Optimizer search algorithm.
-    #[arg(long, value_enum)]
-    optimizer: OptimizerKind,
-    /// Objective metric name (e.g. delta_sharpe, grader_score).
-    #[arg(long)]
-    metric: String,
-    /// Maximum optimizer rounds.
-    #[arg(long, default_value_t = 4)]
-    max_rounds: u32,
-    /// RNG seed for demo sampling / search order.
-    #[arg(long)]
-    rng_seed: u64,
-    /// Validate corpus + capability only; do NOT mutate the store.
-    #[arg(long)]
-    dry_run: bool,
-    /// Use dummy/dummy as the model identity instead of resolving from the
-    /// agent's bound provider+model. For CI and offline testing only.
-    #[arg(long)]
-    test_model: bool,
-    /// Emit a single JSON object to stdout.
-    #[arg(long)]
-    json: bool,
-    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-}
-
-#[derive(Args, Debug)]
-struct ExportDemosArgs {
-    /// Snapshot id whose demos to export, OR a demo-set content hash via
-    /// --demo-set.
-    #[arg(long, conflicts_with = "demo_set")]
-    snapshot: Option<String>,
-    /// Demo-set content hash to export directly.
-    #[arg(long)]
-    demo_set: Option<String>,
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-}
-
-#[derive(Args, Debug)]
-struct ImportDemosArgs {
-    /// Path to a demos JSON file (array of {inputs, outputs}).
-    #[arg(long)]
-    file: PathBuf,
-    #[arg(long)]
-    json: bool,
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-}
-
-#[derive(Args, Debug)]
-struct AcceptArgs {
-    /// Snapshot id to accept.
-    #[arg(long)]
-    snapshot: String,
-    /// New child agent id minted from the accepted snapshot.
-    #[arg(long)]
-    child_agent: String,
-    #[arg(long)]
-    json: bool,
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-}
-
-#[derive(Args, Debug)]
-struct RevertArgs {
-    /// Snapshot id to revert.
-    #[arg(long)]
-    snapshot: String,
-    /// The child agent id whose lineage edge to remove.
-    #[arg(long)]
-    child_agent: String,
-    #[arg(long)]
-    json: bool,
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-}
-
-#[derive(Args, Debug)]
-struct ExplainArgs {
-    /// Corpus query / path to explain.
-    #[arg(long)]
-    corpus: String,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Args, Debug)]
-struct MemoryDemosArgs {
-    /// Agent whose slot should receive the compiled memory demo block.
-    #[arg(long)]
-    agent: String,
-    /// Slot name to patch. Defaults to the first slot.
-    #[arg(long)]
-    slot: Option<String>,
-    /// Exact memory namespace, e.g. `global` or `agent:<id>`.
-    #[arg(long)]
-    namespace: Option<String>,
-    /// Shorthand for `--namespace agent:<id>` when the memory source differs.
-    #[arg(long, conflicts_with = "namespace")]
-    memory_agent: Option<String>,
-    /// Optional Observation provenance filter.
-    #[arg(long)]
-    scenario: Option<String>,
-    /// Optional Observation provenance filter.
-    #[arg(long)]
-    run: Option<String>,
-    /// Demo source selector: frozen-snapshot, fresh-recorder, or manual-csv.
-    #[arg(long, default_value = "frozen-snapshot")]
-    demo_source: String,
-    /// Train/dev/untouched split, e.g. 70/15/15.
-    #[arg(long = "untouched-split", alias = "holdout-split", default_value = "70/15/15")]
-    holdout_split: String,
-    /// Verbatim cohort selector recorded for reproducibility.
-    #[arg(long)]
-    cohort_query: Option<String>,
-    /// CSV file containing Observation ids for --demo-source manual-csv.
-    #[arg(long)]
-    manual_csv: Option<PathBuf>,
-    /// Pattern id to include as an optimizer prior. Repeatable.
-    #[arg(long = "prior-pattern")]
-    prior_patterns: Vec<String>,
-    /// Also include recently recalled live Patterns from the namespace as priors.
-    #[arg(long = "auto-priors")]
-    auto_priors: bool,
-    /// Maximum recently recalled Patterns to append when --auto-priors is set.
-    #[arg(long = "prior-limit", default_value_t = 5)]
-    prior_limit: i64,
-    /// Max Observation demos to include.
-    #[arg(long, default_value_t = 8)]
-    limit: i64,
-    /// Max characters in the rendered `<memory_demos>` block.
-    #[arg(long, default_value_t = 6000)]
-    max_demo_chars: usize,
-    /// Child agent name when minting with `--yes`.
-    #[arg(long)]
-    child_name: Option<String>,
-    /// Actually mint the child agent; otherwise this is a side-effect-free preview.
-    #[arg(long)]
-    yes: bool,
-    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Args, Debug)]
-struct MemoryDemosGateArgs {
-    /// Optimization id returned by `xvn optimize memory-demos --yes`.
-    optimization_id: String,
-    /// Metric name for the dev score.
-    #[arg(long, default_value = "score_delta")]
-    dev_metric: String,
-    /// Metric name for the untouched-period score. Defaults to --dev-metric.
-    #[arg(long = "untouched-metric", alias = "holdout-metric")]
-    holdout_metric: Option<String>,
-    #[arg(long)]
-    parent_dev_score: f64,
-    #[arg(long)]
-    child_dev_score: f64,
-    #[arg(long = "baseline-untouched-score", alias = "parent-holdout-score")]
-    parent_holdout_score: f64,
-    #[arg(long = "candidate-untouched-score", alias = "child-holdout-score")]
-    child_holdout_score: f64,
-    #[arg(long = "min-improvement", alias = "gate-epsilon", default_value_t = 0.0)]
-    gate_epsilon: f64,
-    #[arg(long)]
-    reason: Option<String>,
-    /// Override the XVN home (otherwise XVN_HOME or ~/.xvn).
-    #[arg(long)]
-    xvn_home: Option<PathBuf>,
-    #[arg(long)]
-    json: bool,
-}
-
 // ── Top-level dispatch ────────────────────────────────────────────────────────
 
 pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
     match cmd.action {
-        OptimizeAction::Run(args) => run_optimize(args).await,
-        OptimizeAction::RunCycle(args) => run_cycle_cmd(args).await,
-        OptimizeAction::MutateOnce(args) => run_mutate_once(args).await,
-        OptimizeAction::Demo(args) => run_demo_cmd(args).await,
-        OptimizeAction::Inspect(args) => inspect(args).await,
-        OptimizeAction::MemoryDemos(args) => run_memory_demos(args).await,
-        OptimizeAction::MemoryDemosGate(args) => run_memory_demos_gate(args).await,
-        OptimizeAction::ExportDemos(args) => export_demos(args).await,
-        OptimizeAction::ImportDemos(args) => import_demos(args).await,
-        OptimizeAction::AcceptAsChildAgent(args) => accept(args).await,
-        OptimizeAction::RevertAccepted(args) => revert(args).await,
-        OptimizeAction::ExplainMissingData(args) => explain_missing_data(args),
+        // `xvn optimize` with NO subcommand runs the full cycle (default action).
+        None => run_cycle_cmd(RunCycleArgs::default()).await,
+        Some(OptimizeAction::Run(args)) => run_cycle_cmd(args).await,
+        Some(OptimizeAction::MutateOnce(args)) => run_mutate_once(args).await,
+        Some(OptimizeAction::Demo(args)) => run_demo_cmd(args).await,
+        Some(OptimizeAction::Ls(args)) => run_ls(args).await,
+        Some(OptimizeAction::Show(args)) => run_show(args).await,
+        Some(OptimizeAction::Lineage(cmd)) => match cmd.op {
+            LineageOp::Ls(args) => lineage_ls(args).await,
+            LineageOp::Show(args) => lineage_show(args).await,
+        },
+        Some(OptimizeAction::Unlock(args)) => run_unlock(args).await,
     }
-}
-
-async fn run_optimize(_args: RunArgs) -> CliResult<()> {
-    Err(CliError {
-        exit: XvnExit::OptMissingCapability,
-        source: anyhow::anyhow!(
-            "`xvn optimize run` is deprecated — the DSPy MIPRO optimizer has been removed. \
-             Use `xvn optimizer run-cycle` to run the AutoOptimizer instead."
-        ),
-    })
 }
 
 // ── mutate-once ───────────────────────────────────────────────────────────────
@@ -577,6 +415,8 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
             session_id: String::new(),
             cycle_id: cycle_id.clone(),
             parent_hash: parent_hash.to_hex(),
+            child_hash: String::new(),
+            mutator_model: String::new(),
         },
     )
     .await;
@@ -584,9 +424,16 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     // F32: derive the exploration seed from this mutate-once cycle id so the
     // experiment writer samples diversely (shared helper with the cycle path).
     let exploration_seed = xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
-    let diff = propose(&parent, &cfg, &dispatch, exploration_seed)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
+    let diff = propose(
+        &parent,
+        &cfg,
+        &binding.provider,
+        &binding.model,
+        &dispatch,
+        exploration_seed,
+    )
+    .await
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
     let child = diff.apply_to(&parent);
     let child_json = serde_json::to_value(&child)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize child: {e}")))?;
@@ -615,6 +462,7 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
             child_hash: child_hash.to_hex(),
             passed,
             outcome: outcome_str.to_string(),
+            delta_day: None,
         },
     )
     .await;
@@ -714,6 +562,29 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
 
     require_launchable_provider(args.mock, &xvn_home, &cfg.mutator.provider)?;
 
+    // U3: warn when --budget is set against a provider that reports $0/token, so
+    // the operator isn't surprised that the budget never terminates the cycle.
+    // (Real cost metering also fails fast below when no catalog exists; this
+    // covers the case where a catalog exists but prices everything at zero,
+    // e.g. a local Ollama catalog.) Cache-only catalog load — no creds.
+    if let Some(budget) = args.budget {
+        if !args.mock {
+            warn_if_zero_cost_provider(&xvn_home, &cfg.mutator.provider, budget).await;
+        }
+    }
+
+    // U16: pre-flight bar-coverage check BEFORE the cycle lock is acquired, so a
+    // window that isn't fully cached fails fast with an actionable error instead
+    // of stranding the lock while the eval hangs on a manual fetch. The check is
+    // CACHE-ONLY in the common case (it never touches broker creds) per the U16
+    // operator clarification. Skipped in --mock (no real bars) and when no
+    // --strategy is given (no asset universe to check against).
+    if !args.mock {
+        if let Some(ref strategy_id) = args.strategy {
+            preflight_bar_coverage(&xvn_home, strategy_id, &cfg).await?;
+        }
+    }
+
     // F8: converge on the main `xvn.db`.
     let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
     let pool = open_and_migrate_db(&db_path).await?;
@@ -744,7 +615,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
             return Err(CliError::usage(anyhow::anyhow!(
                 "an optimizer cycle is already running on this workspace (cycle {cycle_id}, \
                  holder {holder}, since {acquired_at}). Wait for it to finish or cancel it before \
-                 starting another — concurrent cycles starve each other."
+                 starting another — concurrent cycles starve each other. If you are sure no cycle \
+                 is live (e.g. a previous run was killed on another host), run \
+                 `xvn optimize unlock` to clear the stuck lock."
             )));
         }
     }
@@ -752,12 +625,51 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let lineage_store = LineageStore::new(pool.clone());
     let strategy_blob_store = BlobStore::new(xvn_home.join("lineage").join("blobs"));
 
+    // B9: load the seed strategy (if any) BEFORE building the scenario so the
+    // scenario granularity matches the strategy's decision cadence. Without an
+    // explicit --strategy we fall back to 60m (1h), preserving prior behaviour.
+    let seed_parent: Option<(ContentHash, Strategy)> = if let Some(ref strategy_id) = args.strategy {
+        Some(load_strategy_parent(strategy_id, &xvn_home, &lineage_store, &strategy_blob_store).await?)
+    } else {
+        None
+    };
+    let cadence_minutes = seed_parent
+        .as_ref()
+        .map(|(_, s)| s.manifest.decision_cadence_minutes)
+        .unwrap_or(60);
+
     // F10: build scenarios through the single shared optimizer scenario builder.
-    let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, "xvn-cli");
+    let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, cadence_minutes, "xvn-cli");
 
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
+
+    // B19: synthesize the round-robin scenario_pool (one (day, baseline) pair per
+    // configured `ScenarioWindowPair`) through the SAME builders as the single
+    // pair, so pool pairs share venue/fee/fill settings with the fallback pair.
+    // Empty when `scenario_pool` is unset ⇒ the cycle uses the single pair above
+    // for every candidate (back-compat). Precedence: when the pool is non-empty
+    // it drives per-candidate sampling; the single pair (which still honors the
+    // --day-*/--baseline-* CLI overrides) is the fallback used only when the pool
+    // is empty, and remains the honesty-check scenario.
+    let scenario_pool: Vec<(
+        xvision_engine::eval::scenario::Scenario,
+        xvision_engine::eval::scenario::Scenario,
+    )> = cfg
+        .scenario_pool
+        .iter()
+        .map(|pair| {
+            let day = synthesize_optimizer_day_scenario(&pair.day, cadence_minutes, "xvn-cli");
+            let baseline = synthesize_baseline_untouched_scenario(&day, &pair.baseline).map_err(|e| {
+                CliError::upstream(anyhow::anyhow!(
+                    "synthesize scenario_pool '{}' baseline: {e}",
+                    pair.label
+                ))
+            })?;
+            Ok::<_, CliError>((day, baseline))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
 
     let binding = build_dispatch(
         args.mock,
@@ -766,12 +678,45 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         &cfg.mutator.model,
     )
     .await?;
-    let raw_dispatch = Arc::clone(&binding.dispatch);
+    // Strict per-call output-token cap (run-cycle --max-output-tokens):
+    // wrap the raw provider dispatch so EVERY cycle LLM call (paper-test
+    // trader decisions, experiment writer/mutator, judge) has its
+    // `max_tokens` forced to the operator's cap at the provider boundary.
+    // The cost meter wraps this layer so it still tallies real token usage
+    // from the response. When the flag is unset, behaviour is unchanged.
+    let raw_dispatch: Arc<dyn LlmDispatch + Send + Sync> = match args.max_output_tokens {
+        Some(cap) => Arc::new(
+            xvision_engine::autooptimizer::metering_dispatch::MaxTokensCapDispatch::new(
+                Arc::clone(&binding.dispatch),
+                cap,
+            ),
+        ),
+        None => Arc::clone(&binding.dispatch),
+    };
 
     // F11/F23: one shared meter for the whole cycle.
     let meter: Arc<std::sync::Mutex<CycleMeter>> = Arc::new(std::sync::Mutex::new(CycleMeter::default()));
 
     let metering_catalogs = load_metering_catalogs(&xvn_home, &binding.provider).await;
+
+    // B2: --budget gates on spent_usd, which stays 0 for providers with no
+    // pricing catalog. Fail fast so the operator isn't surprised by a cycle
+    // that runs forever (until_budget) or silently ignores the cap (run-cycle).
+    if let Some(budget) = args.budget {
+        if metering_catalogs.is_empty() {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--budget ${budget:.4} requires a provider with catalog pricing, but provider \
+                 '{}' has no cached pricing catalog ($XVN_HOME/catalogs/{}.json). Cost \
+                 tracking is unavailable — use --mode once or --mode n_experiments to bound \
+                 cycle count, or run `xvn provider catalog fetch --name {}` to populate the \
+                 catalog if supported.",
+                binding.provider,
+                binding.provider,
+                binding.provider,
+            )));
+        }
+    }
+
     let metered_dispatch: Arc<dyn LlmDispatch + Send + Sync> = Arc::new(CostMeteringDispatch::new(
         Arc::clone(&raw_dispatch),
         metering_catalogs,
@@ -840,9 +785,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
 
     let mut parent_strategies = HashMap::new();
     let mut explicit_parent_hashes = Vec::new();
-    if let Some(ref strategy_id) = args.strategy {
-        let (bundle_hash, strategy) =
-            load_strategy_parent(strategy_id, &xvn_home, &lineage_store, &strategy_blob_store).await?;
+    if let Some((bundle_hash, strategy)) = seed_parent {
+        // B9: strategy already loaded above to derive scenario granularity; reuse it.
+        let strategy_id = args.strategy.as_deref().expect("seed_parent implies --strategy");
         xvision_engine::autooptimizer::preflight::preflight_trader_provider(
             &pool,
             &strategy,
@@ -874,6 +819,8 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         explicit_parent_hashes,
         objective: cfg.objective,
         regime_set: cfg.regime_set.clone(),
+        scenario_pool,
+        max_output_tokens: args.max_output_tokens,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -891,9 +838,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     }
     if args.mock {
         eprintln!(
-            "mock mode: paper-test metrics are synthetic (deterministic stub). This is a \
-             smoke test of the cycle wiring — it does not perform real backtests and may not \
-             appear as a completed run in `xvn optimizer ls`."
+            "mock mode: ALL AI calls (paper-test, experiment writer, judge) use a canned \
+             deterministic stub — no API keys required. This is a smoke test of cycle wiring \
+             only; results have no signal value and may not appear in `xvn optimize ls`."
         );
     }
     let dspy_ctx = if cfg.dspy_enabled {
@@ -917,6 +864,30 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     } else {
         None
     };
+    // U5/UI4: persist every CycleProgressEvent to `autooptimizer_events` so a
+    // CLI-launched cycle appears in the dashboard (which reads the same table)
+    // even without a live socket. The progress closure is sync but
+    // `persist_cycle_event` is async, so the closure pushes each event into an
+    // unbounded mpsc channel and a spawned task drains it and persists under the
+    // `cycle:<cycle_id>` fallback session key (matching the dashboard's
+    // `prune_old_events` retention branch).
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<CycleProgressEvent>();
+    let persist_pool = pool.clone();
+    let persist_session = format!("cycle:{cycle_lock_id}");
+    let persist_task = tokio::spawn(async move {
+        while let Some(ev) = event_rx.recv().await {
+            if let Err(e) = persist_cycle_event(&persist_pool, &ev, &persist_session).await {
+                // Non-fatal: the live stdout stream already showed the event.
+                eprintln!("note: could not persist cycle event: {e}");
+            }
+        }
+    });
+
+    // The progress closure owns its own sender clone; the channel closes (and
+    // the drain task finishes) once `run_cycle` returns and the closure drops.
+    let closure_tx = event_tx.clone();
+    drop(event_tx);
+
     let result = run_cycle(
         &pool,
         &strategy_blob_store,
@@ -926,10 +897,12 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         &mutator,
         &judge,
         paper_tester.as_ref(),
-        |event| {
+        move |event| {
             if let Ok(line) = serde_json::to_string(&event) {
                 println!("{}", line);
             }
+            // Best-effort: ignore send errors (drain task gone ⇒ shutting down).
+            let _ = closure_tx.send(event);
         },
         dspy_ctx.as_ref(),
         opt_mem.as_deref(),
@@ -938,6 +911,9 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         None,
     )
     .await;
+    // The closure (and its sender) drops here at the end of `run_cycle`'s
+    // borrow; await the drain task so all events are flushed before we return.
+    let _ = persist_task.await;
     let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_lock_id).await;
     let result = result.map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
 
@@ -1025,6 +1001,8 @@ fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::PhaseFinished { .. } => "Phase finished",
         CycleProgressEvent::SessionStateChanged { .. } => "Run state changed",
         CycleProgressEvent::FlywheelCompiled { .. } => "Findings compiled into prompt pattern",
+        CycleProgressEvent::EvalProgress { .. } => "Eval progress",
+        CycleProgressEvent::Heartbeat { .. } => "Working",
     }
 }
 
@@ -1042,6 +1020,8 @@ fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
         CycleProgressEvent::PhaseFinished { .. } => "phase_finished",
         CycleProgressEvent::SessionStateChanged { .. } => "session_state_changed",
         CycleProgressEvent::FlywheelCompiled { .. } => "flywheel_compiled",
+        CycleProgressEvent::EvalProgress { .. } => "eval_progress",
+        CycleProgressEvent::Heartbeat { .. } => "heartbeat",
     }
 }
 
@@ -1108,393 +1088,498 @@ async fn ipc_send_event(stream: &mut Option<tokio::net::UnixStream>, ev: CyclePr
     let _ = s.write_all(line.as_bytes()).await;
 }
 
-// ── inspect ─────────────────────────────────────────────────────────────
+// ── unlock ──────────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
-struct InspectReport {
-    run: xvision_engine::optimization::OptimizationRun,
-    reproduction_recipe: xvision_engine::optimization::ReproductionRecipe,
-    candidates: Vec<xvision_engine::optimization::OptimizationCandidate>,
-    snapshots: Vec<xvision_engine::optimization::OptimizationSnapshotRow>,
-}
-
-async fn inspect(args: InspectArgs) -> CliResult<()> {
-    let store = open_store(args.xvn_home.clone()).await?;
-    let run = store.get_run(&args.run).await.map_err(not_found_err)?;
-    let recipe = store
-        .reproduction_recipe(&args.run)
+/// `xvn optimize unlock` — force-clear the workspace optimizer cycle lock.
+async fn run_unlock(args: UnlockArgs) -> CliResult<()> {
+    let xvn_home = crate::commands::home::resolve_xvn_home(args.xvn_home)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("resolve xvn home: {e}")))?;
+    let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
+    let pool = open_and_migrate_db(&db_path).await?;
+    let cleared = xvision_engine::autooptimizer::run_lock::force_clear(&pool)
         .await
-        .map_err(not_found_err)?;
-    let candidates = store.list_candidates(&args.run).await.map_err(persistence_err)?;
-    let snapshots = store.list_snapshots(&args.run).await.map_err(persistence_err)?;
-    let report = InspectReport {
-        run,
-        reproduction_recipe: recipe,
-        candidates,
-        snapshots,
-    };
-    if args.json {
-        print_json(&report)?;
-    } else {
-        eprintln!(
-            "run {} status={} candidates={} snapshots={}",
-            report.run.id,
-            report.run.status,
-            report.candidates.len(),
-            report.snapshots.len()
-        );
-        eprintln!(
-            "  repro: corpus={} seed={} optimizer={} metric={} sig={}",
-            report.reproduction_recipe.corpus_query,
-            report.reproduction_recipe.rng_seed,
-            report.reproduction_recipe.optimizer,
-            report.reproduction_recipe.metric,
-            report
-                .reproduction_recipe
-                .signature_hash
-                .as_deref()
-                .unwrap_or("-"),
-        );
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("clear optimizer cycle lock: {e}")))?;
+    match cleared {
+        Some(cycle_id) => println!("cleared optimizer cycle lock (was held by cycle {cycle_id})"),
+        None => println!("no optimizer cycle lock was held"),
     }
     Ok(())
 }
 
-// ── export-demos / import-demos ─────────────────────────────────────────
+// ── ls (cycle history) ───────────────────────────────────────────────────────
 
-async fn export_demos(args: ExportDemosArgs) -> CliResult<()> {
-    let store = open_store(args.xvn_home.clone()).await?;
-    let demo_set = match (args.snapshot, args.demo_set) {
-        (Some(snap_id), _) => {
-            let snap = store.get_snapshot(&snap_id).await.map_err(not_found_err)?;
-            snap.demo_set.ok_or_else(|| CliError {
-                exit: XvnExit::OptValidation,
-                source: anyhow::anyhow!("snapshot {snap_id} has no demo set"),
-            })?
-        }
-        (None, Some(hash)) => hash,
-        (None, None) => {
-            return Err(CliError {
-                exit: XvnExit::OptValidation,
-                source: anyhow::anyhow!("provide --snapshot <id> or --demo-set <hash>"),
-            })
-        }
-    };
-    let payload = store.get_demo_set(&demo_set).await.map_err(not_found_err)?;
-    println!("{payload}");
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct ImportReport {
-    demo_set: String,
-    demo_count: usize,
-}
-
-async fn import_demos(args: ImportDemosArgs) -> CliResult<()> {
-    let text = std::fs::read_to_string(&args.file).map_err(|e| CliError {
-        exit: XvnExit::OptValidation,
-        source: anyhow::anyhow!("read demos file {}: {e}", args.file.display()),
-    })?;
-    let demos: Vec<SnapshotDemo> = serde_json::from_str(&text).map_err(|e| CliError {
-        exit: XvnExit::OptValidation,
-        source: anyhow::anyhow!(
-            "demos file {} is not a JSON array of {{inputs, outputs}}: {e}",
-            args.file.display()
-        ),
-    })?;
-    let canonical = serde_json::to_string(&demos).map_err(|e| CliError {
-        exit: XvnExit::OptValidation,
-        source: anyhow::anyhow!("serialize demos: {e}"),
-    })?;
-    let store = open_store(args.xvn_home.clone()).await?;
-    let demo_set = store.put_demo_set(&canonical).await.map_err(persistence_err)?;
-    let report = ImportReport {
-        demo_set,
-        demo_count: demos.len(),
-    };
-    if args.json {
-        print_json(&report)?;
-    } else {
-        eprintln!(
-            "imported {} demos as demo_set {}",
-            report.demo_count, report.demo_set
-        );
-    }
-    Ok(())
-}
-
-// ── accept / revert ───────────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-struct AcceptReport {
-    snapshot_id: String,
-    child_agent_id: String,
-    parent_agent_id: String,
-    optimization_run_id: String,
-    accepted: bool,
-}
-
-async fn accept(args: AcceptArgs) -> CliResult<()> {
-    let store = open_store(args.xvn_home.clone()).await?;
-    let snap = store.get_snapshot(&args.snapshot).await.map_err(not_found_err)?;
-    let run = store.get_run(&snap.run_id).await.map_err(not_found_err)?;
-    store
-        .set_snapshot_accepted(&args.snapshot, true)
-        .await
-        .map_err(persistence_err)?;
-    let edge = store
-        .add_lineage(&args.child_agent, &run.agent_id, &run.id)
-        .await
-        .map_err(|e| match e {
-            xvision_engine::api::ApiError::Conflict(m) => CliError {
-                exit: XvnExit::Conflict,
-                source: anyhow::anyhow!("{m}"),
-            },
-            other => persistence_err(other),
-        })?;
-    let report = AcceptReport {
-        snapshot_id: args.snapshot,
-        child_agent_id: edge.child_agent_id,
-        parent_agent_id: edge.parent_agent_id,
-        optimization_run_id: edge.optimization_run_id,
-        accepted: true,
-    };
-    if args.json {
-        print_json(&report)?;
-    } else {
-        eprintln!(
-            "accepted snapshot {} → child agent {} (parent {})",
-            report.snapshot_id, report.child_agent_id, report.parent_agent_id
-        );
-    }
-    Ok(())
-}
-
-#[derive(Serialize)]
-struct RevertReport {
-    snapshot_id: String,
-    child_agent_id: String,
-    accepted: bool,
-}
-
-async fn revert(args: RevertArgs) -> CliResult<()> {
-    let store = open_store(args.xvn_home.clone()).await?;
-    store
-        .set_snapshot_accepted(&args.snapshot, false)
-        .await
-        .map_err(not_found_err)?;
-    store
-        .delete_lineage_for_child(&args.child_agent)
-        .await
-        .map_err(not_found_err)?;
-    let report = RevertReport {
-        snapshot_id: args.snapshot,
-        child_agent_id: args.child_agent,
-        accepted: false,
-    };
-    if args.json {
-        print_json(&report)?;
-    } else {
-        eprintln!(
-            "reverted snapshot {} (child agent {} lineage removed)",
-            report.snapshot_id, report.child_agent_id
-        );
-    }
-    Ok(())
-}
-
-// ── explain-missing-data ──────────────────────────────────────────────────────
-
-#[derive(Serialize)]
-struct ExplainReport {
-    corpus_query: String,
-    resolved_as: &'static str,
-    demo_count: usize,
-    reason: String,
-    remediation: String,
-}
-
-fn explain_missing_data(args: ExplainArgs) -> CliResult<()> {
-    let path = PathBuf::from(&args.corpus);
-    let (resolved_as, demo_count, reason, remediation) = if path.is_file() {
-        match std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Vec<SnapshotDemo>>(&t).ok())
-        {
-            Some(demos) if !demos.is_empty() => (
-                "file",
-                demos.len(),
-                "corpus file parsed with usable rows".to_string(),
-                "no action needed — this corpus has data".to_string(),
-            ),
-            Some(_) => (
-                "file",
-                0,
-                "corpus file parsed but contained 0 rows".to_string(),
-                "add {inputs, outputs} exemplars to the file, or widen the query".to_string(),
-            ),
-            None => (
-                "file",
-                0,
-                "corpus file did not parse as a JSON array of {inputs, outputs}".to_string(),
-                "fix the file shape: a top-level JSON array of objects with \
-                 `inputs` and `outputs` maps"
-                    .to_string(),
-            ),
-        }
-    } else {
-        (
-            "query",
-            0,
-            "corpus is a query string, not a file; no live corpus data source is \
-             wired in this wave"
-                .to_string(),
-            "export a corpus to a JSON file (array of {inputs, outputs}) and pass \
-             the file path to --corpus"
-                .to_string(),
-        )
-    };
-    let report = ExplainReport {
-        corpus_query: args.corpus,
-        resolved_as,
-        demo_count,
-        reason,
-        remediation,
-    };
-    if args.json {
-        print_json(&report)?;
-    } else {
-        eprintln!("corpus `{}` → {}", report.corpus_query, report.resolved_as);
-        eprintln!("  rows: {}", report.demo_count);
-        eprintln!("  reason: {}", report.reason);
-        eprintln!("  fix: {}", report.remediation);
-    }
-    Ok(())
-}
-
-// ── memory-demo optimizer bridge ──────────────────────────────────────────────
-
-fn read_manual_csv_ids(path: Option<&PathBuf>) -> CliResult<Option<Vec<String>>> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let raw = std::fs::read_to_string(path)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("read --manual-csv {}: {e}", path.display())))?;
-    let mut ids = Vec::new();
-    for cell in raw.split([',', '\n', '\r', '\t']) {
-        let cell = cell.trim().trim_matches('"');
-        if cell.is_empty() || cell.eq_ignore_ascii_case("id") || cell.eq_ignore_ascii_case("observation_id") {
-            continue;
-        }
-        ids.push(cell.to_string());
-    }
-    if ids.is_empty() {
-        return Err(CliError::usage(anyhow::anyhow!(
-            "--manual-csv did not contain any Observation ids"
-        )));
-    }
-    Ok(Some(ids))
-}
-
-async fn run_memory_demos(args: MemoryDemosArgs) -> CliResult<()> {
-    if args.agent.trim().is_empty() {
-        return Err(CliError::usage(anyhow::anyhow!("--agent is required")));
-    }
-    let ctx = open_api_context(args.xvn_home.clone(), XvnExit::Upstream).await?;
-    let store = memory::open_default_store()
-        .await
-        .map_err(|e| api_to_cli("optimize memory-demos", e))?;
-
-    let out = memory_optimize::compile_memory_demos(
-        &ctx,
-        &store,
-        MemoryDemoOptimizeRequest {
-            target_agent_id: args.agent,
-            slot: args.slot,
-            namespace: args.namespace,
-            memory_agent: args.memory_agent,
-            scenario_id: args.scenario,
-            run_id: args.run,
-            demo_source: Some(args.demo_source),
-            holdout_split: Some(args.holdout_split),
-            cohort_query: args.cohort_query,
-            manual_observation_ids: read_manual_csv_ids(args.manual_csv.as_ref())?,
-            prior_pattern_ids: if args.prior_patterns.is_empty() {
-                None
-            } else {
-                Some(args.prior_patterns)
-            },
-            auto_prior_patterns: args.auto_priors,
-            prior_pattern_limit: Some(args.prior_limit),
-            limit: Some(args.limit),
-            max_demo_chars: Some(args.max_demo_chars),
-            apply: args.yes,
-            child_name: args.child_name,
-        },
-    )
-    .await
-    .map_err(|e| api_to_cli("optimize memory-demos", e))?;
-
-    if args.json {
-        print_json(&out)?;
-    } else {
-        println!("status: {}", out.status);
-        if let Some(id) = &out.optimization_id {
-            println!("optimization_id: {id}");
-        }
-        println!("namespace: {}", out.namespace);
-        println!("target_agent_id: {}", out.target_agent_id);
-        println!("demo_source: {}", out.demo_source);
-        println!("untouched_split: {}", out.holdout_split);
-        println!("cohort_query: {}", out.cohort_query);
-        if let Some(child) = out.child_agent_id {
-            println!("child_agent_id: {child}");
+/// `xvn optimize ls` — list recent optimizer cycles (D3). Reads the lineage
+/// store the same way the dashboard does so CLI-launched cycles are visible.
+async fn run_ls(args: LsArgs) -> CliResult<()> {
+    let db_path = resolve_lineage_db(args.db)?;
+    let cycles = if db_path.exists() {
+        let pool = open_lineage_db(&db_path).await?;
+        if lineage_table_exists(&pool).await? {
+            list_cycle_runs(&pool, args.limit, args.offset)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("list cycle runs: {e}")))?
         } else {
-            println!("child_agent_id: <dry-run>");
-            println!("rerun with --yes to train the child agent");
+            Vec::new()
         }
-        println!("slot: {}", out.slot);
-        println!("demo_count: {}", out.demo_count);
-        println!("pattern_demo_source_count: {}", out.pattern_demo_source_count);
-        println!("pattern_prior_count: {}", out.pattern_prior_count);
-        println!("dev_count: {}", out.dev_observation_ids.len());
-        println!("untouched_count: {}", out.holdout_observation_ids.len());
-        println!("prompt_prefix_chars: {}", out.prompt_prefix_chars);
+    } else {
+        Vec::new()
+    };
+
+    if args.json {
+        print_json(&cycles)?;
+        return Ok(());
+    }
+
+    if cycles.is_empty() {
+        println!("no optimizer cycles yet (`xvn optimize run`)");
+        return Ok(());
+    }
+
+    println!(
+        "  {:<28}  {:>5}  {:>5}  {:>7}  {:>5}  {:>9}  {:>10}  {}",
+        "Cycle", "Nodes", "Kept", "Suspect", "Drop", "Cost", "Tokens", "Last"
+    );
+    for c in &cycles {
+        let last = c.last_created_at.get(..19).unwrap_or(&c.last_created_at);
+        let cost = c
+            .cost_usd
+            .map(|v| format!("${v:.4}"))
+            .unwrap_or_else(|| "—".to_string());
+        let tokens = match (c.input_tokens, c.output_tokens) {
+            (Some(i), Some(o)) => format!("{}", i + o),
+            _ => "—".to_string(),
+        };
+        println!(
+            "  {:<28}  {:>5}  {:>5}  {:>7}  {:>5}  {:>9}  {:>10}  {}",
+            c.cycle_id, c.node_count, c.active_count, c.suspect_count, c.rejected_count, cost, tokens, last
+        );
+    }
+    println!("\nInspect one with `xvn optimize show <cycle_id>`.");
+    Ok(())
+}
+
+// ── show (cycle detail) ──────────────────────────────────────────────────────
+
+/// `xvn optimize show <cycle_id>` — inspect a single optimizer cycle's gated
+/// candidates and counts. Named `show` (NOT `inspect`) to avoid colliding with
+/// the DSPy `OptimizeAction::Inspect(--run id)` verb.
+async fn run_show(args: ShowArgs) -> CliResult<()> {
+    let db_path = resolve_lineage_db(args.db)?;
+    let detail = if db_path.exists() {
+        let pool = open_lineage_db(&db_path).await?;
+        if lineage_table_exists(&pool).await? {
+            get_cycle_run(&pool, &args.cycle_id)
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("get cycle run: {e}")))?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let detail = detail.ok_or_else(|| {
+        CliError::not_found(anyhow::anyhow!("no optimizer cycle with id {}", args.cycle_id))
+    })?;
+    if args.json {
+        print_json(&detail)?;
+    } else {
+        print_cycle_detail(&detail);
     }
     Ok(())
 }
 
-async fn run_memory_demos_gate(args: MemoryDemosGateArgs) -> CliResult<()> {
-    if args.optimization_id.trim().is_empty() {
-        return Err(CliError::usage(anyhow::anyhow!("optimization_id is required")));
+fn print_cycle_detail(detail: &CycleRunDetail) {
+    let s = &detail.summary;
+    println!("optimizer cycle: {}", s.cycle_id);
+    println!(
+        "candidates: {} ({} kept · {} suspect · {} dropped)",
+        s.node_count, s.active_count, s.suspect_count, s.rejected_count
+    );
+    println!("first node: {}", s.first_created_at);
+    println!("last node:  {}", s.last_created_at);
+
+    if let (Some(in_t), Some(out_t)) = (s.input_tokens, s.output_tokens) {
+        println!("tokens:     {in_t} in / {out_t} out ({} total)", in_t + out_t);
     }
-    let ctx = open_api_context(args.xvn_home.clone(), XvnExit::Upstream).await?;
-    let out = memory_optimize::gate_memory_demo_optimization(
-        &ctx,
-        &args.optimization_id,
-        OptimizationGateRequest {
-            dev_metric: Some(args.dev_metric),
-            holdout_metric: args.holdout_metric,
-            parent_dev_score: args.parent_dev_score,
-            child_dev_score: args.child_dev_score,
-            parent_holdout_score: args.parent_holdout_score,
-            child_holdout_score: args.child_holdout_score,
-            gate_epsilon: Some(args.gate_epsilon),
-            gate_reason: args.reason,
-        },
+    if let Some(cost) = s.cost_usd {
+        match s.unpriced_calls {
+            Some(n) if n > 0 => println!(
+                "cost:       ${cost:.4} metered + {n} call(s) with unknown price (refresh catalog to meter them)"
+            ),
+            _ => println!("cost:       ${cost:.4}"),
+        }
+    }
+
+    if let Some(h) = &detail.honesty_check {
+        println!(
+            "\nhonesty check: {} (sabotage `{}`) — {}",
+            if h.passed { "passed" } else { "FAILED" },
+            h.sabotage_variant,
+            h.message
+        );
+    }
+
+    println!("\nNodes:");
+    println!(
+        "  {:<12}  {:<8}  {:<12}  {:<9}  {:<9}  {}",
+        "Experiment", "Status", "Parent", "Day Shrp", "Hold Shrp", "Mutator"
+    );
+    for cn in &detail.nodes {
+        let n = &cn.node;
+        let exp = n.bundle_hash.to_hex();
+        let exp_short = exp.get(..10).unwrap_or(&exp);
+        let parent = n
+            .parent_hash
+            .as_ref()
+            .map(|h| h.to_hex())
+            .unwrap_or_else(|| "—".to_string());
+        let parent_short = parent.get(..10).unwrap_or(&parent);
+        let status = match n.status {
+            LineageStatus::Active => "kept",
+            LineageStatus::Quarantined => "suspect",
+            LineageStatus::Rejected => "dropped",
+        };
+        let day_sharpe = cn
+            .metrics_day
+            .as_ref()
+            .map(|m| format!("{:.3}", m.sharpe))
+            .unwrap_or_else(|| "—".to_string());
+        let hold_sharpe = cn
+            .metrics_untouched
+            .as_ref()
+            .map(|m| format!("{:.3}", m.sharpe))
+            .unwrap_or_else(|| "—".to_string());
+        let mutator = cn
+            .provenance
+            .as_ref()
+            .map(|p| format!("{}/{}", p.provider, p.model))
+            .unwrap_or_else(|| "—".to_string());
+        println!(
+            "  {exp_short:<12}  {status:<8}  {parent_short:<12}  {day_sharpe:<9}  {hold_sharpe:<9}  {mutator}"
+        );
+    }
+    println!(
+        "\nCandidate strategy JSON: `GET /api/autooptimizer/blob/<experiment-hash>`. \
+         Full genealogy: `xvn optimize lineage ls --cycle {}`.",
+        s.cycle_id
+    );
+}
+
+// ── lineage ──────────────────────────────────────────────────────────────────
+
+async fn open_lineage_db(db: &Path) -> CliResult<SqlitePool> {
+    let db = db.display();
+    SqlitePool::connect(&format!("sqlite://{db}"))
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("open db {db}: {e}")))
+}
+
+async fn lineage_table_exists(pool: &SqlitePool) -> CliResult<bool> {
+    let found: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'lineage_nodes' LIMIT 1",
     )
+    .fetch_optional(pool)
     .await
-    .map_err(|e| api_to_cli("optimize memory-demos-gate", e))?;
-    if args.json {
-        print_json(&out)?;
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("check lineage_nodes: {e}")))?;
+    Ok(found.is_some())
+}
+
+fn parse_lineage_row(row: SqliteRow) -> anyhow::Result<LineageRow> {
+    Ok(LineageRow {
+        bundle_hash: row.try_get("bundle_hash")?,
+        parent_hash: row.try_get("parent_hash")?,
+        status: row.try_get("status")?,
+        cycle_id: row.try_get("cycle_id")?,
+        created_at: row.try_get("created_at")?,
+        gate_verdict: row.try_get("gate_verdict")?,
+    })
+}
+
+async fn fetch_lineage_rows(
+    pool: &SqlitePool,
+    cycle: Option<&str>,
+    status: &str,
+    limit: usize,
+) -> CliResult<Vec<LineageRow>> {
+    const SEL: &str =
+        "SELECT bundle_hash, parent_hash, status, cycle_id, created_at, gate_verdict FROM lineage_nodes";
+    // F33: resolve a cycle's experiments the SAME way `get_cycle_run` (the
+    // dashboard / `optimize show`) does — UNION the per-cycle evaluation edges
+    // with the legacy `cycle_id` column — so `lineage ls --cycle` can't
+    // contradict the dashboard.
+    const CYCLE_PRED: &str = "bundle_hash IN ( \
+        SELECT bundle_hash FROM cycle_node_evaluations WHERE cycle_id = ? \
+        UNION \
+        SELECT bundle_hash FROM lineage_nodes WHERE cycle_id = ? )";
+    ensure_lineage_schema(pool).await.ok();
+    let lim = limit as i64;
+    let raw = if status == "all" {
+        if let Some(c) = cycle {
+            sqlx::query(&format!(
+                "{SEL} WHERE {CYCLE_PRED} ORDER BY created_at DESC LIMIT ?"
+            ))
+            .bind(c)
+            .bind(c)
+            .bind(lim)
+            .fetch_all(pool)
+            .await
+        } else {
+            sqlx::query(&format!("{SEL} ORDER BY created_at DESC LIMIT ?"))
+                .bind(lim)
+                .fetch_all(pool)
+                .await
+        }
+    } else if let Some(c) = cycle {
+        sqlx::query(&format!(
+            "{SEL} WHERE {CYCLE_PRED} AND status = ? ORDER BY created_at DESC LIMIT ?"
+        ))
+        .bind(c)
+        .bind(c)
+        .bind(status)
+        .bind(lim)
+        .fetch_all(pool)
+        .await
     } else {
-        println!("optimization_id: {}", out.optimization_id);
-        println!("gate_verdict: {}", out.gate_verdict);
-        println!("dev_metric: {}", out.dev_metric);
-        println!("untouched_metric: {}", out.holdout_metric);
-        println!("delta_dev: {}", out.delta_dev);
-        println!("delta_untouched: {}", out.delta_holdout);
-        println!("gate_reason: {}", out.gate_reason);
+        sqlx::query(&format!(
+            "{SEL} WHERE status = ? ORDER BY created_at DESC LIMIT ?"
+        ))
+        .bind(status)
+        .bind(lim)
+        .fetch_all(pool)
+        .await
+    }
+    .map_err(|e| CliError::upstream(anyhow::anyhow!("query lineage_nodes: {e}")))?;
+    raw.into_iter()
+        .map(parse_lineage_row)
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+async fn lineage_ls(args: LineageLsArgs) -> CliResult<()> {
+    // Accept operator alias "suspect" (maps to DB wire value "quarantined").
+    let db_status = match args.status.as_str() {
+        "suspect" | "quarantined" => "quarantined",
+        other if matches!(other, "all" | "active" | "rejected") => other,
+        _ => {
+            return Err(CliError::usage(anyhow::anyhow!(
+                "--status must be 'active', 'rejected', 'suspect', or 'all'"
+            )));
+        }
+    };
+    let db_path = resolve_lineage_db(args.db)?;
+    let pool = open_lineage_db(&db_path).await?;
+    let rows = fetch_lineage_rows(&pool, args.cycle.as_deref(), db_status, args.limit).await?;
+    if rows.is_empty() {
+        println!("(no experiments)");
+        return Ok(());
+    }
+    println!(
+        "{:<10}  {:<10}  {:<10}  {:<24}  {:<10}  {}",
+        "Experiment", "Status", "Parent", "Cycle", "Created", "Gate"
+    );
+    for row in &rows {
+        let exp = row.bundle_hash.get(..8).unwrap_or(&row.bundle_hash);
+        let parent = row.parent_hash.as_deref().and_then(|h| h.get(..8)).unwrap_or("—");
+        let cycle = row.cycle_id.as_deref().unwrap_or("—");
+        let created = row.created_at.get(..10).unwrap_or(&row.created_at);
+        let display_status = match row.status.as_str() {
+            "quarantined" => "suspect",
+            other => other,
+        };
+        println!(
+            "{:<10}  {:<10}  {:<10}  {:<24}  {:<10}  {}",
+            exp, display_status, parent, cycle, created, row.gate_verdict
+        );
+    }
+    Ok(())
+}
+
+async fn lineage_show(args: LineageShowArgs) -> CliResult<()> {
+    let hash = ContentHash::from_hex(&args.bundle_hash)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("invalid bundle_hash: {e}")))?;
+    let db_path = resolve_lineage_db(args.db)?;
+    let pool = open_lineage_db(&db_path).await?;
+    let store = LineageStore::new(pool);
+    let node = store
+        .get(&hash)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("lineage show: {e}")))?
+        .ok_or_else(|| CliError::not_found(anyhow::anyhow!("experiment {} not found", args.bundle_hash)))?;
+    println!("bundle_hash:  {}", node.bundle_hash);
+    println!(
+        "status:       {}",
+        match node.status {
+            LineageStatus::Active => "active",
+            LineageStatus::Quarantined => "suspect",
+            LineageStatus::Rejected => "rejected",
+        }
+    );
+    println!("gate_verdict: {}", node.gate_verdict.as_str());
+    println!("cycle_id:     {}", node.cycle_id.as_deref().unwrap_or("—"));
+    println!("created_at:   {}", node.created_at.to_rfc3339());
+    if let Some(p) = &node.parent_hash {
+        println!("parent_hash:  {p}");
+    }
+    println!("\nAncestry:");
+    // F12: cycle-safe walk — track visited hashes (including the start node) and
+    // stop the instant a parent has already been seen.
+    use std::collections::HashSet;
+    let mut visited: HashSet<String> = HashSet::new();
+    visited.insert(node.bundle_hash.to_hex());
+    let mut current = node.parent_hash.clone();
+    let mut depth = 0usize;
+    loop {
+        let Some(ph) = current else {
+            println!("  [root]");
+            break;
+        };
+        if !visited.insert(ph.to_hex()) {
+            println!("  [cycle detected at {ph} — ancestry is not a tree; stopping]");
+            break;
+        }
+        match store.get(&ph).await {
+            Err(e) => {
+                println!("  [error: {e}]");
+                break;
+            }
+            Ok(None) => {
+                println!("  [parent {ph} not in store]");
+                break;
+            }
+            Ok(Some(anc)) => {
+                let s = match anc.status {
+                    LineageStatus::Active => "active",
+                    LineageStatus::Quarantined => "suspect",
+                    LineageStatus::Rejected => "rejected",
+                };
+                println!("  depth={} {} ({})", depth + 1, anc.bundle_hash, s);
+                current = anc.parent_hash.clone();
+            }
+        }
+        depth += 1;
+        if depth >= 200 {
+            println!("  [ancestry truncated at 200 levels]");
+            break;
+        }
+    }
+    Ok(())
+}
+
+// ── U16 preflight + U3 zero-cost budget warning ─────────────────────────────
+
+/// U3: warn (to stderr) when `--budget` is set but the resolved mutator/judge
+/// provider reports `$0`/token in its cached catalog — the budget will then
+/// never terminate the cycle. Cache-only; never touches creds. Best-effort: if
+/// no catalog is cached we stay silent here (the cost-metering fail-fast in
+/// `run_cycle_cmd` covers the no-catalog case with its own actionable error).
+async fn warn_if_zero_cost_provider(xvn_home: &Path, provider: &str, _budget: f64) {
+    let runtime = match load_runtime_config_optional(Some(xvn_home)) {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let Some(kind) = runtime
+        .as_ref()
+        .and_then(|cfg| cfg.providers.iter().find(|p| p.name == provider).map(|p| p.kind))
+    else {
+        return;
+    };
+    let catalog = match xvision_engine::providers::load_cached_catalog(xvn_home, provider).await {
+        Ok(Some(c)) => c,
+        _ => return,
+    };
+    if xvision_engine::eval::provider_reports_zero_cost(kind, &catalog) {
+        eprintln!(
+            "Warning: provider '{provider}' reports $0/token; --budget will not terminate this \
+             cycle. Use --experiments-per-cycle to bound execution."
+        );
+    }
+}
+
+/// U16: pre-flight bar-coverage check before the cycle lock is acquired. For
+/// BOTH the day and baseline-untouched windows, for every asset in the
+/// strategy's universe, verify the local `bars_cache` fully covers the window
+/// (treating adjacent cache entries as contiguous). On any gap, fail fast with
+/// the actionable U16 error listing covered segments + gaps and suggesting
+/// `xvn bars fetch ...`. CACHE-ONLY — never touches broker creds.
+async fn preflight_bar_coverage(
+    xvn_home: &Path,
+    strategy_id: &str,
+    cfg: &AutoOptimizerConfig,
+) -> CliResult<()> {
+    // Read-only strategy load to get the asset universe + cadence.
+    let store = FilesystemStore::new(strategy_store_dir(xvn_home));
+    let strategy = match store.load(strategy_id).await {
+        Ok(s) => s,
+        // If the strategy can't be loaded here, defer to the cycle's own
+        // (post-lock) loader to produce the canonical not-found error.
+        Err(_) => return Ok(()),
+    };
+    use xvision_engine::eval::executor::asset_set::active_assets;
+    let assets = active_assets(&strategy.manifest.asset_universe, None)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("{e}")))?;
+    let cadence = strategy.manifest.decision_cadence_minutes;
+
+    // Synthesize the SAME scenarios the cycle will evaluate so the granularity
+    // and windows match exactly what the backtest loads.
+    let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, cadence, "xvn-cli-preflight");
+    let baseline_scenario =
+        synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
+
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "operator".to_string());
+    let ctx = ApiContext::open(xvn_home, Actor::Cli { user })
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext for bar preflight: {e}")))?;
+
+    // The eval adapter loads bars under this fixed data-source tag.
+    const DATA_SOURCE_TAG: &str = "alpaca-historical-v1";
+
+    for asset in &assets {
+        let asset_pair = asset.as_alpaca_pair(); // AssetSymbol: Copy
+        for (label, scenario) in [("day", &day_scenario), ("baseline-untouched", &baseline_scenario)] {
+            let report = xvision_engine::eval::bars::check_bar_coverage(
+                &ctx,
+                &asset_pair,
+                scenario.granularity,
+                scenario.time_window.start,
+                scenario.time_window.end,
+                DATA_SOURCE_TAG,
+            )
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("bar coverage check: {e}")))?;
+
+            if !report.fully_covered {
+                let covered = if report.covered.is_empty() {
+                    "  (none)".to_string()
+                } else {
+                    report
+                        .covered
+                        .iter()
+                        .map(|c| format!("  {} .. {}", c.start, c.end))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                let gaps = report
+                    .gaps
+                    .iter()
+                    .map(|g| format!("  {} .. {}", g.start, g.end))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let start_d = scenario.time_window.start.date_naive();
+                let end_d = scenario.time_window.end.date_naive();
+                let gran = scenario.granularity.canonical();
+                return Err(CliError::usage(anyhow::anyhow!(
+                    "bars for {asset_pair} {gran} {start_d}..{end_d} ({label} window) are not \
+                     fully cached locally.\nCovered:\n{covered}\nGap(s):\n{gaps}\nFix: \
+                     `xvn bars fetch --asset {asset_pair} --granularity {gran} --from {start_d} \
+                     --to {end_d}` (or use a window fully contained in the local cache). The \
+                     optimizer fails fast here — before taking the cycle lock — so a missing \
+                     window can't strand the lock while the eval hangs on a fetch."
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -1511,11 +1596,6 @@ fn resolve_lineage_db(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
 }
 
 fn resolve_demo_fixture(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
-    resolve_demo_fixture_pub(override_path)
-}
-
-/// Public entry point for `resolve_demo_fixture` — called by autooptimizer.rs tests.
-pub(crate) fn resolve_demo_fixture_pub(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
     if let Some(p) = override_path {
         return Ok(p);
     }
@@ -1527,6 +1607,16 @@ pub(crate) fn resolve_demo_fixture_pub(override_path: Option<PathBuf>) -> CliRes
         .join("replay-fixture.json"))
 }
 
+/// Load the optimizer config.
+///
+/// U2: an explicit `--config <path>` REPLACES the default
+/// `$XVN_HOME/autooptimizer.toml` entirely — there is no merge layer. The
+/// `Some(p)` branch returns early, so the default path is never read when
+/// `--config` is given.
+///
+/// U1/U15: the underlying `AutoOptimizerConfig::from_path` now embeds the toml
+/// deserialization error text (field path + line/col) inline, so the `{e}` here
+/// surfaces the offending field — no need to switch this site to `{e:#}`.
 fn load_ar_config(path: Option<&Path>) -> CliResult<AutoOptimizerConfig> {
     if let Some(p) = path {
         return AutoOptimizerConfig::load(p)
@@ -1641,10 +1731,6 @@ fn validate_budget_usd(budget: f64) -> CliResult<()> {
     Ok(())
 }
 
-pub(crate) fn require_launchable_provider_pub(mock: bool, xvn_home: &Path, provider: &str) -> CliResult<()> {
-    require_launchable_provider(mock, xvn_home, provider)
-}
-
 fn require_launchable_provider(mock: bool, xvn_home: &Path, provider: &str) -> CliResult<()> {
     if mock {
         return Ok(());
@@ -1680,7 +1766,7 @@ fn require_launchable_provider(mock: bool, xvn_home: &Path, provider: &str) -> C
     };
 
     Err(CliError::usage(anyhow::anyhow!(
-        "optimizer run-cycle: mutator/judge provider {provider:?} is not launchable \
+        "optimize run: mutator/judge provider {provider:?} is not launchable \
          (no matching provider in $XVN_HOME/config/default.toml and no runtime default_llm). \
          Registered providers: {registered_list}. \
          Pass --provider <name> --model <model> (e.g. --provider openrouter \
@@ -1856,10 +1942,15 @@ async fn dispatch_from_provider_entry(
             None => std::env::var(&entry.api_key_env).ok().filter(|v| !v.is_empty()),
         };
         from_secrets.ok_or_else(|| {
+            // U8(b): name the exact env var to set (or the provider-key
+            // mechanism) instead of the previous opaque message.
             CliError::auth(anyhow::anyhow!(
-                "no API key for provider `{}` (env var {} is unset and no key stored in secrets/providers.toml)",
-                entry.name,
-                entry.api_key_env
+                "{}",
+                xvision_engine::api::settings::providers::missing_provider_key_message(
+                    entry.kind,
+                    &entry.name,
+                    &entry.api_key_env
+                )
             ))
         })?
     };
@@ -1886,14 +1977,19 @@ async fn dispatch_from_provider_entry(
 async fn propose(
     base: &Strategy,
     cfg: &AutoOptimizerConfig,
+    provider: &str,
+    model: &str,
     dispatch: &Arc<dyn LlmDispatch + Send + Sync>,
     exploration_seed: u64,
 ) -> anyhow::Result<MutationDiff> {
+    // B5: honour the configured mutator provider/model (mirrors run_cycle_cmd's
+    // Mutator construction) instead of hardcoding the Anthropic haiku model —
+    // the hardcode made mutate-once unusable with Ollama / other providers.
     let mutator = Mutator {
-        provider: "anthropic".into(),
-        model: "claude-haiku-4-5-20251001".into(),
+        provider: provider.to_string(),
+        model: model.to_string(),
         dispatch: Arc::clone(dispatch),
-        max_retries: 2,
+        max_retries: cfg.mutator.max_retries,
     };
     mutator
         .propose(
@@ -1901,6 +1997,7 @@ async fn propose(
             cfg,
             None,
             exploration_seed,
+            0, // mutation_idx: single-mutation call site, no kind rotation needed
             None,
             &std::collections::HashSet::new(),
             None,
@@ -1929,7 +2026,7 @@ fn paper_test_sharpes(mock: bool) -> (f64, f64, f64, f64) {
     }
 }
 
-async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
+pub(crate) async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("create lineage db dir: {e}")))?;
@@ -1982,53 +2079,238 @@ fn default_blob_dir() -> PathBuf {
     }
 }
 
-// ── store helpers ────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+    use xvision_engine::agent::llm::{ContentBlock, LlmRequest, LlmResponse, StopReason};
+    use xvision_engine::strategies::Strategy;
 
-async fn open_store(xvn_home: Option<PathBuf>) -> CliResult<OptimizationStore> {
-    let ctx = open_api_context(xvn_home, XvnExit::OptPersistence).await?;
-    Ok(OptimizationStore::new(ctx.db))
-}
-
-async fn open_api_context(xvn_home: Option<PathBuf>, exit: XvnExit) -> CliResult<ApiContext> {
-    let home = crate::commands::home::resolve_xvn_home(xvn_home).map_err(|e| CliError {
-        exit: XvnExit::OptValidation,
-        source: e,
-    })?;
-    let user = std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "operator".to_string());
-    ApiContext::open(&home, Actor::Cli { user })
-        .await
-        .map_err(|e| CliError {
-            exit,
-            source: anyhow::anyhow!("open store: {e}"),
-        })
-}
-
-fn persistence_err(e: xvision_engine::api::ApiError) -> CliError {
-    CliError {
-        exit: XvnExit::OptPersistence,
-        source: anyhow::anyhow!("store error: {e}"),
+    /// Test double that records the `model` of every `LlmRequest` it sees and
+    /// replies with a valid `param`-kind mutation diff so `propose()` succeeds.
+    struct RecordingDispatch {
+        models: StdMutex<Vec<String>>,
     }
-}
 
-fn not_found_err(e: xvision_engine::api::ApiError) -> CliError {
-    match e {
-        xvision_engine::api::ApiError::NotFound(m) => CliError {
-            exit: XvnExit::NotFound,
-            source: anyhow::anyhow!("{m}"),
-        },
-        other => persistence_err(other),
+    impl RecordingDispatch {
+        fn new() -> Self {
+            Self {
+                models: StdMutex::new(Vec::new()),
+            }
+        }
+
+        fn last_model(&self) -> Option<String> {
+            self.models.lock().expect("models lock").last().cloned()
+        }
     }
-}
 
-fn api_to_cli(op: &str, e: xvision_engine::api::ApiError) -> CliError {
-    match e {
-        xvision_engine::api::ApiError::Validation(msg) => CliError::usage(anyhow::anyhow!("{op}: {msg}")),
-        xvision_engine::api::ApiError::NotFound(msg) => CliError::not_found(anyhow::anyhow!("{op}: {msg}")),
-        other => CliError {
-            exit: XvnExit::Upstream,
-            source: anyhow::anyhow!("{op}: {other}"),
-        },
+    #[async_trait::async_trait]
+    impl LlmDispatch for RecordingDispatch {
+        async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
+            self.models.lock().expect("models lock").push(req.model.clone());
+            let canned = r#"{"kind":"param","prose":[],"params":[{"key":"ema_fast","before":12,"after":20}],"tools":{"added":[],"removed":[]},"rationale":"increase ema_fast lookback"}"#;
+            Ok(LlmResponse {
+                content: vec![ContentBlock::Text { text: canned.into() }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 0,
+                output_tokens: 0,
+            })
+        }
+    }
+
+    fn fixture_strategy() -> Strategy {
+        let v = serde_json::json!({
+            "manifest": {
+                "id": "01HZTEST00000000000000000A",
+                "display_name": "Mutate Once Test Strategy",
+                "plain_summary": "Minimal strategy for mutate-once provider/model wiring.",
+                "creator": "@test",
+                "template": "custom",
+                "regime_fit": [],
+                "asset_universe": ["BTC/USD"],
+                "decision_cadence_minutes": 60,
+                "required_tools": ["rsi"],
+                "risk_preset_or_config": "balanced"
+            },
+            "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader"}],
+            "risk": {
+                "risk_pct_per_trade": 0.01,
+                "max_concurrent_positions": 1,
+                "max_leverage": 1.0,
+                "stop_loss_atr_multiple": 2.0,
+                "daily_loss_kill_pct": 0.05
+            },
+            "mechanical_params": { "ema_fast": 12, "ema_slow": 26 }
+        });
+        serde_json::from_value(v).expect("fixture strategy must deserialise")
+    }
+
+    fn cfg_with_mutator_model(model: &str) -> AutoOptimizerConfig {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.mutator.provider = "ollama-local".into();
+        cfg.mutator.model = model.into();
+        cfg
+    }
+
+    /// B5: `propose` must honour the configured mutator provider/model rather
+    /// than hardcoding the Anthropic haiku model. With Ollama configured, the
+    /// `LlmRequest.model` reaching the dispatch must be the Ollama model.
+    #[tokio::test]
+    async fn propose_uses_configured_mutator_model_not_hardcoded_anthropic() {
+        let parent = fixture_strategy();
+        let cfg = cfg_with_mutator_model("qwen2.5:7b");
+        // Keep a concrete handle to read captures, plus a trait-object handle
+        // (same allocation) to pass into propose.
+        let concrete = Arc::new(RecordingDispatch::new());
+        let recording: Arc<dyn LlmDispatch + Send + Sync> = concrete.clone();
+
+        let diff = propose(&parent, &cfg, "ollama-local", "qwen2.5:7b", &recording, 0)
+            .await
+            .expect("propose should succeed with recording dispatch");
+        // Sanity: the canned diff applied to a real param.
+        assert_eq!(diff.params.len(), 1);
+
+        let captured = concrete.last_model();
+        assert_eq!(
+            captured.as_deref(),
+            Some("qwen2.5:7b"),
+            "propose must send the configured mutator model, not the hardcoded anthropic model"
+        );
+    }
+
+    // ── moved from the former autooptimizer.rs (folded into `xvn optimize`) ──
+
+    /// Minimal runtime config that registers an `openrouter` provider, used to
+    /// exercise `require_launchable_provider`'s resolution.
+    const OPENROUTER_CONFIG: &str = r#"
+[runtime]
+mode = "backtest"
+executor = "alpaca"
+random_seed = 42
+
+[[providers]]
+name = "openrouter"
+kind = "openai-compat"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+[trader]
+model_path = "models/x.gguf"
+temperature = 0.0
+forward_paper_temperature = 0.4
+max_tokens = 512
+[trader.vectors]
+enabled = false
+config = "off"
+
+[backtest]
+step = 24
+horizon = 16
+bootstrap_resamples = 1000
+bootstrap_block_size = 8
+
+[paths]
+data_root = "data"
+vectors = "data/vectors"
+probes = "data/probes"
+sqlite_url = "sqlite://x.db"
+"#;
+
+    /// T2 regression: the optimizer's mutator/judge provider gate.
+    ///
+    /// `XVN_CONFIG_PATH` is process-global, so all assertions share one test and
+    /// the prior value is saved and restored before any assertion can fail.
+    #[test]
+    fn run_cycle_provider_override_and_launchable_gate() {
+        const KEY: &str = "XVN_CONFIG_PATH";
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().to_path_buf();
+        let config_path = home.join("config").join("default.toml");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(&config_path, OPENROUTER_CONFIG).unwrap();
+
+        // Apply the same override logic run_cycle_cmd uses.
+        let mut cfg = AutoOptimizerConfig::default();
+        assert_eq!(cfg.mutator.provider, "test", "default is the keyless alias");
+        cfg.mutator.provider = "openrouter".to_string();
+        cfg.mutator.model = "google/gemini-3.1-flash-lite".to_string();
+        assert_eq!(cfg.mutator.provider, "openrouter");
+        assert_eq!(cfg.mutator.model, "google/gemini-3.1-flash-lite");
+
+        let prior = std::env::var(KEY).ok();
+        std::env::set_var(KEY, &config_path);
+
+        let ok = require_launchable_provider(false, &home, &cfg.mutator.provider);
+        let rejected = require_launchable_provider(false, &home, "test");
+        let mock_ok = require_launchable_provider(true, &home, "test");
+
+        match prior {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
+
+        assert!(ok.is_ok(), "registered openrouter must be launchable: {ok:?}");
+        assert!(mock_ok.is_ok(), "--mock must bypass the provider gate");
+        let err = rejected.expect_err("keyless `test` default must be rejected early");
+        let msg = format!("{:#}", err.source);
+        assert!(
+            msg.contains("openrouter"),
+            "error must name the registered providers, got: {msg}"
+        );
+        assert!(
+            msg.contains("--provider"),
+            "error must tell the operator to pass --provider, got: {msg}"
+        );
+    }
+
+    /// Regression for T1: the demo fixture and lineage `--db` defaults must
+    /// resolve under the configured `$XVN_HOME`, NOT under `~/.xvn` or the CWD.
+    #[test]
+    fn path_defaults_resolve_under_xvn_home() {
+        const KEY: &str = "XVN_HOME";
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let home = tmp.path().to_path_buf();
+
+        let prior = std::env::var(KEY).ok();
+        std::env::set_var(KEY, &home);
+
+        let override_db = home.join("custom").join("explicit.db");
+        let resolved_override = resolve_lineage_db(Some(override_db.clone())).expect("override db resolves");
+        let override_fix = home.join("custom").join("explicit-fixture.json");
+        let resolved_override_fix =
+            resolve_demo_fixture(Some(override_fix.clone())).expect("override fixture resolves");
+
+        let default_db = resolve_lineage_db(None).expect("default db resolves");
+        let default_fixture = resolve_demo_fixture(None).expect("default fixture resolves");
+
+        match prior {
+            Some(v) => std::env::set_var(KEY, v),
+            None => std::env::remove_var(KEY),
+        }
+
+        assert_eq!(
+            resolved_override, override_db,
+            "explicit --db must be honored verbatim"
+        );
+        assert_eq!(
+            resolved_override_fix, override_fix,
+            "explicit --fixture must be honored verbatim"
+        );
+        assert_eq!(
+            default_db,
+            home.join("xvn.db"),
+            "default lineage db must be the shared $XVN_HOME/xvn.db (F8 convergence)"
+        );
+        assert!(default_db.starts_with(&home));
+        assert_eq!(
+            default_fixture,
+            home.join("probes")
+                .join("autooptimizer")
+                .join("replay-fixture.json"),
+            "default demo fixture must be $XVN_HOME/probes/autooptimizer/replay-fixture.json"
+        );
+        assert!(default_fixture.starts_with(&home));
     }
 }

@@ -39,8 +39,8 @@ describe("GateScorecard", () => {
 
   it("renders positive delta in green (text-gold) for day window", () => {
     render(<GateScorecard gate_record={gate} />);
-    // delta_day = 0.25 → "+0.25"
-    expect(screen.getByText("+0.25")).toBeInTheDocument();
+    // delta_day = 0.25 → "+0.25" (edge_delta also renders +0.25; use getAllByText)
+    expect(screen.getAllByText("+0.25").length).toBeGreaterThan(0);
   });
 
   it("renders positive delta for holdout window", () => {

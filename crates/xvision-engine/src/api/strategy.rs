@@ -79,6 +79,45 @@ pub struct StrategySummary {
     /// Execution mode as a snake_case string (e.g. `"per_asset"`, `"portfolio"`).
     #[serde(default)]
     pub execution_mode: String,
+    /// blake3 hex hash of the strategy bundle's canonical JSON — the id
+    /// older CLI-launched eval runs carry in `eval_runs.agent_id` (migration
+    /// 014 renamed `strategy_bundle_hash` → `agent_id` without changing the
+    /// value), and the key of autooptimizer `lineage_nodes`. `None` only if
+    /// the bundle fails to serialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub bundle_hash: Option<String>,
+    /// `optimizer` when this strategy's bundle hash appears in the
+    /// autooptimizer lineage (`lineage_nodes`) — such strategies are
+    /// evaluated inside optimizer cycles and the dashboard must not nag
+    /// about them missing direct eval runs. `user` otherwise.
+    #[serde(default)]
+    pub origin: StrategyOrigin,
+    /// True when at least one COMPLETED eval run references this strategy —
+    /// keyed by workspace ULID or by bundle hash — over the FULL `eval_runs`
+    /// table (not a page of it).
+    #[serde(default)]
+    pub evaluated: bool,
+    /// `completed_at` (RFC3339) of the most recent completed eval run
+    /// referencing this strategy. Absent when `evaluated` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub last_eval_completed_at: Option<String>,
+}
+
+/// Where a strategy came from: hand-authored (`user`) or minted by the
+/// autooptimizer (`optimizer`, i.e. its bundle hash is a lineage node).
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StrategyOrigin {
+    #[default]
+    User,
+    Optimizer,
 }
 
 fn default_strategy_summary_activation_mode() -> ActivationMode {
@@ -354,6 +393,12 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
         let model = model_summary(&inventory.models);
         let tags = strategy_tags(&strategy);
         let execution_mode = execution_mode_string(&strategy.manifest.execution_mode);
+        // Same hash the autooptimizer mints for lineage nodes and the CLI
+        // stamps into `eval_runs.agent_id`: blake3 over the bundle's
+        // canonical JSON.
+        let bundle_hash = serde_json::to_value(&strategy)
+            .ok()
+            .map(|v| crate::autooptimizer::ContentHash::of_json(&v).to_hex());
         out.push(StrategySummary {
             agent_id: strategy.manifest.id.clone(),
             display_name: strategy.manifest.display_name.clone(),
@@ -370,9 +415,113 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             activation_mode: strategy.activation_mode,
             asset_universe: strategy.manifest.asset_universe.clone(),
             execution_mode,
+            bundle_hash,
+            origin: StrategyOrigin::User,
+            evaluated: false,
+            last_eval_completed_at: None,
         });
     }
+    apply_eval_coverage(ctx, &mut out).await?;
     Ok(out)
+}
+
+/// SQLite bind-parameter chunk size for the `IN (...)` coverage queries.
+/// Well under the engine's parameter limit even on older SQLite builds.
+const COVERAGE_KEY_CHUNK: usize = 400;
+
+/// Fill `evaluated` / `last_eval_completed_at` / `origin` on a hydrated
+/// summary page from the full `eval_runs` table and the autooptimizer
+/// lineage (beads xvision-eb5).
+///
+/// An eval run references a strategy through either id shape stored in
+/// `eval_runs.agent_id`: the workspace ULID (dashboard-launched runs) or the
+/// bundle hash (CLI-launched runs). Both are matched here, server-side, so
+/// the dashboard never undercounts coverage from a truncated runs page.
+async fn apply_eval_coverage(ctx: &ApiContext, out: &mut [StrategySummary]) -> ApiResult<()> {
+    if out.is_empty() {
+        return Ok(());
+    }
+
+    let mut keys: Vec<String> = Vec::with_capacity(out.len() * 2);
+    for summary in out.iter() {
+        keys.push(summary.agent_id.clone());
+        if let Some(hash) = &summary.bundle_hash {
+            keys.push(hash.clone());
+        }
+    }
+
+    // key (ULID or hash) → most recent completed_at among COMPLETED runs.
+    // MAX over RFC3339 text is chronologically correct (lexicographic).
+    let mut latest_by_key: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+    for chunk in keys.chunks(COVERAGE_KEY_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT agent_id, MAX(completed_at) FROM eval_runs \
+             WHERE status = 'completed' AND agent_id IN ({placeholders}) \
+             GROUP BY agent_id"
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+        for key in chunk {
+            query = query.bind(key);
+        }
+        let rows = query
+            .fetch_all(&ctx.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("eval coverage query: {e}")))?;
+        for (key, latest) in rows {
+            latest_by_key.insert(key, latest);
+        }
+    }
+
+    // Bundle hashes that are autooptimizer lineage nodes ⇒ optimizer origin.
+    // The lineage schema is created lazily by the optimizer; a workspace
+    // that has never run it simply has no optimizer-origin strategies.
+    let mut lineage_hashes: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let lineage_table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'lineage_nodes'",
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("lineage table check: {e}")))?;
+    if lineage_table_exists > 0 {
+        let hashes: Vec<&String> = out.iter().filter_map(|s| s.bundle_hash.as_ref()).collect();
+        for chunk in hashes.chunks(COVERAGE_KEY_CHUNK) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!("SELECT bundle_hash FROM lineage_nodes WHERE bundle_hash IN ({placeholders})");
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for hash in chunk {
+                query = query.bind(hash.as_str());
+            }
+            let rows = query
+                .fetch_all(&ctx.db)
+                .await
+                .map_err(|e| ApiError::Internal(format!("lineage origin query: {e}")))?;
+            lineage_hashes.extend(rows);
+        }
+    }
+
+    for summary in out.iter_mut() {
+        let by_ulid = latest_by_key.get(&summary.agent_id);
+        let by_hash = summary
+            .bundle_hash
+            .as_ref()
+            .and_then(|hash| latest_by_key.get(hash));
+        summary.evaluated = by_ulid.is_some() || by_hash.is_some();
+        summary.last_eval_completed_at = [by_ulid, by_hash]
+            .into_iter()
+            .flatten()
+            .filter_map(|latest| latest.clone())
+            .max();
+        if summary
+            .bundle_hash
+            .as_ref()
+            .is_some_and(|hash| lineage_hashes.contains(hash))
+        {
+            summary.origin = StrategyOrigin::Optimizer;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -815,6 +964,65 @@ pub async fn clone_strategy(ctx: &ApiContext, agent_id: &str, req: CloneStrategy
     result
 }
 
+/// Install a marketplace-delivered strategy manifest as a NEW local
+/// strategy.
+///
+/// Used by the dashboard's license-gated
+/// `POST /api/marketplace/listings/:id/import` route. Mirrors the shallow
+/// clone path: the manifest is deserialized into a full [`Strategy`], a
+/// fresh ULID is minted (the seller's id is NEVER reused — the buyer's copy
+/// is an independent local draft), `published_at` is cleared, and the
+/// source id is stashed in `mechanical_params.metadata.imported_from` so
+/// audit tooling can chain the import back to the listed original. Persists
+/// via the same [`FilesystemStore`] the clone path uses and returns the
+/// stored strategy.
+///
+/// A manifest that does not deserialize as a `Strategy` is a `Validation`
+/// error — the caller has already verified the bytes against the on-chain
+/// content hash, so a shape failure means the listing was published from an
+/// incompatible engine version, not transport corruption.
+pub async fn import_strategy(ctx: &ApiContext, manifest: serde_json::Value) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = async {
+        let mut strategy: Strategy = serde_json::from_value(manifest)
+            .map_err(|e| ApiError::Validation(format!("manifest is not a valid Strategy: {e}")))?;
+        let source_id = strategy.manifest.id.clone();
+        strategy.manifest.id = Ulid::new().to_string();
+        strategy.manifest.published_at = None;
+        strategy.mechanical_params =
+            stash_metadata_string(&strategy.mechanical_params, "imported_from", &source_id);
+        store
+            .save(&strategy)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        Ok::<_, ApiError>(strategy)
+    }
+    .await;
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let target = result.as_ref().ok().map(|strategy| strategy.manifest.id.as_str());
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "import",
+        target,
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+
+    if let Ok(strategy) = &result {
+        index_strategy_after_mutation(ctx, &store, &strategy.manifest.id).await;
+    }
+
+    result
+}
+
 /// Atomic strategy + paired-Agent clone with optional `(provider, model)`
 /// override.
 ///
@@ -1091,6 +1299,15 @@ async fn cleanup_created_clone_agents(ctx: &ApiContext, agent_ids: &[String]) {
 /// the existing value is preserved under a reserved `_legacy` key so the
 /// caller never silently drops authoring data.
 fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json::Value {
+    stash_metadata_string(source, "cloned_from", source_id)
+}
+
+/// Insert (or overwrite) `metadata.{key}` inside a strategy's
+/// `mechanical_params` JSON. If the source value is not a JSON object, the
+/// existing value is preserved under a reserved `_legacy` key so the caller
+/// never silently drops authoring data. Shared by the clone provenance
+/// (`cloned_from`) and the marketplace import provenance (`imported_from`).
+fn stash_metadata_string(source: &serde_json::Value, key: &str, value: &str) -> serde_json::Value {
     let mut params = source.clone();
     if !params.is_object() {
         let prior = params.clone();
@@ -1105,10 +1322,7 @@ fn stash_cloned_from(source: &serde_json::Value, source_id: &str) -> serde_json:
         *metadata = serde_json::json!({ "_legacy": prior });
     }
     let metadata_obj = metadata.as_object_mut().expect("ensured object above");
-    metadata_obj.insert(
-        "cloned_from".to_string(),
-        serde_json::Value::String(source_id.to_string()),
-    );
+    metadata_obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
     params
 }
 
@@ -2011,6 +2225,44 @@ mod tests {
         assert!(audit_row_exists(&ctx, "create", &out.id).await);
         let strategy = get(&ctx, &out.id).await.unwrap();
         assert_eq!(strategy.manifest.id, out.id);
+    }
+
+    #[tokio::test]
+    async fn import_strategy_mints_new_id_persists_and_audits() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "marketplace-buy".into(),
+                creator: Some("@seller".into()),
+            },
+        )
+        .await
+        .unwrap();
+        let source = get(&ctx, &created.id).await.unwrap();
+        let manifest = serde_json::to_value(&source).unwrap();
+
+        let imported = import_strategy(&ctx, manifest).await.unwrap();
+        assert_ne!(imported.manifest.id, created.id, "must mint a NEW ULID");
+        assert!(imported.manifest.published_at.is_none());
+
+        // Round-trips through the same store the clone path uses.
+        let reread = get(&ctx, &imported.manifest.id).await.unwrap();
+        assert_eq!(reread.manifest.display_name, source.manifest.display_name);
+
+        // Provenance: the source id lands in mechanical_params.metadata.
+        assert_eq!(
+            reread.mechanical_params["metadata"]["imported_from"],
+            serde_json::Value::String(created.id.clone()),
+        );
+        assert!(audit_row_exists(&ctx, "import", &imported.manifest.id).await);
+    }
+
+    #[tokio::test]
+    async fn import_strategy_rejects_non_strategy_manifest() {
+        let (ctx, _d) = ctx_with_audit().await;
+        let r = import_strategy(&ctx, serde_json::json!({"not": "a strategy"})).await;
+        assert!(matches!(r, Err(ApiError::Validation(_))), "got {r:?}");
     }
 
     // Pre-2026-05-21: the create_strategy_unknown_template test asserted

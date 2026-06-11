@@ -12,8 +12,9 @@ const SYSTEM_PROMPT: &str = "You are an instruction optimizer for an automated t
     what does not.";
 
 /// GEPA (Genetic-Pareto Evolutionary) bridge: two-stage reflection+proposal loop
-/// with LLM-based per-candidate scoring. Replaces the single-call `LiveDspyBridge`
-/// summarizer when `gepa_enabled = true`.
+/// with LLM-based per-candidate scoring. This is the sole DspyBridge implementation
+/// used when `dspy_enabled = true` (the `gepa_enabled` flag was removed; GEPA is
+/// unconditionally wired).
 ///
 /// Algorithm per generation:
 ///   1. REFLECT — single LLM call: analyze all observations, identify patterns
@@ -60,7 +61,9 @@ impl DspyBridge for GepaBridge {
             // Stage 2+3: PROPOSE + SCORE (one candidate at a time to stay simple)
             let mut candidates = Vec::with_capacity(self.candidates.max(1));
             for i in 0..self.candidates.max(1) {
-                let instruction = self.propose(&reflection, i, self.candidates.max(1), &mut provenance).await?;
+                let instruction = self
+                    .propose(&reflection, i, self.candidates.max(1), &mut provenance)
+                    .await?;
                 let scores = self.score(&instruction, observations, &mut provenance).await?;
                 let mean = if scores.is_empty() {
                     0.0
@@ -71,7 +74,10 @@ impl DspyBridge for GepaBridge {
             }
 
             // Pick the best candidate this generation.
-            if let Some((instr, scores, mean)) = candidates.into_iter().max_by(|a, b| a.2.partial_cmp(&b.2).unwrap()) {
+            if let Some((instr, scores, mean)) = candidates
+                .into_iter()
+                .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap())
+            {
                 if mean > best_score {
                     best_score = mean;
                     best_instruction = instr;
@@ -327,7 +333,7 @@ mod tests {
         };
         let obs = vec![("o1".to_string(), "obs".to_string())];
         let result = bridge.compile("ns", &obs).await.unwrap();
-        assert_eq!(result.provenance.prompt_tokens, 15);    // 3 calls × 5
+        assert_eq!(result.provenance.prompt_tokens, 15); // 3 calls × 5
         assert_eq!(result.provenance.completion_tokens, 30); // 3 calls × 10
     }
 }

@@ -26,6 +26,15 @@ pub enum DashboardError {
     Validation { field: String, msg: String },
     #[error("conflict: {0}")]
     Conflict(String),
+    /// The caller is known but not entitled to the resource — e.g. the
+    /// marketplace import license gate (no ERC-1155 license balance for the
+    /// asserted wallet). 403.
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+    /// A required external dependency (e.g. chain RPC env config) is not
+    /// available; the route degrades loudly with 503 rather than guessing.
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -82,6 +91,16 @@ impl IntoResponse for DashboardError {
             DashboardError::Conflict(m) => (
                 StatusCode::CONFLICT,
                 Json(json!({ "code": "conflict", "message": m.clone() })),
+            )
+                .into_response(),
+            DashboardError::Forbidden(m) => (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "code": "forbidden", "message": m.clone() })),
+            )
+                .into_response(),
+            DashboardError::ServiceUnavailable(m) => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "code": "service_unavailable", "message": m.clone() })),
             )
                 .into_response(),
             DashboardError::Internal(e) => {

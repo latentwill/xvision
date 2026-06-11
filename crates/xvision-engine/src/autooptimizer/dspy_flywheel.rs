@@ -195,11 +195,13 @@ mod tests {
                 provenance: Provenance::new("test", "model"),
                 demos: obs
                     .iter()
-                    .map(|(id, text)| crate::autooptimizer::pattern_snapshot::SnapshotDemo {
-                        observation_id: id.clone(),
-                        text: text.clone(),
-                        score: None,
-                    })
+                    .map(
+                        |(id, text)| crate::autooptimizer::pattern_snapshot::SnapshotDemo {
+                            observation_id: id.clone(),
+                            text: text.clone(),
+                            score: None,
+                        },
+                    )
                     .collect(),
                 optimizer_name: "recording".to_string(),
                 rng_seed: 0,

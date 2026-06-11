@@ -4,6 +4,15 @@
 # (or the compatibility alias XVN_CONFIG=path/to/override.toml), or
 # XVN_<SECTION>_<KEY>=value (e.g. XVN_TRADER_TEMPERATURE=0.4 for forward paper).
 
+# Agent runtime for LLM-backed slots. "cline" routes every slot dispatch
+# through the xvision-agentd sidecar (the unified live + eval + replay path);
+# the sidecar binary is resolved from XVN_AGENTD_BIN (set in the deploy image).
+# This line is deliberately EXPLICIT: the eval resolver treats a missing field
+# as "not opted in" and silently falls back to the legacy llm-dispatch path
+# when XVN_AGENTD_BIN is unset. Emergency rollback to the legacy path:
+# XVN_EMERGENCY_LLM_DISPATCH=1 (see MANUAL.md, "Emergency rollback").
+agent_runtime = "cline"
+
 [runtime]
 mode        = "backtest"        # backtest | paper | live
 executor    = "alpaca"          # alpaca | orderly

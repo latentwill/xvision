@@ -580,17 +580,72 @@ pub async fn get_lineage_node(
 // cycles an operator actually ran.
 // ---------------------------------------------------------------------------
 
+/// One historic cycle, the engine's [`CycleRunSummary`] enriched with the
+/// strategy it optimized. `CycleRunSummary` itself carries no strategy column
+/// (it is grouped purely from `lineage_nodes` by `cycle_id`); the strategy is
+/// resolved here through the `autooptimizer_events(session_id, cycle_id)` bridge
+/// to `autooptimizer_session_state.strategy_id` — the same join the stats and
+/// session-list handlers already use. `None` for CLI cycles that ran before the
+/// events bridge existed (or never wrote a session row).
+#[derive(Serialize)]
+pub struct CycleRunRow {
+    #[serde(flatten)]
+    pub summary: CycleRunSummary,
+    /// The strategy (agent_id) this cycle optimized. `None` when the cycle has
+    /// no session bridge row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy_id: Option<String>,
+}
+
 pub async fn list_cycles(
     State(state): State<AppState>,
     Query(q): Query<CycleRunListQuery>,
-) -> Result<Json<Vec<CycleRunSummary>>, DashboardError> {
+) -> Result<Json<Vec<CycleRunRow>>, DashboardError> {
     if !table_exists(&state.pool, "lineage_nodes").await? {
         return Ok(Json(Vec::new()));
     }
     let runs = list_cycle_runs(&state.pool, q.limit, q.offset)
         .await
         .map_err(DashboardError::Internal)?;
-    Ok(Json(runs))
+
+    // Resolve each cycle's strategy via the events → session bridge. Skipped
+    // entirely when the bridge tables are absent (fresh install), so the list
+    // still renders with `strategy_id` omitted.
+    let has_bridge = table_exists(&state.pool, "autooptimizer_events").await?
+        && table_exists(&state.pool, "autooptimizer_session_state").await?;
+
+    let mut rows = Vec::with_capacity(runs.len());
+    for summary in runs {
+        let strategy_id = if has_bridge {
+            cycle_strategy_id(&state.pool, &summary.cycle_id).await?
+        } else {
+            None
+        };
+        rows.push(CycleRunRow { summary, strategy_id });
+    }
+    Ok(Json(rows))
+}
+
+/// The strategy a cycle optimized, resolved through the
+/// `autooptimizer_events(session_id, cycle_id)` bridge to
+/// `autooptimizer_session_state.strategy_id`. `None` when no session row links
+/// to this cycle (e.g. a pre-bridge CLI cycle).
+async fn cycle_strategy_id(
+    pool: &sqlx::SqlitePool,
+    cycle_id: &str,
+) -> Result<Option<String>, DashboardError> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT ss.strategy_id FROM autooptimizer_session_state ss \
+         WHERE ss.session_id = ( \
+            SELECT session_id FROM autooptimizer_events \
+            WHERE cycle_id = ? ORDER BY seq DESC LIMIT 1 ) \
+         LIMIT 1",
+    )
+    .bind(cycle_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))
+    .map(Option::flatten)
 }
 
 // ---------------------------------------------------------------------------
@@ -1433,7 +1488,7 @@ async fn load_stats_rows(
     Ok(result)
 }
 
-async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, DashboardError> {
+pub(super) async fn table_exists(pool: &sqlx::SqlitePool, table: &str) -> Result<bool, DashboardError> {
     use sqlx::Row;
     let found: Option<String> =
         sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
@@ -1502,6 +1557,51 @@ fn row_to_lineage_node(row: sqlx::sqlite::SqliteRow) -> Result<LineageNode, Dash
         created_at,
         diversity_score,
     })
+}
+
+/// One row returned by `GET /api/autooptimizer/river`.
+#[derive(Serialize, sqlx::FromRow)]
+pub struct RiverNode {
+    pub bundle_hash: String,
+    pub parent_hash: Option<String>,
+    pub cycle_id: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub child_day_score: Option<f64>,
+    pub delta_day: Option<f64>,
+}
+
+/// GET /api/autooptimizer/river
+///
+/// Feed for the lineage-river chart: every lineage node with its gate scores
+/// joined in, oldest-first so the frontend can build generations in order.
+///
+/// Recorded spec deviation: spec §7 allows "a possible events-by-cycle read
+/// endpoint" (Task 1). This second read endpoint is required data-plumbing
+/// for the §3a river (Y = Sharpe per node) and adds no new computation, but
+/// it exceeds §7's literal single-endpoint allowance. Surfaced in PR for
+/// operator sign-off. Implementation is read-only LEFT JOIN; spec §8.2.
+pub async fn get_river(State(state): State<AppState>) -> Result<Json<Vec<RiverNode>>, DashboardError> {
+    if !table_exists(&state.pool, "lineage_nodes").await? {
+        return Ok(Json(Vec::new()));
+    }
+    let has_gates = table_exists(&state.pool, "autooptimizer_gate_records").await?;
+    let sql = if has_gates {
+        "SELECT n.bundle_hash, n.parent_hash, n.cycle_id, n.status, n.created_at,
+                g.child_day_score, g.delta_day
+         FROM lineage_nodes n
+         LEFT JOIN autooptimizer_gate_records g ON g.bundle_hash = n.bundle_hash
+         ORDER BY n.created_at ASC LIMIT 2000"
+    } else {
+        "SELECT bundle_hash, parent_hash, cycle_id, status, created_at,
+                NULL AS child_day_score, NULL AS delta_day
+         FROM lineage_nodes ORDER BY created_at ASC LIMIT 2000"
+    };
+    let nodes: Vec<RiverNode> = sqlx::query_as(sql)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(e.into()))?;
+    Ok(Json(nodes))
 }
 
 #[cfg(test)]
@@ -2228,6 +2328,40 @@ mod tests {
         assert_eq!(rows[0].kept, 1);
     }
 
+    // ─── test_cycle_strategy_id_resolves_via_bridge (UI3) ─────────────────────
+
+    /// `cycle_strategy_id` resolves the optimized strategy through the
+    /// events → session bridge; a cycle with no session row yields `None`.
+    #[tokio::test]
+    async fn test_cycle_strategy_id_resolves_via_bridge() {
+        let pool = open_stats_pool().await;
+
+        // strat-A → sess-A → cycle-A (bridged).
+        sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sess-A', 'strat-A', '{}', 'running', 'once', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO autooptimizer_events \
+             (session_id, cycle_id, kind, payload_json, ts) \
+             VALUES ('sess-A', 'cycle-A', 'cycle_started', '{}', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let resolved = cycle_strategy_id(&pool, "cycle-A").await.unwrap();
+        assert_eq!(resolved.as_deref(), Some("strat-A"));
+
+        // A CLI cycle with no session bridge row → None (renders as "—").
+        let unbridged = cycle_strategy_id(&pool, "cycle-cli-only").await.unwrap();
+        assert_eq!(unbridged, None);
+    }
+
     // ─── test_stats_since_filter ──────────────────────────────────────────────
 
     /// Two cycles — one before and one after a `since` boundary. Only the
@@ -2350,5 +2484,64 @@ mod tests {
         assert_eq!(session_cost_usd(&pool, "sess-empty").await.unwrap(), None);
         assert_eq!(session_latest_honesty(&pool, "sess-empty").await.unwrap(), None);
         assert_eq!(active_session_cycle_id(&pool, "sess-empty").await.unwrap(), None);
+    }
+}
+
+#[cfg(test)]
+mod river_tests {
+    use super::*;
+    use axum::extract::State;
+    use tempfile::TempDir;
+
+    /// Spin up a fresh `AppState` backed by a temp dir.
+    /// `AppState::new` runs all engine migrations (048, 057, 058, …) so
+    /// `lineage_nodes` and `autooptimizer_gate_records` already exist.
+    async fn fresh_state() -> (crate::state::AppState, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let xvn_home = tmp.path().to_path_buf();
+        std::fs::create_dir_all(xvn_home.join("config")).unwrap();
+        let cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
+        std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
+        let state = crate::state::AppState::new(xvn_home)
+            .await
+            .expect("AppState::new");
+        (state, tmp)
+    }
+
+    // ── test_get_river_joins_scores_and_orders_by_created_at ─────────────────
+
+    /// Two lineage nodes: hash-a (no gate record) and hash-b (gate record with
+    /// child_day_score=1.52, delta_day=0.21). The river endpoint must return
+    /// both, with hash-a first (older), and hash-b with scores populated.
+    #[tokio::test]
+    async fn test_get_river_joins_scores_and_orders_by_created_at() {
+        let (state, _tmp) = fresh_state().await;
+
+        sqlx::query(
+            "INSERT INTO lineage_nodes (bundle_hash, parent_hash, cycle_id, status, gate_verdict, created_at)
+             VALUES ('hash-a', NULL, 'cyc-1', 'active', 'Pass', '2026-06-10T00:00:00Z'),
+                    ('hash-b', 'hash-a', 'cyc-2', 'rejected', '{\"Fail\":{\"reason\":\"overfit\"}}', '2026-06-11T00:00:00Z')",
+        )
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO autooptimizer_gate_records (bundle_hash, child_day_score, delta_day, verdict, created_at)
+             VALUES ('hash-b', 1.52, 0.21, 'Fail', '2026-06-11T00:00:00Z')",
+        )
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+        let resp = get_river(State(state)).await.unwrap();
+        let nodes = resp.0;
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].bundle_hash, "hash-a");
+        assert_eq!(nodes[0].child_day_score, None);
+        assert_eq!(nodes[1].child_day_score, Some(1.52));
+        assert_eq!(nodes[1].delta_day, Some(0.21));
+        assert_eq!(nodes[1].parent_hash.as_deref(), Some("hash-a"));
     }
 }

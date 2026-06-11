@@ -17,6 +17,19 @@ import type uPlot from "uplot";
 type DrawHookPlugin = { hooks: { draw: (u: uPlot) => void } };
 
 /**
+ * True when every argument is a finite number. Canvas gradient + path APIs
+ * throw (`createLinearGradient: non-finite`) or silently corrupt the draw
+ * when fed NaN/Infinity — which happens with empty data, zero-height bboxes,
+ * or un-ranged scales (audit F8). Every plugin below guards through this.
+ */
+export function allFinite(...values: number[]): boolean {
+  for (const v of values) {
+    if (!Number.isFinite(v)) return false;
+  }
+  return true;
+}
+
+/**
  * Halo + solid dot on the LAST data point of a series. Used to mark
  * the "where we are now" position on the lead equity curve.
  */
@@ -45,6 +58,7 @@ export function xvnLastDot(
         if (lastIdx < 0) return;
         const x = u.valToPos(xs[lastIdx] as number, "x", true);
         const y = u.valToPos(ys[lastIdx] as number, "y", true);
+        if (!allFinite(x, y)) return;
         const ctx = u.ctx;
         ctx.save();
         if (drawHalo) {
@@ -86,6 +100,7 @@ export function xvnAreaFill(
         if (!xs || !ys || xs.length === 0) return;
         const ctx = u.ctx;
         const { top, height, left, width } = u.bbox;
+        if (!allFinite(top, height, left, width) || height <= 0) return;
         ctx.save();
         ctx.beginPath();
         let started = false;
@@ -96,6 +111,7 @@ export function xvnAreaFill(
           if (v == null || !Number.isFinite(v as number)) continue;
           const x = u.valToPos(xs[i] as number, "x", true);
           const y = u.valToPos(v as number, "y", true);
+          if (!allFinite(x, y)) continue;
           if (!started) {
             ctx.moveTo(x, y);
             firstX = x;
@@ -105,11 +121,11 @@ export function xvnAreaFill(
           }
           lastX = x;
         }
-        if (!started || firstX === null || lastX === null) {
+        const zeroY = u.valToPos(baseline, "y", true);
+        if (!started || firstX === null || lastX === null || !allFinite(zeroY)) {
           ctx.restore();
           return;
         }
-        const zeroY = u.valToPos(baseline, "y", true);
         ctx.lineTo(lastX, zeroY);
         ctx.lineTo(firstX, zeroY);
         ctx.closePath();
@@ -181,6 +197,7 @@ export function xvnGradientFill(
         if (!xs || !ys || xs.length === 0) return;
         const ctx = u.ctx;
         const { top, height, left, width } = u.bbox;
+        if (!allFinite(top, height, left, width) || height <= 0) return;
         ctx.save();
         ctx.beginPath();
         let started = false;
@@ -191,6 +208,7 @@ export function xvnGradientFill(
           if (v == null || !Number.isFinite(v as number)) continue;
           const x = u.valToPos(xs[i] as number, "x", true);
           const y = u.valToPos(v as number, "y", true);
+          if (!allFinite(x, y)) continue;
           if (!started) {
             ctx.moveTo(x, y);
             firstX = x;
@@ -200,11 +218,11 @@ export function xvnGradientFill(
           }
           lastX = x;
         }
-        if (!started || firstX === null || lastX === null) {
+        const zeroY = u.valToPos(baseline, "y", true);
+        if (!started || firstX === null || lastX === null || !allFinite(zeroY)) {
           ctx.restore();
           return;
         }
-        const zeroY = u.valToPos(baseline, "y", true);
         ctx.lineTo(lastX, zeroY);
         ctx.lineTo(firstX, zeroY);
         ctx.closePath();
@@ -227,12 +245,18 @@ export function xvnGradientFill(
  * Green-above/red-below gradient fill split at y=0. Used as `series.fill`
  * callback on the return-% equity pane.
  */
-export function buildReturnFillGradient(u: uPlot): CanvasGradient {
+export function buildReturnFillGradient(u: uPlot): CanvasGradient | string {
   const yMax = u.scales.y.max ?? 10;
   const yMin = u.scales.y.min ?? -10;
   const top = u.valToPos(yMax, "y", true);
   const bot = u.valToPos(yMin, "y", true);
   const zero = u.valToPos(0, "y", true);
+  // F8 guard: empty data / un-ranged scales yield NaN positions, and
+  // `createLinearGradient` throws on non-finite args. Fall back to a
+  // transparent fill instead of crashing the draw pass.
+  if (!allFinite(top, bot, zero)) {
+    return "rgba(0,0,0,0)";
+  }
   const grad = u.ctx.createLinearGradient(0, top, 0, bot);
   const span = bot - top;
   if (span <= 0) {
@@ -250,6 +274,30 @@ export function buildReturnFillGradient(u: uPlot): CanvasGradient {
 }
 
 /**
+ * Red underwater gradient for drawdown panes: strongest at the surface
+ * (the y-scale ceiling, normally 0) fading toward the deepest drawdown.
+ * Used as the `series.fill` callback on `UplotDrawdownPane` - the depth
+ * counterpart to `buildReturnFillGradient`.
+ */
+export function buildDrawdownFillGradient(u: uPlot): CanvasGradient | string {
+  const yMax = u.scales.y.max ?? 0;
+  const yMin = u.scales.y.min ?? -10;
+  const top = u.valToPos(yMax, "y", true);
+  const bot = u.valToPos(yMin, "y", true);
+  // F8 guard: empty data / un-ranged scales yield NaN positions, and
+  // `createLinearGradient` throws on non-finite args. Fall back to a
+  // transparent fill instead of crashing the draw pass.
+  if (!allFinite(top, bot) || bot - top <= 0) {
+    return "rgba(0,0,0,0)";
+  }
+  const grad = u.ctx.createLinearGradient(0, top, 0, bot);
+  grad.addColorStop(0, "rgba(255,77,77,0.32)");
+  grad.addColorStop(0.6, "rgba(255,77,77,0.10)");
+  grad.addColorStop(1, "rgba(255,77,77,0.02)");
+  return grad;
+}
+
+/**
  * Dashed zero-baseline drawn across the plot area. Visible only when the
  * y-scale spans zero (positive + negative returns both present).
  */
@@ -260,6 +308,7 @@ export function xvnZeroLine(): DrawHookPlugin {
         const { min: yMin, max: yMax } = u.scales.y;
         if (yMin == null || yMax == null || yMin > 0 || yMax < 0) return;
         const y = u.valToPos(0, "y", true);
+        if (!allFinite(y, u.bbox.left, u.bbox.width)) return;
         const ctx = u.ctx;
         ctx.save();
         ctx.strokeStyle = "rgba(255,255,255,0.20)";
@@ -289,6 +338,7 @@ export function xvnSheen(
       draw: (u) => {
         const ctx = u.ctx;
         const { top, height, left, width } = u.bbox;
+        if (!allFinite(top, height, left, width) || height <= 0) return;
         const sheenH = Math.max(1, height * topFraction);
         ctx.save();
         const grad = ctx.createLinearGradient(0, top, 0, top + sheenH);

@@ -32,6 +32,12 @@
 // 17c. PUT/DELETE /api/strategy/:id/filter            strategies::put_filter / delete_filter
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
+// 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
+// 18d. POST  /api/marketplace/listings/:id/revoke     marketplace_route::post_revoke
+// 18e. POST  /api/marketplace/buy                     marketplace_route::post_buy
+// 18f. POST  /api/marketplace/listings/:id/import    marketplace_route::post_import
+// 18g. POST  /api/marketplace/listings/:id/attest     marketplace_route::post_attest
+// 18h. POST  /api/marketplace/listings/:id/update     marketplace_route::post_update
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -147,6 +153,14 @@
 //  R61. GET  /api/autooptimizer/flywheel
 //  R62. GET  /api/autooptimizer/stats    (P3-W1 per-cycle aggregates)
 //  R63. GET  /api/assets
+//  R64. GET  /api/marketplace/status
+//  R65. GET  /api/marketplace/listings
+//  R66. GET  /api/marketplace/listings/:id
+//  R67. GET  /api/marketplace/wallet/:address
+//  R68. GET  /api/marketplace/receipts/:tx_hash
+//  R69. GET  /api/marketplace/listings/:id/bundle
+//  R70. GET  /api/marketplace/listings/:id/attestations
+//  R71. GET  /api/live/venue-account     (live venue status snapshot)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -171,17 +185,16 @@ use crate::auth::require_auth::require_auth_middleware;
 use crate::auth::session;
 use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
-    agent_runs, agents, assets as assets_route,
-    assets_refresh as assets_refresh_route,
-    autooptimizer as autooptimizer_route,
-    autooptimizer_cycle, bars, charts_annotated,
-    charts_dashboards, charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
+    agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
+    autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
+    charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    memory as memory_route, optimizations as optimizations_route, safety as safety_route, scenarios,
-    search as search_route, settings, skills, static_files, strategies,
+    live_broker as live_broker_route, marketplace as marketplace_route,
+    marketplace_read as marketplace_read_route, memory as memory_route, optimizations as optimizations_route,
+    safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
     strategies_folder as strategies_folder_route, tools as tools_route,
     version::version,
     wizard,
@@ -213,6 +226,7 @@ fn readonly_router(state: AppState) -> Router {
             get(diagnostics_route::agent),
         )
         .route("/api/assets", get(assets_route::list))
+        .route("/api/live/venue-account", get(live_broker_route::venue_account))
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))
@@ -322,6 +336,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/lineage",
             get(autooptimizer_route::list_lineage),
         )
+        // Lineage-river chart: all lineage nodes joined with gate scores (read-only LEFT JOIN; spec §8.2).
+        .route(
+            "/api/autooptimizer/river",
+            get(autooptimizer_route::get_river),
+        )
         .route(
             "/api/autooptimizer/run-defaults",
             get(autooptimizer_cycle::run_defaults),
@@ -370,6 +389,11 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cost",
             get(autooptimizer_route::get_cycle_cost_handler),
+        )
+        // Replay source for the ConsoleModule: persisted event log of a completed cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/events",
+            get(autooptimizer_cycle::get_cycle_events),
         )
         // P3-W1: per-cycle aggregate statistics (kept/suspect/dropped/cost/cum_cost).
         // Registered before the /:id catch-all.
@@ -433,6 +457,43 @@ fn readonly_router(state: AppState) -> Router {
         // engine OptimizationStore).
         .route("/api/optimizations", get(optimizations_route::list))
         .route("/api/optimizations/:id", get(optimizations_route::get))
+        // Marketplace reads over the indexer snapshot (Phase 1 real-loop).
+        // Static "status"/"listings" segments before the :id catch-all.
+        .route(
+            "/api/marketplace/status",
+            get(marketplace_read_route::get_status),
+        )
+        .route(
+            "/api/marketplace/listings",
+            get(marketplace_read_route::get_listings),
+        )
+        .route(
+            "/api/marketplace/listings/:id",
+            get(marketplace_read_route::get_listing),
+        )
+        .route(
+            "/api/marketplace/wallet/:address",
+            get(marketplace_read_route::get_wallet),
+        )
+        // Purchase receipt: decoded Sold event for a tx hash. Env-gated:
+        // returns 503 without the read-only chain config.
+        .route(
+            "/api/marketplace/receipts/:tx_hash",
+            get(marketplace_read_route::get_receipt),
+        )
+        // Verified bundle delivery: fetch the manifest behind content_uri
+        // (ipfs:// gateway or xvn:// local store) and verify it against the
+        // on-chain content_hash. 409 on integrity mismatch.
+        .route(
+            "/api/marketplace/listings/:id/bundle",
+            get(marketplace_read_route::get_bundle),
+        )
+        // Eval attestations for a listing, read live from the
+        // EvalAttestationRegistry. 404 unknown listing; 503 dormant env.
+        .route(
+            "/api/marketplace/listings/:id/attestations",
+            get(marketplace_read_route::get_attestations),
+        )
         .with_state(state)
 }
 
@@ -494,6 +555,38 @@ fn mutating_router(state: AppState) -> Router {
             post(strategies::post_validate)
                 // F4: GET /api/strategy/:id/validate → 405 with a hint pointing to POST.
                 .get(strategies::validate_get_hint),
+        )
+        // ── Marketplace ───────────────────────────────────────────────────
+        // Genart mint + listing. Env-gated: returns 503 without chain config.
+        .route(
+            "/api/marketplace/publish",
+            post(marketplace_route::post_publish),
+        )
+        // Seller-initiated revoke. Env-gated: returns 503 without chain config.
+        .route(
+            "/api/marketplace/listings/:id/revoke",
+            post(marketplace_route::post_revoke),
+        )
+        // Gasless x402 purchase relay (buyWithAuthorization). Env-gated:
+        // returns 503 without chain config; 400 on M-2 / contract reverts.
+        .route("/api/marketplace/buy", post(marketplace_route::post_buy))
+        // License-gated import: balanceOf gate (403 without a license; 503
+        // env dormant), hash-verified fetch, install as a NEW local strategy.
+        .route(
+            "/api/marketplace/listings/:id/import",
+            post(marketplace_route::post_import),
+        )
+        // Manual eval attestation (permissionless on-chain; the server's
+        // publisher key is the attester). Env-gated: 503 without chain config.
+        .route(
+            "/api/marketplace/listings/:id/attest",
+            post(marketplace_route::post_attest),
+        )
+        // Seller content refresh (updateListing; price immutable on-chain).
+        // Env-gated: 503 without chain config; NotSeller et al. → 400.
+        .route(
+            "/api/marketplace/listings/:id/update",
+            post(marketplace_route::post_update),
         )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(
@@ -794,6 +887,23 @@ pub async fn serve(
         ),
     }
 
+    // Same sweep for the child `agent_runs` ledger: recorder tasks die with
+    // the daemon too, and rows stuck in `running` make the Live cockpit
+    // count phantom "live" strategies (xvision-9pi).
+    match agent_runs::interrupt_orphan_agent_runs(&state.pool).await {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(
+            target: "xvision::dashboard",
+            interrupted = n,
+            "swept orphan agent runs at startup",
+        ),
+        Err(e) => tracing::warn!(
+            target: "xvision::dashboard",
+            error = %e,
+            "failed to sweep orphan agent runs at startup",
+        ),
+    }
+
     if let Err(e) = state.recover_cli_jobs().await {
         tracing::warn!(
             target: "xvision::dashboard",
@@ -832,6 +942,44 @@ pub async fn serve(
             }
         });
     }
+
+    // Marketplace chain config: resolved ONCE here (xvision-df3) instead of
+    // per request in the routes. When the indexer sub-config is present,
+    // poll the on-chain ListingRegistry/IdentityRegistry into the shared
+    // snapshot every 30s. The JoinHandle is intentionally dropped — the
+    // poller lives for the full process lifetime. Without the env the read
+    // routes serve the empty default snapshot and the wallet route returns
+    // 503; chain-mutating routes 503 with the same messages as before.
+    let state = match crate::chain_config::MarketplaceChainConfig::from_env() {
+        Some(cfg) => {
+            match cfg.indexer.clone() {
+                Some(indexer_cfg) => {
+                    tracing::info!(
+                        rpc_url = %indexer_cfg.rpc_url,
+                        listing_registry = %indexer_cfg.listing_registry,
+                        identity_registry = %indexer_cfg.identity_registry,
+                        "marketplace indexer active",
+                    );
+                    state.mark_marketplace_indexer_active();
+                    let _indexer = crate::marketplace_index::spawn_indexer(
+                        state.marketplace_snapshot.clone(),
+                        indexer_cfg,
+                    );
+                }
+                None => tracing::info!(
+                    "marketplace indexer dormant (XVN_RPC_URL/XVN_LISTING_REGISTRY/XVN_IDENTITY_REGISTRY unset)"
+                ),
+            }
+            state.with_marketplace_chain_config(cfg)
+        }
+        None => {
+            tracing::info!(
+                "marketplace chain config dormant (no XVN_RPC_URL/XVN_*_REGISTRY/XVN_LICENSE_TOKEN); \
+                 chain-touching marketplace routes will return 503"
+            );
+            state
+        }
+    };
 
     // AR-3: start the autooptimizer IPC Unix socket listener when the
     // operator passes `--autooptimizer-ipc-socket`. Optimizer-cycle CLI

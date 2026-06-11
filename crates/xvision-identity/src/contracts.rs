@@ -81,6 +81,7 @@ sol! {
         function updateListing(uint256 listingId, bytes32 contentHash, string calldata contentURI) external;
         function revokeListing(uint256 listingId) external;
         function getListing(uint256 listingId) external view returns (Listing memory);
+        function totalListings() external view returns (uint256);
         function transferableForListing(uint256 listingId) external view returns (bool);
         function listingExists(uint256 listingId) external view returns (bool);
 
@@ -209,6 +210,49 @@ impl MarketplaceAddresses {
     pub fn mantle_testnet() -> Option<Self> {
         None
     }
+
+    /// Read marketplace contract addresses from environment variables.
+    ///
+    /// Returns `None` if `XVN_LISTING_REGISTRY` is absent or not a valid hex
+    /// address (it is the one required address for `publish`). All other
+    /// addresses default to [`Address::ZERO`]; the driver's `require_addr`
+    /// guard rejects zero addresses per-operation with a `NotConfigured` error
+    /// so callers get a clear message rather than an opaque on-chain revert.
+    ///
+    /// | Field                    | Env var                                  |
+    /// |--------------------------|------------------------------------------|
+    /// | `listing_registry`       | `XVN_LISTING_REGISTRY`  (required)       |
+    /// | `marketplace`            | `XVN_MARKETPLACE_CONTRACT`               |
+    /// | `license_token`          | `XVN_LICENSE_TOKEN`                      |
+    /// | `eval_attestation`       | `XVN_EVAL_ATTESTATION`                   |
+    /// | `validation_registry`    | `XVN_VALIDATION_REGISTRY`                |
+    /// | `usdc`                   | `XVN_MARKETPLACE_USDC`                   |
+    /// | `xvn_deployer`           | `XVN_MARKETPLACE_DEPLOYER`               |
+    /// | `platform_agent_token_id`| `XVN_MARKETPLACE_PLATFORM_AGENT_TOKEN_ID`|
+    pub fn from_env() -> Option<Self> {
+        fn opt_addr(key: &str) -> Address {
+            std::env::var(key)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(Address::ZERO)
+        }
+
+        let listing_registry: Address = std::env::var("XVN_LISTING_REGISTRY").ok()?.parse().ok()?;
+
+        Some(Self {
+            xvn_deployer: opt_addr("XVN_MARKETPLACE_DEPLOYER"),
+            listing_registry,
+            marketplace: opt_addr("XVN_MARKETPLACE_CONTRACT"),
+            license_token: opt_addr("XVN_LICENSE_TOKEN"),
+            eval_attestation: opt_addr("XVN_EVAL_ATTESTATION"),
+            validation_registry: opt_addr("XVN_VALIDATION_REGISTRY"),
+            usdc: opt_addr("XVN_MARKETPLACE_USDC"),
+            platform_agent_token_id: std::env::var("XVN_MARKETPLACE_PLATFORM_AGENT_TOKEN_ID")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -219,5 +263,22 @@ mod tests {
     fn marketplace_addresses_unset_on_both_chains() {
         assert!(MarketplaceAddresses::mantle_mainnet().is_none());
         assert!(MarketplaceAddresses::mantle_testnet().is_none());
+    }
+
+    #[test]
+    fn from_env_reads_listing_registry() {
+        // Run both env states sequentially in one test to avoid env-mutation races
+        // with parallel test threads.
+        let _ = std::env::remove_var("XVN_LISTING_REGISTRY");
+        assert!(MarketplaceAddresses::from_env().is_none(), "absent → None");
+
+        let addr = "0x1111111111111111111111111111111111111111";
+        std::env::set_var("XVN_LISTING_REGISTRY", addr);
+        let result = MarketplaceAddresses::from_env();
+        std::env::remove_var("XVN_LISTING_REGISTRY");
+        let addrs = result.expect("XVN_LISTING_REGISTRY set → Some");
+        assert_eq!(addrs.listing_registry, addr.parse::<Address>().unwrap());
+        assert_eq!(addrs.marketplace, Address::ZERO);
+        assert_eq!(addrs.platform_agent_token_id, 0);
     }
 }

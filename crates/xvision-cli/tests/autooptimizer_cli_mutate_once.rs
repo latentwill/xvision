@@ -82,6 +82,35 @@ max_retries = 2
     config_path
 }
 
+/// B5 smoke: write a config whose mutator provider/model are NOT the
+/// hardcoded anthropic defaults, to exercise the configured-model code path.
+fn write_config_with_mutator(dir: &Path, provider: &str, model: &str) -> std::path::PathBuf {
+    let config_path = dir.join("autooptimizer.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"
+min_improvement = 0.1
+
+[baseline_untouched_window]
+start = "2025-09-01"
+end = "2025-12-01"
+
+[day_window]
+start = "2024-01-01"
+end = "2025-09-01"
+
+[mutator]
+provider = "{provider}"
+model = "{model}"
+max_retries = 2
+"#
+        ),
+    )
+    .unwrap();
+    config_path
+}
+
 fn mutate_once_cmd<'a>(
     hash: &'a str,
     config: &'a Path,
@@ -91,7 +120,7 @@ fn mutate_once_cmd<'a>(
     extra: &[&'a str],
 ) -> Vec<&'a str> {
     let mut args = vec![
-        "optimizer",
+        "optimize",
         "mutate-once",
         hash,
         "--config",
@@ -204,6 +233,36 @@ fn mutate_once_gate_fail_creates_rejected_node_without_provenance_table() {
         .unwrap();
         assert_eq!(seal_tables, 0, "provenance removal must not create cycle_seals");
     });
+}
+
+/// B5 smoke: mutate-once must complete cleanly when the mutator provider/model
+/// are configured to a non-anthropic provider (e.g. Ollama). Pre-fix, propose()
+/// ignored the config and hardcoded anthropic; this guards the CLI path that
+/// threads binding.provider/binding.model into propose. (--mock hides the model
+/// value itself; the unit test in optimize.rs asserts the actual model.)
+#[test]
+fn mutate_once_with_custom_mutator_model_completes() {
+    let dir = tempdir().unwrap();
+    let blob_dir = dir.path().join("blobs");
+    let hash = write_parent_blob(&blob_dir);
+    let config = write_config_with_mutator(dir.path(), "ollama-local", "qwen2.5:7b");
+    let db = dir.path().join("lineage.db");
+
+    let out = xvn(&mutate_once_cmd(
+        &hash,
+        &config,
+        &db,
+        &blob_dir,
+        "cycle-ollama-01",
+        &[],
+    ));
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "mutate-once with a custom mutator model must succeed; stdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
 }
 
 #[test]

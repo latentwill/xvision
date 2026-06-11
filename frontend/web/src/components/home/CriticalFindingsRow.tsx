@@ -17,19 +17,19 @@ import type { CriticalFinding } from "@/api/eval-review";
 
 function FindingChip({ finding }: { finding: CriticalFinding }) {
   return (
-    <div className="flex-shrink-0 w-64 rounded-md border border-danger/30 bg-danger/5 p-3 flex flex-col gap-2">
+    <div className="flex-shrink-0 w-64 rounded border border-danger/30 bg-danger/5 p-2.5 flex flex-col gap-1.5">
       {/* Header row: severity pill + strategy name */}
       <div className="flex items-center gap-2 flex-wrap">
         <Pill tone="danger">critical</Pill>
         {finding.strategyName && (
-          <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">
+          <span className="text-[11px] text-text-3 truncate max-w-[120px]">
             {finding.strategyName}
           </span>
         )}
       </div>
 
       {/* Summary — 2-line clamp */}
-      <p className="text-[12px] text-foreground line-clamp-2 leading-snug flex-1">
+      <p className="text-[12px] text-text line-clamp-2 leading-snug flex-1">
         {finding.title ?? finding.summary}
       </p>
 
@@ -46,7 +46,7 @@ function FindingChip({ finding }: { finding: CriticalFinding }) {
 
 function EmptyState() {
   return (
-    <p className="text-[13px] text-muted-foreground px-1">
+    <p className="text-[12px] text-text-4">
       No critical findings in recent runs
     </p>
   );
@@ -70,12 +70,12 @@ export function CriticalFindingsRow({ runs }: CriticalFindingsRowProps) {
   });
 
   return (
-    <section data-testid="critical-findings-row">
+    <section data-testid="critical-findings-row" className="px-5 py-2.5">
       {/* Header */}
-      <div className="mb-3 flex items-baseline gap-2">
-        <h2 className="text-sm font-semibold tracking-tight">Critical findings</h2>
-        <span className="text-xs text-muted-foreground">
-          · from 3 most recent reviews
+      <div className="mb-1.5 flex items-baseline gap-2">
+        <span className="caps">Critical findings</span>
+        <span className="text-[11px] text-text-4">
+          from 3 most recent reviews
         </span>
       </div>
 
@@ -87,13 +87,13 @@ export function CriticalFindingsRow({ runs }: CriticalFindingsRowProps) {
           className="animate-pulse flex gap-3"
           aria-label="Loading critical findings"
         >
-          <div className="h-24 w-64 rounded bg-muted" />
-          <div className="h-24 w-64 rounded bg-muted" />
+          <div className="h-20 w-64 rounded bg-surface-elev" />
+          <div className="h-20 w-64 rounded bg-surface-elev" />
         </div>
       ) : !data || data.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto xvn-scroll">
           <div className="flex gap-3 pb-1">
             {data.map((finding) => (
               <FindingChip key={finding.id} finding={finding} />

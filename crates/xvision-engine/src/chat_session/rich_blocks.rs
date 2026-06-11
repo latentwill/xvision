@@ -834,6 +834,10 @@ mod tests {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             asset_universe: vec!["BTC/USD".into()],
             execution_mode: "per_asset".into(),
+            bundle_hash: None,
+            origin: crate::api::strategy::StrategyOrigin::User,
+            evaluated: false,
+            last_eval_completed_at: None,
         };
 
         let block = inline_strategy_card_from_summary(&summary).expect("strategy card");
@@ -908,6 +912,7 @@ mod tests {
             paused: false,
             paused_at: None,
             flatten_requested: false,
+            live_config: None,
         }
     }
 

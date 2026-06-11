@@ -223,6 +223,10 @@ impl From<FetchError> for AlpacaPollError {
             )),
             FetchError::Network(e) => Self::Network(e.to_string()),
             FetchError::Parse(e) => Self::Rejected(format!("parse: {e}")),
+            // U16(c): the historical fetcher now applies a 30s HTTP timeout and
+            // surfaces it as `FetchError::Timeout`. Treat it as a transient
+            // network condition for the live poller.
+            FetchError::Timeout(secs) => Self::Network(format!("request timed out after {secs}s")),
         }
     }
 }

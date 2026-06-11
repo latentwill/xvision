@@ -5,6 +5,63 @@ use serde::{Deserialize, Serialize};
 
 use xvision_core::providers::{lookup_model, ModelMetadata};
 
+/// Default per-request `max_tokens` to seed on a freshly-created agent slot
+/// when the selected model looks like a chain-of-thought (CoT) reasoning
+/// model. CoT models (deepseek-r1, qwq, many gemma builds, …) emit a long
+/// `<think>…</think>` prefix before any decision JSON, so the conservative
+/// 1024 that config seeding otherwise applies is exhausted before the model
+/// writes a single visible token. 8k gives the reasoning prefix room and
+/// still leaves headroom for the structured decision body. See QA U12
+/// (`docs/QA/2026-06-11-optimizer-ux-cli-findings.md`).
+pub const COT_DEFAULT_MAX_TOKENS: u32 = 8_192;
+
+/// Effective resolved `max_tokens` below which a CoT model is at high risk
+/// of truncating before it emits any visible text. Used to gate the
+/// pre-launch warning surfaced by the CLI (U12 (b)/(c)).
+pub const COT_MIN_SAFE_MAX_TOKENS: u32 = 2_048;
+
+/// Recommended minimum `max_tokens` operators should set for CoT models,
+/// surfaced in the `strategy diagnostics` warning text (U12 (c)).
+pub const COT_RECOMMENDED_MIN_MAX_TOKENS: u32 = 4_096;
+
+/// Heuristic: does this model id look like a chain-of-thought / reasoning
+/// model whose visible output is preceded by a long hidden reasoning
+/// prefix?
+///
+/// Combines two signals:
+///
+/// 1. Canonical metadata — `lookup_model(model_id).is_reasoning()` catches
+///    every id the metadata table annotates with a non-zero
+///    `reasoning_token_default` (o1/o3, deepseek-reasoner, etc.).
+/// 2. Name patterns the metadata table misses — Ollama-style ids carry a
+///    `:tag` suffix (`deepseek-r1:8b`, `qwq:32b`) and self-hosted/family
+///    aliases (`deepseek-r1`, `deepseek-r1-distill-…`, `gemma-2`, `qwq`)
+///    never appear verbatim in the canonical table, so `lookup_model`
+///    returns the unknown default with `reasoning_token_default == 0`.
+///    Matching the family stem on the bare id (tag stripped) recovers them.
+///
+/// Matching is case-insensitive and tolerant of the `provider/model` and
+/// `model:tag` shapes. Returns `true` if either signal fires.
+pub fn looks_like_cot_model(model_id: &str) -> bool {
+    if lookup_model(model_id).is_reasoning() {
+        return true;
+    }
+
+    let lower = model_id.trim().to_ascii_lowercase();
+    // Strip an optional `provider/` prefix (`openrouter/deepseek-r1`) and an
+    // optional Ollama `:tag` suffix (`deepseek-r1:8b`) so family matching
+    // sees the bare model stem.
+    let stem = lower.rsplit('/').next().unwrap_or(&lower);
+    let stem = stem.split(':').next().unwrap_or(stem);
+
+    // Family stems whose models lead with a chain-of-thought prefix. Kept
+    // deliberately broad: any deepseek-r* (r1, r1-distill, future r2), the
+    // qwq reasoning line, and the gemma family (many community gemma builds
+    // emit verbose reasoning and exhaust a 1k budget).
+    const COT_PREFIXES: &[&str] = &["deepseek-r", "qwq", "gemma"];
+    COT_PREFIXES.iter().any(|p| stem.starts_with(p))
+}
+
 /// Generic conservative cap for unknown providers / unannounced models
 /// when `provider_default_max_tokens` can't find a canonical metadata
 /// entry. Big enough to fit a typical trader decision JSON + reasoning;
@@ -430,6 +487,17 @@ impl Agent {
         model: impl Into<String>,
     ) -> Self {
         let now = Utc::now();
+        let model: String = model.into();
+        // U12: CoT models burn a long hidden reasoning prefix before any
+        // visible token. Seed a higher default so a freshly-created slot
+        // does not truncate at the conservative config-seeded budget before
+        // emitting the decision JSON. Non-CoT models keep `None` (auto from
+        // model metadata).
+        let default_max_tokens = if looks_like_cot_model(&model) {
+            Some(COT_DEFAULT_MAX_TOKENS)
+        } else {
+            None
+        };
         Self {
             agent_id: agent_id.into(),
             name: name.into(),
@@ -438,10 +506,10 @@ impl Agent {
             slots: vec![AgentSlot {
                 name: "main".to_string(),
                 provider: provider.into(),
-                model: model.into(),
+                model,
                 system_prompt: String::new(),
                 skill_ids: Vec::new(),
-                max_tokens: None,
+                max_tokens: default_max_tokens,
                 max_wall_ms: None,
                 temperature: None,
                 prompt_version: String::new(),
@@ -500,6 +568,50 @@ mod tests {
         // opt into delta-briefing per slot.
         assert_eq!(a.slots[0].delta_briefing, None);
         assert!(!a.slots[0].resolve_delta_briefing());
+    }
+
+    #[test]
+    fn looks_like_cot_model_matches_ollama_tagged_and_family_ids() {
+        // Ollama `:tag` ids that the canonical metadata table misses.
+        assert!(looks_like_cot_model("deepseek-r1:8b"));
+        assert!(looks_like_cot_model("qwq:32b"));
+        // Family stems / aliases without a tag.
+        assert!(looks_like_cot_model("deepseek-r1"));
+        assert!(looks_like_cot_model("deepseek-r1-distill-qwen-7b"));
+        assert!(looks_like_cot_model("gemma-2"));
+        assert!(looks_like_cot_model("gemma2:9b"));
+        // `provider/model` shape is tolerated.
+        assert!(looks_like_cot_model("openrouter/deepseek-r1"));
+        // Case-insensitive.
+        assert!(looks_like_cot_model("DeepSeek-R1:8B"));
+    }
+
+    #[test]
+    fn looks_like_cot_model_rejects_plain_chat_models() {
+        assert!(!looks_like_cot_model("claude-sonnet-4-6"));
+        assert!(!looks_like_cot_model("gpt-4o-mini"));
+        assert!(!looks_like_cot_model("llama3.2"));
+        assert!(!looks_like_cot_model("kimi-k2"));
+        assert!(!looks_like_cot_model(""));
+        // `deepseek-v3` is a non-reasoning chat model — must NOT match the
+        // `deepseek-r` family stem.
+        assert!(!looks_like_cot_model("deepseek-v3"));
+    }
+
+    #[test]
+    fn single_slot_default_seeds_higher_max_tokens_for_cot_model() {
+        // U12: a CoT model gets the elevated default so the reasoning
+        // prefix doesn't truncate the slot before any visible output.
+        let a = Agent::single_slot_default("01HZ000000000000000000000", "cot", "ollama", "deepseek-r1:8b");
+        assert_eq!(a.slots[0].max_tokens, Some(COT_DEFAULT_MAX_TOKENS));
+        // And a plain chat model still defaults to auto (`None`).
+        let b = Agent::single_slot_default(
+            "01HZ000000000000000000001",
+            "chat",
+            "anthropic",
+            "claude-sonnet-4-6",
+        );
+        assert_eq!(b.slots[0].max_tokens, None);
     }
 
     #[test]
