@@ -388,11 +388,16 @@ struct OrderData {
     #[serde(default)]
     client_order_id: Option<String>,
     status: String,
-    /// The venue's `GET /v1/order/{id}` payload spells this
-    /// `total_executed_quantity` (with a sibling `executed`); other
-    /// surfaces use `executed_quantity`. Accept all three.
-    #[serde(default, alias = "total_executed_quantity", alias = "executed")]
+    /// The venue's `GET /v1/order/{id}` payload carries BOTH `executed`
+    /// and `total_executed_quantity` (other surfaces use
+    /// `executed_quantity`) — kept as separate fields (serde aliases
+    /// would error on the duplicate) and coalesced in [`order_from_data`].
+    #[serde(default)]
     executed_quantity: Option<f64>,
+    #[serde(default)]
+    total_executed_quantity: Option<f64>,
+    #[serde(default)]
+    executed: Option<f64>,
     #[serde(default)]
     average_executed_price: Option<f64>,
 }
@@ -443,7 +448,10 @@ fn order_from_data(d: OrderData) -> OrderlyOrder {
         order_id: d.order_id,
         client_order_id: d.client_order_id,
         status: d.status.to_uppercase(),
-        executed_quantity: d.executed_quantity,
+        executed_quantity: d
+            .executed_quantity
+            .or(d.total_executed_quantity)
+            .or(d.executed),
         average_executed_price: d.average_executed_price,
     }
 }
