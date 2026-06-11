@@ -523,6 +523,21 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<PollOutcome> {
 // Background task
 // ---------------------------------------------------------------------------
 
+/// Per-tick deadline applied to the entire chain work block (ledger advance +
+/// poll_once + overlay/swap). Must exceed the worst case of
+/// SOLD_SCAN_MAX_CHUNKS_PER_TICK getLogs calls plus a full listing
+/// enumeration. Generous because this deadline only guards against HUNG
+/// sockets, not slow polls.
+pub(crate) const TICK_DEADLINE: Duration = Duration::from_secs(120);
+
+/// Records a timeout error on the shared snapshot without disturbing the
+/// existing listings. Extracted so it can be called from the spawn loop and
+/// covered by a unit test without spinning up an async runtime.
+pub(crate) fn apply_tick_timeout(snapshot: &mut MarketplaceSnapshot) {
+    snapshot.last_error = Some("indexer tick timed out after 120s".to_owned());
+    snapshot.last_poll_unix = chrono::Utc::now().timestamp();
+}
+
 /// Spawns the 30s polling loop. First tick fires immediately. A successful
 /// poll replaces the snapshot wholesale; a failed poll keeps the previous
 /// listings and records `last_error` + the attempt time.
@@ -534,6 +549,10 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<PollOutcome> {
 /// listings whose count lookup failed ([`carry_forward_attestations`])
 /// and the accumulated sale totals ([`apply_sales`]) before swapping the
 /// fresh snapshot in.
+///
+/// The entire per-tick chain work is wrapped in [`TICK_DEADLINE`]: a hung
+/// socket can no longer stall the loop forever. On timeout the previous
+/// listings are kept and `last_error` is set.
 pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(30));
@@ -542,23 +561,34 @@ pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::
         let mut attestation_counts: HashMap<u64, u64> = HashMap::new();
         loop {
             tick.tick().await;
-            advance_sales_ledger(&cfg, &mut ledger).await;
-            match poll_once(&cfg).await {
-                Ok(outcome) => {
-                    let PollOutcome {
-                        snapshot: mut fresh,
-                        attestation_failures,
-                    } = outcome;
-                    carry_forward_attestations(&mut fresh, &attestation_failures, &mut attestation_counts);
-                    apply_sales(&mut fresh, &ledger);
-                    *snapshot.write().await = fresh;
+            let work = async {
+                advance_sales_ledger(&cfg, &mut ledger).await;
+                match poll_once(&cfg).await {
+                    Ok(outcome) => {
+                        let PollOutcome {
+                            snapshot: mut fresh,
+                            attestation_failures,
+                        } = outcome;
+                        carry_forward_attestations(
+                            &mut fresh,
+                            &attestation_failures,
+                            &mut attestation_counts,
+                        );
+                        apply_sales(&mut fresh, &ledger);
+                        *snapshot.write().await = fresh;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "marketplace indexer poll failed; keeping previous snapshot");
+                        let mut guard = snapshot.write().await;
+                        guard.last_error = Some(e.to_string());
+                        guard.last_poll_unix = chrono::Utc::now().timestamp();
+                    }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "marketplace indexer poll failed; keeping previous snapshot");
-                    let mut guard = snapshot.write().await;
-                    guard.last_error = Some(e.to_string());
-                    guard.last_poll_unix = chrono::Utc::now().timestamp();
-                }
+            };
+            if tokio::time::timeout(TICK_DEADLINE, work).await.is_err() {
+                tracing::warn!("marketplace indexer tick timed out after 120s; keeping previous snapshot");
+                let mut guard = snapshot.write().await;
+                apply_tick_timeout(&mut guard);
             }
         }
     })
@@ -822,6 +852,28 @@ mod tests {
     #[test]
     fn aggregate_sales_empty_is_empty() {
         assert!(aggregate_sales(vec![]).is_empty());
+    }
+
+    // -- tick timeout helper --------------------------------------------------
+
+    #[test]
+    fn apply_tick_timeout_sets_error_keeps_listings() {
+        let listing = listing_with_id(1);
+        let mut snapshot = MarketplaceSnapshot {
+            listings: vec![listing],
+            last_error: None,
+            ..Default::default()
+        };
+        apply_tick_timeout(&mut snapshot);
+        assert_eq!(
+            snapshot.last_error.as_deref(),
+            Some("indexer tick timed out after 120s")
+        );
+        // Listings must be preserved.
+        assert_eq!(snapshot.listings.len(), 1);
+        assert_eq!(snapshot.listings[0].listing_id, 1);
+        // Timestamp updated (non-zero is sufficient; exact value is wall-clock).
+        assert!(snapshot.last_poll_unix > 0);
     }
 
     // -- hex64 ---------------------------------------------------------------
