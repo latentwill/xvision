@@ -127,13 +127,21 @@ pub async fn run_honesty_check(
     // are labeled, so their by-design broker rejections are demoted to expected
     // honesty-check noise.
     let parent_day = paper_tester.run(base, day_scenario).await?;
-    let child_day = paper_tester
-        .run_canary(&sabotaged, day_scenario, variant_label)
-        .await?;
+    let child_day = canary_metrics_or_neutral(
+        paper_tester
+            .run_canary(&sabotaged, day_scenario, variant_label)
+            .await,
+        variant_label,
+        day_scenario.id.as_str(),
+    );
     let parent_untouched = paper_tester.run(base, baseline_scenario).await?;
-    let child_untouched = paper_tester
-        .run_canary(&sabotaged, baseline_scenario, variant_label)
-        .await?;
+    let child_untouched = canary_metrics_or_neutral(
+        paper_tester
+            .run_canary(&sabotaged, baseline_scenario, variant_label)
+            .await,
+        variant_label,
+        baseline_scenario.id.as_str(),
+    );
 
     let gate_in = gate_input_builder(&parent_day, &child_day, &parent_untouched, &child_untouched);
     let gate_verdict = evaluate(&gate_in);
@@ -161,6 +169,49 @@ pub async fn run_honesty_check(
         sabotage_variant: variant_label.to_string(),
         message,
     })
+}
+
+/// B28: map a canary (sabotage) backtest result to metrics the gate can score,
+/// defaulting to a NEUTRAL (zero) [`MetricsSummary`] when the sabotaged run
+/// errored out or completed zero trades.
+///
+/// A deliberately-sabotaged strategy frequently produces **zero completed
+/// trades** — the `kill-trades` variant zero-sizes every order, so every order
+/// is rejected and the backtest aborts with an `Err` instead of writing a
+/// `metrics_json` row (which then read back as NULL/None downstream). Before
+/// this guard, that error propagated up through `run_honesty_check` and aborted
+/// the WHOLE cycle: no completion record was written and the cross-process
+/// cycle lock was left stale (held for its 2h window). The crash was
+/// objective-independent in principle, but surfaced under `--objective
+/// total_return` because that path scored the (missing) canary return without a
+/// neutral fallback.
+///
+/// Scoring a zero-trade / failed sabotage canary as a neutral zero is exactly
+/// the honesty check's intent: a sabotaged strategy that does NOTHING must not
+/// look like an improvement, so the gate rejects it and the check PASSES. The
+/// fallback is objective-agnostic — every field defaults to 0.0, which is the
+/// no-improvement sentinel for return / sharpe / win-rate, and a zero (best-
+/// possible) drawdown that can never trip the drawdown-deterioration guard.
+fn canary_metrics_or_neutral(
+    result: Result<MetricsSummary>,
+    variant_label: &str,
+    scenario_id: &str,
+) -> MetricsSummary {
+    match result {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::info!(
+                target: "xvision::autooptimizer",
+                sabotage_variant = variant_label,
+                scenario_id,
+                error = %e,
+                "honesty-check canary backtest produced no metrics (zero completed trades / \
+                 aborted run); scoring it as a neutral no-improvement result so the gate rejects \
+                 it and the cycle still completes (B28)"
+            );
+            MetricsSummary::default()
+        }
+    }
 }
 
 fn apply_sabotage_kill_trades(s: &mut Strategy) {

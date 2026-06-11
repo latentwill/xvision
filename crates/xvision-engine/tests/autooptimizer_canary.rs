@@ -7,7 +7,7 @@ use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmRequest, LlmRespo
 use xvision_engine::autooptimizer::canary::{build_sabotaged_strategy, run_honesty_check};
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
 use xvision_engine::autooptimizer::eval_adapter::PaperTestRunner;
-use xvision_engine::autooptimizer::gate::{GateInput, GateVerdict};
+use xvision_engine::autooptimizer::gate::{GateInput, GateVerdict, Objective};
 use xvision_engine::autooptimizer::mutator::Mutator;
 use xvision_engine::eval::{
     AdjustmentMode, AssetClass, BarCachePolicy, BarGranularity, CalendarRef, DataSource, Fees, FillModel,
@@ -157,6 +157,99 @@ fn gate_builder(
         min_improvement: 0.1,
         objective: Default::default(),
     }
+}
+
+/// B28 regression scaffolding: a tester whose legitimate (parent) runs succeed
+/// with real metrics, but whose CANARY runs error out — exactly what a
+/// zero-trade `kill-trades` sabotage produces in production (every order is
+/// $0 notional → repeated broker-rule rejections → the backtest aborts with an
+/// `Err` instead of returning a metrics row, so `metrics_json` is never
+/// written / read back as NULL/None).
+struct FailingCanaryTester {
+    parent_total_return: f64,
+}
+
+#[async_trait]
+impl PaperTestRunner for FailingCanaryTester {
+    async fn run(&self, _strategy: &Strategy, _scenario: &Scenario) -> anyhow::Result<MetricsSummary> {
+        Ok(MetricsSummary {
+            total_return_pct: self.parent_total_return,
+            sharpe: self.parent_total_return,
+            ..MetricsSummary::default()
+        })
+    }
+
+    async fn run_canary(
+        &self,
+        _strategy: &Strategy,
+        _scenario: &Scenario,
+        _sabotage_variant: &str,
+    ) -> anyhow::Result<MetricsSummary> {
+        // Mirror the real zero-trade abort: a backtest that completes no trades
+        // because every order was rejected surfaces as an error, never a row.
+        anyhow::bail!(
+            "repeated_broker_error: aborted after 3 consecutive broker_min_order_size rejections \
+             (zero completed trades)"
+        )
+    }
+}
+
+fn gate_builder_total_return(
+    parent_day: &MetricsSummary,
+    child_day: &MetricsSummary,
+    parent_untouched: &MetricsSummary,
+    child_untouched: &MetricsSummary,
+) -> GateInput {
+    GateInput {
+        parent_day_metrics: parent_day.clone(),
+        child_day_metrics: child_day.clone(),
+        parent_untouched_metrics: parent_untouched.clone(),
+        child_untouched_metrics: child_untouched.clone(),
+        min_improvement: 0.1,
+        objective: Objective::TotalReturn,
+    }
+}
+
+/// B28: a zero-trade sabotage canary under `--objective total_return` must NOT
+/// take down the cycle. Before the fix, the canary backtest's `Err` (zero
+/// completed trades → NULL metrics) propagated up through `run_honesty_check`,
+/// so `run_cycle` returned early without writing a completion record and the
+/// stale cycle lock was left behind (held for 2h). After the fix the failed /
+/// zero-trade canary is scored as a neutral (no-improvement) sentinel — the
+/// gate correctly rejects it and the honesty check PASSES and completes.
+#[tokio::test]
+async fn run_honesty_check_total_return_zero_trade_canary_does_not_crash() {
+    let base = make_strategy();
+    let mutator = make_mutator();
+    let scenario = make_scenario();
+    let config = AutoOptimizerConfig::default();
+    // Parent legitimately makes a positive total_return; canary errors out.
+    let tester = FailingCanaryTester {
+        parent_total_return: 5.0,
+    };
+
+    let result = run_honesty_check(
+        &base,
+        &mutator,
+        &tester,
+        gate_builder_total_return,
+        &scenario,
+        &scenario,
+        &config,
+        0, // seed 0 → kill-trades (zeroed position sizing → zero trades)
+    )
+    .await
+    .expect("zero-trade canary must NOT error out the honesty check (B28)");
+
+    assert!(
+        result.passed_check,
+        "honesty check must PASS: a zero-trade sabotage must be rejected, not look good"
+    );
+    assert!(
+        matches!(result.gate_verdict, GateVerdict::Fail { .. }),
+        "gate verdict must reject the neutral-scored sabotage canary"
+    );
+    assert_eq!(result.sabotage_variant, "kill-trades");
 }
 
 #[test]
