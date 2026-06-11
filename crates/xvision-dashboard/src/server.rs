@@ -33,6 +33,7 @@
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
 // 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
+// 18d. POST  /api/marketplace/listings/:id/revoke     marketplace_route::post_revoke
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -523,6 +524,11 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/marketplace/publish",
             post(marketplace_route::post_publish),
+        )
+        // Seller-initiated revoke. Env-gated: returns 503 without chain config.
+        .route(
+            "/api/marketplace/listings/:id/revoke",
+            post(marketplace_route::post_revoke),
         )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(

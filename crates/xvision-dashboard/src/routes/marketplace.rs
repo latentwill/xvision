@@ -18,7 +18,7 @@
 
 use std::fmt;
 
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::{Path, State}, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 
 use alloy::primitives::{Address, B256, U256};
@@ -242,6 +242,65 @@ pub async fn post_publish(
             token_uri_bytes: token_uri.len(),
         }),
     ))
+}
+
+/// Response for a successful revoke.
+#[derive(Debug, Serialize)]
+pub struct RevokeOut {
+    pub listing_id: u64,
+    pub tx_hash: String,
+}
+
+/// `POST /api/marketplace/listings/:id/revoke` — seller-initiated revoke.
+///
+/// Returns 200 `{"listing_id": id, "tx_hash": "0x…"}` on success.
+/// 503 when chain env is not configured; 400 when the private key is invalid;
+/// 422 when the contract reverts (NotSeller, unknown id, already revoked) —
+/// the revert string is included in the response message.
+pub async fn post_revoke(
+    Path(id): Path<u64>,
+    State(_state): State<AppState>,
+) -> Result<Json<RevokeOut>, DashboardError> {
+    // a. Chain gate — all config validated before any chain write.
+    let chain = ChainEnv::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "chain not configured: set XVN_RPC_URL, XVN_CHAIN_ID, XVN_PUBLISHER_PK".into(),
+        )
+    })?;
+    let signer: PrivateKeySigner = chain.publisher_pk.parse().map_err(|_| {
+        DashboardError::ServiceUnavailable("XVN_PUBLISHER_PK is not a valid private key".into())
+    })?;
+    let marketplace_addresses = MarketplaceAddresses::from_env().ok_or_else(|| {
+        DashboardError::ServiceUnavailable(
+            "marketplace not configured: set XVN_LISTING_REGISTRY".into(),
+        )
+    })?;
+
+    // b. Build a signing driver and call revokeListing.
+    let driver = Erc8004MantleDriver::with_signer(
+        marketplace_addresses,
+        chain.rpc_url.clone(),
+        chain.chain_id,
+        signer,
+    );
+    let tx_hash = driver
+        .revoke_listing(U256::from(id))
+        .await
+        .map_err(|e| {
+            // Contract reverts (NotSeller, UnknownListing, AlreadyRevoked) surface
+            // as MarketplaceError::Contract; map them to 422 with the chain error
+            // text so callers can act on them. All other chain failures → 500.
+            let msg = e.to_string();
+            DashboardError::Validation {
+                field: "listing_id".into(),
+                msg: format!("revoke failed: {msg}"),
+            }
+        })?;
+
+    Ok(Json(RevokeOut {
+        listing_id: id,
+        tx_hash: format!("0x{tx_hash:x}"),
+    }))
 }
 
 #[cfg(test)]
