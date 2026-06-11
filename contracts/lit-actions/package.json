@@ -1,0 +1,9 @@
+{
+  "name": "xvision-lit-actions",
+  "private": true,
+  "type": "module",
+  "description": "Lit Protocol gate actions (version-controlled; pinned to IPFS by the operator). Pure validators are unit-tested via sealed-gate.test.mjs.",
+  "scripts": {
+    "test": "node sealed-gate.test.mjs"
+  }
+}

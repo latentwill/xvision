@@ -326,6 +326,7 @@ async fn attestations_503_names_registry_with_injected_config_sans_attestation()
             marketplace_deploy_block: None,
         }),
         license_token: None,
+        lit: None,
         chain_timeout: std::time::Duration::from_secs(45),
     };
     let (state, _tmp) = support::state_with_chain_config(cfg).await;
