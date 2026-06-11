@@ -26,7 +26,7 @@ use xvision_core::AssetSymbol;
 use crate::alpaca::{AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide};
 use crate::orderly::{
     orderly_symbol_for, AlgoKind, Credentials as OrderlyCredentials, OrderSide as OrderlyOrderSide,
-    OrderlyApi, OrderlyOrder, ReqwestOrderlyApi, ORDERLY_MAINNET_BASE,
+    OrderlyApi, OrderlyOrder, OrderlySymbolMeta, ReqwestOrderlyApi, ORDERLY_MAINNET_BASE,
 };
 
 /// Returns `true` when `asset` parses as an Alpaca crypto whitelist symbol
@@ -797,14 +797,23 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
     async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
         let symbol = Self::resolve_symbol(&req.asset)?;
 
-        // Base-asset quantity, rounded to 6 dp (Orderly perp qty precision
-        // is per-market; 6 dp is safely within every listed market's step).
-        let qty = (req.size * 1_000_000.0).round() / 1_000_000.0;
-        if !(qty > 0.0) {
+        // Align the base quantity to the market's step size (the venue
+        // rejects misaligned quantities with -1104 "does not match the
+        // step size"; caught live on testnet 2026-06-11) and enforce the
+        // per-order minimum.
+        let meta = self
+            .api
+            .get_symbol_meta(&symbol)
+            .await
+            .map_err(|e| anyhow::anyhow!("orderly get_symbol_meta: {e}"))?;
+        let qty = crate::orderly::round_to_tick(req.size, meta.base_tick);
+        if !(qty > 0.0) || qty < meta.base_min {
             anyhow::bail!(
-                "orderly order amount is too small after rounding: size {} for {}",
+                "orderly order amount is too small: size {} for {} (base_min {}, step {})",
                 req.size,
-                req.asset
+                req.asset,
+                meta.base_min,
+                meta.base_tick
             );
         }
 
@@ -1115,6 +1124,13 @@ mod orderly_live_surface_tests {
         async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {
             Ok(50_000.0)
         }
+
+        async fn get_symbol_meta(&self, _symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+            Ok(OrderlySymbolMeta {
+                base_tick: 0.00001,
+                base_min: 0.00001,
+            })
+        }
     }
 
     fn filled_order(id: u64, qty: f64, price: f64) -> OrderlyOrder {
@@ -1215,10 +1231,10 @@ mod orderly_live_surface_tests {
     }
 
     #[tokio::test]
-    async fn submit_order_rounds_size_to_six_decimal_places() {
+    async fn submit_order_aligns_size_to_market_step() {
         let api = MockApi {
-            create_result: Some(filled_order(9, 0.123457, 70_000.0)),
-            get_result: Some(filled_order(9, 0.123457, 70_000.0)),
+            create_result: Some(filled_order(9, 0.12345, 70_000.0)),
+            get_result: Some(filled_order(9, 0.12345, 70_000.0)),
             ..Default::default()
         };
         let surface = OrderlyLiveSurface::with_api(api);
@@ -1228,8 +1244,11 @@ mod orderly_live_surface_tests {
             .await
             .expect("submit must succeed");
 
+        // Mock symbol meta serves base_tick = 0.00001 — qty must be
+        // rounded DOWN onto the step grid (venue rejects misaligned
+        // quantities with -1104), never up past the decided size.
         let created = surface.api.created.lock().unwrap().clone();
-        assert_eq!(created[0].quantity, 0.123457);
+        assert!((created[0].quantity - 0.12345).abs() < 1e-12);
     }
 
     #[tokio::test]

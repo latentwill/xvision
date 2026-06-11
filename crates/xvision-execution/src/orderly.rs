@@ -139,6 +139,17 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Round `qty` DOWN to a multiple of `tick`, defusing f64 noise (e.g.
+/// 0.00048 / 0.00001 = 47.999999…) by nudging the ratio before flooring.
+/// Rounding down (never up) keeps the order within the decided notional.
+pub(crate) fn round_to_tick(qty: f64, tick: f64) -> f64 {
+    if tick <= 0.0 {
+        return qty;
+    }
+    let steps = (qty / tick + 1e-9).floor();
+    steps * tick
+}
+
 // ── Plain-data types ─────────────────────────────────────────────────────────
 
 /// Orderly order record returned by the API abstraction.
@@ -249,6 +260,21 @@ pub trait OrderlyApi: Send + Sync {
     /// notional decision into base quantity when the account holds no
     /// position on the market yet.
     async fn get_mark_price(&self, symbol: &str) -> Result<f64, ExecutorError>;
+
+    /// Per-market order constraints from the PUBLIC info endpoint
+    /// (`GET /v1/public/info/{symbol}`, no auth). Quantities must be a
+    /// multiple of `base_tick` and at least `base_min` or the venue
+    /// rejects with -1104 ("does not match the step size").
+    async fn get_symbol_meta(&self, symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError>;
+}
+
+/// Order-quantity constraints for one market. See [`OrderlyApi::get_symbol_meta`].
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct OrderlySymbolMeta {
+    /// Quantity step (e.g. `0.00001` BTC) — submitted qty must be a multiple.
+    pub base_tick: f64,
+    /// Minimum base quantity per order.
+    pub base_min: f64,
 }
 
 // ── Real implementation ───────────────────────────────────────────────────────
@@ -568,6 +594,26 @@ impl OrderlyApi for ReqwestOrderlyApi {
         }
         Ok(env.data.mark_price)
     }
+
+    async fn get_symbol_meta(&self, symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+        // Public endpoint — unsigned request.
+        let url = format!("{}/v1/public/info/{}", self.base_url, symbol);
+        let resp = self.http.get(&url).send().await.map_err(|e| {
+            if e.is_timeout() {
+                ExecutorError::Timeout(e.to_string())
+            } else {
+                ExecutorError::Network(e.to_string())
+            }
+        })?;
+        let env: OkEnvelope<OrderlySymbolMeta> = Self::parse_response(resp).await?;
+        if env.data.base_tick <= 0.0 {
+            return Err(ExecutorError::Internal(format!(
+                "orderly public info {symbol}: non-positive base_tick {}",
+                env.data.base_tick
+            )));
+        }
+        Ok(env.data)
+    }
 }
 
 // ── OrderlyExecutor ──────────────────────────────────────────────────────────
@@ -746,7 +792,18 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
             Some(p) => p,
             None => self.api.get_mark_price(&symbol).await?,
         };
-        let qty = notional_usd / mark_price;
+
+        // Align to the market's step size (venue rejects misaligned
+        // quantities with -1104; caught live on testnet 2026-06-11) and
+        // enforce the per-order minimum.
+        let meta = self.api.get_symbol_meta(&symbol).await?;
+        let qty = round_to_tick(notional_usd / mark_price, meta.base_tick);
+        if qty < meta.base_min {
+            return Err(ExecutorError::Rejected(format!(
+                "min order size: {} {} below base_min {} (notional ${:.2} @ mark {})",
+                qty, symbol, meta.base_min, notional_usd, mark_price
+            )));
+        }
 
         let side = match td.action {
             Action::Buy => OrderSide::Buy,
@@ -1072,6 +1129,13 @@ mod tests {
         async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {
             Ok(MOCK_PUBLIC_MARK_PRICE)
         }
+
+        async fn get_symbol_meta(&self, _symbol: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+            Ok(OrderlySymbolMeta {
+                base_tick: 0.00001,
+                base_min: 0.00001,
+            })
+        }
     }
 
     /// Mark price the mock "public futures" endpoint serves — distinct from
@@ -1284,6 +1348,9 @@ mod tests {
             async fn get_mark_price(&self, _: &str) -> Result<f64, ExecutorError> {
                 panic!("get_mark_price must not be called")
             }
+            async fn get_symbol_meta(&self, _: &str) -> Result<OrderlySymbolMeta, ExecutorError> {
+                panic!("get_symbol_meta must not be called")
+            }
         }
 
         let executor = OrderlyExecutor::with_api(PanicApi);
@@ -1461,6 +1528,15 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"success":true,"data":{"mark_price":70000.0}}"#)
+            .create_async()
+            .await;
+
+        // Stub GET /v1/public/info/PERP_BTC_USDC — step-size metadata.
+        let _info = server
+            .mock("GET", "/v1/public/info/PERP_BTC_USDC")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"success":true,"data":{"base_tick":0.00001,"base_min":0.00001}}"#)
             .create_async()
             .await;
 
