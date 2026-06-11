@@ -376,6 +376,9 @@ export const autooptimizerKeys = {
     [...autooptimizerKeys.all, "diversity", q ?? {}] as const,
   blob: (hash: string | null | undefined) =>
     [...autooptimizerKeys.all, "blob", hash ?? ""] as const,
+  cycleEvents: (cycleId: string | null | undefined) =>
+    [...autooptimizerKeys.all, "cycle-events", cycleId ?? ""] as const,
+  river: () => [...autooptimizerKeys.all, "river"] as const,
 };
 
 // ─── TanStack Query hooks ─────────────────────────────────────────────────────
@@ -816,7 +819,7 @@ export type RiverNode = {
  */
 export function useCycleEvents(cycleId: string | null) {
   return useQuery<PersistedCycleEvent[]>({
-    queryKey: ["optimizer/cycle-events", cycleId],
+    queryKey: autooptimizerKeys.cycleEvents(cycleId),
     queryFn: () =>
       apiFetch<PersistedCycleEvent[]>(`/api/autooptimizer/cycles/${cycleId}/events`),
     enabled: !!cycleId,
@@ -831,7 +834,7 @@ export function useCycleEvents(cycleId: string | null) {
  */
 export function useRiver(opts?: { refetchIntervalWhileRunning?: boolean }) {
   return useQuery<RiverNode[]>({
-    queryKey: ["optimizer/river"],
+    queryKey: autooptimizerKeys.river(),
     queryFn: () => apiFetch<RiverNode[]>("/api/autooptimizer/river"),
     staleTime: 30_000,
     refetchInterval: opts?.refetchIntervalWhileRunning ? 15_000 : false,

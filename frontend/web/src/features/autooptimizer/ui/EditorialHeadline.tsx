@@ -27,7 +27,7 @@ export function EditorialHeadline({
           <span className="text-text-3 font-normal">{headline.subtitle}</span>
         </h1>
         {digest && (
-          <div className="mt-2.5 font-mono text-[11.5px] text-text-3 flex flex-wrap items-center gap-x-0">
+          <div className="mt-2.5 font-mono text-[11.5px] text-text-3 flex flex-wrap items-center">
             <span className="text-text-2">{digest.experiments} experiments</span>
             <span className="px-1.5 text-text-4">this week</span>
             <span className="mx-1.5 text-text-4">·</span>

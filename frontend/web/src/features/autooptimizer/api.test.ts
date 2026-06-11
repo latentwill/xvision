@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 
 import {
   formatGateVerdict,
@@ -12,13 +12,12 @@ import {
   type CycleRunDetail,
 } from "./api";
 import * as client from "@/api/client";
+import { makeClient } from "./test-utils";
 
 // ─── Hook test helpers ────────────────────────────────────────────────────────
 
 function makeWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
+  const queryClient = makeClient();
   return function Wrapper({ children }: { children: ReactNode }) {
     return createElement(QueryClientProvider, { client: queryClient }, children);
   };

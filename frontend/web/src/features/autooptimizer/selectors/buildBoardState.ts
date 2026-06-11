@@ -1,5 +1,7 @@
 import type { CycleProgressEvent } from "../api";
 
+// "queued": not yet assigned by this selector — no event currently produces it.
+// Consumed downstream by LineageRiver's ghost-fan filter (`state === "queued"`).
 export type BoardCardState = "queued" | "evaluating" | "kept" | "rejected" | "suspect";
 export type BoardCard = {
   hash: string;
@@ -8,6 +10,8 @@ export type BoardCard = {
   delta: number | null;
   writer: string | null;
 };
+// "keep": not yet assigned by this selector — no event currently produces it.
+// Consumed downstream by PhaseRibbon which orders phases including "keep".
 export type Phase = "idle" | "propose" | "eval" | "gate" | "keep" | "done";
 export type BoardState = { phase: Phase; cards: BoardCard[]; cycleId: string | null };
 
