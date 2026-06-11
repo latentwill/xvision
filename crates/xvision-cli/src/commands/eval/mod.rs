@@ -220,15 +220,19 @@ pub struct RunArgs {
     #[arg(long)]
     pub max_input_tokens: Option<u64>,
     /// Max cumulative output tokens across all model calls in the run.
-    /// Same advisory/strict semantics as `--max-input-tokens`.
+    /// STRICT when set: a breach cancels the run with a stable reason,
+    /// WITHOUT requiring `--cancel-on-token-limit` (a runaway output is
+    /// misconfiguration, not something to log and continue). Leave unset
+    /// for no output-token cap.
     #[arg(long)]
     pub max_output_tokens: Option<u64>,
     /// Max wall-clock seconds the run may take. Always a hard cap.
     #[arg(long)]
     pub max_wall_clock_secs: Option<u64>,
-    /// When set, breach of a token cap (`--max-input-tokens` or
-    /// `--max-output-tokens`) cancels the run. Without the flag, token
-    /// caps are advisory (logged but not enforced).
+    /// When set, breach of the INPUT token cap (`--max-input-tokens`)
+    /// cancels the run. Without the flag, the input cap is advisory
+    /// (logged but not enforced). NOTE: `--max-output-tokens` is strict
+    /// when set and does NOT depend on this flag.
     #[arg(long)]
     pub cancel_on_token_limit: bool,
     /// Skip the provider reachability preflight check before launching the run.

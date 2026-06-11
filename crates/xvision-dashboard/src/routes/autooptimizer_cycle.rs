@@ -210,6 +210,10 @@ pub async fn start_cycle(
     let day_scenario = build_day_scenario(&cfg, cadence_minutes)?;
     let baseline_scenario =
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)?;
+    // B19: synthesize the round-robin scenario_pool (empty unless configured in
+    // autooptimizer.toml). Same builders as the single pair so pool pairs share
+    // venue/fee/fill settings; empty ⇒ single-pair behavior (back-compat).
+    let scenario_pool = build_scenario_pool(&cfg, cadence_minutes)?;
     // F22/F26: fail fast with guidance instead of a confusing cross-provider 400
     // when the strategy's trader would route to a provider other than the cycle's.
     // Shared with the CLI via `autooptimizer::preflight` — no parallel guard.
@@ -227,6 +231,7 @@ pub async fn start_cycle(
         &judge,
         day_scenario,
         baseline_scenario,
+        scenario_pool,
         parent_strategies,
         explicit_parent_hashes,
     );
@@ -633,6 +638,7 @@ pub(super) fn build_cycle_config(
     judge: &Judge,
     day_scenario: Scenario,
     baseline_scenario: Scenario,
+    scenario_pool: Vec<(Scenario, Scenario)>,
     parent_strategies: HashMap<String, Strategy>,
     explicit_parent_hashes: Vec<ContentHash>,
 ) -> CycleConfig {
@@ -654,7 +660,34 @@ pub(super) fn build_cycle_config(
         explicit_parent_hashes,
         objective: cfg.objective,
         regime_set: cfg.regime_set.clone(),
+        scenario_pool,
+        // The dashboard cycle launcher does not (yet) surface a per-cycle
+        // output-token cap; preserve prior behaviour (no cycle-level cap).
+        max_output_tokens: None,
     }
+}
+
+/// B19: synthesize the round-robin `scenario_pool` for the dashboard cycle
+/// launcher. One `(day, baseline)` pair per configured `ScenarioWindowPair`,
+/// built through the same shared optimizer scenario builders as the single
+/// pair. Empty when `scenario_pool` is unset (back-compat).
+pub(super) fn build_scenario_pool(
+    cfg: &AutoOptimizerConfig,
+    cadence_minutes: u32,
+) -> Result<Vec<(Scenario, Scenario)>, DashboardError> {
+    cfg.scenario_pool
+        .iter()
+        .map(|pair| {
+            let day = synthesize_optimizer_day_scenario(&pair.day, cadence_minutes, "xvn-dashboard");
+            let baseline = synthesize_baseline_untouched_scenario(&day, &pair.baseline).map_err(|e| {
+                DashboardError::Validation {
+                    field: "scenario_pool".into(),
+                    msg: format!("synthesize scenario_pool '{}' baseline: {e}", pair.label),
+                }
+            })?;
+            Ok((day, baseline))
+        })
+        .collect()
 }
 
 pub(super) async fn load_strategy_parent(
@@ -1006,12 +1039,18 @@ mod tests {
             &judge,
             day_scenario,
             baseline_scenario,
+            Vec::new(),
             HashMap::new(),
             Vec::new(),
         );
 
         assert_eq!(cycle.judge_provider, "ollama");
         assert_eq!(cycle.judge_model, "qwen2.5-coder:7b");
+        // B19: default config has no scenario_pool ⇒ empty pool (single-pair path).
+        assert!(
+            cycle.scenario_pool.is_empty(),
+            "default config must yield an empty scenario_pool (back-compat)"
+        );
     }
 
     fn strategy_with_cadence(cadence_minutes: u32) -> Strategy {

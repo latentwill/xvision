@@ -56,6 +56,27 @@ pub struct CycleConfig {
     /// When empty the orchestrator uses the single day+baseline path unchanged.
     /// Populated from `AutoOptimizerConfig.regime_set`.
     pub regime_set: Vec<RegimeWindow>,
+    /// B19: pre-synthesized pool of `(day_scenario, baseline_scenario)` pairs the
+    /// cycle SAMPLES round-robin across candidates (candidate `i` uses
+    /// `scenario_pool[i % len]`), so different candidates are scored on different
+    /// regimes and a strategy tuned to one fixed window can't dominate the cycle.
+    ///
+    /// Synthesized from `AutoOptimizerConfig.scenario_pool` (one entry per
+    /// `ScenarioWindowPair`). EMPTY (the default) ⇒ every candidate uses the
+    /// single `day_scenario`/`baseline_scenario` pair above, exactly as before
+    /// (back-compat). Ignored on the regime-matrix path (`regime_set` non-empty),
+    /// which has its own multi-window semantics.
+    pub scenario_pool: Vec<(Scenario, Scenario)>,
+    /// Strict per-call output-token cap applied to EVERY LLM dispatch this
+    /// cycle (candidate paper-test trader decisions, the experiment writer,
+    /// and the judge). `None` = no cycle-level cap; each slot keeps its own
+    /// `max_tokens`. `Some(n)` is the cap the CLI installs via
+    /// [`crate::autooptimizer::metering_dispatch::MaxTokensCapDispatch`] —
+    /// enforcement happens at the provider boundary, so this field is the
+    /// recorded cycle-level intent that travels with the config.
+    ///
+    /// Set by `xvn optimizer run-cycle --max-output-tokens N`.
+    pub max_output_tokens: Option<u32>,
 }
 
 pub struct CycleResult {
@@ -442,6 +463,31 @@ pub fn exploration_seed_for(cycle_id: &str, mutation_idx: usize) -> u64 {
     h.wrapping_mul(0x0000_0100_0000_01b3)
 }
 
+/// B19: round-robin selection of the `(day_scenario, baseline_scenario)` pair a
+/// given candidate is evaluated on.
+///
+/// - When `pool` is empty, returns the `fallback` pair (the single
+///   `day_window`/`baseline_untouched_window` pair) for EVERY candidate — i.e.
+///   the legacy behavior, unchanged.
+/// - When `pool` is non-empty, returns `pool[mutation_idx % pool.len()]`, so the
+///   pairs cycle deterministically across candidates.
+///
+/// Pure and deterministic so the round-robin can be unit-tested without running
+/// any backtests. Returned references borrow from `pool`/`fallback`; both the
+/// child evaluation AND the parent baseline it is compared against MUST use the
+/// returned pair to keep the gate comparison valid (B19 comparability rule).
+pub fn select_scenario_pair<'a>(
+    pool: &'a [(Scenario, Scenario)],
+    fallback: (&'a Scenario, &'a Scenario),
+    mutation_idx: usize,
+) -> (&'a Scenario, &'a Scenario) {
+    if pool.is_empty() {
+        return fallback;
+    }
+    let (day, baseline) = &pool[mutation_idx % pool.len()];
+    (day, baseline)
+}
+
 async fn process_parent_mutations<F>(
     pool: &SqlitePool,
     strategy_blob_store: &BlobStore,
@@ -475,11 +521,21 @@ where
     let mut rejected: Vec<LineageNode> = Vec::new();
     let mut no_candidate_count: usize = 0;
 
+    // B19: when the scenario_pool is active, the parent must be re-evaluated on
+    // EACH sampled pair (a child is compared only against its parent on the SAME
+    // pair — comparability rule). Those per-pair parent metrics are cached lazily
+    // below (`parent_pool_metrics`). The eager single-pair parent backtest is
+    // therefore only meaningful for the legacy single-pair path; skip it when a
+    // pool is configured to avoid a wasted backtest on a pair no candidate may
+    // even use.
+    let scenario_pool_active = cycle_config.regime_set.is_empty() && !cycle_config.scenario_pool.is_empty();
+
     // Fix 6: Only backtest the parent on the legacy day/baseline scenarios when
     // regime_set is empty. When regime_set is non-empty, the legacy day+baseline
     // metrics are never used for classification — only per-regime backtests drive
-    // the gate. Skipping these runs avoids wasted backtests.
-    let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() {
+    // the gate. Skipping these runs avoids wasted backtests. B19: also skip when
+    // a scenario_pool is active (per-pair parent metrics are computed lazily).
+    let (parent_day, parent_untouched) = if cycle_config.regime_set.is_empty() && !scenario_pool_active {
         let pd = paper_tester
             .run(parent_strategy, &cycle_config.day_scenario)
             .await?;
@@ -490,6 +546,13 @@ where
     } else {
         (MetricsSummary::default(), MetricsSummary::default())
     };
+
+    // B19: per-pair parent metrics cache, keyed by BOTH sampled scenario ids.
+    // The baseline id is part of the key because two pool entries may reuse the
+    // same training/day window with different holdout windows. In that shape,
+    // keying only by day id would incorrectly reuse the first holdout metrics
+    // and break the parent/child comparability rule.
+    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> = HashMap::new();
 
     // Fix 2 + 3: validate regime set (duplicate labels, day/baseline overlap)
     // before entering the mutation loop. Returns immediately on the first
@@ -775,6 +838,49 @@ where
             phase: Phase::GateEvaluating,
             detail: "Running backtests and numeric gate".to_string(),
         });
+        // B19: round-robin select THIS candidate's (day, baseline) pair from the
+        // pool. On the legacy / regime paths the pool is empty, so the fallback
+        // (the single cycle day/baseline pair) is returned for every candidate —
+        // behavior identical to before. The selected pair is then used for BOTH
+        // the child eval AND the parent baseline it is compared against, so the
+        // gate comparison stays valid (comparability rule).
+        let (sampled_day, sampled_baseline) = select_scenario_pair(
+            &cycle_config.scenario_pool,
+            (&cycle_config.day_scenario, &cycle_config.baseline_scenario),
+            mutation_idx,
+        );
+        // B19 comparability: parent metrics MUST come from the SAME sampled pair.
+        // For the pool path, compute (and cache by sampled pair) the parent's
+        // day+baseline metrics on this pair; for the legacy/regime paths reuse
+        // the pre-computed `parent_day`/`parent_untouched` exactly as before.
+        let (gate_parent_day, gate_parent_untouched) = if scenario_pool_active {
+            let pair_key = (sampled_day.id.clone(), sampled_baseline.id.clone());
+            if !parent_pool_metrics.contains_key(&pair_key) {
+                let pd = paper_tester.run(parent_strategy, sampled_day).await?;
+                let pu = paper_tester.run(parent_strategy, sampled_baseline).await?;
+                parent_pool_metrics.insert(pair_key.clone(), (pd, pu));
+            }
+            let (pd, pu) = parent_pool_metrics
+                .get(&pair_key)
+                .expect("parent pool metrics just inserted");
+            (pd.clone(), pu.clone())
+        } else {
+            (parent_day.clone(), parent_untouched.clone())
+        };
+        if scenario_pool_active {
+            // B19 observability: the proposal currently gives operators no way to
+            // tell which regime a candidate was scored on. Emit the sampled pair's
+            // label (display_name carries the window) so the round-robin is visible
+            // in cycle logs / SSE-adjacent tracing.
+            tracing::info!(
+                cycle_id,
+                parent_hash = %ph_str,
+                mutation_idx,
+                scenario_label = %sampled_day.display_name,
+                scenario_day = %sampled_day.description,
+                "B19 round-robin: candidate evaluated on sampled scenario pair"
+            );
+        }
         let gate_t0 = Instant::now();
         let outcome = gate_and_classify(
             parent_strategy,
@@ -783,10 +889,12 @@ where
             paper_tester,
             config.baseline_direction,
             baseline_cache,
-            &parent_day,
-            &parent_untouched,
+            &gate_parent_day,
+            &gate_parent_untouched,
             min_improvement,
             &parent_regime_metrics,
+            sampled_day,
+            sampled_baseline,
             progress,
             cycle_id,
             &ph_str,
@@ -1010,6 +1118,16 @@ async fn gate_and_classify<F>(
     // `process_parent_mutations` so each parent is evaluated only once per
     // regime window across all its mutations.
     parent_regime_metrics: &HashMap<String, (MetricsSummary, MetricsSummary)>,
+    // B19: the (day, baseline) scenario pair THIS candidate is evaluated on,
+    // selected round-robin by the caller. On the legacy / regime paths this is
+    // the single cycle day/baseline pair (`cycle_config.day_scenario` /
+    // `baseline_scenario`); on the scenario_pool path it is the sampled pair.
+    // The `parent_day`/`parent_untouched` passed above were computed on this SAME
+    // pair (comparability), so the legacy gate path uses these scenarios for the
+    // child eval, inversion check, and random-baseline edge — never the raw
+    // `cycle_config` fields — to stay consistent with the parent metrics.
+    sampled_day: &Scenario,
+    sampled_baseline: &Scenario,
     // Progress callback + context for emitting inner phase events.
     progress: &F,
     cycle_id: &str,
@@ -1173,7 +1291,12 @@ where
         });
     }
 
-    // ── Legacy / empty-regime-set path (UNCHANGED) ───────────────────────────
+    // ── Legacy / single-pair / scenario_pool path ────────────────────────────
+    // B19: evaluate the child on the caller-selected `sampled_day` /
+    // `sampled_baseline` pair (the single cycle pair on the legacy path; the
+    // round-robin-sampled pair on the scenario_pool path). The `parent_day` /
+    // `parent_untouched` metrics passed in were computed on this SAME pair, so
+    // parent and child remain directly comparable in the gate.
     progress(CycleProgressEvent::PhaseStarted {
         session_id: String::new(),
         cycle_id: cycle_id.to_string(),
@@ -1182,7 +1305,7 @@ where
         detail: "Day-window backtest".to_string(),
     });
     let t0 = Instant::now();
-    let child_day = paper_tester.run(&child, &cycle_config.day_scenario).await?;
+    let child_day = paper_tester.run(&child, sampled_day).await?;
     progress(CycleProgressEvent::PhaseFinished {
         session_id: String::new(),
         cycle_id: cycle_id.to_string(),
@@ -1199,7 +1322,7 @@ where
         detail: "Untouched-window backtest".to_string(),
     });
     let t0 = Instant::now();
-    let child_untouched = paper_tester.run(&child, &cycle_config.baseline_scenario).await?;
+    let child_untouched = paper_tester.run(&child, sampled_baseline).await?;
     progress(CycleProgressEvent::PhaseFinished {
         session_id: String::new(),
         cycle_id: cycle_id.to_string(),
@@ -1231,8 +1354,8 @@ where
             parent_strategy,
             &diff,
             paper_tester,
-            &cycle_config.day_scenario,
-            &cycle_config.baseline_scenario,
+            sampled_day,
+            sampled_baseline,
         )
         .await?;
         progress(CycleProgressEvent::PhaseFinished {
@@ -1279,12 +1402,15 @@ where
     };
     // Random-baseline edge metrics (informational; never gating). Memoized per
     // (training window, direction) so the extra backtest runs at most once per
-    // cycle. Uses the parent's structure (risk sizing, filters) with random,
-    // direction-restricted decisions.
+    // distinct training window. Uses the parent's structure (risk sizing, filters)
+    // with random, direction-restricted decisions. B19: keyed on the SAMPLED day
+    // scenario so the child's edge is measured against a baseline on the same
+    // window it was scored on (the cache key already keys on scenario id, so
+    // distinct pool pairs get distinct baselines).
     let baseline_score = random_baseline_score(
         paper_tester,
         parent_strategy,
-        &cycle_config.day_scenario,
+        sampled_day,
         baseline_direction,
         obj,
         baseline_cache,
@@ -1773,5 +1899,91 @@ mod tests {
             bear_row.verdict
         );
         assert!((bear_row.delta_sharpe - (-0.2)).abs() < 1e-9, "bear Δsharpe");
+    }
+
+    // ── B19: round-robin scenario_pair selection ──────────────────────────────
+
+    use crate::autooptimizer::config::DayWindow;
+    use crate::autooptimizer::scenario_synthesis::synthesize_optimizer_day_scenario;
+
+    fn pool_scenario(label: &str, year: i32) -> Scenario {
+        let mut s = synthesize_optimizer_day_scenario(
+            &DayWindow {
+                start: chrono::NaiveDate::from_ymd_opt(year, 1, 1).unwrap(),
+                end: chrono::NaiveDate::from_ymd_opt(year, 3, 1).unwrap(),
+            },
+            60,
+            "test",
+        );
+        // Make the id deterministic per label so assertions don't depend on ULID.
+        s.id = format!("day-{label}");
+        s.display_name = label.to_string();
+        s
+    }
+
+    #[test]
+    fn select_scenario_pair_empty_pool_always_returns_fallback() {
+        // Back-compat: an empty pool must return the single fallback pair for
+        // EVERY candidate index — identical to the legacy single-pair behavior.
+        let fb_day = pool_scenario("fallback-day", 2025);
+        let fb_base = pool_scenario("fallback-base", 2026);
+        let pool: Vec<(Scenario, Scenario)> = vec![];
+        for i in 0..10 {
+            let (d, b) = select_scenario_pair(&pool, (&fb_day, &fb_base), i);
+            assert_eq!(d.id, "day-fallback-day", "idx {i} must use fallback day");
+            assert_eq!(b.id, "day-fallback-base", "idx {i} must use fallback baseline");
+        }
+    }
+
+    #[test]
+    fn select_scenario_pair_round_robins_pool_by_index_modulo_len() {
+        // K = 3 pairs, N = 7 candidates → candidate i uses pair i % 3.
+        let fb_day = pool_scenario("fallback-day", 2025);
+        let fb_base = pool_scenario("fallback-base", 2026);
+        let pool: Vec<(Scenario, Scenario)> = vec![
+            (pool_scenario("p0-day", 2020), pool_scenario("p0-base", 2021)),
+            (pool_scenario("p1-day", 2022), pool_scenario("p1-base", 2023)),
+            (pool_scenario("p2-day", 2024), pool_scenario("p2-base", 2025)),
+        ];
+        let expected_day = ["day-p0-day", "day-p1-day", "day-p2-day"];
+        let expected_base = ["day-p0-base", "day-p1-base", "day-p2-base"];
+        for i in 0..7usize {
+            let (d, b) = select_scenario_pair(&pool, (&fb_day, &fb_base), i);
+            assert_eq!(
+                d.id,
+                expected_day[i % 3],
+                "candidate {i} must select pool day pair {}",
+                i % 3
+            );
+            assert_eq!(
+                b.id,
+                expected_base[i % 3],
+                "candidate {i} must select pool baseline pair {}",
+                i % 3
+            );
+            // The fallback must NOT leak in when the pool is non-empty.
+            assert_ne!(d.id, "day-fallback-day", "candidate {i} must not use fallback");
+        }
+    }
+
+    #[test]
+    fn select_scenario_pair_pair_is_self_consistent_for_a_candidate() {
+        // Comparability invariant (pure level): the day and baseline returned for a
+        // given candidate come from the SAME pool entry — so the parent baseline
+        // computed on this same pair is directly comparable to the child. We assert
+        // the returned day/baseline always belong to the same entry index.
+        let fb_day = pool_scenario("fallback-day", 2025);
+        let fb_base = pool_scenario("fallback-base", 2026);
+        let pool: Vec<(Scenario, Scenario)> = vec![
+            (pool_scenario("p0-day", 2020), pool_scenario("p0-base", 2021)),
+            (pool_scenario("p1-day", 2022), pool_scenario("p1-base", 2023)),
+        ];
+        for i in 0..6usize {
+            let (d, b) = select_scenario_pair(&pool, (&fb_day, &fb_base), i);
+            let idx = i % 2;
+            // day suffix and baseline suffix must share the same pair index.
+            assert!(d.id.starts_with(&format!("day-p{idx}-")));
+            assert!(b.id.starts_with(&format!("day-p{idx}-")));
+        }
     }
 }
