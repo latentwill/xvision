@@ -11,12 +11,12 @@
  * ## What the gate enforces (in order)
  *   1. SIGNATURE: ethers.utils.verifyMessage(message, signature) === address
  *      (compared lowercased). Proves the caller controls `address`.
- *   2. MESSAGE BINDING / REPLAY: `message` is a structured SIWE-ish string
+ *   2. MESSAGE BINDING / FRESHNESS: `message` is a structured SIWE-ish string
  *      that embeds the listingId, a nonce, and an expiry unix timestamp. The
  *      gate rejects if the message is expired, or if its listingId does not
  *      match the listingId the caller is trying to unlock. This binds the
  *      signature to one listing and a short time window so a captured
- *      signature cannot be replayed for a different listing or later.
+ *      signature cannot be used for a different listing or after expiry.
  *   3. LICENSE: an ERC-1155 `balanceOf(address, listingId)` RPC call must
  *      return > 0 — the caller must actually hold the license NFT.
  *   4. DECRYPT: only then does it call Lit.Actions.Decrypt({pkpId,ciphertext})
@@ -28,7 +28,7 @@
  *
  *     xvision sealed-bundle license request
  *     Listing: <listingId>            // decimal, must equal expectedListingId
- *     Nonce: <hex-or-alphanumeric>    // >= 8 chars, anti-replay entropy
+ *     Nonce: <hex-or-alphanumeric>    // >= 8 chars, length-checked only (see SECURITY NOTE below)
  *     Expiry: <unixSeconds>           // integer; rejected once nowSec > Expiry
  *
  * Example:
@@ -45,6 +45,21 @@
  * can be unit-tested without the Lit runtime (see sealed-gate.test.mjs). The
  * `main` entrypoint is Lit-runtime-only (it touches `ethers`, the RPC
  * provider, and the `Lit.Actions` globals).
+ *
+ * ## SECURITY NOTE — nonce semantics
+ * Nonce is length-checked only (the action is stateless — no consumed-nonce
+ * store). Replay within the expiry window is possible but harmless: the gate
+ * recovers the signer address from the signature and checks balanceOf for THAT
+ * address, so a replayed message only ever re-grants decryption to a current
+ * license holder. Keep the expiry window short. A consumed-nonce store is a
+ * later hardening if needed.
+ *
+ * ## SECURITY NOTE — js_params trust (route-wiring phase)
+ * nftAddress, rpcUrl, and pkpId arrive as js_params in this Phase-1 action.
+ * At route-wiring time these MUST be sourced from gate-pinned constants or
+ * on-chain listing data, NOT free caller params — otherwise a caller could
+ * point balanceOf at a contract/RPC that returns a fake non-zero balance.
+ * Pin them before live use.
  */
 
 /** Minimum nonce length — short nonces give poor replay entropy. */
@@ -121,7 +136,8 @@ export function validateMessage(message, { expectedListingId, nowSec }) {
     };
   }
 
-  // Nonce: must be present and have enough entropy (anti-replay).
+  // Nonce: length-checked only (the action is stateless — no consumed-nonce
+  // store). See the SECURITY NOTE in the header for replay semantics.
   if (typeof nonce !== "string" || nonce.length < MIN_NONCE_LEN) {
     return { ok: false, error: "nonce too short / missing" };
   }
@@ -171,7 +187,8 @@ async function main() {
       });
     }
 
-    // 2. Validate message binding + freshness (replay protection).
+    // 2. Validate message binding + freshness (expiry is the only temporal
+    //    bound — see SECURITY NOTE in header for nonce/replay semantics).
     const nowSec = Math.floor(Date.now() / 1000);
     const v = validateMessage(message, { expectedListingId: listingId, nowSec });
     if (!v.ok) {
