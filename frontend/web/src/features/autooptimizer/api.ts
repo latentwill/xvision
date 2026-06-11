@@ -168,6 +168,8 @@ export type CycleNodeDetail = LineageNode & {
   metrics_untouched?: RegimeMetrics | null;
   /** Per-regime evaluation results; empty for single-window cycles or pre-Phase-2 nodes. */
   regime_results: RegimeResult[];
+  /** Day-window Sharpe delta from the gate verdict. Null for nodes without a gate result. */
+  delta_day?: number | null;
 };
 
 /** One historic optimizer cycle (grouped from lineage) with F23 tokens + cost. */

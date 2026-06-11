@@ -306,6 +306,17 @@ describe("OptimizerHome — never ran", () => {
     expect(screen.getByText("Keep")).toBeInTheDocument();
     expect(screen.queryByText(/waiting for/i)).toBeNull();
   });
+
+  it("(M-5) renders exactly one Launch run button — ConsoleModule is the sole owner in never-ran state", async () => {
+    mockMutations();
+    renderWithProviders(<OptimizerHome />);
+
+    await screen.findByRole("heading", {
+      level: 1,
+      name: /The optimizer hasn't run yet\./,
+    });
+    expect(screen.getAllByRole("button", { name: /launch run/i })).toHaveLength(1);
+  });
 });
 
 describe("OptimizerHome — schedule subtitle", () => {

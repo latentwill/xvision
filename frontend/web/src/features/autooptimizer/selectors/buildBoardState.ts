@@ -94,7 +94,7 @@ export function buildBoardState(events: CycleProgressEvent[]): BoardState {
  */
 export function boardFromNodes(nodes: CycleNodeDetail[]): BoardCard[] {
   return nodes.map((n) => {
-    const delta = (n as Record<string, unknown>).delta_day;
+    const delta = n.delta_day;
     return {
       hash: n.bundle_hash,
       label: null,

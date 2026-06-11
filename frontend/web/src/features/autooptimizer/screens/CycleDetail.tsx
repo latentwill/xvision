@@ -15,7 +15,7 @@ function bestKeptFind(cycle: CycleRunDetail): { hash: string; delta: number } | 
   let best: { hash: string; delta: number } | null = null;
   for (const n of cycle.nodes ?? []) {
     if (n.status !== "active") continue;
-    const delta = (n as Record<string, unknown>).delta_day;
+    const delta = n.delta_day;
     if (typeof delta !== "number") continue;
     if (best === null || delta > best.delta) best = { hash: n.bundle_hash, delta };
   }

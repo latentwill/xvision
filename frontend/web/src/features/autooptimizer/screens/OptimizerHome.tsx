@@ -23,37 +23,7 @@ import {
   type LineageNode,
 } from "../api";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
-
-// ─── Small time helpers ───────────────────────────────────────────────────────
-
-function formatRelativeTime(iso?: string): string {
-  if (!iso) return "";
-  try {
-    const diffMs = Date.now() - new Date(iso).getTime();
-    const diffMin = Math.floor(diffMs / 60_000);
-    if (diffMin < 1) return "just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
-    const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h ago`;
-    return `${Math.floor(diffHr / 24)}d ago`;
-  } catch {
-    return iso;
-  }
-}
-
-function formatUntil(iso: string): string | null {
-  try {
-    const diffMs = new Date(iso).getTime() - Date.now();
-    if (!Number.isFinite(diffMs) || diffMs <= 0) return null;
-    const diffMin = Math.round(diffMs / 60_000);
-    if (diffMin < 60) return `in ${Math.max(diffMin, 1)}m`;
-    const diffHr = Math.round(diffMin / 60);
-    if (diffHr < 24) return `in ${diffHr}h`;
-    return `in ${Math.round(diffHr / 24)}d`;
-  } catch {
-    return null;
-  }
-}
+import { formatRelativeTime, formatUntil } from "../utils/time";
 
 /** Distinct cycles that still hold an active (kept) node. */
 function countActiveLineages(nodes: LineageNode[]): number {
@@ -103,6 +73,7 @@ export function OptimizerHome() {
   const isActive = state !== "idle";
 
   const cycleRows = cycles.data ?? [];
+  const hasHistory = cycleRows.length > 0;
   const lastCycle = cycleRows[0] ?? null; // CycleRunSummary — only last_created_at exists
   const lastCycleDetail = useCycleRun(lastCycle?.cycle_id);
 
@@ -193,14 +164,16 @@ export function OptimizerHome() {
         </button>
         {cancelButton}
       </>
-    ) : (
+    ) : hasHistory ? (
+      // Idle with history: show the launch button in the headline.
+      // Never-ran: no action here — ConsoleModule's NeverRanExplainer is the
+      // single owner of the launch button via the launchAction slot below.
       launchButton
-    );
+    ) : null;
 
   // Honesty chips: sample sizes for the charts row.
   const attemptCount = cycleRows.reduce((n, c) => n + c.node_count, 0);
-  const cycleCount = statsRows.length;
-  const hasHistory = cycleRows.length > 0;
+  const cycleCount = cycleRows.length;
 
   return (
     <>

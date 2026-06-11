@@ -6,21 +6,7 @@ import { boardFromNodes, buildBoardState } from "../selectors/buildBoardState";
 import { PhaseRibbon } from "./PhaseRibbon";
 import { ExperimentBoard } from "./ExperimentBoard";
 import { NarratedFeed } from "./NarratedFeed";
-
-function formatRelativeTime(iso?: string): string {
-  if (!iso) return "";
-  try {
-    const diffMs = Date.now() - new Date(iso).getTime();
-    const diffMin = Math.floor(diffMs / 60_000);
-    if (diffMin < 1) return "just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
-    const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h ago`;
-    return `${Math.floor(diffHr / 24)}d ago`;
-  } catch {
-    return iso;
-  }
-}
+import { formatRelativeTime } from "../utils/time";
 
 /**
  * The optimizer console: one component, three modes.
@@ -103,6 +89,7 @@ export function ConsoleModule({
             <>Last cycle{lastCycleAgo ? ` · ${lastCycleAgo}` : ""}</>
           )}
         </div>
+        {/* Intentional extension point — CycleDetail / home may populate this in the live/replay header. */}
         {launchAction}
       </div>
       <PhaseRibbon phase={live ? board.phase : "done"} />
