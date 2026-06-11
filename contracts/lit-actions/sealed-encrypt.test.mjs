@@ -7,10 +7,12 @@
  * The encrypt action is tiny and Lit-runtime-only (it just calls
  * `Lit.Actions.Encrypt`), so there are no pure validators to unit-test.
  * Instead we assert:
- *   1. Importing the SOURCE in Node does NOT run the action (the `typeof Lit`
- *      guard holds) — i.e. importing is side-effect-free.
- *   2. The DEPLOY file exists, is byte-valid JS (`node --check`), and still
- *      carries the guard so it won't crash if loaded outside the TEE.
+ *   1. Importing the SOURCE in Node does NOT run the action — Chipotle
+ *      auto-invokes `main(js_params)`, so the file must contain NO top-level
+ *      invocation and importing it is side-effect-free by construction.
+ *   2. The DEPLOY file exists, is byte-valid JS (`node --check`), defines
+ *      `main`, and has no top-level self-invocation (the Datil bare-globals
+ *      and invented-`jsParams` patterns both threw ReferenceError live).
  */
 
 import assert from "node:assert/strict";
@@ -34,9 +36,10 @@ function test(name, fn) {
   }
 }
 
-test("importing the source is side-effect-free (Lit guard holds)", async () => {
-  // If the `typeof Lit` guard were missing, this import would throw a
-  // ReferenceError on `Lit`/`pkpId`. A clean import proves the guard holds.
+test("importing the source is side-effect-free (no top-level invocation)", async () => {
+  // If a top-level self-invoke crept back in, this import would throw a
+  // ReferenceError on `Lit`/`jsParams`. A clean import proves main is only
+  // defined, never called — Chipotle's runtime is what invokes it.
   await import("./sealed-encrypt.js");
 });
 
@@ -46,9 +49,14 @@ test("deploy file passes node --check (valid JS)", () => {
   execFileSync(process.execPath, ["--check", deployPath]);
 });
 
-test("deploy file keeps the typeof-Lit runtime guard", () => {
+test("deploy file defines main with no top-level self-invocation", () => {
   const deploy = readFileSync(join(dir, "sealed-encrypt.deploy.js"), "utf8");
-  assert.match(deploy, /typeof Lit !== "undefined"/);
+  // Chipotle auto-invokes main(js_params); any self-invoke pattern is a
+  // live ReferenceError (bare globals AND a `jsParams` global both failed).
+  assert.match(deploy, /async function main\(\{ pkpId, message \}\)/);
+  assert.doesNotMatch(deploy, /typeof Lit !== "undefined"/);
+  assert.doesNotMatch(deploy, /=\s*jsParams|jsParams\s*[.;)]/); // usage, not prose
+  assert.doesNotMatch(deploy, /^\s*main\(/m);
   assert.match(deploy, /Lit\.Actions\.Encrypt/);
   // generated header present, and no stray ESM export survived
   assert.match(deploy, /^\/\/ GENERATED/);

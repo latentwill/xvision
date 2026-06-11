@@ -41,13 +41,12 @@
  *   { pkpId, ciphertext, address, message, signature,
  *     listingId, nftAddress, rpcUrl }
  *
- * PARAM ACCESS — Naga ("Chipotle" v3) jsParams object, NOT bare globals.
- * Datil (V0) spread jsParams into the action's global scope, so older actions
- * could read `pkpId`/`message`/etc. as free identifiers. Naga removed that:
- * params arrive ONLY on the `jsParams` object. The runtime invoke guard below
- * destructures `jsParams` and passes the values into `main({ ... })`, which
- * receives them as a destructured parameter object. Reading them as bare
- * globals is a ReferenceError under Naga.
+ * PARAM ACCESS — Chipotle (Lit v3) AUTO-INVOKES `main(js_params)`. The action
+ * just DEFINES `main`; the runtime calls it with the request's `js_params` as
+ * the single argument object. There must be NO top-level self-invocation:
+ * Datil (V0) spread js_params into bare globals (gone — ReferenceError), and
+ * Chipotle exposes no `jsParams` global either (also ReferenceError; both
+ * were observed live against the Chipotle API on 2026-06-12).
  *
  * The pure validators (`parseMessage`, `validateMessage`) are exported so they
  * can be unit-tested without the Lit runtime (see sealed-gate.test.mjs). The
@@ -181,9 +180,9 @@ export function checkSigner(recovered, claimed) {
 /* eslint-disable no-undef */
 /**
  * Lit Action entrypoint. RUNTIME-ONLY: depends on the `ethers` and `Lit`
- * globals provided by the Lit execution environment. Params arrive as a
- * destructured object (sourced from `jsParams` by the invoke guard below —
- * Naga no longer spreads jsParams into global scope, see header note).
+ * globals provided by the Lit execution environment. The Chipotle runtime
+ * auto-invokes `main(js_params)` — params arrive as the single destructured
+ * argument object (see PARAM ACCESS header note; no self-invocation here).
  * Not invoked by the unit tests (which exercise the pure validators above).
  */
 async function main({ message, signature, address, listingId, pkpId, ciphertext, nftAddress, rpcUrl }) {
@@ -233,12 +232,5 @@ async function main({ message, signature, address, listingId, pkpId, ciphertext,
   }
 }
 
-// The Lit runtime invokes the top-level expression. Guarded so importing this
-// file for unit tests (in Node, where `Lit`/jsParams are undefined) does not
-// execute the action. Params arrive on the Naga `jsParams` object (Datil V0's
-// bare-global spread was removed), so destructure them off jsParams and pass
-// them into main.
-if (typeof Lit !== "undefined" && typeof Lit.Actions !== "undefined") {
-  const { message, signature, address, listingId, pkpId, ciphertext, nftAddress, rpcUrl } = jsParams;
-  main({ message, signature, address, listingId, pkpId, ciphertext, nftAddress, rpcUrl });
-}
+// NO top-level invocation: the Chipotle runtime auto-invokes `main(js_params)`
+// itself. (Importing this file in Node for unit tests only defines `main`.)
