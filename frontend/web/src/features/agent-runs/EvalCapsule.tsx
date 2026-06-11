@@ -23,6 +23,13 @@ export type EvalCapsuleCurrentSpan = {
 export type EvalCapsuleRow = {
   /** Stable identifier — used for keying and as the target of onSwitchFocus. */
   id: string;
+  /**
+   * Capsule prefix label. `"live"` ⇒ the row is a live-money run: prefix
+   * reads LIVE in the gold tint and the short tag routes to the live
+   * inspector (`/live/runs/:id`). Defaults to `"eval"` (prefix EVAL,
+   * routes to `/eval-runs/:id`) so existing call sites are unchanged.
+   */
+  kind?: "eval" | "live";
   /** Short `strategy·scenario` tag (e.g. `mr·flash`). Never the hex run-id. */
   short: string;
   status: EvalCapsuleStatus;
@@ -101,6 +108,9 @@ function EvalLine({
   onClick?: () => void;
 }): ReactNode {
   const tok = STATUS[run.status] ?? STATUS.eval;
+  // Live-money rows get a LIVE prefix in the gold tint and route to the
+  // live inspector; everything else keeps the EVAL prefix + eval inspector.
+  const isLiveMoney = run.kind === "live";
   return (
     <div
       className="relative h-9 w-full flex items-center gap-3 px-3 text-left transition-colors"
@@ -134,15 +144,26 @@ function EvalLine({
       />
 
       <span className="relative z-10 pointer-events-none flex items-center gap-2 shrink-0">
-        <span className="text-[10px] font-mono tracking-[0.18em] text-text-3">EVAL</span>
+        <span
+          className={`text-[10px] font-mono tracking-[0.18em] ${isLiveMoney ? "font-semibold" : "text-text-3"}`}
+          style={isLiveMoney ? { color: "var(--gold)" } : undefined}
+          data-testid="capsule-kind-label"
+        >
+          {isLiveMoney ? "LIVE" : "EVAL"}
+        </span>
         {/*
           F-6 (qa-round-7): the short `strategy·scenario` tag routes to the
-          dedicated eval-inspector for this run. Keep it as a sibling of the
+          dedicated inspector for this run — live inspector for live-money
+          rows, eval inspector otherwise. Keep it as a sibling of the
           switch-focus button overlay so the focused row remains navigable and
           middle-click / cmd-click keep native link behavior.
         */}
         <Link
-          to={`/eval-runs/${encodeURIComponent(run.id)}`}
+          to={
+            isLiveMoney
+              ? `/live/runs/${encodeURIComponent(run.id)}`
+              : `/eval-runs/${encodeURIComponent(run.id)}`
+          }
           onClick={(e) => e.stopPropagation()}
           className="relative z-20 pointer-events-auto text-[11px] font-mono hover:underline"
           style={{ color: tok.tint }}
