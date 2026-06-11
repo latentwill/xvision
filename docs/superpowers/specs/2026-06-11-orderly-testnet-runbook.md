@@ -28,9 +28,17 @@ in MANUAL.md M6 — onboarding is now scriptable end to end.
   reach the testnet with valid auth; order POSTs get structured venue
   responses (e.g. `-1005 quantity invalid` when equity is 0).
 - Faucet: `POST https://testnet-operator-evm.orderly.org/v1/faucet/usdc`
-  with JSON `{"broker_id":"woofi_dex","chain_id":"421614","user_address":…}`
+  with JSON `{"broker_id":…,"chain_id":"421614","user_address":…}`
   (chain_id MUST be a string) returns success; the credit settles
-  asynchronously (minutes).
+  asynchronously and credits the **Orderly account ledger directly** (no
+  on-chain deposit step — Orderly's own `examples/api/py` mints then
+  immediately trades).
+- Faucet caveats (2026-06-11): claims for broker `woofi_dex` returned
+  success but never credited after 45+ min. Orderly's own examples use
+  broker **`woofi_pro`** on testnet — a second account was registered
+  under `woofi_pro` for faucet funding. The faucet endpoint is also
+  per-IP rate-limited (HTML 429 after a handful of claims); back off
+  ≥5 min between claims.
 
 ## Re-run from scratch
 
