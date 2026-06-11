@@ -33,6 +33,7 @@ fn provider(name: &str, base_url: &str, has_key: bool) -> EffectiveProvider {
         kind: "openai-compat".to_string(),
         base_url: base_url.to_string(),
         api_key_env: format!("{}_API_KEY", name.to_uppercase()),
+        expected_api_key_env: format!("{}_API_KEY", name.to_uppercase()),
         enabled: true,
         has_key,
         models: Vec::new(),

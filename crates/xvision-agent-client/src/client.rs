@@ -77,6 +77,15 @@ impl AgentClient {
         &self.versions
     }
 
+    /// OS pid of the spawned `xvision-agentd` sidecar, captured at spawn time.
+    /// `None` if the client has no live supervisor (already shut down) or the
+    /// OS never assigned a pid. The engine threads this into the agentd
+    /// registry so `eval cancel` can SIGTERM the sidecar instead of leaving a
+    /// zombie node process competing for the inference backend (U13).
+    pub fn sidecar_pid(&self) -> Option<u32> {
+        self.supervisor.as_ref().and_then(|s| s.pid())
+    }
+
     pub async fn health(&self) -> Result<RuntimeHealthResult> {
         self.transport.call::<(), _>("runtime.health", None).await
     }

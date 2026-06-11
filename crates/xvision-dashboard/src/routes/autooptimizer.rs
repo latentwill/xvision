@@ -580,17 +580,75 @@ pub async fn get_lineage_node(
 // cycles an operator actually ran.
 // ---------------------------------------------------------------------------
 
+/// One historic cycle, the engine's [`CycleRunSummary`] enriched with the
+/// strategy it optimized. `CycleRunSummary` itself carries no strategy column
+/// (it is grouped purely from `lineage_nodes` by `cycle_id`); the strategy is
+/// resolved here through the `autooptimizer_events(session_id, cycle_id)` bridge
+/// to `autooptimizer_session_state.strategy_id` — the same join the stats and
+/// session-list handlers already use. `None` for CLI cycles that ran before the
+/// events bridge existed (or never wrote a session row).
+#[derive(Serialize)]
+pub struct CycleRunRow {
+    #[serde(flatten)]
+    pub summary: CycleRunSummary,
+    /// The strategy (agent_id) this cycle optimized. `None` when the cycle has
+    /// no session bridge row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy_id: Option<String>,
+}
+
 pub async fn list_cycles(
     State(state): State<AppState>,
     Query(q): Query<CycleRunListQuery>,
-) -> Result<Json<Vec<CycleRunSummary>>, DashboardError> {
+) -> Result<Json<Vec<CycleRunRow>>, DashboardError> {
     if !table_exists(&state.pool, "lineage_nodes").await? {
         return Ok(Json(Vec::new()));
     }
     let runs = list_cycle_runs(&state.pool, q.limit, q.offset)
         .await
         .map_err(DashboardError::Internal)?;
-    Ok(Json(runs))
+
+    // Resolve each cycle's strategy via the events → session bridge. Skipped
+    // entirely when the bridge tables are absent (fresh install), so the list
+    // still renders with `strategy_id` omitted.
+    let has_bridge = table_exists(&state.pool, "autooptimizer_events").await?
+        && table_exists(&state.pool, "autooptimizer_session_state").await?;
+
+    let mut rows = Vec::with_capacity(runs.len());
+    for summary in runs {
+        let strategy_id = if has_bridge {
+            cycle_strategy_id(&state.pool, &summary.cycle_id).await?
+        } else {
+            None
+        };
+        rows.push(CycleRunRow {
+            summary,
+            strategy_id,
+        });
+    }
+    Ok(Json(rows))
+}
+
+/// The strategy a cycle optimized, resolved through the
+/// `autooptimizer_events(session_id, cycle_id)` bridge to
+/// `autooptimizer_session_state.strategy_id`. `None` when no session row links
+/// to this cycle (e.g. a pre-bridge CLI cycle).
+async fn cycle_strategy_id(
+    pool: &sqlx::SqlitePool,
+    cycle_id: &str,
+) -> Result<Option<String>, DashboardError> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT ss.strategy_id FROM autooptimizer_session_state ss \
+         WHERE ss.session_id = ( \
+            SELECT session_id FROM autooptimizer_events \
+            WHERE cycle_id = ? ORDER BY seq DESC LIMIT 1 ) \
+         LIMIT 1",
+    )
+    .bind(cycle_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))
+    .map(Option::flatten)
 }
 
 // ---------------------------------------------------------------------------
@@ -2271,6 +2329,40 @@ mod tests {
         assert_eq!(rows.len(), 1, "only cycle-A must be in result");
         assert_eq!(rows[0].cycle_id, "cycle-A");
         assert_eq!(rows[0].kept, 1);
+    }
+
+    // ─── test_cycle_strategy_id_resolves_via_bridge (UI3) ─────────────────────
+
+    /// `cycle_strategy_id` resolves the optimized strategy through the
+    /// events → session bridge; a cycle with no session row yields `None`.
+    #[tokio::test]
+    async fn test_cycle_strategy_id_resolves_via_bridge() {
+        let pool = open_stats_pool().await;
+
+        // strat-A → sess-A → cycle-A (bridged).
+        sqlx::query(
+            "INSERT INTO autooptimizer_session_state \
+             (session_id, strategy_id, config_json, state, mode, created_at) \
+             VALUES ('sess-A', 'strat-A', '{}', 'running', 'once', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO autooptimizer_events \
+             (session_id, cycle_id, kind, payload_json, ts) \
+             VALUES ('sess-A', 'cycle-A', 'cycle_started', '{}', '2026-06-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let resolved = cycle_strategy_id(&pool, "cycle-A").await.unwrap();
+        assert_eq!(resolved.as_deref(), Some("strat-A"));
+
+        // A CLI cycle with no session bridge row → None (renders as "—").
+        let unbridged = cycle_strategy_id(&pool, "cycle-cli-only").await.unwrap();
+        assert_eq!(unbridged, None);
     }
 
     // ─── test_stats_since_filter ──────────────────────────────────────────────

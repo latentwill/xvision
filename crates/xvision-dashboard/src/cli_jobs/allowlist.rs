@@ -138,8 +138,10 @@ const STRICT_TEMPLATES: &[Template] = &[
     },
     // UI-launched optimizer cycle. The dashboard job supervisor makes it
     // cancellable and caps runtime/output; --mock is optional for smoke runs.
+    // The cycle verb was consolidated to `xvn optimize` (run-cycle kept as a
+    // visible alias of `run`), so the dashboard launches `optimize run-cycle`.
     Template {
-        head: &["optimizer", "run-cycle"],
+        head: &["optimize", "run-cycle"],
         permitted_flags: &["--session-id", "--config", "--db", "--strategy", "--budget"],
         permitted_switches: &["--mock"],
     },
@@ -181,7 +183,7 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
-    "optimizer", // bounded via STRICT_TEMPLATES (optimizer run-cycle only)
+    "optimize", // bounded via STRICT_TEMPLATES (optimize run-cycle only)
     "portfolio",
     "provider",
     "report",
@@ -365,9 +367,9 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
                 template.head.join(" ")
             ));
         }
-    } else if head == "optimizer" {
+    } else if head == "optimize" {
         return AllowlistDecision::Reject(
-            "subcommand `optimizer` is only allowed over remote cli as `optimizer run-cycle`".into(),
+            "subcommand `optimize` is only allowed over remote cli as `optimize run-cycle`".into(),
         );
     }
 
@@ -539,7 +541,7 @@ mod tests {
     #[test]
     fn optimizer_run_cycle_mock_is_allowed() {
         assert_allow(&[
-            "optimizer",
+            "optimize",
             "run-cycle",
             "--session-id",
             "ui-01",
@@ -554,7 +556,7 @@ mod tests {
     #[test]
     fn optimizer_run_cycle_non_mock_is_allowed() {
         assert_allow(&[
-            "optimizer",
+            "optimize",
             "run-cycle",
             "--session-id",
             "ui-01",
@@ -567,9 +569,12 @@ mod tests {
 
     #[test]
     fn optimizer_other_subcommands_are_rejected() {
+        // `optimize` (the consolidated cycle verb) is only remotely launchable
+        // as `optimize run-cycle`; the DSPy memory-demos / inspect subcommands
+        // and a bare `optimize` are rejected.
         assert_reject(
-            &["optimizer", "run", "--namespace", "global"],
-            "only allowed over remote cli as `optimizer run-cycle`",
+            &["optimize", "memory-demos", "--agent", "ag_1"],
+            "only allowed over remote cli as `optimize run-cycle`",
         );
     }
 
@@ -577,7 +582,7 @@ mod tests {
     fn optimizer_run_cycle_unknown_flag_is_rejected() {
         assert_reject(
             &[
-                "optimizer",
+                "optimize",
                 "run-cycle",
                 "--session-id",
                 "ui-01",

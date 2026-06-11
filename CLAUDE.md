@@ -104,14 +104,32 @@ The subsystem formerly called the "autoresearcher" has two names:
 | Surface | Name |
 |---|---|
 | Developer-surface (Rust module `autooptimizer/`, types `AutoOptimizer*`, SQLite tables `autooptimizer_*`, HTTP routes `/api/autooptimizer/*`, frontend `features/autooptimizer/`, MCP types, internal field names) | `autooptimizer` / `AutoOptimizer` |
-| Operator-surface (dashboard nav/menu + page titles, CLI verb `xvn optimizer`, SSE display labels, MANUAL.md, dashboard wiki) | **Optimizer** |
+| Operator-surface (dashboard nav/menu + page titles, CLI verb **`xvn optimize`**, SSE display labels, MANUAL.md, dashboard wiki) | **Optimizer** |
+
+**Operator CLI verb (amended 2026-06-11): the cycle's one CLI home is
+`xvn optimize`, NOT `xvn optimizer`.** Running `xvn optimize` with no
+subcommand runs the full cycle (aliases `run` / `run-cycle`); subcommands are
+`ls`, `show <cycle_id>`, `lineage ls|show`, `unlock`, `mutate-once`, `demo`.
+The old top-level `xvn optimizer` verb **was removed**, and the standalone DSPy
+prompt-optimizer CLI verbs (`memory-demos`, `export/import-demos`,
+`accept-as-child-agent`, `revert-accepted`, `explain-missing-data`,
+`inspect --run`, and the old `distill/gate/activate/retire/promote/demote`)
+**were folded into the cycle** — the DSPy flywheel now runs *inside* the cycle
+automatically and emits `CycleProgressEvent::FlywheelCompiled`. Rationale: one
+operator surface, less agent confusion / wasted tokens (operator decision). See
+the dated amendment in
+`docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`.
 
 The codename is deliberately `autooptimizer` (NOT `optimizer`) to stay
 distinct from the **pre-existing, unrelated DSPy prompt-optimizer**
 (`xvision-dspy`, the engine `optimization/` module, `optimization_*`
-tables, the `xvn optimize` verb, `Optimizer`/`OptimizerKind`/`OptimizerModel`/
-`OptimizerResult`). Never rename DSPy `optimize`/`optimization`/`Optimizer*`
-tokens, and never let the autooptimizer codename collapse into bare
+tables, `Optimizer`/`OptimizerKind`/`OptimizerModel`/`OptimizerResult`).
+Never rename DSPy `optimize`/`optimization`/`Optimizer*` **engine tokens**.
+Note the distinction: the DSPy *CLI verbs* were removed (folded into the
+cycle), but the DSPy **engine** module/types remain intact and are never
+renamed. The developer-surface autooptimizer names (module/types/tables/routes)
+are likewise UNCHANGED — only the operator CLI verb moved from `xvn optimizer`
+to `xvn optimize`. Never let the autooptimizer codename collapse into bare
 `optimizer` in code.
 
 The autooptimizer, memory, and flywheel surfaces follow a two-name

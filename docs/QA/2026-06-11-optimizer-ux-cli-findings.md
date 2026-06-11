@@ -210,6 +210,21 @@ everywhere, but bar fetches still need the env vars.
 - `xvn bars ls` should show which windows are covered by the union of cached segments,
   not just individual cache entries, so operators can see "coverage gaps" at a glance.
 
+**Operator clarification (2026-06-11):** The Alpaca creds were *already present in the
+app's store the whole time* — the operator never needed to enter them. The CLI repeatedly
+acted as if it needed creds, apparently because it was trying to fetch bars **manually via
+an ENV-only path** instead of (a) checking the cache first and (b) using the creds the app
+already holds. This makes the precedence and messaging requirements concrete:
+- **Preflight before fetch:** in the common (cached) case the CLI must NOT touch creds at
+  all — coverage check first, fetch only on a real miss. This alone removes the spurious
+  "needs creds" behavior.
+- **Resolve from the app store, silently:** when a fetch is genuinely needed, read creds
+  from the app's broker/secret store (where they already live). Do NOT require the operator
+  to set `APCA_*` env per-command.
+- **Error wording:** if creds are truly absent, point the operator to the **dashboard / app
+  broker settings**, NOT to ENV vars. (Contrast U8, where ENV *is* the provider-key
+  mechanism — bars/Alpaca creds are app-managed, a different surface.)
+
 ---
 
 ### U15 — `[[scenario_pool]]` in autooptimizer.toml causes silent exit 2 at runtime (not at parse time)
@@ -344,5 +359,31 @@ fired, when blocked by position, how many times the gate was checked vs fired).
 
 **Fix:** Add "Filter activity" section to eval run detail: gate check count, fire count,
 block count (by reason), with timestamps and indicator values at each fire.
+
+---
+
+### UI3 — Optimizer cycle history list is endless and lacks a strategy column
+
+**Symptom:** The optimizer history list renders every cycle with no pagination/limit,
+growing endlessly, and does not show which strategy each cycle ran against.
+
+**Fix:** Paginate / cap the history list (with load-more or a sane default limit), and
+add a **Strategy** column identifying the strategy (agent_id / name) each cycle optimized.
+
+---
+
+### UI4 — CLI optimizer runs don't appear in the web UI
+
+**Symptom:** Cycles launched from the CLI never show up on the dashboard optimizer view.
+
+**Root-cause theory:** The verb confusion (U4) — `xvn optimizer` vs `xvn optimize run-cycle`
+write cycle state through different code paths / tables, while the dashboard reads only one.
+Consolidating to a single `xvn optimize` cycle surface (this session's decision) should make
+CLI cycles persist to the same `autooptimizer_session_state` the dashboard reads. Verify the
+CLI cycle path writes session state (and emits IPC events) exactly where the dashboard reads.
+
+**Fix:** Ensure the consolidated `xvn optimize` cycle persists to `autooptimizer_session_state`
+and surfaces via the same route the `/optimizer` page reads, so CLI-launched cycles appear in
+the UI. Add an integration check that a CLI cycle is visible via the dashboard route.
 
 ---

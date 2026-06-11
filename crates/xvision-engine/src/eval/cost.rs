@@ -52,6 +52,47 @@
 
 use sqlx::SqlitePool;
 use xvision_core::providers::{Catalog, ModelEntry};
+use xvision_core::config::ProviderKind;
+
+/// Does this provider report `$0`/token for *every* model the cost
+/// machinery can see?
+///
+/// Built on the same `compute_token_cost_usd` "unknown / non-positive
+/// pricing => no cost" semantics as the rest of this module:
+///
+/// * **Local kinds** (`local-candle`, `ollama`, `llama-cpp`, `vllm`) run
+///   on the operator's own hardware and have no published per-token
+///   price, so they always report zero cost regardless of catalog.
+/// * **Network kinds** (`anthropic`, `openai-compat`) report zero cost
+///   only when NO model in `catalog` resolves to a positive price (the
+///   catalog carries no pricing, e.g. bare OpenAI `/v1/models`, or every
+///   entry is a free route filtered to `None` by `positive_price`).
+///
+/// Returned `true` is the signal an operator-facing surface needs (QA
+/// U3): when `--budget` is set but the resolved mutator/judge provider
+/// reports `$0`/token, a budget ceiling can never trip, so the consuming
+/// CLI should warn and point the operator at `--experiments-per-cycle`.
+///
+/// An empty `catalog` for a network kind yields `true` — we genuinely
+/// have no pricing to enforce a budget against, which is exactly the
+/// condition the warning exists to surface.
+pub fn provider_reports_zero_cost(kind: ProviderKind, catalog: &Catalog) -> bool {
+    match kind {
+        // Local inference — no per-token cost to meter against a budget.
+        ProviderKind::LocalCandle
+        | ProviderKind::Ollama
+        | ProviderKind::LlamaCpp
+        | ProviderKind::Vllm => true,
+        // Network kinds: zero cost iff nothing in the catalog has a
+        // positive published price. A single 1-in/1-out probe through the
+        // same `compute_token_cost_usd` gate tells us whether the entry
+        // carries usable pricing.
+        ProviderKind::Anthropic | ProviderKind::OpenaiCompat => !catalog
+            .models
+            .iter()
+            .any(|m| compute_token_cost_usd(1, 1, m).is_some_and(|c| c > 0.0)),
+    }
+}
 
 /// Compute LLM token cost in USD for a single (input, output) token pair
 /// against a known `ModelEntry`.
@@ -301,6 +342,69 @@ mod tests {
         let mut model = openrouter_claude_opus_47();
         model.pricing_per_million_input_usd = Some(f64::INFINITY);
         assert_eq!(compute_token_cost_usd(10, 10, &model), None);
+    }
+
+    fn unpriced_model(id: &str) -> ModelEntry {
+        let mut m = openrouter_claude_opus_47();
+        m.id = id.into();
+        m.pricing_per_million_input_usd = None;
+        m.pricing_per_million_output_usd = None;
+        m
+    }
+
+    fn catalog_with(models: Vec<ModelEntry>) -> Catalog {
+        Catalog {
+            provider: "test".into(),
+            fetched_at: Utc::now(),
+            source_url: "https://example/models".into(),
+            models,
+        }
+    }
+
+    #[test]
+    fn zero_cost_true_for_local_kinds_regardless_of_catalog() {
+        // Local inference has no per-token price; a populated, *priced*
+        // catalog must not flip the verdict — these kinds always report $0.
+        let priced = catalog_with(vec![openrouter_claude_opus_47()]);
+        for kind in [
+            ProviderKind::Ollama,
+            ProviderKind::LocalCandle,
+            ProviderKind::LlamaCpp,
+            ProviderKind::Vllm,
+        ] {
+            assert!(
+                provider_reports_zero_cost(kind, &priced),
+                "{kind:?} must report zero cost"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_cost_false_for_network_kind_with_priced_catalog() {
+        // A real priced catalog (OpenRouter Claude Opus) means a budget
+        // CAN be enforced — no warning should fire.
+        let priced = catalog_with(vec![openrouter_claude_opus_47()]);
+        assert!(!provider_reports_zero_cost(ProviderKind::OpenaiCompat, &priced));
+        assert!(!provider_reports_zero_cost(ProviderKind::Anthropic, &priced));
+    }
+
+    #[test]
+    fn zero_cost_true_for_network_kind_with_unpriced_or_empty_catalog() {
+        // Bare OpenAI / Anthropic /v1/models carry no pricing → unknown →
+        // a budget can't be metered, so the helper reports zero cost.
+        let unpriced = catalog_with(vec![unpriced_model("gpt-4o"), unpriced_model("o3")]);
+        assert!(provider_reports_zero_cost(ProviderKind::OpenaiCompat, &unpriced));
+        // Empty catalog: genuinely nothing to bill against.
+        let empty = catalog_with(vec![]);
+        assert!(provider_reports_zero_cost(ProviderKind::Anthropic, &empty));
+    }
+
+    #[test]
+    fn zero_cost_false_when_any_model_priced() {
+        // Mixed catalog: a single priced entry is enough to enforce a
+        // budget, so the provider does NOT report zero cost.
+        let mixed = catalog_with(vec![unpriced_model("free-route"), openrouter_claude_opus_47()]);
+        assert!(!provider_reports_zero_cost(ProviderKind::OpenaiCompat, &mixed));
     }
 
     #[test]

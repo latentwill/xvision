@@ -8,6 +8,8 @@
 
 use sqlx::SqlitePool;
 
+use crate::autooptimizer::progress::CycleProgressEvent;
+
 /// Append a structured event to `autooptimizer_events`.
 ///
 /// - `session_id`: the optimizer session this event belongs to.
@@ -33,6 +35,46 @@ pub async fn append_event(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// UI4: persist a single [`CycleProgressEvent`] to `autooptimizer_events` for
+/// ANY caller (notably a plain `xvn optimize` CLI cycle), deriving the row
+/// fields from the event itself so callers don't have to re-serialize or pluck
+/// out the kind/ids by hand:
+///
+/// - `kind` = the event's `type` tag (the snake_case wire name).
+/// - `session_id` = the event's `session_id` when non-empty, else the
+///   `fallback_session` (the CLI supplies `cycle:<cycle_id>` so the rows are
+///   grouped and survive [`prune_old_events`]'s `cycle:%` retention branch).
+/// - `cycle_id` = the event's `cycle_id` when present.
+/// - `payload_json` = the full serialized event.
+///
+/// This is the interface the CLI's `xvn optimize` cycle path uses to make its
+/// cycles visible in the dashboard (it reads the same table). The dashboard
+/// broadcast path persists separately and is NOT changed — to avoid
+/// double-writing, only ONE of the two paths should call into the events table
+/// for a given run: the dashboard owns its broadcast persistence; the CLI owns
+/// this sink. They are distinguished by the dashboard supplying a real
+/// `session_id` on its events while the CLI uses the `cycle:<id>` fallback.
+pub async fn persist_cycle_event(
+    pool: &SqlitePool,
+    event: &CycleProgressEvent,
+    fallback_session: &str,
+) -> anyhow::Result<()> {
+    let value = serde_json::to_value(event)?;
+    let kind = value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let session_id = value
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(fallback_session);
+    let cycle_id = value.get("cycle_id").and_then(|v| v.as_str());
+    let payload_json = serde_json::to_string(event)?;
+    append_event(pool, session_id, cycle_id, &kind, &payload_json).await
 }
 
 /// Prune event rows for sessions beyond the 50 most recently created.
@@ -159,6 +201,50 @@ mod tests {
         assert_eq!(kind2, "cycle_finished");
         assert_eq!(rows[0].2.as_deref(), Some("cycle-1"));
         assert_eq!(rows[1].2, None);
+    }
+
+    /// UI4: persist_cycle_event derives kind/cycle_id from the event and uses
+    /// the fallback session when the event carries an empty session_id (the CLI
+    /// case). The resulting rows land under the `cycle:` key so prune retains
+    /// them.
+    #[tokio::test]
+    async fn test_persist_cycle_event_uses_fallback_session() {
+        let pool = open_test_pool().await;
+        let event = CycleProgressEvent::CycleStarted {
+            session_id: String::new(),
+            cycle_id: "01HX0".into(),
+            parent_count: 2,
+        };
+        persist_cycle_event(&pool, &event, "cycle:01HX0").await.unwrap();
+
+        let rows: Vec<(String, Option<String>, String)> =
+            sqlx::query_as("SELECT session_id, cycle_id, kind FROM autooptimizer_events")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "cycle:01HX0", "empty session_id falls back");
+        assert_eq!(rows[0].1.as_deref(), Some("01HX0"));
+        assert_eq!(rows[0].2, "cycle_started");
+    }
+
+    /// When the event carries a real session_id, that wins over the fallback
+    /// (the dashboard case, were it to call this).
+    #[tokio::test]
+    async fn test_persist_cycle_event_prefers_event_session() {
+        let pool = open_test_pool().await;
+        let event = CycleProgressEvent::ParentSelected {
+            session_id: "real-session".into(),
+            cycle_id: "c1".into(),
+            parent_hash: "p1".into(),
+        };
+        persist_cycle_event(&pool, &event, "cycle:c1").await.unwrap();
+        let sid: String =
+            sqlx::query_scalar("SELECT session_id FROM autooptimizer_events LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(sid, "real-session");
     }
 
     /// prune_old_events removes events for sessions outside the 50-most-recent.

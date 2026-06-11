@@ -67,8 +67,8 @@ fn assert_no_banned_terms(surface: &str, text: &str) {
 
 #[test]
 fn autooptimizer_help_contains_no_banned_terms() {
-    let help = xvn_help("optimizer");
-    assert_no_banned_terms("optimizer", &help);
+    let help = xvn_help("optimize");
+    assert_no_banned_terms("optimize", &help);
 }
 
 #[test]
@@ -103,31 +103,31 @@ fn xvn_binary_is_reachable_and_help_exits_zero() {
     );
 }
 
-/// Verify that `xvn autooptimizer --help` exits 0 and lists the core
-/// operator-facing autooptimizer subcommands.
+/// Verify that `xvn optimize --help` exits 0 and lists the core
+/// operator-facing optimizer cycle subcommands.
 #[test]
-fn autooptimizer_help_exits_zero_and_lists_known_subcommands() {
+fn optimize_help_exits_zero_and_lists_known_subcommands() {
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
-        .args(["optimizer", "--help"])
+        .args(["optimize", "--help"])
         .output()
-        .expect("xvn autooptimizer --help must not fail to spawn");
+        .expect("xvn optimize --help must not fail to spawn");
     assert!(
         out.status.success(),
-        "xvn autooptimizer --help must exit 0, got {:?}\nstderr={}",
+        "xvn optimize --help must exit 0, got {:?}\nstderr={}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr),
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("mutate-once"),
-        "autooptimizer --help must list mutate-once, got:\n{stdout}"
+        "optimize --help must list mutate-once, got:\n{stdout}"
     );
     assert!(
         stdout.contains("run-cycle"),
-        "autooptimizer --help must list run-cycle, got:\n{stdout}"
+        "optimize --help must list run-cycle, got:\n{stdout}"
     );
     assert!(
         stdout.contains("demo"),
-        "autooptimizer --help must list demo, got:\n{stdout}"
+        "optimize --help must list demo, got:\n{stdout}"
     );
 }

@@ -29,6 +29,7 @@ import { formatCostUsdPrecise, formatSpendUsd } from "@/lib/format";
 import { drawdownMetricTone } from "@/lib/metric-tone";
 import type {
   DecisionRowDto,
+  FilterEventV1,
   FilterSummary,
   RunDetail,
   RunSummary,
@@ -383,15 +384,19 @@ export function EvalRunDetailRoute() {
             <AssetRollupPanel decisions={detail.decisions} />
 
             {/*
-              Filter v1 read-only panels. Both return `null` when their input is
-              empty, so EveryBar runs render nothing. Originally added in #493
-              and dropped during the Signal redesign (624feb59); remounted here
-              so FilterGated runs surface their suppression stats again.
+              UI2: Filter activity. The two filter v1 panels (gate-check /
+              suppression summary + per-bar fire/blocked timeline) are grouped
+              under one inline section so operators read filter behavior in one
+              place. Display-copy only — the panels still read the same data
+              keys (`suppressed_in_position`, `wakeups`, `bars_scanned`,
+              `filter_events`, …). Both panels return `null` when their input is
+              empty, so the section collapses to just the heading + helper line
+              for EveryBar runs; when BOTH are empty we render nothing at all.
+              Single full-width inline section — no right sidebar, no popups.
             */}
-            <FilterSummaryPanel summaries={detail.filter_summaries ?? []} />
-            <FilterEventTimeline
+            <FilterActivitySection
+              summaries={detail.filter_summaries ?? []}
               events={detail.filter_events ?? []}
-              title="Filter timeline"
             />
 
             <DecisionsCard
@@ -1131,6 +1136,51 @@ function pnlClass(n: number | null | undefined): string {
   if (n > 0) return "text-gold";
   if (n < 0) return "text-danger";
   return "text-text-2";
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// UI2 — Filter activity. Groups the two filter v1 panels under one inline
+// section so the operator reads gate checks / fires / blocked-by-reason in one
+// place instead of two disconnected cards. The child panels are unchanged and
+// still read the same data keys (`bars_scanned`, `wakeups`,
+// `suppressed_in_position`, `filter_events`, …); this is grouping + heading +
+// copy only. Single full-width inline section, no sidebar, no popups.
+
+function FilterActivitySection({
+  summaries,
+  events,
+}: {
+  summaries: FilterSummary[];
+  events: FilterEventV1[];
+}) {
+  // Both child panels self-hide on empty input. When neither has data (EveryBar
+  // runs, or runs that errored before the filter loop) render nothing so the
+  // section doesn't leave a bare heading.
+  if (summaries.length === 0 && events.length === 0) return null;
+
+  return (
+    <section data-testid="filter-activity" className="space-y-3">
+      <div className="flex items-baseline gap-2">
+        <h2
+          className="m-0 font-sans text-[22px] tracking-tight text-text"
+          style={{ fontWeight: 600 }}
+        >
+          Filter activity
+        </h2>
+        <span className="text-[11px] font-mono text-text-3">
+          gate checks · fires · blocked
+        </span>
+      </div>
+
+      {/* Gate checks + fires + blocked-by-reason (bars scanned, wake-ups,
+          suppression breakdown). */}
+      <FilterSummaryPanel summaries={summaries} />
+
+      {/* Per-bar fire / blocked timeline — each tick is one gate check, colored
+          by fired vs blocked-by-reason. */}
+      <FilterEventTimeline events={events} title="Per-bar gate checks" />
+    </section>
+  );
 }
 
 function traceRunId(summary: RunSummary): string {
