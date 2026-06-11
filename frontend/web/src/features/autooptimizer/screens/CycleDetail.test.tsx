@@ -7,21 +7,25 @@ import * as client from "@/api/client";
 
 // Mock ExpandableArtifact so board cards / feed lines don't pull the full
 // experiment-detail network stack (same idiom as ConsoleModule.test.tsx).
-// `aria-expanded` mirrors `defaultOpen` so deep-link tests can assert mount state.
+// `aria-expanded` mirrors the controlled `open` prop (falling back to
+// `defaultOpen` for uncontrolled callers) so deep-link tests can assert
+// mount state.
 vi.mock("../ui/ExpandableArtifact", () => ({
   ExpandableArtifact: ({
     hash,
     summary,
     defaultOpen,
+    open,
   }: {
     hash: string;
     summary: React.ReactNode;
     defaultOpen?: boolean;
+    open?: boolean;
   }) => (
     <div
       data-testid={`artifact-${hash}`}
       role="button"
-      aria-expanded={defaultOpen ? "true" : "false"}
+      aria-expanded={(open ?? defaultOpen) ? "true" : "false"}
     >
       {summary}
     </div>

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../test-utils";
 import { ExperimentBoard } from "./ExperimentBoard";
 import type { BoardCard } from "../selectors/buildBoardState";
@@ -261,6 +262,78 @@ describe("ExperimentBoard — defaultOpenHash and expandBoard props", () => {
     for (const btn of buttons) {
       expect(btn).toHaveAttribute("aria-expanded", "true");
     }
+  });
+});
+
+describe("ExperimentBoard — expanded card spans the full row (Bug 6)", () => {
+  function cellOf(button: HTMLElement): HTMLElement {
+    // The grid cell is the direct child of the grid container wrapping the card.
+    const grid = document.querySelector(".grid")!;
+    let el: HTMLElement = button;
+    while (el.parentElement && el.parentElement !== grid) el = el.parentElement;
+    return el;
+  }
+
+  it("an expanded card's wrapper has col-span-full; collapsed cards don't", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ExperimentBoard
+        cards={[
+          makeCard({ hash: "aaaa1234ef", state: "kept" }),
+          makeCard({ hash: "bbbb5678cd", state: "rejected" }),
+        ]}
+      />,
+    );
+    const buttons = screen.getAllByRole("button");
+    expect(cellOf(buttons[0]).className).not.toMatch(/col-span-full/);
+    expect(cellOf(buttons[1]).className).not.toMatch(/col-span-full/);
+
+    await user.click(buttons[0]);
+    expect(buttons[0]).toHaveAttribute("aria-expanded", "true");
+    expect(cellOf(buttons[0]).className).toMatch(/col-span-full/);
+    expect(cellOf(buttons[1]).className).not.toMatch(/col-span-full/);
+  });
+
+  it("collapsing the card removes col-span-full", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ExperimentBoard cards={[makeCard({ hash: "aaaa1234ef", state: "kept" })]} />,
+    );
+    const btn = screen.getByRole("button");
+    await user.click(btn);
+    expect(cellOf(btn).className).toMatch(/col-span-full/);
+    await user.click(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "false");
+    expect(cellOf(btn).className).not.toMatch(/col-span-full/);
+  });
+
+  it("defaultOpenHash card starts with col-span-full", () => {
+    renderWithProviders(
+      <ExperimentBoard
+        cards={[
+          makeCard({ hash: "target1234ef", state: "kept" }),
+          makeCard({ hash: "other123456", state: "evaluating" }),
+        ]}
+        defaultOpenHash="target1234ef"
+      />,
+    );
+    const buttons = screen.getAllByRole("button");
+    expect(cellOf(buttons[0]).className).toMatch(/col-span-full/);
+    expect(cellOf(buttons[1]).className).not.toMatch(/col-span-full/);
+  });
+
+  it("a defaultOpenHash card can be collapsed by the user", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <ExperimentBoard
+        cards={[makeCard({ hash: "target1234ef", state: "kept" })]}
+        defaultOpenHash="target1234ef"
+      />,
+    );
+    const btn = screen.getByRole("button");
+    expect(btn).toHaveAttribute("aria-expanded", "true");
+    await user.click(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "false");
   });
 });
 
