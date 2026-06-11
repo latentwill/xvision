@@ -2,6 +2,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import { RECEIPTS } from "@/features/marketplace/data/fixtures/receipts";
@@ -24,7 +25,12 @@ const mockedApiFetch = vi.mocked(apiFetch);
 const receipt = RECEIPTS["0xdemo-tx"];
 
 function wrap(ui: React.ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -190,4 +196,65 @@ describe("InstallSteps", () => {
       );
     });
   });
+
+  // ── receipt requirements from the verified bundle (real receipts) ─────────
+  describe("bundle-derived requirements", () => {
+    const realReceipt = {
+      ...receipt,
+      listing: { ...receipt.listing, id: "3" },
+      install: { xvnDetected: false, xvnEndpoint: "", ingredients: [] },
+    };
+    const bundleOut = {
+      listing_id: 3,
+      content_uri: "ipfs://bafytestcid",
+      verified: true,
+      manifest: {
+        manifest: {
+          display_name: "BTC Momentum",
+          plain_summary: "Buys dips.",
+          creator: "@ed",
+          attested_with: ["claude-haiku-4.5"],
+          required_tools: ["birdeye-mcp"],
+        },
+      },
+    };
+
+    it("fetches the bundle for a numeric listing id and renders neutral required chips", async () => {
+      mockedApiFetch.mockResolvedValue(bundleOut);
+      wrap(<InstallSteps receipt={realReceipt} />);
+
+      expect(await screen.findByTestId("receipt-requirements")).toBeInTheDocument();
+      expect(mockedApiFetch).toHaveBeenCalledWith("/api/marketplace/listings/3/bundle");
+
+      // attested models + required tools render as requirement chips
+      expect(screen.getByText("claude-haiku-4.5")).toBeInTheDocument();
+      expect(screen.getByText("birdeye-mcp")).toBeInTheDocument();
+      const chips = screen.getAllByTestId("requirement-chip");
+      expect(chips).toHaveLength(2);
+
+      // honest: no installed/missing claims
+      expect(screen.getByText(/installed state unknown/i)).toBeInTheDocument();
+      expect(screen.queryByTestId("ingredient-chip")).not.toBeInTheDocument();
+      expect(screen.queryByText(/install missing/i)).not.toBeInTheDocument();
+    });
+
+    it("does not fetch the bundle for fixture (slug) receipts", async () => {
+      wrap(<InstallSteps receipt={receipt} />);
+      expect(screen.queryByTestId("receipt-requirements")).not.toBeInTheDocument();
+      expect(mockedApiFetch).not.toHaveBeenCalledWith(
+        expect.stringMatching(/\/bundle$/),
+      );
+    });
+
+    it("renders the plain ingredients step when the bundle fetch fails", async () => {
+      mockedApiFetch.mockRejectedValue(
+        new ApiError(404, "not_found", "listing 3 not in indexed snapshot"),
+      );
+      wrap(<InstallSteps receipt={realReceipt} />);
+      // falls back to the (empty) local ingredient step — nothing invented
+      expect(screen.getByText(/Install missing ingredients/i)).toBeInTheDocument();
+      expect(screen.queryByTestId("requirement-chip")).not.toBeInTheDocument();
+    });
+  });
+
 });

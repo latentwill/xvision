@@ -316,7 +316,7 @@ async fn attestations_503_names_registry_with_injected_config_sans_attestation()
         chain: None,
         registry_addresses: None,
         marketplace_addresses: None,
-        pinata: None,
+        ipfs: None,
         indexer: Some(IndexerCfg {
             rpc_url: "http://127.0.0.1:9".into(),
             listing_registry: "0x1111111111111111111111111111111111111111".parse().unwrap(),

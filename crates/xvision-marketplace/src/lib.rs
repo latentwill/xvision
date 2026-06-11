@@ -39,5 +39,5 @@ pub use adapter::{
     SaleReceipt, TransferAuthorization,
 };
 pub use error::MarketplaceError;
-pub use ipfs::{IpfsStore, PinataDriver};
+pub use ipfs::{IpfsStore, KuboStore, PinataDriver};
 pub use xvision_identity::MarketplaceAddresses;

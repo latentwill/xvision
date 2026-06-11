@@ -4,10 +4,16 @@
 // No popups. Receipts drawer inline-expands via ?receipts=open.
 // Data: useQuery from @tanstack/react-query + useMarketplaceData() seam.
 // Per addendum §1: queryKey ["marketplace", "listing", name] / ["marketplace", "viewer"]
-import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
+import {
+  isOnChainListingId,
+  requirementsFromManifest,
+  useBundleManifest,
+} from "@/features/marketplace/data/bundle";
+import { RequirementChip } from "@/features/marketplace/components/RequirementChip";
 import { useWallet } from "@/features/marketplace/lib/wallet";
 import { faucetUsdc } from "@/features/marketplace/lib/chain";
 import { InsufficientUsdcError } from "@/features/marketplace/lib/purchaseErrors";
@@ -396,6 +402,12 @@ export function LineageRoute() {
     queryFn: () => mp.getViewer(),
   });
 
+  // Verified manifest enrichment — real (numeric) on-chain listings only.
+  // Fixture listings never fetch; on any error this is null and the page
+  // renders exactly as before.
+  const manifest = useBundleManifest(detail?.id);
+  const requirements = requirementsFromManifest(manifest);
+
   // Real purchase via the MarketplaceData seam: ApiMarketplaceData signs an
   // EIP-3009 TransferWithAuthorization and POSTs the gasless relay (falling
   // back to approve+buy when the relay 503s); the fixture client still
@@ -469,7 +481,7 @@ export function LineageRoute() {
           {/* Title row */}
           <div className="flex items-center flex-wrap gap-2">
             <h1 className="font-mono text-[30px] font-semibold tracking-tight leading-none">
-              {detail.id}
+              {manifest?.display_name || detail.id}
             </h1>
             <span className="font-mono text-[11px] text-text-3 px-1.5 py-0.5 rounded border border-border-strong">
               {detail.version}
@@ -483,11 +495,22 @@ export function LineageRoute() {
             ))}
           </div>
 
-          {/* Creator line */}
+          {/* Creator line — real listings link the seller address to the
+              creator page; fixture listings keep the plain text. */}
           <div className="font-mono text-[11.5px] text-text-3 flex items-center gap-1.5">
             <span>{detail.creator.handle ?? detail.creator.address.slice(0, 10)}</span>
             <span>·</span>
-            <span>{detail.creator.address.slice(0, 6)}…{detail.creator.address.slice(-4)}</span>
+            {isOnChainListingId(detail.id) ? (
+              <Link
+                data-testid="creator-link"
+                to={`/marketplace/creator/${detail.creator.address}`}
+                className="text-info hover:underline"
+              >
+                {detail.creator.address.slice(0, 6)}…{detail.creator.address.slice(-4)}
+              </Link>
+            ) : (
+              <span>{detail.creator.address.slice(0, 6)}…{detail.creator.address.slice(-4)}</span>
+            )}
             <span>·</span>
             <span>{detail.model}</span>
           </div>
@@ -634,6 +657,37 @@ export function LineageRoute() {
           </div>
         </div>
       </section>
+
+      {/* ===== MANIFEST ENRICHMENT (real listings; renders nothing when the
+            bundle route 404s/errors or fields are absent) ===== */}
+      {manifest?.plain_summary && (
+        <section
+          data-testid="about-strategy"
+          className="mx-6 mt-6 rounded-md border border-border bg-surface-card p-4"
+        >
+          <div className="text-[12px] font-medium text-foreground mb-1.5">
+            About this strategy
+          </div>
+          <p className="text-[13px] leading-[1.5] text-text-2 whitespace-pre-wrap max-w-[640px]">
+            {manifest.plain_summary}
+          </p>
+        </section>
+      )}
+      {requirements.length > 0 && (
+        <section data-testid="requirements-row" className="mx-6 mt-6">
+          <div className="font-mono text-[9px] tracking-[0.2em] uppercase text-text-3 mb-2">
+            Requirements
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {requirements.map((r) => (
+              <RequirementChip key={`${r.kind}:${r.name}`} requirement={r} />
+            ))}
+          </div>
+          <p className="mt-1.5 font-mono text-[10.5px] text-text-3">
+            you&apos;ll need these to run the strategy after purchase
+          </p>
+        </section>
+      )}
 
       {/* ===== INGREDIENT BANNER ===== */}
       <IngredientBanner ingredients={detail.ingredients} />
