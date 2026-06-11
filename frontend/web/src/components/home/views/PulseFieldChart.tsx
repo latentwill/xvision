@@ -6,10 +6,10 @@
 // unlabeled because elapsed fraction is not wall-clock time.
 //
 // Non-hero series use an rgba-encoded stroke instead of a per-series `alpha`
-// field (uPlot typings don't expose `alpha`). The muted color chosen is
-// theme.surface.gridStrong (a neutral dark/light grid tone) at 40% opacity,
-// which avoids the drawdown red (that reads as loss) while being clearly
-// secondary to the gold hero line.
+// field (uPlot typings don't expose `alpha`). They reuse the equity hue at
+// 28% opacity — a "field" of faint traces in the same family as the hero
+// line. gridStrong was tried first but is a near-background grid tone and
+// disappears entirely in dark mode (verified in the live smoke test).
 
 import "uplot/dist/uPlot.min.css";
 
@@ -65,9 +65,9 @@ export function PulseFieldChart({
     "";
   const { x, ys } = alignFieldSeries(normalized);
 
-  // Non-hero series use gridStrong at 40% opacity — a neutral muted tone
-  // that reads as secondary without implying loss (avoiding drawdown red).
-  const mutedStroke = withAlpha(theme.surface.gridStrong, 0.4);
+  // Non-hero series: equity hue at 28% opacity — visible on the carbon
+  // background but clearly secondary to the full-strength hero line.
+  const mutedStroke = withAlpha(theme.panes.equity, 0.28);
 
   const baseOpts = themeToUplotOptions(theme) as Partial<uPlot.Options>;
   const baseAxes = (baseOpts.axes as uPlot.Axis[] | undefined) ?? [];
