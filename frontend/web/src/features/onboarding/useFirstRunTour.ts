@@ -29,8 +29,8 @@ async function runTour(opts: { force: boolean }) {
   let mod: typeof import("driver.js");
   try {
     mod = await import("driver.js");
-    // CSS side-effect import; ignored by tsc, handled by Vite.
-    // @ts-expect-error css module has no types
+    // CSS side-effect import; typed by vite/client (src/vite-env.d.ts),
+    // handled by Vite.
     await import("driver.js/dist/driver.css");
   } catch {
     // Driver.js unavailable (e.g. test env without the chunk). Skip silently.
