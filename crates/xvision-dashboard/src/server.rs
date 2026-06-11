@@ -322,6 +322,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/lineage",
             get(autooptimizer_route::list_lineage),
         )
+        // Lineage-river chart: all lineage nodes joined with gate scores (read-only LEFT JOIN; spec §8.2).
+        .route(
+            "/api/autooptimizer/river",
+            get(autooptimizer_route::get_river),
+        )
         .route(
             "/api/autooptimizer/run-defaults",
             get(autooptimizer_cycle::run_defaults),
@@ -370,6 +375,11 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/autooptimizer/cycles/:cycle_id/cost",
             get(autooptimizer_route::get_cycle_cost_handler),
+        )
+        // Replay source for the ConsoleModule: persisted event log of a completed cycle.
+        .route(
+            "/api/autooptimizer/cycles/:cycle_id/events",
+            get(autooptimizer_cycle::get_cycle_events),
         )
         // P3-W1: per-cycle aggregate statistics (kept/suspect/dropped/cost/cum_cost).
         // Registered before the /:id catch-all.

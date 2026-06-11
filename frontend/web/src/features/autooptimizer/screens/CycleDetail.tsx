@@ -1,25 +1,47 @@
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
-import { useCycleRun } from "../api";
+import { useCycleRun, type CycleRunDetail } from "../api";
 import { Breadcrumb } from "../ui/Breadcrumb";
+import { ConsoleModule } from "../ui/ConsoleModule";
+import { EditorialHeadline } from "../ui/EditorialHeadline";
 import { EmptyPanel } from "../ui/EmptyPanel";
-import { ProgressDial } from "../ui/ProgressDial";
 import { CycleExperimentsTable } from "../panels/CycleExperimentsTable";
 import { LineageTreePanel } from "../panels/LineageTreePanel";
 import { GateBuckets } from "../panels/GateBuckets";
 import { EvalMatrix } from "../panels/EvalMatrix";
 
-function stat(label: string, value: string, tone = "text-text") {
-  return (
-    <div className="flex flex-col">
-      <span className="text-[8.5px] uppercase tracking-widest text-text-3">{label}</span>
-      <span className={`font-mono text-[20px] ${tone}`}>{value}</span>
-    </div>
-  );
+/** The cycle's best kept node: highest gate delta among `active` nodes (null-safe). */
+function bestKeptFind(cycle: CycleRunDetail): { hash: string; delta: number } | null {
+  let best: { hash: string; delta: number } | null = null;
+  for (const n of cycle.nodes ?? []) {
+    if (n.status !== "active") continue;
+    const delta = n.delta_day;
+    if (typeof delta !== "number") continue;
+    if (best === null || delta > best.delta) best = { hash: n.bundle_hash, delta };
+  }
+  return best;
+}
+
+function fmtDelta(d: number): string {
+  return `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(2)}`;
+}
+
+function headlineFor(cycle: CycleRunDetail): { title: string; subtitle: string } {
+  const best = bestKeptFind(cycle);
+  const bestClause = best
+    ? ` — best find ${best.hash.slice(0, 8)}, ΔSharpe ${fmtDelta(best.delta)}.`
+    : ".";
+  const spend = cycle.cost_usd == null ? "$—" : `$${cycle.cost_usd.toFixed(2)}`;
+  return {
+    title: `Cycle ${cycle.cycle_id} kept ${cycle.active_count} of ${cycle.node_count} experiments${bestClause}`,
+    subtitle: `${spend} · ${cycle.node_count} experiments`,
+  };
 }
 
 export function CycleDetail() {
   const { cycleId = "" } = useParams<{ cycleId: string }>();
+  const [searchParams] = useSearchParams();
+  const exp = searchParams.get("exp") ?? undefined;
   const { data: cycle, isLoading, isError } = useCycleRun(cycleId);
 
   return (
@@ -33,24 +55,15 @@ export function CycleDetail() {
         ) : isError || !cycle ? (
           <p className="text-[12px] text-danger">Couldn't load this cycle.</p>
         ) : (
-          <section className="rounded-md border border-border bg-surface-card p-5">
-            <span className="text-[8.5px] uppercase tracking-widest text-text-3">Cycle</span>
-            <h1 className="m-0 mb-3 font-mono text-[22px] tracking-tight">{cycle.cycle_id}</h1>
-            <div className="flex flex-wrap items-center gap-6">
-              <ProgressDial
-                value={cycle.node_count > 0 ? cycle.active_count / cycle.node_count : 0}
-                label="KEPT"
-                size={64}
-              />
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                {stat("Experiments", String(cycle.node_count))}
-                {stat("Kept", String(cycle.active_count), "text-gold")}
-                {stat("Dropped", String(cycle.rejected_count), "text-text-2")}
-                {stat("$ spend", cycle.cost_usd == null ? "—" : `$${cycle.cost_usd.toFixed(2)}`)}
-              </div>
-            </div>
-          </section>
+          <EditorialHeadline headline={headlineFor(cycle)} digest={null} />
         )}
+
+        <ConsoleModule
+          cycleId={cycleId}
+          expandBoard
+          defaultOpenHash={exp}
+          feedMaxItems={Number.POSITIVE_INFINITY}
+        />
 
         {cycle ? (
           <>

@@ -591,6 +591,8 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
             session_id: String::new(),
             cycle_id: cycle_id.clone(),
             parent_hash: parent_hash.to_hex(),
+            child_hash: String::new(),
+            mutator_model: String::new(),
         },
     )
     .await;
@@ -636,6 +638,7 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
             child_hash: child_hash.to_hex(),
             passed,
             outcome: outcome_str.to_string(),
+            delta_day: None,
         },
     )
     .await;

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiFetch } from "@/api/client";
 import { listProviders } from "@/api/settings";
 import { listStrategies } from "@/api/strategies";
-import { LiveCycleView } from "./LiveCycleView";
+import { LaunchPanel } from "./LaunchPanel";
 
 vi.mock("@/api/client", async () => {
   const actual = await vi.importActual<typeof import("@/api/client")>("@/api/client");
@@ -62,11 +62,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   MockEventSource.instances = [];
   localStorage.clear();
-  Element.prototype.scrollIntoView = vi.fn();
   vi.mocked(apiFetch).mockImplementation((path: string) => {
     if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
-    // Stub the historic-cycles list so `RecentCyclesSectionFull` gets an array
-    // (the catch-all `{}` made `cycleRuns.map` throw — a pre-existing test gap).
     if (path === "/api/autooptimizer/cycles") return Promise.resolve([]);
     if (path === "/api/autooptimizer/run-defaults") {
       return Promise.resolve({
@@ -121,7 +118,7 @@ beforeEach(() => {
   });
 });
 
-function renderLiveCycleView(props: { activeTab?: string; launchOnly?: boolean } = {}) {
+function renderLaunchPanel() {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -130,105 +127,23 @@ function renderLiveCycleView(props: { activeTab?: string; launchOnly?: boolean }
   });
   return render(
     <QueryClientProvider client={client}>
-      <LiveCycleView activeTab={props.activeTab} launchOnly={props.launchOnly} />
+      <LaunchPanel />
     </QueryClientProvider>,
   );
 }
 
-describe("LiveCycleView", () => {
-  it("renders named cycle events from the optimizer SSE stream", async () => {
-    renderLiveCycleView();
+describe("LaunchPanel", () => {
+  it("renders the launch form with strategy picker and run button", async () => {
+    renderLaunchPanel();
 
-    expect(screen.getByText(/Waiting for cycle/)).toBeInTheDocument();
-    expect(MockEventSource.instances[0]?.url).toBe("/api/autooptimizer/events");
-
-    MockEventSource.instances[0].emit(
-      "cycle_started",
-      JSON.stringify({
-        kind: "cycle_started",
-        display_label: "Cycle started",
-        data: { cycle_id: "cycle-1" },
-      }),
-    );
-
-    expect(await screen.findByRole("log")).toBeInTheDocument();
-    expect(screen.getByText("Cycle started")).toBeInTheDocument();
-    expect(screen.getByText("cycle-1")).toBeInTheDocument();
-  });
-
-  it("renders dashboard SSE envelope events from the optimizer stream", async () => {
-    renderLiveCycleView();
-
-    MockEventSource.instances[0].emit(
-      "message",
-      JSON.stringify({
-        kind: "mutation_gated",
-        display_label: "Gate evaluated",
-        data: {
-          type: "mutation_gated",
-          cycle_id: "cycle-2",
-          child_hash: "child-1",
-          passed: false,
-        },
-      }),
-    );
-
-    expect(await screen.findByText("Gate evaluated")).toBeInTheDocument();
-    expect(screen.getByText("cycle-2")).toBeInTheDocument();
-  });
-
-  it("streams live cost/tokens for the running cycle (F35.3)", async () => {
-    vi.mocked(apiFetch).mockImplementation((path: string) => {
-      if (path === "/api/autooptimizer/lineage") return Promise.resolve([]);
-      if (path === "/api/autooptimizer/cycles") return Promise.resolve([]);
-      if (path === "/api/autooptimizer/run-defaults") {
-        return Promise.resolve({
-          mutator_provider: "anthropic",
-          mutator_model: "claude-haiku-4-5",
-          judge_provider: "anthropic",
-          judge_model: "claude-haiku-4-5",
-          config_path: "/tmp/xvn/autooptimizer.toml",
-          config_exists: false,
-        });
-      }
-      if (path === "/api/autooptimizer/cycles/cycle-live/cost") {
-        return Promise.resolve({
-          cycle_id: "cycle-live",
-          cost_usd: 0.1234,
-          input_tokens: 1_935_625,
-          output_tokens: 18_859,
-          unpriced_calls: 0,
-          recorded: true,
-        });
-      }
-      return Promise.resolve({});
-    });
-
-    renderLiveCycleView();
-
-    // Before a cycle starts, no live-spend strip.
-    expect(screen.queryByText(/Live spend/i)).not.toBeInTheDocument();
-
-    MockEventSource.instances[0].emit(
-      "cycle_started",
-      JSON.stringify({
-        kind: "cycle_started",
-        display_label: "Cycle started",
-        data: { cycle_id: "cycle-live" },
-      }),
-    );
-
-    // The ticker polls /cost for the running cycle and renders the spend.
-    expect(await screen.findByText(/Live spend/i)).toBeInTheDocument();
-    expect(await screen.findByText("$0.1234")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(apiFetch).toHaveBeenCalledWith("/api/autooptimizer/cycles/cycle-live/cost"),
-    );
+    expect(screen.getByText("Optimizer Run")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Strategy")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run optimizer" })).toBeInTheDocument();
   });
 
   it("launches an optimizer run through the dashboard API", async () => {
     const user = userEvent.setup();
-    renderLiveCycleView({ launchOnly: true });
+    renderLaunchPanel();
 
     await screen.findByRole("option", { name: "Trend follower" });
     await user.selectOptions(screen.getByLabelText("Strategy"), "strategy-1");
@@ -267,7 +182,7 @@ describe("LiveCycleView", () => {
     });
 
     const user = userEvent.setup();
-    renderLiveCycleView({ launchOnly: true });
+    renderLaunchPanel();
 
     // Each override is a Signal dropdown; open them one at a time and confirm
     // the no-auth model is listed. (option names carry a trailing kind label.)
@@ -306,7 +221,7 @@ describe("LiveCycleView", () => {
       ],
       default_model: null,
     });
-    renderLiveCycleView({ launchOnly: true });
+    renderLaunchPanel();
 
     await screen.findByRole("option", { name: "Trend follower" });
     // The model overrides are Signal dropdowns: open, then click the option.
@@ -334,20 +249,6 @@ describe("LiveCycleView", () => {
     });
   });
 
-  it("does not render ActiveLineagesSectionFull on the default (home) tab", async () => {
-    renderLiveCycleView();
-    await waitFor(() =>
-      expect(screen.queryByText("Active lineages")).not.toBeInTheDocument(),
-    );
-  });
-
-  it("renders ActiveLineagesSectionFull when the genealogy tab is active", async () => {
-    renderLiveCycleView({ activeTab: "genealogy" });
-    await waitFor(() =>
-      expect(screen.getByText("Active lineages")).toBeInTheDocument(),
-    );
-  });
-
   it("does not launch with stale stored optimizer model overrides absent from the picker", async () => {
     localStorage.setItem("autooptimizer_mutator_provider", "openrouter");
     localStorage.setItem("autooptimizer_mutator_model", "old/model");
@@ -369,7 +270,7 @@ describe("LiveCycleView", () => {
       ],
       default_model: null,
     });
-    renderLiveCycleView({ launchOnly: true });
+    renderLaunchPanel();
 
     await screen.findByRole("option", { name: "Trend follower" });
     await waitFor(() => {

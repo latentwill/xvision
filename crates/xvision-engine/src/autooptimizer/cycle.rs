@@ -830,6 +830,11 @@ where
             session_id: String::new(),
             cycle_id: cycle_id.to_string(),
             parent_hash: parent_node.bundle_hash.to_hex(),
+            child_hash: candidate_hash
+                .as_ref()
+                .map(|h| h.to_hex())
+                .unwrap_or_default(),
+            mutator_model: mutator.model.clone(),
         });
         progress(CycleProgressEvent::PhaseStarted {
             session_id: String::new(),
@@ -924,6 +929,7 @@ where
             child_hash: outcome.child_hash.to_hex(),
             passed: matches!(outcome.verdict, GateVerdict::Pass),
             outcome: outcome_str.to_string(),
+            delta_day: outcome.gate_scores.as_ref().map(|gs| gs.delta_day),
         });
         // P2-W2: persist gate record to autooptimizer_gate_records. Best-effort —
         // a DB error must never abort the cycle.

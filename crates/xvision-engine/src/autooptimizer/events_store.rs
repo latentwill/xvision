@@ -39,10 +39,19 @@ pub async fn append_event(
 ///
 /// The 50-session cap keeps the table bounded without losing data for any
 /// active or recent session.
+///
+/// Dashboard-launched cycles (`run_cycle` without a session) persist events
+/// under a `cycle:<cycle_id>` fallback key that never appears in
+/// `autooptimizer_session_state`. Those rows are retained for the 50 most
+/// recent distinct `cycle:` keys (by newest seq) instead of being treated as
+/// orphans — otherwise the next prune would silently break cycle replay.
 pub async fn prune_old_events(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query(
         "DELETE FROM autooptimizer_events WHERE session_id NOT IN \
-         (SELECT session_id FROM autooptimizer_session_state ORDER BY created_at DESC LIMIT 50)",
+         (SELECT session_id FROM autooptimizer_session_state ORDER BY created_at DESC LIMIT 50) \
+         AND session_id NOT IN \
+         (SELECT session_id FROM autooptimizer_events WHERE session_id LIKE 'cycle:%' \
+          GROUP BY session_id ORDER BY MAX(seq) DESC LIMIT 50)",
     )
     .execute(pool)
     .await?;
@@ -206,5 +215,80 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(new_count, 1, "events for newest session should be retained");
+    }
+
+    /// Dashboard-launched cycles persist events under a `cycle:<id>` fallback
+    /// key that never appears in `autooptimizer_session_state`. Pruning must
+    /// retain those rows instead of treating them as orphans.
+    #[tokio::test]
+    async fn test_prune_retains_dashboard_cycle_events() {
+        let pool = open_test_pool().await;
+
+        // 55 real sessions so the session window is saturated.
+        for i in 0..55usize {
+            let sid = format!("session-{i:03}");
+            let ts = format!("2026-01-01T00:00:{i:02}Z");
+            insert_session_sync(&pool, &sid, &ts).await;
+            append_event(&pool, &sid, None, "test_event", r#"{}"#).await.unwrap();
+        }
+
+        // One dashboard-launched cycle: its events carry the `cycle:` fallback
+        // session key, with no matching session_state row.
+        append_event(&pool, "cycle:01HX0", Some("01HX0"), "cycle_started", r#"{}"#)
+            .await
+            .unwrap();
+        append_event(&pool, "cycle:01HX0", Some("01HX0"), "cycle_finished", r#"{}"#)
+            .await
+            .unwrap();
+
+        prune_old_events(&pool).await.unwrap();
+
+        let kept: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:01HX0'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kept, 2, "dashboard-launched cycle events must survive prune");
+    }
+
+    /// The `cycle:` retention is itself bounded: only the 50 most recent
+    /// distinct cycle keys are kept.
+    #[tokio::test]
+    async fn test_prune_bounds_dashboard_cycle_keys_to_50() {
+        let pool = open_test_pool().await;
+
+        // 55 dashboard-launched cycles, one event each, in seq order
+        // (cycle-000 oldest … cycle-054 newest).
+        for i in 0..55usize {
+            let key = format!("cycle:{i:03}");
+            append_event(&pool, &key, Some(&format!("{i:03}")), "cycle_started", r#"{}"#)
+                .await
+                .unwrap();
+        }
+
+        prune_old_events(&pool).await.unwrap();
+
+        let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_events")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, 50, "only 50 most-recent cycle keys retained");
+
+        let oldest: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:000'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(oldest, 0, "oldest cycle key pruned");
+
+        let newest: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM autooptimizer_events WHERE session_id = 'cycle:054'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(newest, 1, "newest cycle key retained");
     }
 }

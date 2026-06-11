@@ -85,6 +85,8 @@ mod tests {
             session_id: "".into(),
             cycle_id: "c1".into(),
             parent_hash: "abc".into(),
+            child_hash: "".into(),
+            mutator_model: "".into(),
         }
     }
     fn mutation_gated_passed() -> CycleProgressEvent {
@@ -94,6 +96,7 @@ mod tests {
             child_hash: "def".into(),
             passed: true,
             outcome: "kept".into(),
+            delta_day: None,
         }
     }
     fn mutation_gated_suspect() -> CycleProgressEvent {
@@ -103,6 +106,7 @@ mod tests {
             child_hash: "def".into(),
             passed: false,
             outcome: "suspect".into(),
+            delta_day: None,
         }
     }
     fn mutation_gated_dropped() -> CycleProgressEvent {
@@ -112,6 +116,7 @@ mod tests {
             child_hash: "def".into(),
             passed: false,
             outcome: "dropped".into(),
+            delta_day: None,
         }
     }
     fn honesty_check_run() -> CycleProgressEvent {

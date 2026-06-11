@@ -23,6 +23,7 @@ use xvision_engine::autooptimizer::{
     dspy_bridge::LiveDspyBridge,
     dspy_flywheel::DspyContext,
     eval_adapter::{BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner},
+    events_store,
     gate::GateVerdict,
     judge::Judge,
     lineage::{LineageNode, LineageStatus, LineageStore},
@@ -30,6 +31,7 @@ use xvision_engine::autooptimizer::{
     mutator::Mutator,
     parent_policy::ParentPolicy,
     preflight::preflight_trader_provider,
+    progress::CycleProgressEvent,
     scenario_synthesis::{synthesize_baseline_untouched_scenario, synthesize_optimizer_day_scenario},
 };
 use xvision_engine::eval::scenario::Scenario;
@@ -38,6 +40,7 @@ use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 
 use crate::error::DashboardError;
+use crate::routes::autooptimizer::table_exists;
 use crate::state::AppState;
 
 #[derive(Deserialize, Default)]
@@ -96,6 +99,49 @@ pub async fn run_defaults() -> Result<Json<RunDefaultsResponse>, DashboardError>
         config_path: config_path.display().to_string(),
         config_exists,
     }))
+}
+
+/// Extract `(session_id, cycle_id)` from a `CycleProgressEvent`.
+/// `SessionStateChanged` has no `cycle_id` field, so we return `None` for it.
+fn event_ids(ev: &CycleProgressEvent) -> (String, Option<String>) {
+    use CycleProgressEvent::*;
+    match ev {
+        CycleStarted { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        ParentSelected { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        MutationProposed { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        NoCandidate { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        MutationGated { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        HonestyCheckRun { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        JudgeFinding { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        CycleFinished { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        PhaseStarted { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        PhaseFinished { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+        SessionStateChanged { session_id, .. } => (session_id.clone(), None),
+        FlywheelCompiled { session_id, cycle_id, .. } => (session_id.clone(), Some(cycle_id.clone())),
+    }
+}
+
+/// Persist a `CycleProgressEvent` to `autooptimizer_events`. Best-effort:
+/// any storage error is logged as a warning and never propagates to the caller.
+///
+/// Dashboard-launched cycles run outside a session: `run_cycle` emits events
+/// with an EMPTY `session_id`. Persisting "" would orphan the rows —
+/// `prune_old_events` retains only session_ids present in
+/// `autooptimizer_session_state` (plus `cycle:`-prefixed keys), so "" rows
+/// would be deleted on the next prune, silently breaking cycle replay.
+/// Substitute the stable fallback key `cycle:<cycle_id>` instead.
+async fn persist_progress_event(pool: &sqlx::SqlitePool, ev: &CycleProgressEvent) {
+    use crate::sse::autooptimizer_labels::event_kind;
+    let (session_id, cycle_id) = event_ids(ev);
+    let session_key = if session_id.is_empty() {
+        format!("cycle:{}", cycle_id.as_deref().unwrap_or("unknown"))
+    } else {
+        session_id
+    };
+    let payload = serde_json::to_string(ev).unwrap_or_else(|_| "{}".into());
+    if let Err(e) = events_store::append_event(pool, &session_key, cycle_id.as_deref(), event_kind(ev), &payload).await {
+        tracing::warn!(error = %e, "persist optimizer cycle event failed (best-effort)");
+    }
 }
 
 pub async fn start_cycle(
@@ -356,6 +402,17 @@ pub async fn start_cycle(
             }
         });
 
+        // Persist cycle events best-effort via an unbounded channel so the
+        // sync progress callback never blocks. The persister task drains the
+        // receiver; dropping `persist_tx` (end of `run_cycle`) signals it to exit.
+        let (persist_tx, mut persist_rx) = tokio::sync::mpsc::unbounded_channel::<CycleProgressEvent>();
+        let persist_pool = pool.clone();
+        tokio::spawn(async move {
+            while let Some(ev) = persist_rx.recv().await {
+                persist_progress_event(&persist_pool, &ev).await;
+            }
+        });
+
         let result = run_cycle(
             &pool,
             &cycle_blob_store,
@@ -366,6 +423,7 @@ pub async fn start_cycle(
             &judge,
             paper_tester.as_ref(),
             move |ev| {
+                let _ = persist_tx.send(ev.clone());
                 let _ = tx.send(ev);
             },
             // DSPy in-loop: `Some` when `dspy_enabled = true` and the store
@@ -1356,6 +1414,40 @@ pub async fn promote_strategy(
     }))
 }
 
+/// One row from `autooptimizer_events`, returned by the cycle-replay endpoint.
+#[derive(Serialize, sqlx::FromRow)]
+pub struct PersistedCycleEvent {
+    pub seq: i64,
+    pub session_id: String,
+    pub cycle_id: Option<String>,
+    pub kind: String,
+    pub payload_json: String,
+    pub ts: String,
+}
+
+/// GET /api/autooptimizer/cycles/:cycle_id/events
+///
+/// Replay source for the ConsoleModule's idle state: the persisted event log
+/// of a completed cycle, oldest-first. Absent table (fresh install) → empty
+/// list, never an error — "no events yet" is a designed product state.
+pub async fn get_cycle_events(
+    Path(cycle_id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PersistedCycleEvent>>, DashboardError> {
+    if !table_exists(&state.pool, "autooptimizer_events").await? {
+        return Ok(Json(Vec::new()));
+    }
+    let events: Vec<PersistedCycleEvent> = sqlx::query_as(
+        "SELECT seq, session_id, cycle_id, kind, payload_json, ts
+         FROM autooptimizer_events WHERE cycle_id = ?1 ORDER BY seq ASC LIMIT 1000",
+    )
+    .bind(&cycle_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| DashboardError::Internal(e.into()))?;
+    Ok(Json(events))
+}
+
 #[cfg(test)]
 mod schedule_tests {
     use super::*;
@@ -1503,5 +1595,241 @@ mod schedule_tests {
             0,
             "deleting nonexistent schedule should affect 0 rows"
         );
+    }
+}
+
+#[cfg(test)]
+mod persist_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn open_pool() -> sqlx::SqlitePool {
+        SqlitePoolOptions::new().connect("sqlite::memory:").await.unwrap()
+    }
+
+    /// Creates the autooptimizer_events table (mirrors migration 057 DDL exactly).
+    /// Named `create_events_table` so Task 1 can reuse it.
+    pub(super) async fn create_events_table(pool: &sqlx::SqlitePool) {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS autooptimizer_events (
+                seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                cycle_id     TEXT,
+                kind         TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                ts           TEXT NOT NULL
+            )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// `persist_progress_event` on a MutationGated event inserts one row with
+    /// kind = "mutation_gated_passed", correct cycle_id, and payload_json = full JSON.
+    #[tokio::test]
+    async fn test_persist_progress_event_mutation_gated() {
+        let pool = open_pool().await;
+        create_events_table(&pool).await;
+
+        // Construct event via serde_json so adding new fields (Task 0a) doesn't break this.
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
+            serde_json::from_str(
+                r#"{
+                    "type": "mutation_gated",
+                    "session_id": "sess-1",
+                    "cycle_id": "cyc-1",
+                    "child_hash": "abc123",
+                    "passed": true,
+                    "outcome": "kept"
+                }"#,
+            )
+            .unwrap();
+
+        persist_progress_event(&pool, &ev).await;
+
+        let row: (String, Option<String>, String) = sqlx::query_as(
+            "SELECT kind, cycle_id, payload_json FROM autooptimizer_events LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(row.0, "mutation_gated_passed", "kind should be event_kind() output");
+        assert_eq!(row.1.as_deref(), Some("cyc-1"), "cycle_id should be set");
+        // payload_json must be valid JSON containing the event fields
+        let payload: serde_json::Value = serde_json::from_str(&row.2).unwrap();
+        assert_eq!(payload["type"], "mutation_gated");
+        assert_eq!(payload["cycle_id"], "cyc-1");
+    }
+
+    /// A SessionStateChanged event (no cycle_id field) persists with cycle_id = NULL.
+    #[tokio::test]
+    async fn test_persist_progress_event_session_state_changed() {
+        let pool = open_pool().await;
+        create_events_table(&pool).await;
+
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
+            serde_json::from_str(
+                r#"{"type":"session_state_changed","session_id":"sess-2","state":"running"}"#,
+            )
+            .unwrap();
+
+        persist_progress_event(&pool, &ev).await;
+
+        let row: (String, Option<String>) =
+            sqlx::query_as("SELECT kind, cycle_id FROM autooptimizer_events LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(row.0, "session_state_changed");
+        assert!(row.1.is_none(), "cycle_id should be NULL for SessionStateChanged");
+    }
+
+    /// Dashboard-launched cycles: `run_cycle` emits events with an EMPTY
+    /// session_id. Persisting them under "" would orphan the rows —
+    /// `prune_old_events` keeps only session_ids present in
+    /// `autooptimizer_session_state`, so "" rows would be silently deleted on
+    /// the next prune. The fallback key `cycle:<cycle_id>` keeps them
+    /// attributable and prune-safe (prune retains `cycle:`-prefixed keys).
+    #[tokio::test]
+    async fn test_persist_progress_event_empty_session_uses_cycle_fallback() {
+        let pool = open_pool().await;
+        create_events_table(&pool).await;
+
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
+            serde_json::from_str(
+                r#"{
+                    "type": "mutation_gated",
+                    "session_id": "",
+                    "cycle_id": "cyc-dash-1",
+                    "child_hash": "abc123",
+                    "passed": true,
+                    "outcome": "kept"
+                }"#,
+            )
+            .unwrap();
+
+        persist_progress_event(&pool, &ev).await;
+
+        let row: (String, Option<String>) =
+            sqlx::query_as("SELECT session_id, cycle_id FROM autooptimizer_events LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            row.0, "cycle:cyc-dash-1",
+            "empty session_id must persist under the cycle: fallback key"
+        );
+        assert_eq!(row.1.as_deref(), Some("cyc-dash-1"));
+    }
+
+    /// A non-empty session_id is stored verbatim (no fallback rewrite).
+    #[tokio::test]
+    async fn test_persist_progress_event_keeps_real_session_id() {
+        let pool = open_pool().await;
+        create_events_table(&pool).await;
+
+        let ev: xvision_engine::autooptimizer::progress::CycleProgressEvent =
+            serde_json::from_str(
+                r#"{"type":"session_state_changed","session_id":"sess-9","state":"running"}"#,
+            )
+            .unwrap();
+
+        persist_progress_event(&pool, &ev).await;
+
+        let session_id: String =
+            sqlx::query_scalar("SELECT session_id FROM autooptimizer_events LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_id, "sess-9");
+    }
+}
+
+#[cfg(test)]
+mod cycle_events_tests {
+    use super::*;
+    use axum::extract::{Path, State};
+    use tempfile::TempDir;
+
+    /// Spin up a fresh `AppState` backed by a temp dir.
+    /// Mirrors the `fresh_state` pattern in `routes/agent_runs.rs`.
+    /// Note: `AppState::new` calls `ApiContext::open` which runs engine migrations,
+    /// including `migrate_autooptimizer_sessions` — so the pool already has
+    /// `autooptimizer_events` after this returns.
+    async fn fresh_state() -> (crate::state::AppState, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let xvn_home = tmp.path().to_path_buf();
+        std::fs::create_dir_all(xvn_home.join("config")).unwrap();
+        let cfg = std::fs::read_to_string("../../config/default.toml")
+            .expect("read workspace config/default.toml");
+        std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
+        let state = crate::state::AppState::new(xvn_home)
+            .await
+            .expect("AppState::new");
+        (state, tmp)
+    }
+
+    // ── test_get_cycle_events_returns_ordered_events ──────────────────────────
+
+    /// Seeding 5 rows (4 for cyc-1, 1 for cyc-2) must return exactly the 4
+    /// rows for cyc-1 in seq order.
+    #[tokio::test]
+    async fn test_get_cycle_events_returns_ordered_events() {
+        let (state, _tmp) = fresh_state().await;
+        // `fresh_state` already creates the table via engine migrations.
+        super::persist_tests::create_events_table(&state.pool).await;
+
+        for (kind, cycle) in [
+            ("cycle_started", "cyc-1"),
+            ("mutation_proposed", "cyc-1"),
+            ("mutation_gated", "cyc-1"),
+            ("cycle_started", "cyc-2"), // other cycle — must be filtered out
+            ("cycle_finished", "cyc-1"),
+        ] {
+            sqlx::query(
+                "INSERT INTO autooptimizer_events (session_id, cycle_id, kind, payload_json, ts)
+                 VALUES ('sess-1', ?1, ?2, '{}', '2026-06-11T00:00:00Z')",
+            )
+            .bind(cycle)
+            .bind(kind)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        }
+
+        let resp = get_cycle_events(Path("cyc-1".into()), State(state))
+            .await
+            .unwrap();
+        let events = resp.0;
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].kind, "cycle_started");
+        assert_eq!(events[3].kind, "cycle_finished");
+        assert!(events.windows(2).all(|w| w[0].seq < w[1].seq));
+    }
+
+    // ── test_get_cycle_events_missing_table_returns_empty ─────────────────────
+
+    /// When `autooptimizer_events` does not exist (fresh install / pre-migration
+    /// DB), the handler must return an empty list — never an error.
+    ///
+    /// `fresh_state` runs engine migrations which CREATE the table, so we must
+    /// explicitly DROP it afterward to exercise the missing-table guard branch in
+    /// `get_cycle_events`.
+    #[tokio::test]
+    async fn test_get_cycle_events_missing_table_returns_empty() {
+        let (state, _tmp) = fresh_state().await;
+        // Drop the table so the guard branch is genuinely exercised.
+        sqlx::query("DROP TABLE IF EXISTS autooptimizer_events")
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        let resp = get_cycle_events(Path("cyc-x".into()), State(state))
+            .await
+            .unwrap();
+        assert!(resp.0.is_empty());
     }
 }

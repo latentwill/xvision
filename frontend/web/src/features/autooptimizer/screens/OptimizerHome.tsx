@@ -1,373 +1,54 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { Topbar } from "@/components/shell/Topbar";
-import { Pill } from "@/components/primitives/Pill";
-import { LiveCycleView } from "../LiveCycleView";
+import { LaunchPanel } from "../ui/LaunchPanel";
 import { RecentCyclesTableBody } from "../panels/RecentCyclesTable";
 import { ExperimentWritersPanel } from "../panels/ExperimentWritersPanel";
-import { PhaseStepper } from "../ui/PhaseStepper";
-import { FlywheelStrip } from "../ui/FlywheelStrip";
-import { ScheduleStrip } from "../ui/ScheduleStrip";
-import { ImprovementChart } from "../ui/ImprovementChart";
-import { OutcomeStackedChart } from "../ui/OutcomeStackedChart";
+import { EditorialHeadline } from "../ui/EditorialHeadline";
+import { ConsoleModule } from "../ui/ConsoleModule";
+import { LineageRiver } from "../ui/LineageRiver";
 import { EdgeVsRandomChart } from "../ui/EdgeVsRandomChart";
+import { buildHeadline, type HeadlineInput } from "../selectors/buildHeadline";
+import { buildDigest, deriveBestFind } from "../selectors/buildDigest";
 import {
   useOptimizerStatus,
   useOptimizerStats,
-  useSessionList,
+  useCycleRuns,
+  useCycleRun,
+  useLineageNodes,
+  useSchedule,
   usePauseCycle,
   useResumeCycle,
-  useCancelSession,
-  type SessionListItem,
+  useCancelCycle,
+  type LineageNode,
 } from "../api";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
+import { formatRelativeTime, formatUntil } from "../utils/time";
 
-// ─── State pill helper ────────────────────────────────────────────────────────
-
-function StatePill({ state }: { state: string }) {
-  const lower = state.toLowerCase();
-  if (lower === "running")
-    return (
-      <Pill tone="gold" animated>
-        Running
-      </Pill>
-    );
-  if (lower === "paused") return <Pill tone="warn">Paused</Pill>;
-  if (lower === "cancelling") return <Pill tone="warn">Cancelling</Pill>;
-  if (lower === "finished") return <Pill tone="default">Finished</Pill>;
-  if (lower === "failed") return <Pill tone="danger">Failed</Pill>;
-  return <Pill tone="default">Idle</Pill>;
-}
-
-function modeLabel(mode: string): string {
-  if (mode === "explore") return "Explore";
-  if (mode === "exploit") return "Exploit";
-  return mode || "";
-}
-
-function formatRelativeTime(iso?: string): string {
-  if (!iso) return "";
-  try {
-    const diffMs = Date.now() - new Date(iso).getTime();
-    const diffMin = Math.floor(diffMs / 60_000);
-    if (diffMin < 1) return "just now";
-    if (diffMin < 60) return `${diffMin}m ago`;
-    const diffHr = Math.floor(diffMin / 60);
-    if (diffHr < 24) return `${diffHr}h ago`;
-    return `${Math.floor(diffHr / 24)}d ago`;
-  } catch {
-    return iso;
+/** Distinct cycles that still hold an active (kept) node. */
+function countActiveLineages(nodes: LineageNode[]): number {
+  const seen = new Set<string>();
+  for (const n of nodes) {
+    if (n.status === "active" && n.cycle_id) seen.add(n.cycle_id);
   }
+  return seen.size;
 }
 
-// ─── Command bar (Zone 1) ─────────────────────────────────────────────────────
+// ─── Session scope chip (?session=) ───────────────────────────────────────────
 
-/**
- * Full-width command bar at the top of the Optimizer page.
- * Shows optimizer state, active-run identity, and a single contextual
- * primary action: Launch run (idle) | Pause + Cancel (running) |
- * Resume + Cancel (paused).
- *
- * `onLaunchToggle` lets the parent show/hide the inline launch panel.
- */
-function CommandBar({
-  launcherOpen,
-  onLaunchToggle,
-}: {
-  launcherOpen: boolean;
-  onLaunchToggle: () => void;
-}) {
-  const status = useOptimizerStatus();
-  const session = status?.active_session ?? null;
-  const state = session?.state ?? "idle";
-  const isRunning = state === "running";
-  const isPaused = state === "paused";
-  const isCancelling = state === "cancelling";
-  const isActive = isRunning || isPaused || isCancelling;
-
-  const { activeCycleId } = useCycleEventStream();
-  const pauseMutation = usePauseCycle();
-  const resumeMutation = useResumeCycle();
-  const cancelMutation = useCancelSession();
-
+function SessionScopeChip({ sessionId }: { sessionId: string }) {
   return (
-    <div className="rounded-md border border-border bg-surface-card px-5 py-4 space-y-3">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        {/* Left group: state pill + identity */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <StatePill state={state} />
-          {isActive && session ? (
-            <span className="font-mono text-[12px] text-text-2">
-              {session.session_id.slice(0, 8)}
-              <span className="text-text-4 mx-1">·</span>
-              {session.strategy_id}
-              <span className="text-text-4 mx-1">·</span>
-              {modeLabel(session.mode)}
-            </span>
-          ) : (
-            <span className="text-[13px] text-text-3">No run in progress</span>
-          )}
-          {isActive && session && (
-            <span className="font-mono text-[11px] text-text-3">
-              {session.cycles_completed} cycles · {session.kept_count} kept ·{" "}
-              {session.suspect_count} suspect
-            </span>
-          )}
-        </div>
-
-        {/* Right group: single primary action */}
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          {isActive && session && (
-            <Link
-              to={`/optimizer/run/${session.session_id}`}
-              className="text-[13px] text-accent hover:underline mr-1"
-            >
-              Watch live →
-            </Link>
-          )}
-          {!isActive && (
-            <button
-              type="button"
-              onClick={onLaunchToggle}
-              aria-expanded={launcherOpen}
-              className={[
-                "rounded px-3 py-1.5 text-[13px] font-medium transition-colors",
-                launcherOpen
-                  ? "bg-surface-panel border border-border text-text-2"
-                  : "bg-accent text-on-accent hover:opacity-90",
-              ].join(" ")}
-            >
-              {launcherOpen ? "Hide launcher" : "Launch run"}
-            </button>
-          )}
-          {isRunning && session && activeCycleId && (
-            <>
-              <button
-                type="button"
-                onClick={() => pauseMutation.mutate(activeCycleId)}
-                disabled={pauseMutation.isPending}
-                className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:bg-surface-elev/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                Pause
-              </button>
-              <button
-                type="button"
-                onClick={() => cancelMutation.mutate(session.session_id)}
-                disabled={cancelMutation.isPending}
-                className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-          {isPaused && session && activeCycleId && (
-            <>
-              <button
-                type="button"
-                onClick={() => resumeMutation.mutate(activeCycleId)}
-                disabled={resumeMutation.isPending}
-                className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                Resume
-              </button>
-              <button
-                type="button"
-                onClick={() => cancelMutation.mutate(session.session_id)}
-                disabled={cancelMutation.isPending}
-                className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Phase spine: visible when running */}
-      {isRunning && (
-        <PhaseStepper currentPhase={null} completedPhases={[]} />
-      )}
-    </div>
-  );
-}
-
-// ─── Recent sessions list ─────────────────────────────────────────────────────
-
-function SessionStateChip({ state }: { state: string }) {
-  return <StatePill state={state} />;
-}
-
-function RecentSessionRow({ item }: { item: SessionListItem }) {
-  return (
-    <Link
-      to={`/optimizer/run/${item.session_id}`}
-      className="flex items-center gap-3 px-4 py-2.5 border-b border-border/50 last:border-0 hover:bg-surface-elev/40 transition-colors group"
-    >
-      <SessionStateChip state={item.state} />
-      <span className="font-mono text-[12px] text-text truncate flex-1">{item.strategy_id}</span>
-      <span className="text-[11px] text-text-3">{modeLabel(item.mode)}</span>
-      {item.kept_count > 0 && (
-        <span className="font-mono text-[11px] text-gold">{item.kept_count} kept</span>
-      )}
-      {item.finished_at && (
-        <span className="font-mono text-[11px] text-text-3">
-          {formatRelativeTime(item.finished_at)}
-        </span>
-      )}
-      <span className="text-text-3 text-[11px] opacity-0 group-hover:opacity-100 transition-opacity">
-        →
+    <div className="flex items-center gap-2">
+      <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-panel px-3 py-1 font-mono text-[11.5px] text-text-2">
+        Session {sessionId}
+        <Link
+          to="/optimizer"
+          aria-label="Clear session filter"
+          className="text-text-3 hover:text-text"
+        >
+          ×
+        </Link>
       </span>
-    </Link>
-  );
-}
-
-function RecentSessionsBody() {
-  const { data: sessions, isLoading } = useSessionList();
-
-  if (isLoading) return <p className="text-[12px] text-text-3">Loading…</p>;
-  if (!sessions || sessions.length === 0) {
-    return <p className="text-[12px] text-text-3">No runs yet.</p>;
-  }
-
-  return (
-    <div className="-mx-5 -mb-1">
-      {sessions.map((item) => (
-        <RecentSessionRow key={item.session_id} item={item} />
-      ))}
-    </div>
-  );
-}
-
-// ─── History ledger (Zone 6) ──────────────────────────────────────────────────
-
-/**
- * Single history surface with a Cycles ⇄ Runs toggle. Replaces the previous
- * duplicate of a standalone RecentCyclesTable plus a separate RecentSessionsList.
- */
-function HistoryLedger() {
-  const [view, setView] = useState<"cycles" | "runs">("cycles");
-
-  const toggleBtn = (key: "cycles" | "runs", label: string) => (
-    <button
-      type="button"
-      onClick={() => setView(key)}
-      aria-pressed={view === key}
-      className={[
-        "px-2.5 py-1 text-[12px] rounded-sm transition-colors",
-        view === key
-          ? "bg-surface-panel text-text"
-          : "text-text-3 hover:text-text-2",
-      ].join(" ")}
-    >
-      {label}
-    </button>
-  );
-
-  return (
-    <section className="rounded-md border border-border bg-surface-card p-5">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <h2 className="m-0 text-[15px] font-semibold tracking-tight">History</h2>
-        <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
-          {toggleBtn("cycles", "Cycles")}
-          {toggleBtn("runs", "Runs")}
-        </div>
-      </div>
-      {view === "cycles" ? <RecentCyclesTableBody /> : <RecentSessionsBody />}
-    </section>
-  );
-}
-
-// ─── Improvement + outcome charts (P3-W3) ────────────────────────────────────
-
-function ImprovementChartsSection() {
-  const [showOutcome, setShowOutcome] = useState(false);
-  const { data: statsRows } = useOptimizerStats();
-  const rows = statsRows ?? [];
-
-  return (
-    <div className="rounded-md border border-border bg-surface-card px-5 py-4 space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-[13px] font-semibold tracking-tight text-text">Improvement over time</h2>
-          <p className="text-[11px] text-text-3 mt-0.5">Best Δ untouched-period score per cycle</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowOutcome((v) => !v)}
-          className="rounded border border-border px-2.5 py-1 text-[11px] text-text-2 hover:bg-surface-elev/40 transition-colors"
-        >
-          {showOutcome ? "Hide outcome mix" : "Show outcome mix"}
-        </button>
-      </div>
-      <ImprovementChart rows={rows} />
-      {showOutcome && <OutcomeStackedChart rows={rows} />}
-
-      <div className="border-t border-border pt-3">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <h3 className="text-[13px] font-semibold tracking-tight text-text">Edge vs random</h3>
-            <p className="text-[11px] text-text-3 mt-0.5">
-              Score above a fixed-seed random agent per cycle — the noise floor is 0
-            </p>
-          </div>
-          <div className="flex items-center gap-3 text-[10px] text-text-3">
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-[2px] w-3" style={{ background: "var(--gold)" }} />
-              Parent
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="inline-block h-[2px] w-3" style={{ background: "#60a5fa" }} />
-              Candidate
-            </span>
-            <span className="flex items-center gap-1">
-              <span
-                className="inline-block h-0 w-3 border-t border-dashed"
-                style={{ borderColor: "var(--text-3)" }}
-              />
-              Random
-            </span>
-          </div>
-        </div>
-        <EdgeVsRandomChart rows={rows} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Outcome strip (Zone 4) ───────────────────────────────────────────────────
-
-/**
- * Horizontal KPI tiles for the active (or most-recent) session — Kept / Suspect
- * / Dropped / Cycles. Absorbs the data the removed KeptNextCard rail used to
- * show, as a glanceable row rather than a tall side card.
- */
-function OutcomeStrip() {
-  const status = useOptimizerStatus();
-  const session = status?.active_session ?? null;
-  if (!session) return null;
-
-  const tiles: Array<{ label: string; value: number; tone: string }> = [
-    { label: "Kept", value: session.kept_count, tone: "text-gold" },
-    { label: "Suspect", value: session.suspect_count, tone: "text-warn" },
-    { label: "Dropped", value: session.dropped_count, tone: "text-text-2" },
-    { label: "Cycles", value: session.cycles_completed, tone: "text-text" },
-  ];
-
-  return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {tiles.map((t) => (
-        <div
-          key={t.label}
-          className="rounded border border-border bg-surface-panel px-3 py-2"
-        >
-          <div className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-text-3">
-            {t.label}
-          </div>
-          <div className={`mt-0.5 font-mono text-xl font-semibold tabular-nums ${t.tone}`}>
-            {t.value}
-          </div>
-        </div>
-      ))}
     </div>
   );
 }
@@ -375,52 +56,184 @@ function OutcomeStrip() {
 // ─── Page root ────────────────────────────────────────────────────────────────
 
 export function OptimizerHome() {
-  const [launcherOpen, setLauncherOpen] = useState(false);
-  const status = useOptimizerStatus();
-  const sessionState = status?.active_session?.state ?? "idle";
-  const isActive =
-    sessionState === "running" ||
-    sessionState === "paused" ||
-    sessionState === "cancelling";
+  const [params] = useSearchParams();
+  const sessionId = params.get("session");
 
-  // Close launcher when a run becomes active.
+  const status = useOptimizerStatus(); // StatusResponse | undefined — not a query object
+  const stats = useOptimizerStats(sessionId ? { session_id: sessionId } : undefined);
+  const cycles = useCycleRuns();
+  const lineage = useLineageNodes({ status: "active" });
+  const schedule = useSchedule();
+
+  const session = status?.active_session ?? null;
+  const rawState = session?.state ?? "idle";
+  const state = (
+    ["running", "paused", "cancelling"].includes(rawState) ? rawState : "idle"
+  ) as HeadlineInput["state"];
+  const isActive = state !== "idle";
+
+  const cycleRows = cycles.data ?? [];
+  const hasHistory = cycleRows.length > 0;
+  const lastCycle = cycleRows[0] ?? null; // CycleRunSummary — only last_created_at exists
+  const lastCycleDetail = useCycleRun(lastCycle?.cycle_id);
+
+  const headline = buildHeadline({
+    state,
+    activeLineages: countActiveLineages(lineage.data ?? []),
+    lastCycle: lastCycle
+      ? { kept: lastCycle.active_count, total: lastCycle.node_count }
+      : null,
+    lastCycleAgo: lastCycle ? formatRelativeTime(lastCycle.last_created_at) : null,
+    bestFind: deriveBestFind(stats.data, lastCycle, lastCycleDetail.data),
+  });
+
+  const statsRows = stats.data ?? [];
+  const digest = buildDigest(statsRows, cycleRows);
+  const newestStatsTs = statsRows.reduce<string | null>(
+    (newest, r) => (newest == null || r.ts > newest ? r.ts : newest),
+    null,
+  );
+
+  // Idle + enabled schedule → "next run <relative time>" in the headline area.
+  const nextRun =
+    !isActive && schedule.data?.enabled && schedule.data.next_run_at
+      ? formatUntil(schedule.data.next_run_at)
+      : null;
+
+  // Contextual action: Launch (idle) | Pause+Cancel (running) | Resume+Cancel (paused)
+  const [launcherOpen, setLauncherOpen] = useState(false);
   useEffect(() => {
     if (isActive) setLauncherOpen(false);
   }, [isActive]);
 
+  // The stream-derived cycle id is empty after a page reload mid-run (the SSE
+  // buffer starts fresh); the status poll's active_cycle_id is the fallback so
+  // Pause/Resume/Cancel stay wired.
+  const { activeCycleId: streamCycleId } = useCycleEventStream();
+  const activeCycleId = streamCycleId ?? status?.active_cycle_id ?? null;
+  const pauseMutation = usePauseCycle();
+  const resumeMutation = useResumeCycle();
+  const cancelMutation = useCancelCycle();
+
+  const launchButton: ReactNode = !isActive ? (
+    <button
+      type="button"
+      onClick={() => setLauncherOpen((v) => !v)}
+      aria-expanded={launcherOpen}
+      className={[
+        "rounded px-3 py-1.5 text-[13px] font-medium transition-colors",
+        launcherOpen
+          ? "bg-surface-panel border border-border text-text-2"
+          : "bg-accent text-on-accent hover:opacity-90",
+      ].join(" ")}
+    >
+      {launcherOpen ? "Hide launcher" : "Launch run"}
+    </button>
+  ) : null;
+
+  const cancelButton =
+    session != null && activeCycleId != null ? (
+      <button
+        type="button"
+        onClick={() => cancelMutation.mutate(activeCycleId)}
+        disabled={cancelMutation.isPending}
+        className="rounded border border-danger/40 px-3 py-1.5 text-[13px] text-danger hover:bg-danger/[0.06] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        Cancel
+      </button>
+    ) : null;
+
+  const action: ReactNode =
+    state === "running" && session && activeCycleId ? (
+      <>
+        <button
+          type="button"
+          onClick={() => pauseMutation.mutate(activeCycleId)}
+          disabled={pauseMutation.isPending}
+          className="rounded border border-border px-3 py-1.5 text-[13px] text-text-2 hover:bg-surface-elev/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          Pause
+        </button>
+        {cancelButton}
+      </>
+    ) : state === "paused" && session && activeCycleId ? (
+      <>
+        <button
+          type="button"
+          onClick={() => resumeMutation.mutate(activeCycleId)}
+          disabled={resumeMutation.isPending}
+          className="rounded bg-accent px-3 py-1.5 text-[13px] font-medium text-on-accent hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          Resume
+        </button>
+        {cancelButton}
+      </>
+    ) : hasHistory ? (
+      // Idle with history: show the launch button in the headline.
+      // Never-ran: no action here — ConsoleModule's NeverRanExplainer is the
+      // single owner of the launch button via the launchAction slot below.
+      launchButton
+    ) : null;
+
+  // Honesty chips: sample sizes for the charts row.
+  const attemptCount = cycleRows.reduce((n, c) => n + c.node_count, 0);
+  const cycleCount = cycleRows.length;
+
   return (
     <>
-      <Topbar title="Optimizer" sub="Tonight's run, experiment writers, and recent cycles" />
+      <Topbar title="Optimizer" />
       <div className="space-y-5">
-        {/* Zone 1: Command bar */}
-        <CommandBar
-          launcherOpen={launcherOpen && !isActive}
-          onLaunchToggle={() => setLauncherOpen((v) => !v)}
-        />
+        <EditorialHeadline headline={headline} digest={digest}>
+          {action}
+        </EditorialHeadline>
 
-        {/* Zone 4: outcome KPI strip — Kept / Suspect / Dropped / Cycles */}
-        <OutcomeStrip />
+        {(newestStatsTs || nextRun) && (
+          <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-text-4 -mt-2">
+            {newestStatsTs && <span>as of {formatRelativeTime(newestStatsTs)}</span>}
+            {nextRun && (
+              <span className="text-text-3">next run {nextRun}</span>
+            )}
+          </div>
+        )}
 
-        {/* Zone 5: Inline launch panel — launchOnly shows just the form card */}
-        {launcherOpen && !isActive && <LiveCycleView embedded launchOnly />}
+        {sessionId && <SessionScopeChip sessionId={sessionId} />}
 
-        {/* Scheduled run config strip — only when launcher is closed */}
-        {!launcherOpen && <ScheduleStrip />}
+        {/* Inline launch panel — the launch form extracted from LiveCycleView */}
+        {launcherOpen && !isActive && <LaunchPanel />}
 
-        {/* Improvement chart + outcome mix toggle */}
-        <ImprovementChartsSection />
+        {/* The headline already carries the contextual action; hand the launch
+            button to the console only for the never-ran explainer. */}
+        <ConsoleModule launchAction={hasHistory ? undefined : launchButton} />
 
-        {/* DSPy flywheel progress strip — hidden when dspy_enabled=false */}
-        <FlywheelStrip />
-
-        {/* Cycle runner + live events — only when idle (Level-2 IA fix: no dual
-            status display when active). Use "Watch live →" from the command bar. */}
-        {!isActive && !launcherOpen && <LiveCycleView embedded />}
+        {/* Charts row — section header carries the honest sample sizes */}
+        <section className="space-y-3">
+          <div className="text-[11px] uppercase tracking-widest text-text-4">
+            Trajectory
+            <span className="ml-2 normal-case tracking-normal text-text-3">
+              {attemptCount} attempts · {cycleCount} cycle
+              {cycleCount === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <LineageRiver hasHistory={hasHistory} />
+            <div className="rounded-md border border-border bg-surface-card p-5 space-y-3">
+              <div className="text-[11px] uppercase tracking-widest text-text-4">
+                Edge vs random
+              </div>
+              <EdgeVsRandomChart rows={statsRows} />
+            </div>
+          </div>
+        </section>
 
         <ExperimentWritersPanel />
 
-        {/* Zone 6: single history ledger with Cycles ⇄ Runs toggle */}
-        <HistoryLedger />
+        {/* Cycle history */}
+        <section className="rounded-md border border-border bg-surface-card p-5">
+          <h2 className="m-0 mb-3 text-[15px] font-semibold tracking-tight">
+            Cycle history
+          </h2>
+          <RecentCyclesTableBody />
+        </section>
       </div>
     </>
   );
