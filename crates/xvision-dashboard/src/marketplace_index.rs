@@ -16,6 +16,11 @@
 //! - a failed `getListing(id)` skips that id with a logged warning;
 //! - a failed/undecodable `tokenURI` keeps the listing with empty metadata
 //!   fields ([`decode_token_metadata`] never errors);
+//! - a failed `getAttestationCount(id)` carries the last-known count
+//!   forward (the spawn loop keeps a per-listing cache and overlays it via
+//!   [`carry_forward_attestations`]) so a transient RPC failure never
+//!   flickers an "attested" badge off; a listing never read successfully
+//!   stays at 0;
 //! - a failed poll keeps the previous snapshot's listings and surfaces the
 //!   error in `last_error`.
 
@@ -65,7 +70,10 @@ pub struct IndexedListing {
     /// `Palette` attribute value, for display (`""` if absent).
     pub palette: String,
     /// Eval attestations posted for this listing (`0` when the
-    /// `EvalAttestationRegistry` is unconfigured or the count call fails).
+    /// `EvalAttestationRegistry` is unconfigured). A failed count call
+    /// degrades to the last successfully read value for the listing (the
+    /// spawn loop overlays it via [`carry_forward_attestations`]), or `0`
+    /// if there has never been a successful read.
     pub attestation_count: u64,
     /// Licenses sold, accumulated by the incremental chunked `Sold` log
     /// scan (`0` when the marketplace contract is unconfigured or the
@@ -357,8 +365,44 @@ pub(crate) fn apply_sales(snapshot: &mut MarketplaceSnapshot, ledger: &SalesLedg
 }
 
 // ---------------------------------------------------------------------------
+// Attestation-count carry-forward
+// ---------------------------------------------------------------------------
+
+/// Overlays last-known attestation counts onto listings whose
+/// `getAttestationCount` call failed this poll, and refreshes the cache
+/// from the listings that were read successfully.
+///
+/// `failed` is the per-poll list of listing ids whose count lookup
+/// errored (their `attestation_count` is 0 in the fresh snapshot);
+/// `last_known` is the spawn loop's persistent per-listing cache. A
+/// failed listing with no cached value keeps its honest 0.
+pub(crate) fn carry_forward_attestations(
+    snapshot: &mut MarketplaceSnapshot,
+    failed: &[u64],
+    last_known: &mut HashMap<u64, u64>,
+) {
+    for listing in &mut snapshot.listings {
+        if failed.contains(&listing.listing_id) {
+            if let Some(prev) = last_known.get(&listing.listing_id) {
+                listing.attestation_count = *prev;
+            }
+        } else {
+            last_known.insert(listing.listing_id, listing.attestation_count);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Chain reader
 // ---------------------------------------------------------------------------
+
+/// Result of one [`poll_once`] pass: the fresh snapshot plus the listing
+/// ids whose `getAttestationCount` lookup failed (their counts are 0 in
+/// the snapshot and get overlaid by [`carry_forward_attestations`]).
+pub struct PollOutcome {
+    pub snapshot: MarketplaceSnapshot,
+    pub attestation_failures: Vec<u64>,
+}
 
 /// One full read pass over the marketplace contracts (listings +
 /// attestations only — `units_sold` / `earned_usdc` come out as zeros and
@@ -367,8 +411,10 @@ pub(crate) fn apply_sales(snapshot: &mut MarketplaceSnapshot, ledger: &SalesLedg
 ///
 /// Errors only on connection / `totalListings()` failure. Per-listing
 /// failures degrade: a failed `getListing` skips the id (logged), a failed
-/// `tokenURI` keeps the listing with empty metadata.
-pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> {
+/// `tokenURI` keeps the listing with empty metadata, and a failed
+/// `getAttestationCount` records the id in `attestation_failures` so the
+/// spawn loop can carry the last-known count forward.
+pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<PollOutcome> {
     let provider = ProviderBuilder::new()
         .connect(cfg.rpc_url.as_str())
         .await
@@ -395,6 +441,7 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
         .map(|addr| IEvalAttestationRegistry::new(addr, &provider));
 
     let mut listings = Vec::with_capacity(total as usize);
+    let mut attestation_failures: Vec<u64> = Vec::new();
     // Listing ids start at 1 (`_nextListingId = 1` in ListingRegistry.sol);
     // totalListings() returns `_nextListingId - 1`, so the range is 1..=total.
     for id in 1..=total {
@@ -419,19 +466,25 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
             }
         };
 
+        let content_hash = hex64(&listing.contentHash.0);
+        let listing_id = u64::try_from(listing.listingId).unwrap_or(id);
+
         let attestation_count = match &attestation_registry {
             Some(registry) => match registry.getAttestationCount(U256::from(id)).call().await {
                 Ok(count) => count.try_into().unwrap_or(u64::MAX),
                 Err(e) => {
-                    tracing::warn!(listing_id = id, error = %e, "getAttestationCount failed; degrading to 0");
+                    tracing::warn!(
+                        listing_id = id,
+                        error = %e,
+                        "getAttestationCount failed; carrying last-known count forward"
+                    );
+                    attestation_failures.push(listing_id);
                     0
                 }
             },
             None => 0,
         };
 
-        let content_hash = hex64(&listing.contentHash.0);
-        let listing_id = u64::try_from(listing.listingId).unwrap_or(id);
         listings.push(IndexedListing {
             listing_id,
             agent_nft_id: listing.agentNftId.to_string(),
@@ -454,11 +507,14 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
         });
     }
 
-    Ok(MarketplaceSnapshot {
-        listings,
-        last_poll_unix: chrono::Utc::now().timestamp(),
-        last_error: None,
-        total_onchain: total,
+    Ok(PollOutcome {
+        snapshot: MarketplaceSnapshot {
+            listings,
+            last_poll_unix: chrono::Utc::now().timestamp(),
+            last_error: None,
+            total_onchain: total,
+        },
+        attestation_failures,
     })
 }
 
@@ -470,20 +526,33 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<MarketplaceSnapshot> 
 /// poll replaces the snapshot wholesale; a failed poll keeps the previous
 /// listings and records `last_error` + the attempt time.
 ///
-/// The loop owns the persistent [`SalesLedger`]: each tick first advances
-/// the incremental chunked Sold scan (cursor only moves past successfully
-/// scanned chunks), then overlays the accumulated totals onto the fresh
-/// snapshot via [`apply_sales`] before swapping it in.
+/// The loop owns the persistent [`SalesLedger`] and the per-listing
+/// last-known attestation-count cache: each tick first advances the
+/// incremental chunked Sold scan (cursor only moves past successfully
+/// scanned chunks), then overlays last-known attestation counts onto
+/// listings whose count lookup failed ([`carry_forward_attestations`])
+/// and the accumulated sale totals ([`apply_sales`]) before swapping the
+/// fresh snapshot in.
 pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(30));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut ledger = SalesLedger::default();
+        let mut attestation_counts: HashMap<u64, u64> = HashMap::new();
         loop {
             tick.tick().await;
             advance_sales_ledger(&cfg, &mut ledger).await;
             match poll_once(&cfg).await {
-                Ok(mut fresh) => {
+                Ok(outcome) => {
+                    let PollOutcome {
+                        snapshot: mut fresh,
+                        attestation_failures,
+                    } = outcome;
+                    carry_forward_attestations(
+                        &mut fresh,
+                        &attestation_failures,
+                        &mut attestation_counts,
+                    );
                     apply_sales(&mut fresh, &ledger);
                     *snapshot.write().await = fresh;
                 }
@@ -665,6 +734,63 @@ mod tests {
                 seller_proceeds_usdc6: 1_000_000,
             })
         );
+    }
+
+    // -- attestation-count carry-forward ---------------------------------------
+
+    fn listing_with_attestations(listing_id: u64, attestation_count: u64) -> IndexedListing {
+        IndexedListing {
+            attestation_count,
+            ..listing_with_id(listing_id)
+        }
+    }
+
+    #[test]
+    fn carry_forward_overlays_failed_listing_from_cache() {
+        let mut last_known: HashMap<u64, u64> = HashMap::from([(2, 3)]);
+        let mut snapshot = MarketplaceSnapshot {
+            // Listing 2 failed this poll (count degraded to 0); listing 5 read fine.
+            listings: vec![
+                listing_with_attestations(2, 0),
+                listing_with_attestations(5, 1),
+            ],
+            ..Default::default()
+        };
+        carry_forward_attestations(&mut snapshot, &[2], &mut last_known);
+        // Failed listing keeps its last-known count instead of flickering to 0.
+        assert_eq!(snapshot.listings[0].attestation_count, 3);
+        // Successful listing keeps the fresh value…
+        assert_eq!(snapshot.listings[1].attestation_count, 1);
+        // …and refreshes the cache; the failed listing's cache is untouched.
+        assert_eq!(last_known.get(&5), Some(&1));
+        assert_eq!(last_known.get(&2), Some(&3));
+    }
+
+    #[test]
+    fn carry_forward_failed_listing_without_cache_stays_zero() {
+        let mut last_known: HashMap<u64, u64> = HashMap::new();
+        let mut snapshot = MarketplaceSnapshot {
+            listings: vec![listing_with_attestations(7, 0)],
+            ..Default::default()
+        };
+        carry_forward_attestations(&mut snapshot, &[7], &mut last_known);
+        // Never read successfully → honest 0, nothing cached.
+        assert_eq!(snapshot.listings[0].attestation_count, 0);
+        assert!(last_known.is_empty());
+    }
+
+    #[test]
+    fn carry_forward_successful_zero_updates_cache() {
+        // A GENUINE zero (successful read) must overwrite a stale cached
+        // value — e.g. after a chain reorg or registry redeploy.
+        let mut last_known: HashMap<u64, u64> = HashMap::from([(4, 9)]);
+        let mut snapshot = MarketplaceSnapshot {
+            listings: vec![listing_with_attestations(4, 0)],
+            ..Default::default()
+        };
+        carry_forward_attestations(&mut snapshot, &[], &mut last_known);
+        assert_eq!(snapshot.listings[0].attestation_count, 0);
+        assert_eq!(last_known.get(&4), Some(&0));
     }
 
     // -- Sold aggregation ----------------------------------------------------

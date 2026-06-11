@@ -211,8 +211,8 @@ describe("LineageRoute", () => {
   });
 });
 
-// ── Verified evals (on-chain attestations) ───────────────────────────────────
-describe("LineageRoute verified evals", () => {
+// ── Eval attestations (on-chain) ─────────────────────────────────────────────
+describe("LineageRoute eval attestations", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   const ATTESTER = "0xa83e000000000000000000000000000000000001";
@@ -263,8 +263,10 @@ describe("LineageRoute verified evals", () => {
     expect(screen.getByText(/2025/)).toBeInTheDocument();
     // eval result uri rendered as text
     expect(screen.getByText("xvn://eval/listing/3")).toBeInTheDocument();
-    // v1: every attestation renders as an endorsement chip
-    expect(screen.getByText(/endorsed/i)).toBeInTheDocument();
+    // honest wording: self-attestations render as "attested", never "verified"
+    expect(screen.getByText("Eval attestations")).toBeInTheDocument();
+    expect(screen.getByText(/attested/i)).toBeInTheDocument();
+    expect(screen.queryByText(/endorsed/i)).not.toBeInTheDocument();
   });
 
   it("does not fetch or render the section for fixture (non-numeric) listings", async () => {

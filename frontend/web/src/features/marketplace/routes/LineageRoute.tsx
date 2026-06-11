@@ -286,7 +286,10 @@ function MoreFromCreatorCard({
   );
 }
 
-// ── Verified evals (on-chain attestations) ──────────────────────────────────
+// ── Eval attestations (on-chain, permissionless self-attestation) ───────────
+// Wording: this section says "attested", never "verified" — v1 attestations
+// are permissionless self-attestations (anyone, including the seller, can
+// post one), so claiming "verified" would overstate the trust signal.
 // Fetched directly from the attestations route rather than threading the data
 // through `detail.onChain.attestations` — ApiMarketplaceData.getListing only
 // hits the listing route and has no attestation fetch, so populating the
@@ -326,7 +329,7 @@ function VerifiedEvalsSection({ listingId }: { listingId: string }) {
     >
       <div className="px-4 py-3 border-b border-border">
         <span className="text-[12px] font-medium text-foreground">
-          Verified evals
+          Eval attestations
         </span>
         <span className="ml-2 font-mono text-[10px] text-text-3">
           on-chain eval attestations
@@ -341,10 +344,11 @@ function VerifiedEvalsSection({ listingId }: { listingId: string }) {
               i < data.items.length - 1 ? "border-b border-border-soft" : "",
             ].join(" ")}
           >
-            {/* v1: any posted attestation counts as an endorsement — the
-                registry carries no verdict field yet. */}
+            {/* v1: the registry carries no verdict field — every posted
+                attestation renders as a plain "attested" chip (a
+                self-attestation, not a third-party verification). */}
             <span className="font-mono text-[10px] px-1.5 py-0.5 border border-gold/40 rounded-[3px] text-gold">
-              endorsed
+              attested
             </span>
             <span className="font-mono text-[11.5px] text-text-2">
               {truncMiddle(a.attester)}
@@ -634,9 +638,10 @@ export function LineageRoute() {
       {/* ===== INGREDIENT BANNER ===== */}
       <IngredientBanner ingredients={detail.ingredients} />
 
-      {/* ===== VERIFIED EVALS (inline, only for verified on-chain listings;
-            verification === "verified" ⇔ attestation_count > 0 in the
-            indexer mapping, so the fetch only fires when rows exist) ===== */}
+      {/* ===== EVAL ATTESTATIONS (inline, only for attested on-chain
+            listings; verification === "verified" ⇔ attestation_count > 0
+            in the indexer mapping, so the fetch only fires when rows
+            exist) ===== */}
       {/^\d+$/.test(detail.id) && detail.verification === "verified" && (
         <VerifiedEvalsSection listingId={detail.id} />
       )}

@@ -52,6 +52,18 @@ describe("ReceiptsDrawer", () => {
     expect(screen.getByText(/question/i)).toBeInTheDocument();
   });
 
+  it("hides the verdicts section entirely when attestations are empty", () => {
+    // API listings always arrive with an empty attestations array — showing
+    // "0 verdicts" would read like a trust failure rather than absent data.
+    const empty: OnChainReceipts = { ...ON_CHAIN, attestations: [] };
+    render(<ReceiptsDrawer onChain={empty} open={true} onToggle={vi.fn()} />);
+    expect(screen.queryByText(/attestation verdicts/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 verdicts/i)).not.toBeInTheDocument();
+    // The rest of the body still renders.
+    expect(screen.getByTestId("receipts-body")).toBeInTheDocument();
+    expect(screen.getAllByText(/anchor history/i).length).toBeGreaterThanOrEqual(1);
+  });
+
   it("shows anchor history entries when open", () => {
     render(<ReceiptsDrawer onChain={ON_CHAIN} open={true} onToggle={vi.fn()} />);
     expect(screen.getAllByText(/merkle/i).length).toBeGreaterThanOrEqual(1);

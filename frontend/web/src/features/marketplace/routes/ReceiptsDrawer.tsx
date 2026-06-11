@@ -134,7 +134,12 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
             </div>
           </div>
 
-          {/* Attestation verdicts */}
+          {/* Attestation verdicts — hidden when there are none. API
+              listings always arrive with an empty `attestations` array
+              (verdicts are a fixture-only concept for now), and rendering
+              "0 verdicts" reads like a trust failure rather than absent
+              data. */}
+          {onChain.attestations.length > 0 && (
           <div className="rounded-md border border-border bg-surface-card">
             <div className="px-4 py-3 border-b border-border">
               <span className="text-[12px] font-medium text-foreground">
@@ -171,6 +176,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
               ))}
             </div>
           </div>
+          )}
 
           {/* Anchor history — full width */}
           <div className="rounded-md border border-border bg-surface-card col-span-2">
