@@ -21,4 +21,9 @@ fees: Fees | null,
 /**
  * Override slippage model. `None` means fall through to scenario default.
  */
-slippage: SlippageModel | null, };
+slippage: SlippageModel | null, 
+/**
+ * Override borrow cost (bps/day) for short positions on this asset.
+ * `None` means fall through to `VenueSettings.borrow_bps_per_day`.
+ */
+borrow_bps_per_day: number | null, };

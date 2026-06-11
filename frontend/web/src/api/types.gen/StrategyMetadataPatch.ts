@@ -22,7 +22,7 @@
  * `Option<String>` (no separate `null` vs. `""` ambiguity) while
  * giving the UI a clean "unset" affordance.
  */
-export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, decision_cadence_minutes: number | null,
+export type StrategyMetadataPatch = { display_name: string | null, plain_summary: string | null, asset_universe: Array<string> | null, decision_cadence_minutes: number | null, 
 /**
  * Optional per-strategy display color. Must be a 7-character CSS
  * hex string (`#RRGGBB`, case-insensitive) when non-empty.

@@ -7,4 +7,9 @@ import type { Indicators } from "./Indicators";
 import type { PositionPoint } from "./PositionPoint";
 import type { TimeWindow } from "./TimeWindow";
 
-export type RunChartPayload = { run_id: string, scenario_id: string, asset: string, granularity: string, time_window: TimeWindow, bars: Array<ChartBar>, indicators: Indicators, equity: Array<ChartEquityPoint>, drawdown: Array<DrawdownPoint>, position: Array<PositionPoint>, markers: ChartMarkers, };
+export type RunChartPayload = { run_id: string, scenario_id: string, asset: string, granularity: string, time_window: TimeWindow, bars: Array<ChartBar>, indicators: Indicators, equity: Array<ChartEquityPoint>, drawdown: Array<DrawdownPoint>, position: Array<PositionPoint>, markers: ChartMarkers, 
+/**
+ * Buy-and-hold comparison curve — present only when the request's
+ * `include` set contains `baseline` and the run has cached bars.
+ */
+baseline_equity: Array<ChartEquityPoint> | null, };

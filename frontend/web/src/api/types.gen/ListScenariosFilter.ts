@@ -5,7 +5,7 @@ import type { ScenarioSource } from "./ScenarioSource";
  * Filter for `list`. All fields are AND-composed; `Default` means "no
  * filter on any dimension" (and excludes archived rows).
  */
-export type ListScenariosFilter = { source: ScenarioSource | null, tags: Array<string>, exclude_tags: Array<string>, include_archived: boolean, parent_scenario_id: string | null,
+export type ListScenariosFilter = { source: ScenarioSource | null, tags: Array<string>, exclude_tags: Array<string>, include_archived: boolean, parent_scenario_id: string | null, 
 /**
  * Optional page-size cap. The dashboard list endpoint sets both
  * `limit` and `offset`; CLI / MCP callers leave them unset.

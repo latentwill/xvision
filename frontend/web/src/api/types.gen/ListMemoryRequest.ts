@@ -20,9 +20,21 @@ agent: string | null,
 /**
  * Observation provenance filters. Both `None` returns all.
  */
-scenario_id: string | null, run_id: string | null, limit: bigint | null, offset: bigint | null, 
+scenario_id: string | null, run_id: string | null, 
+/**
+ * Pattern lifecycle filter, e.g. `"staged"` or `"active"`.
+ * Demoted Patterns are represented by `forgotten_at`, so callers
+ * combine this with `include_forgotten=true` when auditing soft
+ * deletes.
+ */
+promotion_state: string | null, limit: bigint | null, offset: bigint | null, 
 /**
  * When `Some(true)`, soft-deleted rows are included. Default is
  * to skip rows with non-null `forgotten_at`.
  */
-include_forgotten: boolean | null, };
+include_forgotten: boolean | null, 
+/**
+ * When `Some(true)`, return only soft-deleted rows. This implies
+ * `include_forgotten` and powers demoted Pattern drill-downs.
+ */
+forgotten_only: boolean | null, };

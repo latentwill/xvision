@@ -27,7 +27,28 @@ export type MetricsSummary = {
  * Deserialization accepts `gross_return_pct` as an alias so JSON written
  * by future code that uses the new name can still round-trip.
  */
-total_return_pct: number, sharpe: number, max_drawdown_pct: number, win_rate: number, n_trades: number, n_decisions: number, 
+total_return_pct: number, sharpe: number, max_drawdown_pct: number, 
+/**
+ * Fraction of CLOSED ROUND-TRIPS that realized positive PnL
+ * (`wins / realized_count`). A round-trip is one position open→flat
+ * cycle, closed by the trader (`flat`/flip) or a deterministic SL/TP
+ * exit. `0.0` when no round-trip closed.
+ */
+win_rate: number, 
+/**
+ * Count of FILL LEGS that crossed the book — opens, closes, SL/TP forced
+ * exits, and partial-TP1 slices each count one. An open+close round-trip
+ * is `2` here. This is leg-count semantics (NOT round-trips); `win_rate`
+ * is the round-trip view. See the counter doc in `backtest.rs`.
+ */
+n_trades: number, 
+/**
+ * Count of LLM-pipeline decision slots, including synthesized SL/TP exit
+ * rows. Cadence-gated and filter-suppressed bars do not increment it (no
+ * decision occurred). Filter wake/suppression accounting lives separately
+ * in `xvision_filters::events::FilterSummary`.
+ */
+n_decisions: number, 
 /**
  * Total LLM inference cost for all decisions in this run (USD).
  * `None` when the model's pricing isn't in the catalog — in that case

@@ -13,12 +13,12 @@ tier: string, text: string,
 /**
  * RFC3339 timestamp.
  */
-created_at: string, run_id: string | null, scenario_id: string | null, cycle_idx: bigint | null, source_window_start: string | null, source_window_end: string | null,
+created_at: string, run_id: string | null, scenario_id: string | null, cycle_idx: bigint | null, source_window_start: string | null, source_window_end: string | null, 
 /**
  * RFC3339 date; `None` on Observations and on operator-attested
  * Patterns where the operator wants global applicability.
  */
-training_window_end: string | null, promotion_state: string | null, attestation_id: string | null,
+training_window_end: string | null, promotion_state: string | null, attestation_id: string | null, 
 /**
  * RFC3339 timestamp of when the row was soft-deleted via
  * `forget`. `None` on live rows.

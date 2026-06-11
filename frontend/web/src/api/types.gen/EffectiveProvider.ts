@@ -18,7 +18,7 @@ import type { EffectiveProviderModel } from "./EffectiveProviderModel";
  */
 export type EffectiveProvider = { provider: string, 
 /**
- * Stable string form — `"anthropic" | "openai-compat" | "local-candle"`.
+ * Stable string form — `"anthropic" | "openai-compat" | "local-candle" | "ollama" | "llama-cpp" | "vllm"`.
  */
 kind: string, base_url: string, 
 /**

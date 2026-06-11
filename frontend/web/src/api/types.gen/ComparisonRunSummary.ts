@@ -4,29 +4,29 @@ import type { MetricsSummary } from "./MetricsSummary";
 import type { RunMode } from "./RunMode";
 import type { RunStatus } from "./RunStatus";
 
-export type ComparisonRunSummary = { id: string, agent_id: string,
+export type ComparisonRunSummary = { id: string, agent_id: string, 
 /**
  * Human-readable strategy name resolved by the API layer when it has
  * access to the workspace strategy store. `None` for legacy payloads or
  * direct in-process callers that only have a `RunStore`.
  */
-strategy_name: string | null, scenario_id: string, mode: RunMode, status: RunStatus, started_at: string, completed_at: string | null, metrics: MetricsSummary | null, error: string | null,
+strategy_name: string | null, scenario_id: string, mode: RunMode, status: RunStatus, started_at: string, completed_at: string | null, metrics: MetricsSummary | null, error: string | null, 
 /**
  * Derived action-distribution + behaviour summary for this run.
  * Populated by `compare_runs`; `None` only when the decision store
  * query fails for this run (treated as best-effort, not fatal).
  */
-behavior: BehaviorSummary | null,
+behavior: BehaviorSummary | null, 
 /**
  * SHA-256 hex digest of the Parquet bytes used for this run.
  * `None` for pre-migration rows.
  */
-bars_content_hash: string | null,
+bars_content_hash: string | null, 
 /**
  * SHA-256 hex digest of the canonical DataManifest for this run.
  * `None` for pre-migration rows.
  */
-manifest_canonical: string | null,
+manifest_canonical: string | null, 
 /**
  * Net return after deducting LLM inference cost. `None` for old runs
  * without pricing data or when the model isn't in the pricing catalog.
@@ -34,24 +34,24 @@ manifest_canonical: string | null,
  * arm so the compare view can render a Net column without deep-reading
  * the full metrics blob.
  */
-net_return_pct: number | null,
+net_return_pct: number | null, 
 /**
  * Sum of `model_calls.input_token_count` for this run. `None` when
  * the run produced no model_calls (legacy / pre-observability rows)
  * or none of them recorded token counts. Appended 2026-05-22 for
  * `cli-report-actions-and-tokens`.
  */
-input_tokens: bigint | null,
+input_tokens: bigint | null, 
 /**
  * Sum of `model_calls.output_token_count`.
  */
-output_tokens: bigint | null,
+output_tokens: bigint | null, 
 /**
  * Sum of `model_calls.cost_usd`. Not a recomputation — purely a
  * rollup of the populated column. `None` when every contributing
  * row had `cost_usd = NULL` or there were no contributing rows.
  */
-cost_usd_estimate: number | null,
+cost_usd_estimate: number | null, 
 /**
  * `true` iff every model_call contributing to `cost_usd_estimate`
  * had a non-null `cost_usd`. When `false`, the estimate is a strict
@@ -59,7 +59,7 @@ cost_usd_estimate: number | null,
  * model_calls were aggregated — but in that case the cost itself is
  * `None`, so the flag carries no false signal.
  */
-cost_estimate_complete: boolean,
+cost_estimate_complete: boolean, 
 /**
  * Wall-clock duration (`completed_at - started_at`) in milliseconds.
  * `None` for runs that haven't terminated, or pre-migration rows.
