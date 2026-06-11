@@ -6,6 +6,7 @@ import { SLICES } from "./fixtures/slices";
 import { RECEIPTS } from "./fixtures/receipts";
 import { LISTABLE_STRATEGIES, buildPublishDraft } from "./fixtures/seller";
 import { VIEWER } from "./fixtures/viewer";
+import { publishListing } from "./publish";
 import type {
   CreatorProfile, FilterState, Id, ListableStrategy, ListingDetail, ListingRow,
   MarketplaceStats, PublishDraft, PurchaseEvent, Receipt, Slice, SliceId, TxRef, Viewer,
@@ -80,8 +81,8 @@ export class FixtureMarketplaceData implements MarketplaceData {
   async createPublishDraft(strategyId: string) {
     return buildPublishDraft(strategyId);
   }
-  async submitListing(_d: PublishDraft): Promise<TxRef> {
-    return fakeTx();
+  async submitListing(d: PublishDraft): Promise<TxRef> {
+    return publishListing(d);
   }
   async purchaseIntent(_listingId: Id): Promise<TxRef> {
     return fakeTx();

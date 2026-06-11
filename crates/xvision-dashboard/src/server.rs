@@ -32,6 +32,7 @@
 // 17c. PUT/DELETE /api/strategy/:id/filter            strategies::put_filter / delete_filter
 // 18. POST   /api/strategy/:id/validate               strategies::post_validate
 // 18b. GET   /api/strategy/:id/validate               strategies::validate_get_hint (F4 hint → 405)
+// 18c. POST  /api/marketplace/publish                 marketplace_route::post_publish
 // 19. POST   /api/strategies-folder/import            strategies_folder_route::post_import
 // 20. POST   /api/scenarios                           scenarios::create
 // 21. DELETE /api/scenarios/:id                       scenarios::delete
@@ -178,7 +179,8 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    memory as memory_route, optimizations as optimizations_route, safety as safety_route, scenarios,
+    marketplace as marketplace_route, memory as memory_route,
+    optimizations as optimizations_route, safety as safety_route, scenarios,
     search as search_route, settings, skills, static_files, strategies,
     strategies_folder as strategies_folder_route, tools as tools_route,
     version::version,
@@ -492,6 +494,12 @@ fn mutating_router(state: AppState) -> Router {
             post(strategies::post_validate)
                 // F4: GET /api/strategy/:id/validate → 405 with a hint pointing to POST.
                 .get(strategies::validate_get_hint),
+        )
+        // ── Marketplace ───────────────────────────────────────────────────
+        // Genart mint + listing. Env-gated: returns 503 without chain config.
+        .route(
+            "/api/marketplace/publish",
+            post(marketplace_route::post_publish),
         )
         // ── Strategies folder ─────────────────────────────────────────────
         .route(

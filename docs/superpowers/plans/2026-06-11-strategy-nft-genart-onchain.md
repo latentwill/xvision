@@ -13,6 +13,7 @@
 **Two spec corrections to apply during Task 9** (discovered while grounding this plan):
 1. §4 says "weighted bag of 14" — the weights sum to **13**. The normative bag is the 13-entry list in Task 1.
 2. §7 places the identity pre-mint inside `publish_listing` — but `adapter.rs:282-285` deliberately keeps mint and listing separable ("Pre-mint agent registration … is the caller's responsibility"). The pre-mint is orchestrated by the **dashboard route** instead (Task 7). `PublishRequest` is NOT modified.
+3. (applied during execution) §6 encoding changed from per-run `<rect>` to per-color stroke-`<path>` (`M{x} {y}.5h{w}` runs) after dense seeds measured ~69 KB with rects; ceiling raised 12 KB → 16 KB. Tasks 2-4 as committed implement the path encoding.
 
 ---
 

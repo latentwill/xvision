@@ -92,11 +92,11 @@ fn marketplace_help_exits_zero() {
 
 // ── MARKETPLACE_DRIVER=onchain (T2.3) ────────────────────────────────────────
 
-/// `buy` on the onchain driver is gated until the EIP-3009 USDC test token
-/// lands: it must fail fast with a clear message, before any env validation
-/// or network call.
+/// `buy` with MARKETPLACE_DRIVER=onchain and no MANTLE_PRIVATE_KEY must fail
+/// at the env-validation stage (not an EIP-3009 gate — that gate was removed
+/// when MockUSDC3009 was deployed on Mantle Sepolia 2026-06-10).
 #[test]
-fn marketplace_onchain_buy_pending_eip3009() {
+fn marketplace_onchain_buy_proceeds_to_env_validation() {
     let dir = tempdir().unwrap();
     let out = xvn()
         .args([
@@ -114,11 +114,16 @@ fn marketplace_onchain_buy_pending_eip3009() {
         .output()
         .expect("xvn marketplace buy");
 
-    assert!(!out.status.success(), "onchain buy must be rejected");
+    assert!(!out.status.success(), "onchain buy without MANTLE_PRIVATE_KEY must fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
+    // Must reach the driver env check — not an EIP-3009 gate message
     assert!(
-        stderr.contains("EIP-3009"),
-        "expected EIP-3009 pending message in stderr: {stderr}"
+        stderr.contains("MANTLE_PRIVATE_KEY"),
+        "expected MANTLE_PRIVATE_KEY env error in stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("not yet available"),
+        "stale gate message must not appear in stderr: {stderr}"
     );
 }
 
