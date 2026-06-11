@@ -181,9 +181,9 @@ use crate::routes::{
     eval_runs, flywheel, focus as focus_route,
     health::health,
     live_broker as live_broker_route, marketplace as marketplace_route, memory as memory_route,
-    optimizations as optimizations_route, safety as safety_route, scenarios,
-    search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, tools as tools_route,
+    optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
+    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    tools as tools_route,
     version::version,
     wizard,
 };

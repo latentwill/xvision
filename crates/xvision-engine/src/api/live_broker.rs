@@ -83,11 +83,7 @@ fn network_from_base_url(base_url: Option<&str>) -> &'static str {
 pub async fn venue_account() -> ApiResult<VenueAccountDto> {
     let missing: Vec<&str> = ["ORDERLY_KEY", "ORDERLY_SECRET", "ORDERLY_ACCOUNT_ID"]
         .into_iter()
-        .filter(|v| {
-            std::env::var(v)
-                .map(|s| s.trim().is_empty())
-                .unwrap_or(true)
-        })
+        .filter(|v| std::env::var(v).map(|s| s.trim().is_empty()).unwrap_or(true))
         .collect();
     if !missing.is_empty() {
         return Ok(VenueAccountDto::disconnected(format!(
@@ -147,7 +143,10 @@ mod tests {
             network_from_base_url(Some("https://testnet-api-evm.orderly.org")),
             "testnet"
         );
-        assert_eq!(network_from_base_url(Some("https://api-evm.orderly.org")), "mainnet");
+        assert_eq!(
+            network_from_base_url(Some("https://api-evm.orderly.org")),
+            "mainnet"
+        );
         assert_eq!(network_from_base_url(None), "mainnet");
     }
 
@@ -158,10 +157,7 @@ mod tests {
         assert_eq!(json["connected"], false);
         assert_eq!(json["venue"], "orderly");
         assert!(json.get("equity_usd").is_none(), "no equity when disconnected");
-        assert!(json["reason"]
-            .as_str()
-            .unwrap()
-            .contains("not configured"));
+        assert!(json["reason"].as_str().unwrap().contains("not configured"));
         assert!(json["positions"].as_array().unwrap().is_empty());
     }
 

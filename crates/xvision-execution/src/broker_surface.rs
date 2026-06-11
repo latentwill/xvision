@@ -25,8 +25,8 @@ use xvision_core::AssetSymbol;
 
 use crate::alpaca::{AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide};
 use crate::orderly::{
-    orderly_symbol_for, AlgoKind, Credentials as OrderlyCredentials, OrderlyApi, OrderlyOrder,
-    OrderSide as OrderlyOrderSide, ReqwestOrderlyApi, ORDERLY_MAINNET_BASE,
+    orderly_symbol_for, AlgoKind, Credentials as OrderlyCredentials, OrderSide as OrderlyOrderSide,
+    OrderlyApi, OrderlyOrder, ReqwestOrderlyApi, ORDERLY_MAINNET_BASE,
 };
 
 /// Returns `true` when `asset` parses as an Alpaca crypto whitelist symbol
@@ -54,9 +54,7 @@ pub fn is_alpaca_crypto(asset: &str) -> bool {
             // suffix so callers passing Alpaca-style pairs without a slash still
             // resolve correctly.
             let upper = asset.trim().to_ascii_uppercase();
-            let base = upper
-                .strip_suffix("USDC")
-                .or_else(|| upper.strip_suffix("USD"));
+            let base = upper.strip_suffix("USDC").or_else(|| upper.strip_suffix("USD"));
             if let Some(b) = base {
                 if !b.is_empty() {
                     if let Ok(base_sym) = AssetSymbol::from_str(b) {

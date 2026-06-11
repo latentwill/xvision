@@ -66,13 +66,12 @@ pub(crate) const ORDERLY_MAINNET_BASE: &str = "https://api-evm.orderly.org";
 /// unregistered symbols. Returns `NotActionable` only when the registry is
 /// loaded and explicitly marks the asset as having no Orderly symbol.
 pub fn orderly_symbol_for(asset: AssetSymbol) -> Result<String, ExecutorError> {
-    xvision_core::asset_registry::orderly_symbol(asset)
-        .ok_or_else(|| {
-            ExecutorError::NotActionable(format!(
-                "Orderly does not list {} on its Mantle EVM gateway",
-                asset.as_str()
-            ))
-        })
+    xvision_core::asset_registry::orderly_symbol(asset).ok_or_else(|| {
+        ExecutorError::NotActionable(format!(
+            "Orderly does not list {} on its Mantle EVM gateway",
+            asset.as_str()
+        ))
+    })
 }
 
 /// Inverse helper: map an Orderly market string back to its
@@ -1689,7 +1688,9 @@ mod tests {
 
         assert!(state.open_positions.contains_key(&AssetSymbol::Eth));
         assert!(state.open_positions.contains_key(&AssetSymbol::Btc));
-        assert!(state.open_positions.contains_key(&AssetSymbol::from_static("XRP")));
+        assert!(state
+            .open_positions
+            .contains_key(&AssetSymbol::from_static("XRP")));
         assert_eq!(
             state.open_positions.len(),
             3,
