@@ -73,6 +73,13 @@ mod include_set_tests {
         assert!(IncludeSet::parse("equity,baseline").needs_bars());
         assert!(!IncludeSet::parse("equity").needs_bars());
     }
+
+    #[test]
+    fn needs_indicators_only_on_full() {
+        assert!(IncludeSet::full().needs_indicators());
+        assert!(!IncludeSet::parse("bars,markers").needs_indicators());
+        assert!(!IncludeSet::parse("equity").needs_indicators());
+    }
 }
 ```
 
@@ -144,6 +151,12 @@ impl IncludeSet {
     pub fn needs_bars(&self) -> bool {
         self.bars || self.markers || self.baseline
     }
+
+    /// Indicators (and the full payload's position spans) compute only on
+    /// the full, no-`include`-param payload.
+    pub fn needs_indicators(&self) -> bool {
+        self.indicators
+    }
 }
 ```
 
@@ -176,7 +189,9 @@ git commit -m "feat(chart): IncludeSet allowlist parser for slim run-chart paylo
 mod baseline_tests {
     use super::{compute_baseline_equity, ChartEquityPoint};
     use chrono::TimeZone;
-    use xvision_core::trading::MarketBar;
+    // MarketBar lives in xvision_data::alpaca (chart.rs already imports it
+    // around line 281 for compute_indicators) — NOT xvision_core::trading.
+    use xvision_data::alpaca::MarketBar;
 
     fn bar(offset_h: i64, close: f64) -> MarketBar {
         let ts = chrono::Utc
@@ -248,7 +263,7 @@ mod baseline_tests {
 }
 ```
 
-NOTE: `MarketBar` is the type already used by `compute_indicators(bars: &[MarketBar])` in this file — check its import (`xvision_core::trading::MarketBar` or wherever the existing `use` pulls it from at the top of `chart.rs`) and reuse the exact same path. If field names differ (e.g. no `volume`), mirror the construction used by `bar_to_chart_bar` (chart.rs:527) which reads `b.timestamp, b.open, b.high, b.low, b.close, b.volume`.
+NOTE: `MarketBar` is `xvision_data::alpaca::MarketBar` — the same type `compute_indicators(bars: &[MarketBar])` already uses in this file (imported ~line 281). If field names differ from the fixture above, mirror the construction used by `bar_to_chart_bar` (chart.rs:527) which reads `b.timestamp, b.open, b.high, b.low, b.close, b.volume`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -484,7 +499,7 @@ Expected: COMPILE ERROR — `build_run_payload_with` / `baseline_equity` not fou
 
 (The `#[cfg_attr(feature = "ts-export", …)]` derives already sit on the struct; no per-field attribute is needed for an `Option<Vec<…>>` of an already-exported type.)
 
-3b. Derive empty indicators: add `Default` to the derive lists of `Indicators`, `BollingerSeries`, `DonchianSeries`, `MacdSeries` (chart.rs:79-132), e.g. `#[derive(Debug, Clone, Serialize, Deserialize, Default)]`.
+3b. Derive empty indicators: add `Default` to the derive list of ALL FOUR structs — `Indicators` (chart.rs:79), `BollingerSeries` (:105), `DonchianSeries` (:117), AND `MacdSeries` (:128) — each becomes `#[derive(Debug, Clone, Serialize, Deserialize, Default)]`. `Indicators::default()` does not compile unless every nested struct also derives `Default`.
 
 3c. Rewrite the builder (chart.rs:381-523). The old entry point delegates:
 
@@ -627,12 +642,12 @@ pub async fn build_run_payload_with(
     } else {
         vec![]
     };
-    let indicators = if include.indicators {
+    let indicators = if include.needs_indicators() {
         compute_indicators(&bars)
     } else {
         Indicators::default()
     };
-    let position = if include.indicators {
+    let position = if include.needs_indicators() {
         // Position spans ship with the full payload only (run-detail page).
         compute_position(&decisions, &bars)
     } else {
@@ -1489,7 +1504,10 @@ export function PulseHoldChart({
       },
       {
         label: "Buy & Hold",
-        stroke: theme.panes.drawdown,
+        // Muted/neutral tone — NOT theme.panes.drawdown: red would read as
+        // a loss indicator. Use theme.surface.gridStrong if present on the
+        // theme shape, else the muted text/axis token from useChart2Theme.
+        stroke: theme.surface.gridStrong,
         width: 1,
         dash: [4, 4],
         points: { show: false },
@@ -1762,7 +1780,7 @@ it("failed lazy view fetch shows an inline retry, not a crash", async () => {
 });
 ```
 
-(Exact mocking mechanics depend on the file's current approach — it must already mock `@/api/chart`'s `getRunChart` or `apiFetch` for the hero chart; extend that mock to key off the `include` argument.)
+(Read `PulseBand.test.tsx` FIRST and reuse its existing render/fixture helper — e.g. a `renderBand()`-style wrapper with QueryClientProvider and run fixtures — rather than writing a duplicate harness. It must already mock `@/api/chart`'s `getRunChart` or `apiFetch` for the hero chart; extend that mock to key off the `include` argument.)
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -1899,14 +1917,13 @@ Body (after the header row, before the KPI rail):
             {view === "trades" &&
               (tradesChart.isPending ? <ViewSkeleton /> :
                tradesChart.isError ? <ViewError onRetry={() => tradesChart.refetch()} /> :
-               tradesChart.data!.bars.length >= 2 ?
+               (tradesChart.data?.bars.length ?? 0) >= 2 ?
                  <PulseTradesChart payload={tradesChart.data!} /> :
                <ViewEmpty message="No market bars cached for this run." />)}
             {view === "hold" &&
               (holdChart.isPending ? <ViewSkeleton /> :
                holdChart.isError ? <ViewError onRetry={() => holdChart.refetch()} /> :
-               holdChart.data!.baseline_equity &&
-               holdChart.data!.baseline_equity.length >= 2 ?
+               (holdChart.data?.baseline_equity?.length ?? 0) >= 2 ?
                  <PulseHoldChart payload={holdChart.data!} /> :
                <ViewEmpty message="Buy & Hold baseline unavailable for this run." />)}
             {view === "field" &&
@@ -2019,14 +2036,25 @@ Expected: PASS / clean (match whatever lint command `package.json` defines if di
 Run the configured enforcement command from `.coverage-thresholds.json` and report the result honestly (if the repo-wide tarpaulin run is impractical/failing for pre-existing reasons, report numbers for the touched crates and flag it — do NOT silently skip):
 
 ```bash
-env CARGO_TARGET_DIR="$HOME/.cargo-target/xvision-pulse-chart-views" scripts/cargo tarpaulin --fail-under 100 -p xvision-engine 2>&1 | tail -10
+export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision-pulse-chart-views"
+scripts/cargo tarpaulin --fail-under 100 -p xvision-engine 2>&1 | tail -10
 ```
 
 - [ ] **Step 4: Live smoke test (verify skill)**
 
 Boot the dashboard locally, load the home page, and click through all five views; confirm the slim payload (network tab: `?include=equity` response is KB-scale), the single-line hero with band, and each view rendering. Screenshot each view (agent-browser; set a tall viewport rather than `screenshot --full`).
 
-- [ ] **Step 5: Update beads + push**
+- [ ] **Step 5: Rebase onto latest main (Coordination requirement)**
+
+Concurrent tracks are landing changes to `crates/xvision-engine/src/eval/run.rs`, `eval/store.rs`, and `crates/xvision-dashboard/src/routes/*` — this branch touches `eval_runs.rs` and must absorb whatever they merged:
+
+```bash
+git fetch origin && git rebase origin/main
+```
+
+If conflicts hit (most likely `eval_runs.rs`, possibly `chart.rs` neighbors), resolve preserving BOTH sides' intents, then re-run the full test sweep (Steps 1–2) before continuing.
+
+- [ ] **Step 6: Update beads + push**
 
 ```bash
 git push -u origin feat/pulse-chart-views
