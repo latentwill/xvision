@@ -11,4 +11,6 @@ interface ImportMetaEnv {
   readonly VITE_MARKETPLACE_SUBGRAPH_URL?: string;
   /** Force the agent-runs API shim to serve mock fixtures ("1"/"true"/"0"/"false"). */
   readonly VITE_USE_MOCK_AGENT_RUNS?: string;
+  /** Scoped Lit client key for sealed-tier decrypt; unset → sealed install unavailable. */
+  readonly VITE_LIT_CLIENT_KEY?: string;
 }

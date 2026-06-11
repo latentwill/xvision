@@ -1,12 +1,27 @@
 // src/features/marketplace/routes/InstallSteps.tsx
 // Inline install stepper — no modals; all states render inline.
-// "Add to strategies" runs the license-gated import against the local
-// engine; the bundle step links the pinned IPFS manifest (open tier —
-// sealed-tier decryption does not exist yet, so we never offer it).
-import { useState } from "react";
+// "Add to strategies" runs the license-gated import against the local engine.
+// The bundle step links the pinned IPFS manifest for OPEN-tier listings; for
+// SEALED-tier listings (detected by the bundle route returning encrypted:true)
+// the bundle is undecryptable IPFS ciphertext, so we revive a "Decrypt & import
+// sealed bundle" step that drives the Lit-gated decrypt + import-sealed flow.
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, apiFetch } from "@/api/client";
-import { currentAddress } from "../lib/chain";
+import {
+  currentAddress,
+  getPublicGateway,
+  DEFAULT_PUBLIC_GATEWAY,
+} from "../lib/chain";
+import {
+  fetchBundle,
+  importSealedListing,
+} from "@/features/marketplace/data/ApiMarketplaceData";
+import {
+  SealedGateError,
+  SealedNotConfiguredError,
+} from "../lib/sealed";
+import { WalletRequiredError } from "../lib/purchaseErrors";
 import {
   requirementsFromManifest,
   useBundleManifest,
@@ -163,14 +178,60 @@ type ImportState =
   | { phase: "done"; agentId: string }
   | { phase: "error"; message: string };
 
-/** IPFS gateway used for plain open-tier bundle reads (matches the backend's default). */
-const IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
-
 // ── component ────────────────────────────────────────────────────────────────
+/** Map a sealed import/decrypt failure to inline operator copy. */
+function sealedErrorMessage(e: unknown): string {
+  if (e instanceof ApiError && e.status === 403) return "No license held for this wallet.";
+  if (e instanceof ApiError && e.status === 409)
+    return "Bundle integrity check failed (content hash mismatch).";
+  if (e instanceof WalletRequiredError) return "Connect a wallet to decrypt this sealed bundle.";
+  if (e instanceof SealedNotConfiguredError) return e.message;
+  if (e instanceof SealedGateError) return `Decryption failed: ${e.message}`;
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function InstallSteps({ receipt }: { receipt: Receipt }) {
   const { install } = receipt;
   const missingCount = install.ingredients.filter((i) => !i.installed).length;
   const [importState, setImportState] = useState<ImportState>({ phase: "idle" });
+  // Sealed-tier detection: the bundle route reports encrypted:true for sealed
+  // listings. null = still loading / unknown; false = open tier.
+  const [sealed, setSealed] = useState<boolean | null>(null);
+  // Config-driven public IPFS read gateway base (no trailing slash), from the
+  // status route; the neutral default until it loads.
+  const [publicGateway, setPublicGateway] = useState<string>(
+    DEFAULT_PUBLIC_GATEWAY,
+  );
+
+  useEffect(() => {
+    let live = true;
+    getPublicGateway()
+      .then((g) => {
+        if (live) setPublicGateway(g);
+      })
+      .catch(() => {
+        // Keep the neutral default.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let live = true;
+    fetchBundle(receipt.listing.id)
+      .then((b) => {
+        if (live) setSealed(b.encrypted === true);
+      })
+      .catch(() => {
+        // Bundle route unreachable / unindexed — fall back to the open-tier
+        // stepper (the plain import route still resolves server-side).
+        if (live) setSealed(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [receipt.listing.id]);
 
   // Real receipts carry no local ingredient detection (install.ingredients
   // is an honest empty) — derive the requirement list from the listing's
@@ -186,6 +247,16 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
   const bundleCid = receipt.license.bundleCid;
   let n = 0;
   const next = () => ++n;
+
+  async function runSealedImport() {
+    setImportState({ phase: "pending" });
+    try {
+      const out = await importSealedListing(receipt.listing.id);
+      setImportState({ phase: "done", agentId: out.agent_id });
+    } catch (e) {
+      setImportState({ phase: "error", message: sealedErrorMessage(e) });
+    }
+  }
 
   async function runImport() {
     setImportState({ phase: "pending" });
@@ -232,8 +303,10 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
         }
       />
 
-      {/* Bundle step — only when the listing's manifest is pinned to IPFS */}
-      {bundleCid !== "" && (
+      {/* Bundle step — only for OPEN-tier listings with an IPFS-pinned
+          manifest. Sealed listings carry encrypted ciphertext (not a
+          human-openable manifest), so the decrypt step below replaces it. */}
+      {sealed !== true && bundleCid !== "" && (
         <Step
           n={next()}
           state="active"
@@ -247,7 +320,7 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
           action={
             <a
               className={chipClass("chip")}
-              href={`${IPFS_GATEWAY}${bundleCid}`}
+              href={`${publicGateway}/ipfs/${bundleCid}`}
               target="_blank"
               rel="noreferrer"
             >
@@ -313,18 +386,37 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
         />
       )}
 
-      {/* Add to Strategies — license-gated import into the local engine */}
+      {/* Final step — license-gated import into the local engine. Sealed
+          listings decrypt the bundle through the Lit gate first; open
+          listings import the server-resolved manifest directly. */}
       <Step
         n={next()}
         state={importState.phase === "done" ? "done" : "pending"}
-        title="Add to your Strategies and run backtest first"
+        title={
+          sealed === true
+            ? "Decrypt & import sealed bundle"
+            : "Add to your Strategies and run backtest first"
+        }
         description={
           <>
-            Lands in{" "}
-            <span className="font-mono text-text-2">
-              Strategies / Marketplace · {receipt.listing.id}
-            </span>
-            . Recommended: 7-day backtest with 2% risk cap before going live.
+            {sealed === true ? (
+              <>
+                Decrypts the sealed manifest with your wallet (license-gated),
+                then lands in{" "}
+                <span className="font-mono text-text-2">
+                  Strategies / Marketplace · {receipt.listing.id}
+                </span>
+                .
+              </>
+            ) : (
+              <>
+                Lands in{" "}
+                <span className="font-mono text-text-2">
+                  Strategies / Marketplace · {receipt.listing.id}
+                </span>
+                . Recommended: 7-day backtest with 2% risk cap before going live.
+              </>
+            )}
             {importState.phase === "error" && (
               <div data-testid="import-error" className="mt-1.5 text-warn">
                 {importState.message}
@@ -342,7 +434,11 @@ export function InstallSteps({ receipt }: { receipt: Receipt }) {
             </Link>
           ) : importState.phase === "pending" ? (
             <ChipBtn variant="chip" disabled>
-              Importing…
+              {sealed === true ? "Decrypting…" : "Importing…"}
+            </ChipBtn>
+          ) : sealed === true ? (
+            <ChipBtn variant="chip" onClick={() => void runSealedImport()}>
+              Decrypt &amp; import
             </ChipBtn>
           ) : (
             <ChipBtn variant="chip" onClick={() => void runImport()}>

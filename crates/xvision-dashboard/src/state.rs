@@ -140,6 +140,33 @@ pub struct AppState {
     /// did when they read the env per request. Tests inject via
     /// [`AppState::with_marketplace_chain_config`].
     marketplace_chain: Option<Arc<crate::chain_config::MarketplaceChainConfig>>,
+    /// Test-only override for the sealed-bundle crypto backend. Production
+    /// resolves the backend from `marketplace_chain.lit`
+    /// (`MarketplaceChainConfig::resolve_sealed_crypto`); route tests inject a
+    /// deterministic fake here via [`AppState::with_sealed_crypto`] so the
+    /// sealed-publish encrypt path is exercised without a live Lit endpoint —
+    /// mirroring how `marketplace_snapshot` / `marketplace_chain` are injected.
+    sealed_crypto_override: Option<Arc<dyn xvision_marketplace::SealedBundleCrypto>>,
+}
+
+/// Adapts an `Arc<dyn SealedBundleCrypto>` (the test-injection shape) into a
+/// `Box<dyn SealedBundleCrypto>` (the resolver's return shape) by forwarding
+/// every trait method to the shared inner backend.
+struct SealedCryptoHandle(Arc<dyn xvision_marketplace::SealedBundleCrypto>);
+
+#[async_trait::async_trait]
+impl xvision_marketplace::SealedBundleCrypto for SealedCryptoHandle {
+    async fn encrypt(&self, plaintext: &[u8]) -> Result<String, xvision_marketplace::MarketplaceError> {
+        self.0.encrypt(plaintext).await
+    }
+
+    fn gate_action_cid(&self) -> &str {
+        self.0.gate_action_cid()
+    }
+
+    fn is_configured(&self) -> bool {
+        self.0.is_configured()
+    }
 }
 
 impl AppState {
@@ -359,6 +386,7 @@ impl AppState {
             marketplace_snapshot: Default::default(),
             marketplace_indexer_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             marketplace_chain: None,
+            sealed_crypto_override: None,
         })
     }
 
@@ -371,6 +399,28 @@ impl AppState {
     /// `server::serve`; tests use it to inject config without touching env.
     pub fn with_marketplace_chain_config(mut self, cfg: crate::chain_config::MarketplaceChainConfig) -> Self {
         self.marketplace_chain = Some(Arc::new(cfg));
+        self
+    }
+
+    /// Resolve the sealed-bundle crypto backend for the sealed-publish path.
+    /// Returns the test-injected override when present, else the backend
+    /// resolved from the startup `MarketplaceChainConfig` (`lit` → Lit client,
+    /// absent → `NoopSealed`), else `NoopSealed` when there is no config at all.
+    pub fn sealed_crypto(&self) -> Box<dyn xvision_marketplace::SealedBundleCrypto> {
+        if let Some(crypto) = &self.sealed_crypto_override {
+            return Box::new(SealedCryptoHandle(Arc::clone(crypto)));
+        }
+        match self.marketplace_chain() {
+            Some(cfg) => cfg.resolve_sealed_crypto(),
+            None => Box::new(xvision_marketplace::NoopSealed),
+        }
+    }
+
+    /// Inject a sealed-bundle crypto backend (tests only). Lets a route test
+    /// exercise the encrypt path with a deterministic fake instead of a live
+    /// Lit endpoint.
+    pub fn with_sealed_crypto(mut self, crypto: Arc<dyn xvision_marketplace::SealedBundleCrypto>) -> Self {
+        self.sealed_crypto_override = Some(crypto);
         self
     }
 

@@ -96,7 +96,14 @@ pub struct PublishOut {
 /// outage can never strand an orphan NFT (DashboardError has no 502 variant;
 /// `ServiceUnavailable` is the upstream-dependency class here).
 async fn pin_canonical(ipfs: &impl IpfsStore, canonical: &str) -> Result<String, DashboardError> {
-    ipfs.put(canonical.as_bytes()).await.map_err(|e| {
+    pin_bytes(ipfs, canonical.as_bytes()).await
+}
+
+/// Pins arbitrary bytes (plaintext canonical manifest for open tier, or the
+/// sealed ciphertext for sealed tier), mapping any pin failure to the same
+/// 503-class no-orphan error as [`pin_canonical`].
+async fn pin_bytes(ipfs: &impl IpfsStore, bytes: &[u8]) -> Result<String, DashboardError> {
+    ipfs.put(bytes).await.map_err(|e| {
         DashboardError::ServiceUnavailable(format!(
             "IPFS pin failed (publish aborted before mint, nothing on chain): {e}"
         ))
@@ -141,19 +148,11 @@ pub async fn post_publish(
     Json(body): Json<PublishBody>,
 ) -> Result<(StatusCode, Json<PublishOut>), DashboardError> {
     // Validate the cheap, pure inputs before touching the store or chain.
+    // Sealed-tier publishing IS supported (server-side encrypt-at-publish +
+    // ciphertext pin); the tier-specific gating (require Lit, then an IPFS pin
+    // backend) happens at the content_uri step below, after the chain gate and
+    // before the mint, so an encrypt/pin failure leaves nothing on chain.
     let tier = tier_code(&body.tier)?;
-    // Sealed-tier guard — BEFORE any store/chain/pin work. Sealed listings
-    // promise an encrypted bundle, but encryption is unimplemented:
-    // publishing today would pin the full strategy plaintext to public IPFS.
-    if tier == 1 {
-        return Err(DashboardError::Validation {
-            field: "tier".into(),
-            msg: "sealed-tier publishing is not yet supported: bundle encryption is \
-                  unimplemented and publishing would pin the full strategy plaintext to \
-                  public IPFS (tracked: xvision-cgz)"
-                .into(),
-        });
-    }
     let price_usdc = usdc6(body.price_usdc)?;
 
     // a. Load the strategy (404s via ApiError::NotFound when absent).
@@ -206,24 +205,60 @@ pub async fn post_publish(
         chain.signer.clone(),
     );
 
-    // f. Pin the canonical manifest to IPFS when a backend is configured
-    //    (Kubo preferred via XVN_IPFS_API_URL, else Pinata via PINATA_JWT).
-    //    This happens AFTER all config validation and BEFORE the mint: a pin
-    //    failure aborts with 503 and leaves nothing on chain. Without a
-    //    backend the listing keeps the local `xvn://` reference (the bundle
-    //    route resolves both).
-    let content_uri = match mp.and_then(|c| c.ipfs.as_ref()) {
-        Some(ipfs) => {
-            let cid = pin_canonical(ipfs, &canonical).await?;
-            format!("ipfs://{cid}")
+    // f. Decide the content_uri. The on-chain `content_hash` is ALWAYS the
+    //    plaintext manifest hash (`manifest_hash`) for both tiers, so the
+    //    genart seed + tokenURI are identical regardless of tier; the tiers
+    //    diverge only in WHAT gets pinned at this step.
+    //
+    //    - Open tier: pin the plaintext canonical manifest (as before). The
+    //      IPFS backend (Kubo preferred via XVN_IPFS_API_URL, else Pinata via
+    //      PINATA_JWT) is optional — without it the listing keeps the local
+    //      `xvn://` ref (the bundle route resolves both).
+    //    - Sealed tier: encrypt the canonical plaintext server-side (the
+    //      seller's own strategy) and pin the CIPHERTEXT. Requires BOTH Lit
+    //      (else 400) AND an IPFS backend (else 503) — there is no `xvn://`
+    //      fallback for sealed because the plaintext must never be locally
+    //      resolvable as a public bundle.
+    //
+    //    Either branch happens AFTER all other config validation and BEFORE
+    //    the mint: a pin (or encrypt) failure aborts with 503 and leaves
+    //    nothing on chain.
+    let content_uri = if tier == 1 {
+        // Sealed: require Lit, then require an IPFS pin backend.
+        let sealed = state.sealed_crypto();
+        if !sealed.is_configured() {
+            return Err(DashboardError::Validation {
+                field: "tier".into(),
+                msg: "sealed-tier publishing requires Lit configuration (XVN_LIT_*)".into(),
+            });
         }
-        None => {
-            tracing::info!(
-                agent_id = %agent_id,
-                "no IPFS backend configured (XVN_IPFS_API_URL / PINATA_JWT unset); \
-                 publishing with local xvn:// content_uri"
-            );
-            format!("xvn://strategy/{agent_id}")
+        let ipfs = mp.and_then(|c| c.ipfs.as_ref()).ok_or_else(|| {
+            DashboardError::ServiceUnavailable(
+                "sealed-tier publishing requires an IPFS pin backend: set XVN_IPFS_API_URL or \
+                 PINATA_JWT"
+                    .into(),
+            )
+        })?;
+        let ciphertext = sealed
+            .encrypt(canonical.as_bytes())
+            .await
+            .map_err(|e| DashboardError::ServiceUnavailable(format!("sealed encrypt failed: {e}")))?;
+        let cid = pin_bytes(ipfs, ciphertext.as_bytes()).await?;
+        format!("ipfs://{cid}")
+    } else {
+        match mp.and_then(|c| c.ipfs.as_ref()) {
+            Some(ipfs) => {
+                let cid = pin_canonical(ipfs, &canonical).await?;
+                format!("ipfs://{cid}")
+            }
+            None => {
+                tracing::info!(
+                    agent_id = %agent_id,
+                    "no IPFS backend configured (XVN_IPFS_API_URL / PINATA_JWT unset); \
+                     publishing with local xvn:// content_uri"
+                );
+                format!("xvn://strategy/{agent_id}")
+            }
         }
     };
 
@@ -561,9 +596,33 @@ pub async fn post_import(
             .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
     };
 
-    // c. License gate. All startup-resolved config is validated before the
-    //    chain read so a dev box degrades with 503, never a silent skip of
-    //    the gate.
+    // c. License gate (shared with import-sealed): 503 when license/chain env
+    //    is dormant, 403 when the balance is zero.
+    license_gate(&state, address, id).await?;
+
+    // d. Fetch + hash-verify the bundle (404/409/503 per the shared fn).
+    let manifest = crate::routes::marketplace_read::fetch_verified_manifest(&state, &listing).await?;
+
+    // e. Install as a NEW local strategy (fresh ULID; provenance stashed in
+    //    mechanical_params.metadata.imported_from).
+    let imported = strategy::import_strategy(&state.api_context(), manifest).await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(ImportOut {
+            agent_id: imported.manifest.id,
+        }),
+    ))
+}
+
+/// Shared license gate for the import routes: verifies the asserted wallet
+/// holds an ERC-1155 license for the listing via
+/// `ILicenseToken::balanceOf(address, listing_id)` over the read-only
+/// provider. All startup-resolved config is validated before the chain read so
+/// a dev box degrades with 503, never a silent skip. 503 when the license
+/// token / indexer chain env is dormant; 403 when the balance is zero; `Ok`
+/// when the wallet holds at least one license.
+async fn license_gate(state: &AppState, address: Address, id: u64) -> Result<(), DashboardError> {
     let mp = state.marketplace_chain();
     let license_token: Address = mp.and_then(|c| c.license_token).ok_or_else(|| {
         DashboardError::ServiceUnavailable("license gating not configured: set XVN_LICENSE_TOKEN".into())
@@ -595,13 +654,85 @@ pub async fn post_import(
             "no license for {address:#x} on listing {id}"
         )));
     }
+    Ok(())
+}
 
-    // d. Fetch + hash-verify the bundle (404/409/503 per the shared fn).
-    let manifest = crate::routes::marketplace_read::fetch_verified_manifest(&state, &listing).await?;
+// ---------------------------------------------------------------------------
+// POST /api/marketplace/listings/:id/import-sealed — sealed bundle import
+// ---------------------------------------------------------------------------
 
-    // e. Install as a NEW local strategy (fresh ULID; provenance stashed in
-    //    mechanical_params.metadata.imported_from).
-    let imported = strategy::import_strategy(&state.api_context(), manifest).await?;
+/// Request body for `POST /api/marketplace/listings/:id/import-sealed`. Unlike
+/// open-tier import, the manifest is supplied by the caller: the browser
+/// decrypted it client-side via Lit, so the server never sees the ciphertext
+/// key. `address` is still required for the server-side license re-check.
+#[derive(Debug, Deserialize)]
+pub struct ImportSealedBody {
+    /// The buyer's wallet — must hold an ERC-1155 license for the listing.
+    pub address: String,
+    /// The decrypted strategy manifest (browser-side Lit decrypt output).
+    pub manifest: serde_json::Value,
+}
+
+/// Re-verifies a client-supplied manifest against a listing's on-chain
+/// `content_hash` (which commits to the canonical PLAINTEXT for both tiers).
+/// 409 `Conflict` on mismatch — this is the defense against a malicious
+/// browser POSTing arbitrary JSON to the sealed-import route.
+fn verify_manifest_matches_onchain(
+    manifest: &serde_json::Value,
+    onchain_content_hash: &str,
+) -> Result<(), DashboardError> {
+    let canonical = canonical_json(manifest);
+    let manifest_hash = manifest_hash_hex(&canonical);
+    let onchain_hash = onchain_content_hash.trim_start_matches("0x").to_lowercase();
+    if manifest_hash != onchain_hash {
+        return Err(DashboardError::Conflict(format!(
+            "manifest does not match the listing's on-chain hash (on-chain {onchain_hash}, \
+             supplied manifest hashes to {manifest_hash})"
+        )));
+    }
+    Ok(())
+}
+
+/// `POST /api/marketplace/listings/:id/import-sealed` — install a sealed
+/// strategy that the buyer's browser decrypted via the Lit gate action.
+///
+/// Order: validate address (400) → listing from snapshot (404) → license gate
+/// (503 dormant / 403 no license, shared with open import) → RE-VERIFY
+/// `keccak256(canonical_json(manifest)) == listing.content_hash` (409 on
+/// mismatch — this is the defense against a malicious browser POSTing arbitrary
+/// JSON; the on-chain `content_hash` commits to the canonical plaintext for
+/// both tiers) → `import_strategy` mints a NEW local ULID → 201 `{agent_id}`.
+///
+/// The server never decrypts (keys live in Lit's TEE); it trusts the
+/// client-supplied manifest ONLY after the on-chain hash re-check passes.
+pub async fn post_import_sealed(
+    Path(id): Path<u64>,
+    State(state): State<AppState>,
+    Json(body): Json<ImportSealedBody>,
+) -> Result<(StatusCode, Json<ImportOut>), DashboardError> {
+    // a. Validate the asserted wallet before any snapshot/chain work.
+    let address = parse_address("address", &body.address)?;
+
+    // b. Listing from the indexer snapshot (404 unknown).
+    let listing = {
+        let snap = state.marketplace_snapshot.read().await;
+        snap.listings
+            .iter()
+            .find(|l| l.listing_id == id)
+            .cloned()
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
+    };
+
+    // c. License gate (503 dormant / 403 no license).
+    license_gate(&state, address, id).await?;
+
+    // d. Re-verify the client-supplied manifest against the on-chain hash. The
+    //    content_hash commits to the canonical plaintext (identical for both
+    //    tiers), so a browser that swaps in arbitrary JSON is rejected here.
+    verify_manifest_matches_onchain(&body.manifest, &listing.content_hash)?;
+
+    // e. Install as a NEW local strategy (fresh ULID).
+    let imported = strategy::import_strategy(&state.api_context(), body.manifest).await?;
 
     Ok((
         StatusCode::CREATED,
@@ -980,6 +1111,28 @@ mod tests {
         assert_eq!(attest_payload_hash(20, 1.5), expected);
         // Different inputs → different digests (sanity).
         assert_ne!(attest_payload_hash(21, 1.5), expected);
+    }
+
+    #[test]
+    fn verify_manifest_matches_onchain_accepts_matching_hash() {
+        let manifest = serde_json::json!({ "b": 2, "a": 1 });
+        let canonical = canonical_json(&manifest);
+        let hash = manifest_hash_hex(&canonical);
+        // Bare hash and 0x-prefixed/upper-case both accepted (normalized).
+        assert!(verify_manifest_matches_onchain(&manifest, &hash).is_ok());
+        assert!(verify_manifest_matches_onchain(&manifest, &format!("0x{}", hash.to_uppercase())).is_ok());
+    }
+
+    #[test]
+    fn verify_manifest_matches_onchain_rejects_mismatch_as_409() {
+        let manifest = serde_json::json!({ "a": 1 });
+        let err = verify_manifest_matches_onchain(&manifest, &"ab".repeat(32)).unwrap_err();
+        match err {
+            DashboardError::Conflict(msg) => {
+                assert!(msg.contains("does not match"), "{msg}");
+            }
+            other => panic!("expected Conflict (409), got {other:?}"),
+        }
     }
 
     #[test]

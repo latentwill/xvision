@@ -6,6 +6,10 @@
 
 mod support;
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
+use async_trait::async_trait;
 use axum::http::StatusCode;
 use axum::{routing::get, Router};
 use axum_test::TestServer;
@@ -16,8 +20,39 @@ use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 use xvision_engine::autooptimizer::content_hash::canonical_json;
 use xvision_identity::manifest_hash_hex;
+use xvision_marketplace::{MarketplaceError, SealedBundleCrypto};
 
 const ALICE: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+/// Deterministic fake crypto: records the last plaintext it was asked to
+/// encrypt and returns `ENC(<plaintext>)`. Lets a route test prove the
+/// sealed-publish encrypt path runs without a live Lit endpoint.
+struct FakeCrypto {
+    last_plaintext: Mutex<Option<String>>,
+}
+
+impl FakeCrypto {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            last_plaintext: Mutex::new(None),
+        })
+    }
+}
+
+#[async_trait]
+impl SealedBundleCrypto for FakeCrypto {
+    async fn encrypt(&self, plaintext: &[u8]) -> Result<String, MarketplaceError> {
+        let s = String::from_utf8_lossy(plaintext).to_string();
+        *self.last_plaintext.lock().unwrap() = Some(s.clone());
+        Ok(format!("ENC({s})"))
+    }
+    fn gate_action_cid(&self) -> &str {
+        "bafyfakegate"
+    }
+    fn is_configured(&self) -> bool {
+        true
+    }
+}
 
 fn listing(listing_id: u64, content_uri: &str, content_hash: &str) -> IndexedListing {
     IndexedListing {
@@ -298,30 +333,262 @@ async fn update_without_chain_env_is_503() {
     assert_eq!(body["code"], "service_unavailable");
 }
 
-// ── POST /api/marketplace/publish (sealed-tier guard) ───────────────────────
+// ── GET /api/marketplace/listings/:id/bundle (sealed tier) ───────────────────
+
+fn sealed_listing(listing_id: u64, content_uri: &str, content_hash: &str) -> IndexedListing {
+    let mut l = listing(listing_id, content_uri, content_hash);
+    l.tier = 1;
+    l
+}
 
 #[tokio::test]
-async fn publish_sealed_tier_is_rejected_before_chain_or_pin_work() {
-    // The guard runs BEFORE strategy load / chain config / pinning, so no
-    // chain env, no Pinata/Kubo backend, and not even a real strategy are
-    // needed: a sealed publish must 400 (not 404/503).
+async fn sealed_bundle_returns_ciphertext_not_manifest() {
+    // Single test owns PINATA_GATEWAY (crate-wide env-mutation convention).
+    let (server, state, _tmp) = boot().await;
+    let hash = "ab".repeat(32);
+    let ciphertext = "ENC(opaque-sealed-blob)".to_string();
+
+    // In-process gateway serving the CIPHERTEXT (sealed blobs are pinned as-is).
+    let payload = ciphertext.clone();
+    let gateway_app = Router::new().route(
+        "/ipfs/bafysealedcid",
+        get(move || {
+            let payload = payload.clone();
+            async move { payload }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, gateway_app).await.unwrap();
+    });
+
+    std::env::set_var("PINATA_GATEWAY", format!("http://{addr}"));
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://bafysealedcid", &hash)]).await;
+    let response = server.get("/api/marketplace/listings/1/bundle").await;
+    std::env::remove_var("PINATA_GATEWAY");
+
+    response.assert_status_ok();
+    let body: Value = response.json();
+    assert_eq!(body["encrypted"], true);
+    assert_eq!(body["ciphertext"], ciphertext);
+    assert_eq!(body["content_hash"], hash);
+    assert_eq!(body["content_uri"], "ipfs://bafysealedcid");
+    // The plaintext manifest must NOT appear in a sealed response.
+    assert!(
+        body.get("manifest").is_none(),
+        "sealed bundle leaks no manifest: {body}"
+    );
+}
+
+#[tokio::test]
+async fn sealed_bundle_non_ipfs_uri_is_503() {
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(
+        &state,
+        vec![sealed_listing(1, "xvn://strategy/x", &"ab".repeat(32))],
+    )
+    .await;
+    let response = server.get("/api/marketplace/listings/1/bundle").await;
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// ── POST /api/marketplace/listings/:id/import-sealed ─────────────────────────
+
+#[tokio::test]
+async fn import_sealed_invalid_address_is_400() {
     let (server, _state, _tmp) = boot().await;
+    let response = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&serde_json::json!({ "address": "nope", "manifest": {} }))
+        .await;
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let body: Value = response.json();
+    assert_eq!(body["field"], "address");
+}
+
+#[tokio::test]
+async fn import_sealed_unknown_listing_is_404() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server
+        .post("/api/marketplace/listings/99/import-sealed")
+        .json(&serde_json::json!({ "address": ALICE, "manifest": {} }))
+        .await;
+    response.assert_status(StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn import_sealed_without_license_env_is_503() {
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let response = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&serde_json::json!({ "address": ALICE, "manifest": {} }))
+        .await;
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// With the license gate passed (injected token) but no indexer chain access,
+/// the gate still 503s on the missing chain access — proving the sealed import
+/// reuses the same gate as open import and reads `AppState` config, not env.
+#[tokio::test]
+async fn import_sealed_with_token_but_no_indexer_is_503() {
+    use xvision_dashboard::chain_config::MarketplaceChainConfig;
+    let cfg = MarketplaceChainConfig {
+        chain: None,
+        registry_addresses: None,
+        marketplace_addresses: None,
+        ipfs: None,
+        indexer: None,
+        license_token: Some("0x3333333333333333333333333333333333333333".parse().unwrap()),
+        lit: None,
+        chain_timeout: std::time::Duration::from_secs(45),
+    };
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let response = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&serde_json::json!({ "address": ALICE, "manifest": {} }))
+        .await;
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = response.json();
+    assert!(
+        body["message"].as_str().unwrap().contains("chain access"),
+        "{body}"
+    );
+}
+
+// ── POST /api/marketplace/publish (sealed tier) ──────────────────────────────
+
+/// A fully-populated chain config (dummy addresses) so the sealed-publish path
+/// gets past the chain gate to the encrypt+pin step. The IPFS backend is a
+/// Pinata driver with an EMPTY jwt so the pin fails fast (NotConfigured)
+/// WITHOUT network — the encrypt has already run by then, which is what these
+/// tests assert.
+fn full_chain_config_empty_pinata() -> xvision_dashboard::chain_config::MarketplaceChainConfig {
+    use alloy::signers::local::PrivateKeySigner;
+    use xvision_dashboard::chain_config::{ChainSigner, IpfsBackend, MarketplaceChainConfig};
+    use xvision_identity::{MarketplaceAddresses, RegistryAddresses};
+    use xvision_marketplace::PinataDriver;
+
+    // A well-known Anvil dev key — only used to satisfy ChainSigner; no chain
+    // call is reached because the pin aborts first.
+    let signer: PrivateKeySigner = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        .parse()
+        .unwrap();
+    let addr = "0x1111111111111111111111111111111111111111".parse().unwrap();
+    MarketplaceChainConfig {
+        chain: Some(ChainSigner {
+            rpc_url: "http://127.0.0.1:1".into(),
+            chain_id: 5003,
+            signer,
+        }),
+        registry_addresses: Some(RegistryAddresses::custom(addr, addr)),
+        marketplace_addresses: Some(MarketplaceAddresses {
+            xvn_deployer: addr,
+            listing_registry: addr,
+            marketplace: addr,
+            license_token: addr,
+            eval_attestation: addr,
+            validation_registry: addr,
+            usdc: addr,
+            platform_agent_token_id: 0,
+        }),
+        ipfs: Some(IpfsBackend::Pinata(PinataDriver::new(
+            String::new(),
+            String::new(),
+        ))),
+        indexer: None,
+        license_token: None,
+        lit: None,
+        chain_timeout: std::time::Duration::from_secs(45),
+    }
+}
+
+#[tokio::test]
+async fn publish_sealed_without_lit_is_400() {
+    // Full chain config but NO sealed crypto override → NoopSealed (not
+    // configured) → 400 before any encrypt/pin/mint.
+    let cfg = full_chain_config_empty_pinata();
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    let (id, _canonical, _hash) = seed_strategy(&server, &state).await;
+
     let response = server
         .post("/api/marketplace/publish")
         .json(&serde_json::json!({
-            "strategy_id": "01JXNOTREALSTRATEGYULID000",
-            "tier": "sealed",
-            "price_usdc": 49.0,
+            "strategy_id": id, "tier": "sealed", "price_usdc": 49.0
         }))
         .await;
     response.assert_status(StatusCode::BAD_REQUEST);
     let body: Value = response.json();
-    assert_eq!(body["code"], "validation");
     assert_eq!(body["field"], "tier");
-    let msg = body["message"].as_str().unwrap();
     assert!(
-        msg.contains("sealed-tier publishing is not yet supported") && msg.contains("xvision-cgz"),
-        "guard message must explain the plaintext-pin hazard and name the \
-         tracking issue: {msg}"
+        body["message"].as_str().unwrap().contains("Lit configuration"),
+        "{body}"
     );
+}
+
+#[tokio::test]
+async fn publish_sealed_encrypts_canonical_before_pin() {
+    // Full chain config + an injected fake crypto + empty-jwt pinata. The
+    // encrypt runs (recorded by the fake), then the pin fails fast → 503; the
+    // assertion is that the fake saw the EXACT canonical plaintext bytes.
+    let cfg = full_chain_config_empty_pinata();
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let fake = FakeCrypto::new();
+    let state = state.with_sealed_crypto(fake.clone());
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    let (id, canonical, _hash) = seed_strategy(&server, &state).await;
+
+    let response = server
+        .post("/api/marketplace/publish")
+        .json(&serde_json::json!({
+            "strategy_id": id, "tier": "sealed", "price_usdc": 49.0
+        }))
+        .await;
+
+    // The pin fails fast (empty JWT) → 503, but the encrypt already ran.
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    let recorded = fake.last_plaintext.lock().unwrap().clone();
+    assert_eq!(
+        recorded.as_deref(),
+        Some(canonical.as_str()),
+        "sealed publish must encrypt the canonical plaintext before pinning"
+    );
+}
+
+#[tokio::test]
+async fn publish_open_does_not_encrypt() {
+    // The open tier never touches the sealed crypto: a fake that PANICS on
+    // encrypt proves the open path doesn't call it. Open with empty-jwt pinata
+    // fails at the open pin → 503.
+    struct PanicCrypto;
+    #[async_trait]
+    impl SealedBundleCrypto for PanicCrypto {
+        async fn encrypt(&self, _: &[u8]) -> Result<String, MarketplaceError> {
+            panic!("open-tier publish must never call sealed encrypt");
+        }
+        fn gate_action_cid(&self) -> &str {
+            ""
+        }
+        fn is_configured(&self) -> bool {
+            true
+        }
+    }
+
+    let cfg = full_chain_config_empty_pinata();
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let state = state.with_sealed_crypto(Arc::new(PanicCrypto));
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    let (id, _canonical, _hash) = seed_strategy(&server, &state).await;
+
+    let response = server
+        .post("/api/marketplace/publish")
+        .json(&serde_json::json!({
+            "strategy_id": id, "tier": "open", "price_usdc": 49.0
+        }))
+        .await;
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 }

@@ -20,6 +20,7 @@ import {
   InsufficientUsdcError,
   WalletRequiredError,
 } from "../lib/purchaseErrors";
+import { decryptSealedBundle } from "../lib/sealed";
 import { FixtureMarketplaceData, type MarketplaceData } from "./MarketplaceData";
 import { applyFilter } from "./filter";
 import { publishListing } from "./publish";
@@ -82,6 +83,55 @@ export interface ReceiptOut {
 export function bundleCidFromContentUri(contentUri: string | undefined): string {
   if (!contentUri) return "";
   return contentUri.startsWith("ipfs://") ? contentUri.slice("ipfs://".length) : "";
+}
+
+/**
+ * `GET /api/marketplace/listings/:id/bundle` response. For OPEN listings this
+ * carries `{verified, manifest}`; for SEALED listings it carries
+ * `{encrypted:true, ciphertext, content_hash}` instead — the manifest is
+ * undecryptable without satisfying the Lit gate.
+ */
+export interface BundleOut {
+  listing_id: number;
+  content_uri: string;
+  encrypted?: boolean;
+  ciphertext?: string;
+  content_hash?: string;
+  verified?: boolean;
+  manifest?: unknown;
+}
+
+/** Fetch a listing's bundle (open manifest or sealed ciphertext). */
+export async function fetchBundle(listingId: Id): Promise<BundleOut> {
+  return apiFetch<BundleOut>(
+    `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/bundle`,
+  );
+}
+
+/**
+ * Standalone sealed-tier import: fetch bundle → Lit-gated decrypt → POST the
+ * plaintext manifest to import-sealed. Exported so the InstallSteps stepper can
+ * drive it without instantiating the data client. See `importSealed` below for
+ * the error contract; the server's on-chain `content_hash` recheck (409) is the
+ * integrity authority.
+ */
+export async function importSealedListing(
+  listingId: Id,
+): Promise<{ agent_id: string }> {
+  const bundle = await fetchBundle(listingId);
+  if (!bundle.encrypted || !bundle.ciphertext) {
+    throw new Error("Listing is not a sealed bundle.");
+  }
+  const manifest = await decryptSealedBundle({
+    listingId,
+    ciphertext: bundle.ciphertext,
+  });
+  const address = await currentAddress();
+  if (!address) throw new WalletRequiredError();
+  return apiFetch<{ agent_id: string }>(
+    `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/import-sealed`,
+    { method: "POST", body: JSON.stringify({ address, manifest }) },
+  );
 }
 
 export interface MarketplaceIndexStatus {
@@ -323,6 +373,21 @@ export class ApiMarketplaceData implements MarketplaceData {
       const txHash = await buyDirect(BigInt(listingId), addr);
       return { txHash, network: "mantle-sepolia" };
     }
+  }
+  /**
+   * SEALED-tier import: fetch the bundle, decrypt the ciphertext through the
+   * Lit gate (license-gated), then POST the plaintext manifest to the
+   * import-sealed route. The server re-checks `keccak256(canonical(manifest))`
+   * against the on-chain `content_hash` (409 on mismatch) — that on-chain
+   * recheck, not any browser-side hash, is the integrity authority.
+   *
+   * Resolves to the local `agent_id` the manifest landed as. Errors propagate:
+   *   - WalletRequiredError / SealedNotConfiguredError / SealedGateError from
+   *     decrypt (no wallet, no Lit config, gate rejection / no license),
+   *   - ApiError 403 (no license at import), 409 (hash mismatch) from the POST.
+   */
+  async importSealed(listingId: Id): Promise<{ agent_id: string }> {
+    return importSealedListing(listingId);
   }
   cloneIntent(listingId: Id): Promise<TxRef> {
     return this.fallback.cloneIntent(listingId);

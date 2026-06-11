@@ -69,9 +69,47 @@ interface StatusOut {
     listing_registry: string | null;
     identity_registry: string | null;
   };
+  /** Public IPFS read gateway base (no trailing slash, no `/ipfs`). */
+  public_gateway?: string | null;
 }
 
 let contractsCache: MarketplaceContracts | null = null;
+
+/**
+ * Vendor-neutral fallback public read gateway, mirroring the backend default
+ * (`DEFAULT_PUBLIC_GATEWAY` in marketplace_read.rs). `dweb.link` is the
+ * IPFS-canonical public gateway, not a vendor product — used only when the
+ * status route does not surface a configured gateway.
+ */
+export const DEFAULT_PUBLIC_GATEWAY = "https://dweb.link";
+
+let publicGatewayCache: string | null = null;
+
+/**
+ * The public IPFS read gateway base for "open bundle" links, config-driven
+ * from `GET /api/marketplace/status` (`public_gateway`). Returns a base with
+ * no trailing slash; callers build `${base}/ipfs/${cid}`. Falls back to the
+ * vendor-neutral default when the status route lacks the field or is
+ * unreachable (never throws — this only powers a convenience link).
+ */
+export async function getPublicGateway(): Promise<string> {
+  if (publicGatewayCache) return publicGatewayCache;
+  let gateway = DEFAULT_PUBLIC_GATEWAY;
+  try {
+    const status = await apiFetch<StatusOut>("/api/marketplace/status");
+    const g = status.public_gateway?.trim();
+    if (g) gateway = g.replace(/\/+$/, "");
+  } catch {
+    // Status unreachable — keep the neutral default.
+  }
+  publicGatewayCache = gateway;
+  return gateway;
+}
+
+/** Test-only: clear the cached public gateway. */
+export function __resetPublicGatewayCacheForTest(): void {
+  publicGatewayCache = null;
+}
 
 /**
  * Fetch (once per session) the marketplace contract address book.

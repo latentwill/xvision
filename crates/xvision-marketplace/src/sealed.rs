@@ -16,21 +16,34 @@
 //!   [`MarketplaceError::NotImplemented`]. The trait shape is the
 //!   deliverable; a real symmetric cipher lands in a later phase.
 //! - [`LitChipotleClient`] — Lit Protocol v3 ("Chipotle") REST backend.
-//!   `encrypt` POSTs to the Lit Action endpoint and returns the ciphertext.
-//!   Decryption is NOT a Rust concern: it happens inside the custom Lit
-//!   gate action (`contracts/lit-actions/sealed-gate.js`) pinned to
+//!   `encrypt` POSTs to the single `lit_action` endpoint to run a pinned
+//!   ENCRYPT action server-side and returns the ciphertext. Decryption is NOT
+//!   a Rust concern: it happens inside the custom Lit gate action
+//!   (`contracts/lit-actions/sealed-gate.js`) pinned to
 //!   [`SealedBundleCrypto::gate_action_cid`].
 //!
-//! ## Lit Chipotle wire-format caveat
+//! ## Lit Chipotle wire format
 //!
 //! Lit v3 "Chipotle" is a REST API (`api.chipotle.litprotocol.com`), not an
-//! SDK. The exact request/response JSON shapes are **not fully pinned** as of
-//! 2026-06-11. The structs in this module ([`LitActionRequest`],
-//! [`LitActionResponse`]) encode a best-effort shape and are marked
-//! accordingly — **verify against the live Chipotle OpenAPI before any live
-//! wiring.** This phase ships the trait, a compiling+tested HTTP client
-//! (against a mock server), and the gate action JS; the live wiring is a
-//! later phase.
+//! SDK. There is a SINGLE endpoint for running an action:
+//! `POST {api_base}/core/v1/lit_action`, header `X-Api-Key: <key>`. The body
+//! accepts EITHER `{"ipfs_id": "<action CID>", "js_params": {...}}` (resolve a
+//! cached action by CID) OR `{"code": "<full JS source>", "js_params": {...}}`
+//! (run the JS inline). The CID cache is IN-MEMORY and non-durable, so this
+//! client ALWAYS sends `code` inline — Lit caches it by hash and authorization
+//! is unchanged (it computes the CID over the inline bytes and checks the
+//! operator's group binding). The response is an envelope
+//! `{"response": <value or json-string>, "logs": "...", "has_error": bool}`.
+//!
+//! Encryption has NO standalone endpoint — it runs INSIDE an action via
+//! `Lit.Actions.Encrypt({pkpId, message}) → ciphertext`. So this client
+//! encrypts by invoking a tiny pinned ENCRYPT action
+//! (`contracts/lit-actions/sealed-encrypt.js`, CID =
+//! [`LitChipotleClient::encrypt_action_cid`]) — a separate CID from the gate.
+//!
+//! Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct). The request
+//! ([`LitActionRequest`]) and response envelope ([`LitActionEnvelope`]) structs
+//! encode that shape.
 
 use std::fmt;
 use std::time::Duration;
@@ -42,6 +55,19 @@ use crate::error::MarketplaceError;
 
 /// Default Lit Chipotle REST API base (overridable for tests).
 const DEFAULT_LIT_API: &str = "https://api.chipotle.litprotocol.com";
+
+/// The full JS source of the pinned ENCRYPT action, embedded at compile time
+/// from the byte-identical deploy file. We send this INLINE as `code` on every
+/// `lit_action` call (never by `ipfs_id`): Lit's CID-keyed action cache is
+/// in-memory and non-durable, so an `ipfs_id` reference only resolves if that
+/// exact CID happens to still be cached — no durability guarantee. Inline
+/// `code` always works (Lit caches it by hash on the spot).
+///
+/// AUTHORIZATION still holds: Lit computes the CID (v0) of these inline bytes
+/// and checks its keccak hash is in a group the API key may execute. So the
+/// bytes here MUST stay byte-identical to the pinned deploy file the operator
+/// registered — `encrypt_action_src_matches_pinned_deploy_file` guards that.
+const ENCRYPT_ACTION_SRC: &str = include_str!("../../../contracts/lit-actions/sealed-encrypt.deploy.js");
 /// HTTP timeout for Lit Action requests. A Lit Action may run up to 15min
 /// server-side, but the *encrypt* path is a short call; without a timeout a
 /// hung connection would block an `encrypt` future forever. Matches the
@@ -146,34 +172,63 @@ impl SealedBundleCrypto for EscrowSealed {
     }
 }
 
-/// Request body POSTed to the Lit Chipotle `lit_action` endpoint to encrypt.
-///
-/// VERIFY AGAINST THE LIVE CHIPOTLE OPENAPI BEFORE LIVE USE — the exact field
-/// names/shape are not pinned as of 2026-06-11. Best-effort: the encrypt Lit
-/// Action takes the PKP id and the message to seal.
+/// `js_params` passed to the pinned ENCRYPT action. Matches the Chipotle
+/// OpenAPI as of 2026-06-12 (api_direct): the encrypt action takes the PKP id
+/// and the UTF-8 message to seal (see `contracts/lit-actions/sealed-encrypt.js`).
 #[derive(Debug, Serialize)]
-struct LitActionRequest<'a> {
+struct EncryptJsParams<'a> {
     #[serde(rename = "pkpId")]
     pkp_id: &'a str,
     message: &'a str,
 }
 
-/// Successful response from the Lit Chipotle `lit_action` endpoint.
+/// Request body POSTed to `POST {api_base}/core/v1/lit_action`.
 ///
-/// VERIFY AGAINST THE LIVE CHIPOTLE OPENAPI BEFORE LIVE USE — best-effort:
-/// the action returns the ciphertext blob under `ciphertext`.
+/// Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct): the endpoint
+/// accepts EITHER `{ipfs_id, js_params}` (resolve a cached action by CID — but
+/// the cache is in-memory / non-durable) OR `{code, js_params}` (run the inline
+/// JS source — always works, Lit caches it by hash). We ALWAYS send `code`
+/// inline for durability; authorization is unchanged (Lit hashes the inline
+/// bytes to the CID and checks the operator's group binding).
+#[derive(Debug, Serialize)]
+struct LitActionRequest<'a> {
+    code: &'a str,
+    js_params: EncryptJsParams<'a>,
+}
+
+/// Response envelope from `POST {api_base}/core/v1/lit_action`.
+///
+/// Matches the Chipotle OpenAPI as of 2026-06-12 (api_direct). `response` is
+/// the action's return value, which Chipotle delivers EITHER as a JSON object
+/// (`{"ciphertext": ...}`) OR as a JSON STRING that itself parses to that
+/// object (the `Lit.Actions.setResponse({response: JSON.stringify(...)})`
+/// pattern). Both forms are handled (see [`LitChipotleClient::encrypt`]).
 #[derive(Debug, Deserialize)]
-struct LitActionResponse {
+struct LitActionEnvelope {
+    /// The action's return value — object or json-string. `null`/absent when
+    /// the action errored without a payload.
+    #[serde(default)]
+    response: serde_json::Value,
+    /// `true` when the action raised an error; the call is then treated as a
+    /// failure regardless of `response`.
+    #[serde(default)]
+    has_error: bool,
+}
+
+/// The encrypt action's decoded return value: `{ciphertext}`.
+#[derive(Debug, Deserialize)]
+struct EncryptResult {
     ciphertext: String,
 }
 
 /// Lit Protocol v3 ("Chipotle") REST backend.
 ///
 /// `encrypt` POSTs to `{api_base}/core/v1/lit_action` with an `X-Api-Key`
-/// header and parses the returned `ciphertext`. The matching decrypt path is
-/// the custom gate Lit Action (`contracts/lit-actions/sealed-gate.js`) pinned
-/// to `gate_action_cid`, which verifies a SIWE-ish signature + an ERC-1155
-/// `balanceOf` before calling `Lit.Actions.Decrypt` — it is not a Rust path.
+/// header, running the pinned ENCRYPT action (`encrypt_action_cid`) and parsing
+/// the returned `ciphertext`. The matching decrypt path is the custom gate Lit
+/// Action (`contracts/lit-actions/sealed-gate.js`) pinned to `gate_action_cid`,
+/// which verifies a SIWE-ish signature + an ERC-1155 `balanceOf` before calling
+/// `Lit.Actions.Decrypt` — it is not a Rust path.
 pub struct LitChipotleClient {
     /// Lit REST API base (production by default; a mock URL in tests).
     api_base: String,
@@ -183,6 +238,13 @@ pub struct LitChipotleClient {
     pkp_id: String,
     /// IPFS CID of the immutable decrypt gate action.
     gate_action_cid: String,
+    /// AUTHORIZATION REFERENCE for the ENCRYPT action — must be registered in
+    /// the operator's Lit group (the PKP's authorized CID set). Execution does
+    /// NOT send this CID; it sends the action source inline as `code`
+    /// ([`ENCRYPT_ACTION_SRC`]). Kept so the operator's group binding (CID +
+    /// PKP) is documented and verifiable. The inline `code` bytes hash to this
+    /// same CID, which is what keeps authorization intact.
+    encrypt_action_cid: String,
     client: reqwest::Client,
 }
 
@@ -193,6 +255,7 @@ impl fmt::Debug for LitChipotleClient {
             .field("api_key", &"<redacted>")
             .field("pkp_id", &self.pkp_id)
             .field("gate_action_cid", &self.gate_action_cid)
+            .field("encrypt_action_cid", &self.encrypt_action_cid)
             .finish()
     }
 }
@@ -203,8 +266,15 @@ impl LitChipotleClient {
         api_key: impl Into<String>,
         pkp_id: impl Into<String>,
         gate_action_cid: impl Into<String>,
+        encrypt_action_cid: impl Into<String>,
     ) -> Self {
-        Self::with_api_base(DEFAULT_LIT_API, api_key, pkp_id, gate_action_cid)
+        Self::with_api_base(
+            DEFAULT_LIT_API,
+            api_key,
+            pkp_id,
+            gate_action_cid,
+            encrypt_action_cid,
+        )
     }
 
     /// Construct against a custom API base (tests target a mock HTTP server).
@@ -214,6 +284,7 @@ impl LitChipotleClient {
         api_key: impl Into<String>,
         pkp_id: impl Into<String>,
         gate_action_cid: impl Into<String>,
+        encrypt_action_cid: impl Into<String>,
     ) -> Self {
         let api_base = api_base.into();
         let api_base = if api_base.is_empty() {
@@ -233,6 +304,7 @@ impl LitChipotleClient {
             api_key: api_key.into(),
             pkp_id: pkp_id.into(),
             gate_action_cid: gate_action_cid.into(),
+            encrypt_action_cid: encrypt_action_cid.into(),
             client,
         }
     }
@@ -250,12 +322,19 @@ impl SealedBundleCrypto for LitChipotleClient {
         // Lit encrypt takes a string message. Sealed payloads are arbitrary
         // bytes, so we send the UTF-8-lossy form; the gate action returns the
         // same string on decrypt. (Callers should hand UTF-8 payloads, e.g.
-        // JSON manifests; binary sealing is a later-phase concern alongside
-        // the pinned wire format.)
+        // JSON manifests; binary sealing is a later-phase concern.)
         let message = String::from_utf8_lossy(plaintext);
+        // Send the encrypt action source INLINE as `code` (not by
+        // `encrypt_action_cid` / `ipfs_id`): Lit's CID-keyed cache is
+        // non-durable, so inline `code` is the only reliable path. `code` is
+        // byte-identical to the pinned deploy file, so the CID Lit computes
+        // over it matches the operator's registered group binding.
         let body = LitActionRequest {
-            pkp_id: &self.pkp_id,
-            message: &message,
+            code: ENCRYPT_ACTION_SRC,
+            js_params: EncryptJsParams {
+                pkp_id: &self.pkp_id,
+                message: &message,
+            },
         };
 
         let url = format!("{}/core/v1/lit_action", self.api_base);
@@ -276,11 +355,34 @@ impl SealedBundleCrypto for LitChipotleClient {
             )));
         }
 
-        let parsed: LitActionResponse = resp
+        let envelope: LitActionEnvelope = resp
             .json()
             .await
             .map_err(|e| MarketplaceError::Sealed(format!("lit_action response decode failed: {e}")))?;
-        Ok(parsed.ciphertext)
+
+        // The envelope flags action-level errors independently of HTTP status.
+        if envelope.has_error {
+            return Err(MarketplaceError::Sealed(format!(
+                "lit_action reported has_error=true: {}",
+                envelope.response
+            )));
+        }
+
+        // `response` is the action's return value. Chipotle delivers it EITHER
+        // as a JSON object (`{"ciphertext": ...}`) OR as a JSON STRING that
+        // itself parses to that object (the
+        // `setResponse({response: JSON.stringify(...)})` pattern). Handle both.
+        let result: EncryptResult = match &envelope.response {
+            serde_json::Value::String(s) => serde_json::from_str(s).map_err(|e| {
+                MarketplaceError::Sealed(format!(
+                    "lit_action response (json-string form) decode failed: {e}"
+                ))
+            })?,
+            other => serde_json::from_value(other.clone()).map_err(|e| {
+                MarketplaceError::Sealed(format!("lit_action response (object form) decode failed: {e}"))
+            })?,
+        };
+        Ok(result.ciphertext)
     }
 
     fn gate_action_cid(&self) -> &str {
@@ -345,16 +447,15 @@ mod tests {
     // --- LitChipotleClient --------------------------------------------------
 
     #[test]
-    fn lit_is_configured_requires_key_pkp_and_gate_cid() {
-        assert!(LitChipotleClient::new("key", "pkp", "cid").is_configured());
-        assert!(!LitChipotleClient::new("", "pkp", "cid").is_configured());
-        assert!(!LitChipotleClient::new("key", "", "cid").is_configured());
-        assert!(!LitChipotleClient::new("key", "pkp", "").is_configured());
+    fn lit_is_configured_requires_key_and_pkp() {
+        assert!(LitChipotleClient::new("key", "pkp", "cid", "enc").is_configured());
+        assert!(!LitChipotleClient::new("", "pkp", "cid", "enc").is_configured());
+        assert!(!LitChipotleClient::new("key", "", "cid", "enc").is_configured());
     }
 
     #[test]
     fn lit_gate_action_cid_is_returned() {
-        let c = LitChipotleClient::new("key", "pkp", "bafygatecid");
+        let c = LitChipotleClient::new("key", "pkp", "bafygatecid", "bafyencryptcid");
         assert_eq!(c.gate_action_cid(), "bafygatecid");
     }
 
@@ -362,7 +463,7 @@ mod tests {
     fn lit_debug_redacts_api_key() {
         let dbg = format!(
             "{:?}",
-            LitChipotleClient::new("super-secret-api-key", "pkp", "cid")
+            LitChipotleClient::new("super-secret-api-key", "pkp", "cid", "enc")
         );
         assert!(dbg.contains("<redacted>"), "{dbg}");
         assert!(!dbg.contains("super-secret-api-key"), "{dbg}");
@@ -370,30 +471,140 @@ mod tests {
 
     #[tokio::test]
     async fn lit_encrypt_unconfigured_errors() {
-        let c = LitChipotleClient::new("", "pkp", "cid");
+        let c = LitChipotleClient::new("", "pkp", "cid", "enc");
         let err = c.encrypt(b"x").await.unwrap_err();
         assert!(matches!(err, MarketplaceError::Sealed(_)), "{err:?}");
     }
 
+    /// The embedded encrypt action source must be byte-identical to the pinned
+    /// deploy file so the CID Lit computes over the inline `code` matches the
+    /// CID the operator registered in the PKP's authorized group. If this drifts
+    /// the inline call would compute a different CID and authorization fails.
+    #[test]
+    fn encrypt_action_src_matches_pinned_deploy_file() {
+        let on_disk = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../contracts/lit-actions/sealed-encrypt.deploy.js"
+        ))
+        .expect("read pinned deploy file");
+        assert_eq!(
+            ENCRYPT_ACTION_SRC, on_disk,
+            "embedded ENCRYPT_ACTION_SRC drifted from the pinned deploy file"
+        );
+    }
+
+    /// POSTs the Chipotle `lit_action` shape (X-Api-Key + `{code, js_params}`
+    /// with the inline ENCRYPT action source) and parses the OBJECT response
+    /// form (`response` is a JSON object). Matches the Chipotle OpenAPI
+    /// 2026-06-12. We send `code` inline (not `ipfs_id`) because Lit's
+    /// CID-keyed action cache is non-durable; inline `code` always works.
     #[tokio::test]
-    async fn lit_encrypt_posts_and_returns_ciphertext() {
+    async fn lit_encrypt_posts_code_inline_and_parses_object_response() {
         let mut server = mockito::Server::new_async().await;
         let m = server
             .mock("POST", "/core/v1/lit_action")
             .match_header("x-api-key", "test-api-key")
+            // Body carries the inline `code` (encrypt action source) + js_params,
+            // and NOT an `ipfs_id` field.
             .match_body(mockito::Matcher::PartialJsonString(
-                r#"{"pkpId":"pkp-123","message":"plain-secret"}"#.to_string(),
+                serde_json::json!({
+                    "code": ENCRYPT_ACTION_SRC,
+                    "js_params": {"pkpId": "pkp-123", "message": "plain-secret"}
+                })
+                .to_string(),
             ))
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"ciphertext":"sealed-blob-abc"}"#)
+            // OBJECT form: response is a JSON object.
+            .with_body(r#"{"response":{"ciphertext":"sealed-blob-abc"},"logs":"","has_error":false}"#)
             .create_async()
             .await;
 
-        let c = LitChipotleClient::with_api_base(server.url(), "test-api-key", "pkp-123", "cid");
+        let c = LitChipotleClient::with_api_base(
+            server.url(),
+            "test-api-key",
+            "pkp-123",
+            "cid",
+            "bafyencryptcid",
+        );
         let ct = c.encrypt(b"plain-secret").await.unwrap();
         assert_eq!(ct, "sealed-blob-abc");
         m.assert_async().await;
+    }
+
+    /// The request body must NOT contain an `ipfs_id` field anymore — the
+    /// migration is to inline `code`, and a lingering `ipfs_id` would be dead
+    /// weight (or, worse, route around the durable path).
+    #[tokio::test]
+    async fn lit_encrypt_body_has_no_ipfs_id() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/core/v1/lit_action")
+            .match_body(mockito::Matcher::AllOf(vec![mockito::Matcher::Regex(
+                r#""code""#.to_string(),
+            )]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"response":{"ciphertext":"ok"},"has_error":false}"#)
+            .create_async()
+            .await;
+
+        let c = LitChipotleClient::with_api_base(server.url(), "key", "pkp", "cid", "bafyencryptcid");
+        c.encrypt(b"x").await.unwrap();
+        m.assert_async().await;
+        // Belt-and-suspenders: serialize the request body and assert no ipfs_id.
+        let body = serde_json::to_value(LitActionRequest {
+            code: ENCRYPT_ACTION_SRC,
+            js_params: EncryptJsParams {
+                pkp_id: "pkp",
+                message: "m",
+            },
+        })
+        .unwrap();
+        assert!(body.get("ipfs_id").is_none(), "ipfs_id must be gone");
+        assert!(body.get("code").is_some(), "code must be present");
+    }
+
+    /// Parses the JSON-STRING response form: `response` is a string that itself
+    /// parses to `{ciphertext}` (the `setResponse({response: JSON.stringify})`
+    /// pattern the encrypt action uses). Matches the Chipotle OpenAPI 2026-06-12.
+    #[tokio::test]
+    async fn lit_encrypt_parses_json_string_response() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/core/v1/lit_action")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            // JSON-STRING form: response is a string holding the JSON payload.
+            .with_body(
+                r#"{"response":"{\"ciphertext\":\"sealed-from-string\"}","logs":"","has_error":false}"#,
+            )
+            .create_async()
+            .await;
+
+        let c = LitChipotleClient::with_api_base(server.url(), "key", "pkp", "cid", "enc");
+        let ct = c.encrypt(b"x").await.unwrap();
+        assert_eq!(ct, "sealed-from-string");
+    }
+
+    /// `has_error: true` in the envelope is a failure even on HTTP 200.
+    #[tokio::test]
+    async fn lit_encrypt_errors_on_envelope_has_error() {
+        let mut server = mockito::Server::new_async().await;
+        let _m = server
+            .mock("POST", "/core/v1/lit_action")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"response":"boom","logs":"trace","has_error":true}"#)
+            .create_async()
+            .await;
+
+        let c = LitChipotleClient::with_api_base(server.url(), "key", "pkp", "cid", "enc");
+        let err = c.encrypt(b"x").await.unwrap_err();
+        match err {
+            MarketplaceError::Sealed(msg) => assert!(msg.contains("has_error"), "{msg}"),
+            other => panic!("expected Sealed error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -406,7 +617,7 @@ mod tests {
             .create_async()
             .await;
 
-        let c = LitChipotleClient::with_api_base(server.url(), "bad-key", "pkp", "cid");
+        let c = LitChipotleClient::with_api_base(server.url(), "bad-key", "pkp", "cid", "enc");
         let err = c.encrypt(b"x").await.unwrap_err();
         match err {
             MarketplaceError::Sealed(msg) => assert!(msg.contains("403"), "{msg}"),
@@ -421,11 +632,12 @@ mod tests {
             .mock("POST", "/core/v1/lit_action")
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"unexpected":"shape"}"#)
+            // Envelope present, but `response` lacks `ciphertext`.
+            .with_body(r#"{"response":{"unexpected":"shape"},"has_error":false}"#)
             .create_async()
             .await;
 
-        let c = LitChipotleClient::with_api_base(server.url(), "key", "pkp", "cid");
+        let c = LitChipotleClient::with_api_base(server.url(), "key", "pkp", "cid", "enc");
         let err = c.encrypt(b"x").await.unwrap_err();
         assert!(matches!(err, MarketplaceError::Sealed(_)), "{err:?}");
     }

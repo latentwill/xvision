@@ -65,6 +65,97 @@ async fn status_dormant_shape() {
 }
 
 #[tokio::test]
+async fn status_lit_block_is_null_when_unconfigured() {
+    let (server, _state, _tmp) = boot().await;
+    let body: Value = server.get("/api/marketplace/status").await.json();
+    assert!(
+        body["lit"].is_null(),
+        "lit block null when Lit unconfigured: {body}"
+    );
+}
+
+#[tokio::test]
+async fn status_lit_block_exposes_public_fields_never_api_key() {
+    use xvision_dashboard::chain_config::{LitConfig, MarketplaceChainConfig};
+    let cfg = MarketplaceChainConfig {
+        chain: None,
+        registry_addresses: None,
+        marketplace_addresses: None,
+        ipfs: None,
+        indexer: None,
+        license_token: None,
+        lit: Some(LitConfig {
+            api_base: "https://api.chipotle.litprotocol.com".into(),
+            api_key: "super-secret-api-key".into(),
+            pkp_id: "pkp-123".into(),
+            gate_action_cid: "bafygatecid".into(),
+            encrypt_action_cid: "bafyencryptcid".into(),
+        }),
+        chain_timeout: std::time::Duration::from_secs(45),
+    };
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+
+    let resp = server.get("/api/marketplace/status").await;
+    let raw = resp.text();
+    let body: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(body["lit"]["api_base"], "https://api.chipotle.litprotocol.com");
+    assert_eq!(body["lit"]["gate_action_cid"], "bafygatecid");
+    assert_eq!(body["lit"]["pkp_id"], "pkp-123");
+    // The API key must NEVER be exposed — not as a field, not anywhere.
+    assert!(body["lit"].get("api_key").is_none(), "no api_key field: {body}");
+    assert!(
+        !raw.contains("super-secret-api-key"),
+        "api key must not leak: {raw}"
+    );
+}
+
+#[tokio::test]
+async fn status_public_gateway_defaults_to_vendor_neutral() {
+    // No pinata config → the status route must surface the vendor-neutral
+    // default read gateway, never a vendor product (no pinata.cloud).
+    let (server, _state, _tmp) = boot().await;
+    let resp = server.get("/api/marketplace/status").await;
+    let raw = resp.text();
+    let body: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(body["public_gateway"], "https://dweb.link");
+    assert!(!raw.contains("pinata"), "no vendor gateway baked in: {raw}");
+    // The pinning API URL must NEVER appear on the status route.
+    assert!(!raw.contains("api.pinata.cloud"), "no API url: {raw}");
+}
+
+#[tokio::test]
+async fn status_public_gateway_reflects_configured_gateway() {
+    use xvision_dashboard::chain_config::{IpfsBackend, MarketplaceChainConfig};
+    use xvision_marketplace::PinataDriver;
+    let cfg = MarketplaceChainConfig {
+        chain: None,
+        registry_addresses: None,
+        marketplace_addresses: None,
+        // The JWT is a pinning credential — it must never leak to the status
+        // route, only the read gateway should surface.
+        ipfs: Some(IpfsBackend::Pinata(PinataDriver::new(
+            "super-secret-pin-jwt",
+            "https://ipfs.mynode.example",
+        ))),
+        indexer: None,
+        license_token: None,
+        lit: None,
+        chain_timeout: std::time::Duration::from_secs(45),
+    };
+    let (state, _tmp) = support::state_with_chain_config(cfg).await;
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+
+    let resp = server.get("/api/marketplace/status").await;
+    let raw = resp.text();
+    let body: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(body["public_gateway"], "https://ipfs.mynode.example");
+    // Never the pinning JWT or any API URL.
+    assert!(!raw.contains("super-secret-pin-jwt"), "jwt must not leak: {raw}");
+    assert!(!raw.contains("api.pinata.cloud"), "no API url: {raw}");
+}
+
+#[tokio::test]
 async fn status_active_after_spawn_and_first_poll() {
     let (server, state, _tmp) = boot().await;
     state.mark_marketplace_indexer_active();
