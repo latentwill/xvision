@@ -312,7 +312,7 @@ pub async fn compare(
     Ok(Json(report))
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct ChartParams {
     pub include: Option<String>,
 }
