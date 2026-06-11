@@ -56,7 +56,11 @@ export type DiversityEntry = {
   created_at: string;
 };
 
-/** SSE event from the /api/autooptimizer/events stream. */
+/** SSE event from the /api/autooptimizer/events stream.
+ *
+ * Wire shape (progress.rs) is serde-tagged with per-kind fields flattened at
+ * the top level (`passed`, `outcome`, `delta_day`, `parent_count`, …), so the
+ * type carries an open index signature beyond the shared base fields. */
 export type CycleProgressEvent = {
   event_type?: string;
   type?: string;
@@ -69,6 +73,7 @@ export type CycleProgressEvent = {
   ts?: string;
   payload?: Record<string, unknown> | null;
   data?: Record<string, unknown> | null;
+  [key: string]: unknown;
 };
 
 export type StartRunCycleRequest = {

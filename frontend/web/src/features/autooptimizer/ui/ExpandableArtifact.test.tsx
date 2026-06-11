@@ -56,7 +56,7 @@ function useDetailOk() {
     status: "success",
     error: null,
     isSuccess: true,
-  } as ReturnType<typeof useExperimentDetail>);
+  } as unknown as ReturnType<typeof useExperimentDetail>);
 }
 
 function useDetailLoading() {
@@ -221,7 +221,7 @@ describe("ExpandableArtifact — FindingsList non-empty", () => {
       status: "success",
       error: null,
       isSuccess: true,
-    } as ReturnType<typeof useExperimentDetail>);
+    } as unknown as ReturnType<typeof useExperimentDetail>);
 
     renderArtifact();
     const btn = screen.getByRole("button", { name: /v3\.1\.g/ });
