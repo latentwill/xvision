@@ -26,7 +26,7 @@ use xvision_core::AssetSymbol;
 use crate::alpaca::{AlpacaApi, ApacClientApi, OrderRequest as ApacOrderRequest, OrderSide as ApacSide};
 use crate::orderly::{
     orderly_symbol_for, AlgoKind, Credentials as OrderlyCredentials, OrderSide as OrderlyOrderSide,
-    OrderlyApi, OrderlyOrder, OrderlySymbolMeta, ReqwestOrderlyApi, ORDERLY_MAINNET_BASE,
+    OrderlyApi, OrderlyOrder, ReqwestOrderlyApi, ORDERLY_MAINNET_BASE,
 };
 
 /// Returns `true` when `asset` parses as an Alpaca crypto whitelist symbol
@@ -862,7 +862,7 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
                         close_side,
                         fill_qty,
                         trigger,
-                        Some(format!("tp-{}", req.idempotency_key)),
+                        Some(crate::orderly::venue_client_id("tp-", &req.idempotency_key)),
                         Some(true),
                     )
                     .await
@@ -884,7 +884,7 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
                         close_side,
                         fill_qty,
                         trigger,
-                        Some(format!("sl-{}", req.idempotency_key)),
+                        Some(crate::orderly::venue_client_id("sl-", &req.idempotency_key)),
                         Some(true),
                     )
                     .await
@@ -1032,7 +1032,7 @@ mod helper_tests {
 mod orderly_live_surface_tests {
     use super::*;
     use crate::executor::ExecutorError;
-    use crate::orderly::{OrderlyAccount, OrderlyPosition};
+    use crate::orderly::{OrderlyAccount, OrderlyPosition, OrderlySymbolMeta};
 
     // ── Local mock OrderlyApi ────────────────────────────────────────────────
 
@@ -1212,8 +1212,8 @@ mod orderly_live_surface_tests {
             assert_eq!(leg.reduce_only, Some(true));
             assert_eq!(leg.quantity, 0.05);
         }
-        assert_eq!(tp.client_order_id.as_deref(), Some("tp-cycle-abc"));
-        assert_eq!(sl.client_order_id.as_deref(), Some("sl-cycle-abc"));
+        assert_eq!(tp.client_order_id.as_deref(), Some("tp-cycleabc"));
+        assert_eq!(sl.client_order_id.as_deref(), Some("sl-cycleabc"));
     }
 
     #[tokio::test]

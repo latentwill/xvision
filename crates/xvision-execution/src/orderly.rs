@@ -142,6 +142,17 @@ fn now_ms() -> u64 {
 /// Round `qty` DOWN to a multiple of `tick`, defusing f64 noise (e.g.
 /// 0.00048 / 0.00001 = 47.999999…) by nudging the ratio before flooring.
 /// Rounding down (never up) keeps the order within the decided notional.
+/// Compose a venue `client_order_id` from a short prefix and a key,
+/// stripping hyphens and truncating to Orderly's 36-char limit
+/// (full prefixed UUIDs overflow it: "tp-" + 36 = 39 — the venue
+/// rejects with -1005; caught live on testnet 2026-06-11).
+pub(crate) fn venue_client_id(prefix: &str, key: &str) -> String {
+    let compact: String = key.chars().filter(|c| *c != '-').collect();
+    let mut id = format!("{prefix}{compact}");
+    id.truncate(36);
+    id
+}
+
 pub(crate) fn round_to_tick(qty: f64, tick: f64) -> f64 {
     if tick <= 0.0 {
         return qty;
@@ -872,7 +883,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     close_side,
                     fill_qty,
                     tp_trigger,
-                    Some(format!("tp-{}", td.cycle_id)),
+                    Some(venue_client_id("tp-", &td.cycle_id.to_string())),
                     Some(true),
                 )
                 .await;
@@ -885,7 +896,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     close_side,
                     fill_qty,
                     sl_trigger,
-                    Some(format!("sl-{}", td.cycle_id)),
+                    Some(venue_client_id("sl-", &td.cycle_id.to_string())),
                     Some(true),
                 )
                 .await;
@@ -960,7 +971,7 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                 &symbol,
                 close_side,
                 qty,
-                Some(format!("close-{}", Uuid::new_v4())),
+                Some(venue_client_id("cl-", &Uuid::new_v4().to_string())),
                 Some(true),
             )
             .await?;
