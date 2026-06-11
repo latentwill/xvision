@@ -60,10 +60,11 @@ pub mod validator;
 pub use blob_store::BlobStore;
 pub use canary::{build_sabotaged_strategy, run_honesty_check, HonestyCheckResult, SabotageVariant};
 pub use config::{
-    AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig, TradeDirection,
+    AutoOptimizerConfig, BaselineUntouchedWindow, DayWindow, LooseningSchedule, MutatorConfig,
+    ScenarioWindowPair, TradeDirection,
 };
 pub use content_hash::{canonical_json, canonicalize_json, hash_bytes, hash_canonical_json, ContentHash};
-pub use cycle::{run_cycle, CycleConfig, CycleResult};
+pub use cycle::{run_cycle, select_scenario_pair, CycleConfig, CycleResult};
 pub use cycle_loosen::{effective_min_improvement_for_cycle, EffectiveGateConfig};
 pub use cycle_runs::{
     get_cycle_run, list_cycle_runs, CycleNodeDetail, CycleRunDetail, CycleRunSummary, HonestyCheckRecord,

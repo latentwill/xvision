@@ -795,6 +795,30 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
             .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
 
+    // B19: synthesize the round-robin scenario_pool (one (day, baseline) pair per
+    // configured `ScenarioWindowPair`) through the SAME builders as the single
+    // pair, so pool pairs share venue/fee/fill settings with the fallback pair.
+    // Empty when `scenario_pool` is unset ⇒ the cycle uses the single pair above
+    // for every candidate (back-compat). Precedence: when the pool is non-empty
+    // it drives per-candidate sampling; the single pair (which still honors the
+    // --day-*/--baseline-* CLI overrides) is the fallback used only when the pool
+    // is empty, and remains the honesty-check scenario.
+    let scenario_pool: Vec<(xvision_engine::eval::scenario::Scenario, xvision_engine::eval::scenario::Scenario)> =
+        cfg.scenario_pool
+            .iter()
+            .map(|pair| {
+                let day = synthesize_optimizer_day_scenario(&pair.day, cadence_minutes, "xvn-cli");
+                let baseline = synthesize_baseline_untouched_scenario(&day, &pair.baseline)
+                    .map_err(|e| {
+                        CliError::upstream(anyhow::anyhow!(
+                            "synthesize scenario_pool '{}' baseline: {e}",
+                            pair.label
+                        ))
+                    })?;
+                Ok::<_, CliError>((day, baseline))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
     let binding = build_dispatch(
         args.mock,
         Some(&xvn_home),
@@ -943,6 +967,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         explicit_parent_hashes,
         objective: cfg.objective,
         regime_set: cfg.regime_set.clone(),
+        scenario_pool,
         max_output_tokens: args.max_output_tokens,
     };
 
