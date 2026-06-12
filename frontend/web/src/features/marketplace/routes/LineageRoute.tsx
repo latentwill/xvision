@@ -560,6 +560,15 @@ export function LineageRoute() {
     );
   }
 
+  const provenanceTx =
+    (
+      detail.onChain.anchors.find((anchor) => anchor.kind === "mint" && anchor.tx)
+        ?.tx ??
+      detail.onChain.anchors.find((anchor) => anchor.tx)?.tx ??
+      detail.onChain.tradesMeta.anchorTx
+    ) ||
+    undefined;
+
   // Title fallback chain: verified manifest display name → the listing's own
   // name → a humanized form of the id. Never the raw tech slug —
   // `humanize('btc-momentum-v3')` yields "Btc Momentum V3" (QA fix).
@@ -877,13 +886,15 @@ export function LineageRoute() {
               </div>
             ))}
           </div>
-          <div className="mt-3">
-            <TxChip
-              hash={detail.onChain.nft.tokenId}
-              network={detail.onChain.nft.network}
-              label="View on explorer"
-            />
-          </div>
+          {provenanceTx && (
+            <div className="mt-3">
+              <TxChip
+                hash={provenanceTx}
+                network={detail.onChain.nft.network}
+                label="View on explorer"
+              />
+            </div>
+          )}
         </section>
       )}
 
