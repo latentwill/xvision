@@ -70,6 +70,7 @@ describe("mapListingRow", () => {
     expect(row.buyers).toEqual({ humans: 1, agents: 2 });
     expect(row.verification).toBe("verified"); // has a validation
     expect(row.acceptsX402).toBe(true); // positive price
+    // QA11: genArtSeed from agent.id
     expect(row.genArtSeed).toBe("42");
     // off-chain (no manifest/eval): defaults, not fabricated
     expect(row.model).toBe("—");
@@ -78,10 +79,13 @@ describe("mapListingRow", () => {
     expect(row.return30dPct).toBe(0);
     expect(row.clones).toBe(0);
     expect(row.transferableLicense).toBe(false);
+    // QA9: name is undefined when no manifest
+    expect(row.name).toBeUndefined();
   });
 
   it("applies resolved manifest metadata when present", () => {
     const row = mapListingRow(paidListing, {
+      name: "BTC Momentum v3",
       model: "kimi-k2",
       assets: ["ETH/USD"],
       style: "breakout",
@@ -89,6 +93,18 @@ describe("mapListingRow", () => {
     expect(row.model).toBe("kimi-k2");
     expect(row.assets).toEqual(["ETH/USD"]);
     expect(row.style).toBe("breakout");
+    // QA9: name from manifest
+    expect(row.name).toBe("BTC Momentum v3");
+  });
+
+  it("QA11: genArtSeed falls back to listing id when agent.id is empty", () => {
+    const noAgentId: SgListing = {
+      ...paidListing,
+      agent: { ...baseAgent, id: "" },
+    };
+    const row = mapListingRow(noAgentId, null);
+    // Falls back to listing id "7"
+    expect(row.genArtSeed).toBe("7");
   });
 
   it("unverified when no validations; x402 from sales when free", () => {
@@ -142,6 +158,7 @@ describe("mapListingDetail", () => {
     const d = mapListingDetail(detail, { description: "does a thing" });
     expect(d.id).toBe("7");
     expect(d.platformFeeBps).toBe(500);
+    // promise comes from meta.description (no fabrication)
     expect(d.promise).toBe("does a thing");
     expect(d.paidToCreatorUsd).toBeCloseTo(1.425, 3);
     expect(d.onChain.nft.tokenId).toBe("42");
@@ -158,6 +175,11 @@ describe("mapListingDetail", () => {
     expect(d.metrics.sharpe).toBe(0);
     expect(d.equityCurve.points).toEqual([]);
     expect(d.onChain.trades).toEqual([]);
+  });
+
+  it("promise is empty string when meta is null (no fabrication)", () => {
+    const d = mapListingDetail(detail, null);
+    expect(d.promise).toBe("");
   });
 });
 

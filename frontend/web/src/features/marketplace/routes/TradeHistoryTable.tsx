@@ -53,13 +53,13 @@ export function TradeHistoryTable({ trades, meta }: Props) {
       {/* Card header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div>
-          <span className="text-[12px] font-medium text-foreground">Trade history</span>
+          <span className="text-[12px] font-medium text-text">Trade history</span>
           <span className="ml-2 font-mono text-[10.5px] text-text-3">
             {meta.totalOnChain} trades on chain · last anchor {meta.lastAnchorAt} ·
             receipt_kind={meta.receiptKind}
           </span>
         </div>
-        <button className="px-2.5 py-1 rounded border border-border-strong text-[11px] font-medium text-text-2 hover:text-foreground transition-colors">
+        <button className="px-2.5 py-1 rounded border border-border-strong text-[11px] font-medium text-text-2 hover:text-text transition-colors">
           Export ledger
         </button>
       </div>
@@ -196,7 +196,7 @@ export function TradeHistoryTable({ trades, meta }: Props) {
                 {t.action}
               </span>
               <span className="font-mono text-[11.5px] text-text-2">{t.symbol}</span>
-              <span className="font-mono text-[11.5px] text-foreground text-right">{t.qty}</span>
+              <span className="font-mono text-[11.5px] text-text text-right">{t.qty}</span>
               <span className="font-mono text-[11.5px] text-text-2 text-right">
                 {t.entry !== null ? `$${t.entry.toLocaleString()}` : "—"}
               </span>

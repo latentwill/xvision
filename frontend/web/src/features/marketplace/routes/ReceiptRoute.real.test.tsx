@@ -72,10 +72,17 @@ describe("ReceiptRoute with a real mapped receipt", () => {
       client: new RealReceiptClient(),
     });
 
-    // Success header with the on-chain listing id + real amounts
-    expect(await screen.findByText(/You bought/)).toBeInTheDocument();
+    // Success header: paid receipt (pricePaidUsdc=49) shows "Acquired" (QA12)
+    expect(await screen.findByText(/Acquired/)).toBeInTheDocument();
+    // Should NOT say "You bought"
+    expect(screen.queryByText(/You bought/)).toBeNull();
+
+    // Price and net-to-creator amounts visible
     expect(screen.getAllByText(/49 USDC/).length).toBeGreaterThan(0);
     expect(screen.getByText(/46\.55 USDC/)).toBeInTheDocument();
+
+    // Fee parenthetical must NOT appear (QA15)
+    expect(screen.queryByText(/5% fee/)).toBeNull();
 
     // License panel renders the real token + minted time, empty manifest is fine
     expect(screen.getByText("LICENSE 3")).toBeInTheDocument();
@@ -84,11 +91,36 @@ describe("ReceiptRoute with a real mapped receipt", () => {
     // Install panel: honest "not detected" state for the real receipt
     expect(screen.getAllByText(/XVN not detected/).length).toBeGreaterThan(0);
 
-    // Tx link points at the real hash
-    const link = screen.getByRole("link", { name: /view on mantlescan/i });
+    // Tx link points at the real hash via TxChip (QA16)
+    // TxChip renders the hash as a link; label="View on explorer"
+    const link = screen.getByRole("link", { name: new RegExp(TX) });
     expect(link).toHaveAttribute(
       "href",
-      `https://sepolia.mantlescan.xyz/tx/${TX}`,
+      `https://explorer.sepolia.mantle.xyz/tx/${TX}`,
     );
+
+    // Layout: no 380px third column
+    const grids = document.querySelectorAll("[style*='grid']");
+    for (const el of grids) {
+      expect((el as HTMLElement).style.gridTemplateColumns).not.toContain("380px");
+    }
+  });
+
+  it("renders 'Activated' header for a zero-price (free/open) receipt", async () => {
+    const freeReceipt: Receipt = {
+      ...realReceipt,
+      license: { ...realReceipt.license, pricePaidUsdc: 0, feeUsdc: 0, netToCreatorUsdc: 0 },
+    };
+    class FreeClient extends FixtureMarketplaceData {
+      async getReceipt(): Promise<Receipt> { return freeReceipt; }
+    }
+    renderMarketplace(<ReceiptRoute />, {
+      path: "/marketplace/receipts/:tx",
+      route: `/marketplace/receipts/${TX}`,
+      client: new FreeClient(),
+    });
+    expect(await screen.findByText(/Activated/)).toBeInTheDocument();
+    expect(screen.queryByText(/Acquired/)).toBeNull();
+    expect(screen.queryByText(/You bought/)).toBeNull();
   });
 });
