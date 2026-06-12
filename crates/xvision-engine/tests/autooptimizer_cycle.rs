@@ -328,6 +328,7 @@ async fn run_cycle_smoke() {
     // ── 7. Configs ────────────────────────────────────────────────────────────
     let ar_config = AutoOptimizerConfig {
         min_improvement: 0.05,
+        edge_gate_enabled: false,
         ..AutoOptimizerConfig::default()
     };
 
@@ -495,6 +496,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
 
     let ar_config = AutoOptimizerConfig {
         min_improvement: 0.05,
+        edge_gate_enabled: false,
         ..AutoOptimizerConfig::default()
     };
     let day_scenario = make_scenario("day-keep", 2024, 2025);
@@ -636,6 +638,7 @@ async fn run_cycle_scenario_pool_round_robin_keeps_parent_child_comparable() {
 
     let ar_config = AutoOptimizerConfig {
         min_improvement: 0.05,
+        edge_gate_enabled: false,
         ..AutoOptimizerConfig::default()
     };
     // Fallback single pair (used for the honesty check + as index-0 fallback).
@@ -796,6 +799,7 @@ async fn run_cycle_scenario_pool_cache_distinguishes_same_day_different_baseline
 
     let ar_config = AutoOptimizerConfig {
         min_improvement: 0.05,
+        edge_gate_enabled: false,
         ..AutoOptimizerConfig::default()
     };
     let day_scenario = make_scenario("day-fallback", 2024, 2025);

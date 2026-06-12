@@ -11,10 +11,27 @@ use crate::autooptimizer::dspy_bridge::DspyBridge;
 use crate::autooptimizer::judge::Finding;
 use crate::autooptimizer::pattern_snapshot::{PatternSnapshot, PatternSnapshotStore};
 
-const EMBEDDER_ID: &str = "autooptimizer-static-v1";
+const EMBEDDER_ID: &str = "autooptimizer-lexical-hash-v1";
 
-fn static_embedding() -> Vec<f32> {
-    vec![1.0f32]
+fn lexical_hash_embedding(text: &str) -> Vec<f32> {
+    const DIMS: usize = 64;
+    let mut v = vec![0.0f32; DIMS];
+    for token in text.split_whitespace() {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in token.as_bytes() {
+            hash ^= *b as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let idx = (hash as usize) % DIMS;
+        v[idx] += 1.0;
+    }
+    let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for x in &mut v {
+            *x /= norm;
+        }
+    }
+    v
 }
 
 fn finding_to_observation(finding: &Finding, namespace: &str, cycle_id: &str) -> MemoryItem {
@@ -24,7 +41,7 @@ fn finding_to_observation(finding: &Finding, namespace: &str, cycle_id: &str) ->
         namespace: namespace.to_string(),
         tier: Tier::Observation,
         text: format!("[{}] {}", finding.code, finding.summary),
-        embedding: static_embedding(),
+        embedding: lexical_hash_embedding(&format!("[{}] {}", finding.code, finding.summary)),
         created_at: now,
         run_id: Some(cycle_id.to_string()),
         scenario_id: Some("autooptimizer".to_string()),
@@ -53,7 +70,7 @@ pub async fn write_cycle_findings(
 }
 
 pub async fn query_dsr_prefix(store: &MemoryStore, namespace: &str) -> anyhow::Result<Option<String>> {
-    let matches = store.query(namespace, &static_embedding(), 1, None).await?;
+    let matches = store.query(namespace, &lexical_hash_embedding(namespace), 1, None).await?;
     Ok(matches.into_iter().next().map(|m| m.text))
 }
 
@@ -71,7 +88,7 @@ async fn persist_compiled_pattern(
         namespace: namespace.to_string(),
         tier: Tier::Pattern,
         text: instruction.to_string(),
-        embedding: static_embedding(),
+        embedding: lexical_hash_embedding(instruction),
         created_at: now,
         run_id: None,
         scenario_id: None,
@@ -79,11 +96,63 @@ async fn persist_compiled_pattern(
         source_window_start: None,
         source_window_end: None,
         training_window_end: Some(now),
-        promotion_state: Some("active".to_string()),
+        promotion_state: Some("staged".to_string()),
         attestation_id: None,
         forgotten_at: None,
     };
     store.upsert_pattern(&item, EMBEDDER_ID).await
+}
+
+pub struct PatternValidationComparison {
+    pub pattern_id: String,
+    pub predecessor_id: String,
+    pub pattern_score: f64,
+    pub predecessor_score: f64,
+    pub gate_verdict: crate::autooptimizer::gate::GateVerdict,
+}
+
+pub async fn activate_pattern_after_validation(
+    store: &MemoryStore,
+    xvn_pool: &SqlitePool,
+    comparison: PatternValidationComparison,
+) -> anyhow::Result<bool> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS autooptimizer_pattern_validation_comparisons (
+            pattern_id TEXT NOT NULL,
+            predecessor_id TEXT NOT NULL,
+            pattern_score REAL NOT NULL,
+            predecessor_score REAL NOT NULL,
+            gate_verdict TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+    )
+    .execute(xvn_pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO autooptimizer_pattern_validation_comparisons \
+         (pattern_id, predecessor_id, pattern_score, predecessor_score, gate_verdict, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&comparison.pattern_id)
+    .bind(&comparison.predecessor_id)
+    .bind(comparison.pattern_score)
+    .bind(comparison.predecessor_score)
+    .bind(comparison.gate_verdict.as_str())
+    .bind(Utc::now().to_rfc3339())
+    .execute(xvn_pool)
+    .await?;
+
+    let state = if matches!(comparison.gate_verdict, crate::autooptimizer::gate::GateVerdict::Pass) {
+        "active"
+    } else {
+        "staged"
+    };
+    sqlx::query("UPDATE memory_items SET promotion_state = ? WHERE id = ? AND tier = 'pattern'")
+        .bind(state)
+        .bind(&comparison.pattern_id)
+        .execute(store.pool())
+        .await?;
+    Ok(state == "active")
 }
 
 /// Returns the snapshot id when a compile ran and a pattern was persisted;
@@ -317,12 +386,24 @@ mod tests {
         assert!(*called.lock().unwrap(), "bridge must be called at threshold");
         assert!(snap_id.is_some(), "compile must return a snapshot id");
 
-        // compiled instruction was persisted as a Pattern
+        // compiled instruction was persisted as a staged Pattern, so active
+        // recall must not see it until validation activates it.
         let prefix = query_dsr_prefix(&store, "test:enabled").await.unwrap();
-        assert!(prefix.is_some(), "DSR prefix must be queryable after compilation");
         assert!(
-            prefix.unwrap().contains("compiled instruction"),
-            "prefix must contain the bridge-returned instruction"
+            prefix.is_none(),
+            "staged compiled pattern must not be queryable as an active DSR prefix"
+        );
+        let state: Option<String> = sqlx::query_scalar(
+            "SELECT promotion_state FROM memory_items WHERE namespace = ? AND tier = 'pattern' LIMIT 1",
+        )
+        .bind("test:enabled")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            state.as_deref(),
+            Some("staged"),
+            "compiled patterns must be staged until validation activates them"
         );
 
         // snapshot must be in xvn.db
@@ -333,5 +414,74 @@ mod tests {
             snap.unwrap().instruction.contains("compiled instruction"),
             "persisted snapshot instruction must match bridge output"
         );
+    }
+
+    #[tokio::test]
+    async fn validation_comparison_controls_pattern_activation() {
+        let store = Arc::new(MemoryStore::open_in_memory().await.unwrap());
+        let pool = fresh_xvn_pool().await;
+        persist_compiled_pattern(&store, "test:activation", "compiled activation candidate")
+            .await
+            .unwrap();
+        let pattern_id: String = sqlx::query_scalar(
+            "SELECT id FROM memory_items WHERE namespace = ? AND tier = 'pattern' LIMIT 1",
+        )
+        .bind("test:activation")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+
+        let failed = activate_pattern_after_validation(
+            &store,
+            &pool,
+            PatternValidationComparison {
+                pattern_id: pattern_id.clone(),
+                predecessor_id: "prev".to_string(),
+                pattern_score: 0.9,
+                predecessor_score: 1.0,
+                gate_verdict: crate::autooptimizer::gate::GateVerdict::Fail {
+                    reason: "validation holdout failed".to_string(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!failed, "failing validation must not activate pattern");
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT promotion_state FROM memory_items WHERE id = ?")
+                .bind(&pattern_id)
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(state.as_deref(), Some("staged"));
+
+        let activated = activate_pattern_after_validation(
+            &store,
+            &pool,
+            PatternValidationComparison {
+                pattern_id: pattern_id.clone(),
+                predecessor_id: "prev".to_string(),
+                pattern_score: 1.2,
+                predecessor_score: 1.0,
+                gate_verdict: crate::autooptimizer::gate::GateVerdict::Pass,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(activated, "passing validation must activate pattern");
+        let state: Option<String> =
+            sqlx::query_scalar("SELECT promotion_state FROM memory_items WHERE id = ?")
+                .bind(&pattern_id)
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(state.as_deref(), Some("active"));
+
+        let comparisons: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM autooptimizer_pattern_validation_comparisons")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(comparisons, 2, "both validation comparisons must be recorded");
     }
 }

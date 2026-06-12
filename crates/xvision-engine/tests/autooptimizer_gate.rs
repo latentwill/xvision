@@ -1,4 +1,6 @@
-use xvision_engine::autooptimizer::gate::{evaluate, GateInput, GateVerdict, Objective};
+use xvision_engine::autooptimizer::gate::{
+    evaluate, GateBootstrapConfig, GateInput, GateVerdict, Objective, PairedReturnSeries,
+};
 use xvision_engine::eval::MetricsSummary;
 
 fn metrics(sharpe: f64, max_drawdown_pct: f64) -> MetricsSummary {
@@ -20,14 +22,14 @@ fn make_input(
     child_untouched_dd: f64,
     min_improvement: f64,
 ) -> GateInput {
-    GateInput {
-        parent_day_metrics: metrics(parent_day_sharpe, parent_day_dd),
-        child_day_metrics: metrics(child_day_sharpe, child_day_dd),
-        parent_untouched_metrics: metrics(parent_untouched_sharpe, parent_untouched_dd),
-        child_untouched_metrics: metrics(child_untouched_sharpe, child_untouched_dd),
+    GateInput::aggregate_only(
+        metrics(parent_day_sharpe, parent_day_dd),
+        metrics(child_day_sharpe, child_day_dd),
+        metrics(parent_untouched_sharpe, parent_untouched_dd),
+        metrics(child_untouched_sharpe, child_untouched_dd),
         min_improvement,
-        objective: Objective::default(),
-    }
+        Objective::default(),
+    )
 }
 
 // ── F24: configurable objective ──────────────────────────────────────────────
@@ -39,6 +41,41 @@ fn m_full(sharpe: f64, total_return_pct: f64, win_rate: f64, max_drawdown_pct: f
         win_rate,
         max_drawdown_pct,
         ..MetricsSummary::default()
+    }
+}
+
+fn traded(mut m: MetricsSummary, n: u32) -> MetricsSummary {
+    m.n_trades = n;
+    m
+}
+
+fn series(delta: f32, n: usize) -> PairedReturnSeries {
+    PairedReturnSeries {
+        candidate: (0..n).map(|i| 0.002 + delta + ((i % 5) as f32 - 2.0) * 0.0001).collect(),
+        baseline: (0..n).map(|i| 0.002 + ((i % 5) as f32 - 2.0) * 0.0001).collect(),
+    }
+}
+
+fn statistical_input(day_delta: f32, holdout_delta: f32, edge_delta: f32) -> GateInput {
+    GateInput {
+        parent_day_metrics: traded(m_full(1.0, 5.0, 0.5, -10.0), 12),
+        child_day_metrics: traded(m_full(1.2, 7.0, 0.6, -10.0), 12),
+        parent_untouched_metrics: traded(m_full(1.0, 5.0, 0.5, -8.0), 12),
+        child_untouched_metrics: traded(m_full(1.2, 7.0, 0.6, -8.0), 12),
+        min_improvement: 0.05,
+        objective: Objective::Sharpe,
+        min_trades_per_window: 10,
+        edge_gate_enabled: true,
+        require_return_series: true,
+        bootstrap: GateBootstrapConfig {
+            n_resamples: 200,
+            block_size: None,
+            periods_per_year: 365.0,
+            seed: 42,
+        },
+        day_returns: Some(series(day_delta, 64)),
+        untouched_returns: Some(series(holdout_delta, 64)),
+        edge_returns: Some(series(edge_delta, 64)),
     }
 }
 
@@ -54,6 +91,14 @@ fn total_return_objective_gates_on_return_not_sharpe() {
         child_untouched_metrics: m_full(1.0, 7.0, 0.5, -8.0),
         min_improvement: 1.0,
         objective: Objective::TotalReturn,
+        ..GateInput::aggregate_only(
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            1.0,
+            Objective::TotalReturn,
+        )
     };
     assert!(matches!(evaluate(&input), GateVerdict::Pass));
 }
@@ -71,6 +116,14 @@ fn max_drawdown_objective_rewards_reducing_drawdown() {
         child_untouched_metrics: m_full(1.0, 5.0, 0.5, -10.0),
         min_improvement: 1.0,
         objective: Objective::MaxDrawdown,
+        ..GateInput::aggregate_only(
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            1.0,
+            Objective::MaxDrawdown,
+        )
     };
     assert!(matches!(evaluate(&input), GateVerdict::Pass));
 }
@@ -86,6 +139,14 @@ fn total_return_objective_requires_both_windows() {
         child_untouched_metrics: m_full(1.0, 4.0, 0.5, -8.0), // no untouched improvement
         min_improvement: 1.0,
         objective: Objective::TotalReturn,
+        ..GateInput::aggregate_only(
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            MetricsSummary::default(),
+            1.0,
+            Objective::TotalReturn,
+        )
     };
     assert!(matches!(evaluate(&input), GateVerdict::Fail { .. }));
 }
@@ -220,4 +281,55 @@ fn determinism() {
             _ => panic!("verdict changed between calls"),
         }
     }
+}
+
+#[test]
+fn trade_floor_rejects_thin_child_windows() {
+    let mut input = statistical_input(0.001, 0.001, 0.001);
+    input.child_untouched_metrics.n_trades = 9;
+    let GateVerdict::Fail { reason } = evaluate(&input) else {
+        panic!("expected thin untouched window to fail");
+    };
+    assert!(reason.contains("min-trades-per-window"), "got: {reason}");
+}
+
+#[test]
+fn paired_ci_low_must_clear_both_windows() {
+    let input = statistical_input(0.001, -0.0002, 0.001);
+    let GateVerdict::Fail { reason } = evaluate(&input) else {
+        panic!("expected weak holdout return distribution to fail");
+    };
+    assert!(reason.contains("baseline-untouched paired-return CI-low"), "got: {reason}");
+}
+
+#[test]
+fn edge_over_random_gate_is_enabled_by_default_behavior() {
+    let input = statistical_input(0.001, 0.001, -0.0002);
+    let GateVerdict::Fail { reason } = evaluate(&input) else {
+        panic!("expected weak edge-over-random distribution to fail");
+    };
+    assert!(reason.contains("edge-over-random CI-low"), "got: {reason}");
+}
+
+#[test]
+fn edge_gate_can_be_disabled_for_diagnostics() {
+    let mut input = statistical_input(0.001, 0.001, -0.0002);
+    input.edge_gate_enabled = false;
+    assert!(matches!(evaluate(&input), GateVerdict::Pass));
+}
+
+#[test]
+fn pure_noise_acceptance_stays_under_five_percent() {
+    let mut accepted = 0;
+    for i in 0..200_u64 {
+        let mut input = statistical_input(0.0, 0.0, 0.0);
+        input.bootstrap.seed = i;
+        if matches!(evaluate(&input), GateVerdict::Pass) {
+            accepted += 1;
+        }
+    }
+    assert!(
+        accepted <= 10,
+        "pure-noise gates accepted {accepted}/200 candidates"
+    );
 }

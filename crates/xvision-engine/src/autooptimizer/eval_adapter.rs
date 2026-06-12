@@ -15,6 +15,7 @@ use crate::api::ApiContext;
 use crate::eval::bars::{self, BarCacheArgs};
 use crate::eval::executor::asset_set::active_assets;
 use crate::eval::executor::{Executor, RunExecutor};
+use crate::eval::metrics::equity_to_returns;
 use crate::eval::run::{MetricsSummary, Run, RunMode};
 use crate::eval::scenario::Scenario;
 use crate::eval::scenario_store;
@@ -25,6 +26,12 @@ use crate::tools::ToolRegistry;
 #[async_trait]
 pub trait PaperTestRunner: Send + Sync {
     async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary>;
+
+    async fn run_result(&self, strategy: &Strategy, scenario: &Scenario) -> Result<PaperTestResult> {
+        let metrics = self.run(strategy, scenario).await?;
+        let returns = synthetic_returns_for_metrics(&metrics);
+        Ok(PaperTestResult { metrics, returns })
+    }
 
     /// F9: run a deliberately-sabotaged honesty-check (canary) strategy,
     /// tagging the run with the sabotage variant so the backtest executor
@@ -55,6 +62,39 @@ pub trait PaperTestRunner: Send + Sync {
     ) -> Result<MetricsSummary> {
         anyhow::bail!("random baseline not supported by this PaperTestRunner")
     }
+
+    async fn run_random_baseline_result(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<PaperTestResult> {
+        let metrics = self.run_random_baseline(strategy, scenario, direction).await?;
+        let returns = synthetic_returns_for_metrics(&metrics);
+        Ok(PaperTestResult { metrics, returns })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PaperTestResult {
+    pub metrics: MetricsSummary,
+    pub returns: Vec<f32>,
+}
+
+fn returns_from_equity_curve(curve: &[(chrono::DateTime<chrono::Utc>, f64)]) -> Vec<f32> {
+    let equity: Vec<f64> = curve.iter().map(|(_, nav)| *nav).collect();
+    equity_to_returns(&equity)
+        .into_iter()
+        .filter(|r| r.is_finite())
+        .map(|r| r as f32)
+        .collect()
+}
+
+fn synthetic_returns_for_metrics(metrics: &MetricsSummary) -> Vec<f32> {
+    let mean = (metrics.sharpe as f32) * 0.0001;
+    (0..64)
+        .map(|i| mean + ((i % 7) as f32 - 3.0) * 0.00001)
+        .collect()
 }
 
 pub struct BacktestPaperTester {
@@ -96,6 +136,18 @@ impl BacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
     ) -> Result<MetricsSummary> {
+        Ok(self
+            .run_inner_with_dispatch(strategy, scenario, canary, None)
+            .await?
+            .metrics)
+    }
+
+    async fn run_result_inner(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        canary: Option<&str>,
+    ) -> Result<PaperTestResult> {
         self.run_inner_with_dispatch(strategy, scenario, canary, None)
             .await
     }
@@ -109,7 +161,7 @@ impl BacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
         dispatch_override: Option<Arc<dyn LlmDispatch>>,
-    ) -> Result<MetricsSummary> {
+    ) -> Result<PaperTestResult> {
         let dispatch = dispatch_override.unwrap_or_else(|| Arc::clone(&self.dispatch));
         let mut executor = match self.injected_bars.as_ref() {
             Some(bars) => Executor::with_bars(bars.clone()),
@@ -130,7 +182,7 @@ impl BacktestPaperTester {
         // back `<no_response>` with 0 tokens and the run died at decision 0.
         let agent_slots =
             crate::agent::pipeline::resolve_agent_slots_for_strategy(self.store.pool(), strategy).await?;
-        executor
+        let metrics = executor
             .run(
                 &mut run,
                 strategy,
@@ -140,7 +192,12 @@ impl BacktestPaperTester {
                 Arc::clone(&self.tools),
                 &self.store,
             )
-            .await
+            .await?;
+        let curve = self.store.read_equity_curve(&run.id).await.unwrap_or_default();
+        Ok(PaperTestResult {
+            metrics,
+            returns: returns_from_equity_curve(&curve),
+        })
     }
 }
 
@@ -148,6 +205,10 @@ impl BacktestPaperTester {
 impl PaperTestRunner for BacktestPaperTester {
     async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
         self.run_inner(strategy, scenario, None).await
+    }
+
+    async fn run_result(&self, strategy: &Strategy, scenario: &Scenario) -> Result<PaperTestResult> {
+        self.run_result_inner(strategy, scenario, None).await
     }
 
     async fn run_canary(
@@ -165,6 +226,29 @@ impl PaperTestRunner for BacktestPaperTester {
         scenario: &Scenario,
         direction: crate::autooptimizer::config::TradeDirection,
     ) -> Result<MetricsSummary> {
+        let actions = direction
+            .baseline_actions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(
+            crate::autooptimizer::random_baseline::RandomBaselineDispatch::new(
+                crate::autooptimizer::random_baseline::RANDOM_BASELINE_SEED,
+                actions,
+            ),
+        );
+        Ok(self
+            .run_inner_with_dispatch(strategy, scenario, None, Some(dispatch))
+            .await?
+            .metrics)
+    }
+
+    async fn run_random_baseline_result(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<PaperTestResult> {
         let actions = direction
             .baseline_actions()
             .iter()
@@ -250,6 +334,18 @@ impl CachedBacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
     ) -> Result<MetricsSummary> {
+        Ok(self
+            .run_inner_with_dispatch(strategy, scenario, canary, None)
+            .await?
+            .metrics)
+    }
+
+    async fn run_result_inner(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        canary: Option<&str>,
+    ) -> Result<PaperTestResult> {
         self.run_inner_with_dispatch(strategy, scenario, canary, None)
             .await
     }
@@ -260,7 +356,7 @@ impl CachedBacktestPaperTester {
         scenario: &Scenario,
         canary: Option<&str>,
         dispatch_override: Option<Arc<dyn LlmDispatch>>,
-    ) -> Result<MetricsSummary> {
+    ) -> Result<PaperTestResult> {
         ensure_scenario_persisted(&self.ctx, scenario).await?;
         let executor = build_cached_backtest_executor(
             &self.ctx,
@@ -298,7 +394,11 @@ impl CachedBacktestPaperTester {
                 &store,
             )
             .await?;
-        Ok(metrics)
+        let curve = store.read_equity_curve(&run.id).await.unwrap_or_default();
+        Ok(PaperTestResult {
+            metrics,
+            returns: returns_from_equity_curve(&curve),
+        })
     }
 }
 
@@ -306,6 +406,10 @@ impl CachedBacktestPaperTester {
 impl PaperTestRunner for CachedBacktestPaperTester {
     async fn run(&self, strategy: &Strategy, scenario: &Scenario) -> Result<MetricsSummary> {
         self.run_inner(strategy, scenario, None).await
+    }
+
+    async fn run_result(&self, strategy: &Strategy, scenario: &Scenario) -> Result<PaperTestResult> {
+        self.run_result_inner(strategy, scenario, None).await
     }
 
     async fn run_canary(
@@ -323,6 +427,29 @@ impl PaperTestRunner for CachedBacktestPaperTester {
         scenario: &Scenario,
         direction: crate::autooptimizer::config::TradeDirection,
     ) -> Result<MetricsSummary> {
+        let actions = direction
+            .baseline_actions()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(
+            crate::autooptimizer::random_baseline::RandomBaselineDispatch::new(
+                crate::autooptimizer::random_baseline::RANDOM_BASELINE_SEED,
+                actions,
+            ),
+        );
+        Ok(self
+            .run_inner_with_dispatch(strategy, scenario, None, Some(dispatch))
+            .await?
+            .metrics)
+    }
+
+    async fn run_random_baseline_result(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<PaperTestResult> {
         let actions = direction
             .baseline_actions()
             .iter()
@@ -360,6 +487,14 @@ pub struct StubPaperTester {
 impl PaperTestRunner for StubPaperTester {
     async fn run(&self, _strategy: &Strategy, _scenario: &Scenario) -> Result<MetricsSummary> {
         Ok(self.metrics.clone())
+    }
+
+    async fn run_result(&self, _strategy: &Strategy, _scenario: &Scenario) -> Result<PaperTestResult> {
+        let returns = synthetic_returns_for_metrics(&self.metrics);
+        Ok(PaperTestResult {
+            metrics: self.metrics.clone(),
+            returns,
+        })
     }
 }
 
@@ -473,6 +608,32 @@ impl PaperTestRunner for BudgetCappedPaperTester {
         // forward straight to the inner tester so the real backtest path runs.
         self.inner
             .run_random_baseline(strategy, scenario, direction)
+            .await
+    }
+
+    async fn run_result(&self, strategy: &Strategy, scenario: &Scenario) -> Result<PaperTestResult> {
+        {
+            let spent = self.meter.lock().expect("budget mutex poisoned").spent_usd;
+            if spent >= self.budget_usd {
+                anyhow::bail!(
+                    "optimizer cycle --budget of ${:.4} reached (spent ${:.4} on paper-test \
+                     inference); stopping before the next backtest",
+                    self.budget_usd,
+                    spent,
+                );
+            }
+        }
+        self.inner.run_result(strategy, scenario).await
+    }
+
+    async fn run_random_baseline_result(
+        &self,
+        strategy: &Strategy,
+        scenario: &Scenario,
+        direction: crate::autooptimizer::config::TradeDirection,
+    ) -> Result<PaperTestResult> {
+        self.inner
+            .run_random_baseline_result(strategy, scenario, direction)
             .await
     }
 }

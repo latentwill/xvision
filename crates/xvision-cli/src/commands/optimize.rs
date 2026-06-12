@@ -54,9 +54,9 @@ use xvision_engine::autooptimizer::content_hash::ContentHash;
 use xvision_engine::autooptimizer::cycle::{run_cycle, CycleConfig};
 use xvision_engine::autooptimizer::cycle_runs::{get_cycle_run, list_cycle_runs, CycleRunDetail};
 use xvision_engine::autooptimizer::eval_adapter::{
-    BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestRunner, StubPaperTester,
+    BudgetCappedPaperTester, CachedBacktestPaperTester, PaperTestResult, PaperTestRunner, StubPaperTester,
 };
-use xvision_engine::autooptimizer::gate::GateVerdict;
+use xvision_engine::autooptimizer::gate::{evaluate, GateInput, GateVerdict, PairedReturnSeries};
 use xvision_engine::autooptimizer::judge::Judge;
 use xvision_engine::autooptimizer::lineage::{
     ensure_lineage_schema, LineageNode, LineageStatus, LineageStore,
@@ -438,15 +438,68 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     let child_json = serde_json::to_value(&child)
         .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize child: {e}")))?;
     let child_hash = ContentHash::of_json(&child_json);
-    let (pd, ph, cd, ch) = paper_test_sharpes(args.mock);
-    let passed = gate_passes(pd, cd, ph, ch, cfg.min_improvement);
-    let verdict = if passed {
-        GateVerdict::Pass
+    let cadence_minutes = parent.manifest.decision_cadence_minutes;
+    let day_scenario = synthesize_optimizer_day_scenario(&cfg.day_window, cadence_minutes, "xvn-cli");
+    let baseline_scenario = synthesize_baseline_untouched_scenario(&day_scenario, &cfg.baseline_untouched_window)
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("synthesize baseline scenario: {e}")))?;
+    let (parent_day, parent_holdout, child_day, child_holdout, random_baseline) = if args.mock {
+        let parent_result = mutate_once_mock_result(1.0, cfg.min_trades_per_window.max(10));
+        let child_result = mutate_once_mock_result(1.2, cfg.min_trades_per_window.max(10));
+        (
+            parent_result.clone(),
+            parent_result,
+            child_result.clone(),
+            child_result,
+            None,
+        )
     } else {
-        GateVerdict::Fail {
-            reason: "minimum-improvement threshold not met".into(),
-        }
+        let xvn_home = crate::commands::home::resolve_xvn_home(None)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
+        let user = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "operator".to_string());
+        let ctx = ApiContext::open(&xvn_home, Actor::Cli { user })
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("open ApiContext: {e}")))?;
+        let paper_tester: Box<dyn PaperTestRunner> = Box::new(CachedBacktestPaperTester::new(
+            ctx,
+            Arc::clone(&dispatch),
+            Arc::new(ToolRegistry::default_with_builtins()),
+        ));
+        let (parent_day, parent_holdout, child_day, child_holdout) = run_mutate_once_paper_tests(
+            paper_tester.as_ref(),
+            &parent,
+            &child,
+            &day_scenario,
+            &baseline_scenario,
+        )
+        .await?;
+        let random_baseline = if cfg.edge_gate_enabled {
+            paper_tester
+                .run_random_baseline_result(&parent, &day_scenario, cfg.baseline_direction)
+                .await
+                .ok()
+        } else {
+            None
+        };
+        (
+            parent_day,
+            parent_holdout,
+            child_day,
+            child_holdout,
+            random_baseline,
+        )
     };
+    let verdict = mutate_once_gate_verdict(
+        &cfg,
+        &parent_day,
+        &parent_holdout,
+        &child_day,
+        &child_holdout,
+        random_baseline.as_ref(),
+        !args.mock,
+    );
+    let passed = matches!(verdict, GateVerdict::Pass);
     let status = if passed {
         LineageStatus::Active
     } else {
@@ -470,8 +523,8 @@ pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
     eprintln!(
         "Gate: {} (day Δ={:.3}, untouched Δ={:.3})",
         verdict.as_str(),
-        cd - pd,
-        ch - ph
+        cfg.objective.oriented_value(&child_day.metrics) - cfg.objective.oriented_value(&parent_day.metrics),
+        cfg.objective.oriented_value(&child_holdout.metrics) - cfg.objective.oriented_value(&parent_holdout.metrics)
     );
     if args.dry_run {
         println!("verdict: {}", verdict.as_str());
@@ -2006,25 +2059,87 @@ async fn propose(
         .await
 }
 
-fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {
-    assert!(min_improvement > 0.0, "min_improvement must be positive");
-    (cd - pd) >= min_improvement && (ch - ph) >= min_improvement
+async fn run_mutate_once_paper_tests(
+    paper_tester: &dyn PaperTestRunner,
+    parent: &Strategy,
+    child: &Strategy,
+    day_scenario: &xvision_engine::eval::scenario::Scenario,
+    baseline_scenario: &xvision_engine::eval::scenario::Scenario,
+) -> CliResult<(PaperTestResult, PaperTestResult, PaperTestResult, PaperTestResult)> {
+    eprintln!("Paper-testing parent on day window...");
+    let parent_day = paper_tester
+        .run_result(parent, day_scenario)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("paper-test parent day: {e}")))?;
+    eprintln!("Paper-testing parent on untouched window...");
+    let parent_holdout = paper_tester
+        .run_result(parent, baseline_scenario)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("paper-test parent untouched: {e}")))?;
+    eprintln!("Paper-testing experiment on day window...");
+    let child_day = paper_tester
+        .run_result(child, day_scenario)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("paper-test child day: {e}")))?;
+    eprintln!("Paper-testing experiment on untouched window...");
+    let child_holdout = paper_tester
+        .run_result(child, baseline_scenario)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("paper-test child untouched: {e}")))?;
+    Ok((parent_day, parent_holdout, child_day, child_holdout))
 }
 
-fn paper_test_sharpes(mock: bool) -> (f64, f64, f64, f64) {
-    if mock {
-        (1.0, 1.0, 1.2, 1.2)
-    } else {
-        eprintln!("Paper-testing parent on day window...");
-        let pd = 1.0_f64;
-        eprintln!("Paper-testing parent on untouched window...");
-        let ph = 1.0_f64;
-        eprintln!("Paper-testing experiment on day window...");
-        let cd = 1.0_f64;
-        eprintln!("Paper-testing experiment on untouched window...");
-        let ch = 1.0_f64;
-        (pd, ph, cd, ch)
+fn mutate_once_mock_result(sharpe: f64, min_trades: u32) -> PaperTestResult {
+    let metrics = MetricsSummary {
+        sharpe,
+        total_return_pct: sharpe * 5.0,
+        max_drawdown_pct: 3.0,
+        win_rate: 0.60,
+        n_trades: min_trades,
+        n_decisions: 20,
+        ..Default::default()
+    };
+    let returns = (0..64)
+        .map(|i| (sharpe as f32) * 0.0001 + ((i % 7) as f32 - 3.0) * 0.00001)
+        .collect();
+    PaperTestResult { metrics, returns }
+}
+
+fn mutate_once_gate_verdict(
+    cfg: &AutoOptimizerConfig,
+    parent_day: &PaperTestResult,
+    parent_holdout: &PaperTestResult,
+    child_day: &PaperTestResult,
+    child_holdout: &PaperTestResult,
+    random_baseline: Option<&PaperTestResult>,
+    require_return_series: bool,
+) -> GateVerdict {
+    let mut input = GateInput::aggregate_only(
+        parent_day.metrics.clone(),
+        child_day.metrics.clone(),
+        parent_holdout.metrics.clone(),
+        child_holdout.metrics.clone(),
+        cfg.min_improvement,
+        cfg.objective,
+    );
+    input.min_trades_per_window = cfg.min_trades_per_window;
+    input.require_return_series = require_return_series;
+    input.edge_gate_enabled = cfg.edge_gate_enabled && require_return_series;
+    input.day_returns = Some(PairedReturnSeries {
+        candidate: child_day.returns.clone(),
+        baseline: parent_day.returns.clone(),
+    });
+    input.untouched_returns = Some(PairedReturnSeries {
+        candidate: child_holdout.returns.clone(),
+        baseline: parent_holdout.returns.clone(),
+    });
+    if let Some(random) = random_baseline {
+        input.edge_returns = Some(PairedReturnSeries {
+            candidate: child_day.returns.clone(),
+            baseline: random.returns.clone(),
+        });
     }
+    evaluate(&input)
 }
 
 pub(crate) async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {

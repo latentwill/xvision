@@ -6,6 +6,8 @@ use crate::autooptimizer::{
     AutoOptimizerConfig,
 };
 
+pub const MIN_IMPROVEMENT_HARD_FLOOR: f64 = 0.01;
+
 pub struct EffectiveGateConfig {
     pub base_min_improvement: f64,
     pub effective_min_improvement: f64,
@@ -40,9 +42,10 @@ pub async fn effective_min_improvement_for_cycle(
     }
 
     let idx = (sustained_no_pass_cycles as usize - 1).min(thresholds.len() - 1);
+    let effective = thresholds[idx].max(MIN_IMPROVEMENT_HARD_FLOOR);
     Ok(EffectiveGateConfig {
         base_min_improvement: base,
-        effective_min_improvement: thresholds[idx],
+        effective_min_improvement: effective,
         loosening_steps_applied: idx as u32 + 1,
         schedule_hash,
     })

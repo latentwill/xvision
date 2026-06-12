@@ -39,6 +39,14 @@ fn default_experiments_per_cycle() -> u32 {
     5
 }
 
+fn default_min_trades_per_window() -> u32 {
+    crate::autooptimizer::gate::DEFAULT_MIN_TRADES_PER_WINDOW
+}
+
+fn default_edge_gate_enabled() -> bool {
+    true
+}
+
 /// Trade-direction mode the optimizer's random baseline mirrors. A
 /// "no-intelligence" baseline for a LONG-only strategy must randomly pick
 /// between LONG and FLAT (never SHORT), otherwise it measures the wrong
@@ -107,6 +115,12 @@ pub struct AutoOptimizerConfig {
     #[serde(default)]
     pub objective: crate::autooptimizer::gate::Objective,
 
+    /// Candidate child runs must clear this trade-count floor on BOTH the day
+    /// and untouched windows before promotion. Defaults to 10 so a zero/near-zero
+    /// trade backtest cannot win on a brittle point estimate.
+    #[serde(default = "default_min_trades_per_window")]
+    pub min_trades_per_window: u32,
+
     /// Optional regime windows for the regime-matrix optimizer feature.
     /// Defaults to empty (back-compat: existing configs without this key are unchanged).
     #[serde(default)]
@@ -134,10 +148,15 @@ pub struct AutoOptimizerConfig {
     /// compare child/parent against a fixed-seed random agent that picks
     /// uniformly from this direction's action set. `Both` (default) =
     /// long+short+flat; `Long`/`Short` restrict it so a directional strategy is
-    /// measured against the right counterfactual. Informational only — never
-    /// gates promotion. Back-compat: absent from existing configs ⇒ `Both`.
+    /// measured against the right counterfactual.
     #[serde(default)]
     pub baseline_direction: TradeDirection,
+
+    /// Require the child's paired-bootstrap edge over the fixed-seed random
+    /// baseline to have CI-low > 0 before promotion. Defaults to true; operators
+    /// can disable for emergency diagnostics with `edge_gate_enabled = false`.
+    #[serde(default = "default_edge_gate_enabled")]
+    pub edge_gate_enabled: bool,
 
     /// Number of candidate instructions GEPA generates per generation.
     /// Each candidate is proposed independently and scored. Default: 3.
@@ -250,9 +269,11 @@ impl Default for AutoOptimizerConfig {
             dspy_pattern_cohort_threshold: default_dspy_pattern_cohort_threshold(),
             tournament_enabled: false,
             objective: crate::autooptimizer::gate::Objective::default(),
+            min_trades_per_window: default_min_trades_per_window(),
             regime_set: vec![],
             scenario_pool: vec![],
             baseline_direction: TradeDirection::Both,
+            edge_gate_enabled: default_edge_gate_enabled(),
             gepa_candidates: default_gepa_candidates(),
             gepa_generations: default_gepa_generations(),
         }

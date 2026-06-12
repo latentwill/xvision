@@ -94,6 +94,8 @@ serve both audiences and was deliberately kept.
 | Holdout split (e.g. "70/15/15") | Training / Validation / Untouched test split |
 | Pre-commitment | Session ground rules (locked at start) |
 | `--baseline-score`, `--candidate-score` | Same |
+| `min_trades_per_window` | Minimum trades per test window |
+| `edge_gate_enabled` | Require edge over random baseline |
 
 ## Section 4 — Loop control & sanity-check evaluations
 

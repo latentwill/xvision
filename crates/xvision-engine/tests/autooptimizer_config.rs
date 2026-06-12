@@ -2,6 +2,7 @@ use std::io::Write;
 
 use tempfile::NamedTempFile;
 use xvision_engine::autooptimizer::config::AutoOptimizerConfig;
+use xvision_engine::autooptimizer::gate::DEFAULT_MIN_TRADES_PER_WINDOW;
 
 fn write_temp(content: &str) -> NamedTempFile {
     let mut f = NamedTempFile::new().unwrap();
@@ -32,6 +33,8 @@ fn valid_toml_parses() {
     let cfg = AutoOptimizerConfig::from_path(f.path()).expect("should parse valid TOML");
     assert!((cfg.min_improvement - 0.05).abs() < f64::EPSILON);
     assert_eq!(cfg.mutator.provider, "anthropic");
+    assert_eq!(cfg.min_trades_per_window, DEFAULT_MIN_TRADES_PER_WINDOW);
+    assert!(cfg.edge_gate_enabled);
 }
 
 #[test]

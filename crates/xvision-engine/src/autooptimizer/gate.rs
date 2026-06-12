@@ -1,6 +1,7 @@
 use crate::eval::MetricsSummary;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+use xvision_eval::bootstrap::paired_bootstrap_sharpe_delta;
 
 /// Factor by which the child's worst drawdown may exceed the parent's before rejection.
 const DRAWDOWN_DETERIORATION_FACTOR: f64 = 1.5;
@@ -8,6 +9,11 @@ const DRAWDOWN_DETERIORATION_FACTOR: f64 = 1.5;
 /// Tolerance applied to boundary comparisons.
 /// Prevents identical inputs from flipping at the threshold due to FP rounding.
 const CMP_EPS: f64 = 1e-9;
+
+pub const DEFAULT_MIN_TRADES_PER_WINDOW: u32 = 10;
+pub const DEFAULT_GATE_BOOTSTRAP_RESAMPLES: usize = 500;
+pub const DEFAULT_GATE_BOOTSTRAP_PERIODS_PER_YEAR: f32 = 365.0 * 24.0;
+pub const DEFAULT_GATE_BOOTSTRAP_SEED: u64 = 0xA076_1D64_78BD_642F;
 
 /// F24: the metric a mutation cycle optimizes. Higher-is-better for all but
 /// `MaxDrawdown`, which the gate minimizes. (`sortino` and a cost/efficiency axis
@@ -79,6 +85,72 @@ pub struct GateInput {
     /// existing call sites/fixtures that omit it keep the prior behavior.
     #[serde(default)]
     pub objective: Objective,
+    #[serde(default)]
+    pub min_trades_per_window: u32,
+    #[serde(default)]
+    pub edge_gate_enabled: bool,
+    #[serde(default)]
+    pub require_return_series: bool,
+    #[serde(default)]
+    pub bootstrap: GateBootstrapConfig,
+    #[serde(default)]
+    pub day_returns: Option<PairedReturnSeries>,
+    #[serde(default)]
+    pub untouched_returns: Option<PairedReturnSeries>,
+    #[serde(default)]
+    pub edge_returns: Option<PairedReturnSeries>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairedReturnSeries {
+    pub candidate: Vec<f32>,
+    pub baseline: Vec<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateBootstrapConfig {
+    pub n_resamples: usize,
+    pub block_size: Option<usize>,
+    pub periods_per_year: f32,
+    pub seed: u64,
+}
+
+impl Default for GateBootstrapConfig {
+    fn default() -> Self {
+        Self {
+            n_resamples: DEFAULT_GATE_BOOTSTRAP_RESAMPLES,
+            block_size: None,
+            periods_per_year: DEFAULT_GATE_BOOTSTRAP_PERIODS_PER_YEAR,
+            seed: DEFAULT_GATE_BOOTSTRAP_SEED,
+        }
+    }
+}
+
+impl GateInput {
+    pub fn aggregate_only(
+        parent_day_metrics: MetricsSummary,
+        child_day_metrics: MetricsSummary,
+        parent_untouched_metrics: MetricsSummary,
+        child_untouched_metrics: MetricsSummary,
+        min_improvement: f64,
+        objective: Objective,
+    ) -> Self {
+        Self {
+            parent_day_metrics,
+            child_day_metrics,
+            parent_untouched_metrics,
+            child_untouched_metrics,
+            min_improvement,
+            objective,
+            min_trades_per_window: 0,
+            edge_gate_enabled: false,
+            require_return_series: false,
+            bootstrap: GateBootstrapConfig::default(),
+            day_returns: None,
+            untouched_returns: None,
+            edge_returns: None,
+        }
+    }
 }
 
 /// Outcome of `evaluate`.
@@ -144,6 +216,23 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
     // drawdown — so the reason string is byte-stable for identical inputs.
     let mut failures: Vec<String> = Vec::new();
 
+    if input.min_trades_per_window > 0 {
+        let day_trades = input.child_day_metrics.n_trades;
+        let untouched_trades = input.child_untouched_metrics.n_trades;
+        if day_trades < input.min_trades_per_window {
+            failures.push(format!(
+                "today's trade count ({day_trades}) is below min-trades-per-window {}",
+                input.min_trades_per_window
+            ));
+        }
+        if untouched_trades < input.min_trades_per_window {
+            failures.push(format!(
+                "baseline-untouched trade count ({untouched_trades}) is below min-trades-per-window {}",
+                input.min_trades_per_window
+            ));
+        }
+    }
+
     let day_failed = delta_day < input.min_improvement - CMP_EPS;
     if day_failed {
         failures.push(format!(
@@ -196,12 +285,70 @@ pub fn evaluate(input: &GateInput) -> GateVerdict {
         }
     }
 
+    append_ci_failure(
+        "today's paired-return CI-low",
+        &input.day_returns,
+        input.require_return_series,
+        &input.bootstrap,
+        input.bootstrap.seed,
+        &mut failures,
+    );
+    append_ci_failure(
+        "baseline-untouched paired-return CI-low",
+        &input.untouched_returns,
+        input.require_return_series,
+        &input.bootstrap,
+        input.bootstrap.seed ^ 0x9E37_79B9_7F4A_7C15,
+        &mut failures,
+    );
+    if input.edge_gate_enabled {
+        append_ci_failure(
+            "edge-over-random CI-low",
+            &input.edge_returns,
+            input.require_return_series,
+            &input.bootstrap,
+            input.bootstrap.seed ^ 0xC2B2_AE3D_27D4_EB4F,
+            &mut failures,
+        );
+    }
+
     if failures.is_empty() {
         GateVerdict::Pass
     } else {
         GateVerdict::Fail {
             reason: failures.join("; "),
         }
+    }
+}
+
+fn append_ci_failure(
+    label: &str,
+    pair: &Option<PairedReturnSeries>,
+    require_return_series: bool,
+    cfg: &GateBootstrapConfig,
+    seed: u64,
+    failures: &mut Vec<String>,
+) {
+    let Some(pair) = pair else {
+        if require_return_series {
+            failures.push(format!("{label} missing paired return series"));
+        }
+        return;
+    };
+    match paired_bootstrap_sharpe_delta(
+        &pair.candidate,
+        &pair.baseline,
+        cfg.n_resamples,
+        cfg.block_size,
+        cfg.periods_per_year,
+        seed,
+    ) {
+        Ok(result) if result.ci_low > 0.0 => {}
+        Ok(result) => failures.push(format!(
+            "{label} must be > 0.000000 (got {:.6}, point {:.6})",
+            result.ci_low, result.point_estimate
+        )),
+        Err(e) => failures.push(format!("{label} could not be computed: {e}")),
     }
 }
 

@@ -2,7 +2,7 @@ use sqlx::SqlitePool;
 use xvision_engine::autooptimizer::{
     config::{AutoOptimizerConfig, LooseningSchedule},
     content_hash::hash_canonical_json,
-    cycle_loosen::effective_min_improvement_for_cycle,
+    cycle_loosen::{effective_min_improvement_for_cycle, MIN_IMPROVEMENT_HARD_FLOOR},
 };
 
 fn make_config(thresholds: Vec<f64>) -> AutoOptimizerConfig {
@@ -57,6 +57,16 @@ async fn sustained_beyond_schedule_clamps_to_last_entry() {
         .unwrap();
     assert!((r.effective_min_improvement - 0.05).abs() < f64::EPSILON);
     assert_eq!(r.loosening_steps_applied, 2);
+}
+
+#[tokio::test]
+async fn schedule_cannot_loosen_below_hard_floor() {
+    let config = make_config(vec![0.007, 0.001]);
+    let pool = mem_pool().await;
+    let r = effective_min_improvement_for_cycle(&pool, &config, 0, 99)
+        .await
+        .unwrap();
+    assert_eq!(r.effective_min_improvement, MIN_IMPROVEMENT_HARD_FLOOR);
 }
 
 #[tokio::test]

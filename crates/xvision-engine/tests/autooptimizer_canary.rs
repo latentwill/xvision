@@ -153,14 +153,14 @@ fn gate_builder(
     parent_untouched: &MetricsSummary,
     child_untouched: &MetricsSummary,
 ) -> GateInput {
-    GateInput {
-        parent_day_metrics: parent_day.clone(),
-        child_day_metrics: child_day.clone(),
-        parent_untouched_metrics: parent_untouched.clone(),
-        child_untouched_metrics: child_untouched.clone(),
-        min_improvement: 0.1,
-        objective: Default::default(),
-    }
+    GateInput::aggregate_only(
+        parent_day.clone(),
+        child_day.clone(),
+        parent_untouched.clone(),
+        child_untouched.clone(),
+        0.1,
+        Default::default(),
+    )
 }
 
 /// B28 regression scaffolding: a tester whose legitimate (parent) runs succeed
@@ -232,14 +232,14 @@ fn gate_builder_total_return(
     parent_untouched: &MetricsSummary,
     child_untouched: &MetricsSummary,
 ) -> GateInput {
-    GateInput {
-        parent_day_metrics: parent_day.clone(),
-        child_day_metrics: child_day.clone(),
-        parent_untouched_metrics: parent_untouched.clone(),
-        child_untouched_metrics: child_untouched.clone(),
-        min_improvement: 0.1,
-        objective: Objective::TotalReturn,
-    }
+    GateInput::aggregate_only(
+        parent_day.clone(),
+        child_day.clone(),
+        parent_untouched.clone(),
+        child_untouched.clone(),
+        0.1,
+        Objective::TotalReturn,
+    )
 }
 
 /// B28: a zero-trade sabotage canary under `--objective total_return` must NOT

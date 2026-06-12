@@ -17,9 +17,11 @@ use crate::autooptimizer::content_hash::ContentHash;
 use crate::autooptimizer::cycle_loosen::effective_min_improvement_for_cycle;
 use crate::autooptimizer::diversity::diversity_decay_for_cycle;
 use crate::autooptimizer::dspy_flywheel::{handle_cycle_dspy, query_dsr_prefix, DspyContext};
-use crate::autooptimizer::eval_adapter::PaperTestRunner;
+use crate::autooptimizer::eval_adapter::{PaperTestResult, PaperTestRunner};
 use crate::autooptimizer::evidence::{persist_finding, persist_gate_record, GateRecord};
-use crate::autooptimizer::gate::{aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective};
+use crate::autooptimizer::gate::{
+    aggregate_regime_verdicts, evaluate, GateInput, GateVerdict, Objective, PairedReturnSeries,
+};
 use crate::autooptimizer::inversion::run_inversion_pair;
 use crate::autooptimizer::judge::{run_judge, Finding, Judge};
 use crate::autooptimizer::lineage::{LineageNode, LineageStatus, LineageStore};
@@ -139,36 +141,35 @@ struct GateScores {
 /// Per-cycle memoization of the random-baseline objective score, keyed by
 /// (day-scenario id, direction). The baseline depends only on the training
 /// window + direction, so it is computed once and reused for every candidate.
-type BaselineCache = tokio::sync::Mutex<std::collections::HashMap<(String, TradeDirection), f64>>;
+type BaselineCache = tokio::sync::Mutex<std::collections::HashMap<(String, TradeDirection), PaperTestResult>>;
 
 /// Compute (memoized) the random-baseline objective score for `day_scenario`
 /// under `direction`, using `structure_strategy` for risk sizing / filters.
 /// Returns `f64::NAN` when the baseline run is unavailable; the caller maps NAN
 /// to "no edge metrics" (the metric is informational and never blocks).
-async fn random_baseline_score(
+async fn random_baseline_result(
     paper_tester: &dyn PaperTestRunner,
     structure_strategy: &Strategy,
     day_scenario: &Scenario,
     direction: TradeDirection,
-    objective: Objective,
     cache: &BaselineCache,
-) -> f64 {
+) -> Option<PaperTestResult> {
     let key = (day_scenario.id.clone(), direction);
-    if let Some(v) = cache.lock().await.get(&key).copied() {
-        return v;
+    if let Some(v) = cache.lock().await.get(&key).cloned() {
+        return Some(v);
     }
-    let score = match paper_tester
-        .run_random_baseline(structure_strategy, day_scenario, direction)
+    let result = match paper_tester
+        .run_random_baseline_result(structure_strategy, day_scenario, direction)
         .await
     {
-        Ok(metrics) => objective.oriented_value(&metrics),
+        Ok(result) => result,
         Err(e) => {
             tracing::warn!(error = %e, "random baseline run failed; edge metrics omitted this cycle");
-            f64::NAN
+            return None;
         }
     };
-    cache.lock().await.insert(key, score);
-    score
+    cache.lock().await.insert(key, result.clone());
+    Some(result)
 }
 
 pub async fn run_cycle(
@@ -424,14 +425,14 @@ where
         s,
         mutator,
         paper_tester,
-        move |pd, cd, pu, cu| GateInput {
-            parent_day_metrics: pd.clone(),
-            child_day_metrics: cd.clone(),
-            parent_untouched_metrics: pu.clone(),
-            child_untouched_metrics: cu.clone(),
-            min_improvement: mi,
-            objective: obj,
-        },
+        move |pd, cd, pu, cu| GateInput::aggregate_only(
+            pd.clone(),
+            cd.clone(),
+            pu.clone(),
+            cu.clone(),
+            mi,
+            obj,
+        ),
         &cycle_config.day_scenario,
         &cycle_config.baseline_scenario,
         config,
@@ -553,7 +554,7 @@ where
         });
         let day_t0 = Instant::now();
         let pd = paper_tester
-            .run(parent_strategy, &cycle_config.day_scenario)
+            .run_result(parent_strategy, &cycle_config.day_scenario)
             .await?;
         progress(CycleProgressEvent::PhaseFinished {
             session_id: String::new(),
@@ -571,7 +572,7 @@ where
         });
         let unt_t0 = Instant::now();
         let pu = paper_tester
-            .run(parent_strategy, &cycle_config.baseline_scenario)
+            .run_result(parent_strategy, &cycle_config.baseline_scenario)
             .await?;
         progress(CycleProgressEvent::PhaseFinished {
             session_id: String::new(),
@@ -582,7 +583,7 @@ where
         });
         (pd, pu)
     } else {
-        (MetricsSummary::default(), MetricsSummary::default())
+        (PaperTestResult::default(), PaperTestResult::default())
     };
 
     // B19: per-pair parent metrics cache, keyed by BOTH sampled scenario ids.
@@ -590,7 +591,7 @@ where
     // same training/day window with different holdout windows. In that shape,
     // keying only by day id would incorrectly reuse the first holdout metrics
     // and break the parent/child comparability rule.
-    let mut parent_pool_metrics: HashMap<(String, String), (MetricsSummary, MetricsSummary)> = HashMap::new();
+    let mut parent_pool_metrics: HashMap<(String, String), (PaperTestResult, PaperTestResult)> = HashMap::new();
 
     // Fix 2 + 3: validate regime set (duplicate labels, day/baseline overlap)
     // before entering the mutation loop. Returns immediately on the first
@@ -601,11 +602,11 @@ where
 
     // Phase 2: pre-compute parent metrics once per regime window so every child
     // mutation in this loop can reuse them. Empty when regime_set is empty.
-    let mut parent_regime_metrics: HashMap<String, (MetricsSummary, MetricsSummary)> = HashMap::new();
+    let mut parent_regime_metrics: HashMap<String, (PaperTestResult, PaperTestResult)> = HashMap::new();
     for rw in &cycle_config.regime_set {
         let (regime_day_scen, regime_baseline_scen) = build_regime_scenario_pair(cycle_config, rw)?;
-        let pd = paper_tester.run(parent_strategy, &regime_day_scen).await?;
-        let pu = paper_tester.run(parent_strategy, &regime_baseline_scen).await?;
+        let pd = paper_tester.run_result(parent_strategy, &regime_day_scen).await?;
+        let pu = paper_tester.run_result(parent_strategy, &regime_baseline_scen).await?;
         parent_regime_metrics.insert(rw.label.clone(), (pd, pu));
     }
 
@@ -896,8 +897,8 @@ where
         let (gate_parent_day, gate_parent_untouched) = if scenario_pool_active {
             let pair_key = (sampled_day.id.clone(), sampled_baseline.id.clone());
             if !parent_pool_metrics.contains_key(&pair_key) {
-                let pd = paper_tester.run(parent_strategy, sampled_day).await?;
-                let pu = paper_tester.run(parent_strategy, sampled_baseline).await?;
+                let pd = paper_tester.run_result(parent_strategy, sampled_day).await?;
+                let pu = paper_tester.run_result(parent_strategy, sampled_baseline).await?;
                 parent_pool_metrics.insert(pair_key.clone(), (pd, pu));
             }
             let (pd, pu) = parent_pool_metrics
@@ -928,6 +929,8 @@ where
             cycle_config,
             paper_tester,
             config.baseline_direction,
+            config.min_trades_per_window,
+            config.edge_gate_enabled,
             baseline_cache,
             &gate_parent_day,
             &gate_parent_untouched,
@@ -1151,14 +1154,16 @@ async fn gate_and_classify<F>(
     cycle_config: &CycleConfig,
     paper_tester: &dyn PaperTestRunner,
     baseline_direction: TradeDirection,
+    min_trades_per_window: u32,
+    edge_gate_enabled: bool,
     baseline_cache: &BaselineCache,
-    parent_day: &MetricsSummary,
-    parent_untouched: &MetricsSummary,
+    parent_day: &PaperTestResult,
+    parent_untouched: &PaperTestResult,
     min_improvement: f64,
     // Per-regime parent metrics (label → (day, untouched)), pre-computed by
     // `process_parent_mutations` so each parent is evaluated only once per
     // regime window across all its mutations.
-    parent_regime_metrics: &HashMap<String, (MetricsSummary, MetricsSummary)>,
+    parent_regime_metrics: &HashMap<String, (PaperTestResult, PaperTestResult)>,
     // B19: the (day, baseline) scenario pair THIS candidate is evaluated on,
     // selected round-robin by the caller. On the legacy / regime paths this is
     // the single cycle day/baseline pair (`cycle_config.day_scenario` /
@@ -1195,7 +1200,7 @@ where
                 detail: format!("Day-window backtest for regime '{}'", rw.label),
             });
             let t0 = Instant::now();
-            let child_day_r = paper_tester.run(&child, &regime_day_scen).await?;
+            let child_day_r = paper_tester.run_result(&child, &regime_day_scen).await?;
             progress(CycleProgressEvent::PhaseFinished {
                 session_id: String::new(),
                 cycle_id: cycle_id.to_string(),
@@ -1212,7 +1217,7 @@ where
                 detail: format!("Untouched-window backtest for regime '{}'", rw.label),
             });
             let t0 = Instant::now();
-            let child_untouched_r = paper_tester.run(&child, &regime_baseline_scen).await?;
+            let child_untouched_r = paper_tester.run_result(&child, &regime_baseline_scen).await?;
             progress(CycleProgressEvent::PhaseFinished {
                 session_id: String::new(),
                 cycle_id: cycle_id.to_string(),
@@ -1224,6 +1229,18 @@ where
                 .get(&rw.label)
                 .map(|(d, u)| (d.clone(), u.clone()))
                 .ok_or_else(|| anyhow::anyhow!("missing parent regime metrics for label '{}'", rw.label))?;
+            let random_baseline = if edge_gate_enabled {
+                random_baseline_result(
+                    paper_tester,
+                    parent_strategy,
+                    &regime_day_scen,
+                    baseline_direction,
+                    baseline_cache,
+                )
+                .await
+            } else {
+                None
+            };
             regime_inputs.push(RegimeEvalInput {
                 label: rw.label.clone(),
                 side: rw.side.clone(),
@@ -1231,11 +1248,17 @@ where
                 child_untouched: child_untouched_r,
                 parent_day: parent_day_r,
                 parent_untouched: parent_untouched_r,
+                random_baseline,
             });
         }
 
-        let (regime_status, regime_rows) =
-            classify_from_regime_outcomes(&regime_inputs, min_improvement, cycle_config.objective);
+        let (regime_status, regime_rows) = classify_from_regime_outcomes(
+            &regime_inputs,
+            min_improvement,
+            cycle_config.objective,
+            min_trades_per_window,
+            edge_gate_enabled,
+        );
 
         // For regime path: use the first regime's day metrics as the primary
         // child_day/child_untouched for the node-metrics side table (so the
@@ -1243,7 +1266,7 @@ where
         // Fall back to running the main day/baseline scenarios if the regime set
         // happens to be configured without any entries (shouldn't happen here).
         let (child_day, child_untouched) = if let Some(first) = regime_inputs.first() {
-            (first.child_day.clone(), first.child_untouched.clone())
+            (first.child_day.metrics.clone(), first.child_untouched.metrics.clone())
         } else {
             (
                 paper_tester.run(&child, &cycle_config.day_scenario).await?,
@@ -1258,7 +1281,7 @@ where
             regime_rows.iter().map(|r| r.delta_sharpe).sum::<f64>() / regime_rows.len() as f64
         } else {
             // Fallback: unreachable when regime_set is non-empty and validation passes.
-            child_day.sharpe - parent_day.sharpe
+            child_day.sharpe - parent_day.metrics.sharpe
         };
 
         // Fix 4: restore the inversion-pair guard for regime-path Active candidates.
@@ -1346,7 +1369,7 @@ where
         detail: "Day-window backtest".to_string(),
     });
     let t0 = Instant::now();
-    let child_day = paper_tester.run(&child, sampled_day).await?;
+    let child_day = paper_tester.run_result(&child, sampled_day).await?;
     progress(CycleProgressEvent::PhaseFinished {
         session_id: String::new(),
         cycle_id: cycle_id.to_string(),
@@ -1363,7 +1386,7 @@ where
         detail: "Untouched-window backtest".to_string(),
     });
     let t0 = Instant::now();
-    let child_untouched = paper_tester.run(&child, sampled_baseline).await?;
+    let child_untouched = paper_tester.run_result(&child, sampled_baseline).await?;
     progress(CycleProgressEvent::PhaseFinished {
         session_id: String::new(),
         cycle_id: cycle_id.to_string(),
@@ -1379,8 +1402,11 @@ where
         &child_untouched,
         min_improvement,
         cycle_config.objective,
+        min_trades_per_window,
+        false,
+        None,
     );
-    let delta_sharpe = child_day.sharpe - parent_day.sharpe;
+    let delta_sharpe = child_day.metrics.sharpe - parent_day.metrics.sharpe;
 
     let (verdict, status) = if matches!(raw_verdict, GateVerdict::Pass) {
         progress(CycleProgressEvent::PhaseStarted {
@@ -1422,19 +1448,21 @@ where
 
     // Capture numeric gate scores for persistence to autooptimizer_gate_records.
     let obj = cycle_config.objective;
-    let parent_day_score = obj.oriented_value(parent_day);
-    let child_day_score = obj.oriented_value(&child_day);
-    let parent_holdout_score = obj.oriented_value(parent_untouched);
-    let child_holdout_score = obj.oriented_value(&child_untouched);
+    let parent_day_score = obj.oriented_value(&parent_day.metrics);
+    let child_day_score = obj.oriented_value(&child_day.metrics);
+    let parent_holdout_score = obj.oriented_value(&parent_untouched.metrics);
+    let child_holdout_score = obj.oriented_value(&child_untouched.metrics);
     let drawdown_ratio = {
         let parent_worst = parent_day
+            .metrics
             .max_drawdown_pct
             .abs()
-            .max(parent_untouched.max_drawdown_pct.abs());
+            .max(parent_untouched.metrics.max_drawdown_pct.abs());
         let child_worst = child_day
+            .metrics
             .max_drawdown_pct
             .abs()
-            .max(child_untouched.max_drawdown_pct.abs());
+            .max(child_untouched.metrics.max_drawdown_pct.abs());
         if parent_worst > 0.0 {
             Some(child_worst / parent_worst)
         } else {
@@ -1448,15 +1476,18 @@ where
     // scenario so the child's edge is measured against a baseline on the same
     // window it was scored on (the cache key already keys on scenario id, so
     // distinct pool pairs get distinct baselines).
-    let baseline_score = random_baseline_score(
+    let baseline = random_baseline_result(
         paper_tester,
         parent_strategy,
         sampled_day,
         baseline_direction,
-        obj,
         baseline_cache,
     )
     .await;
+    let baseline_score = baseline
+        .as_ref()
+        .map(|b| obj.oriented_value(&b.metrics))
+        .unwrap_or(f64::NAN);
     let (edge_over_random, parent_edge, edge_delta) = if baseline_score.is_finite() {
         let eor = child_day_score - baseline_score;
         let pe = parent_day_score - baseline_score;
@@ -1478,6 +1509,34 @@ where
         edge_delta,
     });
 
+    if matches!(verdict, GateVerdict::Pass) && edge_gate_enabled {
+        let edge_verdict = gate_check(
+            parent_day,
+            &child_day,
+            parent_untouched,
+            &child_untouched,
+            min_improvement,
+            cycle_config.objective,
+            min_trades_per_window,
+            true,
+            baseline.as_ref(),
+        );
+        if let GateVerdict::Fail { reason } = edge_verdict {
+            return Ok(MutationOutcome {
+                child,
+                diff,
+                child_hash,
+                verdict: GateVerdict::Fail { reason },
+                status: LineageStatus::Rejected,
+                delta_sharpe,
+                child_day: child_day.metrics,
+                child_untouched: child_untouched.metrics,
+                regime_rows: vec![],
+                gate_scores,
+            });
+        }
+    }
+
     Ok(MutationOutcome {
         child,
         diff,
@@ -1485,8 +1544,8 @@ where
         verdict,
         status,
         delta_sharpe,
-        child_day,
-        child_untouched,
+        child_day: child_day.metrics,
+        child_untouched: child_untouched.metrics,
         regime_rows: vec![],
         gate_scores,
     })
@@ -1740,21 +1799,42 @@ async fn persist_honesty_check(pool: &SqlitePool, cycle_id: &str, check: &Honest
 }
 
 fn gate_check(
-    parent_day: &MetricsSummary,
-    child_day: &MetricsSummary,
-    parent_untouched: &MetricsSummary,
-    child_untouched: &MetricsSummary,
+    parent_day: &PaperTestResult,
+    child_day: &PaperTestResult,
+    parent_untouched: &PaperTestResult,
+    child_untouched: &PaperTestResult,
     min_improvement: f64,
     objective: Objective,
+    min_trades_per_window: u32,
+    edge_gate_enabled: bool,
+    random_baseline: Option<&PaperTestResult>,
 ) -> GateVerdict {
-    evaluate(&GateInput {
-        parent_day_metrics: parent_day.clone(),
-        child_day_metrics: child_day.clone(),
-        parent_untouched_metrics: parent_untouched.clone(),
-        child_untouched_metrics: child_untouched.clone(),
+    let mut input = GateInput::aggregate_only(
+        parent_day.metrics.clone(),
+        child_day.metrics.clone(),
+        parent_untouched.metrics.clone(),
+        child_untouched.metrics.clone(),
         min_improvement,
         objective,
-    })
+    );
+    input.min_trades_per_window = min_trades_per_window;
+    input.require_return_series = true;
+    input.edge_gate_enabled = edge_gate_enabled;
+    input.day_returns = Some(PairedReturnSeries {
+        candidate: child_day.returns.clone(),
+        baseline: parent_day.returns.clone(),
+    });
+    input.untouched_returns = Some(PairedReturnSeries {
+        candidate: child_untouched.returns.clone(),
+        baseline: parent_untouched.returns.clone(),
+    });
+    if let Some(random) = random_baseline {
+        input.edge_returns = Some(PairedReturnSeries {
+            candidate: child_day.returns.clone(),
+            baseline: random.returns.clone(),
+        });
+    }
+    evaluate(&input)
 }
 
 // ── Phase 2: regime-matrix pure helper ───────────────────────────────────────
@@ -1766,10 +1846,11 @@ fn gate_check(
 pub struct RegimeEvalInput {
     pub label: String,
     pub side: RegimeSide,
-    pub child_day: MetricsSummary,
-    pub child_untouched: MetricsSummary,
-    pub parent_day: MetricsSummary,
-    pub parent_untouched: MetricsSummary,
+    pub child_day: PaperTestResult,
+    pub child_untouched: PaperTestResult,
+    pub parent_day: PaperTestResult,
+    pub parent_untouched: PaperTestResult,
+    pub random_baseline: Option<PaperTestResult>,
 }
 
 /// Pure, side-effect-free aggregation of per-regime gate results.
@@ -1785,25 +1866,30 @@ pub fn classify_from_regime_outcomes(
     regimes: &[RegimeEvalInput],
     min_improvement: f64,
     objective: Objective,
+    min_trades_per_window: u32,
+    edge_gate_enabled: bool,
 ) -> (LineageStatus, Vec<RegimeResultRow>) {
     let mut side_verdict_pairs: Vec<(RegimeSide, GateVerdict)> = Vec::with_capacity(regimes.len());
     let mut rows: Vec<RegimeResultRow> = Vec::with_capacity(regimes.len());
 
     for r in regimes {
-        let verdict = evaluate(&GateInput {
-            parent_day_metrics: r.parent_day.clone(),
-            child_day_metrics: r.child_day.clone(),
-            parent_untouched_metrics: r.parent_untouched.clone(),
-            child_untouched_metrics: r.child_untouched.clone(),
+        let verdict = gate_check(
+            &r.parent_day,
+            &r.child_day,
+            &r.parent_untouched,
+            &r.child_untouched,
             min_improvement,
             objective,
-        });
-        let delta_sharpe = r.child_day.sharpe - r.parent_day.sharpe;
+            min_trades_per_window,
+            edge_gate_enabled,
+            r.random_baseline.as_ref(),
+        );
+        let delta_sharpe = r.child_day.metrics.sharpe - r.parent_day.metrics.sharpe;
         rows.push(RegimeResultRow {
             regime_label: r.label.clone(),
             side: r.side.clone(),
-            metrics_day: r.child_day.clone(),
-            metrics_untouched: r.child_untouched.clone(),
+            metrics_day: r.child_day.metrics.clone(),
+            metrics_untouched: r.child_untouched.metrics.clone(),
             delta_sharpe,
             verdict: verdict.as_str(),
         });
@@ -1888,6 +1974,12 @@ mod tests {
             baselines: None,
             ..Default::default()
         };
+        let make_result = |sharpe: f64| PaperTestResult {
+            metrics: make_metrics(sharpe),
+            returns: (0..64)
+                .map(|i| (sharpe as f32) * 0.0001 + ((i % 7) as f32 - 3.0) * 0.00001)
+                .collect(),
+        };
 
         // Bull: child sharpe 1.2 vs parent 1.0 → Δ = 0.2 > 0.1 → Pass
         // BearOrShock: child sharpe 0.3 vs parent 0.5 → Δ = -0.2 < 0.1 → Fail
@@ -1895,22 +1987,24 @@ mod tests {
             RegimeEvalInput {
                 label: "bull_2024".to_string(),
                 side: RegimeSide::Bull,
-                parent_day: make_metrics(1.0),
-                parent_untouched: make_metrics(1.0),
-                child_day: make_metrics(1.2),
-                child_untouched: make_metrics(1.2),
+                parent_day: make_result(1.0),
+                parent_untouched: make_result(1.0),
+                child_day: make_result(1.2),
+                child_untouched: make_result(1.2),
+                random_baseline: None,
             },
             RegimeEvalInput {
                 label: "bear_2022".to_string(),
                 side: RegimeSide::BearOrShock,
-                parent_day: make_metrics(0.5),
-                parent_untouched: make_metrics(0.5),
-                child_day: make_metrics(0.3),
-                child_untouched: make_metrics(0.3),
+                parent_day: make_result(0.5),
+                parent_untouched: make_result(0.5),
+                child_day: make_result(0.3),
+                child_untouched: make_result(0.3),
+                random_baseline: None,
             },
         ];
 
-        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, Objective::Sharpe);
+        let (status, rows) = classify_from_regime_outcomes(&regimes, 0.1, Objective::Sharpe, 0, false);
 
         assert_eq!(
             status,
