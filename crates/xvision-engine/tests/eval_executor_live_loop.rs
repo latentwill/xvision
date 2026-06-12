@@ -39,7 +39,7 @@ use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError, LivePollFe
 use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
 
 use xvision_core::trading::AssetSymbol;
-use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
 use xvision_engine::eval::executor::{Executor, LiveStream, MultiLiveStream, RunExecutor, WallClock};
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::{Run, RunMode};
@@ -51,6 +51,7 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
+use xvision_filters::{parse_toml, Filter};
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -277,6 +278,22 @@ fn long_open_dispatch() -> Arc<dyn LlmDispatch> {
     ))
 }
 
+fn sequence_dispatch(payloads: &[&str]) -> Arc<dyn LlmDispatch> {
+    Arc::new(MockDispatch::sequence(
+        payloads
+            .iter()
+            .map(|payload| LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: (*payload).to_string(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            })
+            .collect(),
+    ))
+}
+
 fn build_strategy(agent_id: &str) -> Strategy {
     Strategy {
         manifest: PublicManifest {
@@ -317,6 +334,29 @@ fn build_strategy(agent_id: &str) -> Strategy {
         decision_mode: Default::default(),
         mechanistic_config: None,
     }
+}
+
+fn always_blocking_filter() -> Filter {
+    parse_toml(
+        r#"
+[filter]
+id = "f_live_loop_blocks"
+strategy_id = "s_live_loop_blocks"
+display_name = "Blocks normal prices"
+asset_scope = ["BTC/USD"]
+timeframe = "1m"
+scan_cadence = "bar_close"
+cooldown_bars = 0
+wake_when_in_position = "always"
+agent_context_template = "compact_trade_context_v1"
+
+[[filter.conditions.all]]
+lhs = "close"
+op  = ">"
+rhs = 999999.0
+"#,
+    )
+    .expect("valid blocking filter")
 }
 
 /// A live scenario shape (mirrors `api::eval::scenario_from_live_config`)
@@ -603,6 +643,337 @@ async fn live_loop_exits_on_decision_limit_stop_policy() {
         .expect("live run completes at the decision limit");
 
     assert_eq!(metrics.n_decisions, 1, "decision_limit=1 => one decision");
+}
+
+#[tokio::test]
+async fn live_loop_honors_strategy_decision_cadence() {
+    let (store, mut strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    strategy.manifest.decision_cadence_minutes = 60;
+    let broker = RecordingBroker::new(50_000.0);
+    let stream = single_asset_stream(vec![
+        market_bar_at(0, 50_000.0),
+        market_bar_at(60, 50_100.0),
+        market_bar_at(120, 50_200.0),
+    ]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(0)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    assert_eq!(
+        metrics.n_decisions, 1,
+        "60-minute cadence on 1-minute bars should dispatch only on the cadence boundary",
+    );
+    assert_eq!(
+        store.read_decisions(&run.id).await.unwrap().len(),
+        1,
+        "non-cadence bars must not persist decision rows",
+    );
+    assert_eq!(
+        broker.submitted().len(),
+        1,
+        "non-cadence bars must not reach the broker",
+    );
+}
+
+#[tokio::test]
+async fn live_loop_honors_deterministic_filter_gate() {
+    let (store, mut strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    strategy.activation_mode = xvision_filters::ActivationMode::FilterGated;
+    strategy.filter = Some(always_blocking_filter());
+
+    let broker = RecordingBroker::new(50_000.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    assert_eq!(metrics.n_decisions, 0, "blocked filter bars must not dispatch");
+    assert!(
+        store.read_decisions(&run.id).await.unwrap().is_empty(),
+        "blocked filter bars must not persist decision rows",
+    );
+    assert!(
+        broker.submitted().is_empty(),
+        "blocked filter bars must not reach the broker",
+    );
+    let filter_events = store.read_filter_events(&run.id).await.unwrap();
+    assert_eq!(
+        filter_events.len(),
+        2,
+        "live filter evaluation should be persisted for each scanned bar",
+    );
+    assert!(
+        filter_events.iter().all(|event| !event.triggered),
+        "the blocking filter fixture should never trigger",
+    );
+}
+
+#[tokio::test]
+async fn live_loop_enforces_sltp_before_dispatch_and_counts_realized_round_trips() {
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = PerAssetRecordingBroker::new(&[("BTC/USD", 50_000.0)]);
+    let stream = single_asset_stream(vec![
+        MarketBar {
+            timestamp: ts(60),
+            open: 50_000.0,
+            high: 50_500.0,
+            low: 49_900.0,
+            close: 50_000.0,
+            volume: 1_000.0,
+        },
+        MarketBar {
+            timestamp: ts(120),
+            open: 50_000.0,
+            high: 50_100.0,
+            low: 49_000.0,
+            close: 49_100.0,
+            volume: 1_000.0,
+        },
+    ]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            sequence_dispatch(&[
+                r#"{"action":"long_open","conviction":0.9,"justification":"open with stop","stop_loss_pct":1.0,"take_profit_pct":5.0}"#,
+                r#"{"action":"hold","conviction":0.1,"justification":"this should not dispatch when stop fires"}"#,
+            ]),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "second bar should trigger a broker flat before consulting the model",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy));
+    assert!(matches!(submitted[1].side, Side::Sell));
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(
+        decisions.iter().map(|d| d.action.as_str()).collect::<Vec<_>>(),
+        vec!["long_open", "stop_loss"],
+        "stop-hit bar should record the deterministic SLTP exit, not the scripted hold",
+    );
+    assert_eq!(
+        metrics.n_decisions, 2,
+        "one model decision plus one deterministic SLTP decision should be counted",
+    );
+    assert_eq!(metrics.n_trades, 2, "open plus SLTP close should both count as fills");
+    assert_eq!(
+        metrics.win_rate, 0.0,
+        "closed losing round trip should produce a non-null zero win_rate",
+    );
+}
+
+#[tokio::test]
+async fn live_loop_checks_sltp_on_non_cadence_bars() {
+    let (store, mut strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    strategy.manifest.decision_cadence_minutes = 60;
+    let broker = PerAssetRecordingBroker::new(&[("BTC/USD", 50_000.0)]);
+    let stream = single_asset_stream(vec![
+        MarketBar {
+            timestamp: ts(0),
+            open: 50_000.0,
+            high: 50_500.0,
+            low: 49_900.0,
+            close: 50_000.0,
+            volume: 1_000.0,
+        },
+        MarketBar {
+            timestamp: ts(60),
+            open: 50_000.0,
+            high: 50_100.0,
+            low: 49_000.0,
+            close: 49_100.0,
+            volume: 1_000.0,
+        },
+    ]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(0)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            sequence_dispatch(&[
+                r#"{"action":"long_open","conviction":0.9,"justification":"open with stop","stop_loss_pct":1.0,"take_profit_pct":5.0}"#,
+                r#"{"action":"hold","conviction":0.1,"justification":"non-cadence stop should not consult this"}"#,
+            ]),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    let submitted = broker.submitted();
+    assert_eq!(
+        submitted.len(),
+        2,
+        "SLTP must flatten on the non-cadence bar even though normal dispatch is skipped",
+    );
+    assert!(matches!(submitted[0].side, Side::Buy));
+    assert!(matches!(submitted[1].side, Side::Sell));
+    assert_eq!(
+        store
+            .read_decisions(&run.id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|d| d.action.as_str())
+            .collect::<Vec<_>>(),
+        vec!["long_open", "stop_loss"],
+    );
+    assert_eq!(metrics.n_decisions, 2);
+}
+
+#[tokio::test]
+async fn live_loop_applies_broker_min_notional_before_submit() {
+    let (store, mut strategy, mut scenario, mut run, _dir) = live_fixtures(10_000.0).await;
+    strategy.risk.risk_pct_per_trade = 0.000001;
+    scenario.capital.initial = 10_000.0;
+    let broker = RecordingBroker::new(100_000.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 100_000.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run should complete when a deterministic min-notional veto fires");
+
+    assert!(
+        broker.submitted().is_empty(),
+        "below-min-notional live orders must be vetoed before BrokerSurface::submit_order",
+    );
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    assert_eq!(decisions.len(), 1, "the trader intent should still be recorded");
+    assert_eq!(decisions[0].action, "long_open");
+    assert!(decisions[0].fill_price.is_none());
+    assert!(decisions[0].fill_size.is_none());
+    assert_eq!(metrics.n_trades, 0);
+}
+
+#[tokio::test]
+async fn live_loop_applies_short_borrow_cost_on_realized_close() {
+    let (store, strategy, mut scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    scenario.venue.fees.maker_bps = 0;
+    scenario.venue.fees.taker_bps = 0;
+    scenario.venue.borrow_bps_per_day = 1_000_000.0;
+    let broker = RecordingBroker::new(50_000.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_000.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            sequence_dispatch(&[
+                r#"{"action":"short_open","conviction":0.9,"justification":"open short"}"#,
+                r#"{"action":"flat","conviction":0.9,"justification":"close short"}"#,
+            ]),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    assert_eq!(broker.submitted().len(), 2, "short open and close should reach broker");
+    assert_eq!(metrics.n_trades, 2);
+    assert_eq!(metrics.win_rate, 0.0);
+    assert!(
+        metrics.total_return_pct < 0.0,
+        "flat-price short close should still lose money once borrow cost is applied; got {}",
+        metrics.total_return_pct,
+    );
 }
 
 #[tokio::test]

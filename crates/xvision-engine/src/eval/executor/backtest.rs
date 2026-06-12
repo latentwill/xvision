@@ -54,6 +54,7 @@ use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::traits::{
     eval_only_token, Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills,
 };
+use crate::eval::orders::OrderState;
 use crate::eval::executor::wall_clock::WallClock;
 use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
@@ -66,8 +67,6 @@ use crate::eval::metrics::{
     annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
     total_return_pct,
 };
-#[cfg(test)]
-use crate::eval::orders::OrderState;
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
@@ -2965,8 +2964,8 @@ impl Executor {
         // unique index so the `(run_id, decision_index)` PK never collides.
         let mut decision_idx = 0u32;
         let mut n_trades = 0u32;
-        let wins = 0u32;
-        let realized_count = 0u32;
+        let mut wins = 0u32;
+        let mut realized_count = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let run_started: Instant = Instant::now();
@@ -2992,6 +2991,13 @@ impl Executor {
             .iter()
             .map(|a| (*a, crate::agent::signal_cache::SignalCache::new()))
             .collect();
+        let mut sltp_state: BTreeMap<
+            xvision_core::trading::AssetSymbol,
+            crate::eval::executor::sltp::PositionRiskState,
+        > = BTreeMap::new();
+        let mut short_bars_held: BTreeMap<xvision_core::trading::AssetSymbol, u32> = BTreeMap::new();
+        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?;
+        let pool = store.pool().clone();
         // Last pooled-equity timestamp recorded — drives the upsert path so
         // a single-asset run keeps the L1 one-INSERT-per-bar shape while a
         // multi-asset run collapses same-timestamp bars to one pooled row.
@@ -3196,6 +3202,236 @@ impl Executor {
                 current_ts: wall_now,
             });
 
+            let on_cadence = (bar.timestamp.timestamp() / 60) % cadence_min as i64 == 0;
+            let mut filter_trigger_context: Option<serde_json::Value> = None;
+            let mut filter_gated = false;
+            if on_cadence {
+                if let Some(hook) = filter_hook.as_mut() {
+                    let in_position = active.iter().any(|a| book.position(*a).abs() > f64::EPSILON);
+                    let evaluation = hook.evaluate(&bar, in_position);
+                    hook.record(&pool, self.progress.as_ref(), &run.id, bar.timestamp, &evaluation)
+                        .await?;
+                    if !evaluation.outcome.decision.is_active() {
+                        filter_gated = true;
+                        if matches!(
+                            evaluation.outcome.decision,
+                            xvision_filters::runtime::ActivationDecision::SuppressedInPosition
+                        ) {
+                            self.emit(ProgressEvent::FilterBlocked {
+                                run_id: run.id.clone(),
+                                reason: "in_position".to_string(),
+                            });
+                        }
+                    } else {
+                        filter_trigger_context = evaluation.trigger_context.clone();
+                    }
+                }
+            }
+
+            let pre_dispatch_sltp_trigger = if book.position(asset_sym).abs() > f64::EPSILON {
+                sltp_state
+                    .get_mut(&asset_sym)
+                    .and_then(|state| crate::eval::executor::sltp::check_and_update(state, &bar))
+            } else {
+                None
+            };
+            let sltp_full_exit_ready = matches!(
+                pre_dispatch_sltp_trigger,
+                Some(crate::eval::executor::sltp::SltpTrigger::FullExit { .. })
+            );
+
+            if (!on_cadence || filter_gated) && !sltp_full_exit_ready {
+                let asset_hist = history.entry(asset_sym).or_default();
+                asset_hist.push(bar.clone());
+                if history_window > 0 && asset_hist.len() > history_window {
+                    let drop_n = asset_hist.len() - history_window;
+                    asset_hist.drain(0..drop_n);
+                }
+
+                book.mark(asset_sym, bar.close);
+                let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
+                equity = book.equity(&marks);
+                if book.position(asset_sym) < -f64::EPSILON {
+                    *short_bars_held.entry(asset_sym).or_insert(0) += 1;
+                }
+                equity_samples_buf.push((decision_ts, equity));
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Equity(ChartEquityPoint {
+                        time: decision_ts.timestamp(),
+                        equity_usd: equity,
+                    }),
+                )
+                .await;
+                equity_curve.push(equity);
+                if equity > peak_equity {
+                    peak_equity = equity;
+                }
+                let drawdown_pct = if peak_equity > 0.0 {
+                    ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
+                } else {
+                    0.0
+                };
+                self.emit(ProgressEvent::MetricsUpdated {
+                    run_id: run.id.clone(),
+                    equity,
+                    drawdown_pct,
+                    n_trades,
+                });
+
+                if let Some(stop) = live_stop_reason(&stop_policy, bar_count, decision_idx, run_started) {
+                    tracing::info!(
+                        run_id = %run.id,
+                        reason = %stop,
+                        bar_count,
+                        decision_idx,
+                        "live run reached stop policy; ending stream loop"
+                    );
+                    break;
+                }
+                continue;
+            }
+
+            if let Some(crate::eval::executor::sltp::SltpTrigger::FullExit { reason }) =
+                pre_dispatch_sltp_trigger
+            {
+                        let pre_fill_position = book.position(asset_sym);
+                        let pre_fill_entry = book.entry_price(asset_sym);
+                        let fill = runtime
+                            .fill_sink
+                            .submit(FillRequest {
+                                pos: pre_fill_position,
+                                entry: pre_fill_entry,
+                                action: "flat".to_string(),
+                                next_open: bar.close,
+                                bar_volume: bar.volume,
+                                slip_bps: 0.0,
+                                spread_bps: 0.0,
+                                taker_bps: scenario.venue.fees.taker_bps as f64,
+                                maker_bps: scenario.venue.fees.maker_bps as f64,
+                                equity,
+                                risk_pct: strategy.risk.risk_pct_per_trade,
+                                slippage_model: scenario.venue.slippage.clone(),
+                                fee_source: crate::eval::scenario::FeeSource::Default,
+                                asset: asset.clone(),
+                                bar_ts: bar.timestamp,
+                                bar_open: bar.open,
+                                bar_high: bar.high,
+                                bar_low: bar.low,
+                                bar_close: bar.close,
+                                decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
+                                bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                            })
+                            .await;
+                        let broker_error = fill.broker_error.clone();
+                        book.set_position(asset_sym, fill.new_pos, fill.new_entry);
+                        book.add_realized(fill.realized_pnl);
+                        let mut net_realized_pnl = fill.realized_pnl;
+                        if pre_fill_position < -f64::EPSILON && fill.fill_price.is_some() {
+                            let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
+                            let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                                .and_then(|o| o.borrow_bps_per_day)
+                                .unwrap_or(scenario.venue.borrow_bps_per_day);
+                            let borrow_cost = compute_borrow_cost(
+                                pre_fill_position.abs(),
+                                pre_fill_entry,
+                                borrow_bps,
+                                held,
+                                scenario.granularity.seconds(),
+                            );
+                            if borrow_cost > 0.0 {
+                                book.add_realized(-borrow_cost);
+                                net_realized_pnl -= borrow_cost;
+                            }
+                        }
+                        if pre_fill_position != 0.0 && fill.new_pos.abs() <= f64::EPSILON {
+                            realized_count += 1;
+                            if net_realized_pnl > 0.0 {
+                                wins += 1;
+                            }
+                        }
+                        if fill.fill_price.is_some() {
+                            n_trades += 1;
+                            self.emit(ProgressEvent::FillRecorded {
+                                run_id: run.id.clone(),
+                                side: fill_side_for_action("flat", pre_fill_position).into(),
+                                price: fill.fill_price.unwrap_or(0.0),
+                                qty: fill.fill_size.unwrap_or(0.0),
+                                fee: fill.fee.unwrap_or(0.0),
+                            });
+                        }
+                        sltp_state.remove(&asset_sym);
+                        last_open_direction.insert(asset_sym, None);
+
+                        let decision_row = DecisionRow {
+                            run_id: run.id.clone(),
+                            decision_index: decision_idx,
+                            timestamp: decision_ts,
+                            asset: asset.clone(),
+                            action: reason.to_string(),
+                            conviction: Some(1.0),
+                            justification: Some(format!("sltp: {reason}")),
+                            reasoning: Some(format!("sltp: {reason}")),
+                            order_size: fill.fill_size,
+                            fill_price: fill.fill_price,
+                            fill_size: fill.fill_size,
+                            fee: fill.fee,
+                            pnl_realized: if net_realized_pnl != 0.0 {
+                                Some(net_realized_pnl)
+                            } else {
+                                None
+                            },
+                        };
+                        store.record_decision(&decision_row).await?;
+                        self.emit_chart(
+                            &run.id,
+                            RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+                        )
+                        .await;
+
+                        let asset_hist = history.entry(asset_sym).or_default();
+                        asset_hist.push(bar.clone());
+                        if history_window > 0 && asset_hist.len() > history_window {
+                            let drop_n = asset_hist.len() - history_window;
+                            asset_hist.drain(0..drop_n);
+                        }
+                        book.mark(asset_sym, bar.close);
+                        let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
+                        equity = book.equity(&marks);
+                        if book.position(asset_sym) < -f64::EPSILON {
+                            *short_bars_held.entry(asset_sym).or_insert(0) += 1;
+                        }
+                        equity_samples_buf.push((decision_ts, equity));
+                        self.emit_chart(
+                            &run.id,
+                            RunChartEvent::Equity(ChartEquityPoint {
+                                time: decision_ts.timestamp(),
+                                equity_usd: equity,
+                            }),
+                        )
+                        .await;
+                        equity_curve.push(equity);
+                        if equity > peak_equity {
+                            peak_equity = equity;
+                        }
+                        let drawdown_pct = if peak_equity > 0.0 {
+                            ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
+                        } else {
+                            0.0
+                        };
+                        self.emit(ProgressEvent::MetricsUpdated {
+                            run_id: run.id.clone(),
+                            equity,
+                            drawdown_pct,
+                            n_trades,
+                        });
+                        decision_idx += 1;
+                        if let Some((class, msg)) = broker_error {
+                            anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
+                        }
+                        continue;
+            }
+
             // Run one decision cycle for THIS (asset, bar). The pooled book
             // + the shared `equity` are passed in; the per-asset rolling
             // history, signal cache, and open-direction memory are pulled
@@ -3237,6 +3473,7 @@ impl Executor {
                         bar_period_minutes,
                         signal_cache: asset_signal_cache,
                         multi_filter_config,
+                        filter_trigger_context,
                         daily_loss_day,
                         daily_realized_at_day_start,
                     },
@@ -3255,6 +3492,35 @@ impl Executor {
 
             if outcome.fill_happened {
                 n_trades += 1;
+            }
+            let mut net_realized_pnl = outcome.realized_pnl;
+            if outcome.pre_fill_position < -f64::EPSILON && outcome.fill_happened {
+                let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
+                let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                    .and_then(|o| o.borrow_bps_per_day)
+                    .unwrap_or(scenario.venue.borrow_bps_per_day);
+                let borrow_cost = compute_borrow_cost(
+                    outcome.pre_fill_position.abs(),
+                    outcome.pre_fill_entry,
+                    borrow_bps,
+                    held,
+                    scenario.granularity.seconds(),
+                );
+                if borrow_cost > 0.0 {
+                    book.add_realized(-borrow_cost);
+                    net_realized_pnl -= borrow_cost;
+                }
+            }
+            if outcome.pre_fill_position != 0.0 && outcome.new_position.abs() <= f64::EPSILON {
+                realized_count += 1;
+                if net_realized_pnl > 0.0 {
+                    wins += 1;
+                }
+            }
+            if let Some(state) = outcome.new_sltp_state {
+                sltp_state.insert(asset_sym, state);
+            } else if outcome.clear_sltp_state {
+                sltp_state.remove(&asset_sym);
             }
             // Per-asset open-direction memory: write back THIS asset's
             // updated direction only.
@@ -3301,6 +3567,9 @@ impl Executor {
             book.mark(asset_sym, bar.close);
             let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
             equity = book.equity(&marks);
+            if book.position(asset_sym) < -f64::EPSILON {
+                *short_bars_held.entry(asset_sym).or_insert(0) += 1;
+            }
             // Upsert (not plain INSERT): two assets at the same bar
             // timestamp would otherwise collide on the `(run_id, timestamp)`
             // PK. The latest pooled NAV at a timestamp wins; a single-asset
@@ -3446,6 +3715,7 @@ impl Executor {
             bar_period_minutes,
             signal_cache,
             multi_filter_config,
+            filter_trigger_context,
             mut daily_loss_day,
             mut daily_realized_at_day_start,
         } = ctx;
@@ -3483,7 +3753,7 @@ impl Executor {
         } else {
             (live_entry - live_mark) / live_entry * 100.0
         };
-        let seed = build_decision_seed(DecisionSeedInput {
+        let mut seed = build_decision_seed(DecisionSeedInput {
             decision_idx,
             asset,
             active_assets: active_venue_symbols,
@@ -3506,6 +3776,11 @@ impl Executor {
             stop_loss_price: 0.0,
             take_profit_price: 0.0,
         });
+        if let Some(ctx) = &filter_trigger_context {
+            if let Some(obj) = seed.as_object_mut() {
+                obj.insert("filter_context".to_string(), ctx.clone());
+            }
+        }
 
         let outs = run_pipeline(PipelineInputs {
             strategy,
@@ -3681,34 +3956,139 @@ impl Executor {
                 volume_cap_hit: None,
             }
         } else {
-            fill_sink
-                .submit(FillRequest {
-                    pos: pre_fill_position,
-                    entry: pre_fill_entry,
-                    action: applied_action.clone(),
-                    next_open,
-                    bar_volume: bar.volume,
-                    slip_bps: 0.0,
-                    spread_bps: 0.0,
-                    taker_bps: scenario.venue.fees.taker_bps as f64,
-                    maker_bps: scenario.venue.fees.maker_bps as f64,
-                    equity,
-                    risk_pct: strategy.risk.risk_pct_per_trade,
-                    slippage_model: scenario.venue.slippage.clone(),
-                    fee_source: crate::eval::scenario::FeeSource::Default,
-                    asset: asset.to_string(),
-                    bar_ts: bar.timestamp,
-                    bar_open: bar.open,
-                    bar_high: bar.high,
-                    bar_low: bar.low,
-                    bar_close: bar.close,
-                    decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
-                    bar_duration_ms: scenario.granularity.seconds() * 1_000,
-                })
-                .await
+            let want_flat = applied_action != "long_open" && applied_action != "short_open";
+            let target_pos = if want_flat {
+                0.0
+            } else {
+                let units = (equity * strategy.risk.risk_pct_per_trade / next_open).max(0.0);
+                if applied_action == "long_open" {
+                    units
+                } else {
+                    -units
+                }
+            };
+            let order_size = if pre_fill_position == 0.0 {
+                target_pos.abs()
+            } else if target_pos == 0.0 {
+                pre_fill_position.abs()
+            } else {
+                pre_fill_position.abs() + target_pos.abs()
+            };
+            let pending = PendingOrder {
+                symbol: asset.to_string(),
+                kind: OrderKind::Market,
+                tif: TimeInForce::Gtc,
+                qty: order_size,
+                price: next_open,
+            };
+            let broker_rules: Box<dyn BrokerRuleSet> = rule_set_for_asset_class(scenario.asset_class);
+            match broker_rules.validate(&pending) {
+                Err(violation) if violation.severity == BrokerViolationSeverity::Critical => {
+                    store
+                        .record_supervisor_note(
+                            &run.id,
+                            "broker_rules",
+                            "warn",
+                            &format!(
+                                "live broker-rule veto `{}` at decision {} ({}): {}",
+                                violation.specific_rule, decision_idx, asset, violation.message
+                            ),
+                        )
+                        .await?;
+                    FillRecord {
+                        new_pos: pre_fill_position,
+                        new_entry: pre_fill_entry,
+                        fill_price: None,
+                        fill_size: None,
+                        fee: None,
+                        realized_pnl: 0.0,
+                        provenance: crate::eval::scenario::FillProvenance::default(),
+                        fill_branch: None,
+                        aggressor_side: None,
+                        order_state: Some(OrderState::Rejected),
+                        broker_error: None,
+                        volume_cap_hit: None,
+                    }
+                }
+                _ => {
+                    fill_sink
+                        .submit(FillRequest {
+                            pos: pre_fill_position,
+                            entry: pre_fill_entry,
+                            action: applied_action.clone(),
+                            next_open,
+                            bar_volume: bar.volume,
+                            slip_bps: 0.0,
+                            spread_bps: 0.0,
+                            taker_bps: scenario.venue.fees.taker_bps as f64,
+                            maker_bps: scenario.venue.fees.maker_bps as f64,
+                            equity,
+                            risk_pct: strategy.risk.risk_pct_per_trade,
+                            slippage_model: scenario.venue.slippage.clone(),
+                            fee_source: crate::eval::scenario::FeeSource::Default,
+                            asset: asset.to_string(),
+                            bar_ts: bar.timestamp,
+                            bar_open: bar.open,
+                            bar_high: bar.high,
+                            bar_low: bar.low,
+                            bar_close: bar.close,
+                            decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
+                            bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                        })
+                        .await
+                }
+            }
         };
 
         let broker_error = fill.broker_error.clone();
+        let new_position = fill.new_pos;
+        let realized_pnl = fill.realized_pnl;
+        let clear_sltp_state = fill.fill_price.is_some() && fill.new_pos.abs() <= f64::EPSILON;
+        let new_sltp_state = if fill.fill_price.is_some()
+            && fill.new_pos.abs() > f64::EPSILON
+            && (applied_action == "long_open" || applied_action == "short_open")
+        {
+            let direction = if fill.new_pos > 0.0 {
+                xvision_core::trading::Direction::Long
+            } else {
+                xvision_core::trading::Direction::Short
+            };
+            let sl_pct = parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0);
+            let tp_pct = parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0);
+            let effective_sl_atr_mult = parsed.sl_atr_mult.or_else(|| {
+                if sl_pct <= 0.0 && strategy.risk.stop_loss_atr_multiple > 0.0 {
+                    Some(strategy.risk.stop_loss_atr_multiple)
+                } else {
+                    None
+                }
+            });
+            let entry_atr = if effective_sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some() {
+                crate::eval::executor::sltp::compute_atr14(&history_slice)
+            } else {
+                None
+            };
+            Some(crate::eval::executor::sltp::PositionRiskState::new(
+                direction,
+                fill.new_entry,
+                sl_pct,
+                tp_pct,
+                entry_atr,
+                parsed.trailing_stop_pct,
+                parsed.breakeven_trigger_pct,
+                parsed.breakeven_offset_pct,
+                parsed.fade_sl_bars,
+                parsed.fade_sl_start_pct,
+                parsed.fade_sl_end_pct,
+                parsed.max_bars_held,
+                effective_sl_atr_mult,
+                parsed.tp_atr_mult,
+                parsed.tp1_pct,
+                parsed.tp1_close_fraction,
+                parsed.tp2_pct,
+            ))
+        } else {
+            None
+        };
 
         // Apply the broker-reported fill to the pooled book.
         book.set_position(asset_sym, fill.new_pos, fill.new_entry);
@@ -3809,6 +4189,12 @@ impl Executor {
             input_tokens,
             output_tokens,
             fill_happened,
+            pre_fill_position,
+            pre_fill_entry,
+            new_position,
+            realized_pnl,
+            new_sltp_state,
+            clear_sltp_state,
             last_open_direction,
             broker_error,
             daily_loss_day,
@@ -4235,6 +4621,7 @@ struct DecideOneLiveCtx<'a> {
     bar_period_minutes: u32,
     signal_cache: &'a mut crate::agent::signal_cache::SignalCache,
     multi_filter_config: crate::agent::filter_dispatch::MultiFilterConfig,
+    filter_trigger_context: Option<serde_json::Value>,
     /// R3 risk-veto: UTC day the daily-loss accumulator was last rolled (None
     /// = not yet seen). Passed in from the loop driver's run-level state and
     /// returned (possibly updated) via `LiveDecisionOutcome`.
@@ -4249,6 +4636,12 @@ struct LiveDecisionOutcome {
     input_tokens: u64,
     output_tokens: u64,
     fill_happened: bool,
+    pre_fill_position: f64,
+    pre_fill_entry: f64,
+    new_position: f64,
+    realized_pnl: f64,
+    new_sltp_state: Option<crate::eval::executor::sltp::PositionRiskState>,
+    clear_sltp_state: bool,
     last_open_direction: Option<GuardAction>,
     broker_error: Option<(xvision_execution::broker_surface::BrokerErrorClass, String)>,
     /// R3 risk-veto: updated daily-loss state, written back to the loop
