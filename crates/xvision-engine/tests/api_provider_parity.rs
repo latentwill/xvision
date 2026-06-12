@@ -135,6 +135,34 @@ async fn resolve_provider_returns_key_missing_for_unset_env() {
 }
 
 #[tokio::test]
+async fn resolve_provider_accepts_key_from_secrets_file_when_env_unset() {
+    let env_var = "XVN_PARITY_SECRET_ONLY_OPENROUTER_KEY";
+    std::env::remove_var(env_var);
+    let (ctx, _d) = open_api_context().await;
+    let src = OPENROUTER_NO_KEY_CONFIG.replace("OPENROUTER_API_KEY_PARITY_TEST", env_var);
+    let cfg = write_config(&ctx, &src);
+
+    let secrets_dir = ctx.xvn_home.join("secrets");
+    std::fs::create_dir_all(&secrets_dir).unwrap();
+    std::fs::write(
+        secrets_dir.join("providers.toml"),
+        format!(
+            r#"[provider.openrouter]
+env_var = "{env_var}"
+api_key = "sk-secret-only"
+"#
+        ),
+    )
+    .unwrap();
+
+    let provider = providers::resolve_provider(&ctx, &cfg, "openrouter", Some("deepseek/deepseek-v4-flash"))
+        .await
+        .expect("run-path provider resolution must fall back to secrets/providers.toml");
+    assert_eq!(provider.name, "openrouter");
+    assert_eq!(provider.api_key_env, env_var);
+}
+
+#[tokio::test]
 async fn resolve_provider_returns_unknown_for_unconfigured_name() {
     ensure_key_unset();
     let (ctx, _d) = open_api_context().await;
