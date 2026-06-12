@@ -1,33 +1,38 @@
 // src/features/marketplace/components/FilterDrawer.tsx
-// Docked right-edge panel. NOT a Dialog/Modal/Sheet/Popover (CLAUDE.md
-// no-popups rule). It does not trap focus or paint a full-screen overlay
-// owning the page; it docks over the list area while the rail/sidebar stay.
-import type { ReactNode } from "react";
+// Inline filter accordion (spec 3.1C, QA4). NOT an absolute overlay / Dialog /
+// Sheet / Popover — it renders in normal document flow and pushes the list down
+// (no "stuck open" problem, no click-outside trap). The reveal is INSTANT, not
+// height-animated: transitions on grid-template-rows fr values or max-height
+// freeze at their start value (panel reads as permanently collapsed) under
+// animation-paused environments like CDP screenshot tooling, and the crisp
+// state change keeps the reveal predictable. The content caps itself
+// at 60vh (FilterDrawerContent) with a sticky footer. The owner (BrowseRoute)
+// wires an Escape-to-close useEffect, a scroll-into-view on open, and a
+// "Done" button.
+import type { ReactNode, Ref } from "react";
 
 export function FilterDrawer({
   open,
-  onClose,
   title = "Filter strategies",
   children,
+  sectionRef,
 }: {
   open: boolean;
-  onClose: () => void;
+  /** Optional accessible label for the in-flow region. */
   title?: string;
   children: ReactNode;
+  /** Optional ref to the section element (e.g. for scroll-into-view on open). */
+  sectionRef?: Ref<HTMLElement>;
 }) {
-  if (!open) return null;
   return (
-    <aside
+    <section
+      ref={sectionRef}
       aria-label={title}
-      className="absolute right-0 top-0 h-full w-[400px] bg-surface-panel border-l border-border shadow-xl flex flex-col"
+      data-filter-accordion
+      data-open={open || undefined}
+      className={open ? "shrink-0 border-b border-border" : "shrink-0"}
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <span className="font-sans font-medium text-[15px]">{title}</span>
-        <button type="button" aria-label="close filters" onClick={onClose} className="text-text-3 hover:text-text">
-          ×
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto px-4 py-3">{children}</div>
-    </aside>
+      {open && <div className="overflow-hidden">{children}</div>}
+    </section>
   );
 }

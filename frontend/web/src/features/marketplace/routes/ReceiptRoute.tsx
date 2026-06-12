@@ -2,12 +2,15 @@
 // F6 — /marketplace/receipts/:tx — post-buy install + share surface.
 // No modals. All panels are inline. Post targets open new tabs.
 // Data fetched via useQuery per integration addendum §1.
+// Layout: 2-column (320px license | 1fr install). Share collapsed inline below install.
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import type { Receipt } from "@/features/marketplace/data/types";
 import { TxChip } from "@/features/marketplace/components/TxChip";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
+import { humanize } from "./browse/ListingEntry";
 import { InstallSteps } from "./InstallSteps";
 import { ShareComposer } from "./ShareComposer";
 
@@ -42,15 +45,19 @@ function Panel({
 // ── license metadata stack ───────────────────────────────────────────────────
 function LicenseCard({ receipt }: { receipt: Receipt }) {
   const { license, listing } = receipt;
+  // Display name, not the raw URL slug — the licence reads as an editorial
+  // record, not a database key (spec §3.3).
+  const displayName =
+    (listing as Receipt["listing"] & { name?: string }).name ?? humanize(listing.id);
   const rows: [string, React.ReactNode, "gold" | "mono" | "muted" | "link"][] = [
-    ["strategy", <span key="strategy" className="text-gold">{listing.id}</span>, "gold"],
+    ["strategy", <span key="strategy" className="text-gold">{displayName}</span>, "gold"],
     ["version", listing.version, "mono"],
     ["creator", listing.creator.handle ?? listing.creator.address, "mono"],
     ["manifest", license.manifestHash, "mono"],
     ["bundle", `ipfs://${license.bundleCid}`, "link"],
     [
       "paid",
-      `${license.pricePaidUsdc} USDC (5% fee · ${license.feeUsdc} USDC)`,
+      `${license.pricePaidUsdc} USDC`,
       "muted",
     ],
     ["minted", license.mintedAt, "mono"],
@@ -103,6 +110,7 @@ function LicenseCard({ receipt }: { receipt: Receipt }) {
 export function ReceiptRoute() {
   const { tx = "" } = useParams<{ tx: string }>();
   const mp = useMarketplaceData();
+  const [shareExpanded, setShareExpanded] = useState(false);
 
   const { data: receipt, isLoading, error } = useQuery({
     queryKey: ["marketplace", "receipt", tx],
@@ -127,6 +135,15 @@ export function ReceiptRoute() {
 
   const { listing, license, network } = receipt;
   const creatorLabel = listing.creator.handle ?? listing.creator.address;
+  // Display name, not the raw URL slug — this is the emotional payoff of the buy
+  // flow and must read as an editorial title, not a database key (spec §3.3).
+  const displayName =
+    (listing as Receipt["listing"] & { name?: string }).name ?? humanize(listing.id);
+  // Header branches on whether a price was paid (spec 3.3, QA12)
+  const isPaid = license.pricePaidUsdc > 0;
+  const headerTitle = isPaid
+    ? `Acquired ${displayName}`
+    : `Activated ${displayName} — added to your strategies`;
 
   return (
     <div className="flex flex-col min-h-0">
@@ -156,15 +173,18 @@ export function ReceiptRoute() {
 
         <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight leading-tight">
-            You bought{" "}
-            <span className="font-mono text-gold">{listing.id}</span>
+            {headerTitle}
           </h1>
           <div className="mt-1.5 font-mono text-[11.5px] text-text-3 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span>
-              <span className="text-gold">{license.pricePaidUsdc} USDC</span>{" "}
-              paid
-            </span>
-            <span className="text-text-4">·</span>
+            {isPaid && (
+              <>
+                <span>
+                  <span className="text-gold">{license.pricePaidUsdc} USDC</span>{" "}
+                  paid
+                </span>
+                <span className="text-text-4">·</span>
+              </>
+            )}
             <span>
               license{" "}
               <span className="text-text-2">{license.tokenId}</span> minted
@@ -174,27 +194,16 @@ export function ReceiptRoute() {
               {license.netToCreatorUsdc} USDC → {creatorLabel}
             </span>
             <span className="text-text-4">·</span>
-            <TxChip hash={receipt.txHash} network={network} />
+            {/* Single explorer link via TxChip (QA16 — fixes hand-built mantlescan href) */}
+            <TxChip hash={receipt.txHash} network={network} label="View on explorer" />
           </div>
         </div>
-
-        <a
-          href={`https://${network.includes("sepolia") ? "sepolia." : ""}mantlescan.xyz/tx/${receipt.txHash}`}
-          target="_blank"
-          rel="noreferrer"
-          className="shrink-0 font-mono text-[12px] text-text-3 border border-border-strong rounded px-2.5 py-1.5 hover:text-text hover:border-border-strong/80 flex items-center gap-1.5"
-        >
-          View on Mantlescan
-          <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-            <path d="M4 2h6v6M10 2L4.5 7.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </a>
       </div>
 
-      {/* ── Body: 3-col ─────────────────────────────────────────────────────── */}
+      {/* ── Body: 2-col (spec 3.4, QA13 layout rule — no 380px third column) ─── */}
       <div
         className="flex-1 min-h-0 overflow-auto p-4"
-        style={{ display: "grid", gridTemplateColumns: "320px 1fr 380px", gap: 14 }}
+        style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 14 }}
       >
         {/* Col 1 — License NFT */}
         <Panel
@@ -204,30 +213,59 @@ export function ReceiptRoute() {
           <LicenseCard receipt={receipt} />
         </Panel>
 
-        {/* Col 2 — Install steps */}
-        <Panel
-          title="Install in your XVN"
-          sub={
-            receipt.install.xvnDetected
-              ? `detected at ${receipt.install.xvnEndpoint} · 4 steps · sealed bundle auto-decrypts`
-              : "XVN not detected · install XVN first"
-          }
-          right={
-            <button className="font-mono text-[12px] bg-gold text-black px-3 py-1.5 rounded hover:opacity-90 font-semibold motion-safe:active:scale-[0.96]">
-              Install all
-            </button>
-          }
-        >
-          <InstallSteps receipt={receipt} />
-        </Panel>
+        {/* Col 2 — Install steps + collapsed share accordion */}
+        <div className="flex flex-col gap-3.5">
+          <Panel
+            title="Install in your XVN"
+            sub={
+              receipt.install.xvnDetected
+                ? `detected at ${receipt.install.xvnEndpoint} · 4 steps · sealed bundle auto-decrypts`
+                : "XVN not detected · install XVN first"
+            }
+            right={
+              <button className="font-mono text-[12px] bg-gold text-black px-3 py-1.5 rounded hover:opacity-90 font-semibold motion-safe:active:scale-[0.96]">
+                Install all
+              </button>
+            }
+          >
+            <InstallSteps receipt={receipt} />
+          </Panel>
 
-        {/* Col 3 — Share composer */}
-        <Panel
-          title="Share"
-          sub="OG card pre-loaded · post to X / Farcaster / Discord"
-        >
-          <ShareComposer share={receipt.share} />
-        </Panel>
+          {/* Collapsed share accordion — default state is a ~56px strip (QA13) */}
+          <div className="rounded-md border border-border bg-surface-card overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <span className="text-[13px] font-semibold text-text">Share this acquisition</span>
+                <button
+                  onClick={() => {
+                    try {
+                      navigator.clipboard?.writeText(
+                        `${receipt.share.caption} https://${receipt.share.ogCard.url}`
+                      );
+                    } catch {
+                      // clipboard not available
+                    }
+                  }}
+                  className="font-mono text-[11px] text-text-3 border border-border-strong rounded px-2 py-1 hover:text-text"
+                >
+                  Copy link
+                </button>
+              </div>
+              <button
+                onClick={() => setShareExpanded((v) => !v)}
+                className="font-mono text-[11px] text-text-3 border border-border-strong rounded px-2 py-1 hover:text-text shrink-0"
+              >
+                {shareExpanded ? "Collapse" : "Customize post"}
+              </button>
+            </div>
+            {shareExpanded && (
+              <div className="border-t border-border">
+                {/* initialExpanded=true: the full composer is visible once the outer accordion opens */}
+                <ShareComposer share={receipt.share} initialExpanded={true} />
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

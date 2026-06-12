@@ -3,10 +3,18 @@ import { TestnetBadge } from "./TestnetBadge";
 
 const TESTNETS = ["mantle-sepolia", "sepolia", "testnet"];
 
+/**
+ * Builds the canonical block-explorer URL for a transaction hash.
+ * Uses the canonical Mantle explorers (NOT mantlescan.xyz):
+ *   - mantle-sepolia / sepolia / testnet  → https://explorer.sepolia.mantle.xyz
+ *   - mainnet mantle                      → https://explorer.mantle.xyz
+ */
 function explorerTxUrl(hash: string, network?: string): string {
-  if (!network) return `https://sepolia.mantlescan.xyz/tx/${hash}`;
-  if (network.includes("sepolia") || network.includes("testnet")) return `https://sepolia.mantlescan.xyz/tx/${hash}`;
-  if (network.includes("mantle")) return `https://mantlescan.xyz/tx/${hash}`;
+  if (!network) return `https://explorer.sepolia.mantle.xyz/tx/${hash}`;
+  if (network.includes("sepolia") || network.includes("testnet")) {
+    return `https://explorer.sepolia.mantle.xyz/tx/${hash}`;
+  }
+  if (network.includes("mantle")) return `https://explorer.mantle.xyz/tx/${hash}`;
   return "#";
 }
 

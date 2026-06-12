@@ -37,12 +37,13 @@ describe("LeaderboardIndex", () => {
     expect(await screen.findByText(/asset=SOL/)).toBeInTheDocument();
   });
 
-  it("renders the count for each slice", async () => {
+  it("renders the live count for each slice (computed from the curated pool)", async () => {
     render();
-    // trending count = 1247
-    expect(await screen.findByTestId("slice-count-trending")).toHaveTextContent("1,247");
-    // sol-7d count = 142
-    expect(await screen.findByTestId("slice-count-sol-7d")).toHaveTextContent("142");
+    // Counts are computed live by getSlices() — no stale hardcoded figures.
+    // trending matches the whole curated collection (6).
+    expect(await screen.findByTestId("slice-count-trending")).toHaveTextContent("6");
+    // sol-7d matches the two SOL listings.
+    expect(await screen.findByTestId("slice-count-sol-7d")).toHaveTextContent("2");
   });
 
   it("each slice item is a link to /marketplace/leaderboard/<id>", async () => {

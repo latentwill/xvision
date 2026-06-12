@@ -25,6 +25,7 @@
 import { applyFilter, defaultFilterState } from "./filter";
 import { FixtureMarketplaceData } from "./MarketplaceData";
 import type { MarketplaceData } from "./MarketplaceData";
+import { currentAddress } from "../lib/chain";
 import { SLICES } from "./fixtures/slices";
 import {
   Q_LISTING,
@@ -71,6 +72,9 @@ export interface SubgraphMarketplaceDataOpts {
 }
 
 export class SubgraphMarketplaceData implements MarketplaceData {
+  // W2-DATA: required by the MarketplaceData interface (added by W1-FOUNDATION).
+  readonly dataSource = "subgraph" as const;
+
   private readonly client: SubgraphClient;
   private readonly fallback: MarketplaceData;
   private readonly manifest: ManifestResolver;
@@ -125,19 +129,47 @@ export class SubgraphMarketplaceData implements MarketplaceData {
     return mapStats(r, this.nowSecs());
   }
 
+  // --- overrides with live/honest implementations --------------------------
+
+  // QA1: return real slice counts by recomputing each slice's count from
+  // actual listing rows. Slice definitions (id/label/hint/filter) come from
+  // SLICES; counts are computed by applying each slice's filter to live rows.
+  async getSlices(): Promise<Slice[]> {
+    const { listings } = await this.client.query<{ listings: SgListing[] }>(
+      Q_LISTINGS,
+      { first: LISTINGS_CAP },
+    );
+    const rows = await this.rowsFrom(listings);
+    return SLICES.map((slice) => ({
+      ...slice,
+      count: applyFilter(rows, { ...defaultFilterState(), ...slice.filter } as FilterState).matched,
+    }));
+  }
+
+  // QA1: return a real wallet-based viewer instead of delegating to the
+  // fixture @ed viewer. The wallet→listing join is deferred; listing id
+  // arrays are empty for now.
+  async getViewer(): Promise<Viewer> {
+    const address = await currentAddress();
+    if (!address) {
+      return { isConnected: false, createdListingIds: [], ownedListingIds: [] };
+    }
+    return { isConnected: true, address, createdListingIds: [], ownedListingIds: [] };
+  }
+
+  // QA1: return a no-op cleanup instead of delegating to the fixture 5-second
+  // fake purchase feed. No fake purchase events in the real client.
+  subscribePurchases(_cb: (e: PurchaseEvent) => void): () => void {
+    return () => {};
+  }
+
   // --- delegated (off-chain / operator-local / write) --------------------
 
-  getSlices(): Promise<Slice[]> {
-    return this.fallback.getSlices();
-  }
   getCreator(handleOrAddress: string): Promise<CreatorProfile> {
     return this.fallback.getCreator(handleOrAddress);
   }
   getReceipt(txHash: string): Promise<Receipt> {
     return this.fallback.getReceipt(txHash);
-  }
-  getViewer(): Promise<Viewer> {
-    return this.fallback.getViewer();
   }
   listListableStrategies(): Promise<ListableStrategy[]> {
     return this.fallback.listListableStrategies();
@@ -153,9 +185,6 @@ export class SubgraphMarketplaceData implements MarketplaceData {
   }
   cloneIntent(listingId: Id): Promise<TxRef> {
     return this.fallback.cloneIntent(listingId);
-  }
-  subscribePurchases(cb: (e: PurchaseEvent) => void): () => void {
-    return this.fallback.subscribePurchases(cb);
   }
 
   // --- helpers -----------------------------------------------------------

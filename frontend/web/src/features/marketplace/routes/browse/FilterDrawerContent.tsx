@@ -128,7 +128,7 @@ function CheckRow({
         aria-hidden="true"
       >
         {checked && (
-          <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="#001A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="var(--on-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M1.5 4.5L4 7l4-5" />
           </svg>
         )}
@@ -170,7 +170,7 @@ function ToggleSwitch({
       >
         <span
           className={[
-            "absolute top-0.5 w-[13px] h-[13px] rounded-full bg-[#000] transition-[left]",
+            "absolute top-0.5 w-[13px] h-[13px] rounded-full bg-[var(--on-accent)] transition-[left]",
             checked ? "left-[15px]" : "left-0.5",
           ].join(" ")}
         />
@@ -270,6 +270,8 @@ interface FilterDrawerContentProps {
   filter: FilterState;
   setFilter: (patch: Partial<FilterState>) => void;
   matchCount: number;
+  /** Total listings in the marketplace (drives the "of N match" line, QA1). */
+  totalCount: number;
   onClose: () => void;
 }
 
@@ -277,6 +279,7 @@ export function FilterDrawerContent({
   filter,
   setFilter,
   matchCount,
+  totalCount,
   onClose,
 }: FilterDrawerContentProps) {
   const def = defaultFilterState();
@@ -323,7 +326,11 @@ export function FilterDrawerContent({
   }
 
   return (
-    <>
+    // Cap the accordion body at ~60vh with internal scroll so the sticky
+    // footer (Clear all · matches · Done) is always reachable without scrolling
+    // the whole page (QA fix: Done button was ~790px below the fold at 1440×900).
+    <div className="flex flex-col max-h-[60vh]">
+      <div className="overflow-y-auto min-h-0 flex-1">
       {/* Header meta line */}
       <div className="px-[18px] pb-2 pt-1 font-mono text-[10.5px] text-text-3">
         {filter.assets.length + filter.models.length + filter.styles.length +
@@ -340,7 +347,7 @@ export function FilterDrawerContent({
                 (filter.trust.auditedOnly ? 1 : 0)}{" "}
               filters active
             </span>{" "}
-            · {matchCount.toLocaleString()} of 1,247 match
+            · {matchCount.toLocaleString()} of {totalCount.toLocaleString()} match
           </>
         ) : (
           <span>{matchCount.toLocaleString()} strategies</span>
@@ -534,9 +541,10 @@ export function FilterDrawerContent({
           onChange={(v) => setFilter({ minBuyers: v })}
         />
       </DrawerSection>
+      </div>
 
-      {/* Footer */}
-      <div className="px-4 py-3 border-t border-border bg-[#050505] flex items-center gap-2">
+      {/* Footer — pinned at the bottom of the capped accordion (always reachable). */}
+      <div className="shrink-0 px-4 py-3 border-t border-border bg-bg flex items-center gap-2">
         <button
           type="button"
           onClick={clearAll}
@@ -545,17 +553,17 @@ export function FilterDrawerContent({
           Clear all
         </button>
         <span className="ml-auto font-mono text-[11px] text-text-3">
-          <span className="text-gold">{matchCount.toLocaleString()}</span> matches
+          <span className="text-text-2">{matchCount.toLocaleString()}</span> matches
         </span>
         <button
           type="button"
-          aria-label="apply"
+          aria-label="done"
           onClick={onClose}
-          className="px-5 py-1.5 rounded bg-gold text-[#001A0A] text-[12px] font-bold hover:opacity-90 transition-opacity motion-safe:active:scale-[0.96]"
+          className="px-4 py-1.5 rounded bg-gold text-bg text-[12px] font-medium transition-colors hover:bg-gold-soft motion-safe:active:scale-[0.96]"
         >
-          Apply
+          Done
         </button>
       </div>
-    </>
+    </div>
   );
 }

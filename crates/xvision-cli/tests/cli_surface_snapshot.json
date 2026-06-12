@@ -315,6 +315,8 @@
       ],
       "has_subcommands": false,
       "long_flags": [
+        "--asset",
+        "--granularity",
         "--help"
       ],
       "mutates": false,
@@ -3164,6 +3166,17 @@
         "help",
         "strategy",
         "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
+        "reindex"
       ]
     },
     {
@@ -6302,6 +6315,17 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
+        "reindex"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": true,
       "path": [
         "strategy",
@@ -6411,7 +6435,8 @@
         "--filter",
         "--format",
         "--help",
-        "--json"
+        "--json",
+        "--orphans"
       ],
       "mutates": false,
       "path": [
@@ -6463,6 +6488,18 @@
       "path": [
         "strategy",
         "new"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "reindex"
       ]
     },
     {

@@ -13,6 +13,7 @@
 //      the hero gradient variant).
 
 import type uPlot from "uplot";
+import type { V2Marker } from "../types";
 
 type DrawHookPlugin = { hooks: { draw: (u: uPlot) => void } };
 
@@ -318,6 +319,86 @@ export function xvnZeroLine(): DrawHookPlugin {
         ctx.moveTo(u.bbox.left, y);
         ctx.lineTo(u.bbox.left + u.bbox.width, y);
         ctx.stroke();
+        ctx.restore();
+      },
+    },
+  };
+}
+
+/**
+ * On-chain buy/sell trade markers drawn onto the equity pane.
+ * Modeled line-for-line on `xvnLastDot` — same `u.valToPos` / `allFinite`
+ * guard pattern. Returns `{ hooks: { draw } }` shaped for uPlot's plugins array.
+ *
+ * - buy  markers: gold upward   triangle ▲ (default #00e676)
+ * - sell markers: red  downward triangle ▼ (default #ff4d4d)
+ *
+ * Markers whose `time` falls outside `u.scales.x.min/max` are skipped so
+ * the canvas does not bleed outside the chart's x range.
+ */
+export function xvnTradeMarkers(
+  markers: V2Marker[],
+  opts: { buyColor?: string; sellColor?: string } = {},
+): DrawHookPlugin {
+  const buyColor = opts.buyColor ?? "#00e676";
+  const sellColor = opts.sellColor ?? "#ff4d4d";
+  const SIZE = 6; // half-size of triangle in pixels
+
+  return {
+    hooks: {
+      draw: (u) => {
+        if (!markers || markers.length === 0) return;
+        const ctx = u.ctx;
+        const xMin = u.scales.x.min;
+        const xMax = u.scales.x.max;
+
+        ctx.save();
+        for (const m of markers) {
+          // Skip markers outside the visible x range.
+          if (xMin != null && m.time < xMin) continue;
+          if (xMax != null && m.time > xMax) continue;
+
+          // Determine y: use marker.price when available, else look up series value.
+          let yVal: number | null | undefined;
+          if (m.price != null && Number.isFinite(m.price)) {
+            yVal = m.price;
+          } else {
+            // Fall back to the first series (index 1) value at the nearest time point.
+            const times = u.data[0];
+            const vals = u.data[1];
+            if (times && vals) {
+              let bestIdx = -1;
+              let bestDiff = Infinity;
+              for (let i = 0; i < times.length; i++) {
+                const diff = Math.abs((times[i] as number) - m.time);
+                if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+              }
+              if (bestIdx >= 0) yVal = vals[bestIdx] as number;
+            }
+          }
+          if (yVal == null || !Number.isFinite(yVal)) continue;
+
+          const x = u.valToPos(m.time, "x", true);
+          const y = u.valToPos(yVal, "y", true);
+          if (!allFinite(x, y)) continue;
+
+          const isBuy = m.kind === "buy";
+          ctx.beginPath();
+          if (isBuy) {
+            // Upward triangle ▲
+            ctx.moveTo(x, y - SIZE);
+            ctx.lineTo(x + SIZE, y + SIZE);
+            ctx.lineTo(x - SIZE, y + SIZE);
+          } else {
+            // Downward triangle ▼ (sell / close)
+            ctx.moveTo(x, y + SIZE);
+            ctx.lineTo(x + SIZE, y - SIZE);
+            ctx.lineTo(x - SIZE, y - SIZE);
+          }
+          ctx.closePath();
+          ctx.fillStyle = isBuy ? buyColor : sellColor;
+          ctx.fill();
+        }
         ctx.restore();
       },
     },

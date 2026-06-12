@@ -71,15 +71,53 @@ function Wrapper({
 }
 
 describe("LineageRoute", () => {
-  it("renders the hero info stack with title, promise, and 30d return", async () => {
+  it("renders the hero info stack with title, description, and 30d return", async () => {
     render(<Wrapper />);
     expect(await screen.findByTestId("lineage-info-stack")).toBeInTheDocument();
-    expect(screen.getByText("btc-momentum-v3")).toBeInTheDocument();
+    // The hero title uses the listing's display name (app-native title style,
+    // no raw tech slug): btc-momentum-v3 → "BTC Momentum v3".
+    expect(screen.getByText("BTC Momentum v3")).toBeInTheDocument();
     expect(screen.getByText(/BTC momentum/)).toBeInTheDocument();
     // 30D RETURN label
     expect(screen.getByText(/30D Return/i)).toBeInTheDocument();
     // value shown as percentage
     expect(screen.getByText(/47\.2/)).toBeInTheDocument();
+  });
+
+  it("renders the strategy description above the fold from detail.promise", async () => {
+    render(<Wrapper />);
+    const desc = await screen.findByTestId("strategy-description");
+    // Fixture promise text appears in the dedicated description block.
+    expect(desc).toHaveTextContent(/BTC momentum with Claude regime detection/i);
+    // The sealed-fallback line is NOT shown when a promise exists.
+    expect(
+      screen.queryByTestId("strategy-description-sealed"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the honest sealed-strategy line when the promise is empty", async () => {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing("btc-momentum-v3");
+    vi.spyOn(client, "getListing").mockResolvedValue({ ...base, promise: "" });
+    render(<Wrapper client={client} />);
+    const sealed = await screen.findByTestId("strategy-description-sealed");
+    expect(sealed).toHaveTextContent(
+      /sealed strategy — contents verified on-chain, revealed after purchase/i,
+    );
+    expect(screen.queryByTestId("strategy-description")).not.toBeInTheDocument();
+  });
+
+  it("renders all five metric cells with values that fit (tabular-nums, nowrap)", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-info-stack");
+    // Labels present
+    for (const label of ["30D Return", "Sharpe", "Win rate", "Max DD", "Avg dur"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    // The value cell uses whitespace-nowrap + tabular-nums so values never clip.
+    const ret = screen.getByText(/\+?47\.2%/);
+    expect(ret.className).toMatch(/whitespace-nowrap/);
+    expect(ret.className).toMatch(/tabular-nums/);
   });
 
   it("renders asset pills and badges in the hero", async () => {
@@ -111,34 +149,75 @@ describe("LineageRoute", () => {
     expect(screen.getAllByText(/14/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("NFT token id stamped on the gen-art panel", async () => {
+  it("clicking the gen-art thumbnail inline-expands the artifact & provenance inspector", async () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-hero");
-    expect(screen.getByText(/#0043/)).toBeInTheDocument();
+    // Closed by default
+    expect(screen.queryByTestId("inspect-art")).not.toBeInTheDocument();
+    await act(async () => {
+      await userEvent.click(screen.getByTestId("plate-inspect-toggle"));
+    });
+    const inspector = await screen.findByTestId("inspect-art");
+    expect(inspector).toHaveTextContent(/artifact & provenance/i);
+    // On-chain metadata + a TxChip explorer link
+    expect(inspector).toHaveTextContent(/manifest_hash/i);
+    expect(inspector).toHaveTextContent(/view on explorer/i);
   });
 
-  it("renders the purchase column with price", async () => {
+  it("renders the purchase block with price (no fee in the price) and an Acquire CTA", async () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-purchase-col");
-    expect(screen.getByText(/49/)).toBeInTheDocument(); // 49 USDC
-    expect(screen.getByRole("button", { name: /buy/i })).toBeInTheDocument();
+    expect(screen.getByText(/49 USDC/)).toBeInTheDocument(); // 49 USDC, no parenthesized fee
+    // Fee lives on a separate muted line
+    expect(screen.getByTestId("fee-line")).toHaveTextContent(/platform fee 5%/i);
+    expect(screen.getByRole("button", { name: /^acquire$/i })).toBeInTheDocument();
   });
 
-  it("Buy calls purchaseIntent and navigates to receipts", async () => {
+  it("does not render a Share button in the hero (removed)", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-purchase-col");
+    expect(screen.queryByRole("button", { name: /^share$/i })).not.toBeInTheDocument();
+  });
+
+  it("Acquire calls purchaseIntent and navigates to receipts", async () => {
     const client = new FixtureMarketplaceData();
     const spy = vi.spyOn(client, "purchaseIntent").mockResolvedValue({
       txHash: "0xdeadbeef",
       network: "mantle-sepolia",
     });
     render(<Wrapper client={client} />);
-    await screen.findByRole("button", { name: /buy/i });
+    await screen.findByRole("button", { name: /^acquire$/i });
     await act(async () => {
-      await userEvent.click(screen.getByRole("button", { name: /buy/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^acquire$/i }));
     });
     await waitFor(() => {
       expect(spy).toHaveBeenCalledWith("btc-momentum-v3");
     });
     // After success, navigated to receipts
+    expect(await screen.findByText("receipt")).toBeInTheDocument();
+  });
+
+  it("open-tier listings show Run free and route through cloneIntent", async () => {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing("btc-momentum-v3");
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...base,
+      tier: "open",
+      priceUsdc: null,
+    });
+    const cloneSpy = vi.spyOn(client, "cloneIntent").mockResolvedValue({
+      txHash: "0xfreeclone",
+      network: "mantle-sepolia",
+    });
+    render(<Wrapper client={client} />);
+    const runFree = await screen.findByTestId("run-free-btn");
+    expect(runFree).toHaveTextContent(/run free/i);
+    // No Acquire/buy button on an open listing
+    expect(screen.queryByTestId("buy-btn")).not.toBeInTheDocument();
+    await act(async () => {
+      await userEvent.click(runFree);
+    });
+    await waitFor(() => expect(cloneSpy).toHaveBeenCalledWith("btc-momentum-v3"));
     expect(await screen.findByText("receipt")).toBeInTheDocument();
   });
 
@@ -205,9 +284,15 @@ describe("LineageRoute", () => {
     expect(await screen.findByTestId("receipts-body")).toBeInTheDocument();
   });
 
-  it("shows an error state for an unknown strategy name", async () => {
+  it("shows the app-native not-found state for an unknown strategy name", async () => {
     render(<Wrapper initialPath="/marketplace/lineage/does-not-exist" />);
-    expect(await screen.findByText(/not found/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/strategy not found/i),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("lineage-not-found")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /back to marketplace/i }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -404,7 +489,8 @@ describe("LineageRoute bundle enrichment", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<Wrapper />); // fixture slug listing
     await screen.findByTestId("lineage-page");
-    expect(screen.getByText("btc-momentum-v3")).toBeInTheDocument();
+    // Fixture title is the listing's display name, not the raw id.
+    expect(screen.getByText("BTC Momentum v3")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByTestId("creator-link")).not.toBeInTheDocument();
   });
