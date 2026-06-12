@@ -1,5 +1,5 @@
 {
-  "schema_version": "xvn.agent_run.v1",
+  "schema_version": "xvn.agent_run.v2",
   "run_id": "run_export_fixture_01",
   "objective": "Improve BTC mean reversion strategy",
   "strategy_id": "strat_export_fixture",
@@ -16,6 +16,18 @@
     "input_tokens": 1234,
     "output_tokens": 456,
     "cost_usd": 0.0123
+  },
+  "accounting": {
+    "source": "agent_model_calls",
+    "eval_run_id": null,
+    "eval_mode": null,
+    "eval_status": null,
+    "eval_actual_input_tokens": null,
+    "eval_actual_output_tokens": null,
+    "eval_model_calls": 0,
+    "eval_model_call_input_tokens": null,
+    "eval_model_call_output_tokens": null,
+    "eval_model_call_cost_usd": null
   },
   "spans": [
     {

@@ -26,6 +26,7 @@ import type {
   AgentRunMemoryEventsResponse,
   AgentRunStreamEvent,
   AgentRunSummary,
+  AgentRunAccounting,
   RetentionMode,
   RunSpan,
   RunStatus,
@@ -104,7 +105,11 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 function isAgentRunExportPayload(payload: unknown): payload is Record<string, unknown> {
-  return isObject(payload) && payload.schema_version === "xvn.agent_run.v1";
+  return (
+    isObject(payload) &&
+    (payload.schema_version === "xvn.agent_run.v1" ||
+      payload.schema_version === "xvn.agent_run.v2")
+  );
 }
 
 function asString(v: unknown, fallback = ""): string {
@@ -113,6 +118,10 @@ function asString(v: unknown, fallback = ""): string {
 
 function asNumber(v: unknown, fallback = 0): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+function asNullableNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 function asNullableString(v: unknown): string | null {
@@ -246,8 +255,25 @@ function durationMs(startedAt: string, finishedAt: string | null): number | null
   return Math.max(0, end - start);
 }
 
+function normalizeAccounting(raw: unknown): AgentRunAccounting | null {
+  if (!isObject(raw)) return null;
+  return {
+    source: asString(raw.source, "none") as AgentRunAccounting["source"],
+    eval_run_id: asNullableString(raw.eval_run_id),
+    eval_mode: asNullableString(raw.eval_mode),
+    eval_status: asNullableString(raw.eval_status),
+    eval_actual_input_tokens: asNullableNumber(raw.eval_actual_input_tokens),
+    eval_actual_output_tokens: asNullableNumber(raw.eval_actual_output_tokens),
+    eval_model_calls: asNumber(raw.eval_model_calls),
+    eval_model_call_input_tokens: asNullableNumber(raw.eval_model_call_input_tokens),
+    eval_model_call_output_tokens: asNullableNumber(raw.eval_model_call_output_tokens),
+    eval_model_call_cost_usd: asNullableNumber(raw.eval_model_call_cost_usd),
+  };
+}
+
 function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDetail {
   const totals = isObject(payload.totals) ? payload.totals : {};
+  const accounting = normalizeAccounting(payload.accounting);
   const spans = flattenExportSpans(payload.spans);
   const modelCallsRaw = Array.isArray(payload.model_calls) ? payload.model_calls : [];
   const toolCallsRaw = Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
@@ -307,6 +333,7 @@ function normalizeAgentRunExport(payload: Record<string, unknown>): AgentRunDeta
       duration_ms: durationMs(startedAt, finishedAt),
       financial_eval_id: asNullableString(payload.eval_run_id),
       retention_mode: asString(payload.retention_mode, "hash_only") as RetentionMode,
+      ...(accounting ? { accounting } : {}),
     },
     spans,
     model_calls: modelCallsRaw.filter(isObject).map((row) => ({

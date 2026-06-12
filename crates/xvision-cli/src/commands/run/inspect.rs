@@ -1,7 +1,7 @@
 //! `xvn run inspect <id>` — build the canonical export deliverables
 //! for a finished agent run.
 //!
-//! Writes `xvn_run.json` (schema `xvn.agent_run.v1`) + `xvn_report.md`
+//! Writes `xvn_run.json` (schema `xvn.agent_run.v2`) + `xvn_report.md`
 //! into `--out <dir>` (default: cwd). `--out -` writes JSON to stdout,
 //! which is the form the autooptimizer ingests. `--format` controls
 //! which deliverables get materialized; both are emitted by default

@@ -1,9 +1,9 @@
-//! Snapshot test for the `xvn.agent_run.v1` JSON export.
+//! Snapshot test for the `xvn.agent_run.v2` JSON export.
 //!
 //! Inserts a deterministic fixture run via the `SqliteRecorder` event
 //! path (so the rows exercise the same write surface production uses),
 //! then calls `build_export` and asserts the serialized JSON matches
-//! `tests/fixtures/xvn_run_v1.golden.json` byte-for-byte. A schema-
+//! `tests/fixtures/xvn_run_v2.golden.json` byte-for-byte. A schema-
 //! version bump is therefore the intentional way to land any breaking
 //! change to the export shape.
 //!
@@ -29,7 +29,7 @@ const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_ev
 const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
 const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
-const GOLDEN_JSON: &str = include_str!("fixtures/xvn_run_v1.golden.json");
+const GOLDEN_JSON: &str = include_str!("fixtures/xvn_run_v2.golden.json");
 
 const RUN_ID: &str = "run_export_fixture_01";
 const ARTIFACT_ID: &str = "art_export_fixture_01";
