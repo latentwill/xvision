@@ -335,4 +335,25 @@ describe("SlotForm.changeProvider", () => {
     expect(next.provider).toBe("openai");
     expect(next.model).toBe("");
   });
+
+  // BUG xvision-mkdd: when canRemove=false (exactly one slot), the remove
+  // button is hidden with no explanation. The fix renders a hint explaining
+  // why the slot cannot be removed so the operator isn't left confused.
+  it("shows an at-least-one-slot hint when canRemove is false", async () => {
+    vi.mocked(settingsApi.listProviders).mockResolvedValue({
+      providers: [row("anthropic", "anthropic", ["claude-sonnet-4-6"])],
+      default_model: null,
+    });
+
+    renderSlot({
+      slot: makeSlot(),
+      onChange: vi.fn(),
+    });
+
+    // The hint must be present when canRemove=false (the renderSlot helper
+    // always passes canRemove={false}).
+    expect(
+      await screen.findByText(/agent needs at least one slot/i),
+    ).toBeInTheDocument();
+  });
 });

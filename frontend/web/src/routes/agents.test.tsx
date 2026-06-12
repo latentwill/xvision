@@ -11,7 +11,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import { AgentsRoute } from "./agents";
 import * as agentsApi from "@/api/agents";
-import type { Agent } from "@/api/agents";
+import type { Agent, AgentSlot } from "@/api/agents";
 
 vi.mock("@/api/agents", async () => {
   const actual = await vi.importActual<typeof import("@/api/agents")>(
@@ -200,6 +200,48 @@ describe("AgentsRoute", () => {
       expect(screen.queryByText("Mean Reverter")).not.toBeInTheDocument(),
     );
     expect(screen.getAllByText("Trend Trader").length).toBeGreaterThan(0);
+  });
+
+  // BUG xvision-4wna: after archiving an agent, the user navigates to
+  // /agents which defaults the archived filter to "exclude", making the
+  // just-archived agent appear to vanish. The fix navigates to
+  // /agents?archived=include so the archived filter is pre-set to "include"
+  // and the agent remains visible.
+  it("renders include_archived=true when route mounts with ?archived=include", async () => {
+    const archivedSlot: AgentSlot = {
+      name: "main",
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      system_prompt: "",
+      skill_ids: [],
+      allowed_tools: [],
+      max_tokens: null,
+    };
+    vi.mocked(agentsApi.listAgentsPaged).mockResolvedValue({
+      items: [
+        agent({
+          agent_id: "archived-1",
+          name: "Old Strategy",
+          archived: true,
+          slots: [archivedSlot],
+        }),
+      ],
+      total: 1,
+    });
+
+    // Simulate landing on /agents?archived=include (what the post-archive
+    // redirect produces).
+    renderRoute("/agents?archived=include");
+
+    await waitFor(() => {
+      const calls = vi.mocked(agentsApi.listAgentsPaged).mock.calls;
+      expect(
+        calls.some(
+          ([f]) =>
+            (f as { include_archived?: boolean }).include_archived === true,
+        ),
+      ).toBe(true);
+    });
   });
 
   it("filters by shape=single via the toolbar filter", async () => {
