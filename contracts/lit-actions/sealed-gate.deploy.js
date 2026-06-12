@@ -184,7 +184,11 @@ function checkSigner(recovered, claimed) {
  * Lit Action entrypoint. RUNTIME-ONLY: depends on the `ethers` and `Lit`
  * globals provided by the Lit execution environment. The Chipotle runtime
  * auto-invokes `main(js_params)` — params arrive as the single destructured
- * argument object (see PARAM ACCESS header note; no self-invocation here).
+ * argument object — and uses main's RETURN VALUE as the response envelope
+ * (NOT Lit.Actions.setResponse, whose side-effect Chipotle ignores; observed
+ * live 2026-06-12: setResponse-only left `response: null`). Return plain
+ * objects: `{ plaintext }` on success, `{ error }` on any failure.
+ * (See PARAM ACCESS header note; no self-invocation here.)
  * Not invoked by the unit tests (which exercise the pure validators above).
  */
 async function main({ message, signature, address, listingId, pkpId, ciphertext, nftAddress, rpcUrl }) {
@@ -193,9 +197,7 @@ async function main({ message, signature, address, listingId, pkpId, ciphertext,
     const recovered = ethers.utils.verifyMessage(message, signature);
     const sig = checkSigner(recovered, String(address));
     if (!sig.ok) {
-      return Lit.Actions.setResponse({
-        response: JSON.stringify({ error: sig.error }),
-      });
+      return { error: sig.error };
     }
 
     // 2. Validate message binding + freshness (expiry is the only temporal
@@ -203,9 +205,7 @@ async function main({ message, signature, address, listingId, pkpId, ciphertext,
     const nowSec = Math.floor(Date.now() / 1000);
     const v = validateMessage(message, { expectedListingId: listingId, nowSec });
     if (!v.ok) {
-      return Lit.Actions.setResponse({
-        response: JSON.stringify({ error: v.error }),
-      });
+      return { error: v.error };
     }
 
     // 3. License check: ERC-1155 balanceOf(address, listingId) > 0.
@@ -217,20 +217,14 @@ async function main({ message, signature, address, listingId, pkpId, ciphertext,
     );
     const balance = await erc1155.balanceOf(address, listingId);
     if (balance.lte(0)) {
-      return Lit.Actions.setResponse({
-        response: JSON.stringify({ error: "caller does not hold the license NFT" }),
-      });
+      return { error: "caller does not hold the license NFT" };
     }
 
     // 4. All gates passed — decrypt.
     const plaintext = await Lit.Actions.Decrypt({ pkpId, ciphertext });
-    return Lit.Actions.setResponse({
-      response: JSON.stringify({ plaintext }),
-    });
+    return { plaintext };
   } catch (e) {
-    return Lit.Actions.setResponse({
-      response: JSON.stringify({ error: `gate error: ${e && e.message ? e.message : e}` }),
-    });
+    return { error: `gate error: ${e && e.message ? e.message : e}` };
   }
 }
 

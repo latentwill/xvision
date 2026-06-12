@@ -38,7 +38,10 @@
  */
 
 /* eslint-disable no-undef */
+// Chipotle uses main's RETURN VALUE as the response envelope (NOT
+// Lit.Actions.setResponse, whose side-effect it ignores; observed live
+// 2026-06-12: setResponse-only left `response: null`).
 async function main({ pkpId, message }) {
   const ciphertext = await Lit.Actions.Encrypt({ pkpId, message });
-  return Lit.Actions.setResponse({ response: JSON.stringify({ ciphertext }) });
+  return { ciphertext };
 }
