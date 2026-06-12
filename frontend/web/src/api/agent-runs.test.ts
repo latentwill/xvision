@@ -154,6 +154,42 @@ describe("validateAgentRunDetail", () => {
     expect(detail.model_calls[0]?.response_text).toBeNull();
   });
 
+  test("normalizes backend xvn.agent_run.v2 accounting exports", () => {
+    const detail = validateAgentRunDetail({
+      ...EXPORT_PAYLOAD,
+      schema_version: "xvn.agent_run.v2",
+      status: "completed",
+      finished_at: "2026-05-17T16:00:09Z",
+      eval_run_id: "eval_run_1",
+      totals: {
+        ...EXPORT_PAYLOAD.totals,
+        model_calls: 0,
+        input_tokens: 46473,
+        output_tokens: 991,
+      },
+      accounting: {
+        source: "eval_actuals",
+        eval_run_id: "eval_run_1",
+        eval_mode: "live",
+        eval_status: "completed",
+        eval_actual_input_tokens: 46473,
+        eval_actual_output_tokens: 991,
+        eval_model_calls: 0,
+        eval_model_call_input_tokens: null,
+        eval_model_call_output_tokens: null,
+        eval_model_call_cost_usd: null,
+      },
+    });
+
+    expect(detail.summary.status).toBe("completed");
+    expect(detail.summary.finished_at).toBe("2026-05-17T16:00:09Z");
+    expect(detail.summary.financial_eval_id).toBe("eval_run_1");
+    expect(detail.summary.total_input_tokens).toBe(46473);
+    expect(detail.summary.total_output_tokens).toBe(991);
+    expect((detail.summary as any).accounting?.source).toBe("eval_actuals");
+    expect((detail.summary as any).accounting?.eval_mode).toBe("live");
+  });
+
   test("projects model_calls.provider/model/hashes onto the matching span", () => {
     const detail = validateAgentRunDetail(EXPORT_PAYLOAD);
     const modelSpan = detail.spans.find((s) => s.span_id === "span_model");

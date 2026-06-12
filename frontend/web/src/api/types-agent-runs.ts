@@ -168,6 +168,19 @@ export type ToolCall = {
   finished_at: string | null;
 };
 
+export type AgentRunAccounting = {
+  source: "agent_model_calls" | "eval_model_calls" | "eval_actuals" | "none";
+  eval_run_id: string | null;
+  eval_mode: "backtest" | "live" | string | null;
+  eval_status: string | null;
+  eval_actual_input_tokens: number | null;
+  eval_actual_output_tokens: number | null;
+  eval_model_calls: number;
+  eval_model_call_input_tokens: number | null;
+  eval_model_call_output_tokens: number | null;
+  eval_model_call_cost_usd: number | null;
+};
+
 export type MemoryRecallItem = {
   id: string;
   score: number;
@@ -316,6 +329,12 @@ export type AgentRunSummary = {
    * flips it via the [Flatten positions] inline action.
    */
   flatten_requested?: boolean;
+  /**
+   * v2 export accounting provenance. Present when a backend
+   * `xvn.agent_run.v2` export is normalized; absent for older detail
+   * envelopes and v1 exports.
+   */
+  accounting?: AgentRunAccounting | null;
 };
 
 export type AgentRunDetail = {

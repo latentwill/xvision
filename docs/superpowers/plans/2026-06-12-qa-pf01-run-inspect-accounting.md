@@ -12,7 +12,7 @@
 
 ## Plan Review Gate Status
 
-**Status:** ESCALATION REQUIRED. The plan review gate exhausted 3/3 iterations, so implementation must not start from this plan unless the release manager explicitly overrides the remaining risks or approves another revision cycle.
+**Status:** IMPLEMENTED AND LOCALLY VERIFIED. The plan review gate exhausted 3/3 iterations. On 2026-06-13 the release manager approved proceeding after incorporating the two remaining P1 blockers into this plan and tracker: frontend/UI v2 operator-surface coverage and explicit `finished_at` reconciliation assertions.
 
 | Iteration | Feasibility | Completeness | Scope & Alignment |
 |---|---|---|---|
@@ -20,12 +20,28 @@
 | 2 | PASS | FAIL | PASS |
 | 3 | PASS | FAIL | PASS |
 
-Remaining P1 blockers from iteration 3:
+Resolved P1 blockers from iteration 3:
 
-- UI/operator surface wiring is incomplete. The plan bumps exports to `xvn.agent_run.v2`, but the frontend currently accepts only `schema_version === "xvn.agent_run.v1"` in `frontend/web/src/api/agent-runs.ts`; a runnable plan must cover the UI/API normalizer or explicitly exclude the UI operator surface with tracker approval.
-- `finished_at` reconciliation lacks direct verification. The plan says stale sidecars should take `eval_runs.completed_at` as top-level `finished_at`, but the planned stale-sidecar, stdout, direct-eval, and status-precedence assertions do not explicitly check it.
+- UI/operator surface wiring is now in scope. The implementation must update `frontend/web/src/api/agent-runs.ts` to accept `xvn.agent_run.v2`, add/extend `frontend/web/src/api/agent-runs.test.ts`, and surface reconciled v2 accounting through the normalized run detail summary so the UI path no longer rejects v2 exports.
+- `finished_at` reconciliation is now explicitly verified. The stale-sidecar, stdout JSON, direct-eval, failed/cancelled override, and non-downgrade tests must assert the expected top-level `finished_at`.
 
-No implementation files were edited while this gate remained unresolved.
+Implementation work happens in `.worktrees/qa-pf01-run-inspect-accounting-20260613` on branch `qa/pf01-run-inspect-accounting-20260613`.
+
+## Implementation Closeout
+
+PF-01 was implemented on branch `qa/pf01-run-inspect-accounting-20260613` under Beads task `xvision-xth7`.
+
+Evidence:
+
+- Backend export: `AgentRunExport` now emits `xvn.agent_run.v2` with `accounting` provenance; `build_export` reconciles linked/direct `eval_runs` accounting, terminal eval status, `finished_at`, and token/cost totals.
+- CLI wiring: `xvn run inspect` file JSON, stdout JSON, and markdown all route through the same enriched `build_export`/`build_report` path.
+- Dashboard wiring: `GET /api/agent-runs/:id`, `/export.json`, `/export.md`, and SSE snapshots still serve `AgentRunExport` from `build_export`.
+- Frontend wiring: `validateAgentRunDetail` accepts exact v1/v2 export schema strings and normalizes v2 accounting onto the detail summary while preserving v1 compatibility.
+- Active design docs: `docs/design/ce-plan.md` and `docs/design/notes-live-status.md` now reference the v2 export.
+- Verification: `scripts/cargo test -p xvision-cli --test run_inspect -- --nocapture` passed 13/13; `scripts/cargo test -p xvision-observability --test export_schema -- --nocapture` passed 2/2; `cd frontend/web && npm test -- agent-runs.test.ts` passed 34/34; `rustfmt --check` passed on touched Rust files; `git diff --check` passed.
+- Adversarial review: read-only `codex review --uncommitted` found no actionable correctness issues after independently rerunning the focused Rust/frontend checks.
+
+The unchecked task list below is retained as the original execution plan; optional legacy paper-mode coverage was not added because current live parity is covered by an explicit `mode = 'live'` fixture.
 
 ---
 
@@ -37,6 +53,11 @@ No implementation files were edited while this gate remained unresolved.
 - Modify `crates/xvision-observability/tests/fixtures/xvn_run_v1.golden.json` by replacing it with a v2 fixture or adding sibling `xvn_run_v2.golden.json`; keep explicit schema drift coverage.
 - Modify `crates/xvision-cli/tests/run_inspect.rs`: integration regression tests that seed `eval_runs` plus stale or incomplete sidecar rows and invoke `xvn run inspect`.
 - Modify `crates/xvision-cli/src/commands/run/inspect.rs` only if CLI-level behavior or help text needs to mention eval-linked accounting; otherwise leave command dispatch unchanged.
+- Modify `crates/xvision-dashboard/src/routes/agent_runs.rs`: update v2 route/SSE comments to match the shared export schema.
+- Modify `frontend/web/src/api/agent-runs.ts`: accept v2 exports and normalize the new `accounting` object into operator-visible run detail fields.
+- Modify `frontend/web/src/api/agent-runs.test.ts`: assert v2 exports normalize successfully and expose reconciled status, `finished_at`, token totals, and accounting provenance.
+- Modify `frontend/web/src/api/types-agent-runs.ts` only if the normalized UI type needs an accounting field.
+- Modify `docs/design/ce-plan.md` and `docs/design/notes-live-status.md`: update active schema references from v1 to v2 after implementation review surfaced the stale references.
 - Do not modify `crates/xvision-engine/src/api/eval.rs`, `crates/xvision-engine/src/eval/executor/backtest.rs`, or other actively owned engine execution/API files for PF-01.
 
 ## Live/Eval Parity Plan
@@ -44,7 +65,7 @@ No implementation files were edited while this gate remained unresolved.
 - **Backtest path:** Backtest eval runs persist status and token counters in `eval_runs` (`mode = 'backtest'`, `status`, `completed_at`, `actual_input_tokens`, `actual_output_tokens`) and may link sidecar rows through `agent_runs.eval_run_id`.
 - **Live path:** Live eval runs use the same `eval_runs` table shape (`mode = 'live'` for current writes) and the same `agent_runs.eval_run_id` linkage. `mode = 'paper'` is only a legacy read alias and is not sufficient parity evidence. PF-01 must not special-case backtest mode; enrichment must work for both `backtest` and `live` eval modes.
 - **Evidence path:** `xvn_run.json.accounting`, top-level `status`, `finished_at`, and `totals` provide the common post-run comparison surface. The detail `model_calls` array remains the inspected agent-run detail list; `accounting.source` states whether totals came from agent model-call detail rows, eval-linked model-call aggregation, eval actual counters, or no signal.
-- **Operator surface:** `xvn run inspect` file JSON, stdout JSON (`--out - --format json`), and `xvn_report.md` must all show the reconciled status/accounting source. Missing/legacy/no-signal states must render as `accounting.source = "none"` or nullable accounting fields, never as unexplained zero.
+- **Operator surface:** `xvn run inspect` file JSON, stdout JSON (`--out - --format json`), `xvn_report.md`, and the dashboard/frontend agent-run API normalizer must all accept/show the reconciled status/accounting source. Missing/legacy/no-signal states must render as `accounting.source = "none"` or nullable accounting fields, never as unexplained zero.
 - **Parity tests:** Add one stale-sidecar test for `mode = 'backtest'` and one equivalent stale-sidecar test for `mode = 'live'`. Both must assert the same accounting/status reconciliation behavior. Add optional legacy coverage for `mode = 'paper'` only as a backward-compatibility case, not as the current live parity proof. If true live-loop persistence later diverges from the shared `eval_runs`/`agent_runs.eval_run_id` path, that divergence becomes a follow-up item owned by the live executor track; PF-01 must still persist and surface the `mode`/source evidence so the omission is explicit.
 
 ## Work Units
@@ -60,16 +81,17 @@ No implementation files were edited while this gate remained unresolved.
 - [ ] Assert `xvn run inspect <run_id> --db <db> --out <dir>` succeeds and writes `xvn_run.json` with:
   - `schema_version = "xvn.agent_run.v2"`;
   - top-level `status = "completed"`;
+  - top-level `finished_at = eval_runs.completed_at`;
   - `eval_run_id = eval_run_id`;
   - `totals.input_tokens` and `totals.output_tokens` from `eval_runs.actual_*_tokens`;
   - `totals.model_calls = 0`;
   - `accounting.source = "eval_actuals"`;
   - `accounting.eval_status = "completed"`;
   - `accounting.eval_mode = "backtest"`.
-- [ ] Assert `xvn_report.md` contains `Status: completed`, `Eval run: <eval_run_id>`, and an accounting provenance line naming `eval_actuals`.
-- [ ] Add `inspect_reconciles_live_eval_accounting_when_sidecar_is_stale` using the same fixture with `eval_runs.mode = 'live'`; assert it matches the backtest behavior and exposes `accounting.eval_mode = "live"`.
+- [ ] Assert `xvn_report.md` contains `Status: completed`, `Finished at: <eval completed_at>`, `Eval run: <eval_run_id>`, and an accounting provenance line naming `eval_actuals`.
+- [ ] Add `inspect_reconciles_live_eval_accounting_when_sidecar_is_stale` using the same fixture with `eval_runs.mode = 'live'`; assert it matches the backtest behavior and exposes `accounting.eval_mode = "live"` plus the eval `completed_at` as top-level `finished_at`.
 - [ ] Optionally add `inspect_reconciles_legacy_paper_eval_accounting_when_sidecar_is_stale` for old DB rows, but do not use this as the live parity proof.
-- [ ] Add `inspect_stdout_json_reconciles_eval_accounting` using `--out - --format json` against the stale sidecar fixture; assert stdout JSON has the same v2 `accounting`, `status`, and token totals as file JSON.
+- [ ] Add `inspect_stdout_json_reconciles_eval_accounting` using `--out - --format json` against the stale sidecar fixture; assert stdout JSON has the same v2 `accounting`, `status`, `finished_at`, and token totals as file JSON.
 - [ ] Run RED:
   - `export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"; scripts/cargo test -p xvision-cli --test run_inspect inspect_reconciles_completed_eval_accounting_when_sidecar_is_stale -- --nocapture`
   - `export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"; scripts/cargo test -p xvision-cli --test run_inspect inspect_reconciles_live_eval_accounting_when_sidecar_is_stale -- --nocapture`
@@ -128,15 +150,15 @@ No implementation files were edited while this gate remained unresolved.
   - assert totals match the aggregate linked model calls.
 - [ ] Add `inspect_direct_eval_run_id_without_sidecar_uses_eval_projection`:
   - seed only `eval_runs`;
-  - assert `xvn run inspect <eval_run_id>` emits a minimal v2 export with eval status, eval mode, and actual token totals.
+  - assert `xvn run inspect <eval_run_id>` emits a minimal v2 export with eval status, eval mode, eval `completed_at` as top-level `finished_at`, and actual token totals.
 - [ ] Add `inspect_legacy_agent_db_without_eval_table_still_exports`:
   - create a DB with `013_cli_jobs.sql` and `018_agent_run_observability.sql` but without `002_eval.sql`;
   - seed a pure `agent_runs` row with no `eval_run_id`;
   - assert `xvn run inspect` succeeds, emits v2 with legacy agent fields preserved, and sets `accounting.source = "none"` instead of failing with `no such table: eval_runs`.
 - [ ] Add status-precedence tests:
-  - `inspect_uses_failed_eval_status_when_sidecar_is_running`;
-  - `inspect_uses_cancelled_eval_status_when_sidecar_is_running`;
-  - `inspect_nonterminal_eval_does_not_downgrade_completed_sidecar`.
+  - `inspect_uses_failed_eval_status_when_sidecar_is_running`, including failed eval `completed_at` as top-level `finished_at`;
+  - `inspect_uses_cancelled_eval_status_when_sidecar_is_running`, including cancelled eval `completed_at` as top-level `finished_at`;
+  - `inspect_nonterminal_eval_does_not_downgrade_completed_sidecar`, including preservation of the completed sidecar `finished_at`.
 - [ ] Add a legacy pure-agent assertion to the existing smoke test:
   - current non-eval `agent_runs` fixtures should now emit `schema_version = "xvn.agent_run.v2"`;
   - `accounting.source = "none"` or `agent_model_calls` according to the fixture.
@@ -166,6 +188,21 @@ No implementation files were edited while this gate remained unresolved.
 - [ ] Keep the trajectory-mode stderr probe best-effort; direct eval IDs may skip that line.
 - [ ] Run Task 3 GREEN commands.
 
+### Task 4b: Frontend V2 Export Compatibility
+
+**Files:**
+- Modify `frontend/web/src/api/agent-runs.ts`
+- Modify `frontend/web/src/api/agent-runs.test.ts`
+- Modify `frontend/web/src/api/types-agent-runs.ts` only if needed
+
+- [ ] Add RED test coverage that `validateAgentRunDetail` accepts a backend export with `schema_version = "xvn.agent_run.v2"` and an `accounting` object.
+- [ ] Assert the normalized detail summary preserves reconciled `status`, `finished_at`, token totals, and exposes accounting provenance to operator UI code.
+- [ ] Update the export-shape guard to accept v1 and v2. Do not loosen it to arbitrary strings.
+- [ ] Add a nullable/optional accounting field to the normalized type if needed, keeping v1 exports valid with no accounting object.
+- [ ] Run RED then GREEN:
+  - `cd frontend/web && npm test -- agent-runs.test.ts --runInBand` or the repo's equivalent focused test command.
+  - If the package uses Vitest directly, run the existing focused Vitest command for `frontend/web/src/api/agent-runs.test.ts`.
+
 ### Task 5: Verification, Adversarial Review, And Tracker Closeout
 
 **Files:**
@@ -175,10 +212,11 @@ No implementation files were edited while this gate remained unresolved.
   - `export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"; scripts/cargo test -p xvision-cli --test run_inspect -- --nocapture`
   - `export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"; scripts/cargo test -p xvision-observability --test export_schema -- --nocapture`
   - `export CARGO_TARGET_DIR="$HOME/.cargo-target/xvision"; scripts/cargo test -p xvision-observability export::tests -- --nocapture` if observability unit tests are added.
+  - focused frontend API test command for `frontend/web/src/api/agent-runs.test.ts`.
 - [ ] Run hygiene:
   - `git diff --check`
   - `rustfmt --check crates/xvision-observability/src/export.rs crates/xvision-observability/tests/export_schema.rs crates/xvision-cli/tests/run_inspect.rs crates/xvision-cli/src/commands/run/inspect.rs`
-- [ ] Perform a wiring audit and record it in `QA_TRACKER.md`: `xvn run inspect` command -> `build_export` -> eval enrichment -> file JSON, stdout JSON, and markdown report.
+- [ ] Perform a wiring audit and record it in `QA_TRACKER.md`: `xvn run inspect` command -> `build_export` -> eval enrichment -> file JSON, stdout JSON, markdown report, dashboard `/api/agent-runs/:id`, dashboard `/api/agent-runs/:id/export.json`, SSE snapshot, and frontend `validateAgentRunDetail`/normalization.
 - [ ] Record live/eval parity evidence in `QA_TRACKER.md`: backtest fixture, live-mode fixture, common `accounting` evidence path, operator surfaces, and any explicit live executor dependency if a real live-loop path remains outside this batch.
 - [ ] Run read-only adversarial implementation review. Required prompt checks:
   - schema-version compatibility and v1 field preservation;
@@ -187,11 +225,12 @@ No implementation files were edited while this gate remained unresolved.
   - direct eval fallback behavior;
   - legacy DB behavior without `eval_runs`;
   - stdout/file/markdown wiring;
+  - frontend v2 export acceptance and normalized accounting display;
   - live/eval parity evidence;
   - scope compliance with `team/OWNERSHIP.md`.
 - [ ] Fix all P0/P1 findings and repeat review until PASS.
 - [ ] Update PF-01 in `QA_TRACKER.md` with implementation evidence, wiring proof, verification command output, adversarial review result, parity result, and branch/PR status.
-- [ ] Commit only scoped files on `qa/pf01-run-inspect-accounting-20260612`.
+- [ ] Commit only scoped files on `qa/pf01-run-inspect-accounting-20260613`.
 - [ ] Push and open a stacked PR against the latest QA stack head unless prior QA PRs have merged; if they have merged, rebase/retarget to `main`.
 
 ## Safety Notes

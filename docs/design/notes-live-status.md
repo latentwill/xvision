@@ -22,7 +22,7 @@ Findings from the live-status fix, for the ce-plan. 2026-06-10.
 
 ## Deferred: detail endpoint (`GET /api/agent-runs/:id`) not enriched
 
-The detail route serves the versioned `xvn.agent_run.v1` payload
+The detail route serves the versioned `xvn.agent_run.v2` payload
 (`AgentRunExport` in `crates/xvision-observability/src/export.rs`),
 which is contractually byte-for-byte identical to `xvn run inspect`
 output. Adding `eval_mode`/`is_live_money` there means a schema-version
