@@ -1086,7 +1086,10 @@ impl Executor {
                 // (qa-decisions-30day-count).
                 let next_bar_open = bars.get(i + 1).map(|b| b.open).unwrap_or(bar.close);
 
-                if filter_gated {
+                let filter_gated_position_sltp_check = filter_gated
+                    && book.position(asset_sym).abs() > f64::EPSILON
+                    && sltp_state.contains_key(&asset_sym);
+                if filter_gated && !filter_gated_position_sltp_check {
                     // Strategy filter gated this timestamp: skip the agent
                     // pipeline for this asset. No decision row is written
                     // (matches the single-asset filter-gate behavior, which
@@ -1375,6 +1378,13 @@ impl Executor {
                             None => {}
                         }
                     }
+                }
+
+                if filter_gated_position_sltp_check {
+                    // PF-17: filter-gated in-position bars still need the
+                    // deterministic SL/TP check above, but a non-triggering
+                    // bar must continue to skip the agent pipeline.
+                    continue 'asset;
                 }
 
                 // eval-flat-degeneracy-early-stop (F-9): before paying the

@@ -25,6 +25,7 @@ pub async fn fresh_store() -> RunStore {
         include_str!("../../migrations/014_eval_agent_id.sql"),
         include_str!("../../migrations/022_eval_runs_agents_agent_id.sql"),
         include_str!("../../migrations/027_run_bars_manifest.sql"),
+        include_str!("../../migrations/032_filters_and_evaluations.sql"),
         include_str!("../../migrations/016_eval_reviews.sql"),
         include_str!("../../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../../migrations/038_eval_runs_live_config.sql"),

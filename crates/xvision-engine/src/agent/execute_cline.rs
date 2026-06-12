@@ -580,6 +580,18 @@ pub const STEP_ERR_REPLAY_FRAMES_EXHAUSTED: &str = "replay_frames_exhausted";
 /// request did not match the recording).
 pub const STEP_ERR_REPLAY_DIVERGENCE: &str = "replay_divergence";
 
+fn cline_raw_json_repair_prompt() -> String {
+    "Output only a JSON object with your trading decision — no prose, no markdown. \
+        Optional bracket keys may be omitted when not needed; if present, use these exact key names:\n\
+        {\"action\": \"long_open|short_open|flat|hold\", \"conviction\": 0.0-1.0, \"justification\": \"reason\", \
+        \"stop_loss_pct\": 2.0, \"take_profit_pct\": 4.0, \"trailing_stop_pct\": 1.5, \
+        \"breakeven_trigger_pct\": 2.0, \"breakeven_offset_pct\": 0.2, \"fade_sl_bars\": 6, \
+        \"fade_sl_start_pct\": 3.0, \"fade_sl_end_pct\": 1.0, \"max_bars_held\": 12, \
+        \"sl_atr_mult\": 2.0, \"tp_atr_mult\": 3.0, \"tp1_pct\": 3.0, \
+        \"tp1_close_fraction\": 0.5, \"tp2_pct\": 6.0}"
+        .to_string()
+}
+
 /// Single-shot no-decision recovery for weak tool-callers that emit
 /// `end_turn` without calling `submit_decision`. Runs BEFORE `end_run`
 /// so the session is still open for a second step.
@@ -626,9 +638,7 @@ async fn try_nodecision_recovery(
     let repair = client
         .step(StepParams {
             run_id: run_id.to_string(),
-            prompt: "Output only a JSON object with your trading decision — no prose, no markdown:\n\
-                {\"action\": \"buy|sell|hold\", \"conviction\": 0.0-1.0, \"justification\": \"reason\"}"
-                .to_string(),
+            prompt: cline_raw_json_repair_prompt(),
         })
         .await;
 
@@ -929,6 +939,26 @@ mod tests {
 
         let already = plus(vec![SUBMIT_DECISION_TOOL.into()]);
         assert_eq!(already.iter().filter(|t| *t == SUBMIT_DECISION_TOOL).count(), 1);
+    }
+
+    #[test]
+    fn raw_json_repair_prompt_mentions_optional_bracket_fields() {
+        let prompt = cline_raw_json_repair_prompt();
+        assert!(prompt.contains("long_open|short_open|flat|hold"));
+        for field in [
+            "\"stop_loss_pct\"",
+            "\"take_profit_pct\"",
+            "\"trailing_stop_pct\"",
+            "\"breakeven_trigger_pct\"",
+            "\"tp1_close_fraction\"",
+            "\"tp2_pct\"",
+        ] {
+            assert!(prompt.contains(field), "repair prompt missing {field}: {prompt}");
+        }
+        assert!(
+            !prompt.contains("_pct?") && !prompt.contains("_mult?") && !prompt.contains("_bars?"),
+            "repair prompt must not show parser-invalid question-mark keys: {prompt}"
+        );
     }
 
     #[test]
