@@ -164,10 +164,22 @@ enum ProviderAction {
 /// any `ApiContext::open` / env key lookup. Exposed here (rather than
 /// inlined into `lib.rs`) so the bootstrap owner wires a single named call.
 pub async fn load_secrets_into_env_best_effort(xvn_home: &std::path::Path) {
-    // Best-effort: any error (missing/unreadable providers.toml) is non-fatal —
-    // a genuinely-missing key still surfaces downstream with an actionable,
-    // env-var-naming error. We deliberately swallow the result here.
-    let _ = providers::load_providers_secrets_into_env(xvn_home).await;
+    let path = xvn_home.join("secrets").join("providers.toml");
+    match providers::load_providers_secrets_into_env(xvn_home).await {
+        Ok(_) => {}
+        Err(_) if !path.exists() => eprintln!("{}", missing_provider_secrets_warning(xvn_home)),
+        Err(e) => eprintln!(
+            "warning: could not load provider secrets from {}: {e}",
+            path.display()
+        ),
+    }
+}
+
+pub fn missing_provider_secrets_warning(xvn_home: &std::path::Path) -> String {
+    format!(
+        "warning: provider secrets file not found at {}; provider API keys must come from env vars until this file exists",
+        xvn_home.join("secrets").join("providers.toml").display()
+    )
 }
 
 pub async fn run(cmd: ProviderCmd) -> Result<()> {
@@ -913,6 +925,13 @@ api_key_env = "K"
             provider_catalog_probe_url("vllm", "http://localhost:8000/v1"),
             "http://localhost:8000/v1/models"
         );
+    }
+
+    #[test]
+    fn missing_provider_secrets_warning_names_expected_path() {
+        let warning = missing_provider_secrets_warning(std::path::Path::new("/tmp/xvn-home"));
+        assert!(warning.contains("/tmp/xvn-home/secrets/providers.toml"));
+        assert!(warning.contains("provider API keys must come from env vars"));
     }
 
     const MIN_CONFIG: &str = r#"

@@ -1,4 +1,4 @@
-use crate::agents::{Agent, AgentSlot, InputsPolicy};
+use crate::agents::{Agent, AgentSlot, Capability, InputsPolicy};
 use crate::diagnostics::{assert_launchable, diagnose, DiagnosticsError};
 use crate::strategies::agent_ref::AgentRef;
 use crate::strategies::manifest::PublicManifest;
@@ -123,6 +123,36 @@ fn missing_submit_decision_blocks_launch() {
             ..
         }
     ));
+}
+
+#[test]
+fn critic_capability_surfaces_stub_warning() {
+    let mut strategy = strategy(vec!["ohlcv", "submit_decision"]);
+    strategy.agents[0].activates = Some(Capability::Critic);
+
+    let diag = diagnose(&strategy, &[agent("agent-1", vec!["ohlcv", "submit_decision"])]);
+
+    assert!(
+        diag.warnings
+            .iter()
+            .any(|w| w.contains("capability Critic is a stub")),
+        "expected Critic stub warning, got {:?}",
+        diag.warnings
+    );
+}
+
+#[test]
+fn trader_capability_has_no_stub_warning() {
+    let diag = diagnose(
+        &strategy(vec![]),
+        &[agent("agent-1", vec!["ohlcv", "submit_decision"])],
+    );
+
+    assert!(
+        diag.warnings.is_empty(),
+        "trader-only strategy must not warn: {:?}",
+        diag.warnings
+    );
 }
 
 #[test]

@@ -1309,6 +1309,9 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
                 source: anyhow::anyhow!("{}", render_diagnostics_error(&e)),
             });
         }
+        for warning in &diag.warnings {
+            println!("warning: {warning}");
+        }
         for warning in no_filter_warnings(&strategy) {
             println!("warning: {warning}");
         }
@@ -1336,6 +1339,7 @@ async fn validate(id: &str, scenario_id: Option<&str>, json: bool) -> CliResult<
     if let Err(e) = assert_launchable(&diag) {
         errors.push(render_diagnostics_error(&e));
     }
+    warnings.extend(diag.warnings);
 
     let Some(scenario_id) = scenario_id else {
         warnings.push("no --scenario supplied; run shape-only check only".to_string());
@@ -1641,6 +1645,13 @@ fn print_diagnostics_text(diag: &StrategyDiagnostics) {
         println!("UNREGISTERED TOOLS:");
         for u in &diag.unregistered_tools {
             println!("  - role '{}': {}", u.role, u.tool);
+        }
+    }
+    if !diag.warnings.is_empty() {
+        println!();
+        println!("WARNINGS:");
+        for warning in &diag.warnings {
+            println!("  - {warning}");
         }
     }
 }

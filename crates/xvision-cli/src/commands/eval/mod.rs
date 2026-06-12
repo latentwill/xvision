@@ -247,11 +247,10 @@ pub struct RunArgs {
     /// the check (e.g. when the missing window will be fetched on demand).
     #[arg(long)]
     pub skip_bar_coverage_check: bool,
-    /// Stream live progress as NDJSON to STDERR while the run is in flight
-    /// (U5/U11). Emits `{"type":"eval_progress",...}` heartbeats and
-    /// `{"type":"filter_blocked",...}` lines so a long backtest does not look
-    /// hung. STDOUT is unaffected — the final `Run` value remains the only
-    /// thing written to stdout, preserving the json-stdout contract.
+    /// Emit NDJSON progress summaries to STDERR: one start heartbeat before
+    /// launch and one final decision-count summary after completion. STDOUT is
+    /// unaffected — the final `Run` value remains the only thing written to
+    /// stdout, preserving the json-stdout contract.
     #[arg(long)]
     pub stream_progress: bool,
 
@@ -869,13 +868,9 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         mode.as_str(),
     );
 
-    // U5/U11: when `--stream-progress` is set, emit an initial heartbeat to
-    // STDERR so the operator sees the run is alive before the first decision.
-    // Mid-run heartbeats + filter-blocked lines require the engine to expose a
-    // subscribable progress bus on the plain `eval::run` path (see the
-    // interface note for api/eval.rs); until then we surface the start and the
-    // truthful completion summary derived from the returned `Run`. STDOUT stays
-    // single-value.
+    // U5/U11: emit only truthful summaries. The plain eval::run path does not
+    // expose a subscribable per-decision progress bus, so this flag reports
+    // start + final decision count rather than pretending to stream internals.
     if args.stream_progress {
         emit_eval_progress_line(&req.agent_id, 0, 0);
     }
@@ -2410,12 +2405,22 @@ async fn run_sweep(args: SweepArgs) -> CliResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
+    use clap::{Args, Command, Parser};
 
     #[derive(Parser, Debug)]
     struct TestEval {
         #[command(subcommand)]
         op: Op,
+    }
+
+    #[test]
+    fn stream_progress_help_describes_summary_events_only() {
+        let help = RunArgs::augment_args(Command::new("run"))
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("one start heartbeat"));
+        assert!(help.contains("one final decision-count summary"));
+        assert!(!help.contains("filter_blocked"));
     }
 
     // ── Task C3: --assets parse + EvalRunRequest threading ──────────────────────

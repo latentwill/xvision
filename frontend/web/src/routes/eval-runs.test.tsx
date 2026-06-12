@@ -267,6 +267,32 @@ describe("EvalRunsRoute", () => {
     expect(scenariosApi.listScenarios).toHaveBeenCalled();
   });
 
+  it("shows regime and venue context in launcher scenario options", async () => {
+    mockReady();
+    vi.mocked(scenariosApi.listScenarios).mockResolvedValue([
+      scenario({
+        display_name: "BTC bull with costs",
+        tags: ["bull", "momentum"],
+        regime_label: "Bull",
+        volatility_label: "High vol",
+        trend_direction: "Up",
+        venue: {
+          ...scenario().venue,
+          fees: { maker_bps: 1.5, taker_bps: 4.25 },
+          slippage: { model: "linear", bps: 2 },
+        } as Scenario["venue"],
+      }),
+    ]);
+
+    renderRoute("/eval-runs?start=1");
+
+    expect(
+      await screen.findByRole("option", {
+        name: /BTC bull with costs .* Bull .* High vol .* Up .* bull, momentum .* fees 1.5\/4.25 bps .* slippage linear/i,
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("renders a positive max-drawdown value with the danger tone class", async () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([
       {

@@ -1659,6 +1659,12 @@ function InspectorActions({
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const validation = useQuery({
+    queryKey: strategyKeys.validate(strategyId),
+    queryFn: () => validateDraft(strategyId),
+    enabled: hasAttachedAgents(strategy),
+    staleTime: 30_000,
+  });
   const deleteMut = useMutation({
     mutationFn: () => deleteStrategy(strategyId),
     onSuccess: async () => {
@@ -1720,6 +1726,13 @@ function InspectorActions({
     );
   }
 
+  const launchErrors = validation.data?.errors ?? [];
+  const launchBlocked =
+    validation.isError || (validation.isFetched && validation.data?.ok === false);
+  const launchBlockedReason = validation.isError
+    ? errorMessage(validation.error)
+    : launchErrors[0];
+
   return (
     <div className="flex items-center justify-end gap-3 mb-5">
       {deleteMut.isError ? (
@@ -1728,12 +1741,27 @@ function InspectorActions({
         </span>
       ) : null}
       {deleteButton}
-      <Link
-        to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
-        className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors motion-safe:active:scale-[0.96]"
-      >
-        Run eval →
-      </Link>
+      {launchBlocked ? (
+        <>
+          {launchBlockedReason ? (
+            <span className="text-[12px] text-danger">{launchBlockedReason}</span>
+          ) : null}
+          <button
+            type="button"
+            disabled
+            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-surface-elev text-text-3 border border-border cursor-not-allowed"
+          >
+            Run eval →
+          </button>
+        </>
+      ) : (
+        <Link
+          to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors motion-safe:active:scale-[0.96]"
+        >
+          Run eval →
+        </Link>
+      )}
     </div>
   );
 }

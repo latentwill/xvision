@@ -919,7 +919,7 @@ function StartEvalPanel({
               <option value="">— pick a scenario —</option>
               {(scenarios.data ?? []).map((s: Scenario) => (
                 <option key={s.id} value={s.id}>
-                  {s.display_name} · {scenarioWindowLabel(s)}
+                  {scenarioOptionLabel(s)}
                 </option>
               ))}
             </select>
@@ -1250,6 +1250,51 @@ function scenarioWindowLabel(s: Scenario): string {
   }
   const days = Math.max(1, Math.round((end - start) / 86_400_000));
   return `${s.granularity} · ${days}d`;
+}
+
+function scenarioOptionLabel(s: Scenario): string {
+  return [
+    s.display_name,
+    scenarioWindowLabel(s),
+    scenarioRegimeContext(s),
+    scenarioVenueContext(s),
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" · ");
+}
+
+function scenarioRegimeContext(s: Scenario): string | null {
+  const tags = (s.tags ?? []).filter((tag) => tag.trim().length > 0);
+  const parts = [
+    s.regime_label,
+    s.volatility_label,
+    s.trend_direction,
+    tags.length ? tags.join(", ") : null,
+  ].filter((part): part is string => Boolean(part && part.trim().length > 0));
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function scenarioVenueContext(s: Scenario): string {
+  return `${scenarioFeesLabel(s)} · ${scenarioSlippageLabel(s)}`;
+}
+
+function scenarioFeesLabel(s: Scenario): string {
+  const fees = s.venue?.fees;
+  const maker = Number(fees?.maker_bps ?? 0);
+  const taker = Number(fees?.taker_bps ?? 0);
+  if (maker === 0 && taker === 0) return "fees none";
+  return `fees ${formatBps(maker)}/${formatBps(taker)} bps`;
+}
+
+function scenarioSlippageLabel(s: Scenario): string {
+  const slippage = s.venue?.slippage as { model?: string } | null | undefined;
+  const model = slippage?.model;
+  if (!model || model === "none") return "slippage none";
+  return `slippage ${model}`;
+}
+
+function formatBps(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function errorDetail(err: unknown): string {

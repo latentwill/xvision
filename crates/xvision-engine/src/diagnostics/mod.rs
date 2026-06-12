@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::agents::{Agent, AgentSlot};
+use crate::agents::{Agent, AgentSlot, Capability};
 use crate::api::{agents as agents_api, strategy as strategy_api, ApiContext, ApiError};
 use crate::strategies::agent_ref::{canonical_role, AgentRef};
 use crate::strategies::Strategy;
@@ -61,6 +61,8 @@ pub struct StrategyDiagnostics {
     pub unregistered_tools: Vec<UnmetTool>,
     pub has_decision_path: bool,
     pub launchable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -172,13 +174,17 @@ pub fn diagnose(strategy: &Strategy, agents: &[Agent]) -> StrategyDiagnostics {
         .collect();
 
     let mut unregistered = BTreeSet::new();
+    let mut warnings = Vec::new();
     let mut has_decision_path = strategy
         .manifest
         .required_tools
         .iter()
         .any(|tool| tool == "submit_decision");
 
-    for agent in &per_agent {
+    for (agent_ref, agent) in strategy.agents.iter().zip(per_agent.iter()) {
+        if let Some(warning) = stub_capability_warning(agent_ref) {
+            warnings.push(warning);
+        }
         for tool in &agent.tools {
             if tool.name == "submit_decision" {
                 has_decision_path = true;
@@ -202,6 +208,21 @@ pub fn diagnose(strategy: &Strategy, agents: &[Agent]) -> StrategyDiagnostics {
         unregistered_tools,
         has_decision_path,
         launchable,
+        warnings,
+    }
+}
+
+fn stub_capability_warning(agent_ref: &AgentRef) -> Option<String> {
+    match agent_ref.activates {
+        Some(Capability::Critic) => Some(
+            "capability Critic is a stub; its output is placeholder text and will degrade results"
+                .to_string(),
+        ),
+        Some(Capability::Intern) => Some(
+            "capability Intern is a stub; its output is placeholder text and will degrade results"
+                .to_string(),
+        ),
+        _ => None,
     }
 }
 

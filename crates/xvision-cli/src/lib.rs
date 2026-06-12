@@ -78,15 +78,15 @@ pub enum Command {
     ShowDecision {
         #[arg(long)]
         cycle_id: Uuid,
-        #[arg(long, default_value = "data/store.db")]
-        db: PathBuf,
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Pretty-print a cached `InternBriefing` by cycle_id.
     ShowBriefing {
         #[arg(long)]
         cycle_id: Uuid,
-        #[arg(long, default_value = "data/store.db")]
-        db: PathBuf,
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     /// Run a single setup through Intern → Risk slice.
     RunSetup {
@@ -266,12 +266,16 @@ impl Cli {
 
         match self.command {
             Command::ShowMetrics { report } => commands::show_metrics::run(report).map_err(Into::into),
-            Command::ShowDecision { cycle_id, db } => commands::show_decision::run(cycle_id, db)
-                .await
-                .map_err(Into::into),
-            Command::ShowBriefing { cycle_id, db } => commands::show_briefing::run(cycle_id, db)
-                .await
-                .map_err(Into::into),
+            Command::ShowDecision { cycle_id, db } => {
+                commands::show_decision::run(cycle_id, db.unwrap_or_else(default_xvn_db_path))
+                    .await
+                    .map_err(Into::into)
+            }
+            Command::ShowBriefing { cycle_id, db } => {
+                commands::show_briefing::run(cycle_id, db.unwrap_or_else(default_xvn_db_path))
+                    .await
+                    .map_err(Into::into)
+            }
             Command::RunSetup {
                 snapshot,
                 intern,
@@ -355,5 +359,47 @@ impl Cli {
                 .await
                 .map_err(Into::into),
         }
+    }
+}
+
+fn default_xvn_db_path() -> PathBuf {
+    commands::home::resolve_xvn_home_env()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("xvn.db")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn show_decision_defaults_db_to_xvn_home_xvn_db() {
+        let parsed = Cli::try_parse_from([
+            "xvn",
+            "show-decision",
+            "--cycle-id",
+            "00000000-0000-0000-0000-000000000001",
+        ])
+        .expect("show-decision parses without --db");
+        let Command::ShowDecision { db, .. } = parsed.command else {
+            panic!("expected show-decision");
+        };
+        assert!(db.is_none(), "runtime default must come from $XVN_HOME/xvn.db");
+    }
+
+    #[test]
+    fn show_briefing_defaults_db_to_xvn_home_xvn_db() {
+        let parsed = Cli::try_parse_from([
+            "xvn",
+            "show-briefing",
+            "--cycle-id",
+            "00000000-0000-0000-0000-000000000001",
+        ])
+        .expect("show-briefing parses without --db");
+        let Command::ShowBriefing { db, .. } = parsed.command else {
+            panic!("expected show-briefing");
+        };
+        assert!(db.is_none(), "runtime default must come from $XVN_HOME/xvn.db");
     }
 }

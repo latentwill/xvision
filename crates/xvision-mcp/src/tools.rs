@@ -132,8 +132,8 @@ pub struct CreateStrategyReq {
     /// Human-readable name (e.g., `btc-momentum-v1`). Post 2026-05-21
     /// the request no longer takes a `template` discriminator —
     /// `xvn_create_strategy` produces a blank draft and the agent
-    /// (`xvn_create_strategy_agent`) and slot/mechanical-param tool
-    /// calls populate the draft. Unknown fields (including legacy
+    /// (`xvn_strategy_create_atomic` or `xvn_update_slot`) and
+    /// mechanical-param tool calls populate the draft. Unknown fields (including legacy
     /// `template` payloads from pre-migration callers) are silently
     /// ignored on the MCP boundary so the wizard tool-use loop
     /// doesn't break mid-conversation.
@@ -758,21 +758,28 @@ impl XvisionTools {
     // authoring tools — operate on `$XVN_HOME/strategies/<id>.json` via
     // xvision_engine's strategy store + validator. Post-2026-05-21 the
     // strategy template_registry was removed; `xvn_list_templates`
-    // returns an empty array (stub) and `xvn_create_strategy` produces
-    // a blank draft. Operator-readable starters live as prepop seeds
+    // returns a typed redirect and `xvn_create_strategy` produces a
+    // blank draft. Operator-readable starters live as prepop seeds
     // under `$XVN_HOME/strategies/library/`.
     // -----------------------------------------------------------------------
 
-    /// Deprecated stub. The strategy `template_registry` was removed
-    /// on 2026-05-21; this tool now returns an empty array. Operators
-    /// browse the prepop library at
-    /// `$XVN_HOME/strategies/library/` (populated by `xvn strategies
-    /// init`) for starter content.
+    /// Deprecated redirect. The strategy `template_registry` was removed
+    /// on 2026-05-21; this tool now points callers at the prepop library.
+    /// Operators browse `$XVN_HOME/strategies/library/` (populated by
+    /// `xvn strategies init`) for starter content.
     #[tool(
-        description = "Deprecated. The strategy template_registry was removed; returns an empty array. Operator-readable starters live under $XVN_HOME/strategies/library/."
+        description = "Deprecated. The strategy template_registry was removed; returns a typed redirect to $XVN_HOME/strategies/library/."
     )]
     async fn xvn_list_templates(&self) -> Result<String, rmcp::ErrorData> {
-        json_or_err(&authoring::list_templates())
+        json_or_err(&serde_json::json!({
+            "type": "strategy_template_registry_removed",
+            "deprecated": true,
+            "redirect": {
+                "kind": "strategy_library",
+                "path": "$XVN_HOME/strategies/library/",
+                "init_command": "xvn strategies init",
+            },
+        }))
     }
 
     /// Create a new blank strategy draft. Persists to
@@ -781,10 +788,10 @@ impl XvisionTools {
     /// Post-2026-05-21 the request no longer takes a `template`
     /// discriminator (the strategy template_registry was removed).
     /// Callers fill in agents / slots / mechanical params via the
-    /// follow-up `xvn_create_strategy_agent`, `xvn_update_slot`,
+    /// follow-up `xvn_strategy_create_atomic`, `xvn_update_slot`,
     /// `xvn_set_mechanical_param`, … verbs.
     #[tool(
-        description = "Create a new blank strategy draft. Persists the strategy and returns { id } (ULID). Follow up with xvn_create_strategy_agent / xvn_update_slot / xvn_set_mechanical_param to populate it."
+        description = "Create a new blank strategy draft. Persists the strategy and returns { id } (ULID). Follow up with xvn_strategy_create_atomic / xvn_update_slot / xvn_set_mechanical_param to populate it."
     )]
     async fn xvn_create_strategy(
         &self,
@@ -1360,7 +1367,7 @@ impl XvisionTools {
                     bar_history_limit: None,
                     memory_mode: Default::default(),
                     noop_skip: None,
-                    allowed_tools: Vec::new(),
+                    allowed_tools: allowed_tools_for_atomic_role(&req.role),
                     delta_briefing: None,
                 }],
                 scope_strategy_id: None,
@@ -2090,6 +2097,14 @@ fn parse_timeframe_mcp(timeframe: &str) -> Result<u32, rmcp::ErrorData> {
     }
 }
 
+fn allowed_tools_for_atomic_role(role: &str) -> Vec<String> {
+    if role.eq_ignore_ascii_case("trader") {
+        vec!["ohlcv".to_string(), "submit_decision".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Count each action kind in the decisions table for a run.
 /// Returns a `serde_json::Value` map (`{ "long_open": N, ... }`).
 async fn action_distribution_mcp(ctx: &ApiContext, run_id: &str) -> anyhow::Result<serde_json::Value> {
@@ -2756,18 +2771,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_templates_returns_empty_post_registry_removal() {
+    async fn list_templates_returns_typed_redirect_post_registry_removal() {
         // Post-2026-05-21: the strategy template_registry was removed.
-        // xvn_list_templates is retained as a deprecation stub that
-        // returns an empty array. Operator-readable starters live
-        // under $XVN_HOME/strategies/library/ via `xvn strategies init`.
+        // xvn_list_templates is retained as a typed redirect so MCP callers
+        // don't infer "there are zero templates" from an empty array.
         let tools = XvisionTools::default();
         let s = tools.xvn_list_templates().await.unwrap();
         let v = parsed(&s);
+        assert_eq!(v["type"], "strategy_template_registry_removed");
+        assert_eq!(v["redirect"]["kind"], "strategy_library");
+        assert_eq!(v["redirect"]["init_command"], "xvn strategies init");
+        assert_eq!(v["redirect"]["path"], "$XVN_HOME/strategies/library/");
+    }
+
+    #[tokio::test]
+    async fn strategy_create_atomic_trader_slot_grants_submit_decision() {
+        use xvision_engine::diagnostics::{assert_launchable, diagnose};
+
+        let (tools, _td) = tools_with_tmp();
+        let created = tools
+            .xvn_strategy_create_atomic(Parameters(StrategyCreateAtomicReq {
+                name: "mcp-atomic-trader".into(),
+                role: "trader".into(),
+                prompt: "You are a trader. Call submit_decision with each decision.".into(),
+                provider: "openrouter".into(),
+                model: "kimi-k2".into(),
+                asset: Some("BTC/USD".into()),
+                timeframe: Some("4h".into()),
+                creator: Some("@mcp-test".into()),
+            }))
+            .await
+            .unwrap();
+        let created = parsed(&created);
+        let strategy_id = created["strategy_id"].as_str().unwrap().to_string();
+        let agent_id = created["agent_id"].as_str().unwrap().to_string();
+
+        let ctx = tools.api_context().await.unwrap();
+        let agent = api_agents::get(&ctx, &agent_id).await.unwrap();
+        assert_eq!(agent.slots.len(), 1);
         assert!(
-            v.as_array().is_some_and(|arr| arr.is_empty()),
-            "post-registry-removal list must be empty, got: {s}"
+            agent.slots[0]
+                .allowed_tools
+                .iter()
+                .any(|tool| tool == "submit_decision"),
+            "MCP atomic trader slot must grant submit_decision: {:?}",
+            agent.slots[0].allowed_tools
         );
+
+        let strategy = tools.store().load(&strategy_id).await.unwrap();
+        let diag = diagnose(&strategy, &[agent]);
+        assert_launchable(&diag).expect("MCP atomic trader strategy must be launchable");
     }
 
     #[tokio::test]

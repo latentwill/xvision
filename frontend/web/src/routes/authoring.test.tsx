@@ -155,6 +155,33 @@ afterEach(() => {
   cleanup();
 });
 
+describe("AuthoringRoute eval launch CTA", () => {
+  it("links to the eval launcher for a launchable strategy", async () => {
+    renderRoute();
+
+    const link = await screen.findByRole("link", { name: "Run eval →" });
+    expect(link).toHaveAttribute("href", "/eval-runs?strategy=01TEST&start=1");
+  });
+
+  it("disables the eval launcher with the validation reason when not launchable", async () => {
+    vi.mocked(strategyApi.validateDraft).mockResolvedValue({
+      id: "01TEST",
+      ok: false,
+      errors: ["no slot grants submit_decision"],
+      warnings: [],
+    });
+
+    renderRoute();
+
+    const disabled = await screen.findByRole("button", { name: "Run eval →" });
+    expect(disabled).toBeDisabled();
+    expect(await screen.findAllByText("no slot grants submit_decision")).not.toHaveLength(0);
+    expect(
+      screen.queryByRole("link", { name: "Run eval →" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("AuthoringRoute attached-agent row collapse + inline detail", () => {
   it("renders the model in the bar even when the row is collapsed", async () => {
     // Pre-set storage so the row mounts in collapsed state.

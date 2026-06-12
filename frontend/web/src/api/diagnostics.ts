@@ -26,6 +26,7 @@ export type StrategyDiagnostics = {
   unregistered_tools: UnmetTool[];
   has_decision_path: boolean;
   launchable: boolean;
+  warnings?: string[];
 };
 
 export type AgentSlotDiagnostics = {

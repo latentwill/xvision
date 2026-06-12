@@ -388,6 +388,12 @@ is `/charts/compare?ids=<run-a>,<run-b>`.
 `xvn eval run` is part of the current surface. Use `xvn scenario ls` to find
 scenario ids; `xvn eval scenarios` remains available but is deprecated.
 
+Live paper runs must include a finite stop policy. `xvn eval run --mode live`
+requires `--live-asset`, `--live-capital`, and at least one of
+`--live-bar-limit`, `--live-decision-limit`, `--live-time-limit-secs`, or
+`--live-duration`; launches without a stop flag fail before broker startup.
+Live mode uses Alpaca paper credentials only in the current surface.
+
 ### Exit codes
 
 `xvn strategy *` and `xvn eval *` follow Printing-Press-style typed exit
