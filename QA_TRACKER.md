@@ -23,6 +23,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | 2026-06-12 | N. Batch C and D branches published | Batch C blocker record pushed and opened as PR #952 against `main`. PF-15 pushed and opened as stacked PR #953 against `qa/batch-c-brackets-20260612`, limiting the PF-15 diff to the provider CLI change plus tracker updates. |
 | 2026-06-12 | O. Batch E isolated and PF-04 locally verified | Worktree `.worktrees/qa-pf04-provider-secret-fallback-20260612` on branch `qa/pf04-provider-secret-fallback-20260612` created from the PF-15 tracker head. PF-04 code path was already present; a run-path regression test was added to `api_provider_parity.rs` proving `resolve_provider` accepts a configured provider whose key exists only in `$XVN_HOME/secrets/providers.toml`. Focused and full provider parity checks passed. |
 | 2026-06-12 | P. Batch E adversarial review passed | Read-only Codex implementation review returned PASS with no P0/P1 blockers. Reviewer confirmed scope, the new regression test's use of the run-path launch gate, existing eval/optimize wiring through `resolve_provider` and `resolve_provider_key_value`, and honest tracker status. |
+| 2026-06-12 | Q. Batch E branch published | PF-04 pushed and opened as stacked PR #954 against `qa/pf15-provider-models-20260612`, limiting the PF-04 diff to the provider parity regression test plus tracker updates. |
 
 ## Reconciled Counts
 
@@ -40,7 +41,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | `qa/release-manager-20260612` / `.worktrees/qa-release-manager-20260612` | QA reconciliation and first implementation batch | `QA_TRACKER.md`, `docs/research/2026-06-12-qa-findings-action-list.md`, batch-specific files listed below | Open PR #949 |
 | `qa/batch-c-brackets-20260612` / `.worktrees/qa-batch-c-brackets-20260612` | Batch C `PF-19`/`PF-20` bracket persistence and take-profit config | `QA_TRACKER.md`, `docs/superpowers/plans/2026-06-12-qa-batch-c-bracket-persistence-config.md` only; implementation files were not edited because required files are actively owned by other tracks | Open PR #952; blocked pending ownership/contract coordination |
 | `qa/pf15-provider-models-20260612` / `.worktrees/qa-pf15-provider-models-20260612` | Batch D `PF-15` provider models soft miss | `QA_TRACKER.md`, `crates/xvision-cli/src/commands/provider.rs` | Open stacked PR #953 |
-| `qa/pf04-provider-secret-fallback-20260612` / `.worktrees/qa-pf04-provider-secret-fallback-20260612` | Batch E `PF-04` provider key run-path fallback | `QA_TRACKER.md`, `crates/xvision-engine/tests/api_provider_parity.rs` | Verified locally; pending commit/PR |
+| `qa/pf04-provider-secret-fallback-20260612` / `.worktrees/qa-pf04-provider-secret-fallback-20260612` | Batch E `PF-04` provider key run-path fallback | `QA_TRACKER.md`, `crates/xvision-engine/tests/api_provider_parity.rs` | Open stacked PR #954 |
 
 ## Batch Plan
 
