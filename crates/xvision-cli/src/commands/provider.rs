@@ -124,8 +124,8 @@ enum ProviderAction {
     /// are shown. When `enabled_models` is empty (nothing configured yet),
     /// all cached models are shown as a fallback.
     ///
-    /// Does NOT hit the network — run `refresh-models` first if you want
-    /// a fresh fetch.
+    /// Does NOT hit the network — prints a refresh hint when no cached
+    /// catalog exists yet.
     Models {
         #[arg(long)]
         name: String,
@@ -611,9 +611,10 @@ async fn models(
     let cat = match cat {
         Some(c) => c,
         None => {
-            anyhow::bail!(
+            eprintln!(
                 "no cached catalog for `{name}` — run `xvn provider refresh-models --name {name}` first"
             );
+            return Ok(());
         }
     };
 
@@ -867,6 +868,17 @@ api_key_env = "K"
         .await
         .unwrap_err();
         assert!(format!("{err}").contains("cannot be used together"));
+    }
+
+    #[tokio::test]
+    async fn models_without_cached_catalog_returns_soft_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = write_min_config(&dir);
+        let ctx = test_ctx(&dir).await;
+
+        models(&ctx, &config, "anthropic", false, None, None)
+            .await
+            .expect("missing catalog should print a refresh hint without failing");
     }
 
     #[test]
