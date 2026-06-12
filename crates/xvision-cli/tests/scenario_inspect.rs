@@ -85,8 +85,8 @@ fn scenario_inspect_card_prints_expected_fields() {
         "card must contain warmup_bars; got:\n{card}"
     );
     assert!(
-        card.contains("decision_bars:"),
-        "card must contain decision_bars; got:\n{card}"
+        card.contains("decision_bars: 48"),
+        "card must count only the scenario window bars, not subtract pre-window warmup; got:\n{card}"
     );
     // No parent — source line should be absent.
     assert!(

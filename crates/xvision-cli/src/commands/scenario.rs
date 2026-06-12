@@ -860,17 +860,11 @@ pub fn format_inspect_card(s: &Scenario, run_count: Option<usize>, best_return_p
     ));
     out.push_str(&format!("warmup_bars: {}\n", s.warmup_bars));
 
-    // decision_bars: derive from the window duration ÷ granularity bar seconds,
-    // then subtract warmup_bars. We use the granularity's seconds_per_bar to
-    // compute how many decision bars fit in the window.
+    // decision_bars: derive from the scenario window duration ÷ granularity.
+    // Warmup bars are pre-window context, not decision opportunities.
     let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
     let bar_secs = s.granularity.seconds();
-    let decision_bars = if bar_secs > 0 {
-        let total_bars = window_secs / bar_secs;
-        total_bars.saturating_sub(s.warmup_bars as u64)
-    } else {
-        0
-    };
+    let decision_bars = if bar_secs > 0 { window_secs / bar_secs } else { 0 };
     out.push_str(&format!("decision_bars: {}\n", decision_bars));
 
     if let Some(parent_id) = &s.parent_scenario_id {
@@ -961,17 +955,17 @@ async fn run_inspect(ctx: &ApiContext, a: InspectArgs) -> CliResult<()> {
 
 /// Compute the decision bar count for a scenario.
 ///
-/// Uses the same formula as `format_inspect_card`: total bars in the time
-/// window minus `warmup_bars`.  Returns 0 when bar granularity has no duration
-/// (should never happen for valid scenarios).
+/// Uses the same formula as `format_inspect_card`: total bars in the scenario
+/// window. `warmup_bars` are pre-window context and do not reduce decision
+/// opportunities. Returns 0 when bar granularity has no duration (should never
+/// happen for valid scenarios).
 pub fn scenario_decision_count(s: &Scenario) -> u64 {
     let window_secs = (s.time_window.end - s.time_window.start).num_seconds() as u64;
     let bar_secs = s.granularity.seconds();
     if bar_secs == 0 {
         return 0;
     }
-    let total_bars = window_secs / bar_secs;
-    total_bars.saturating_sub(s.warmup_bars as u64)
+    window_secs / bar_secs
 }
 
 /// Extract the regime labels stored as `regime:<label>` tags.
@@ -1759,23 +1753,26 @@ pub mod select {
 
     #[test]
     fn decision_count_1h_gran_with_200_warmup() {
-        // 1h = 3600 s.  Window = 300 hours = 1 080 000 s → 300 bars − 200 warmup = 100.
+        // 1h = 3600 s. Window = 300 hours = 300 decision bars.
+        // Warmup bars are pre-window context, so they do not reduce the
+        // scenario's decision count.
         let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
-        assert_eq!(scenario_decision_count(&s), 100);
+        assert_eq!(scenario_decision_count(&s), 300);
     }
 
     #[test]
     fn decision_count_4h_gran_with_0_warmup() {
-        // 4h = 14400 s.  Window = 48 bars (8 days) − 0 warmup = 48.
+        // 4h = 14400 s. Window = 48 bars (8 days).
         let s = make_scenario("sc2", "BTC", "4h", 48 * 4 * 3_600, 0, &[]);
         assert_eq!(scenario_decision_count(&s), 48);
     }
 
     #[test]
-    fn decision_count_warmup_saturates_at_zero() {
-        // Warmup > total bars: saturating_sub → 0, not underflow.
+    fn decision_count_ignores_warmup_larger_than_window() {
+        // Warmup > total bars is valid because warmup is pre-window context;
+        // the scenario still has 5 decision bars in its own window.
         let s = make_scenario("sc3", "SOL", "1h", 5 * 3_600, 200, &[]);
-        assert_eq!(scenario_decision_count(&s), 0);
+        assert_eq!(scenario_decision_count(&s), 5);
     }
 
     // ── scenario_regime_labels ────────────────────────────────────────────
@@ -1799,18 +1796,16 @@ pub mod select {
 
     #[test]
     fn mode_a_returns_empty_when_no_match() {
-        // 50-decision scenarios; target = 200 (±10 % → 180..220) → no match.
-        let s1 = make_scenario("sc1", "ETH", "1h", 250 * 3_600, 200, &[]);
-        // 250 total − 200 warmup = 50 decisions
+        // 50-decision scenario; target = 200 (±10 % → 180..220) → no match.
+        let s1 = make_scenario("sc1", "ETH", "1h", 50 * 3_600, 200, &[]);
         let rows = select_scenarios(&[s1], None, &[], Some(200), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
 
     #[test]
     fn mode_a_matches_within_ten_percent_tolerance() {
-        // 1h window: 300 total bars − 200 warmup = 100 decisions.
-        // Target = 100 → ±10 % = 90..110 → match.
-        let s1 = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
+        // 1h window: 100 decision bars. Target = 100 → ±10 % = 90..110 → match.
+        let s1 = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
         let rows = select_scenarios(&[s1], None, &[], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].decision_count, 100);
@@ -1828,7 +1823,7 @@ pub mod select {
     #[test]
     fn mode_a_timeframe_filter_includes_matching_granularity() {
         // 4h scenario; filter by 4h (240 min) → included.
-        // 200 total 4h bars − 0 warmup = 200 decisions.  target=200 → within ±10 %.
+        // 200 total 4h bars. target=200 → within ±10 %.
         let s = make_scenario("sc1", "ETH", "4h", 200 * 4 * 3_600, 0, &[]);
         let rows = select_scenarios(&[s], Some(240), &[], Some(200), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
@@ -1836,7 +1831,7 @@ pub mod select {
 
     #[test]
     fn mode_a_regime_filter_excludes_non_matching() {
-        let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["trending_bear"]);
+        let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &["trending_bear"]);
         let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
     }
@@ -1844,7 +1839,7 @@ pub mod select {
     #[test]
     fn mode_a_regime_filter_includes_partial_match() {
         // "bull" is a substring of "trending_bull" → should match.
-        let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["trending_bull"]);
+        let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &["trending_bull"]);
         let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
         assert_eq!(rows.len(), 1);
     }
@@ -1852,10 +1847,10 @@ pub mod select {
     #[test]
     fn mode_a_count_cap_respected() {
         // 4 scenarios all matching; count=2 → only 2 returned.
-        let s1 = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
-        let s2 = make_scenario("sc2", "BTC", "1h", 300 * 3_600, 200, &[]);
-        let s3 = make_scenario("sc3", "SOL", "1h", 300 * 3_600, 200, &[]);
-        let s4 = make_scenario("sc4", "DOGE", "1h", 300 * 3_600, 200, &[]);
+        let s1 = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
+        let s2 = make_scenario("sc2", "BTC", "1h", 100 * 3_600, 200, &[]);
+        let s3 = make_scenario("sc3", "SOL", "1h", 100 * 3_600, 200, &[]);
+        let s4 = make_scenario("sc4", "DOGE", "1h", 100 * 3_600, 200, &[]);
         let rows = select_scenarios(&[s1, s2, s3, s4], None, &[], Some(100), false, None, 2).unwrap();
         assert_eq!(rows.len(), 2);
     }
@@ -1865,10 +1860,9 @@ pub mod select {
     #[test]
     fn mode_b_finds_common_count() {
         // Two scenarios with 100 decisions, one with 50 — common count = 100.
-        let s1 = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
-        let s2 = make_scenario("sc2", "BTC", "1h", 300 * 3_600, 200, &[]);
-        let s3 = make_scenario("sc3", "SOL", "1h", 250 * 3_600, 200, &[]);
-        // s1 and s2 → 100 decisions; s3 → 50 decisions.
+        let s1 = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
+        let s2 = make_scenario("sc2", "BTC", "1h", 100 * 3_600, 200, &[]);
+        let s3 = make_scenario("sc3", "SOL", "1h", 50 * 3_600, 200, &[]);
         let rows = select_scenarios(&[s1, s2, s3], None, &[], None, true, Some(200), 2).unwrap();
         assert_eq!(rows.len(), 2);
         for r in &rows {
@@ -1883,9 +1877,9 @@ pub mod select {
     fn mode_b_max_decisions_cap_observed() {
         // s1 → 200 decisions, s2 → 100 decisions, s3 → 100 decisions.
         // max_decisions = 150 → s1 excluded, common count among s2/s3 = 100.
-        let s1 = make_scenario("sc1", "ETH", "1h", 400 * 3_600, 200, &[]);
-        let s2 = make_scenario("sc2", "BTC", "1h", 300 * 3_600, 200, &[]);
-        let s3 = make_scenario("sc3", "SOL", "1h", 300 * 3_600, 200, &[]);
+        let s1 = make_scenario("sc1", "ETH", "1h", 200 * 3_600, 200, &[]);
+        let s2 = make_scenario("sc2", "BTC", "1h", 100 * 3_600, 200, &[]);
+        let s3 = make_scenario("sc3", "SOL", "1h", 100 * 3_600, 200, &[]);
         let rows = select_scenarios(&[s1, s2, s3], None, &[], None, true, Some(150), 4).unwrap();
         assert!(!rows.iter().any(|r| r.id == "sc1"), "sc1 should be excluded");
         for r in &rows {
@@ -1895,7 +1889,7 @@ pub mod select {
 
     #[test]
     fn mode_b_returns_empty_when_no_candidates_under_max() {
-        let s1 = make_scenario("sc1", "ETH", "1h", 400 * 3_600, 200, &[]);
+        let s1 = make_scenario("sc1", "ETH", "1h", 200 * 3_600, 200, &[]);
         // 200 decisions; max_decisions = 50 → excluded → empty.
         let rows = select_scenarios(&[s1], None, &[], None, true, Some(50), 4).unwrap();
         assert!(rows.is_empty());
@@ -1921,7 +1915,7 @@ pub mod select {
     fn regime_column_match_takes_priority_over_tag_match() {
         // Scenario has regime_label = "expansion" in the column, but its tag
         // says "bear" — column wins and it should match "expansion", not "bear".
-        let mut s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["bear"]);
+        let mut s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &["bear"]);
         s.regime_label = Some("expansion".to_string());
 
         let rows_expansion = select_scenarios(
@@ -1948,7 +1942,7 @@ pub mod select {
     #[test]
     fn tag_fallback_when_column_is_null() {
         // Scenario has no regime_label column (None), but has regime tag → tag fallback.
-        let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &["trending_bull"]);
+        let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &["trending_bull"]);
         assert!(s.regime_label.is_none());
 
         let rows = select_scenarios(&[s], None, &["bull".to_string()], Some(100), false, None, 4).unwrap();
@@ -1962,7 +1956,7 @@ pub mod select {
     #[test]
     fn scenario_without_regime_excluded_when_regime_filter_set() {
         // No regime in column AND no regime tag → excluded when filter is active.
-        let s = make_scenario("sc1", "ETH", "1h", 300 * 3_600, 200, &[]);
+        let s = make_scenario("sc1", "ETH", "1h", 100 * 3_600, 200, &[]);
         let rows =
             select_scenarios(&[s], None, &["expansion".to_string()], Some(100), false, None, 4).unwrap();
         assert!(rows.is_empty());
