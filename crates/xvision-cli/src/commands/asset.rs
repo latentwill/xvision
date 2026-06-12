@@ -16,15 +16,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_asset_accepts_full_alpaca_crypto_whitelist() {
+    fn parse_asset_normalizes_forgiving_forms() {
+        // Trims surrounding whitespace, upper-cases, and strips the `/USD`
+        // quote suffix down to the base ticker before interning.
         assert_eq!(parse_asset("AAVE").unwrap(), AssetSymbol::Aave);
         assert_eq!(parse_asset(" link/usd ").unwrap(), AssetSymbol::Link);
-        assert_eq!(parse_asset("USDCUSD").unwrap(), AssetSymbol::Usdc);
+        assert_eq!(parse_asset("usdc/usd").unwrap(), AssetSymbol::Usdc);
     }
 
     #[test]
-    fn parse_asset_rejects_unsupported_symbols_with_whitelist_message() {
-        let err = parse_asset("XRP").unwrap_err();
-        assert!(err.contains("not in the Alpaca crypto whitelist"));
+    fn parse_asset_is_open_world_but_rejects_invalid_format() {
+        // Open-world interning (W2 whitelist registry): any well-formed ticker
+        // parses, including symbols outside the legacy 15-symbol set. There is
+        // no Alpaca-whitelist rejection at parse time anymore.
+        assert_eq!(parse_asset("XRP").unwrap().as_str(), "XRP");
+        // Format validation still rejects non-[A-Z0-9_] characters.
+        let err = parse_asset("XR!P").unwrap_err();
+        assert!(err.contains("invalid characters"), "got: {err}");
     }
 }
