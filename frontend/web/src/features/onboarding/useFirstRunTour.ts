@@ -6,6 +6,7 @@ import {
 } from "@/lib/storage";
 import { TOUR_COMPLETED_KEY } from "./keys";
 import { firstRunTourSteps } from "./steps";
+import { tourThemeConfig } from "./tour-theme";
 
 // Module-level guard so React StrictMode's deliberate double-invoke of
 // effects cannot race two `driver()` instances. Set BEFORE the async
@@ -32,20 +33,23 @@ async function runTour(opts: { force: boolean }) {
     // CSS side-effect import; typed by vite/client (src/vite-env.d.ts),
     // handled by Vite.
     await import("driver.js/dist/driver.css");
+    await import("./tour-theme.css");
   } catch {
     // Driver.js unavailable (e.g. test env without the chunk). Skip silently.
     markCompleted();
     tourLaunching = false;
     return;
   }
+  const theme = tourThemeConfig(firstRunTourSteps);
   const drv = mod.driver({
-    showProgress: true,
+    ...theme,
     allowClose: true,
     onCloseClick: () => {
       markCompleted();
       drv.destroy();
     },
     onDestroyed: () => {
+      theme.__teardown();
       markCompleted();
       tourLaunching = false;
     },
