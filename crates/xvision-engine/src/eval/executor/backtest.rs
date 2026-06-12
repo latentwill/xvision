@@ -1163,6 +1163,8 @@ impl Executor {
                     bars_held: seed_bars_held,
                     stop_loss_price: seed_sl_price,
                     take_profit_price: seed_tp_price,
+                    // Backtest is spot-only: no perps context (deferred).
+                    perps: PerpsContext::default(),
                 });
                 // When the DSL filter fired this bar, inject its trigger context
                 // (indicator snapshot + fire.reason/priority/tags) into the seed
@@ -3515,6 +3517,13 @@ impl Executor {
             bars_held: 0,
             stop_loss_price: 0.0,
             take_profit_price: 0.0,
+            // LIVE PERPS ATTACH POINT: this is the call-site for the perps feed.
+            // A network fetch in this sync hot loop is the wrong shape — an
+            // out-of-band poller (xvision_data::perp_feed::fetch_perp_snapshot)
+            // should cache the latest reading per asset; read that cache here and
+            // build PerpsContext { funding_rate, open_interest, .. }. Until that
+            // poller exists the agent simply sees no perps block (None).
+            perps: PerpsContext::default(),
         });
 
         let outs = run_pipeline(PipelineInputs {
@@ -5103,6 +5112,50 @@ fn build_baselines_report(
     }
 }
 
+/// Perpetual-futures context threaded into the trader's `market_data`.
+/// All fields optional — only the populated ones are emitted, and the whole
+/// `perps` object is omitted (`null`) when nothing is set. Backtest passes
+/// the default (all `None`); the live path attaches an out-of-band perps
+/// feed reading (see `xvision_data::perp_feed`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerpsContext {
+    pub funding_rate: Option<f64>,
+    pub open_interest: Option<f64>,
+    pub mark_index_basis: Option<f64>,
+    pub long_short_ratio: Option<f64>,
+}
+
+impl PerpsContext {
+    fn is_empty(&self) -> bool {
+        self.funding_rate.is_none()
+            && self.open_interest.is_none()
+            && self.mark_index_basis.is_none()
+            && self.long_short_ratio.is_none()
+    }
+
+    /// JSON object with only the populated fields, or `null` when empty so the
+    /// trader prompt builder can skip it (mirrors the indicator-panel pattern).
+    fn to_json(self) -> serde_json::Value {
+        if self.is_empty() {
+            return serde_json::Value::Null;
+        }
+        let mut obj = serde_json::Map::new();
+        if let Some(v) = self.funding_rate {
+            obj.insert("funding_rate".into(), serde_json::json!(v));
+        }
+        if let Some(v) = self.open_interest {
+            obj.insert("open_interest".into(), serde_json::json!(v));
+        }
+        if let Some(v) = self.mark_index_basis {
+            obj.insert("mark_index_basis".into(), serde_json::json!(v));
+        }
+        if let Some(v) = self.long_short_ratio {
+            obj.insert("long_short_ratio".into(), serde_json::json!(v));
+        }
+        serde_json::Value::Object(obj)
+    }
+}
+
 /// Input for [`build_decision_seed`], the production seed payload builder
 /// shared by backtest/live execution and integration tests.
 pub struct DecisionSeedInput<'a> {
@@ -5127,6 +5180,9 @@ pub struct DecisionSeedInput<'a> {
     pub stop_loss_price: f64,
     /// Effective take-profit price from the SLTP state; `0.0` when none active.
     pub take_profit_price: f64,
+    /// Perps context (funding/OI/basis/long-short). Default (all `None`) on the
+    /// spot/backtest path; populated live from `xvision_data::perp_feed`.
+    pub perps: PerpsContext,
 }
 
 /// Build the trader seed JSON for one decision cycle. F-6: `Causal`
@@ -5148,6 +5204,7 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "reference_price_usd": input.bar.close,
                 "reference_price_source": input.reference_price_source,
                 "bar_history": bar_history,
+                "perps": input.perps.to_json(),
             },
             "portfolio_state": {
                 "position_size": input.position_size,
@@ -5170,6 +5227,7 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "reference_price_usd": input.bar.close,
                 "reference_price_source": input.reference_price_source,
                 "bar_history": bar_history,
+                "perps": input.perps.to_json(),
             },
             "portfolio_state": {
                 "position_size": input.position_size,
