@@ -39,7 +39,15 @@ export function useAccent() {
 
   const setAccent = useCallback((key: AccentKey) => {
     safeStorageSet(ACCENT_PREFERENCE_KEY, key);
-    refreshSnapshot();
+    // Update the in-memory snapshot directly so the UI reflects the
+    // user's choice immediately — even if safeStorageSet silently
+    // failed (e.g. private-browsing quota exceeded).  refreshSnapshot
+    // re-reads from storage and would leave the old value in place
+    // when the write was dropped.
+    if (snapshot !== key) {
+      snapshot = key;
+      listeners.forEach((listener) => listener());
+    }
   }, []);
 
   return useMemo(() => ({ accentKey, setAccent }), [accentKey, setAccent]);
