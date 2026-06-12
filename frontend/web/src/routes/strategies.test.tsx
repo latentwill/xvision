@@ -398,6 +398,44 @@ describe("StrategiesRoute", () => {
     );
   });
 
+  it("hides body cells for a column that is toggled off via columnState", async () => {
+    // Pre-seed localStorage so useListColumns initialises with "model" hidden.
+    // The storage key follows the pattern `xvn:list:<listId>:columns`.
+    // Essential keys (name, actions) are always re-added by the hook, so we
+    // only need to list the non-essential keys we want visible.
+    const visibleKeys = ["name", "shape", "tags", "cadence", "created", "actions"];
+    window.localStorage.setItem(
+      "xvn:list:strategies:columns",
+      JSON.stringify(visibleKeys),
+    );
+
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01TEST",
+          display_name: "Trend 4H",
+          template: "trend_follower",
+          decision_cadence_minutes: 240,
+          model: "claude-sonnet-4",
+        },
+      ],
+      total: 1,
+    });
+
+    renderRoute();
+
+    // Wait for the row to render.
+    await screen.findByText("Trend 4H");
+
+    // The "Model" column header must NOT be rendered.
+    expect(screen.queryByRole("columnheader", { name: /^Model$/i })).not.toBeInTheDocument();
+
+    // The model value must NOT appear as a body cell.
+    expect(screen.queryByText("claude-sonnet-4")).not.toBeInTheDocument();
+
+    window.localStorage.removeItem("xvn:list:strategies:columns");
+  });
+
   it("clicking List tab from folder view hides folder content and shows list", async () => {
     vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
       items: [],

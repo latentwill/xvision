@@ -27,7 +27,7 @@ export type ResponsiveListCardProps<T> = {
   columns?: ListColumn[];
   columnState?: ColumnState;
   rows: T[];
-  renderRow: (row: T, index: number) => ReactNode;
+  renderRow: (row: T, index: number, visibleKeys: Set<string>) => ReactNode;
   renderMobileRow: (row: T, index: number) => ReactNode;
   rightAction?: ReactNode;
   actions?: ReactNode;

@@ -277,6 +277,38 @@ describe("ListCard", () => {
     expect(within(chips).getByRole("button", { name: /Validated/ })).toBeInTheDocument();
   });
 
+  it("passes visibleKeys to renderRow so body cells for hidden columns are not rendered", () => {
+    // columnState with only "name" visible (id toggled off)
+    const columnState = {
+      visibleKeys: new Set(["name"]),
+      toggle: vi.fn(),
+      reset: vi.fn(),
+      isEssential: (key: string) => key === "name",
+    };
+
+    render(
+      <ListCard<Row>
+        columns={COLUMNS}
+        columnState={columnState}
+        rows={ROWS}
+        renderRow={(r, _i, visibleKeys) => (
+          <tr key={r.id} data-testid={`row-${r.id}`}>
+            {visibleKeys.has("name") && <td data-testid={`name-${r.id}`}>{r.name}</td>}
+            {visibleKeys.has("id") && <td data-testid={`id-${r.id}`}>{r.id}</td>}
+          </tr>
+        )}
+      />,
+    );
+
+    // Name column header is visible, id header is not
+    expect(screen.getByRole("columnheader", { name: "Name" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "ID" })).not.toBeInTheDocument();
+
+    // Name body cells ARE rendered, id body cells are NOT
+    expect(screen.getByTestId("name-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("id-1")).not.toBeInTheDocument();
+  });
+
   it("compact density hides the active-chips row and the / keyboard hint", () => {
     const state = makeState({
       search: { value: "eth", setValue: vi.fn() },
