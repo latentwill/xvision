@@ -1234,6 +1234,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: vec![],
         }
     }
 
@@ -1767,6 +1768,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: vec![],
         };
 
         let receipt = executor.submit(&decision).await.expect("ETH submit must succeed");
@@ -1827,6 +1829,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: vec![],
         };
 
         let receipt = executor
