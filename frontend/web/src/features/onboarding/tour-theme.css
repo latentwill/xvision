@@ -1,0 +1,256 @@
+:root {
+  --tour-accent: var(--gold);
+}
+
+#xvn-spotlight {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 999999990;
+  pointer-events: none;
+  opacity: 0;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px var(--xvn-scrim, rgba(5, 7, 11, 0.74));
+  transition:
+    left 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    top 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    width 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    height 0.34s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.2s ease;
+}
+
+#xvn-spotlight.has-target {
+  box-shadow:
+    0 0 0 9999px var(--xvn-scrim, rgba(5, 7, 11, 0.74)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tour-accent) 30%, transparent);
+}
+
+#xvn-spotlight.has-target.glow {
+  box-shadow:
+    0 0 0 9999px var(--xvn-scrim, rgba(5, 7, 11, 0.74)),
+    0 0 0 1px color-mix(in srgb, var(--tour-accent) 60%, transparent),
+    0 0 0 5px color-mix(in srgb, var(--tour-accent) 12%, transparent),
+    0 0 30px 2px color-mix(in srgb, var(--tour-accent) 22%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--tour-accent) 45%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #xvn-spotlight {
+    transition: opacity 0.15s ease;
+  }
+}
+
+.xvn-tour.driver-popover {
+  --pop-bg: #14181f;
+  background: var(--pop-bg);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 18px 14px;
+  max-width: 322px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 24px 60px -16px rgba(0, 0, 0, 0.8);
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+}
+
+body.tour-glow .xvn-tour.driver-popover {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px color-mix(in srgb, var(--tour-accent) 16%, transparent),
+    0 24px 60px -16px rgba(0, 0, 0, 0.8),
+    0 0 46px -10px color-mix(in srgb, var(--tour-accent) 24%, transparent);
+}
+
+.xvn-tour .xvn-tour-brand {
+  margin-bottom: 14px;
+}
+
+.xvn-tour .xvn-tour-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--tour-accent) 88%, white);
+  margin-bottom: 11px;
+}
+
+.xvn-tour .xvn-tour-eyebrow::before {
+  content: "";
+  width: 16px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: var(--tour-accent);
+}
+
+.xvn-tour .driver-popover-title {
+  font-family: "Geist", sans-serif;
+  font-size: 16.5px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.25;
+  margin: 0 0 7px;
+}
+
+.xvn-tour .driver-popover-description {
+  font-size: 13px;
+  line-height: 1.56;
+  color: var(--text-2);
+  margin: 0;
+}
+
+.xvn-tour .driver-popover-close-btn {
+  all: unset;
+  position: absolute;
+  top: 11px;
+  right: 11px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  color: var(--text-4);
+  font-size: 17px;
+  line-height: 1;
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+
+.xvn-tour .driver-popover-close-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.xvn-tour .driver-popover-footer {
+  margin-top: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.xvn-tour .driver-popover-progress-text {
+  display: none;
+}
+
+.xvn-tour .driver-popover-navigation-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.xvn-tour .driver-popover-footer button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-family: "Geist", sans-serif;
+  font-size: 12.5px;
+  font-weight: 500;
+  height: 31px;
+  padding: 0 15px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition:
+    filter 0.15s,
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.xvn-tour .driver-popover-prev-btn {
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  background: var(--surface-elev);
+}
+
+.xvn-tour .driver-popover-prev-btn:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.xvn-tour .driver-popover-next-btn {
+  color: #04130b;
+  background: var(--tour-accent);
+  border: 1px solid var(--tour-accent);
+  font-weight: 600;
+}
+
+.xvn-tour .driver-popover-next-btn:hover {
+  filter: brightness(1.08);
+}
+
+.xvn-tour .driver-popover-footer button:disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+.xvn-tour-progress {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex: none;
+  white-space: nowrap;
+}
+
+.xvn-tour-segs {
+  display: flex;
+  gap: 4px;
+}
+
+.xvn-tour-seg {
+  width: 18px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  transition:
+    background 0.3s ease,
+    width 0.3s ease;
+}
+
+.xvn-tour-seg.is-done {
+  background: color-mix(in srgb, var(--tour-accent) 55%, var(--border));
+}
+
+.xvn-tour-seg.is-current {
+  width: 24px;
+  background: var(--tour-accent);
+}
+
+.xvn-tour-count {
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--text-4);
+}
+
+.xvn-tour-count b {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.xvn-tour .driver-popover-arrow-side-left {
+  border-left-color: var(--pop-bg);
+}
+
+.xvn-tour .driver-popover-arrow-side-right {
+  border-right-color: var(--pop-bg);
+}
+
+.xvn-tour .driver-popover-arrow-side-top {
+  border-top-color: var(--pop-bg);
+}
+
+.xvn-tour .driver-popover-arrow-side-bottom {
+  border-bottom-color: var(--pop-bg);
+}
+
+.driver-active-element {
+  border-radius: 7px;
+}

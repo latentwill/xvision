@@ -16,6 +16,7 @@ vi.mock("driver.js/dist/driver.css", () => ({}));
 
 import { TOUR_COMPLETED_KEY } from "./keys";
 import { RestartTourButton } from "./RestartTourButton";
+import { firstRunTourSteps } from "./steps";
 import {
   __resetFirstRunTourForTests,
   hasCompletedFirstRunTour,
@@ -41,17 +42,45 @@ afterEach(() => {
 });
 
 describe("useFirstRunTour", () => {
+  it("covers the primary XVN surfaces in sidebar order", () => {
+    expect(firstRunTourSteps).toHaveLength(7);
+    expect(firstRunTourSteps.map((step) => step.element ?? null)).toEqual([
+      null,
+      'a[href="/strategies"]',
+      'a[href="/scenarios"]',
+      'a[href="/eval-runs"]',
+      'a[href="/live"]',
+      'a[href="/marketplace"]',
+      'a[href="/optimizer"]',
+    ]);
+    expect(firstRunTourSteps.map((step) => step.popover?.title)).toEqual([
+      "Welcome to XVN",
+      "Strategies",
+      "Scenarios",
+      "Eval Runs",
+      "Live Trading",
+      "Marketplace",
+      "Optimizer",
+    ]);
+  });
+
   it("fires once on a clean workspace", async () => {
     render(<Harness />);
     await waitFor(() => expect(driveMock).toHaveBeenCalledTimes(1));
     expect(driverFactory).toHaveBeenCalledTimes(1);
     const config = driverFactory.mock.calls[0]?.[0] as {
       allowClose?: boolean;
+      doneBtnText?: string;
+      popoverClass?: string;
+      showProgress?: boolean;
       steps?: unknown[];
     };
     expect(config?.allowClose).toBe(true);
+    expect(config?.showProgress).toBe(false);
+    expect(config?.popoverClass).toBe("xvn-tour");
+    expect(config?.doneBtnText).toBe("Finish tour");
     expect(Array.isArray(config?.steps)).toBe(true);
-    expect((config?.steps ?? []).length).toBeGreaterThan(0);
+    expect((config?.steps ?? []).length).toBe(7);
   });
 
   it("does not fire again once completed", async () => {
