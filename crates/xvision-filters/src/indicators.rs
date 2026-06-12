@@ -58,6 +58,16 @@ pub struct Bar {
     pub close: f64,
     pub volume: f64,
     pub timestamp: Option<DateTime<Utc>>,
+    /// Perps funding rate (per-interval fraction). `None` for spot bars.
+    pub funding_rate: Option<f64>,
+    /// Open interest in USD. `None` for spot bars.
+    pub open_interest: Option<f64>,
+    /// Venue mark price. `None` for spot bars.
+    pub mark_price: Option<f64>,
+    /// Mark − index basis (fraction). `None` for spot bars.
+    pub mark_index_basis: Option<f64>,
+    /// Long/short account ratio. `None` for spot bars.
+    pub long_short_ratio: Option<f64>,
 }
 
 impl Bar {
@@ -73,6 +83,11 @@ impl Bar {
             close,
             volume,
             timestamp: None,
+            funding_rate: None,
+            open_interest: None,
+            mark_price: None,
+            mark_index_basis: None,
+            long_short_ratio: None,
         }
     }
 
@@ -91,6 +106,11 @@ impl Bar {
             close,
             volume,
             timestamp: Some(timestamp),
+            funding_rate: None,
+            open_interest: None,
+            mark_price: None,
+            mark_index_basis: None,
+            long_short_ratio: None,
         }
     }
 }
@@ -125,6 +145,11 @@ pub struct IndicatorEngine {
     last_low: Option<f64>,
     last_close: Option<f64>,
     last_volume: Option<f64>,
+    last_funding_rate: Option<f64>,
+    last_open_interest: Option<f64>,
+    last_mark_price: Option<f64>,
+    last_mark_index_basis: Option<f64>,
+    last_long_short_ratio: Option<f64>,
     obv_value: f64,
     obv_started: bool,
     calendar: CalendarLevels,
@@ -251,7 +276,12 @@ impl IndicatorEngine {
                 | IndicatorName::PremarketLow
                 | IndicatorName::GapPct
                 | IndicatorName::GapUp
-                | IndicatorName::GapDown => continue, // no per-instance state
+                | IndicatorName::GapDown
+                | IndicatorName::FundingRate
+                | IndicatorName::OpenInterest
+                | IndicatorName::MarkPrice
+                | IndicatorName::MarkIndexBasis
+                | IndicatorName::LongShortRatio => continue, // no per-instance state
             };
             instances.insert(key, inst);
         }
@@ -263,6 +293,11 @@ impl IndicatorEngine {
             last_low: None,
             last_close: None,
             last_volume: None,
+            last_funding_rate: None,
+            last_open_interest: None,
+            last_mark_price: None,
+            last_mark_index_basis: None,
+            last_long_short_ratio: None,
             obv_value: 0.0,
             obv_started: false,
             calendar: CalendarLevels::default(),
@@ -311,6 +346,23 @@ impl IndicatorEngine {
         self.last_low = Some(bar.low);
         self.last_close = Some(bar.close);
         self.last_volume = Some(bar.volume);
+        // Perps scalars: overwrite only when the bar carries a value so a
+        // spot bar (all-None) does not erase the last-known perps reading.
+        if bar.funding_rate.is_some() {
+            self.last_funding_rate = bar.funding_rate;
+        }
+        if bar.open_interest.is_some() {
+            self.last_open_interest = bar.open_interest;
+        }
+        if bar.mark_price.is_some() {
+            self.last_mark_price = bar.mark_price;
+        }
+        if bar.mark_index_basis.is_some() {
+            self.last_mark_index_basis = bar.mark_index_basis;
+        }
+        if bar.long_short_ratio.is_some() {
+            self.last_long_short_ratio = bar.long_short_ratio;
+        }
         self.calendar.push(bar);
         self.bars_seen += 1;
     }
@@ -342,6 +394,11 @@ impl IndicatorEngine {
             IndicatorName::GapPct => return self.calendar.gap_pct,
             IndicatorName::GapUp => return self.calendar.gap_pct.map(|v| if v > 0.0 { 1.0 } else { 0.0 }),
             IndicatorName::GapDown => return self.calendar.gap_pct.map(|v| if v < 0.0 { 1.0 } else { 0.0 }),
+            IndicatorName::FundingRate => return self.last_funding_rate,
+            IndicatorName::OpenInterest => return self.last_open_interest,
+            IndicatorName::MarkPrice => return self.last_mark_price,
+            IndicatorName::MarkIndexBasis => return self.last_mark_index_basis,
+            IndicatorName::LongShortRatio => return self.last_long_short_ratio,
             _ => {}
         }
         let key = IndicatorKey::from_ref(r);
@@ -1705,6 +1762,82 @@ mod tests {
         // Synthesize OHLC where high = close + 0.5, low = close - 0.5 so
         // true range is well defined.
         closes.iter().map(|&c| bar(c, c + 0.5, c - 0.5, c)).collect()
+    }
+
+    fn periodless(name: IndicatorName) -> IndicatorRef {
+        IndicatorRef {
+            name,
+            period: None,
+            bar_offset: None,
+        }
+    }
+
+    #[test]
+    fn bar_carries_optional_perps_fields_default_none() {
+        let b = Bar::new(1.0, 2.0, 0.5, 1.5);
+        assert_eq!(b.funding_rate, None);
+        assert_eq!(b.open_interest, None);
+        assert_eq!(b.mark_price, None);
+        assert_eq!(b.mark_index_basis, None);
+        assert_eq!(b.long_short_ratio, None);
+    }
+
+    #[test]
+    fn engine_reports_latest_perps_values() {
+        let mut e = IndicatorEngine::new(std::iter::empty());
+        let mut b = Bar::new(1.0, 2.0, 0.5, 1.5);
+        b.funding_rate = Some(0.0001);
+        b.open_interest = Some(5_000_000.0);
+        b.mark_price = Some(1.52);
+        b.mark_index_basis = Some(0.0005);
+        b.long_short_ratio = Some(1.3);
+        e.push(&b);
+        assert_eq!(e.value(&periodless(IndicatorName::FundingRate)), Some(0.0001));
+        assert_eq!(
+            e.value(&periodless(IndicatorName::OpenInterest)),
+            Some(5_000_000.0)
+        );
+        assert_eq!(e.value(&periodless(IndicatorName::MarkPrice)), Some(1.52));
+        assert_eq!(e.value(&periodless(IndicatorName::MarkIndexBasis)), Some(0.0005));
+        assert_eq!(e.value(&periodless(IndicatorName::LongShortRatio)), Some(1.3));
+    }
+
+    #[test]
+    fn engine_perps_value_none_before_any_bar() {
+        let e = IndicatorEngine::new(std::iter::empty());
+        assert_eq!(e.value(&periodless(IndicatorName::FundingRate)), None);
+    }
+
+    #[test]
+    fn perps_indicators_parse_from_dsl() {
+        assert_eq!(
+            IndicatorRef::parse_dsl("funding_rate").unwrap().name,
+            IndicatorName::FundingRate
+        );
+        assert_eq!(
+            IndicatorRef::parse_dsl("open_interest").unwrap().name,
+            IndicatorName::OpenInterest
+        );
+        assert_eq!(
+            IndicatorRef::parse_dsl("mark_price").unwrap().name,
+            IndicatorName::MarkPrice
+        );
+        assert_eq!(
+            IndicatorRef::parse_dsl("mark_index_basis").unwrap().name,
+            IndicatorName::MarkIndexBasis
+        );
+        assert_eq!(
+            IndicatorRef::parse_dsl("long_short_ratio").unwrap().name,
+            IndicatorName::LongShortRatio
+        );
+    }
+
+    #[test]
+    fn perps_indicators_are_periodless() {
+        assert!(!IndicatorName::FundingRate.has_period());
+        assert!(!IndicatorName::OpenInterest.has_period());
+        assert_eq!(IndicatorName::MarkPrice.period_bounds(), None);
+        assert_eq!(IndicatorName::FundingRate.dsl_prefix(), "funding_rate");
     }
 
     #[test]
