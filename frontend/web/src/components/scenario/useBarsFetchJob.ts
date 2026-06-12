@@ -105,6 +105,18 @@ function buildBarsFetchArgv(
 
 export function scenarioGranularityToCli(granularity: string) {
   switch (granularity) {
+    // Legacy backend enum strings (PascalCase). The backend's BarGranularity
+    // Serialize impl now emits canonical CLI form ("1h", "4h", …) but older
+    // rows in the DB were stored/serialised in PascalCase and must still be
+    // handled so the "Indicator timeframe" <select> always has a matching
+    // <option>. Without this guard the select renders as a blank white
+    // rectangle (bead xvision-o24j).
+    case "Minute1":
+      return "1m";
+    case "Minute5":
+      return "5m";
+    case "Minute15":
+      return "15m";
     case "Hour1":
       return "1h";
     case "Hour4":
@@ -113,7 +125,12 @@ export function scenarioGranularityToCli(granularity: string) {
       return "6h";
     case "Day1":
       return "1d";
+    case "Week1":
+      return "1w";
     default:
+      // Canonical CLI form ("1m", "5m", "15m", "1h", "4h", "6h", "1d",
+      // "1w") passes through unchanged — the backend already emits these for
+      // new rows.
       return granularity;
   }
 }

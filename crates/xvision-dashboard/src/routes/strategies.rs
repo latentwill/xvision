@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
-    self, add_agent, archive_strategy, remove_agent, rename_agent_role, set_mechanical_param, set_pipeline,
-    set_risk_config, update_inspector, update_metadata, update_slot, validate_draft, AddAgentReq,
-    CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq,
-    StrategyAgentsOut, StrategySummary,
+    self, add_agent, archive_strategy, clear_strategy_filter, remove_agent, rename_agent_role,
+    set_mechanical_param, set_mechanistic_config, set_pipeline, set_risk_config, update_inspector,
+    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest,
+    RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -24,6 +24,7 @@ use xvision_engine::authoring::{
 };
 use xvision_engine::chat_session::{ChatSessionStore, ContextScope};
 use xvision_engine::checkpoint::{CheckpointKind, Checkpointer, SnapshotRequest};
+use xvision_engine::strategies::mechanistic::{DecisionMode, MechanisticConfig};
 use xvision_engine::strategies::risk::RiskConfig;
 use xvision_engine::strategies::store::{
     strategy_store_dir, FilesystemStore, MetadataPatchError, StrategyMetadataPatch, StrategyStore,
@@ -677,6 +678,43 @@ fn classify_metadata_patch_error(err: anyhow::Error, id: &str) -> DashboardError
         }
     }
     DashboardError::Internal(err)
+}
+
+/// `DELETE /api/strategy/:id/filter` — clear the strategy's filter and revert
+/// `activation_mode` to `EveryBar`. Returns `204 No Content` on success.
+/// No-op if the strategy has no filter.
+pub async fn delete_filter(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, DashboardError> {
+    clear_strategy_filter(&state.api_context(), &id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct PutMechanisticBody {
+    pub decision_mode: DecisionMode,
+    #[serde(default)]
+    pub mechanistic_config: Option<MechanisticConfig>,
+}
+
+/// `PUT /api/strategy/:id/mechanistic` — set the strategy's decision mode
+/// and optional mechanistic config. `decision_mode == "mechanistic"` requires
+/// a `mechanistic_config`; `"agentic"` clears it. Returns the updated
+/// `Strategy`.
+pub async fn put_mechanistic(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    Json(body): Json<PutMechanisticBody>,
+) -> Result<Json<Strategy>, DashboardError> {
+    let strategy = set_mechanistic_config(
+        &state.api_context(),
+        &id,
+        body.decision_mode,
+        body.mechanistic_config,
+    )
+    .await?;
+    Ok(Json(strategy))
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RECEIPTS } from "@/features/marketplace/data/fixtures/receipts";
 import { ShareComposer } from "./ShareComposer";
 
@@ -118,5 +118,24 @@ describe("ShareComposer", () => {
     // Collapse
     await user.click(screen.getByRole("button", { name: /Collapse/i }));
     expect(document.querySelector("[data-og-preview]")).toBeNull();
+  });
+
+  describe("Copy link button — copies URL only, never caption", () => {
+    it("writes only the URL (no caption) to the clipboard when 'Copy link' is clicked", async () => {
+      const user = userEvent.setup();
+      // userEvent.setup() installs its own clipboard stub on navigator.clipboard.
+      // Spy on that stub after it is in place so our spy captures the real call.
+      const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      wrap(<ShareComposer share={share} />);
+      const copyBtn = screen.getByRole("button", { name: /Copy link/i });
+      await user.click(copyBtn);
+      expect(writeText).toHaveBeenCalledTimes(1);
+      // Must be exactly the URL — no caption prepended
+      const expectedUrl = `https://${share.ogCard.url}`;
+      expect(writeText).toHaveBeenCalledWith(expectedUrl);
+      // Confirm caption text is NOT in the argument
+      expect(writeText.mock.calls[0][0]).not.toContain(share.caption);
+      writeText.mockRestore();
+    });
   });
 });

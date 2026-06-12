@@ -25,7 +25,7 @@ export type ListCardProps<T> = {
   columns?: ListColumn[];
   columnState?: ColumnState;
   rows: T[];
-  renderRow: (row: T, index: number) => ReactNode;
+  renderRow: (row: T, index: number, visibleKeys: Set<string>) => ReactNode;
   actions?: ReactNode;
   footer?: ReactNode;
   className?: string;
@@ -129,6 +129,7 @@ export const ListCard = forwardRef(function ListCard<T>(
   }, []);
 
   const colSpan = Math.max(visibleColumns.length, 1);
+  const visibleKeySet = new Set(visibleColumns.map((c) => c.key));
 
   return (
     <div
@@ -261,7 +262,7 @@ export const ListCard = forwardRef(function ListCard<T>(
                   compact={compact}
                 />
               ) : (
-                rows.map((r, i) => renderRow(r, i))
+                rows.map((r, i) => renderRow(r, i, visibleKeySet))
               )}
             </tbody>
           </table>

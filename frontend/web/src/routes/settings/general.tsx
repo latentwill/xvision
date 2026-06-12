@@ -1,3 +1,4 @@
+import { useState, useCallback, useRef } from "react";
 import { Card } from "@/components/primitives/Card";
 import {
   themeDefinitions,
@@ -19,6 +20,23 @@ function swatchFor(value: string) {
 export function SettingsGeneralRoute() {
   const { preference, setPreference } = useTheme();
   const { accentKey, setAccent } = useAccent();
+  const [accentSaved, setAccentSaved] = useState(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleAccentChange = useCallback(
+    (key: AccentKey) => {
+      setAccent(key);
+      setAccentSaved(true);
+      if (savedTimerRef.current !== null) {
+        clearTimeout(savedTimerRef.current);
+      }
+      savedTimerRef.current = setTimeout(() => {
+        setAccentSaved(false);
+        savedTimerRef.current = null;
+      }, 2000);
+    },
+    [setAccent],
+  );
 
   return (
     <div className="space-y-5">
@@ -81,9 +99,20 @@ export function SettingsGeneralRoute() {
         </div>
 
         <div className="mt-5 pt-4 border-t border-border">
-          <p className="text-[11px] font-medium text-text-3 uppercase tracking-[0.08em] mb-3">
-            Accent color
-          </p>
+          <div className="flex items-center gap-2 mb-3">
+            <p className="text-[11px] font-medium text-text-3 uppercase tracking-[0.08em]">
+              Accent color
+            </p>
+            {accentSaved ? (
+              <span className="text-[11px] text-text-3" aria-live="polite">
+                Saved
+              </span>
+            ) : (
+              <span className="text-[11px] text-text-4">
+                · applies instantly
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-1.5 flex-wrap">
             {(Object.keys(ACCENT_PRESETS) as AccentKey[]).map((key) => {
               const preset = ACCENT_PRESETS[key];
@@ -95,7 +124,7 @@ export function SettingsGeneralRoute() {
                   aria-label={`${preset.label} accent`}
                   aria-pressed={selected}
                   title={preset.label}
-                  onClick={() => setAccent(key)}
+                  onClick={() => handleAccentChange(key)}
                   className={[
                     "flex flex-col items-center gap-1 rounded px-2 py-1.5 transition-colors",
                     selected ? "bg-surface-panel" : "hover:bg-surface-elev",

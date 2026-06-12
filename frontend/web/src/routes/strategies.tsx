@@ -332,10 +332,11 @@ function StrategiesListView() {
             onClick={() => create.mutate()}
           />
         }
-        renderRow={(row) => (
+        renderRow={(row, _i, visibleKeys) => (
           <DesktopRow
             key={row.agent_id}
             row={row}
+            visibleKeys={visibleKeys}
             clonePending={
               clone.isPending && clone.variables?.agent_id === row.agent_id
             }
@@ -416,10 +417,12 @@ function DesktopRow({
   row,
   onClone,
   clonePending,
+  visibleKeys,
 }: {
   row: StrategyListItem;
   onClone: () => void;
   clonePending: boolean;
+  visibleKeys: Set<string>;
 }) {
   const shape = shapeOf(row);
   const mode = decisionMode(row);
@@ -429,83 +432,97 @@ function DesktopRow({
       key={row.agent_id}
       className="xvn-row-in border-b border-border-soft transition-colors last:border-b-0 hover:bg-surface-hover"
     >
-      <td className="px-3 py-3 text-text">
-        <Link
-          to={`/strategies/${encodeURIComponent(row.agent_id)}`}
-          className="break-all text-text hover:underline"
+      {visibleKeys.has("name") && (
+        <td className="px-3 py-3 text-text">
+          <Link
+            to={`/strategies/${encodeURIComponent(row.agent_id)}`}
+            className="break-all text-text hover:underline"
+          >
+            {row.display_name || "Untitled strategy"}
+          </Link>
+        </td>
+      )}
+      {visibleKeys.has("shape") && (
+        <td className="px-3 py-3">
+          <Pill tone={mode.pillTone}>{mode.label}</Pill>
+          {filterLabel(row) ? (
+            <span className="ml-1.5">
+              <Pill tone="default">{filterLabel(row)}</Pill>
+            </span>
+          ) : null}
+          {shape === "multi" ? (
+            <span className="ml-1.5">
+              <Pill tone="default">{agentCount(row)} agents</Pill>
+            </span>
+          ) : null}
+        </td>
+      )}
+      {visibleKeys.has("tags") && (
+        <td className="px-3 py-3">
+          <TagList tags={row.tags ?? []} />
+        </td>
+      )}
+      {visibleKeys.has("cadence") && (
+        <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+          {formatCadence(row.decision_cadence_minutes)}
+        </td>
+      )}
+      {visibleKeys.has("model") && (
+        <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
+          {row.model ?? <span className="font-medium text-text-3">—</span>}
+        </td>
+      )}
+      {visibleKeys.has("created") && (
+        <td
+          className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2"
+          title={ulidToCreatedAt(row.agent_id)?.toISOString() ?? row.agent_id}
         >
-          {row.display_name || "Untitled strategy"}
-        </Link>
-      </td>
-      <td className="px-3 py-3">
-        <Pill tone={mode.pillTone}>{mode.label}</Pill>
-        {filterLabel(row) ? (
-          <span className="ml-1.5">
-            <Pill tone="default">{filterLabel(row)}</Pill>
-          </span>
-        ) : null}
-        {shape === "multi" ? (
-          <span className="ml-1.5">
-            <Pill tone="default">{agentCount(row)} agents</Pill>
-          </span>
-        ) : null}
-      </td>
-      <td className="px-3 py-3">
-        <TagList tags={row.tags ?? []} />
-      </td>
-      <td className="px-3 py-3 font-mono text-[12px] text-text-2">
-        {formatCadence(row.decision_cadence_minutes)}
-      </td>
-      <td className="max-w-[180px] px-3 py-3 break-all font-mono text-[12px] text-text-2">
-        {row.model ?? <span className="font-medium text-text-3">—</span>}
-      </td>
-      <td
-        className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2"
-        title={ulidToCreatedAt(row.agent_id)?.toISOString() ?? row.agent_id}
-      >
-        {fmtCreatedFromUlid(row.agent_id)}
-      </td>
-      <td className="px-3 py-3 text-right">
-        <SignalActionMenu
-          align="right"
-          triggerAriaLabel={`Actions for ${displayName(row)}`}
-          triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text"
-          triggerLabel={<Icon name="moreH" size={15} />}
-          groups={[
-            {
-              items: [
-                {
-                  icon: "openExternal",
-                  label: "Open",
-                  shortcut: "⌘O",
-                  onClick: () => navigate(`/strategies/${encodeURIComponent(row.agent_id)}`),
-                },
-                {
-                  icon: "copy",
-                  label: "Duplicate",
-                  shortcut: "⌘D",
-                  disabled: clonePending,
-                  onClick: onClone,
-                },
-                {
-                  icon: "compare",
-                  label: "Compare…",
-                  onClick: () => navigate(`/eval-runs/compare?ids=${encodeURIComponent(row.agent_id)}`),
-                },
-              ],
-            },
-            {
-              items: [
-                {
-                  icon: "fileCode",
-                  label: "View raw JSON",
-                  onClick: () => navigate(`/strategies/${encodeURIComponent(row.agent_id)}?tab=json`),
-                },
-              ],
-            },
-          ]}
-        />
-      </td>
+          {fmtCreatedFromUlid(row.agent_id)}
+        </td>
+      )}
+      {visibleKeys.has("actions") && (
+        <td className="px-3 py-3 text-right">
+          <SignalActionMenu
+            align="right"
+            triggerAriaLabel={`Actions for ${displayName(row)}`}
+            triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded text-text-3 transition-colors hover:bg-surface-hover hover:text-text"
+            triggerLabel={<Icon name="moreH" size={15} />}
+            groups={[
+              {
+                items: [
+                  {
+                    icon: "openExternal",
+                    label: "Open",
+                    shortcut: "⌘O",
+                    onClick: () => navigate(`/strategies/${encodeURIComponent(row.agent_id)}`),
+                  },
+                  {
+                    icon: "copy",
+                    label: "Duplicate",
+                    shortcut: "⌘D",
+                    disabled: clonePending,
+                    onClick: onClone,
+                  },
+                  {
+                    icon: "compare",
+                    label: "Compare…",
+                    onClick: () => navigate(`/eval-runs/compare?ids=${encodeURIComponent(row.agent_id)}`),
+                  },
+                ],
+              },
+              {
+                items: [
+                  {
+                    icon: "fileCode",
+                    label: "View raw JSON",
+                    onClick: () => navigate(`/strategies/${encodeURIComponent(row.agent_id)}?tab=json`),
+                  },
+                ],
+              },
+            ]}
+          />
+        </td>
+      )}
     </tr>
   );
 }

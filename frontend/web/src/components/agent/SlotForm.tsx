@@ -159,7 +159,12 @@ export function SlotForm({
             >
               <Icon name="trash" size={14} />
             </button>
-          ) : null}
+          ) : (
+            <span className="text-[11px] text-text-3 leading-snug">
+              An agent needs at least one slot — fill it in or add another,
+              then you can remove this one.
+            </span>
+          )}
         </div>
       </div>
 

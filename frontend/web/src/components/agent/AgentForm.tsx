@@ -147,7 +147,10 @@ export function AgentForm({
     mutationFn: () => archiveAgent(agentId!),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: agentKeys.all });
-      navigate("/agents");
+      // Navigate with archived=include so the just-archived agent is
+      // immediately visible in the list rather than appearing to vanish
+      // behind the default "exclude" filter.
+      navigate("/agents?archived=include");
     },
     onError: (e) => setSaveError(errorMessage(e)),
   });
