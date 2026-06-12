@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
 import { Icon } from "@/components/primitives/Icon";
+import { Topbar } from "@/components/shell/Topbar";
 import type { ListingRow, MarketplaceStats } from "@/features/marketplace/data/types";
 
 function fmt(n: number): string {
@@ -40,25 +41,21 @@ export function HeaderStrip({ rows = [] }: HeaderStripProps) {
   const entries = stats?.totalStrategies ?? 0;
 
   return (
-    <div className="px-4 sm:px-7 py-5 border-b border-border flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end sm:gap-6">
-      <div className="min-w-0 max-w-[640px]">
-        <div className="flex items-center gap-2 flex-wrap">
-          <h1 className="m-0 text-[24px] font-semibold tracking-[-0.025em] leading-[1.15] text-text">
-            Marketplace
-          </h1>
+    <div className="px-4 sm:px-7 pt-5 pb-4 border-b border-border">
+      <Topbar
+        title="Marketplace"
+        sub="Buy and sell trading strategies as on-chain agents on Mantle."
+      />
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center sm:gap-6">
+        <div className="min-w-0 font-mono text-[11.5px] text-text-3 flex items-center flex-wrap gap-0 tracking-[0.01em]">
           {isDevFixture && (
             <span
               data-testid="dev-fixtures-marker"
-              className="font-mono text-[10px] tracking-[0.04em] rounded border border-border bg-surface-elev px-1.5 py-0.5 text-text-3"
+              className="mr-2.5 font-mono text-[10px] tracking-[0.04em] rounded border border-border bg-surface-elev px-1.5 py-0.5 text-text-3"
             >
               dev fixtures
             </span>
           )}
-        </div>
-        <p className="mt-1.5 text-[13px] text-text-2 leading-[1.55]">
-          Buy and sell trading strategies as on-chain agents on Mantle.
-        </p>
-        <div className="mt-2.5 font-mono text-[11.5px] text-text-3 flex items-center flex-wrap gap-0 tracking-[0.01em]">
           {stats ? (
             <>
               <span>
@@ -73,9 +70,8 @@ export function HeaderStrip({ rows = [] }: HeaderStripProps) {
             <span className="text-text-4">Loading…</span>
           )}
         </div>
-      </div>
 
-      <div className="flex gap-2 items-center shrink-0 flex-wrap">
+        <div className="flex gap-2 items-center shrink-0 flex-wrap">
         <TestnetBadge size="sm" />
         <Link
           to="/marketplace/wallet"
@@ -93,6 +89,7 @@ export function HeaderStrip({ rows = [] }: HeaderStripProps) {
           <Icon name="plus" size={13} />
           List your strategy
         </button>
+        </div>
       </div>
     </div>
   );

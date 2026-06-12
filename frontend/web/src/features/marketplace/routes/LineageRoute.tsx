@@ -346,7 +346,7 @@ function MetricCell({
 }) {
   return (
     <div className="border border-border rounded-card bg-surface-card p-3 min-w-0">
-      <div className="text-[11px] uppercase tracking-wide text-text-3 truncate">
+      <div className="text-[10px] uppercase tracking-[0.04em] text-text-3 whitespace-nowrap">
         {label}
       </div>
       <div
@@ -640,7 +640,7 @@ export function LineageRoute() {
           {/* Title row */}
           <div className="flex items-center flex-wrap gap-2">
             <h1
-              className="text-[24px] font-semibold tracking-tight leading-tight text-text"
+              className="text-[30px] font-medium tracking-tight leading-tight text-text"
               title={title}
             >
               {title}
@@ -696,7 +696,7 @@ export function LineageRoute() {
 
           {/* Metric strip — every value FITS: tabular-nums + whitespace-nowrap,
               "—" for absent values (never 0). */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 pt-1">
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2 pt-1">
             <MetricCell
               label="30D Return"
               value={
