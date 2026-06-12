@@ -30,6 +30,11 @@ use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
 use xvision_engine::strategies::risk::{RiskConfig, RiskPreset};
 use xvision_engine::tools::ToolRegistry;
+use xvision_filters::{
+    ActivationMode, AgentContextTemplateId, Condition, ConditionItem, ConditionTree, Filter, FilterId,
+    FilterStatus, IndicatorRef, Operand, Operator, ScanCadence, StrategyId, Symbol, Timeframe,
+    WakeInPosition, DEFAULT_AGENT_CONTEXT_TEMPLATE,
+};
 
 mod support;
 
@@ -55,6 +60,29 @@ fn long_open_with_tp_then_holds(tp_pct: f64, holds: usize) -> Arc<dyn LlmDispatc
         resps.push(trader_resp("hold"));
     }
     Arc::new(MockDispatch::sequence(resps))
+}
+
+fn always_true_filter(strategy_id: &str, wake_when_in_position: WakeInPosition) -> Filter {
+    Filter {
+        id: FilterId::new("01TESTFILTERALWAYSTRUE000000"),
+        strategy_id: StrategyId::new(strategy_id),
+        display_name: "always true test filter".into(),
+        description: None,
+        status: FilterStatus::Active,
+        asset_scope: vec![Symbol::new("BTC/USD")],
+        timeframe: Timeframe::new("1d"),
+        scan_cadence: ScanCadence::BarClose,
+        conditions: ConditionTree::All(vec![ConditionItem::Leaf(Condition {
+            lhs: Operand::Indicator(IndicatorRef::close()),
+            op: Operator::Gt,
+            rhs: Operand::Numeric(0.0),
+        })]),
+        fire: None,
+        cooldown_bars: 0,
+        max_wakeups_per_day: None,
+        wake_when_in_position,
+        agent_context_template: AgentContextTemplateId::new(DEFAULT_AGENT_CONTEXT_TEMPLATE),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -143,6 +171,85 @@ async fn configured_atr_stop_force_closes_held_long_without_model_bracket() {
         stop.pnl_realized.unwrap_or(0.0) < 0.0,
         "stop-loss close must realize a loss; got {:?}",
         stop.pnl_realized
+    );
+}
+
+#[tokio::test]
+async fn configured_atr_stop_runs_before_filter_gate_when_position_is_open() {
+    // Reproduces PF-17: a filter-gated strategy opens once, then suppresses
+    // in-position wakeups. The deterministic ATR stop must still run on the
+    // crash bar before the filter skip can bypass the agent pipeline.
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+
+    let agent_id = "01TESTFILTERSLTP0000000000A";
+    let mut strategy = strategy_with(agent_id, &["BTC/USD"], RiskPreset::Balanced, 1_440);
+    strategy.activation_mode = ActivationMode::FilterGated;
+    strategy.filter = Some(always_true_filter(agent_id, WakeInPosition::Never));
+
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let mut bars: Vec<Ohlcv> = Vec::new();
+    for i in 0..20 {
+        let (o, h, l, c) = if i == 17 {
+            (100.0, 100.0, 60.0, 62.0)
+        } else if i == 18 {
+            (62.0, 63.0, 60.0, 62.0)
+        } else {
+            (100.0, 101.0, 99.0, 100.0)
+        };
+        bars.push(Ohlcv {
+            timestamp: start + Duration::days(i as i64),
+            open: o,
+            high: h,
+            low: l,
+            close: c,
+            volume: 1_000.0,
+        });
+    }
+
+    let mut actions = vec!["hold"; 15];
+    actions.extend(["long_open", "hold", "hold", "hold", "hold"]);
+    let dispatch = sequenced_dispatch(&actions);
+    let tools = Arc::new(ToolRegistry::empty());
+    let executor = Executor::with_bars(bars);
+
+    executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("backtest run should complete");
+
+    let decisions = store.read_decisions(&run.id).await.unwrap();
+    let actions_seen = decisions.iter().map(|d| d.action.as_str()).collect::<Vec<_>>();
+    let open_idx = actions_seen
+        .iter()
+        .position(|action| *action == "long_open")
+        .expect("test must open a long before SL/TP enforcement is meaningful");
+    let stop_idx = actions_seen
+        .iter()
+        .position(|action| *action == "stop_loss")
+        .expect("test must force one stop_loss row");
+    assert_eq!(
+        &actions_seen[(open_idx + 1)..stop_idx],
+        &[] as &[&str],
+        "filter-suppressed in-position bars must not emit extra trader decision rows between open and stop; actions = {actions_seen:?}"
+    );
+
+    let stop_rows = decisions.iter().filter(|d| d.action == "stop_loss").count();
+    assert_eq!(
+        stop_rows,
+        1,
+        "filter-gated in-position bars must still run SL/TP before skipping; decisions = {:?}",
+        decisions.iter().map(|d| d.action.clone()).collect::<Vec<_>>()
     );
 }
 

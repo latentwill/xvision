@@ -432,9 +432,41 @@ impl ResponseSchema {
                     "justification": {
                         "type": "string",
                         "minLength": 1
-                    }
+                    },
+                    "stop_loss_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "take_profit_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "trailing_stop_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "breakeven_trigger_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "breakeven_offset_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "fade_sl_bars": { "type": ["integer", "null"], "minimum": 0 },
+                    "fade_sl_start_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "fade_sl_end_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "max_bars_held": { "type": ["integer", "null"], "minimum": 1 },
+                    "sl_atr_mult": { "type": ["number", "null"], "minimum": 0.0 },
+                    "tp_atr_mult": { "type": ["number", "null"], "minimum": 0.0 },
+                    "tp1_pct": { "type": ["number", "null"], "minimum": 0.0 },
+                    "tp1_close_fraction": { "type": ["number", "null"], "minimum": 0.0, "maximum": 1.0 },
+                    "tp2_pct": { "type": ["number", "null"], "minimum": 0.0 }
                 },
-                "required": ["action", "conviction", "justification"]
+                "required": [
+                    "action",
+                    "conviction",
+                    "justification",
+                    "stop_loss_pct",
+                    "take_profit_pct",
+                    "trailing_stop_pct",
+                    "breakeven_trigger_pct",
+                    "breakeven_offset_pct",
+                    "fade_sl_bars",
+                    "fade_sl_start_pct",
+                    "fade_sl_end_pct",
+                    "max_bars_held",
+                    "sl_atr_mult",
+                    "tp_atr_mult",
+                    "tp1_pct",
+                    "tp1_close_fraction",
+                    "tp2_pct"
+                ]
             }),
         }
     }
@@ -561,6 +593,61 @@ mod schema_tests {
             schema.schema.pointer("/additionalProperties"),
             Some(&serde_json::Value::Bool(false))
         );
+    }
+
+    #[test]
+    fn trader_response_schema_allows_optional_bracket_fields() {
+        let schema = ResponseSchema::trader_output();
+        let properties = schema
+            .schema
+            .pointer("/properties")
+            .and_then(|v| v.as_object())
+            .expect("schema properties object");
+
+        let bracket_fields = [
+            "stop_loss_pct",
+            "take_profit_pct",
+            "trailing_stop_pct",
+            "breakeven_trigger_pct",
+            "breakeven_offset_pct",
+            "fade_sl_bars",
+            "fade_sl_start_pct",
+            "fade_sl_end_pct",
+            "max_bars_held",
+            "sl_atr_mult",
+            "tp_atr_mult",
+            "tp1_pct",
+            "tp1_close_fraction",
+            "tp2_pct",
+        ];
+
+        for field in bracket_fields {
+            assert!(
+                properties.contains_key(field),
+                "trader_output schema must allow optional bracket field `{field}`"
+            );
+        }
+
+        let required = schema
+            .schema
+            .pointer("/required")
+            .and_then(|v| v.as_array())
+            .expect("schema required array");
+        for field in bracket_fields {
+            assert!(
+                required.iter().any(|v| v.as_str() == Some(field)),
+                "strict structured outputs require nullable optional field `{field}` to appear in required"
+            );
+            let ty = properties
+                .get(field)
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_array())
+                .expect("nullable optional field must use a type array");
+            assert!(
+                ty.iter().any(|v| v.as_str() == Some("null")),
+                "optional field `{field}` must allow null"
+            );
+        }
     }
 
     #[test]
