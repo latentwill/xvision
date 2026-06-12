@@ -4,7 +4,7 @@
 // → catalogue list of CatalogueEntry. No leaderboard rail, no list-row buy flow,
 // no popups (the filter panel is an inline accordion in document flow). Rows are
 // whole <Link>s to the inspector — inspect-before-buy is the catalogue ethos.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
@@ -94,6 +94,19 @@ export function BrowseRoute() {
     return () => document.removeEventListener("keydown", onKey);
   }, [filtersOpen]);
 
+  // When the accordion opens below the hero, its sticky footer (Clear all ·
+  // matches · Done) can land just past the viewport bottom. The reveal is
+  // instant, so scroll the section minimally into view right after layout so
+  // the footer is always clickable without hunting.
+  const filterSectionRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const t = setTimeout(() => {
+      filterSectionRef.current?.scrollIntoView?.({ block: "nearest" });
+    }, 30);
+    return () => clearTimeout(t);
+  }, [filtersOpen]);
+
   const filterCount = countActiveFilters(filter);
 
   return (
@@ -114,7 +127,7 @@ export function BrowseRoute() {
       />
 
       {/* Inline filter accordion — in document flow, pushes the list down */}
-      <FilterDrawer open={filtersOpen} title="Filter strategies">
+      <FilterDrawer open={filtersOpen} title="Filter strategies" sectionRef={filterSectionRef}>
         <FilterDrawerContent
           filter={filter}
           setFilter={setFilter}
