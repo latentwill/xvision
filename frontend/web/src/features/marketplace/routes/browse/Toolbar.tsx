@@ -1,7 +1,12 @@
 // src/features/marketplace/routes/browse/Toolbar.tsx
+// The Catalogue toolbar (spec 3.1B). Sort is wired to SignalSelectMenu (the
+// project-approved portal dropdown with built-in click-outside + Escape — NOT
+// a focus-stealing modal, QA5). The Filters button toggles the inline filter
+// accordion (no absolute overlay). A segmented Catalogue | Index view toggle.
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import type { FilterState, SortKey } from "@/features/marketplace/data/types";
 
-const SORT_LABELS: Record<SortKey, string> = {
+export const SORT_LABELS: Record<SortKey, string> = {
   return30d: "30d return",
   sharpe: "Sharpe",
   buyers: "Buyers",
@@ -15,18 +20,47 @@ const SEGMENTS: { key: FilterState["segment"]; label: string }[] = [
   { key: "mine", label: "Mine" },
 ];
 
+export type BrowseView = "catalogue" | "index";
+
 interface ToolbarProps {
   filter: FilterState;
   setFilter: (patch: Partial<FilterState>) => void;
   filterCount: number;
-  onOpenDrawer: () => void;
+  /** Toggle the inline filter accordion (no popup). */
+  onToggleFilters: () => void;
+  filtersOpen: boolean;
   matchCount: number;
+  view: BrowseView;
+  setView: (v: BrowseView) => void;
+  /**
+   * When false (real client whose return/sharpe data is all zero), omit the
+   * return30d + sharpe sort options so we never sort on zeros (spec 3.1B).
+   */
+  allowPerformanceSort: boolean;
 }
 
-export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: ToolbarProps) {
+export function Toolbar({
+  filter,
+  setFilter,
+  filterCount,
+  onToggleFilters,
+  filtersOpen,
+  view,
+  setView,
+  allowPerformanceSort,
+}: ToolbarProps) {
+  // Build the sort options, dropping performance sorts when they'd sort on zeros.
+  const sortKeys: SortKey[] = allowPerformanceSort
+    ? ["return30d", "sharpe", "buyers", "mostCloned", "newest"]
+    : ["newest", "buyers", "mostCloned"];
+  const sortOptions = sortKeys.map((k) => ({ value: k, label: SORT_LABELS[k] }));
+  // If the active sort was hidden (performance sort on a zeroed client), fall
+  // back to "newest" for the menu's displayed value.
+  const sortValue = sortKeys.includes(filter.sort) ? filter.sort : "newest";
+
   return (
-    <div className="relative border-b border-border">
-      <div className="px-7 py-3.5 flex items-center gap-3 flex-wrap">
+    <div className="relative border-b border-ink-rule">
+      <div className="px-4 sm:px-7 py-3.5 flex items-center gap-3 flex-wrap">
         {/* Segmented: Trending | New | Mine */}
         <div className="inline-flex border border-border-strong rounded bg-surface-elev p-0.5">
           {SEGMENTS.map((s) => {
@@ -66,29 +100,28 @@ export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: Toolba
           <kbd className="ml-auto border border-border-strong rounded-[3px] font-mono text-[9.5px] text-text-3 px-1.5 py-0.5 tracking-[0.06em]">/</kbd>
         </div>
 
-        {/* Sort button */}
-        <button
-          type="button"
-          aria-label={`sort by ${SORT_LABELS[filter.sort]}`}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border-strong bg-surface-elev text-text-2 text-[12px] font-medium hover:border-border"
-        >
-          <span className="font-medium">Sort</span>
-          <span className="pl-1.5 ml-0.5 border-l border-border font-mono text-[11px] text-text-3">
-            {SORT_LABELS[filter.sort]}
-          </span>
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-            <path d="M2 4l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        {/* Sort — wired to SignalSelectMenu (click-outside + Escape built in) */}
+        <SignalSelectMenu
+          label="Sort"
+          value={sortValue}
+          options={sortOptions}
+          onChange={(v) => setFilter({ sort: v as SortKey })}
+        />
 
         <span className="w-px h-[22px] bg-border" />
 
-        {/* Filters button */}
+        {/* Filters — toggles the inline accordion (no overlay) */}
         <button
           type="button"
           aria-label="filters"
-          onClick={onOpenDrawer}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border-strong bg-surface-elev text-text-2 text-[12px] font-medium hover:border-border"
+          aria-expanded={filtersOpen}
+          onClick={onToggleFilters}
+          className={[
+            "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] font-medium",
+            filtersOpen
+              ? "border-gilt/45 bg-gilt-bg text-gilt"
+              : "border-border-strong bg-surface-elev text-text-2 hover:border-border",
+          ].join(" ")}
         >
           <span className="font-medium">Filters</span>
           {filterCount > 0 && (
@@ -103,18 +136,28 @@ export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: Toolba
           </svg>
         </button>
 
-        {/* Save view (disabled until F4 slice-save) */}
-        {/* TODO(Phase F4/slice save): wire Save view to createSlice */}
-        <div className="ml-auto">
-          <button
-            type="button"
-            disabled
-            aria-label="save view"
-            title="Save view — available in a future phase"
-            className="opacity-40 inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border-strong bg-transparent text-text-2 text-[12px] font-medium cursor-not-allowed"
-          >
-            Save view
-          </button>
+        {/* View toggle: Catalogue | Index */}
+        <div className="ml-auto inline-flex border border-border-strong rounded bg-surface-elev p-0.5">
+          {(["catalogue", "index"] as BrowseView[]).map((v) => {
+            const isActive = view === v;
+            return (
+              <button
+                key={v}
+                type="button"
+                aria-label={`${v} view`}
+                aria-pressed={isActive}
+                onClick={() => setView(v)}
+                className={[
+                  "px-2.5 py-1 rounded-[3px] text-[11.5px] font-medium capitalize cursor-pointer transition-colors",
+                  isActive
+                    ? "bg-gilt-bg text-gilt"
+                    : "bg-transparent text-text-3 hover:text-text",
+                ].join(" ")}
+              >
+                {v}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

@@ -1,18 +1,21 @@
 // src/features/marketplace/routes/BrowseRoute.tsx
-// F1 implementation of the /marketplace browse surface.
-// Replaces MarketplaceBrowseStub. All data via useMarketplaceData() + useQuery.
-// No popups. FilterDrawer is the F0 docked panel; its content is FilterDrawerContent.
-import { useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
+// "The Catalogue" — the /marketplace browse surface (spec 3.1).
+// Single full-width vertical stack: Hero → Toolbar → AppliedChips → SliceChips
+// → catalogue list of CatalogueEntry. No leaderboard rail, no list-row buy flow,
+// no popups (the filter panel is an inline accordion in document flow). Rows are
+// whole <Link>s to the inspector — inspect-before-buy is the catalogue ethos.
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { useFilterState } from "@/features/marketplace/hooks/useFilterState";
+import { EmptyState } from "@/components/chart/v2/primitives/EmptyState";
 import { FilterDrawer } from "@/features/marketplace/components/FilterDrawer";
 import { HeaderStrip } from "./browse/HeaderStrip";
-import { Toolbar } from "./browse/Toolbar";
+import { Toolbar, type BrowseView } from "./browse/Toolbar";
 import { AppliedChips } from "./browse/AppliedChips";
-import { LeaderboardRail } from "./browse/LeaderboardRail";
-import { ListingCard } from "./browse/ListingCard";
+import { SliceChips } from "./browse/SliceChips";
+import { CatalogueEntry, humanize, plateNumber } from "./browse/CatalogueEntry";
 import { FilterDrawerContent } from "./browse/FilterDrawerContent";
 import type { FilterState, ListingRow, Slice, SliceId } from "@/features/marketplace/data/types";
 
@@ -31,7 +34,6 @@ function countActiveFilters(filter: FilterState): number {
 }
 
 // Merge active slice's filter fields into the user filter.
-// When a slice is active, its asset/model/sort constraints overlay the URL filter.
 function mergeSliceFilter(filter: FilterState, slices: Slice[]): FilterState {
   if (!filter.slice) return filter;
   const slice = slices.find((s) => s.id === filter.slice);
@@ -39,48 +41,24 @@ function mergeSliceFilter(filter: FilterState, slices: Slice[]): FilterState {
   return { ...filter, ...slice.filter };
 }
 
-// List header column labels matching the 8-column grid from the design ref.
-function ListHeader() {
-  return (
-    <div
-      className="grid items-center gap-3.5 px-[22px] py-2.5 border-b border-border/50 sticky top-0 bg-bg z-[1]"
-      style={{ gridTemplateColumns: "56px 1.8fr 0.75fr 1.1fr 1.05fr 0.6fr 0.85fr 110px" }}
-    >
-      {["", "Strategy", "Assets", "30d return", "Buyers", "Sharpe", "Price", ""].map(
-        (h, i) => (
-          <div
-            key={i}
-            className={`font-mono text-[9px] tracking-[0.2em] uppercase text-text-3 font-semibold ${
-              i === 3 || i === 5 ? "text-right" : "text-left"
-            }`}
-          >
-            {h}
-          </div>
-        )
-      )}
-    </div>
-  );
-}
-
 export function BrowseRoute() {
   const mp = useMarketplaceData();
-  const navigate = useNavigate();
   const { filter, setFilter } = useFilterState();
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  // Per-card inline error surface is impractical in the dense list; failures
-  // land in a single dismissible strip at the top of the grid (no popups).
-  const [buyError, setBuyError] = useState<{ id: string; message: string } | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [view, setView] = useState<BrowseView>("catalogue");
 
-  // Load slices first (needed to merge slice filter into listing query)
+  // Whether the active client is the fixture/demo client (drives the DEMO
+  // marker and the sort-options gating).
+  const isDemo = mp.dataSource === "fixture";
+
+  // Load slices first (needed to merge slice filter into listing query).
   const { data: slices = [] } = useQuery<Slice[]>({
     queryKey: ["marketplace", "slices"],
     queryFn: () => mp.getSlices(),
   });
 
-  // Merge the active slice's filter fields into the effective filter for the query
   const effectiveFilter = mergeSliceFilter(filter, slices);
 
-  // Load listings using the merged filter
   const { data: listingsResult } = useQuery<{ rows: ListingRow[]; total: number; matched: number }>({
     queryKey: ["marketplace", "listings", effectiveFilter],
     queryFn: () => mp.listListings(effectiveFilter),
@@ -89,107 +67,153 @@ export function BrowseRoute() {
 
   const rows = listingsResult?.rows ?? [];
   const matched = listingsResult?.matched ?? 0;
+  const total = listingsResult?.total ?? 0;
 
-  const handleBuy = useCallback(
-    async (id: string) => {
-      // Real purchase via the seam (gasless relay → approve+buy fallback in
-      // ApiMarketplaceData). Success routes to the receipt; failure surfaces
-      // in the inline strip above the grid.
-      setBuyError(null);
-      try {
-        const ref = await mp.purchaseIntent(id);
-        navigate(`/marketplace/receipts/${ref.txHash}`);
-      } catch (e) {
-        setBuyError({
-          id,
-          message: e instanceof Error ? e.message : String(e),
-        });
-      }
-    },
-    [mp, navigate]
-  );
+  // On the real client, hide return/sharpe sort options when every value is 0
+  // (sorting on zeros is meaningless). The demo client always allows them.
+  const allowPerformanceSort = useMemo(() => {
+    if (isDemo) return true;
+    return rows.some((r) => r.return30dPct !== 0 || r.sharpe !== 0);
+  }, [isDemo, rows]);
 
   const handleSliceClick = useCallback(
     (sliceId: SliceId) => {
-      // Toggle: click same slice again to deselect
+      // Toggle: click same slice again to deselect.
       setFilter({ slice: filter.slice === sliceId ? undefined : sliceId });
     },
     [filter.slice, setFilter]
   );
 
+  // Inline filter accordion closes on Escape (no overlay, but keyboard-friendly).
+  useEffect(() => {
+    if (!filtersOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setFiltersOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [filtersOpen]);
+
   const filterCount = countActiveFilters(filter);
 
   return (
     <div className="flex flex-col min-h-0">
-      <HeaderStrip />
+      <HeaderStrip rows={rows} />
 
       <Toolbar
         filter={filter}
         setFilter={setFilter}
         filterCount={filterCount}
-        onOpenDrawer={() => setDrawerOpen(true)}
+        filtersOpen={filtersOpen}
+        onToggleFilters={() => setFiltersOpen((o) => !o)}
         matchCount={matched}
+        view={view}
+        setView={setView}
+        allowPerformanceSort={allowPerformanceSort}
       />
+
+      {/* Inline filter accordion — in document flow, pushes the list down */}
+      <FilterDrawer open={filtersOpen} title="Filter strategies">
+        <FilterDrawerContent
+          filter={filter}
+          setFilter={setFilter}
+          matchCount={matched}
+          totalCount={total}
+          onClose={() => setFiltersOpen(false)}
+        />
+      </FilterDrawer>
 
       <AppliedChips filter={filter} setFilter={setFilter} matchCount={matched} />
 
-      {/* Inline buy-error strip (no popups) */}
-      {buyError && (
-        <div
-          data-testid="browse-buy-error"
-          className="mx-[22px] my-2 flex items-center gap-2 rounded border border-danger/40 bg-danger/5 px-3 py-2 font-mono text-[11px] text-danger"
-        >
-          <span className="min-w-0">
-            Buy failed for {buyError.id}: {buyError.message}
-          </span>
-          <button
-            type="button"
-            onClick={() => setBuyError(null)}
-            className="ml-auto shrink-0 text-text-3 underline underline-offset-2 hover:text-text transition-colors"
-          >
-            dismiss
-          </button>
-        </div>
-      )}
+      {/* Slice chip strip — renders only when a slice has a real count > 0 */}
+      <SliceChips
+        slices={slices}
+        activeSliceId={filter.slice}
+        onSliceClick={handleSliceClick}
+      />
 
-      {/* Body: leaderboard rail | list + optional drawer overlay */}
-      <div
-        className="flex-1 min-h-0 grid overflow-hidden relative"
-        style={{ gridTemplateColumns: "232px 1fr" }}
-      >
-        <LeaderboardRail
-          activeSliceId={filter.slice}
-          onSliceClick={handleSliceClick}
-        />
-
-        {/* List area */}
-        <div className="overflow-auto pb-2">
-          <ListHeader />
-          {rows.length === 0 ? (
-            <div className="px-[22px] py-10 text-[13px] text-text-3 text-center">
-              No strategies match the current filters.
+      {/* Catalogue list (single full-width column) */}
+      <div className="flex-1 min-h-0 overflow-auto pb-6">
+        {total === 0 ? (
+          <div className="px-4 sm:px-7 py-10">
+            <EmptyState
+              title="The catalogue is empty"
+              message="No strategies minted yet."
+            />
+            <div className="mt-4 text-center">
+              <Link
+                to="/marketplace/sell"
+                className="font-mono text-[12px] text-gilt hover:underline underline-offset-2"
+              >
+                List your strategy →
+              </Link>
             </div>
-          ) : (
-            rows.map((row) => (
-              <ListingCard key={row.id} row={row} onBuy={handleBuy} />
-            ))
-          )}
-        </div>
-
-        {/* FilterDrawer docked panel — covers list area, rail stays visible */}
-        <FilterDrawer
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          title="Filter strategies"
-        >
-          <FilterDrawerContent
-            filter={filter}
-            setFilter={setFilter}
-            matchCount={matched}
-            onClose={() => setDrawerOpen(false)}
-          />
-        </FilterDrawer>
+          </div>
+        ) : matched === 0 ? (
+          <div className="px-4 sm:px-7 py-10 text-center font-display italic text-[13px] text-text-3">
+            No entries match the current filters.
+          </div>
+        ) : view === "index" ? (
+          <IndexTable rows={rows} />
+        ) : (
+          // Honest-data spine (spec §3.1E): ListingRow carries no equity
+          // series, so every catalogue row falls through to the dignified
+          // "pending first live cycle" caption — no fabricated per-row
+          // micro-curves on the catalogue. The MiniSparkline path on
+          // CatalogueEntry is reserved for surfaces that carry real equity.
+          rows.map((row, i) => (
+            <CatalogueEntry key={row.id} row={row} index={i} />
+          ))
+        )}
       </div>
     </div>
+  );
+}
+
+// Dense mono fallback table for power users (spec 3.1B view toggle). Real
+// fields only, hairline rules, NO sparkline. The Catalogue view is the thesis;
+// the Index view is opt-in.
+function IndexTable({ rows }: { rows: ListingRow[] }) {
+  return (
+    <table className="w-full border-collapse font-mono text-[12px]">
+      <thead>
+        <tr className="border-b border-ink-rule text-left">
+          {["№", "Strategy", "Tier", "Price", "Creator"].map((h) => (
+            <th
+              key={h}
+              className="px-4 sm:px-7 py-2 font-semibold text-[9px] tracking-[0.18em] uppercase text-text-3"
+            >
+              {h}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => {
+          const isOpen = row.priceUsdc === null || row.tier === "open";
+          return (
+            <tr key={row.id} className="border-b border-ink-rule-faint hover:bg-surface-hover">
+              <td className="px-4 sm:px-7 py-2 text-gilt">№ {plateNumber(row.id)}</td>
+              <td className="px-4 sm:px-7 py-2">
+                <Link
+                  to={`/marketplace/lineage/${row.id}`}
+                  className="text-text hover:text-gilt hover:underline underline-offset-2"
+                >
+                  {row.name ?? humanize(row.id)}
+                </Link>
+                <span className="text-text-3 ml-1.5">{row.version}</span>
+              </td>
+              <td className="px-4 sm:px-7 py-2 text-text-2">{isOpen ? "Open" : "Sealed"}</td>
+              <td className="px-4 sm:px-7 py-2 text-text-2 tabular-nums">
+                {isOpen ? "—" : `${row.priceUsdc} USDC`}
+              </td>
+              <td className="px-4 sm:px-7 py-2 text-text-3">
+                {row.creator.handle ?? `${row.creator.address.slice(0, 8)}…`}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }

@@ -5,6 +5,14 @@ import type { MarketplaceData } from "./MarketplaceData";
 import type { SubgraphClient } from "./subgraph/client";
 import { defaultFilterState } from "./filter";
 
+// Mock chain so getViewer tests don't need real wallet state.
+vi.mock("../lib/chain", () => ({
+  currentAddress: vi.fn(async () => null),
+}));
+
+import * as chain from "../lib/chain";
+const mockedChain = vi.mocked(chain);
+
 const listing = (id: string, agentId: string) => ({
   id,
   seller: "0x00000000000000000000000000000000000000ab",
@@ -43,6 +51,7 @@ function stubClient(map: {
 function spyFallback(): MarketplaceData {
   const tx = { txHash: "0xfake", network: "mantle-sepolia" };
   return {
+    dataSource: "fixture" as const,
     getStats: vi.fn(),
     listListings: vi.fn(),
     getSlices: vi.fn(async () => []),
@@ -98,11 +107,13 @@ describe("SubgraphMarketplaceData", () => {
   it("uses the manifest resolver for off-chain metadata", async () => {
     const mp = new SubgraphMarketplaceData({
       client: stubClient({ listings: [listing("1", "10")] }),
-      manifest: { resolve: async () => ({ model: "kimi-k2", assets: ["ETH/USD"] }) },
+      manifest: { resolve: async () => ({ name: "BTC Momentum", model: "kimi-k2", assets: ["ETH/USD"] }) },
     });
     const { rows } = await mp.listListings(defaultFilterState());
     expect(rows[0].model).toBe("kimi-k2");
     expect(rows[0].assets).toEqual(["ETH/USD"]);
+    // QA9: name field from manifest
+    expect(rows[0].name).toBe("BTC Momentum");
   });
 
   it("delegates off-chain / write methods to the fallback", async () => {
@@ -111,17 +122,70 @@ describe("SubgraphMarketplaceData", () => {
       client: stubClient({}),
       fallback,
     });
-    await mp.getSlices();
     await mp.getReceipt("0xabc");
-    await mp.getViewer();
     await mp.listListableStrategies();
     await mp.purchaseIntent("7");
     await mp.submitListing({} as never);
-    expect(fallback.getSlices).toHaveBeenCalled();
     expect(fallback.getReceipt).toHaveBeenCalledWith("0xabc");
-    expect(fallback.getViewer).toHaveBeenCalled();
     expect(fallback.listListableStrategies).toHaveBeenCalled();
     expect(fallback.purchaseIntent).toHaveBeenCalledWith("7");
     expect(fallback.submitListing).toHaveBeenCalled();
+  });
+
+  it("QA1: getSlices does NOT delegate to fallback — computes live counts", async () => {
+    const fallback = spyFallback();
+    const mp = new SubgraphMarketplaceData({
+      client: stubClient({ listings: [listing("1", "10")] }),
+      fallback,
+    });
+    const slices = await mp.getSlices();
+    // getSlices is overridden; fallback.getSlices should NOT be called
+    expect(fallback.getSlices).not.toHaveBeenCalled();
+    expect(slices.length).toBeGreaterThan(0);
+    for (const s of slices) {
+      expect(typeof s.count).toBe("number");
+    }
+  });
+
+  it("QA1: getViewer does NOT delegate to fallback", async () => {
+    mockedChain.currentAddress.mockResolvedValue(null);
+    const fallback = spyFallback();
+    const mp = new SubgraphMarketplaceData({
+      client: stubClient({}),
+      fallback,
+    });
+    const viewer = await mp.getViewer();
+    expect(fallback.getViewer).not.toHaveBeenCalled();
+    expect(viewer.isConnected).toBe(false);
+    // Must NOT assert @ed is connected
+    expect(viewer.handle).toBeUndefined();
+  });
+
+  it("QA1: getViewer returns isConnected:true when wallet is connected", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+    const mp = new SubgraphMarketplaceData({ client: stubClient({}) });
+    const viewer = await mp.getViewer();
+    expect(viewer.isConnected).toBe(true);
+    expect(viewer.address).toBe(ADDR);
+  });
+
+  it("QA1: subscribePurchases returns a no-op cleanup, not the fixture feed", () => {
+    const fallback = spyFallback();
+    const mp = new SubgraphMarketplaceData({
+      client: stubClient({}),
+      fallback,
+    });
+    const events: unknown[] = [];
+    const cleanup = mp.subscribePurchases((e) => events.push(e));
+    expect(typeof cleanup).toBe("function");
+    expect(events).toHaveLength(0);
+    expect(fallback.subscribePurchases).not.toHaveBeenCalled();
+    expect(() => cleanup()).not.toThrow();
+  });
+
+  it("exposes dataSource = 'subgraph'", () => {
+    const mp = new SubgraphMarketplaceData({ client: stubClient({}) });
+    expect(mp.dataSource).toBe("subgraph");
   });
 });

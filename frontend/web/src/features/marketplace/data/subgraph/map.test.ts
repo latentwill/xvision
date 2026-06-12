@@ -70,6 +70,7 @@ describe("mapListingRow", () => {
     expect(row.buyers).toEqual({ humans: 1, agents: 2 });
     expect(row.verification).toBe("verified"); // has a validation
     expect(row.acceptsX402).toBe(true); // positive price
+    // QA11: genArtSeed from agent.id
     expect(row.genArtSeed).toBe("42");
     // off-chain (no manifest/eval): defaults, not fabricated
     expect(row.model).toBe("—");
@@ -78,10 +79,13 @@ describe("mapListingRow", () => {
     expect(row.return30dPct).toBe(0);
     expect(row.clones).toBe(0);
     expect(row.transferableLicense).toBe(false);
+    // QA9: name is undefined when no manifest
+    expect(row.name).toBeUndefined();
   });
 
   it("applies resolved manifest metadata when present", () => {
     const row = mapListingRow(paidListing, {
+      name: "BTC Momentum v3",
       model: "kimi-k2",
       assets: ["ETH/USD"],
       style: "breakout",
@@ -89,6 +93,18 @@ describe("mapListingRow", () => {
     expect(row.model).toBe("kimi-k2");
     expect(row.assets).toEqual(["ETH/USD"]);
     expect(row.style).toBe("breakout");
+    // QA9: name from manifest
+    expect(row.name).toBe("BTC Momentum v3");
+  });
+
+  it("QA11: genArtSeed falls back to listing id when agent.id is empty", () => {
+    const noAgentId: SgListing = {
+      ...paidListing,
+      agent: { ...baseAgent, id: "" },
+    };
+    const row = mapListingRow(noAgentId, null);
+    // Falls back to listing id "7"
+    expect(row.genArtSeed).toBe("7");
   });
 
   it("unverified when no validations; x402 from sales when free", () => {

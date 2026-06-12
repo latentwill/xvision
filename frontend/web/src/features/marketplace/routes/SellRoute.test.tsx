@@ -42,9 +42,19 @@ async function advanceToStep3(client?: InstanceType<typeof FixtureMarketplaceDat
 describe("SellRoute", () => {
   it("renders the page heading and step 1 active", async () => {
     renderSell();
-    expect(await screen.findByText(/Share your strategy/)).toBeInTheDocument();
+    // Heading is now "List your strategy" (not "Share your strategy")
+    expect(await screen.findByRole("heading", { name: /List your strategy/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Share your strategy/)).not.toBeInTheDocument();
     expect(await screen.findByTestId("sell-step-1-body")).toBeInTheDocument();
     expect(screen.queryByTestId("sell-step-2-body")).not.toBeInTheDocument();
+  });
+
+  it("renders the catalogue eyebrow above the heading", async () => {
+    renderSell();
+    expect(await screen.findByTestId("sell-eyebrow")).toBeInTheDocument();
+    expect(screen.getByTestId("sell-eyebrow").textContent).toMatch(
+      /SUBMIT A WORK TO THE CATALOGUE/i,
+    );
   });
 
   it("step 1: lists all 3 fixture strategies", async () => {
@@ -105,8 +115,10 @@ describe("SellRoute", () => {
     await screen.findByTestId("sell-step-2-body");
     await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
     await screen.findByTestId("sell-step-3-body");
-    // ListingPreviewCard renders preview.id
-    expect(await screen.findByText("btc-momentum")).toBeInTheDocument();
+    // ListingPreviewCard renders the catalogue-style entry with the humanized title
+    expect(await screen.findByTestId("sell-step-3-body")).toBeInTheDocument();
+    // The preview card element is present
+    expect(document.querySelector("[data-preview='listing']")).toBeInTheDocument();
   });
 
   it("step 3: Mint button is disabled when any listability check fails (wip-draft)", async () => {

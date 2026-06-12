@@ -1,33 +1,30 @@
 // src/features/marketplace/components/FilterDrawer.tsx
-// Docked right-edge panel. NOT a Dialog/Modal/Sheet/Popover (CLAUDE.md
-// no-popups rule). It does not trap focus or paint a full-screen overlay
-// owning the page; it docks over the list area while the rail/sidebar stay.
+// Inline filter accordion (spec 3.1C, QA4). NOT an absolute overlay / Dialog /
+// Sheet / Popover — it renders in normal document flow and pushes the list down
+// (no "stuck open" problem, no click-outside trap). Height is animated via a
+// grid-template-rows 0fr → 1fr transition. The owner (BrowseRoute) wires an
+// Escape-to-close useEffect and a "Done" button.
 import type { ReactNode } from "react";
 
 export function FilterDrawer({
   open,
-  onClose,
   title = "Filter strategies",
   children,
 }: {
   open: boolean;
-  onClose: () => void;
+  /** Optional accessible label for the in-flow region. */
   title?: string;
   children: ReactNode;
 }) {
-  if (!open) return null;
   return (
-    <aside
+    <section
       aria-label={title}
-      className="absolute right-0 top-0 h-full w-[400px] bg-surface-panel border-l border-border shadow-xl flex flex-col"
+      data-filter-accordion
+      data-open={open || undefined}
+      className="grid transition-[grid-template-rows] duration-200 ease-out border-b border-ink-rule"
+      style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-        <span className="font-sans font-medium text-[15px]">{title}</span>
-        <button type="button" aria-label="close filters" onClick={onClose} className="text-text-3 hover:text-text">
-          ×
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto px-4 py-3">{children}</div>
-    </aside>
+      <div className="overflow-hidden min-h-0">{open && children}</div>
+    </section>
   );
 }

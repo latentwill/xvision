@@ -11,9 +11,13 @@ describe("fixtures", () => {
     expect(makeWallListings()).toHaveLength(200);
     expect(makeWallListings()[5]).toEqual(makeWallListings()[5]);
   });
-  it("ALL_LISTINGS includes named + wall", () => {
+
+  it("QA1: ALL_LISTINGS in dev (import.meta.env.DEV=true in vitest) includes named + wall", () => {
+    // In the vitest environment, import.meta.env.DEV is true, so ALL_LISTINGS
+    // should contain both NAMED_LISTINGS and the 200 wall rows.
     expect(ALL_LISTINGS.length).toBe(NAMED_LISTINGS.length + 200);
   });
+
   it("every detail extends a known row", () => {
     for (const [id, d] of Object.entries(LISTING_DETAILS)) {
       expect(d.id).toBe(id);
@@ -30,5 +34,12 @@ describe("fixtures", () => {
   it("publish draft flags missing assets", () => {
     const d = buildPublishDraft("local-wip-draft");
     expect(d.listable.find((c) => c.label.includes("asset"))?.ok).toBe(false);
+  });
+
+  it("makeWallListings is still exported and usable for dev use", () => {
+    const wall = makeWallListings(10);
+    expect(wall).toHaveLength(10);
+    // Every row has a non-empty id
+    expect(wall.every((r) => r.id.startsWith("wall-strat-"))).toBe(true);
   });
 });

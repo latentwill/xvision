@@ -1,5 +1,7 @@
-// BrowseRoute.buy.test.tsx — F6 closure: card Buy navigates to the receipt on
-// success; failures surface in the inline strip above the grid (no popups).
+// BrowseRoute.buy.test.tsx — The Catalogue removes the list-row buy flow.
+// Rows are whole <Link>s to the inspector (inspect-before-buy); no tx fires from
+// the list and no inline buy-error strip exists. Clicking a catalogue entry
+// navigates to /marketplace/lineage/:name (spec 3.1E, QA10/QA12).
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -17,6 +19,7 @@ function Wrapper({ client }: { client: FixtureMarketplaceData }) {
         <MemoryRouter initialEntries={["/marketplace"]}>
           <Routes>
             <Route path="/marketplace" element={<BrowseRoute />} />
+            <Route path="/marketplace/lineage/:name" element={<div>inspector page</div>} />
             <Route path="/marketplace/receipts/:tx" element={<div>receipt page</div>} />
           </Routes>
         </MemoryRouter>
@@ -25,40 +28,27 @@ function Wrapper({ client }: { client: FixtureMarketplaceData }) {
   );
 }
 
-describe("BrowseRoute buy", () => {
-  it("navigates to the receipt after a successful card buy", async () => {
+describe("BrowseRoute entries route to the inspector", () => {
+  it("navigates to the inspector (not a receipt) when a catalogue entry is clicked", async () => {
     const client = new FixtureMarketplaceData();
-    const spy = vi.spyOn(client, "purchaseIntent").mockResolvedValue({
-      txHash: "0xbrowse-buy",
-      network: "mantle-sepolia",
-    });
+    const buySpy = vi.spyOn(client, "purchaseIntent");
     render(<Wrapper client={client} />);
 
     const user = userEvent.setup();
-    const buyButtons = await screen.findAllByRole("button", { name: /^buy$/i });
-    await user.click(buyButtons[0]);
+    const entry = await screen.findByText("Btc Momentum V3");
+    await user.click(entry);
 
-    expect(await screen.findByText("receipt page")).toBeInTheDocument();
-    expect(spy).toHaveBeenCalledTimes(1);
+    // Routed to the inspector, never a receipt; no purchase tx fired from the list.
+    expect(await screen.findByText("inspector page")).toBeInTheDocument();
+    expect(screen.queryByText("receipt page")).not.toBeInTheDocument();
+    expect(buySpy).not.toHaveBeenCalled();
   });
 
-  it("shows a dismissible inline error strip when the buy fails", async () => {
+  it("does not render a list-row buy button or an inline buy-error strip", async () => {
     const client = new FixtureMarketplaceData();
-    vi.spyOn(client, "purchaseIntent").mockRejectedValue(
-      new Error("Connect a wallet to buy — no wallet connected."),
-    );
     render(<Wrapper client={client} />);
-
-    const user = userEvent.setup();
-    const buyButtons = await screen.findAllByRole("button", { name: /^buy$/i });
-    await user.click(buyButtons[0]);
-
-    const strip = await screen.findByTestId("browse-buy-error");
-    expect(strip).toHaveTextContent(/connect a wallet to buy/i);
-    // still on the browse page
-    expect(screen.queryByText("receipt page")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /dismiss/i }));
+    await screen.findByText("Btc Momentum V3");
+    expect(screen.queryByRole("button", { name: /^buy$/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("browse-buy-error")).not.toBeInTheDocument();
   });
 });

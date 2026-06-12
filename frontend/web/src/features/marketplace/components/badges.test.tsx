@@ -15,9 +15,10 @@ describe("badges", () => {
     render(<AssetPill asset="WIF" />);
     expect(screen.getByText("WIF")).toBeInTheDocument();
   });
-  it("VerifiedBadge has an accessible title", () => {
+  it("VerifiedBadge is a gilt wax-seal with an 'attested on-chain' title", () => {
     render(<VerifiedBadge />);
-    expect(screen.getByTitle(/backtested/i)).toBeInTheDocument();
+    // Restyled per overhaul §5: antique-gilt wax seal, title "Attested on-chain".
+    expect(screen.getByTitle(/attested on-chain/i)).toBeInTheDocument();
   });
   it("X402Badge labels x402", () => {
     render(<X402Badge />);

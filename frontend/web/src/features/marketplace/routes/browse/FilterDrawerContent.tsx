@@ -270,6 +270,8 @@ interface FilterDrawerContentProps {
   filter: FilterState;
   setFilter: (patch: Partial<FilterState>) => void;
   matchCount: number;
+  /** Total listings in the catalogue (drives the "of N match" line, QA1). */
+  totalCount: number;
   onClose: () => void;
 }
 
@@ -277,6 +279,7 @@ export function FilterDrawerContent({
   filter,
   setFilter,
   matchCount,
+  totalCount,
   onClose,
 }: FilterDrawerContentProps) {
   const def = defaultFilterState();
@@ -340,7 +343,7 @@ export function FilterDrawerContent({
                 (filter.trust.auditedOnly ? 1 : 0)}{" "}
               filters active
             </span>{" "}
-            · {matchCount.toLocaleString()} of 1,247 match
+            · {matchCount.toLocaleString()} of {totalCount.toLocaleString()} match
           </>
         ) : (
           <span>{matchCount.toLocaleString()} strategies</span>
@@ -536,7 +539,7 @@ export function FilterDrawerContent({
       </DrawerSection>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-border bg-[#050505] flex items-center gap-2">
+      <div className="px-4 py-3 border-t border-ink-rule flex items-center gap-2">
         <button
           type="button"
           onClick={clearAll}
@@ -549,11 +552,11 @@ export function FilterDrawerContent({
         </span>
         <button
           type="button"
-          aria-label="apply"
+          aria-label="done"
           onClick={onClose}
           className="px-5 py-1.5 rounded bg-gold text-[#001A0A] text-[12px] font-bold hover:opacity-90 transition-opacity motion-safe:active:scale-[0.96]"
         >
-          Apply
+          Done
         </button>
       </div>
     </>

@@ -1,5 +1,6 @@
 // src/features/marketplace/routes/BrowseRoute.test.tsx
 import { render, screen, act, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
@@ -21,23 +22,33 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("BrowseRoute", () => {
-  it("renders the H1 promise", async () => {
+  it("renders the Catalogue hero headline", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
-    expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("The Catalogue");
   });
 
-  it("renders strategy rows from listListings", async () => {
+  it("renders catalogue entries from listListings as links to the inspector", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
-    // fixture ALL_LISTINGS includes "btc-momentum-v3"
-    expect(await screen.findByText("btc-momentum-v3")).toBeInTheDocument();
+    // fixture NAMED_LISTINGS includes "btc-momentum-v3" (humanized title)
+    const entry = await screen.findByText("Btc Momentum V3");
+    const link = entry.closest("a");
+    expect(link).toHaveAttribute("href", "/marketplace/lineage/btc-momentum-v3");
   });
 
-  it("renders the leaderboard rail with slices", async () => {
+  it("renders the slice chip strip (replaces the leaderboard rail)", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
-    expect(await screen.findByText("Trending")).toBeInTheDocument();
+    // Slice chips use slice labels; "Trending" is the first slice.
+    expect(await screen.findByTestId("slice-chip-trending")).toBeInTheDocument();
   });
 
-  it("renders at least one GenArtPlaceholder thumb", async () => {
+  it("does not render a leaderboard rail or CHAIN OPS callout", async () => {
+    render(<BrowseRoute />, { wrapper: Wrapper });
+    await screen.findByTestId("slice-chip-trending");
+    expect(screen.queryByText(/CHAIN OPS/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/LEADERBOARDS/i)).not.toBeInTheDocument();
+  });
+
+  it("renders at least one GenArtPlaceholder plate", async () => {
     const { container } = render(<BrowseRoute />, { wrapper: Wrapper });
     await waitFor(() => {
       expect(container.querySelectorAll('[data-genart="bitfields-v3"]').length).toBeGreaterThan(0);
@@ -49,19 +60,26 @@ describe("BrowseRoute", () => {
     expect(await screen.findByRole("button", { name: /filters/i })).toBeInTheDocument();
   });
 
-  it("opens the FilterDrawer when Filters is clicked", async () => {
+  it("opens the inline filter accordion (in document flow, no overlay aside) when Filters is clicked", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
     const btn = await screen.findByRole("button", { name: /filters/i });
     act(() => btn.click());
-    // F0 FilterDrawer <aside> plus LeaderboardRail <aside> = at least 2 complementary roles
-    expect(screen.getAllByRole("complementary").length).toBeGreaterThanOrEqual(2);
+    // The filter accordion exposes its content; the sort section renders.
+    expect(await screen.findByText("Sort by")).toBeInTheDocument();
+    // No absolute overlay <aside> for filters; the inline accordion is a region.
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
   });
 
-  it("the FilterDrawer shows sort section content", async () => {
+  it("closes the inline filter accordion on Escape", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
+    const user = userEvent.setup();
     const btn = await screen.findByRole("button", { name: /filters/i });
-    act(() => btn.click());
-    expect(screen.getByText("Sort by")).toBeInTheDocument();
+    await user.click(btn);
+    expect(await screen.findByText("Sort by")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.queryByText("Sort by")).not.toBeInTheDocument();
+    });
   });
 
   it("Mine segment shows only the viewer's created listings", async () => {
@@ -76,19 +94,19 @@ describe("BrowseRoute", () => {
       </QueryClientProvider>
     );
     // viewer.createdListingIds = ["btc-momentum-v3", "btc-grid-v2", "eth-mr-v2"]
-    expect(await screen.findByText("btc-momentum-v3")).toBeInTheDocument();
+    expect(await screen.findByText("Btc Momentum V3")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.queryByText("sol-strategist-pro")).not.toBeInTheDocument();
+      expect(screen.queryByText("Sol Strategist Pro")).not.toBeInTheDocument();
     });
   });
 
-  it("clicking a leaderboard slice sets the slice URL param", async () => {
+  it("clicking a slice chip narrows the catalogue", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
-    const sliceItem = await screen.findByTestId("slice-sol-7d");
-    act(() => sliceItem.click());
-    // After click, row set should narrow to SOL assets (fixture slice filter)
+    const chip = await screen.findByTestId("slice-chip-sol-7d");
+    act(() => chip.click());
+    // SOL slice filter excludes BTC-only entries.
     await waitFor(() => {
-      expect(screen.queryByText("btc-momentum-v3")).not.toBeInTheDocument();
+      expect(screen.queryByText("Btc Momentum V3")).not.toBeInTheDocument();
     });
   });
 });

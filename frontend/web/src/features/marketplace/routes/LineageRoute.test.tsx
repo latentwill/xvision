@@ -111,34 +111,81 @@ describe("LineageRoute", () => {
     expect(screen.getAllByText(/14/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("NFT token id stamped on the gen-art panel", async () => {
+  it("plate number is stamped under the gen-art plate (№ 0043)", async () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-hero");
-    expect(screen.getByText(/#0043/)).toBeInTheDocument();
+    expect(screen.getByText(/№\s*0043/)).toBeInTheDocument();
   });
 
-  it("renders the purchase column with price", async () => {
+  it("clicking the plate inline-expands the artifact & provenance inspector", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-hero");
+    // Closed by default
+    expect(screen.queryByTestId("inspect-art")).not.toBeInTheDocument();
+    await act(async () => {
+      await userEvent.click(screen.getByTestId("plate-inspect-toggle"));
+    });
+    const inspector = await screen.findByTestId("inspect-art");
+    expect(inspector).toHaveTextContent(/artifact & provenance/i);
+    // On-chain metadata + a TxChip explorer link
+    expect(inspector).toHaveTextContent(/manifest_hash/i);
+    expect(inspector).toHaveTextContent(/view on explorer/i);
+  });
+
+  it("renders the purchase block with price (no fee in the price) and an Acquire CTA", async () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-purchase-col");
-    expect(screen.getByText(/49/)).toBeInTheDocument(); // 49 USDC
-    expect(screen.getByRole("button", { name: /buy/i })).toBeInTheDocument();
+    expect(screen.getByText(/49 USDC/)).toBeInTheDocument(); // 49 USDC, no parenthesized fee
+    // Fee lives on a separate muted line
+    expect(screen.getByTestId("fee-line")).toHaveTextContent(/platform fee 5%/i);
+    expect(screen.getByRole("button", { name: /^acquire$/i })).toBeInTheDocument();
   });
 
-  it("Buy calls purchaseIntent and navigates to receipts", async () => {
+  it("does not render a Share button in the hero (removed)", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-purchase-col");
+    expect(screen.queryByRole("button", { name: /^share$/i })).not.toBeInTheDocument();
+  });
+
+  it("Acquire calls purchaseIntent and navigates to receipts", async () => {
     const client = new FixtureMarketplaceData();
     const spy = vi.spyOn(client, "purchaseIntent").mockResolvedValue({
       txHash: "0xdeadbeef",
       network: "mantle-sepolia",
     });
     render(<Wrapper client={client} />);
-    await screen.findByRole("button", { name: /buy/i });
+    await screen.findByRole("button", { name: /^acquire$/i });
     await act(async () => {
-      await userEvent.click(screen.getByRole("button", { name: /buy/i }));
+      await userEvent.click(screen.getByRole("button", { name: /^acquire$/i }));
     });
     await waitFor(() => {
       expect(spy).toHaveBeenCalledWith("btc-momentum-v3");
     });
     // After success, navigated to receipts
+    expect(await screen.findByText("receipt")).toBeInTheDocument();
+  });
+
+  it("open-tier listings show Run free and route through cloneIntent", async () => {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing("btc-momentum-v3");
+    vi.spyOn(client, "getListing").mockResolvedValue({
+      ...base,
+      tier: "open",
+      priceUsdc: null,
+    });
+    const cloneSpy = vi.spyOn(client, "cloneIntent").mockResolvedValue({
+      txHash: "0xfreeclone",
+      network: "mantle-sepolia",
+    });
+    render(<Wrapper client={client} />);
+    const runFree = await screen.findByTestId("run-free-btn");
+    expect(runFree).toHaveTextContent(/run free/i);
+    // No Acquire/buy button on an open listing
+    expect(screen.queryByTestId("buy-btn")).not.toBeInTheDocument();
+    await act(async () => {
+      await userEvent.click(runFree);
+    });
+    await waitFor(() => expect(cloneSpy).toHaveBeenCalledWith("btc-momentum-v3"));
     expect(await screen.findByText("receipt")).toBeInTheDocument();
   });
 
@@ -205,9 +252,15 @@ describe("LineageRoute", () => {
     expect(await screen.findByTestId("receipts-body")).toBeInTheDocument();
   });
 
-  it("shows an error state for an unknown strategy name", async () => {
+  it("shows the designed catalogue-miss state for an unknown strategy name", async () => {
     render(<Wrapper initialPath="/marketplace/lineage/does-not-exist" />);
-    expect(await screen.findByText(/not found/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/this entry is not in the catalogue/i),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("lineage-not-found")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /back to the catalogue/i }),
+    ).toBeInTheDocument();
   });
 });
 

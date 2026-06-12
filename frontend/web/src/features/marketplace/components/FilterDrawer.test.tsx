@@ -1,35 +1,40 @@
 // src/features/marketplace/components/FilterDrawer.test.tsx
-import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+// The FilterDrawer is now an inline accordion (spec 3.1C, QA4): in document
+// flow, NOT an absolute overlay / Dialog / Sheet / Popover / complementary aside.
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 import { FilterDrawer } from "./FilterDrawer";
 
-describe("FilterDrawer", () => {
+describe("FilterDrawer (inline accordion)", () => {
   it("does not render content when closed", () => {
     render(
-      <FilterDrawer open={false} onClose={() => {}}>
+      <FilterDrawer open={false}>
         <p>filters</p>
       </FilterDrawer>,
     );
     expect(screen.queryByText("filters")).not.toBeInTheDocument();
   });
-  it("renders content and a close affordance when open", () => {
-    const onClose = vi.fn();
+
+  it("renders content in document flow when open", () => {
     render(
-      <FilterDrawer open onClose={onClose}>
+      <FilterDrawer open>
         <p>filters</p>
       </FilterDrawer>,
     );
     expect(screen.getByText("filters")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /close/i }));
-    expect(onClose).toHaveBeenCalledOnce();
   });
-  it("is a docked complementary panel, not a dialog (no-popups rule)", () => {
-    render(
-      <FilterDrawer open onClose={() => {}}>
+
+  it("is not a dialog or an absolute complementary aside (no-popups rule)", () => {
+    const { container } = render(
+      <FilterDrawer open>
         <p>filters</p>
       </FilterDrawer>,
     );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("complementary")).toBeInTheDocument();
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
+    // In-flow region wrapper carries the accordion marker, not an absolute aside.
+    const region = container.querySelector("[data-filter-accordion]");
+    expect(region).not.toBeNull();
+    expect(region!.className).not.toMatch(/absolute/);
   });
 });

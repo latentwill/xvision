@@ -1,12 +1,40 @@
 // src/features/marketplace/routes/browse/browse.test.tsx
-// Shared test file for all browse sub-components. Add describes per task.
+// Tests for the Catalogue browse sub-components (spec 3.1, 7).
 import { render, screen, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeAll, afterAll } from "vitest";
 import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
 import { HeaderStrip } from "./HeaderStrip";
+
+// MiniSparkline (used by CatalogueEntry's demo performance caption) renders a
+// uPlot pane behind a ResizeObserver. jsdom provides neither a canvas context
+// nor ResizeObserver — mock uPlot as a no-op and stub ResizeObserver (matches
+// the pattern in EquityPanel.test.tsx / LineageRoute tests).
+vi.mock("uplot", () => ({
+  default: class {
+    constructor() {}
+    setSize() {}
+    destroy() {}
+  },
+}));
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+beforeAll(() => {
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    writable: true,
+    configurable: true,
+    value: ResizeObserverStub,
+  });
+});
+afterAll(() => {
+  delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+});
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -22,49 +50,94 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("HeaderStrip", () => {
-  it("renders the H1 promise copy", async () => {
+  it("renders the Fraunces 'The Catalogue' headline", async () => {
     render(<HeaderStrip />, { wrapper: Wrapper });
-    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
-      "Buy a strategy. Run it. Or share yours and get paid."
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("The Catalogue");
+  });
+
+  it("renders the editorial eyebrow", async () => {
+    render(<HeaderStrip />, { wrapper: Wrapper });
+    expect(
+      await screen.findByText(/XVISION · STRATEGY CATALOGUE · MANTLE TESTNET/i)
+    ).toBeInTheDocument();
+  });
+
+  it("renders the honest stat ledger (entries / creators / paid to creators em-dash) and not the fixture cells", async () => {
+    const rows = [
+      { creator: { address: "0xAAA" } },
+      { creator: { address: "0xbbb" } },
+      { creator: { address: "0xAAA" } },
+    ] as never;
+    render(<HeaderStrip rows={rows} />, { wrapper: Wrapper });
+    // The three honest ledger cells render (labels are case-exact in markup).
+    expect(await screen.findByText(/^Entries$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Creators$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Paid to creators$/i)).toBeInTheDocument();
+    // Removed fixture-or-zero cells: paid this week / agent purchases / minted 24h.
+    expect(screen.queryByText(/paid this week/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/agent purchases/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/minted in 24h/i)).not.toBeInTheDocument();
+    // Distinct creators from the two unique addresses above.
+    expect(screen.getByText("2")).toBeInTheDocument();
+    // Paid-to-creators is an honest em-dash (no real backing total).
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("shows the DEMO CATALOGUE marker on the fixture client", async () => {
+    render(<HeaderStrip />, { wrapper: Wrapper });
+    expect(await screen.findByTestId("demo-catalogue-marker")).toBeInTheDocument();
+  });
+
+  it("renders the List-your-strategy CTA and no Share button", async () => {
+    render(<HeaderStrip />, { wrapper: Wrapper });
+    expect(
+      await screen.findByRole("button", { name: /list your strategy/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^share$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /share your strategy/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the Wallet link", async () => {
+    render(<HeaderStrip />, { wrapper: Wrapper });
+    expect(await screen.findByRole("link", { name: /wallet/i })).toBeInTheDocument();
+  });
+
+  it("renders a Testnet badge in the hero (once, as a standalone chip)", async () => {
+    const { container } = render(<HeaderStrip />, { wrapper: Wrapper });
+    await screen.findByRole("heading", { level: 1 });
+    // The standalone TestnetBadge chip renders exactly the word "Testnet".
+    const badges = Array.from(container.querySelectorAll("span")).filter(
+      (el) => el.textContent === "Testnet"
     );
-  });
-
-  it("renders the stats from getStats after load", async () => {
-    render(<HeaderStrip />, { wrapper: Wrapper });
-    // fixture: { totalStrategies: 1247, paidThisWeekUsd: 34820, agentPurchases: 218, mintedLast24h: 64 }
-    expect(await screen.findByText(/1,247/)).toBeInTheDocument();
-    expect(await screen.findByText(/\$34,820/)).toBeInTheDocument();
-    expect(await screen.findByText(/218/)).toBeInTheDocument();
-    expect(await screen.findByText(/64/)).toBeInTheDocument();
-  });
-
-  it("renders the Share and Share-your-strategy CTAs", async () => {
-    render(<HeaderStrip />, { wrapper: Wrapper });
-    expect(await screen.findByRole("button", { name: /share your strategy/i })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /^share$/i })).toBeInTheDocument();
+    expect(badges).toHaveLength(1);
   });
 });
 
-// --- Task 2: Toolbar + AppliedChips ---
+// --- Toolbar ---
 
 import { Toolbar } from "./Toolbar";
 import { AppliedChips } from "./AppliedChips";
 import type { FilterState } from "@/features/marketplace/data/types";
 import { defaultFilterState } from "@/features/marketplace/data/filter";
 
+function toolbarProps(overrides: Partial<React.ComponentProps<typeof Toolbar>> = {}) {
+  return {
+    filter: defaultFilterState(),
+    setFilter: vi.fn(),
+    filterCount: 0,
+    filtersOpen: false,
+    onToggleFilters: vi.fn(),
+    matchCount: 100,
+    view: "catalogue" as const,
+    setView: vi.fn(),
+    allowPerformanceSort: true,
+    ...overrides,
+  };
+}
+
 describe("Toolbar", () => {
   it("renders Trending | New | Mine segments", () => {
-    const setFilter = vi.fn();
-    render(
-      <Toolbar
-        filter={defaultFilterState()}
-        setFilter={setFilter}
-        filterCount={0}
-        onOpenDrawer={() => {}}
-        matchCount={100}
-      />,
-      { wrapper: Wrapper }
-    );
+    render(<Toolbar {...toolbarProps()} />, { wrapper: Wrapper });
     expect(screen.getByRole("button", { name: /trending/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /new/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /mine/i })).toBeInTheDocument();
@@ -72,62 +145,58 @@ describe("Toolbar", () => {
 
   it("calls setFilter with segment when a segment is clicked", () => {
     const setFilter = vi.fn();
-    render(
-      <Toolbar
-        filter={defaultFilterState()}
-        setFilter={setFilter}
-        filterCount={0}
-        onOpenDrawer={() => {}}
-        matchCount={100}
-      />,
-      { wrapper: Wrapper }
-    );
+    render(<Toolbar {...toolbarProps({ setFilter })} />, { wrapper: Wrapper });
     act(() => screen.getByRole("button", { name: /new/i }).click());
     expect(setFilter).toHaveBeenCalledWith(expect.objectContaining({ segment: "new" }));
   });
 
-  it("shows the filter count badge when filterCount > 0", () => {
-    render(
-      <Toolbar
-        filter={defaultFilterState()}
-        setFilter={vi.fn()}
-        filterCount={3}
-        onOpenDrawer={() => {}}
-        matchCount={45}
-      />,
+  it("opens the SignalSelectMenu sort dropdown and selects a sort", async () => {
+    const setFilter = vi.fn();
+    const { container } = render(<Toolbar {...toolbarProps({ setFilter })} />, { wrapper: Wrapper });
+    const user = userEvent.setup();
+    // The sort trigger is the listbox button (SignalSelectMenu).
+    const trigger = container.querySelector('button[aria-haspopup="listbox"]')!;
+    await user.click(trigger);
+    const option = await screen.findByRole("option", { name: /sharpe/i });
+    await user.click(option);
+    expect(setFilter).toHaveBeenCalledWith(expect.objectContaining({ sort: "sharpe" }));
+  });
+
+  it("omits return30d and sharpe sort options when performance sort is disallowed", async () => {
+    const { container } = render(
+      <Toolbar {...toolbarProps({ allowPerformanceSort: false })} />,
       { wrapper: Wrapper }
     );
+    const user = userEvent.setup();
+    const trigger = container.querySelector('button[aria-haspopup="listbox"]')!;
+    await user.click(trigger);
+    expect(await screen.findByRole("option", { name: /newest/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /30d return/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /^sharpe$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the filter count badge when filterCount > 0", () => {
+    render(<Toolbar {...toolbarProps({ filterCount: 3 })} />, { wrapper: Wrapper });
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
   it("renders the / shortcut hint in the search field", () => {
-    render(
-      <Toolbar
-        filter={defaultFilterState()}
-        setFilter={vi.fn()}
-        filterCount={0}
-        onOpenDrawer={() => {}}
-        matchCount={0}
-      />,
-      { wrapper: Wrapper }
-    );
+    render(<Toolbar {...toolbarProps()} />, { wrapper: Wrapper });
     expect(screen.getByText("/")).toBeInTheDocument();
   });
 
-  it("calls onOpenDrawer when the Filters button is clicked", () => {
-    const onOpenDrawer = vi.fn();
-    render(
-      <Toolbar
-        filter={defaultFilterState()}
-        setFilter={vi.fn()}
-        filterCount={0}
-        onOpenDrawer={onOpenDrawer}
-        matchCount={0}
-      />,
-      { wrapper: Wrapper }
-    );
+  it("calls onToggleFilters when the Filters button is clicked", () => {
+    const onToggleFilters = vi.fn();
+    render(<Toolbar {...toolbarProps({ onToggleFilters })} />, { wrapper: Wrapper });
     act(() => screen.getByRole("button", { name: /filters/i }).click());
-    expect(onOpenDrawer).toHaveBeenCalledOnce();
+    expect(onToggleFilters).toHaveBeenCalledOnce();
+  });
+
+  it("renders a Catalogue | Index view toggle and switches view", () => {
+    const setView = vi.fn();
+    render(<Toolbar {...toolbarProps({ setView })} />, { wrapper: Wrapper });
+    act(() => screen.getByRole("button", { name: /index view/i }).click());
+    expect(setView).toHaveBeenCalledWith("index");
   });
 });
 
@@ -172,59 +241,77 @@ describe("AppliedChips", () => {
   });
 });
 
-// --- Task 3: LeaderboardRail ---
+// --- SliceChips (replaces LeaderboardRail) ---
 
-import { LeaderboardRail } from "./LeaderboardRail";
+import { SliceChips } from "./SliceChips";
+import type { Slice } from "@/features/marketplace/data/types";
 
-describe("LeaderboardRail", () => {
-  it("renders slices from getSlices", async () => {
+const SLICES_FIXTURE: Slice[] = [
+  { id: "trending", label: "Trending", hint: "velocity × return", count: 5, filter: { sort: "return30d" } },
+  { id: "sol-7d", label: "Top on SOL · 7d", hint: "asset=SOL", count: 3, filter: { assets: ["SOL"] } },
+  { id: "empty", label: "Empty slice", hint: "nothing", count: 0, filter: {} },
+];
+
+describe("SliceChips", () => {
+  it("renders a gilt chip per slice with a real count > 0 and omits count-0 slices", () => {
     render(
-      <LeaderboardRail activeSliceId={undefined} onSliceClick={() => {}} />,
+      <SliceChips slices={SLICES_FIXTURE} activeSliceId={undefined} onSliceClick={() => {}} />,
       { wrapper: Wrapper }
     );
-    // fixture: SLICES[0].label = "Trending"
-    expect(await screen.findByText("Trending")).toBeInTheDocument();
-    expect(await screen.findByText("Top on SOL · 7d")).toBeInTheDocument();
+    expect(screen.getByTestId("slice-chip-trending")).toBeInTheDocument();
+    expect(screen.getByTestId("slice-chip-sol-7d")).toBeInTheDocument();
+    expect(screen.queryByTestId("slice-chip-empty")).not.toBeInTheDocument();
   });
 
-  it("marks the active slice with the gold style", async () => {
-    render(
-      <LeaderboardRail activeSliceId="trending" onSliceClick={() => {}} />,
+  it("renders nothing when every slice has count 0", () => {
+    const { container } = render(
+      <SliceChips
+        slices={[{ id: "z", label: "Z", hint: "", count: 0, filter: {} }]}
+        activeSliceId={undefined}
+        onSliceClick={() => {}}
+      />,
       { wrapper: Wrapper }
     );
-    const item = await screen.findByTestId("slice-trending");
-    expect(item.className).toMatch(/gold/);
+    expect(container.querySelector("[data-slice-chips]")).toBeNull();
   });
 
-  it("calls onSliceClick with the slice id when clicked", async () => {
+  it("calls onSliceClick with the slice id when a chip is clicked", () => {
     const onSliceClick = vi.fn();
     render(
-      <LeaderboardRail activeSliceId={undefined} onSliceClick={onSliceClick} />,
+      <SliceChips slices={SLICES_FIXTURE} activeSliceId={undefined} onSliceClick={onSliceClick} />,
       { wrapper: Wrapper }
     );
-    const item = await screen.findByTestId("slice-trending");
-    act(() => item.click());
+    act(() => screen.getByTestId("slice-chip-trending").click());
     expect(onSliceClick).toHaveBeenCalledWith("trending");
   });
 
-  it("renders the CHAIN OPS callout below the slices", async () => {
+  it("marks the active chip", () => {
     render(
-      <LeaderboardRail activeSliceId={undefined} onSliceClick={() => {}} />,
+      <SliceChips slices={SLICES_FIXTURE} activeSliceId="trending" onSliceClick={() => {}} />,
       { wrapper: Wrapper }
     );
-    expect((await screen.findAllByText(/CHAIN OPS/i)).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("slice-chip-trending")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not render any CHAIN OPS callout (deleted from browse)", () => {
+    render(
+      <SliceChips slices={SLICES_FIXTURE} activeSliceId={undefined} onSliceClick={() => {}} />,
+      { wrapper: Wrapper }
+    );
+    expect(screen.queryByText(/CHAIN OPS/i)).not.toBeInTheDocument();
   });
 });
 
-// --- Task 4: ListingCard ---
+// --- CatalogueEntry (replaces ListingCard) ---
 
-import { ListingCard } from "./ListingCard";
+import { CatalogueEntry, humanize, plateNumber } from "./CatalogueEntry";
 import type { ListingRow } from "@/features/marketplace/data/types";
 
-const FIXTURE_ROW: ListingRow = {
+const PAID_ROW: ListingRow = {
   id: "btc-momentum-v3",
   lineageId: "btc-momentum",
   version: "v3.0",
+  name: "BTC Momentum",
   creator: { address: "0xa83e", handle: "@ed" },
   model: "Claude · Haiku 4.5",
   style: "Day",
@@ -241,112 +328,140 @@ const FIXTURE_ROW: ListingRow = {
   genArtSeed: "btc-momentum-7a91-v3",
 };
 
-const FREE_ROW: ListingRow = {
-  ...FIXTURE_ROW,
+const OPEN_ROW: ListingRow = {
+  ...PAID_ROW,
   id: "meme-radar",
+  name: undefined,
   priceUsdc: null,
   tier: "open",
   return30dPct: 124.8,
   verification: "unverified",
   acceptsX402: false,
+  assets: [],
 };
 
-describe("ListingCard", () => {
-  it("renders listing id, version and creator handle", () => {
-    render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
-    expect(screen.getByText("btc-momentum-v3")).toBeInTheDocument();
-    expect(screen.getByText("v3.0")).toBeInTheDocument();
-    expect(screen.getByText("@ed")).toBeInTheDocument();
-  });
+function renderEntry(row: ListingRow, props: Partial<React.ComponentProps<typeof CatalogueEntry>> = {}) {
+  return render(<CatalogueEntry row={row} {...props} />, { wrapper: Wrapper });
+}
 
-  it("renders a GenArtPlaceholder thumb", () => {
-    const { container } = render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, {
-      wrapper: Wrapper,
-    });
-    expect(container.querySelector('[data-genart="bitfields-v3"]')).not.toBeNull();
+describe("humanize / plateNumber helpers", () => {
+  it("humanize slug → Title Case", () => {
+    expect(humanize("btc-momentum-v3")).toBe("Btc Momentum V3");
   });
-
-  it("renders the Sparkline", () => {
-    const { container } = render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, {
-      wrapper: Wrapper,
-    });
-    expect(container.querySelector("svg path")).not.toBeNull();
+  it("humanize numeric → Strategy #id", () => {
+    expect(humanize("42")).toBe("Strategy #42");
   });
-
-  it("renders AssetPills for each asset", () => {
-    render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
-    expect(screen.getByText("BTC")).toBeInTheDocument();
+  it("plateNumber numeric is zero-padded", () => {
+    expect(plateNumber("43")).toBe("0043");
   });
-
-  it("renders VerifiedBadge for verified listings", () => {
-    render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
-    expect(screen.getByTitle(/backtested/i)).toBeInTheDocument();
-  });
-
-  it("renders no verification badge for unverified listings", () => {
-    render(<ListingCard row={FREE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
-    expect(screen.queryByTitle(/backtested/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/unverified/i)).not.toBeInTheDocument();
-  });
-
-  it("renders X402Badge for x402 listings", () => {
-    render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
-    expect(screen.getByText("x402")).toBeInTheDocument();
-  });
-
-  it("renders Buy CTA with [Testnet] indicator for paid listing", () => {
-    render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
-    expect(screen.getByRole("button", { name: /buy/i })).toBeInTheDocument();
-    expect(screen.getByText(/testnet/i)).toBeInTheDocument();
-  });
-
-  it("renders Run free CTA and OPEN pill for free-tier listing", () => {
-    render(<ListingCard row={FREE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
-    expect(screen.getByRole("button", { name: /run free/i })).toBeInTheDocument();
-    expect(screen.getByText("OPEN")).toBeInTheDocument();
-  });
-
-  it("calls onBuy with the listing id when Buy is clicked", () => {
-    const onBuy = vi.fn();
-    render(<ListingCard row={FIXTURE_ROW} onBuy={onBuy} />, { wrapper: Wrapper });
-    act(() => screen.getByRole("button", { name: /buy/i }).click());
-    expect(onBuy).toHaveBeenCalledWith("btc-momentum-v3");
-  });
-
-  it("renders positive return in gold tone", () => {
-    const { container } = render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, {
-      wrapper: Wrapper,
-    });
-    const retEl = container.querySelector("[data-return-pct]");
-    expect(retEl).not.toBeNull();
-    expect(retEl!.className).toContain("gold");
-  });
-
-  it("renders negative return in danger tone", () => {
-    const negRow: ListingRow = { ...FIXTURE_ROW, return30dPct: -5 };
-    const { container } = render(<ListingCard row={negRow} onBuy={() => {}} />, {
-      wrapper: Wrapper,
-    });
-    const retEl = container.querySelector("[data-return-pct]");
-    expect(retEl!.className).toContain("danger");
+  it("plateNumber slug is a stable 4-digit hash", () => {
+    expect(plateNumber("btc-momentum-v3")).toBe(plateNumber("btc-momentum-v3"));
+    expect(plateNumber("btc-momentum-v3")).toMatch(/^\d{4}$/);
   });
 });
 
-// --- Task 5: FilterDrawerContent ---
+describe("CatalogueEntry", () => {
+  it("wraps the whole entry in a Link to the inspector (no list-row tx)", () => {
+    renderEntry(PAID_ROW);
+    const link = screen.getByRole("link");
+    expect(link).toHaveAttribute("href", "/marketplace/lineage/btc-momentum-v3");
+    // No buy/run button that fires a tx — the entry is the link.
+    expect(screen.queryByRole("button", { name: /^buy$/i })).not.toBeInTheDocument();
+  });
+
+  it("renders the display name (Fraunces title) with a title attr", () => {
+    renderEntry(PAID_ROW);
+    const title = screen.getByText("BTC Momentum");
+    expect(title).toHaveAttribute("title", "BTC Momentum");
+  });
+
+  it("falls back to humanize(id) when no name is present", () => {
+    renderEntry(OPEN_ROW);
+    expect(screen.getByText("Meme Radar")).toBeInTheDocument();
+  });
+
+  it("renders the plate number in gilt", () => {
+    renderEntry(PAID_ROW);
+    expect(screen.getByText(/№/)).toBeInTheDocument();
+  });
+
+  it("renders a GenArtPlaceholder plate", () => {
+    const { container } = renderEntry(PAID_ROW);
+    expect(container.querySelector('[data-genart="bitfields-v3"]')).not.toBeNull();
+  });
+
+  it("renders AssetPills inline only when assets are present", () => {
+    renderEntry(PAID_ROW);
+    expect(screen.getByText("BTC")).toBeInTheDocument();
+  });
+
+  it("omits the assets segment entirely when assets are empty (no blank cell)", () => {
+    renderEntry(OPEN_ROW);
+    expect(screen.queryByText("BTC")).not.toBeInTheDocument();
+  });
+
+  it("renders the dignified pending performance caption (no sparkline) by default", () => {
+    const { container } = renderEntry(PAID_ROW);
+    expect(screen.getByText(/pending first live cycle/i)).toBeInTheDocument();
+    expect(container.querySelector("[data-perf-spark]")).toBeNull();
+  });
+
+  it("renders the real return + sparkline only for the demo client (showSparkline)", () => {
+    const { container } = renderEntry(PAID_ROW, { showSparkline: true });
+    expect(container.querySelector("[data-perf-spark]")).not.toBeNull();
+    const ret = container.querySelector("[data-return-pct]");
+    expect(ret).not.toBeNull();
+    expect(ret!.className).toContain("gold");
+  });
+
+  it("renders an OPEN edition seal and Run free label for open-tier listings", () => {
+    renderEntry(OPEN_ROW);
+    // "Open edition" appears as the acquisition seal (and the tier label in the
+    // provenance caption) — assert at least one renders.
+    expect(screen.getAllByText(/open edition/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/run free/i)).toBeInTheDocument();
+  });
+
+  it("renders the USDC price (no fee) and Acquire label for paid listings", () => {
+    renderEntry(PAID_ROW);
+    expect(screen.getByText(/49/)).toBeInTheDocument();
+    expect(screen.getByText("USDC")).toBeInTheDocument();
+    expect(screen.getByText(/acquire/i)).toBeInTheDocument();
+    // No fee embedded in the price (QA15).
+    expect(screen.queryByText(/fee/i)).not.toBeInTheDocument();
+  });
+
+  it("renders a VerifiedBadge (gilt wax-seal) for verified listings only", () => {
+    const { rerender } = renderEntry(PAID_ROW);
+    expect(screen.getByTitle(/attested on-chain/i)).toBeInTheDocument();
+    rerender(<CatalogueEntry row={OPEN_ROW} />);
+    expect(screen.queryByTitle(/attested on-chain/i)).not.toBeInTheDocument();
+  });
+
+  it("does not render a per-row Testnet badge", () => {
+    renderEntry(PAID_ROW);
+    expect(screen.queryByText(/testnet/i)).not.toBeInTheDocument();
+  });
+});
+
+// --- FilterDrawerContent ---
 
 import { FilterDrawerContent } from "./FilterDrawerContent";
 
+function fdcProps(overrides: Partial<React.ComponentProps<typeof FilterDrawerContent>> = {}) {
+  return {
+    filter: defaultFilterState(),
+    setFilter: vi.fn(),
+    matchCount: 100,
+    totalCount: 9,
+    onClose: vi.fn(),
+    ...overrides,
+  };
+}
+
 describe("FilterDrawerContent", () => {
   it("renders all section headings", () => {
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={vi.fn()}
-        matchCount={100}
-        onClose={() => {}}
-      />,
-      { wrapper: Wrapper }
-    );
+    render(<FilterDrawerContent {...fdcProps()} />, { wrapper: Wrapper });
     expect(screen.getByText("Sort by")).toBeInTheDocument();
     expect(screen.getByText("Assets")).toBeInTheDocument();
     expect(screen.getByText("Models")).toBeInTheDocument();
@@ -356,110 +471,60 @@ describe("FilterDrawerContent", () => {
     expect(screen.getByText("Minimum buyers")).toBeInTheDocument();
   });
 
-  it("marks the active sort option", () => {
+  it("uses the totalCount prop in the 'of N match' line (no 1,247 literal)", () => {
     render(
-      <FilterDrawerContent
-        filter={{ ...defaultFilterState(), sort: "sharpe" }}
-        setFilter={vi.fn()}
-        matchCount={50}
-        onClose={() => {}}
-      />,
+      <FilterDrawerContent {...fdcProps({ filter: { ...defaultFilterState(), assets: ["BTC"] }, matchCount: 4, totalCount: 9 })} />,
       { wrapper: Wrapper }
     );
-    const sharpeRadio = screen.getByRole("radio", { name: /sharpe/i });
-    expect(sharpeRadio).toBeChecked();
+    expect(screen.getByText(/of 9 match/)).toBeInTheDocument();
+    expect(screen.queryByText(/1,247/)).not.toBeInTheDocument();
+  });
+
+  it("marks the active sort option", () => {
+    render(<FilterDrawerContent {...fdcProps({ filter: { ...defaultFilterState(), sort: "sharpe" } })} />, {
+      wrapper: Wrapper,
+    });
+    expect(screen.getByRole("radio", { name: /sharpe/i })).toBeChecked();
   });
 
   it("calls setFilter with new sort when sort radio changes", () => {
     const setFilter = vi.fn();
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={setFilter}
-        matchCount={100}
-        onClose={() => {}}
-      />,
-      { wrapper: Wrapper }
-    );
-    const buyersRadio = screen.getByRole("radio", { name: /buyers/i });
-    act(() => buyersRadio.click());
+    render(<FilterDrawerContent {...fdcProps({ setFilter })} />, { wrapper: Wrapper });
+    act(() => screen.getByRole("radio", { name: /buyers/i }).click());
     expect(setFilter).toHaveBeenCalledWith(expect.objectContaining({ sort: "buyers" }));
   });
 
   it("calls setFilter with added asset when an asset checkbox is clicked", () => {
     const setFilter = vi.fn();
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={setFilter}
-        matchCount={100}
-        onClose={() => {}}
-      />,
-      { wrapper: Wrapper }
-    );
-    const btcCheckbox = screen.getByRole("checkbox", { name: /BTC/i });
-    act(() => btcCheckbox.click());
-    const call = setFilter.mock.calls[0][0];
-    expect(call.assets).toContain("BTC");
+    render(<FilterDrawerContent {...fdcProps({ setFilter })} />, { wrapper: Wrapper });
+    act(() => screen.getByRole("checkbox", { name: /BTC/i }).click());
+    expect(setFilter.mock.calls[0][0].assets).toContain("BTC");
   });
 
   it("calls setFilter with toggled verifiedOnly when the Verified toggle is clicked", () => {
     const setFilter = vi.fn();
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={setFilter}
-        matchCount={100}
-        onClose={() => {}}
-      />,
-      { wrapper: Wrapper }
-    );
-    const toggle = screen.getByRole("switch", { name: /verified only/i });
-    act(() => toggle.click());
+    render(<FilterDrawerContent {...fdcProps({ setFilter })} />, { wrapper: Wrapper });
+    act(() => screen.getByRole("switch", { name: /verified only/i }).click());
     expect(setFilter).toHaveBeenCalledWith(
       expect.objectContaining({ trust: expect.objectContaining({ verifiedOnly: true }) })
     );
   });
 
-  it("renders the match count and Apply button in the footer", () => {
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={vi.fn()}
-        matchCount={342}
-        onClose={() => {}}
-      />,
-      { wrapper: Wrapper }
-    );
+  it("renders the match count and a Done button in the footer", () => {
+    render(<FilterDrawerContent {...fdcProps({ matchCount: 342 })} />, { wrapper: Wrapper });
     expect(screen.getByText("342")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /apply/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /done/i })).toBeInTheDocument();
   });
 
-  it("calls onClose when Apply is clicked", () => {
+  it("calls onClose when Done is clicked", () => {
     const onClose = vi.fn();
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={vi.fn()}
-        matchCount={10}
-        onClose={onClose}
-      />,
-      { wrapper: Wrapper }
-    );
-    act(() => screen.getByRole("button", { name: /apply/i }).click());
+    render(<FilterDrawerContent {...fdcProps({ onClose, matchCount: 10 })} />, { wrapper: Wrapper });
+    act(() => screen.getByRole("button", { name: /done/i }).click());
     expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("renders Tier section with Open and Sealed buttons", () => {
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={vi.fn()}
-        matchCount={100}
-        onClose={() => {}}
-      />,
-      { wrapper: Wrapper }
-    );
+    render(<FilterDrawerContent {...fdcProps()} />, { wrapper: Wrapper });
     expect(screen.getByText("Tier")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open \(free\)/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /sealed \(paid\)/i })).toBeInTheDocument();
@@ -467,33 +532,18 @@ describe("FilterDrawerContent", () => {
 
   it("calls setFilter with tier when a tier button is clicked", () => {
     const setFilter = vi.fn();
-    render(
-      <FilterDrawerContent
-        filter={defaultFilterState()}
-        setFilter={setFilter}
-        matchCount={100}
-        onClose={() => {}}
-      />,
-      { wrapper: Wrapper }
-    );
+    render(<FilterDrawerContent {...fdcProps({ setFilter })} />, { wrapper: Wrapper });
     act(() => screen.getByRole("button", { name: /open \(free\)/i }).click());
-    const call = setFilter.mock.calls[0][0];
-    expect(call.tier).toContain("open");
+    expect(setFilter.mock.calls[0][0].tier).toContain("open");
   });
 
   it("removes a tier from filter.tier when the active tier button is clicked again", () => {
     const setFilter = vi.fn();
     render(
-      <FilterDrawerContent
-        filter={{ ...defaultFilterState(), tier: ["open"] }}
-        setFilter={setFilter}
-        matchCount={50}
-        onClose={() => {}}
-      />,
+      <FilterDrawerContent {...fdcProps({ filter: { ...defaultFilterState(), tier: ["open"] }, setFilter, matchCount: 50 })} />,
       { wrapper: Wrapper }
     );
     act(() => screen.getByRole("button", { name: /open \(free\)/i }).click());
-    const call = setFilter.mock.calls[0][0];
-    expect(call.tier).not.toContain("open");
+    expect(setFilter.mock.calls[0][0].tier).not.toContain("open");
   });
 });

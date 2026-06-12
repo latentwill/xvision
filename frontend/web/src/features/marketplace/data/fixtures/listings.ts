@@ -66,7 +66,12 @@ export function makeWallListings(n = 200): ListingRow[] {
   return out;
 }
 
-export const ALL_LISTINGS: ListingRow[] = [...NAMED_LISTINGS, ...makeWallListings()];
+// QA1: wall fixtures (200 seeded rows) are only included in dev builds so the
+// production client never shows placeholder data. In production, ALL_LISTINGS
+// is just NAMED_LISTINGS. Keep makeWallListings exported for dev use.
+export const ALL_LISTINGS: ListingRow[] = import.meta.env.DEV
+  ? [...NAMED_LISTINGS, ...makeWallListings()]
+  : [...NAMED_LISTINGS];
 
 export const LISTING_DETAILS: Record<string, ListingDetail> = {
   "btc-momentum-v3": {
