@@ -44,7 +44,7 @@ describe("marketplace routes", () => {
     render(<RouterProvider router={routerAt("/marketplace/lineage/btc-momentum-v3")} />);
     expect(await screen.findByText(/Marketplace · lineage/)).toBeInTheDocument();
   });
-  it("resolves /marketplace/sell and renders the page heading", async () => {
+  it("resolves /marketplace/sell and renders the catalogue listing heading", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const router = createMemoryRouter(
       [
@@ -65,7 +65,9 @@ describe("marketplace routes", () => {
       { initialEntries: ["/marketplace/sell"] },
     );
     render(<RouterProvider router={router} />);
-    expect(await screen.findByText(/Share your strategy/)).toBeInTheDocument();
+    // W2-SELL renamed the funnel from "Share your strategy" to "List your strategy"
+    // (QA2). The word "Share" no longer labels this flow.
+    expect(await screen.findByText(/List your strategy/)).toBeInTheDocument();
   });
 });
 
@@ -99,7 +101,9 @@ function renderReceiptRoute(path: string) {
 describe("marketplace receipt route integration", () => {
   it("renders the receipt page for the demo fixture tx", async () => {
     renderReceiptRoute("/marketplace/receipts/0xdemo-tx");
-    expect(await screen.findByText(/You bought/)).toBeInTheDocument();
+    // W2-RECEIPT branches the success header on price (QA12): the paid demo tx
+    // (pricePaidUsdc=49) reads "Acquired {id}", never "You bought".
+    expect(await screen.findByText(/Acquired btc-momentum-v3/)).toBeInTheDocument();
     const matches = await screen.findAllByText("btc-momentum-v3");
     expect(matches.length).toBeGreaterThan(0);
   });
@@ -109,14 +113,19 @@ describe("marketplace receipt route integration", () => {
     expect(await screen.findByText(/Fetch strategy bundle/i)).toBeInTheDocument();
   });
 
-  it("renders the share composer with Post to X CTA", async () => {
+  it("renders the collapsed share strip (QA13)", async () => {
     renderReceiptRoute("/marketplace/receipts/0xdemo-tx");
-    expect(await screen.findAllByText(/Post to X/i)).not.toHaveLength(0);
+    // W2-RECEIPT collapses share to an inline accordion strip by default (QA13):
+    // the strip shows "Share this acquisition" + "Customize post"; the full
+    // composer (Post to X / Farcaster) is revealed only on expand.
+    expect(await screen.findByText(/Share this acquisition/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Customize post/i)).toBeInTheDocument();
   });
 
   it("unknown tx falls back to demo receipt (fixture behaviour)", async () => {
     renderReceiptRoute("/marketplace/receipts/0xunknown");
-    // FixtureMarketplaceData.getReceipt falls back to 0xdemo-tx for unknown hashes
-    expect(await screen.findByText(/You bought/)).toBeInTheDocument();
+    // FixtureMarketplaceData.getReceipt falls back to 0xdemo-tx for unknown hashes;
+    // the paid demo header reads "Acquired {id}" after the QA12 header branch.
+    expect(await screen.findByText(/Acquired btc-momentum-v3/)).toBeInTheDocument();
   });
 });
