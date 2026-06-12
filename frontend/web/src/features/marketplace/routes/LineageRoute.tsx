@@ -49,13 +49,30 @@ function BuyerCard({
   paidToCreatorUsd,
   platformFeeBps,
   creator,
+  isDemo,
 }: {
   humans: number;
   agents: number;
   paidToCreatorUsd: number;
   platformFeeBps: number;
   creator: Creator;
+  /** Fixture/demo client — adoption + earnings figures are illustrative. */
+  isDemo: boolean;
 }) {
+  // Honest-data discipline (spec §0.5): adoption counts and the paid-to-creator
+  // figure are fixture data on the demo client and unbacked (0) on the real
+  // client today. Show them only when they are real (>0) or explicitly marked
+  // DEMO — never a fabricated value masquerading as a real on-chain stat.
+  const hasBuyers = humans + agents > 0;
+  const hasPaid = paidToCreatorUsd > 0;
+  if (!isDemo && !hasBuyers && !hasPaid) {
+    // Real listing with no adoption record yet — dignified empty caption.
+    return (
+      <p className="font-mono text-[11px] text-text-3 mt-3" data-testid="buyers-empty">
+        No buyers yet · be the first to acquire.
+      </p>
+    );
+  }
   return (
     <div className="flex items-center gap-2.5 p-3 rounded-md border border-border bg-surface-elev mt-3">
       {/* Avatar stack: 5 colored circles + AgentIcon circle */}
@@ -71,14 +88,24 @@ function BuyerCard({
           <AgentIcon size={10} className="text-gold" />
         </span>
       </div>
-      <div>
-        <p className="font-mono text-[11.5px] text-text">
+      <div className="min-w-0">
+        <p className="font-mono text-[11.5px] text-text flex items-center gap-1.5 flex-wrap">
           {humans} humans + {agents} agents
+          {isDemo && (
+            <span
+              data-testid="buyers-demo-marker"
+              className="font-mono text-[8.5px] tracking-[0.12em] uppercase bg-gilt-bg text-gilt border border-gilt/30 rounded-[2px] px-1 py-0.5"
+            >
+              Demo
+            </span>
+          )}
         </p>
-        <p className="font-mono text-[10px] text-text-3">
-          ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)} ·{" "}
-          {platformFeeBps / 100}% platform fee
-        </p>
+        {hasPaid && (
+          <p className="font-mono text-[10px] text-text-3">
+            ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)} ·{" "}
+            {platformFeeBps / 100}% platform fee
+          </p>
+        )}
       </div>
     </div>
   );
@@ -364,6 +391,7 @@ function VerifiedEvalsSection({ listingId }: { listingId: string }) {
 export function LineageRoute() {
   const { name } = useParams<{ name: string }>();
   const mp = useMarketplaceData();
+  const isDemo = mp.dataSource === "fixture";
   const navigate = useNavigate();
   const [sp, setSp] = useSearchParams();
   const { address: walletAddress } = useWallet();
@@ -519,8 +547,23 @@ export function LineageRoute() {
             <span className="font-mono text-[12px] tracking-[0.1em] text-gilt">
               № {String(detail.onChain.nft.tokenId).replace(/^#/, "").padStart(4, "0")}
             </span>
-            <span className="font-mono text-[10px] tracking-[0.14em] text-text-3 uppercase">
-              {inspectOpen ? "Hide artifact ▴" : "Artifact & provenance ▾"}
+            <span className="font-mono text-[10px] tracking-[0.14em] text-text-3 uppercase inline-flex items-center gap-1.5">
+              {inspectOpen ? "Hide artifact" : "Artifact & provenance"}
+              <svg
+                width="9"
+                height="9"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+                className={[
+                  "transition-transform",
+                  inspectOpen ? "rotate-180" : "",
+                ].join(" ")}
+              >
+                <path d="M2.5 3.5L5 6l2.5-2.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </span>
           </div>
         </div>
@@ -611,6 +654,7 @@ export function LineageRoute() {
             paidToCreatorUsd={detail.paidToCreatorUsd}
             platformFeeBps={detail.platformFeeBps}
             creator={detail.creator}
+            isDemo={isDemo}
           />
 
           {/* Purchase block — folded inline into Zone B's right edge (no third column) */}

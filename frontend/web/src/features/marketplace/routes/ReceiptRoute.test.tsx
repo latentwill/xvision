@@ -46,11 +46,14 @@ function renderWithQuery(path: string) {
 describe("ReceiptRoute", () => {
   it("renders 'Acquired' in the success header for a paid receipt", async () => {
     renderWithQuery("/marketplace/receipts/0xdemo-tx");
-    // fixture pricePaidUsdc=49 > 0, so header says "Acquired"
-    expect(await screen.findByText(/Acquired/)).toBeInTheDocument();
-    // btc-momentum-v3 appears in header and license card — use findAllByText
-    const matches = await screen.findAllByText("btc-momentum-v3");
+    // fixture pricePaidUsdc=49 > 0, so header says "Acquired" with the display
+    // name (not the raw URL slug): "Acquired BTC Momentum v3".
+    expect(await screen.findByText(/Acquired BTC Momentum v3/)).toBeInTheDocument();
+    // The display name appears in the header and the licence STRATEGY row.
+    const matches = await screen.findAllByText("BTC Momentum v3");
     expect(matches.length).toBeGreaterThan(0);
+    // The raw URL slug is never shown as the title.
+    expect(screen.queryByText("btc-momentum-v3")).not.toBeInTheDocument();
   });
 
   it("does not say 'You bought' in the success header", async () => {

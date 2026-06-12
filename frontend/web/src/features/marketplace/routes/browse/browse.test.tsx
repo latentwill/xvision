@@ -345,8 +345,12 @@ function renderEntry(row: ListingRow, props: Partial<React.ComponentProps<typeof
 }
 
 describe("humanize / plateNumber helpers", () => {
-  it("humanize slug → Title Case", () => {
-    expect(humanize("btc-momentum-v3")).toBe("Btc Momentum V3");
+  it("humanize slug → Title Case with acronyms upper-cased and version segments lowercase", () => {
+    expect(humanize("btc-momentum-v3")).toBe("BTC Momentum v3");
+  });
+  it("humanize upper-cases other known asset acronyms", () => {
+    expect(humanize("eth-mean-reversion-v2")).toBe("ETH Mean Reversion v2");
+    expect(humanize("sol-strategist-pro")).toBe("SOL Strategist Pro");
   });
   it("humanize numeric → Strategy #id", () => {
     expect(humanize("42")).toBe("Strategy #42");

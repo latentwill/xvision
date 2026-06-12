@@ -74,9 +74,9 @@ describe("LineageRoute", () => {
   it("renders the hero info stack with title, promise, and 30d return", async () => {
     render(<Wrapper />);
     expect(await screen.findByTestId("lineage-info-stack")).toBeInTheDocument();
-    // The hero title humanizes the slug (no raw tech slug in the Fraunces
-    // display serif): "btc-momentum-v3" → "Btc Momentum V3".
-    expect(screen.getByText("Btc Momentum V3")).toBeInTheDocument();
+    // The hero title uses the listing's display name (no raw tech slug in the
+    // Fraunces display serif): btc-momentum-v3 → "BTC Momentum v3".
+    expect(screen.getByText("BTC Momentum v3")).toBeInTheDocument();
     expect(screen.getByText(/BTC momentum/)).toBeInTheDocument();
     // 30D RETURN label
     expect(screen.getByText(/30D Return/i)).toBeInTheDocument();
@@ -459,8 +459,8 @@ describe("LineageRoute bundle enrichment", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<Wrapper />); // fixture slug listing
     await screen.findByTestId("lineage-page");
-    // Fixture title is the humanized slug, not the raw id.
-    expect(screen.getByText("Btc Momentum V3")).toBeInTheDocument();
+    // Fixture title is the listing's display name, not the raw id.
+    expect(screen.getByText("BTC Momentum v3")).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByTestId("creator-link")).not.toBeInTheDocument();
   });

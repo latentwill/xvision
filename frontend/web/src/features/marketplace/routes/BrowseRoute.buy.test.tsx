@@ -64,7 +64,7 @@ describe("BrowseRoute entries route to the inspector", () => {
     render(<Wrapper client={client} />);
 
     const user = userEvent.setup();
-    const entry = await screen.findByText("Btc Momentum V3");
+    const entry = await screen.findByText("BTC Momentum v3");
     await user.click(entry);
 
     // Routed to the inspector, never a receipt; no purchase tx fired from the list.
@@ -76,7 +76,7 @@ describe("BrowseRoute entries route to the inspector", () => {
   it("does not render a list-row buy button or an inline buy-error strip", async () => {
     const client = new FixtureMarketplaceData();
     render(<Wrapper client={client} />);
-    await screen.findByText("Btc Momentum V3");
+    await screen.findByText("BTC Momentum v3");
     expect(screen.queryByRole("button", { name: /^buy$/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("browse-buy-error")).not.toBeInTheDocument();
   });

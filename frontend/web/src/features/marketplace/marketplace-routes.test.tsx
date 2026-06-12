@@ -102,9 +102,10 @@ describe("marketplace receipt route integration", () => {
   it("renders the receipt page for the demo fixture tx", async () => {
     renderReceiptRoute("/marketplace/receipts/0xdemo-tx");
     // W2-RECEIPT branches the success header on price (QA12): the paid demo tx
-    // (pricePaidUsdc=49) reads "Acquired {id}", never "You bought".
-    expect(await screen.findByText(/Acquired btc-momentum-v3/)).toBeInTheDocument();
-    const matches = await screen.findAllByText("btc-momentum-v3");
+    // (pricePaidUsdc=49) reads "Acquired {name}", never "You bought". The header
+    // uses the editorial display name, not the raw URL slug.
+    expect(await screen.findByText(/Acquired BTC Momentum v3/)).toBeInTheDocument();
+    const matches = await screen.findAllByText("BTC Momentum v3");
     expect(matches.length).toBeGreaterThan(0);
   });
 
@@ -125,7 +126,7 @@ describe("marketplace receipt route integration", () => {
   it("unknown tx falls back to demo receipt (fixture behaviour)", async () => {
     renderReceiptRoute("/marketplace/receipts/0xunknown");
     // FixtureMarketplaceData.getReceipt falls back to 0xdemo-tx for unknown hashes;
-    // the paid demo header reads "Acquired {id}" after the QA12 header branch.
-    expect(await screen.findByText(/Acquired btc-momentum-v3/)).toBeInTheDocument();
+    // the paid demo header reads "Acquired {name}" after the QA12 header branch.
+    expect(await screen.findByText(/Acquired BTC Momentum v3/)).toBeInTheDocument();
   });
 });

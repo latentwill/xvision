@@ -58,8 +58,8 @@ describe("BrowseRoute", () => {
 
   it("renders catalogue entries from listListings as links to the inspector", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
-    // fixture NAMED_LISTINGS includes "btc-momentum-v3" (humanized title)
-    const entry = await screen.findByText("Btc Momentum V3");
+    // fixture NAMED_LISTINGS includes btc-momentum-v3 with name "BTC Momentum v3"
+    const entry = await screen.findByText("BTC Momentum v3");
     const link = entry.closest("a");
     expect(link).toHaveAttribute("href", "/marketplace/lineage/btc-momentum-v3");
   });
@@ -123,9 +123,9 @@ describe("BrowseRoute", () => {
       </QueryClientProvider>
     );
     // viewer.createdListingIds = ["btc-momentum-v3", "btc-grid-v2", "eth-mr-v2"]
-    expect(await screen.findByText("Btc Momentum V3")).toBeInTheDocument();
+    expect(await screen.findByText("BTC Momentum v3")).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.queryByText("Sol Strategist Pro")).not.toBeInTheDocument();
+      expect(screen.queryByText("SOL Strategist Pro")).not.toBeInTheDocument();
     });
   });
 
@@ -135,7 +135,7 @@ describe("BrowseRoute", () => {
     act(() => chip.click());
     // SOL slice filter excludes BTC-only entries.
     await waitFor(() => {
-      expect(screen.queryByText("Btc Momentum V3")).not.toBeInTheDocument();
+      expect(screen.queryByText("BTC Momentum v3")).not.toBeInTheDocument();
     });
   });
 });

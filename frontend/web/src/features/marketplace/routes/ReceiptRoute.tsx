@@ -10,6 +10,7 @@ import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import type { Receipt } from "@/features/marketplace/data/types";
 import { TxChip } from "@/features/marketplace/components/TxChip";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
+import { humanize } from "./browse/CatalogueEntry";
 import { InstallSteps } from "./InstallSteps";
 import { ShareComposer } from "./ShareComposer";
 
@@ -44,8 +45,12 @@ function Panel({
 // ── license metadata stack ───────────────────────────────────────────────────
 function LicenseCard({ receipt }: { receipt: Receipt }) {
   const { license, listing } = receipt;
+  // Display name, not the raw URL slug — the licence reads as an editorial
+  // record, not a database key (spec §3.3).
+  const displayName =
+    (listing as Receipt["listing"] & { name?: string }).name ?? humanize(listing.id);
   const rows: [string, React.ReactNode, "gold" | "mono" | "muted" | "link"][] = [
-    ["strategy", <span key="strategy" className="text-gold">{listing.id}</span>, "gold"],
+    ["strategy", <span key="strategy" className="text-gold">{displayName}</span>, "gold"],
     ["version", listing.version, "mono"],
     ["creator", listing.creator.handle ?? listing.creator.address, "mono"],
     ["manifest", license.manifestHash, "mono"],
@@ -130,11 +135,15 @@ export function ReceiptRoute() {
 
   const { listing, license, network } = receipt;
   const creatorLabel = listing.creator.handle ?? listing.creator.address;
+  // Display name, not the raw URL slug — this is the emotional payoff of the buy
+  // flow and must read as an editorial title, not a database key (spec §3.3).
+  const displayName =
+    (listing as Receipt["listing"] & { name?: string }).name ?? humanize(listing.id);
   // Header branches on whether a price was paid (spec 3.3, QA12)
   const isPaid = license.pricePaidUsdc > 0;
   const headerTitle = isPaid
-    ? `Acquired ${listing.id}`
-    : `Activated ${listing.id} — added to your strategies`;
+    ? `Acquired ${displayName}`
+    : `Activated ${displayName} — added to your strategies`;
 
   return (
     <div className="flex flex-col min-h-0">

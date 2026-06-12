@@ -10,16 +10,35 @@ import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { MiniSparkline } from "@/components/chart/v2/primitives/MiniSparkline";
 import type { ListingRow } from "@/features/marketplace/data/types";
 
+// Known financial/asset acronyms that should render in all-caps when a slug is
+// humanized (e.g. `btc-momentum-v3` → "BTC Momentum v3", not "Btc Momentum V3").
+const ACRONYMS = new Set([
+  "btc", "eth", "sol", "doge", "mnt", "avax", "usdc", "usdt", "ai", "ml",
+  "dca", "rsi", "macd", "atr", "ema", "sma", "mr", "ls", "nft", "defi",
+]);
+
 /**
  * Humanize a listing id for display.
  *  - numeric ids → "Strategy #<id>"
- *  - slug ids    → Title Case ("btc-momentum-v3" → "Btc Momentum V3")
+ *  - slug ids    → Title Case with known acronyms upper-cased and version
+ *    segments (`v3`, `v2.1`) kept lowercase: `btc-momentum-v3` → "BTC Momentum v3".
  * Mirrors the helper in sell/ListingPreviewCard so browse + mint preview match.
  */
 export function humanize(id: string | number): string {
   const s = String(id);
   if (/^\d+$/.test(s)) return `Strategy #${s}`;
-  return s.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return s
+    .replace(/[-_]/g, " ")
+    .split(" ")
+    .map((word) => {
+      if (!word) return word;
+      const lower = word.toLowerCase();
+      if (ACRONYMS.has(lower)) return word.toUpperCase();
+      // Version segments stay lowercase: v3, v2.1, v10
+      if (/^v\d+(\.\d+)?$/.test(lower)) return lower;
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
 }
 
 /**

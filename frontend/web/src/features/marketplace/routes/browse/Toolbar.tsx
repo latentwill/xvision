@@ -37,6 +37,12 @@ interface ToolbarProps {
    * return30d + sharpe sort options so we never sort on zeros (spec 3.1B).
    */
   allowPerformanceSort: boolean;
+  /**
+   * Fixture/demo client. When the active sort is a performance sort, annotate
+   * the Sort control with a quiet DEMO tag so the seeded-RNG-driven ordering is
+   * never presented as authoritative live data.
+   */
+  isDemo?: boolean;
 }
 
 export function Toolbar({
@@ -48,6 +54,7 @@ export function Toolbar({
   view,
   setView,
   allowPerformanceSort,
+  isDemo = false,
 }: ToolbarProps) {
   // Build the sort options, dropping performance sorts when they'd sort on zeros.
   const sortKeys: SortKey[] = allowPerformanceSort
@@ -57,12 +64,15 @@ export function Toolbar({
   // If the active sort was hidden (performance sort on a zeroed client), fall
   // back to "newest" for the menu's displayed value.
   const sortValue = sortKeys.includes(filter.sort) ? filter.sort : "newest";
+  // On the demo client, performance-based ordering is driven by illustrative
+  // returns — surface a quiet DEMO tag so it never reads as authoritative.
+  const showSortDemoTag = isDemo && (sortValue === "return30d" || sortValue === "sharpe");
 
   return (
     <div className="relative border-b border-ink-rule">
-      <div className="px-4 sm:px-7 py-3.5 flex items-center gap-3 flex-wrap">
+      <div className="px-4 sm:px-7 py-3.5 flex items-center gap-2.5 sm:gap-3 flex-wrap">
         {/* Segmented: Trending | New | Mine */}
-        <div className="inline-flex border border-border-strong rounded bg-surface-elev p-0.5">
+        <div className="inline-flex border border-border-strong rounded bg-surface-elev p-0.5 order-1">
           {SEGMENTS.map((s) => {
             const isActive = filter.segment === s.key;
             return (
@@ -87,8 +97,8 @@ export function Toolbar({
           })}
         </div>
 
-        {/* Search */}
-        <div className="flex-1 min-w-[240px] max-w-[380px] flex items-center gap-2 px-2.5 py-1.5 border border-border-strong rounded bg-surface-elev">
+        {/* Search — full-width own row on mobile, inline flex-1 on desktop */}
+        <div className="order-last w-full sm:order-2 sm:w-auto sm:flex-1 sm:min-w-[240px] sm:max-w-[380px] flex items-center gap-2 px-2.5 py-1.5 border border-border-strong rounded bg-surface-elev">
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-text-3 shrink-0" aria-hidden="true">
             <circle cx="6" cy="6" r="4" />
             <path d="M9.5 9.5l2.5 2.5" strokeLinecap="round" />
@@ -104,14 +114,25 @@ export function Toolbar({
         </div>
 
         {/* Sort — wired to SignalSelectMenu (click-outside + Escape built in) */}
-        <SignalSelectMenu
-          label="Sort"
-          value={sortValue}
-          options={sortOptions}
-          onChange={(v) => setFilter({ sort: v as SortKey })}
-        />
+        <div className="inline-flex items-center gap-1.5 order-2 sm:order-3">
+          <SignalSelectMenu
+            label="Sort"
+            value={sortValue}
+            options={sortOptions}
+            onChange={(v) => setFilter({ sort: v as SortKey })}
+          />
+          {showSortDemoTag && (
+            <span
+              data-testid="sort-demo-tag"
+              title="Demo ordering — returns are illustrative"
+              className="font-mono text-[8.5px] tracking-[0.12em] uppercase bg-gilt-bg text-gilt border border-gilt/30 rounded-[2px] px-1 py-0.5"
+            >
+              Demo
+            </span>
+          )}
+        </div>
 
-        <span className="w-px h-[22px] bg-border" />
+        <span className="hidden sm:block w-px h-[22px] bg-border order-3 sm:order-4" />
 
         {/* Filters — toggles the inline accordion (no overlay) */}
         <button
@@ -120,7 +141,7 @@ export function Toolbar({
           aria-expanded={filtersOpen}
           onClick={onToggleFilters}
           className={[
-            "inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] font-medium",
+            "order-3 sm:order-5 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] font-medium",
             filtersOpen
               ? "border-gilt/45 bg-gilt-bg text-gilt"
               : "border-border-strong bg-surface-elev text-text-2 hover:border-border",
@@ -140,7 +161,7 @@ export function Toolbar({
         </button>
 
         {/* View toggle: Catalogue | Index */}
-        <div className="ml-auto inline-flex border border-border-strong rounded bg-surface-elev p-0.5">
+        <div className="order-4 sm:order-6 ml-auto inline-flex border border-border-strong rounded bg-surface-elev p-0.5">
           {(["catalogue", "index"] as BrowseView[]).map((v) => {
             const isActive = view === v;
             return (

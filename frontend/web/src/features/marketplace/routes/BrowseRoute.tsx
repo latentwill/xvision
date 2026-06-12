@@ -110,6 +110,7 @@ export function BrowseRoute() {
         view={view}
         setView={setView}
         allowPerformanceSort={allowPerformanceSort}
+        isDemo={isDemo}
       />
 
       {/* Inline filter accordion — in document flow, pushes the list down */}

@@ -4,18 +4,8 @@ import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlace
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
+import { humanize } from "@/features/marketplace/routes/browse/CatalogueEntry";
 import type { ListingRow } from "@/features/marketplace/data/types";
-
-/** Humanize a listing id for display — mirrors the logic in CatalogueEntry. */
-function humanize(id: string | number): string {
-  const s = String(id);
-  // Numeric ids → "Strategy #<id>"
-  if (/^\d+$/.test(s)) return `Strategy #${s}`;
-  // Slug ids → Title Case, replacing hyphens/underscores with spaces
-  return s
-    .replace(/[-_]/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 export function ListingPreviewCard({ listing }: { listing: ListingRow }) {
   const displayTitle = (listing as ListingRow & { name?: string }).name ?? humanize(listing.id);

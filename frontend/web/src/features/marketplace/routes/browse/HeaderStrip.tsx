@@ -33,7 +33,9 @@ export function HeaderStrip({ rows = [] }: HeaderStripProps) {
   // Honest CREATORS count: distinct creator addresses across the loaded rows.
   const distinctCreators = new Set(rows.map((r) => r.creator.address.toLowerCase())).size;
   const entries = stats?.totalStrategies ?? 0;
-  const scarce = entries > 0 && entries < 5;
+  // A deliberately small, curated collection (spec §1/§3.1F): adapt the hero
+  // copy for any catalogue up to ~9 entries so scarcity reads as curation.
+  const scarce = entries > 0 && entries <= 9;
 
   return (
     <div className="relative px-4 sm:px-7 py-6 border-b border-ink-rule">
