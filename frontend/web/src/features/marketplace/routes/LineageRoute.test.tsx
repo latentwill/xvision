@@ -159,9 +159,15 @@ describe("LineageRoute", () => {
     });
     const inspector = await screen.findByTestId("inspect-art");
     expect(inspector).toHaveTextContent(/artifact & provenance/i);
-    // On-chain metadata + a TxChip explorer link
+    // On-chain metadata + a real transaction explorer link.
     expect(inspector).toHaveTextContent(/manifest_hash/i);
     expect(inspector).toHaveTextContent(/view on explorer/i);
+    expect(
+      screen.getByRole("link", { name: /0xc0a4f3b2/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://explorer.sepolia.mantle.xyz/tx/0xc0a4f3b2",
+    );
   });
 
   it("renders the purchase block with price (no fee in the price) and an Acquire CTA", async () => {
