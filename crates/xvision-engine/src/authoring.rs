@@ -16,6 +16,7 @@ use ulid::Ulid;
 use crate::strategies::{
     agent_ref::canonical_role,
     manifest::PublicManifest,
+    mechanistic::{DecisionMode, MechanisticConfig},
     risk::{RiskConfig, RiskPreset},
     slot::LLMSlot,
     store::StrategyStore,
@@ -760,6 +761,23 @@ pub async fn clear_strategy_filter(store: &dyn StrategyStore, id: &str) -> anyho
     strategy.filter = None;
     strategy.activation_mode = ActivationMode::EveryBar;
     store.save(&strategy).await
+}
+
+/// Set the strategy's decision mode and optional mechanistic config.
+/// When `decision_mode == Mechanistic`, the caller must supply a
+/// `mechanistic_config`; when `decision_mode == Agentic`, the config is
+/// cleared to `None`. Returns the updated `Strategy`.
+pub async fn set_mechanistic_config(
+    store: &dyn StrategyStore,
+    id: &str,
+    decision_mode: DecisionMode,
+    mechanistic_config: Option<MechanisticConfig>,
+) -> anyhow::Result<Strategy> {
+    let mut strategy = store.load(id).await?;
+    strategy.decision_mode = decision_mode;
+    strategy.mechanistic_config = mechanistic_config;
+    store.save(&strategy).await?;
+    Ok(strategy)
 }
 
 pub async fn validate_draft(store: &dyn StrategyStore, id: &str) -> anyhow::Result<ValidateDraftOut> {

@@ -2121,6 +2121,41 @@ pub async fn clear_strategy_filter(ctx: &ApiContext, id: &str) -> ApiResult<()> 
     result
 }
 
+/// Set the strategy's decision mode and mechanistic config. When
+/// `decision_mode == mechanistic` the caller must supply a
+/// `mechanistic_config`; `agentic` clears it to `None`.
+pub async fn set_mechanistic_config(
+    ctx: &ApiContext,
+    id: &str,
+    decision_mode: crate::strategies::mechanistic::DecisionMode,
+    mechanistic_config: Option<crate::strategies::mechanistic::MechanisticConfig>,
+) -> ApiResult<Strategy> {
+    let started = Instant::now();
+    let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
+    let result = authoring::set_mechanistic_config(&store, id, decision_mode, mechanistic_config)
+        .await
+        .map_err(|e| map_authoring_error(e, Some(id)));
+
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "strategy",
+        "set_mechanistic_config",
+        Some(id),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    if result.is_ok() {
+        index_strategy_after_mutation(ctx, &store, id).await;
+    }
+    result
+}
+
 /// Re-load the strategy after a successful mutation and refresh its row in
 /// the search index. Best-effort: index failures are logged and never
 /// bubbled up — the mutation has already succeeded.
