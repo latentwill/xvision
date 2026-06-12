@@ -294,6 +294,11 @@ describe("ListingCard", () => {
     expect(screen.getByText("x402")).toBeInTheDocument();
   });
 
+  it("labels fixture-sourced Sharpe as sample data", () => {
+    render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
+    expect(screen.getByText("sample data")).toBeInTheDocument();
+  });
+
   it("renders Buy CTA with [Testnet] indicator for paid listing", () => {
     render(<ListingCard row={FIXTURE_ROW} onBuy={() => {}} />, { wrapper: Wrapper });
     expect(screen.getByRole("button", { name: /buy/i })).toBeInTheDocument();

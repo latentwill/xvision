@@ -1886,6 +1886,7 @@ mod tests {
             inference_cost_quote_total: None,
             net_return_pct: None,
             baselines: None,
+            ..Default::default()
         };
 
         // Bull: child sharpe 1.2 vs parent 1.0 → Δ = 0.2 > 0.1 → Pass

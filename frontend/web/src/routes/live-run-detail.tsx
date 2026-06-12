@@ -34,6 +34,7 @@ import { FilterBar } from "@/features/agent-runs/FilterBar";
 import { useSpanFilter } from "@/features/agent-runs/use-span-filter";
 import { deriveDecisions } from "@/features/agent-runs/decisions";
 import { useTraceDock } from "@/stores/trace-dock";
+import { TrustFrameStrip } from "@/components/eval-detail/TrustFrame";
 
 function formatPnlPct(pct: number | null | undefined): string | null {
   if (pct == null || !Number.isFinite(pct)) return null;
@@ -248,6 +249,10 @@ export function LiveRunDetailRoute() {
           </Link>
         ) : null}
       </Card>
+
+      <div className="mb-4">
+        <TrustFrameStrip metrics={evalSummary} compact />
+      </div>
 
       <Card className="mb-3 overflow-x-auto overflow-y-hidden">
         <FilterBar

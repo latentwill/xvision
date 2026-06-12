@@ -558,9 +558,13 @@ pub fn action_confirmation_card(
 fn run_metrics(run: &RunSummary) -> Vec<InlineMetric> {
     let mut metrics = Vec::new();
     if let Some(value) = run.sharpe {
+        let value = match (run.sharpe_ci_low, run.sharpe_ci_high) {
+            (Some(low), Some(high)) => format!("{value:.2} [{low:.2}, {high:.2}]"),
+            _ => format!("{value:.2}"),
+        };
         metrics.push(InlineMetric {
             label: "Sharpe".into(),
-            value: format!("{value:.2}"),
+            value,
             unit: None,
             tone: Some(InlineTone::Info),
         });
@@ -574,11 +578,31 @@ fn run_metrics(run: &RunSummary) -> Vec<InlineMetric> {
         });
     }
     if let Some(value) = run.total_return_pct {
+        let formatted = match (run.return_ci_low, run.return_ci_high) {
+            (Some(low), Some(high)) => format!("{} [{low:.1}, {high:.1}]", signed_number(value)),
+            _ => signed_number(value),
+        };
         metrics.push(InlineMetric {
             label: "Return".into(),
-            value: signed_number(value),
+            value: formatted,
             unit: Some("%".into()),
             tone: tone_for_signed(value),
+        });
+    }
+    if let Some(grade) = &run.evidence_grade {
+        metrics.push(InlineMetric {
+            label: "Evidence".into(),
+            value: grade.clone(),
+            unit: None,
+            tone: Some(InlineTone::Warn),
+        });
+    }
+    if let (Some(real), Some(synth)) = (run.n_real_decisions, run.n_synthesized_decisions) {
+        metrics.push(InlineMetric {
+            label: "Decisions".into(),
+            value: format!("{real}/{synth}"),
+            unit: Some("real/synth".into()),
+            tone: Some(InlineTone::Muted),
         });
     }
     metrics
@@ -900,6 +924,17 @@ mod tests {
             sharpe: Some(1.25),
             max_drawdown_pct: Some(4.2),
             total_return_pct: Some(total_return_pct),
+            sharpe_ci_low: None,
+            sharpe_ci_high: None,
+            return_ci_low: None,
+            return_ci_high: None,
+            n_trades: None,
+            n_decisions: None,
+            n_real_decisions: None,
+            n_synthesized_decisions: None,
+            insufficient_sample: None,
+            annualization_calendar: None,
+            evidence_grade: None,
             error: None,
             actual_input_tokens: Some(10),
             actual_output_tokens: Some(20),

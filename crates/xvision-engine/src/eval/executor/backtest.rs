@@ -29,6 +29,7 @@ use xvision_core::market::Ohlcv;
 use xvision_core::providers::Catalog;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
+use xvision_eval::bootstrap::bootstrap_metric_ci;
 use xvision_eval::baselines::bar_baselines;
 
 use crate::agent::llm::LlmDispatch;
@@ -64,12 +65,12 @@ use crate::eval::guardrails::{
 };
 use crate::eval::live_config::LiveConfig;
 use crate::eval::metrics::{
-    annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
-    total_return_pct,
+    annualization_calendar_for_asset_class, annualization_periods_per_year_for_asset_class,
+    equity_to_returns, max_drawdown_pct, sharpe_from_returns, total_return_pct,
 };
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, MetricsSummary, Run, RunStatus};
-use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
+use crate::eval::scenario::{AssetClass, FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
@@ -764,6 +765,7 @@ impl Executor {
 
         let mut equity = initial;
         let mut equity_curve: Vec<f64> = vec![initial];
+        let mut metric_equity_curve: Vec<f64> = vec![initial];
         // Multi-asset (B4): pooled accounting moved from scalar
         // `position`/`entry_price`/`realized_total` to a `PortfolioBook`
         // keyed per asset. Single-asset preserved: with ONE asset the
@@ -821,6 +823,7 @@ impl Executor {
         let mut n_trades = 0u32;
         let mut wins = 0u32;
         let mut realized_count = 0u32;
+        let mut n_synthesized_decisions = 0u32;
         // R3 daily-loss kill: the UTC day the realized-loss window currently
         // tracks, and the book's cumulative realized PnL at that day's start.
         // `realized_today = book.realized() - daily_realized_at_day_start`.
@@ -940,14 +943,16 @@ impl Executor {
                 persist_partial_snapshot(
                     store,
                     &run.id,
-                    &equity_curve,
+                    &metric_equity_curve,
                     initial,
                     equity,
                     strategy.manifest.decision_cadence_minutes,
+                    scenario.asset_class,
                     realized_count,
                     wins,
                     n_trades,
                     decision_idx,
+                    n_synthesized_decisions,
                     total_input_tokens,
                     total_output_tokens,
                 )
@@ -958,14 +963,16 @@ impl Executor {
                 persist_partial_snapshot(
                     store,
                     &run.id,
-                    &equity_curve,
+                    &metric_equity_curve,
                     initial,
                     equity,
                     strategy.manifest.decision_cadence_minutes,
+                    scenario.asset_class,
                     realized_count,
                     wins,
                     n_trades,
                     decision_idx,
+                    n_synthesized_decisions,
                     total_input_tokens,
                     total_output_tokens,
                 )
@@ -1066,6 +1073,8 @@ impl Executor {
             // filter gate) advance to the next asset rather than the next
             // timestamp. Skipped via `continue 'asset` after recording the
             // per-asset decision row.
+            let mut inherited_decision_at_ts = false;
+            let mut non_inherited_decision_at_ts = false;
             'asset: for (&asset_sym, &i) in assets_at_ts.iter() {
                 let asset = asset_sym.as_alpaca_pair();
                 let bars = &asset_bars[&asset_sym];
@@ -1317,6 +1326,8 @@ impl Executor {
                                     episodic_store.push(sltp_obs);
                                 }
                                 decision_idx += 1;
+                                n_synthesized_decisions += 1;
+                                non_inherited_decision_at_ts = true;
                                 continue 'asset;
                             }
                             Some(SltpTrigger::PartialTp1 { fraction }) => {
@@ -1369,6 +1380,8 @@ impl Executor {
                                     episodic_store.push(pt1_obs);
                                 }
                                 decision_idx += 1;
+                                n_synthesized_decisions += 1;
+                                non_inherited_decision_at_ts = true;
                                 continue 'asset;
                             }
                             None => {}
@@ -1481,6 +1494,8 @@ impl Executor {
                     es.inherit_remaining -= 1;
                     es.prev_position = book.position(asset_sym);
                     decision_idx += 1;
+                    n_synthesized_decisions += 1;
+                    inherited_decision_at_ts = true;
                     continue 'asset;
                 }
 
@@ -1563,14 +1578,16 @@ impl Executor {
                         persist_partial_snapshot(
                             store,
                             &run.id,
-                            &equity_curve,
+                            &metric_equity_curve,
                             initial,
                             equity,
                             strategy.manifest.decision_cadence_minutes,
+                            scenario.asset_class,
                             realized_count,
                             wins,
                             n_trades,
                             decision_idx,
+                            n_synthesized_decisions,
                             total_input_tokens,
                             total_output_tokens,
                         )
@@ -1671,14 +1688,16 @@ impl Executor {
                         persist_partial_snapshot(
                             store,
                             &run.id,
-                            &equity_curve,
+                            &metric_equity_curve,
                             initial,
                             equity,
                             strategy.manifest.decision_cadence_minutes,
+                            scenario.asset_class,
                             realized_count,
                             wins,
                             n_trades,
                             decision_idx,
+                            n_synthesized_decisions,
                             total_input_tokens,
                             total_output_tokens,
                         )
@@ -1790,14 +1809,16 @@ impl Executor {
                     persist_partial_snapshot(
                         store,
                         &run.id,
-                        &equity_curve,
+                        &metric_equity_curve,
                         initial,
                         equity,
                         strategy.manifest.decision_cadence_minutes,
+                        scenario.asset_class,
                         realized_count,
                         wins,
                         n_trades,
                         decision_idx,
+                        n_synthesized_decisions,
                         total_input_tokens,
                         total_output_tokens,
                     )
@@ -2659,6 +2680,10 @@ impl Executor {
                 }
 
                 decision_idx += 1;
+                non_inherited_decision_at_ts = true;
+                if is_synthesized_decision(&parsed.justification) {
+                    n_synthesized_decisions += 1;
+                }
             } // end 'asset inner loop
 
             // Pooled NAV mark for this timestamp. Each active asset is
@@ -2693,6 +2718,9 @@ impl Executor {
             )
             .await;
             equity_curve.push(equity);
+            if include_equity_sample_for_metrics(inherited_decision_at_ts, non_inherited_decision_at_ts) {
+                metric_equity_curve.push(equity);
+            }
 
             if equity > peak_equity {
                 peak_equity = equity;
@@ -2720,14 +2748,16 @@ impl Executor {
         if store.is_terminal(&run.id).await? {
             // F36: capture the (now near-complete) accumulators before bailing.
             let partial = compute_run_metrics(
-                &equity_curve,
+                &metric_equity_curve,
                 initial,
                 equity,
                 strategy.manifest.decision_cadence_minutes,
+                scenario.asset_class,
                 realized_count,
                 wins,
                 n_trades,
                 decision_idx,
+                n_synthesized_decisions,
                 None,
             );
             let _ = store
@@ -2756,19 +2786,22 @@ impl Executor {
         // slice the strategy saw. `decision_bars` was populated by the loop
         // above — one push per cadence-gate pass, matching the strategy's
         // iteration exactly.
-        let baselines = build_baselines_report(&decision_bars, initial, cadence_minutes, strategy_return_pct);
+        let baselines =
+            build_baselines_report(&decision_bars, initial, cadence_minutes, scenario.asset_class, strategy_return_pct);
 
         // inference_cost_quote_total + net_return_pct populated post-finalize by
         // api::eval::enrich_with_inference_cost.
         let metrics = compute_run_metrics(
-            &equity_curve,
+            &metric_equity_curve,
             initial,
             equity,
             cadence_minutes,
+            scenario.asset_class,
             realized_count,
             wins,
             n_trades,
             decision_idx,
+            n_synthesized_decisions,
             Some(baselines),
         );
 
@@ -2966,6 +2999,7 @@ impl Executor {
         let mut n_trades = 0u32;
         let mut wins = 0u32;
         let mut realized_count = 0u32;
+        let mut n_synthesized_decisions = 0u32;
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;
         let run_started: Instant = Instant::now();
@@ -3070,10 +3104,12 @@ impl Executor {
                     initial,
                     equity,
                     strategy.manifest.decision_cadence_minutes,
+                    scenario.asset_class,
                     realized_count,
                     wins,
                     n_trades,
                     decision_idx,
+                    n_synthesized_decisions,
                     None,
                 );
                 let _ = store
@@ -3141,10 +3177,12 @@ impl Executor {
                     initial,
                     equity,
                     strategy.manifest.decision_cadence_minutes,
+                    scenario.asset_class,
                     realized_count,
                     wins,
                     n_trades,
                     decision_idx,
+                    n_synthesized_decisions,
                     None,
                 );
                 let _ = store
@@ -3426,6 +3464,7 @@ impl Executor {
                             n_trades,
                         });
                         decision_idx += 1;
+                        n_synthesized_decisions += 1;
                         if let Some((class, msg)) = broker_error {
                             anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
                         }
@@ -3602,6 +3641,9 @@ impl Executor {
             });
 
             decision_idx += 1;
+            if outcome.is_synthesized {
+                n_synthesized_decisions += 1;
+            }
 
             // (b) StopPolicy — evaluate after the decision is fully
             // recorded so a limit of N yields N decisions. Whichever fires
@@ -3634,10 +3676,12 @@ impl Executor {
                 initial,
                 equity,
                 strategy.manifest.decision_cadence_minutes,
+                scenario.asset_class,
                 realized_count,
                 wins,
                 n_trades,
                 decision_idx,
+                n_synthesized_decisions,
                 None,
             );
             let _ = store
@@ -3653,10 +3697,12 @@ impl Executor {
             initial,
             equity,
             strategy.manifest.decision_cadence_minutes,
+            scenario.asset_class,
             realized_count,
             wins,
             n_trades,
             decision_idx,
+            n_synthesized_decisions,
             None,
         );
 
@@ -4197,6 +4243,7 @@ impl Executor {
             clear_sltp_state,
             last_open_direction,
             broker_error,
+            is_synthesized: is_synthesized_decision(&parsed.justification),
             daily_loss_day,
             daily_realized_at_day_start,
         })
@@ -4644,6 +4691,7 @@ struct LiveDecisionOutcome {
     clear_sltp_state: bool,
     last_open_direction: Option<GuardAction>,
     broker_error: Option<(xvision_execution::broker_surface::BrokerErrorClass, String)>,
+    is_synthesized: bool,
     /// R3 risk-veto: updated daily-loss state, written back to the loop
     /// driver so the accumulator persists across consecutive `decide_one_live`
     /// calls on the same run.
@@ -5373,6 +5421,9 @@ const PARTIAL_PERSIST_INTERVAL: std::time::Duration = std::time::Duration::from_
 /// Checked on wall-clock time at the top of the loop, independent of the
 /// strategy cadence early-continue.
 const EVAL_HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+const HONESTY_ENVELOPE_BOOTSTRAP_ITERS: usize = 500;
+const HONESTY_ENVELOPE_BOOTSTRAP_SEED: u64 = 0x5856_4e5f_5755_3231;
+const MIN_TRADES_FOR_HONESTY_ENVELOPE: u32 = 10;
 
 /// F36: snapshot the accumulators into a partial [`MetricsSummary`] and persist
 /// it (best-effort, no status change) so a cancelled/timed-out/crashed run keeps
@@ -5387,10 +5438,12 @@ async fn persist_partial_snapshot(
     initial: f64,
     equity: f64,
     cadence_minutes: u32,
+    asset_class: AssetClass,
     realized_count: u32,
     wins: u32,
     n_trades: u32,
     decision_idx: u32,
+    n_synthesized_decisions: u32,
     input_tokens: u64,
     output_tokens: u64,
 ) {
@@ -5399,10 +5452,12 @@ async fn persist_partial_snapshot(
         initial,
         equity,
         cadence_minutes,
+        asset_class,
         realized_count,
         wins,
         n_trades,
         decision_idx,
+        n_synthesized_decisions,
         None,
     );
     let _ = store
@@ -5423,14 +5478,42 @@ fn compute_run_metrics(
     initial: f64,
     equity: f64,
     cadence_minutes: u32,
+    asset_class: AssetClass,
     realized_count: u32,
     wins: u32,
     n_trades: u32,
     decision_idx: u32,
+    n_synthesized_decisions: u32,
     baselines: Option<BaselinesReport>,
 ) -> MetricsSummary {
     let returns = equity_to_returns(equity_curve);
-    let periods_per_year = annualization_periods_per_year(cadence_minutes);
+    let periods_per_year = annualization_periods_per_year_for_asset_class(asset_class, cadence_minutes);
+    let (sharpe_ci, return_ci) = if n_trades == 0 {
+        (None, None)
+    } else {
+        (
+            bootstrap_metric_ci(
+                &returns,
+                |sample| sharpe_from_returns(sample, periods_per_year),
+                HONESTY_ENVELOPE_BOOTSTRAP_ITERS,
+                HONESTY_ENVELOPE_BOOTSTRAP_SEED,
+            ),
+            bootstrap_metric_ci(
+                &returns,
+                total_return_pct_from_returns,
+                HONESTY_ENVELOPE_BOOTSTRAP_ITERS,
+                HONESTY_ENVELOPE_BOOTSTRAP_SEED ^ 0x9e37_79b9_7f4a_7c15,
+            ),
+        )
+    };
+    let return_ci_low = return_ci.map(|ci| ci.low);
+    let return_ci_high = return_ci.map(|ci| ci.high);
+    let evidence_grade = crate::eval::evidence::evidence_grade(crate::eval::evidence::EvidenceInputs {
+        n_trades,
+        return_ci_low,
+        baselines: baselines.as_ref(),
+        fees_modeled: true,
+    });
     MetricsSummary {
         total_return_pct: total_return_pct(initial, equity),
         sharpe: sharpe_from_returns(&returns, periods_per_year),
@@ -5442,19 +5525,52 @@ fn compute_run_metrics(
         },
         n_trades,
         n_decisions: decision_idx,
+        sharpe_ci_low: sharpe_ci.map(|ci| ci.low),
+        sharpe_ci_high: sharpe_ci.map(|ci| ci.high),
+        return_ci_low,
+        return_ci_high,
+        n_real_decisions: Some(decision_idx.saturating_sub(n_synthesized_decisions)),
+        n_synthesized_decisions: Some(n_synthesized_decisions),
+        insufficient_sample: Some(n_trades < MIN_TRADES_FOR_HONESTY_ENVELOPE),
+        annualization_calendar: Some(annualization_calendar_for_asset_class(asset_class).to_string()),
+        evidence_grade: Some(evidence_grade.to_string()),
         baselines,
         ..Default::default()
     }
+}
+
+fn total_return_pct_from_returns(returns: &[f64]) -> f64 {
+    let gross = returns.iter().fold(1.0, |acc, r| acc * (1.0 + r));
+    (gross - 1.0) * 100.0
+}
+
+fn is_synthesized_decision(justification: &str) -> bool {
+    justification.contains("noop_skip")
+        || justification.contains("inherited from early-stop policy")
+        || justification.contains("sltp:")
+}
+
+fn include_equity_sample_for_metrics(
+    inherited_decision_at_ts: bool,
+    non_inherited_decision_at_ts: bool,
+) -> bool {
+    !inherited_decision_at_ts || non_inherited_decision_at_ts
 }
 
 fn build_baselines_report(
     bars: &[Ohlcv],
     initial_equity: f64,
     cadence_minutes: u32,
+    asset_class: AssetClass,
     strategy_return_pct: f64,
 ) -> BaselinesReport {
-    let computed =
-        bar_baselines::compute_baselines(bars, initial_equity, cadence_minutes, strategy_return_pct, 42);
+    let computed = bar_baselines::compute_baselines_with_periods_per_year(
+        bars,
+        initial_equity,
+        annualization_periods_per_year_for_asset_class(asset_class, cadence_minutes),
+        strategy_return_pct,
+        42,
+    );
     BaselinesReport {
         buy_hold: BaselineMetrics {
             return_pct: computed.buy_hold.return_pct,
@@ -5666,6 +5782,71 @@ mod tests {
             bar_high: 61_000.0,
             bar_low: 59_000.0,
         }
+    }
+
+    #[test]
+    fn compute_run_metrics_flags_insufficient_sample_and_persists_envelope_counts() {
+        let equity_curve = [10_000.0, 10_100.0, 10_060.0, 10_180.0, 10_150.0, 10_240.0];
+
+        let metrics = compute_run_metrics(
+            &equity_curve,
+            10_000.0,
+            10_240.0,
+            15,
+            AssetClass::Crypto,
+            2,
+            1,
+            3,
+            4,
+            1,
+            None,
+        );
+
+        assert_eq!(metrics.n_trades, 3);
+        assert_eq!(metrics.n_decisions, 4);
+        assert_eq!(metrics.n_real_decisions, Some(3));
+        assert_eq!(metrics.n_synthesized_decisions, Some(1));
+        assert_eq!(metrics.insufficient_sample, Some(true));
+        assert!(metrics.sharpe_ci_low.is_some());
+        assert!(metrics.sharpe_ci_high.is_some());
+        assert!(metrics.return_ci_low.is_some());
+        assert!(metrics.return_ci_high.is_some());
+        assert!(metrics.sharpe_ci_low <= metrics.sharpe_ci_high);
+        assert!(metrics.return_ci_low <= metrics.return_ci_high);
+    }
+
+    #[test]
+    fn compute_run_metrics_zero_trade_run_omits_ci_fields_and_flags_sample() {
+        let equity_curve = [10_000.0, 10_020.0, 10_010.0, 10_030.0];
+
+        let metrics = compute_run_metrics(
+            &equity_curve,
+            10_000.0,
+            10_030.0,
+            15,
+            AssetClass::Crypto,
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+        );
+
+        assert_eq!(metrics.n_trades, 0);
+        assert_eq!(metrics.n_decisions, 0);
+        assert_eq!(metrics.sharpe_ci_low, None);
+        assert_eq!(metrics.sharpe_ci_high, None);
+        assert_eq!(metrics.return_ci_low, None);
+        assert_eq!(metrics.return_ci_high, None);
+        assert_eq!(metrics.insufficient_sample, Some(true));
+    }
+
+    #[test]
+    fn inherited_early_stop_only_timestamp_is_excluded_from_metric_curve() {
+        assert!(!include_equity_sample_for_metrics(true, false));
+        assert!(include_equity_sample_for_metrics(false, false));
+        assert!(include_equity_sample_for_metrics(true, true));
     }
 
     #[test]

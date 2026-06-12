@@ -15,6 +15,7 @@ import { isInflightRunStatus } from "@/lib/run-status";
 import type { EvalRunLabels } from "@/lib/run-display";
 import { formatCostUsd } from "@/lib/format";
 import { drawdownMetricTone } from "@/lib/metric-tone";
+import { TrustFrameStrip } from "@/components/eval-detail/TrustFrame";
 import type { Agent } from "@/api/agents";
 import type {
   DecisionRowDto,
@@ -374,6 +375,8 @@ function SummaryTab({
           sub="inference"
         />
       </div>
+
+      <TrustFrameStrip metrics={summary} compact />
 
       <EquityCard equity={equity_curve} pct={summary.total_return_pct} />
 

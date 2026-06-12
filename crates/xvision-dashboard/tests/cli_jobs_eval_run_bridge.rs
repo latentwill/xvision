@@ -64,6 +64,7 @@ fn sample_metrics() -> MetricsSummary {
         inference_cost_quote_total: Some(0.42),
         net_return_pct: Some(12.08),
         baselines: None,
+        ..Default::default()
     }
 }
 

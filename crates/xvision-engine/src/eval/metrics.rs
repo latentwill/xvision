@@ -19,6 +19,8 @@
 
 use statrs::statistics::Statistics;
 
+use crate::eval::scenario::AssetClass;
+
 /// Convert a series of equity samples into per-period percentage returns.
 ///
 /// `equity[i+1] / equity[i] - 1` for each adjacent pair where `equity[i] > 0`.
@@ -99,6 +101,34 @@ pub fn annualization_periods_per_year(cadence_minutes: u32) -> f64 {
     }
     let minutes_per_year = 60.0 * 24.0 * 365.0;
     minutes_per_year / cadence_minutes as f64
+}
+
+pub const CRYPTO_ANNUALIZATION_CALENDAR: &str = "crypto_24_7_365d";
+pub const US_MARKET_ANNUALIZATION_CALENDAR: &str = "us_market_252x390m";
+
+/// Product eval annualization by market calendar.
+///
+/// Crypto trades 24/7. Alpaca equities/options/futures use the US regular
+/// session calendar here: 252 trading days × 390 minutes.
+pub fn annualization_periods_per_year_for_asset_class(
+    asset_class: AssetClass,
+    cadence_minutes: u32,
+) -> f64 {
+    if cadence_minutes == 0 {
+        return 1.0;
+    }
+    let minutes_per_year = match asset_class {
+        AssetClass::Crypto => 60.0 * 24.0 * 365.0,
+        AssetClass::Equity | AssetClass::Option | AssetClass::Future => 252.0 * 390.0,
+    };
+    minutes_per_year / cadence_minutes as f64
+}
+
+pub fn annualization_calendar_for_asset_class(asset_class: AssetClass) -> &'static str {
+    match asset_class {
+        AssetClass::Crypto => CRYPTO_ANNUALIZATION_CALENDAR,
+        AssetClass::Equity | AssetClass::Option | AssetClass::Future => US_MARKET_ANNUALIZATION_CALENDAR,
+    }
 }
 
 /// Compute net return after deducting LLM inference cost.

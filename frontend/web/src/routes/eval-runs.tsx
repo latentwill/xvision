@@ -28,6 +28,10 @@ import { chartKeys, getRunChart } from "@/api/chart";
 import { RunChartV2 } from "@/components/chart/v2/surfaces/RunChartV2";
 import { runChartPayloadToV2 } from "@/components/chart/v2/adapters/run-chart-payload";
 import {
+  ConfidenceInline,
+  EvidenceGradeChip,
+} from "@/components/eval-detail/TrustFrame";
+import {
   evalKeys,
   cancelRun,
   deleteRun,
@@ -334,6 +338,7 @@ export function EvalRunsRoute() {
     { key: "strategy", label: "Strategy",                essential: true,  estWidth: 160 },
     { key: "scenario", label: "Scenario",                essential: true,  estWidth: 150 },
     { key: "status",   label: "Status",                  essential: true,  estWidth: 100 },
+    { key: "evidence", label: "Evidence",                essential: true,  estWidth: 105 },
     { key: "return",   label: "Return",  align: "right" as const, essential: true, estWidth: 90 },
     { key: "sharpe",   label: "Sharpe",  align: "right" as const, essential: true, estWidth: 90 },
     { key: "drawdown", label: "Max DD",  align: "right" as const, priority: 4, estWidth: 90 },
@@ -436,7 +441,7 @@ export function EvalRunsRoute() {
             subtitle={displayScenarioName(row.scenario_id, scenarios)}
             meta={`${evalRunDisambiguator(row, runs)} · ${row.mode}`}
             rightTop={fmtPct(row.total_return_pct)}
-            rightSub={fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
+            rightSub={`${gradeLabel(row.evidence_grade)} · ${fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}`}
             rightTone={signedTone(row.total_return_pct)}
           />
         )}
@@ -613,15 +618,24 @@ function DesktopRow({
       <td className="px-3 py-3">
         <StatusPill status={row.status} />
       </td>
+      <td className="px-3 py-3">
+        <EvidenceGradeChip grade={row.evidence_grade} failed={row.status === "failed"} />
+      </td>
       <td
         className={`px-3 py-3 text-right font-mono ${signedToneClass(row.total_return_pct)}`}
       >
-        {fmtPct(row.total_return_pct)}
+        <div>{fmtPct(row.total_return_pct)}</div>
+        <div className="mt-0.5 text-[10px]">
+          <ConfidenceInline low={row.return_ci_low} high={row.return_ci_high} unit="%" />
+        </div>
       </td>
       <td
         className={`px-3 py-3 text-right font-mono ${signedToneClass(row.sharpe)}`}
       >
-        {fmtNumber(row.sharpe)}
+        <div>{fmtNumber(row.sharpe)}</div>
+        <div className="mt-0.5 text-[10px]">
+          <ConfidenceInline low={row.sharpe_ci_low} high={row.sharpe_ci_high} />
+        </div>
       </td>
       <td
         className={`px-3 py-3 text-right font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}
@@ -1297,6 +1311,10 @@ function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(2)}%`;
+}
+
+function gradeLabel(grade: string | null | undefined): string {
+  return grade ? `grade ${grade}` : "grade pending";
 }
 
 function signedToneClass(n: number | null | undefined): string {

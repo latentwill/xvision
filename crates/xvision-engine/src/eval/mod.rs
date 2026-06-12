@@ -23,6 +23,7 @@ pub mod cost_arrays;
 pub mod cycle_features;
 pub mod determinism;
 pub mod early_stop;
+pub mod evidence;
 pub mod executor;
 pub mod experiment_store;
 pub mod export;

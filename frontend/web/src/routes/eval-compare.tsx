@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
@@ -11,6 +11,10 @@ import { listStrategies, strategyKeys, type ExitReason, type StrategyListItem } 
 import { ChartFrame } from "@/components/chart/v2/primitives/ChartFrame";
 import { UplotCompareOverlayPane } from "@/components/chart/v2/primitives/UplotCompareOverlayPane";
 import { useChart2Theme } from "@/components/chart/v2/hooks/useChart2Theme";
+import {
+  ConfidenceInline,
+  EvidenceGradeChip,
+} from "@/components/eval-detail/TrustFrame";
 import { isInflightRunStatus } from "@/lib/run-status";
 import { drawdownToneClass } from "@/lib/metric-tone";
 import {
@@ -259,6 +263,7 @@ function MetricsTable({
           <tr className="text-left text-text-2 text-[12px] border-b border-border-soft">
             <th className="font-normal py-2.5 px-5">Run</th>
             <th className="font-normal py-2.5 px-3">Status</th>
+            <th className="font-normal py-2.5 px-3">Evidence</th>
             <th className="font-normal py-2.5 px-3">Scenario</th>
             <th className="font-normal py-2.5 px-3 text-right">Gross %</th>
             <th className="font-normal py-2.5 px-3 text-right">Infer cost</th>
@@ -309,19 +314,23 @@ function MetricsTable({
                     {r.status}
                   </Pill>
                 </td>
+                <td className="py-2.5 px-3">
+                  <EvidenceGradeChip grade={r.metrics?.evidence_grade} failed={r.status === "failed"} />
+                </td>
                 <td className="py-2.5 px-3 text-text-2 text-[12px]">
                   {displayScenarioName(r.scenario_id, scenarios)}
                 </td>
-                <MetricCell
-                  value={fmtPct(r.metrics?.total_return_pct)}
-                  sign={signOf(r.metrics?.total_return_pct)}
-                />
+                <MetricCell value={fmtPct(r.metrics?.total_return_pct)} sign={signOf(r.metrics?.total_return_pct)}>
+                  <ConfidenceInline low={r.metrics?.return_ci_low} high={r.metrics?.return_ci_high} unit="%" />
+                </MetricCell>
                 <MetricCell value={fmtCostUsd(r.metrics?.inference_cost_quote_total)} />
                 <MetricCell
                   value={fmtPct(r.net_return_pct ?? r.metrics?.net_return_pct)}
                   sign={signOf(r.net_return_pct ?? r.metrics?.net_return_pct)}
                 />
-                <MetricCell value={fmtNumber(r.metrics?.sharpe, 3)} />
+                <MetricCell value={fmtNumber(r.metrics?.sharpe, 3)}>
+                  <ConfidenceInline low={r.metrics?.sharpe_ci_low} high={r.metrics?.sharpe_ci_high} />
+                </MetricCell>
                 <MetricCell
                   value={fmtPct(r.metrics?.max_drawdown_pct)}
                   toneClass={drawdownToneClass(r.metrics?.max_drawdown_pct)}
@@ -342,12 +351,14 @@ function MetricCell({
   value,
   sign,
   toneClass,
+  children,
 }: {
   value: string;
   sign?: 1 | -1 | 0;
   /** Override the sign-derived tone class (e.g. for drawdown, which is
    * always loss-coloured regardless of sign). */
   toneClass?: string;
+  children?: ReactNode;
 }) {
   const tone =
     toneClass ??
@@ -358,7 +369,12 @@ function MetricCell({
         : sign < 0
           ? "text-danger"
           : "text-text-2");
-  return <td className={`py-2.5 px-3 text-right font-mono ${tone}`}>{value}</td>;
+  return (
+    <td className={`py-2.5 px-3 text-right font-mono ${tone}`}>
+      <div>{value}</div>
+      {children ? <div className="mt-0.5 text-[10px]">{children}</div> : null}
+    </td>
+  );
 }
 
 function FindingsTable({

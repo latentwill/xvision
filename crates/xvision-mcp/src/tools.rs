@@ -3070,6 +3070,7 @@ mod tests {
             inference_cost_quote_total: None,
             net_return_pct: None,
             baselines: None,
+            ..Default::default()
         };
         store.finalize(&run.id, &metrics).await.unwrap();
         run.id

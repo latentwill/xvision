@@ -249,6 +249,39 @@ pub struct RunSummary {
     pub sharpe: Option<f64>,
     pub max_drawdown_pct: Option<f64>,
     pub total_return_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub sharpe_ci_low: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub sharpe_ci_high: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub return_ci_low: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub return_ci_high: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub n_trades: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub n_decisions: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub n_real_decisions: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub n_synthesized_decisions: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub insufficient_sample: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub annualization_calendar: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub evidence_grade: Option<String>,
     pub error: Option<String>,
     #[cfg_attr(feature = "ts-export", ts(type = "number | null"))]
     pub actual_input_tokens: Option<u64>,
@@ -4484,15 +4517,45 @@ fn apply_review_launch_options(run: &mut Run, req: &EvalRunRequest) {
 }
 
 fn summarise(run: Run) -> RunSummary {
-    let (sharpe, max_dd, total_return, inference_cost, net_return) = match &run.metrics {
+    let (
+        sharpe,
+        max_dd,
+        total_return,
+        sharpe_ci_low,
+        sharpe_ci_high,
+        return_ci_low,
+        return_ci_high,
+        n_trades,
+        n_decisions,
+        n_real_decisions,
+        n_synthesized_decisions,
+        insufficient_sample,
+        annualization_calendar,
+        evidence_grade,
+        inference_cost,
+        net_return,
+    ) = match &run.metrics {
         Some(m) => (
             Some(m.sharpe),
             Some(m.max_drawdown_pct),
             Some(m.total_return_pct),
+            m.sharpe_ci_low,
+            m.sharpe_ci_high,
+            m.return_ci_low,
+            m.return_ci_high,
+            Some(m.n_trades),
+            Some(m.n_decisions),
+            m.n_real_decisions,
+            m.n_synthesized_decisions,
+            m.insufficient_sample,
+            m.annualization_calendar.clone(),
+            m.evidence_grade.clone(),
             m.inference_cost_quote_total,
             m.net_return_pct,
         ),
-        None => (None, None, None, None, None),
+        None => (
+            None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+        ),
     };
     RunSummary {
         id: run.id,
@@ -4510,6 +4573,17 @@ fn summarise(run: Run) -> RunSummary {
         sharpe,
         max_drawdown_pct: max_dd,
         total_return_pct: total_return,
+        sharpe_ci_low,
+        sharpe_ci_high,
+        return_ci_low,
+        return_ci_high,
+        n_trades,
+        n_decisions,
+        n_real_decisions,
+        n_synthesized_decisions,
+        insufficient_sample,
+        annualization_calendar,
+        evidence_grade,
         error: run.error,
         actual_input_tokens: run.actual_input_tokens,
         actual_output_tokens: run.actual_output_tokens,

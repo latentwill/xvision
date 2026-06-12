@@ -19,7 +19,7 @@ import type { BaselinesReport } from "./BaselinesReport";
  *   capital_initial × 100)`. `None` when `inference_cost_quote_total` is
  *   unavailable.
  */
-export type MetricsSummary = { 
+export type MetricsSummary = {
 /**
  * Gross trading return as a percentage of starting capital.
  * Deprecated wire name: `total_return_pct` (kept for one release).
@@ -27,20 +27,80 @@ export type MetricsSummary = {
  * Deserialization accepts `gross_return_pct` as an alias so JSON written
  * by future code that uses the new name can still round-trip.
  */
-total_return_pct: number, sharpe: number, max_drawdown_pct: number, win_rate: number, n_trades: number, n_decisions: number, 
+total_return_pct: number, sharpe: number, max_drawdown_pct: number,
+/**
+ * Fraction of CLOSED ROUND-TRIPS that realized positive PnL
+ * (`wins / realized_count`). A round-trip is one position open→flat
+ * cycle, closed by the trader (`flat`/flip) or a deterministic SL/TP
+ * exit. `0.0` when no round-trip closed.
+ */
+win_rate: number,
+/**
+ * Count of FILL LEGS that crossed the book — opens, closes, SL/TP forced
+ * exits, and partial-TP1 slices each count one. An open+close round-trip
+ * is `2` here. This is leg-count semantics (NOT round-trips); `win_rate`
+ * is the round-trip view. See the counter doc in `backtest.rs`.
+ */
+n_trades: number,
+/**
+ * Count of LLM-pipeline decision slots, including synthesized SL/TP exit
+ * rows. Cadence-gated and filter-suppressed bars do not increment it (no
+ * decision occurred). Filter wake/suppression accounting lives separately
+ * in `xvision_filters::events::FilterSummary`.
+ */
+n_decisions: number,
+/**
+ * 2.5th percentile confidence bound for the run Sharpe bootstrap.
+ */
+sharpe_ci_low?: number,
+/**
+ * 97.5th percentile confidence bound for the run Sharpe bootstrap.
+ */
+sharpe_ci_high?: number,
+/**
+ * 2.5th percentile confidence bound for total-return percentage.
+ */
+return_ci_low?: number,
+/**
+ * 97.5th percentile confidence bound for total-return percentage.
+ */
+return_ci_high?: number,
+/**
+ * LLM-pipeline decisions emitted by the trader path.
+ */
+n_real_decisions?: number,
+/**
+ * Synthetic decisions emitted by deterministic engine paths.
+ */
+n_synthesized_decisions?: number,
+/**
+ * True when the run has fewer than the minimum trade legs for an honest
+ * product-level statistical envelope.
+ */
+insufficient_sample?: boolean,
+/**
+ * Calendar used to annualize Sharpe going forward. `None` indicates a
+ * legacy row computed before calendar-aware annualization.
+ */
+annualization_calendar?: string,
+/**
+ * Product trust grade (A-D) computed from trade count, CI, fee modeling,
+ * and baseline-beat evidence. `None` indicates a legacy row.
+ */
+evidence_grade?: string,
 /**
  * Total LLM inference cost for all decisions in this run (USD).
  * `None` when the model's pricing isn't in the catalog — in that case
  * `net_return_pct` is also `None` and a `MissingPricingData` finding
  * fires at run-finalize time.
  */
-inference_cost_quote_total: number | null, 
+inference_cost_quote_total: number | null,
 /**
  * Net return after subtracting LLM inference cost from gross return.
  * Math: `total_return_pct − (inference_cost_quote_total / capital_initial × 100)`.
  * `None` when `inference_cost_quote_total` is unavailable.
  */
-net_return_pct: number | null, 
+net_return_pct: number | null,
 /**
  * Automatic baseline comparison computed over the same bar slice the
  * strategy saw. `None` for old runs that predate baselines support or

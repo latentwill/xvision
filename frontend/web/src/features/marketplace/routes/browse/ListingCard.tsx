@@ -82,8 +82,11 @@ export function ListingCard({ row, onBuy }: ListingCardProps) {
 
       {/* Sharpe */}
       <div className="text-right">
-        <span className="font-mono text-[12px] text-text-3">
+        <span className="block font-mono text-[12px] text-text-3">
           {row.sharpe > 0 ? "+" : ""}{row.sharpe.toFixed(2)}
+        </span>
+        <span className="block font-mono text-[9.5px] uppercase tracking-[0.14em] text-text-4">
+          sample data
         </span>
       </div>
 

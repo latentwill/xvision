@@ -369,6 +369,45 @@ pub struct MetricsSummary {
     /// decision occurred). Filter wake/suppression accounting lives separately
     /// in `xvision_filters::events::FilterSummary`.
     pub n_decisions: u32,
+    /// 2.5th percentile confidence bound for the run Sharpe bootstrap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub sharpe_ci_low: Option<f64>,
+    /// 97.5th percentile confidence bound for the run Sharpe bootstrap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub sharpe_ci_high: Option<f64>,
+    /// 2.5th percentile confidence bound for total-return percentage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub return_ci_low: Option<f64>,
+    /// 97.5th percentile confidence bound for total-return percentage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub return_ci_high: Option<f64>,
+    /// LLM-pipeline decisions emitted by the trader path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub n_real_decisions: Option<u32>,
+    /// Synthetic decisions emitted by deterministic engine paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub n_synthesized_decisions: Option<u32>,
+    /// True when the run has fewer than the minimum trade legs for an honest
+    /// product-level statistical envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub insufficient_sample: Option<bool>,
+    /// Calendar used to annualize Sharpe going forward. `None` indicates a
+    /// legacy row computed before calendar-aware annualization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub annualization_calendar: Option<String>,
+    /// Product trust grade (A-D) computed from trade count, CI, fee modeling,
+    /// and baseline-beat evidence. `None` indicates a legacy row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-export", ts(optional))]
+    pub evidence_grade: Option<String>,
     /// Total LLM inference cost for all decisions in this run (USD).
     /// `None` when the model's pricing isn't in the catalog — in that case
     /// `net_return_pct` is also `None` and a `MissingPricingData` finding
@@ -481,5 +520,30 @@ mod tests {
         assert_eq!(ms.total_return_pct, 5.0);
         assert_eq!(baselines.buy_hold.return_pct, 2.0);
         assert_eq!(baselines.relative_to.buy_hold, 3.0);
+    }
+
+    #[test]
+    fn legacy_metrics_json_without_honesty_envelope_deserializes_with_absent_fields() {
+        let legacy_json = r#"{
+            "total_return_pct": 5.0,
+            "sharpe": 1.2,
+            "max_drawdown_pct": 3.0,
+            "win_rate": 0.6,
+            "n_trades": 10,
+            "n_decisions": 20
+        }"#;
+
+        let ms: MetricsSummary = serde_json::from_str(legacy_json).expect("legacy metrics must deserialize");
+
+        assert_eq!(ms.total_return_pct, 5.0);
+        assert_eq!(ms.sharpe_ci_low, None);
+        assert_eq!(ms.sharpe_ci_high, None);
+        assert_eq!(ms.return_ci_low, None);
+        assert_eq!(ms.return_ci_high, None);
+        assert_eq!(ms.n_real_decisions, None);
+        assert_eq!(ms.n_synthesized_decisions, None);
+        assert_eq!(ms.insufficient_sample, None);
+        assert_eq!(ms.annualization_calendar, None);
+        assert_eq!(ms.evidence_grade, None);
     }
 }

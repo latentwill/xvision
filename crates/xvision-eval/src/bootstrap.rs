@@ -54,6 +54,15 @@ pub struct BootstrapResult {
     pub block_size: Option<usize>,
 }
 
+/// Percentile confidence interval for a single metric over one return series.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Ci {
+    /// 2.5th percentile of the bootstrapped metric distribution.
+    pub low: f64,
+    /// 97.5th percentile of the bootstrapped metric distribution.
+    pub high: f64,
+}
+
 // ---------------------------------------------------------------------------
 // Core function
 // ---------------------------------------------------------------------------
@@ -176,6 +185,44 @@ pub fn paired_bootstrap_sharpe_delta(
     })
 }
 
+/// Single-series percentile bootstrap for any scalar metric over returns.
+///
+/// Resamples `returns` with replacement, recomputes `metric` for each sample,
+/// and returns the 2.5/97.5 percentile interval. Returns `None` when there is
+/// not enough data to resample (`n < 2`) or when `iters == 0`.
+pub fn bootstrap_metric_ci<F>(returns: &[f64], metric: F, iters: usize, seed: u64) -> Option<Ci>
+where
+    F: Fn(&[f64]) -> f64,
+{
+    let n = returns.len();
+    if n < 2 || iters == 0 {
+        return None;
+    }
+
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut sample = Vec::with_capacity(n);
+    let mut values = Vec::with_capacity(iters);
+    for _ in 0..iters {
+        sample.clear();
+        for _ in 0..n {
+            let idx = rng.gen_range(0..n);
+            sample.push(returns[idx]);
+        }
+        let value = metric(&sample);
+        if value.is_finite() {
+            values.push(value);
+        }
+    }
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(Ci {
+        low: percentile_f64(&values, 2.5),
+        high: percentile_f64(&values, 97.5),
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -193,6 +240,22 @@ fn percentile(sorted: &[f32], pct: f64) -> f32 {
     let lo = rank.floor() as usize;
     let hi = (lo + 1).min(n - 1);
     let frac = (rank - lo as f64) as f32;
+    sorted[lo] * (1.0 - frac) + sorted[hi] * frac
+}
+
+/// Linear-interpolation percentile on a pre-sorted f64 slice.
+fn percentile_f64(sorted: &[f64], pct: f64) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if n == 1 {
+        return sorted[0];
+    }
+    let rank = pct / 100.0 * (n - 1) as f64;
+    let lo = rank.floor() as usize;
+    let hi = (lo + 1).min(n - 1);
+    let frac = rank - lo as f64;
     sorted[lo] * (1.0 - frac) + sorted[hi] * frac
 }
 
@@ -323,5 +386,35 @@ mod tests {
         assert!(r.ci_low <= r.ci_high, "ci_low must be <= ci_high");
         assert_eq!(r.n_resamples, 500);
         assert!(r.block_size.is_none());
+    }
+
+    #[test]
+    fn single_series_metric_ci_is_deterministic_and_brackets_positive_mean() {
+        let returns: Vec<f64> = (0..80)
+            .map(|i| {
+                let wave = (i % 8) as f64 - 3.5;
+                0.002 + wave * 0.0002
+            })
+            .collect();
+
+        let metric = |sample: &[f64]| sample.iter().copied().sum::<f64>() / sample.len() as f64;
+        let ci_a = bootstrap_metric_ci(&returns, metric, 500, 42).expect("ci must be computed");
+        let ci_b = bootstrap_metric_ci(&returns, metric, 500, 42).expect("ci must be deterministic");
+
+        assert_eq!(ci_a.low.to_bits(), ci_b.low.to_bits());
+        assert_eq!(ci_a.high.to_bits(), ci_b.high.to_bits());
+        assert!(
+            ci_a.low <= 0.002 && ci_a.high >= 0.002,
+            "CI [{}, {}] should bracket the known mean",
+            ci_a.low,
+            ci_a.high
+        );
+    }
+
+    #[test]
+    fn single_series_metric_ci_returns_none_for_tiny_samples() {
+        let metric = |sample: &[f64]| sample.iter().copied().sum::<f64>();
+        assert!(bootstrap_metric_ci(&[], metric, 100, 1).is_none());
+        assert!(bootstrap_metric_ci(&[0.01], metric, 100, 1).is_none());
     }
 }

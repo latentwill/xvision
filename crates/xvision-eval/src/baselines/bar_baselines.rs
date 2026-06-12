@@ -114,8 +114,22 @@ pub fn compute_baselines(
     strategy_return_pct: f64,
     rng_seed: u64,
 ) -> BaselinesReport {
-    let periods_per_year = annualization_periods_per_year(cadence_minutes);
+    compute_baselines_with_periods_per_year(
+        bars,
+        initial_equity,
+        annualization_periods_per_year(cadence_minutes),
+        strategy_return_pct,
+        rng_seed,
+    )
+}
 
+pub fn compute_baselines_with_periods_per_year(
+    bars: &[Ohlcv],
+    initial_equity: f64,
+    periods_per_year: f64,
+    strategy_return_pct: f64,
+    rng_seed: u64,
+) -> BaselinesReport {
     let buy_hold = baseline_buy_hold(bars, initial_equity, periods_per_year);
     let always_flat = BaselineResult {
         return_pct: 0.0,

@@ -34,6 +34,17 @@ describe("buildHeadline", () => {
     expect(h.subtitle).toBe("Best find: abcd1234 (ΔSharpe +0.21) · 5 active lineages.");
   });
 
+  it("includes the best-find CI band when available", () => {
+    const h = buildHeadline({
+      state: "idle",
+      activeLineages: 5,
+      lastCycle: { kept: 2, total: 14 },
+      lastCycleAgo: "3h ago",
+      bestFind: { hash: "abcd1234ef", delta: 0.21, ciLow: -0.04, ciHigh: 0.39 },
+    });
+    expect(h.subtitle).toContain("ΔSharpe +0.21 CI -0.04..0.39");
+  });
+
   it("paused state names the state", () => {
     expect(buildHeadline({ state: "paused", activeLineages: 0, lastCycle: null, lastCycleAgo: null }).title)
       .toBe("A run is paused.");

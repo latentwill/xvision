@@ -757,6 +757,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 inference_cost_quote_total: None,
                 net_return_pct: None,
                 baselines: None,
+                ..Default::default()
             },
         })
     } else {

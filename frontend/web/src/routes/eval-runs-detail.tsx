@@ -37,6 +37,7 @@ import type {
 import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
 import { MetaChip } from "@/components/eval-detail/MetaChip";
 import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
+import { TrustFrameStrip } from "@/components/eval-detail/TrustFrame";
 import { toTimelineDecisions } from "@/components/eval-detail/decision-view";
 import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
 import { FilterEventTimeline } from "@/features/eval-runs/FilterEventTimeline";
@@ -342,6 +343,10 @@ export function EvalRunDetailRoute() {
                 }
               />
             </div>
+          </div>
+
+          <div className="mb-5">
+            <TrustFrameStrip metrics={detail.summary} />
           </div>
 
           {/*

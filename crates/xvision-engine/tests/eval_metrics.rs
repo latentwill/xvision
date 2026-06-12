@@ -2,9 +2,11 @@
 //! max drawdown, and per-period returns over an equity curve.
 
 use xvision_engine::eval::metrics::{
-    annualization_periods_per_year, equity_to_returns, max_drawdown_pct, sharpe_from_returns,
-    total_return_pct,
+    annualization_calendar_for_asset_class, annualization_periods_per_year,
+    annualization_periods_per_year_for_asset_class, equity_to_returns, max_drawdown_pct,
+    sharpe_from_returns, total_return_pct,
 };
+use xvision_engine::eval::scenario::AssetClass;
 
 #[test]
 fn equity_to_returns_yields_n_minus_one_periods() {
@@ -138,4 +140,37 @@ fn annualization_periods_per_year_for_daily_cadence_is_365() {
 #[test]
 fn annualization_periods_per_year_zero_or_negative_returns_one() {
     assert_eq!(annualization_periods_per_year(0), 1.0);
+}
+
+#[test]
+fn calendar_annualization_crypto_60min_cadence_is_8760() {
+    assert_eq!(
+        annualization_calendar_for_asset_class(AssetClass::Crypto),
+        "crypto_24_7_365d"
+    );
+    assert!(
+        (annualization_periods_per_year_for_asset_class(AssetClass::Crypto, 60) - 8760.0).abs()
+            < 1e-9
+    );
+}
+
+#[test]
+fn calendar_annualization_equity_60min_cadence_uses_regular_session_minutes() {
+    let expected = 252.0 * 390.0 / 60.0;
+    assert_eq!(
+        annualization_calendar_for_asset_class(AssetClass::Equity),
+        "us_market_252x390m"
+    );
+    assert!(
+        (annualization_periods_per_year_for_asset_class(AssetClass::Equity, 60) - expected).abs()
+            < 1e-9
+    );
+}
+
+#[test]
+fn calendar_annualization_zero_cadence_returns_one() {
+    assert_eq!(
+        annualization_periods_per_year_for_asset_class(AssetClass::Equity, 0),
+        1.0
+    );
 }
