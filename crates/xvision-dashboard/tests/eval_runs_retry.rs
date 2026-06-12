@@ -13,16 +13,16 @@ use tempfile::TempDir;
 use xvision_dashboard::server::build_router;
 use xvision_dashboard::AppState;
 
-async fn boot() -> (TestServer, TempDir) {
+async fn boot() -> (TestServer, AppState, TempDir) {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(tmp.path().to_path_buf())
         .await
         .expect("init dashboard state");
-    let server = TestServer::new(build_router(state)).unwrap();
-    (server, tmp)
+    let server = TestServer::new(build_router(state.clone())).unwrap();
+    (server, state, tmp)
 }
 
-async fn seed_launchable_strategy(tmp: &TempDir, strategy_id: &str) {
+async fn seed_launchable_strategy(state: &AppState, tmp: &TempDir, strategy_id: &str) {
     use xvision_engine::agents::model::InputsPolicy;
     use xvision_engine::agents::store::{AgentStore, NewAgent};
     use xvision_engine::agents::AgentSlot;
@@ -80,10 +80,13 @@ sqlite_url = "sqlite://x.db"
     )
     .unwrap();
 
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
-        .await
-        .unwrap();
-    let agent_id = AgentStore::new(pool)
+    // Use the AppState's already-migrated pool rather than opening a
+    // second SQLitePool connection directly. A second raw pool (without
+    // migrations applied) can conflict with the WAL-mode pool that
+    // AppState uses, causing intermittent "database is locked" errors
+    // when the two pools race on writes under the concurrent --no-fail-fast
+    // test suite.
+    let agent_id = AgentStore::new(state.pool.clone())
         .create(NewAgent {
             name: format!("{strategy_id}-trader"),
             description: "retry acceptance fixture trader".into(),
@@ -165,11 +168,8 @@ async fn retry_returns_202_for_completed_source_with_queued_sibling() {
         store::RunStore,
     };
 
-    let (server, tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
-        .await
-        .unwrap();
-    let store = RunStore::new(pool);
+    let (server, state, _tmp) = boot().await;
+    let store = RunStore::new(state.pool.clone());
 
     let mut completed = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     completed.status = RunStatus::Queued;
@@ -216,12 +216,9 @@ async fn retry_creates_new_run_for_completed_source_without_sibling() {
         store::RunStore,
     };
 
-    let (server, tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
-        .await
-        .unwrap();
-    let store = RunStore::new(pool);
-    seed_launchable_strategy(&tmp, "agent-x").await;
+    let (server, state, tmp) = boot().await;
+    let store = RunStore::new(state.pool.clone());
+    seed_launchable_strategy(&state, &tmp, "agent-x").await;
 
     let source = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let source_id = source.id.clone();
@@ -261,12 +258,9 @@ async fn retry_creates_new_run_for_cancelled_source_without_sibling() {
         store::RunStore,
     };
 
-    let (server, tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
-        .await
-        .unwrap();
-    let store = RunStore::new(pool);
-    seed_launchable_strategy(&tmp, "agent-x").await;
+    let (server, state, tmp) = boot().await;
+    let store = RunStore::new(state.pool.clone());
+    seed_launchable_strategy(&state, &tmp, "agent-x").await;
 
     let source = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let source_id = source.id.clone();
@@ -306,11 +300,8 @@ async fn retry_rejects_queued_source_with_400_validation() {
         store::RunStore,
     };
 
-    let (server, tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
-        .await
-        .unwrap();
-    let store = RunStore::new(pool);
+    let (server, state, _tmp) = boot().await;
+    let store = RunStore::new(state.pool.clone());
 
     let run = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let run_id = run.id.clone();
@@ -332,11 +323,8 @@ async fn retry_rejects_running_source_with_400_validation() {
         store::RunStore,
     };
 
-    let (server, tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
-        .await
-        .unwrap();
-    let store = RunStore::new(pool);
+    let (server, state, _tmp) = boot().await;
+    let store = RunStore::new(state.pool.clone());
 
     let run = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     let run_id = run.id.clone();
@@ -361,11 +349,8 @@ async fn retry_still_returns_202_for_failed_source_with_queued_sibling() {
         store::RunStore,
     };
 
-    let (server, tmp) = boot().await;
-    let pool = sqlx::SqlitePool::connect(&format!("sqlite://{}/xvn.db", tmp.path().display()))
-        .await
-        .unwrap();
-    let store = RunStore::new(pool);
+    let (server, state, _tmp) = boot().await;
+    let store = RunStore::new(state.pool.clone());
 
     let failed = Run::new_queued("agent-x".into(), "crypto-bull-q1-2025".into(), RunMode::Backtest);
     store.create(&failed).await.unwrap();
