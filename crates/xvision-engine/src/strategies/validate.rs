@@ -219,6 +219,16 @@ pub fn no_filter_warnings(strategy: &Strategy) -> Vec<String> {
         if !role_is_decision_like(&agent.role) {
             continue;
         }
+        // Only emit the topology-based warning for agents that have explicitly
+        // declared an `activates` capability. Agents with `activates: None` are
+        // not yet wired into the capability-dispatch pipeline — the activation-
+        // mode warning (`every_bar_warning`) covers that case and must not be
+        // suppressed by a spurious topology warning. See the contract in
+        // `preflight_tests::preflight_every_bar_warning_appears_when_no_topo_warning`
+        // and `preflight_no_duplicate_warnings_when_both_checks_fire`.
+        if agent.activates.is_none() {
+            continue;
+        }
         let role = canonical_role(&agent.role);
         let has_upstream_filter_edge = strategy.pipeline.edges.iter().any(|e| {
             canonical_role(&e.to_role) == role && filter_roles.contains(&canonical_role(&e.from_role))
