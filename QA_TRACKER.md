@@ -27,6 +27,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | 2026-06-12 | R. Batch E branch published | PF-04 pushed and opened as stacked PR #954 against `qa/pf15-provider-models-20260612`, limiting the PF-04 diff to the provider parity regression test plus tracker updates. |
 | 2026-06-12 | S. Batch F isolated and PF-03 implemented locally | Worktree `.worktrees/qa-pf03-decision-bars-20260612` on branch `qa/pf03-decision-bars-20260612` created from the PF-04 tracker head. Scope is PF-03 only: `crates/xvision-cli/src/commands/scenario.rs`, `crates/xvision-cli/tests/scenario_inspect.rs`, and `QA_TRACKER.md`. RED tests reproduced the warmup-subtraction bug, then GREEN checks passed after changing decision-bar counts to use only the scenario window. |
 | 2026-06-12 | T. Batch F adversarial review passed | Read-only Codex implementation review returned PASS with no P0/P1 blockers. Reviewer confirmed `xvn scenario inspect --card` still routes through `run_inspect` to `format_inspect_card`, `scenario select` uses the same helper semantics, regression coverage includes the 8-day 4h / 200 warmup case, and the diff is limited to scoped files. |
+| 2026-06-12 | U. Batch F branch published | PF-03 pushed and opened as stacked PR #955 against `qa/pf04-provider-secret-fallback-20260612`, limiting the PF-03 diff to the scenario card/select helper change, regression tests, and tracker updates. |
 
 ## Reconciled Counts
 
@@ -46,7 +47,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | `qa/batch-c-brackets-20260612` / `.worktrees/qa-batch-c-brackets-20260612` | Batch C `PF-19`/`PF-20` bracket persistence and take-profit config | `QA_TRACKER.md`, `docs/superpowers/plans/2026-06-12-qa-batch-c-bracket-persistence-config.md` only; implementation files were not edited because required files are actively owned by other tracks | Open PR #952; blocked pending ownership/contract coordination |
 | `qa/pf15-provider-models-20260612` / `.worktrees/qa-pf15-provider-models-20260612` | Batch D `PF-15` provider models soft miss | `QA_TRACKER.md`, `crates/xvision-cli/src/commands/provider.rs` | Open stacked PR #953 |
 | `qa/pf04-provider-secret-fallback-20260612` / `.worktrees/qa-pf04-provider-secret-fallback-20260612` | Batch E `PF-04` provider key run-path fallback | `QA_TRACKER.md`, `crates/xvision-engine/tests/api_provider_parity.rs` | Open stacked PR #954 |
-| `qa/pf03-decision-bars-20260612` / `.worktrees/qa-pf03-decision-bars-20260612` | Batch F `PF-03` scenario decision-bar card count | `QA_TRACKER.md`, `crates/xvision-cli/src/commands/scenario.rs`, `crates/xvision-cli/tests/scenario_inspect.rs` | Local verified implementation; PR pending |
+| `qa/pf03-decision-bars-20260612` / `.worktrees/qa-pf03-decision-bars-20260612` | Batch F `PF-03` scenario decision-bar card count | `QA_TRACKER.md`, `crates/xvision-cli/src/commands/scenario.rs`, `crates/xvision-cli/tests/scenario_inspect.rs` | Open stacked PR #955 |
 
 ## Batch Plan
 
