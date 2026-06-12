@@ -13,8 +13,10 @@ import {
   xvnGradientFill,
   xvnLastDot,
   xvnSheen,
+  xvnTradeMarkers,
   xvnZeroLine,
 } from "./uplot-plugins";
+import type { V2Marker } from "../types";
 
 /** Canvas-like 2d context that throws on non-finite gradient args, mirroring
  * real browser behaviour, and records every call. */
@@ -168,5 +170,105 @@ describe("area/gradient/sheen/dot/zero-line plugins (F8 guards)", () => {
     });
     expect(() => xvnZeroLine().hooks.draw(u)).not.toThrow();
     expect(u.ctx.stroke).not.toHaveBeenCalled();
+  });
+});
+
+describe("xvnTradeMarkers", () => {
+  it("does not throw and does not call fill when markers array is empty", () => {
+    const u = fakePlot({
+      data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+      bbox: { top: 0, height: 100, left: 0, width: 300 },
+      scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+      valToPos: (v: number) => v * 0.1,
+    });
+    expect(() => xvnTradeMarkers([]).hooks.draw(u)).not.toThrow();
+    expect(u.ctx.fill).not.toHaveBeenCalled();
+  });
+
+  it("skips markers whose time is outside x scale min/max", () => {
+    const outOfRange: V2Marker[] = [
+      { kind: "buy",  time: 500,  price: 1.0 }, // before x min
+      { kind: "sell", time: 9999, price: 1.0 }, // after x max
+    ];
+    const u = fakePlot({
+      data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+      bbox: { top: 0, height: 100, left: 0, width: 300 },
+      scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+      valToPos: (v: number) => v * 0.1,
+    });
+    expect(() => xvnTradeMarkers(outOfRange).hooks.draw(u)).not.toThrow();
+    expect(u.ctx.fill).not.toHaveBeenCalled();
+  });
+
+  it("calls fill for an in-range buy marker with a known price", () => {
+    const markers: V2Marker[] = [
+      { kind: "buy", time: 2000, price: 1.1 },
+    ];
+    const u = fakePlot({
+      data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+      bbox: { top: 0, height: 100, left: 0, width: 300 },
+      scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+      valToPos: (v: number) => v * 0.1,
+    });
+    xvnTradeMarkers(markers).hooks.draw(u);
+    expect(u.ctx.fill).toHaveBeenCalled();
+  });
+
+  it("calls fill for an in-range sell marker with a known price", () => {
+    const markers: V2Marker[] = [
+      { kind: "sell", time: 2000, price: 1.1 },
+    ];
+    const u = fakePlot({
+      data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+      bbox: { top: 0, height: 100, left: 0, width: 300 },
+      scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+      valToPos: (v: number) => v * 0.1,
+    });
+    xvnTradeMarkers(markers).hooks.draw(u);
+    expect(u.ctx.fill).toHaveBeenCalled();
+  });
+
+  it("uses custom buy/sell colors when provided", () => {
+    const markers: V2Marker[] = [
+      { kind: "buy",  time: 2000, price: 1.1 },
+      { kind: "sell", time: 2500, price: 1.0 },
+    ];
+    const u = fakePlot({
+      data: [[1000, 2000, 2500, 3000], [1.0, 1.1, 1.0, 1.2]],
+      bbox: { top: 0, height: 100, left: 0, width: 300 },
+      scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+      valToPos: (v: number) => v * 0.1,
+    });
+    xvnTradeMarkers(markers, { buyColor: "#aabbcc", sellColor: "#112233" }).hooks.draw(u);
+    // fill should have been called for both markers
+    expect((u.ctx.fill as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("falls back to series value when price is absent", () => {
+    const markers: V2Marker[] = [
+      { kind: "buy", time: 2000 }, // no price — should look up series[1][1]
+    ];
+    const u = fakePlot({
+      data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+      bbox: { top: 0, height: 100, left: 0, width: 300 },
+      scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+      valToPos: (v: number) => v * 0.1,
+    });
+    expect(() => xvnTradeMarkers(markers).hooks.draw(u)).not.toThrow();
+    expect(u.ctx.fill).toHaveBeenCalled();
+  });
+
+  it("skips marker when valToPos returns non-finite for an in-range time", () => {
+    const markers: V2Marker[] = [
+      { kind: "buy", time: 2000, price: 1.1 },
+    ];
+    const u = fakePlot({
+      data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+      bbox: { top: 0, height: 100, left: 0, width: 300 },
+      scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+      valToPos: () => NaN, // all positions non-finite
+    });
+    expect(() => xvnTradeMarkers(markers).hooks.draw(u)).not.toThrow();
+    expect(u.ctx.fill).not.toHaveBeenCalled();
   });
 });

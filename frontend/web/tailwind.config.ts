@@ -52,6 +52,12 @@ export default {
         danger: cv("--danger"),
         info: cv("--info"),
         violet: cv("--violet"),
+        // Catalogue tokens (2026-06-12 marketplace overhaul)
+        paper: cv("--paper"),
+        "ink-rule": cv("--ink-rule"),
+        "ink-rule-faint": cv("--ink-rule-faint"),
+        gilt: cv("--gilt"),
+        "gilt-bg": cv("--gilt-bg"),
       },
       fontFamily: {
         // `serif` retained as a Tailwind utility name for compatibility with
@@ -59,6 +65,8 @@ export default {
         serif: ["'Geist'", "ui-sans-serif", "system-ui", "sans-serif"],
         sans: ["'Geist'", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["'Geist Mono'", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        // Catalogue display serif — editorial headings, plate titles, hero.
+        display: ["Fraunces", "Georgia", "serif"],
       },
       borderRadius: {
         card: "6px",

@@ -554,6 +554,23 @@
   outline-offset: 2px;
 }
 
+/* ── Catalogue keyframes (2026-06-12 marketplace overhaul) ─────────────────
+   Top-level (outside @layer) so they are reachable by motion-safe:animate-[…]
+   utilities on any element. The global prefers-reduced-motion block below
+   collapses these to 0.01ms — no extra work needed. */
+
+@keyframes xvn-plate-develop {
+  /* gen-art "develops" like a photographic plate on load */
+  from { opacity: 0; filter: blur(6px) saturate(0.4); transform: scale(0.985); }
+  to   { opacity: 1; filter: blur(0)   saturate(1);   transform: scale(1); }
+}
+
+@keyframes xvn-rule-draw {
+  /* section hairlines draw in from the left like a pen stroke */
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+
 /*
  * Global reduced-motion safeguard. Users who request reduced motion at the OS
  * level get near-instant animations/transitions everywhere, including Tailwind

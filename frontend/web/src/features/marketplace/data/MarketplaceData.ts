@@ -13,6 +13,10 @@ import type {
 } from "./types";
 
 export interface MarketplaceData {
+  // W1-FOUNDATION: `dataSource` is REQUIRED on the interface.
+  // W2-DATA MUST add `readonly dataSource = "api"` to ApiMarketplaceData and
+  // `readonly dataSource = "subgraph"` to SubgraphMarketplaceData, or tsc fails.
+  readonly dataSource: "fixture" | "api" | "subgraph";
   getStats(): Promise<MarketplaceStats>;
   listListings(f: FilterState): Promise<{ rows: ListingRow[]; total: number; matched: number }>;
   getSlices(): Promise<Slice[]>;
@@ -40,6 +44,7 @@ const fakeTx = (): TxRef => ({
 });
 
 export class FixtureMarketplaceData implements MarketplaceData {
+  readonly dataSource = "fixture" as const;
   async getStats(): Promise<MarketplaceStats> {
     return { totalStrategies: 1247, paidThisWeekUsd: 34820, agentPurchases: 218, mintedLast24h: 64 };
   }
