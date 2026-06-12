@@ -86,7 +86,7 @@ function demoEquity(seed: string, positive: boolean): { time: number[]; values: 
   return { time, values };
 }
 
-export function CatalogueEntry({ row, index = 0, showSparkline = false }: CatalogueEntryProps) {
+export function CatalogueEntry({ row, index: _index = 0, showSparkline = false }: CatalogueEntryProps) {
   const displayTitle = row.name ?? humanize(row.id);
   const isOpen = row.priceUsdc === null || row.tier === "open";
   const tierLabel = isOpen ? "Open edition" : "Sealed";
