@@ -35,6 +35,7 @@ export interface ListingRow {
   id: Id;
   lineageId: LineageId;
   version: string;
+  name?: string;  // human-readable display name (from manifest meta / IndexedListing.name)
   creator: Creator;
   model: string;
   style: string;

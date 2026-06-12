@@ -76,7 +76,7 @@ describe("LineageRoute buy states", () => {
     render(<Wrapper client={client} />);
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /^buy$/i }));
+    await user.click(await screen.findByRole("button", { name: /^acquire$/i }));
 
     const strip = await screen.findByTestId("buy-error");
     expect(strip).toHaveTextContent("relay exploded");
@@ -93,7 +93,7 @@ describe("LineageRoute buy states", () => {
     render(<Wrapper client={client} />);
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /^buy$/i }));
+    await user.click(await screen.findByRole("button", { name: /^acquire$/i }));
 
     // Inline error names the shortfall and offers the faucet
     const strip = await screen.findByTestId("buy-error");
