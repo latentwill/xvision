@@ -4,7 +4,7 @@ import type { Slice } from "../types";
 // Slice DEFINITIONS only. The `count` here is a non-authoritative seed: every
 // MarketplaceData client (fixture, api, subgraph) recomputes the live count
 // from its real pool in getSlices(), so the chip strip never shows a stale,
-// fabricated figure (no hardcoded 1,247 against a 6-entry catalogue). Seeded
+// fabricated figure (no hardcoded 1,247 against a 6-entry collection). Seeded
 // to 0 so any path that somehow reads these raw is visibly "not yet counted"
 // rather than a confident lie.
 export const SLICES: Slice[] = [

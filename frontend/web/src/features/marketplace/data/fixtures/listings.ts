@@ -43,12 +43,12 @@ export const NAMED_LISTINGS: ListingRow[] = [
   },
 ];
 
-// The curated demo catalogue — the small, deliberately-small collection the
-// fixture client actually serves to browse/stats/slices/leaderboard. Wall
-// strats (below) are at-scale validation fixtures only; they are NEVER part of
-// the browse pool, because every wall-strat slug has no detail fixture and
-// would link to the designed not-found page, undermining "Inspect freely".
-export const CATALOGUE_LISTINGS: ListingRow[] = NAMED_LISTINGS;
+// The curated demo collection — the small set the fixture client actually
+// serves to browse/stats/slices/leaderboard. Wall strats (below) are at-scale
+// validation fixtures only; they are NEVER part of the browse pool, because
+// every wall-strat slug has no detail fixture and would link to the designed
+// not-found page, undermining "Inspect freely".
+export const DEMO_LISTINGS: ListingRow[] = NAMED_LISTINGS;
 
 const WALL_ASSETS = ["BTC", "ETH", "SOL", "DOGE", "MNT", "AVAX"];
 const WALL_MODELS = ["Claude · Haiku 4.5", "GPT-5", "Gemini 3 Pro", "Llama 4"];
@@ -139,14 +139,14 @@ export const LISTING_DETAILS: Record<string, ListingDetail> = {
 };
 
 // Synthesize a dignified ListingDetail from a ListingRow so EVERY curated
-// catalogue entry is inspectable in the demo (not just the one hand-authored
-// detail). Real on-chain listings ship their own backend detail; this is the
-// demo-only path that keeps "Inspect freely" honest across the full collection.
+// entry is inspectable in the demo (not just the one hand-authored detail).
+// Real on-chain listings ship their own backend detail; this is the demo-only
+// path that keeps "Inspect freely" honest across the full collection.
 // Performance is left as a designed empty record (no equity points, no trades)
 // so the detail page renders the honest "pending first live cycle" empty state
 // rather than a fabricated curve.
 export function synthDetailFromRow(row: ListingRow): ListingDetail {
-  const tokenId = `#${plate4(row.id)}`;
+  const tokenId = `#${tokenId4(row.id)}`;
   return {
     ...row,
     promise: `${row.assets.join("/")} ${row.style.toLowerCase()} strategy on ${row.model}.`,
@@ -195,20 +195,20 @@ export function synthDetailFromRow(row: ListingRow): ListingDetail {
   };
 }
 
-// Stable 4-digit plate index for a slug id (mirrors browse/CatalogueEntry).
-function plate4(id: string): string {
+// Stable 4-digit NFT token id for a slug id.
+function tokenId4(id: string): string {
   if (/^\d+$/.test(id)) return id.padStart(4, "0");
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return String(h % 10000).padStart(4, "0");
 }
 
-// Resolve a demo detail for a catalogue listing: prefer a hand-authored detail,
-// otherwise synthesize one from the curated row. Returns undefined when the id
-// is not in the curated catalogue at all (→ designed not-found state).
-export function getCatalogueDetail(idOrName: string): ListingDetail | undefined {
+// Resolve a demo detail for a listing: prefer a hand-authored detail, otherwise
+// synthesize one from the curated row. Returns undefined when the id is not in
+// the curated collection at all (→ designed not-found state).
+export function getDemoDetail(idOrName: string): ListingDetail | undefined {
   const explicit = LISTING_DETAILS[idOrName];
   if (explicit) return explicit;
-  const row = CATALOGUE_LISTINGS.find((r) => r.id === idOrName);
+  const row = DEMO_LISTINGS.find((r) => r.id === idOrName);
   return row ? synthDetailFromRow(row) : undefined;
 }

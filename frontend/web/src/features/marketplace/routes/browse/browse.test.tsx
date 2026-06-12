@@ -60,9 +60,10 @@ describe("HeaderStrip", () => {
     expect(
       await screen.findByText(/Buy and sell trading strategies as on-chain agents on Mantle\./i)
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/XVISION · STRATEGY CATALOGUE · MANTLE TESTNET/i)
-    ).not.toBeInTheDocument();
+    // Regression guard: the old editorial brand eyebrow (an all-caps
+    // "XVISION · …" lead-in) must not return. We match the distinctive
+    // lead-in fragment rather than the full editorial phrase.
+    expect(screen.queryByText(/XVISION ·/i)).not.toBeInTheDocument();
   });
 
   it("renders the honest stats line (entries / creators) and not the fixture cells", async () => {

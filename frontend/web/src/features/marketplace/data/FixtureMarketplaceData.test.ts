@@ -13,7 +13,7 @@ vi.mock("./publish", () => ({
 const mp = new FixtureMarketplaceData();
 
 describe("FixtureMarketplaceData", () => {
-  it("lists with totals (curated catalogue only — no at-scale wall fixtures)", async () => {
+  it("lists with totals (curated collection only — no at-scale wall fixtures)", async () => {
     const { rows, total, matched } = await mp.listListings(defaultFilterState());
     // The demo client serves only the curated NAMED_LISTINGS so every browse
     // entry is inspectable; the 200 wall-strat at-scale fixtures are excluded.
@@ -23,7 +23,7 @@ describe("FixtureMarketplaceData", () => {
 
   it("getListing synthesizes a detail for a curated row without an explicit detail", async () => {
     // sol-strategist-pro has no hand-authored LISTING_DETAILS entry — the
-    // fixture client synthesizes one so every catalogue entry is inspectable.
+    // fixture client synthesizes one so every entry is inspectable.
     const d = await mp.getListing("sol-strategist-pro");
     expect(d.id).toBe("sol-strategist-pro");
     expect(d.onChain.nft.network).toBe("mantle-sepolia");
@@ -35,7 +35,7 @@ describe("FixtureMarketplaceData", () => {
   it("getSlices computes live counts from the curated pool (no stale hardcoded figures)", async () => {
     const slices = await mp.getSlices();
     const trending = slices.find((s) => s.id === "trending");
-    // Trending matches the whole curated catalogue (6), never the old 1,247.
+    // Trending matches the whole curated collection (6), never the old 1,247.
     expect(trending?.count).toBe(6);
     // Every shown slice has a real, small count.
     expect(slices.every((s) => s.count <= 6)).toBe(true);

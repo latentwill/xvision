@@ -40,7 +40,7 @@ describe("LeaderboardIndex", () => {
   it("renders the live count for each slice (computed from the curated pool)", async () => {
     render();
     // Counts are computed live by getSlices() — no stale hardcoded figures.
-    // trending matches the whole curated catalogue (6).
+    // trending matches the whole curated collection (6).
     expect(await screen.findByTestId("slice-count-trending")).toHaveTextContent("6");
     // sol-7d matches the two SOL listings.
     expect(await screen.findByTestId("slice-count-sol-7d")).toHaveTextContent("2");

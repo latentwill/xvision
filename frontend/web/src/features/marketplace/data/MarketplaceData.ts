@@ -1,6 +1,6 @@
 // src/features/marketplace/data/MarketplaceData.ts
 import { applyFilter, defaultFilterState } from "./filter";
-import { CATALOGUE_LISTINGS, getCatalogueDetail } from "./fixtures/listings";
+import { DEMO_LISTINGS, getDemoDetail } from "./fixtures/listings";
 import { CREATORS } from "./fixtures/creators";
 import { SLICES } from "./fixtures/slices";
 import { RECEIPTS } from "./fixtures/receipts";
@@ -46,28 +46,28 @@ const fakeTx = (): TxRef => ({
 export class FixtureMarketplaceData implements MarketplaceData {
   readonly dataSource = "fixture" as const;
   async getStats(): Promise<MarketplaceStats> {
-    // ENTRIES must equal the number of rows actually in the catalogue. The demo
-    // serves only the curated CATALOGUE_LISTINGS (the small, deliberately-small
-    // collection) — NOT the 200 at-scale wall-strat fixtures, which have no
-    // detail page and would link to the designed not-found state. Deriving from
-    // the same source the rows come from keeps the stat ledger and the row
-    // count in agreement and the catalogue inspectable end-to-end.
-    return { totalStrategies: CATALOGUE_LISTINGS.length, paidThisWeekUsd: 34820, agentPurchases: 218, mintedLast24h: 64 };
+    // ENTRIES must equal the number of rows actually served. The demo serves
+    // only the curated DEMO_LISTINGS (the small, deliberately-small collection)
+    // — NOT the 200 at-scale wall-strat fixtures, which have no detail page and
+    // would link to the designed not-found state. Deriving from the same source
+    // the rows come from keeps the stat ledger and the row count in agreement
+    // and the collection inspectable end-to-end.
+    return { totalStrategies: DEMO_LISTINGS.length, paidThisWeekUsd: 34820, agentPurchases: 218, mintedLast24h: 64 };
   }
   async listListings(f: FilterState) {
     const pool =
       f.segment === "mine"
-        ? CATALOGUE_LISTINGS.filter((r) => VIEWER.createdListingIds.includes(r.id))
-        : CATALOGUE_LISTINGS;
+        ? DEMO_LISTINGS.filter((r) => VIEWER.createdListingIds.includes(r.id))
+        : DEMO_LISTINGS;
     return applyFilter(pool, f);
   }
   async getSlices() {
     // Compute each slice's count live from the curated pool so the chip counts
-    // are factually honest for the demo catalogue (no stale hardcoded 1,247).
+    // are factually honest for the demo collection (no stale hardcoded 1,247).
     return SLICES.map((slice) => ({
       ...slice,
       count: applyFilter(
-        CATALOGUE_LISTINGS,
+        DEMO_LISTINGS,
         { ...defaultFilterState(), ...slice.filter } as FilterState,
       ).matched,
     }));
@@ -76,7 +76,7 @@ export class FixtureMarketplaceData implements MarketplaceData {
     // Resolve a demo detail for any curated listing — a hand-authored detail
     // when present, otherwise a synthesized one from the row so EVERY entry is
     // inspectable. Unknown ids surface the designed not-found state.
-    const d = getCatalogueDetail(idOrName);
+    const d = getDemoDetail(idOrName);
     if (!d) throw new Error(`listing not found: ${idOrName}`);
     return d;
   }
@@ -88,7 +88,7 @@ export class FixtureMarketplaceData implements MarketplaceData {
   async getLeaderboard(sliceId: SliceId) {
     const def = SLICES.find((s) => s.id === sliceId);
     if (!def) throw new Error(`slice not found: ${sliceId}`);
-    const { rows, matched } = applyFilter(CATALOGUE_LISTINGS, { ...defaultFilterState(), ...def.filter } as FilterState);
+    const { rows, matched } = applyFilter(DEMO_LISTINGS, { ...defaultFilterState(), ...def.filter } as FilterState);
     // Live count so the leaderboard header matches the rows it actually shows
     // (no stale hardcoded figure against the curated pool).
     const slice = { ...def, count: matched };

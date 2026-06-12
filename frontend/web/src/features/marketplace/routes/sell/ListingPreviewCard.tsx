@@ -4,7 +4,7 @@ import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlace
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
-import { humanize } from "@/features/marketplace/routes/browse/CatalogueEntry";
+import { humanize } from "@/features/marketplace/routes/browse/ListingEntry";
 import type { ListingRow } from "@/features/marketplace/data/types";
 
 export function ListingPreviewCard({ listing }: { listing: ListingRow }) {

@@ -28,7 +28,7 @@ import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { TxChip } from "@/features/marketplace/components/TxChip";
 import { relativeTime } from "@/features/marketplace/lib/time";
-import { humanize } from "./browse/CatalogueEntry";
+import { humanize } from "./browse/ListingEntry";
 import { IngredientBanner } from "./IngredientBanner";
 import { PerformanceSection } from "./PerformanceSection";
 import { ReceiptsDrawer } from "./ReceiptsDrawer";

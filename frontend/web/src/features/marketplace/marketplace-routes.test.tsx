@@ -44,7 +44,7 @@ describe("marketplace routes", () => {
     render(<RouterProvider router={routerAt("/marketplace/lineage/btc-momentum-v3")} />);
     expect(await screen.findByText(/Marketplace · lineage/)).toBeInTheDocument();
   });
-  it("resolves /marketplace/sell and renders the catalogue listing heading", async () => {
+  it("resolves /marketplace/sell and renders the listing heading", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const router = createMemoryRouter(
       [

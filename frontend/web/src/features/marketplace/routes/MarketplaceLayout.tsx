@@ -8,10 +8,7 @@ import {
 } from "@/features/marketplace/data/MarketplaceData";
 import { chooseMarketplaceData } from "@/features/marketplace/data/ApiMarketplaceData";
 import { SubgraphMarketplaceData } from "@/features/marketplace/data/SubgraphMarketplaceData";
-import {
-  createSubgraphClient,
-  subgraphUrl,
-} from "@/features/marketplace/data/subgraph/client";
+import { createSubgraphClient } from "@/features/marketplace/data/subgraph/client";
 import { TestnetBanner } from "@/features/marketplace/components/TestnetBadge";
 
 // Data-source selection, layered (merge of the subgraph track #908 and the
@@ -24,12 +21,6 @@ import { TestnetBanner } from "@/features/marketplace/components/TestnetBadge";
 //   3. PROD builds: skip fixtures entirely — initialize immediately with the
 //      real path (subgraph or indexer probe) so the hackathon demo never
 //      shows fixture content. Real empty states render if the index is empty.
-
-function subgraphClient(): MarketplaceData | null {
-  const url = subgraphUrl();
-  if (!url) return null;
-  return new SubgraphMarketplaceData({ client: createSubgraphClient(url) });
-}
 
 /**
  * Pure client-selection function — extracted so prod/dev branching is unit-

@@ -5,8 +5,8 @@ import { renderMarketplace } from "@/features/marketplace/test-utils";
 import { LeaderboardSlice } from "./LeaderboardSlice";
 
 // Fixture slice: sol-7d = { label: "Top on SOL · 7d", hint: "asset=SOL · 7d" }
-// FixtureMarketplaceData.getLeaderboard filters the curated CATALOGUE_LISTINGS
-// by slice.filter ({ assets: ["SOL"] }) and reports a LIVE count of the matched
+// FixtureMarketplaceData.getLeaderboard filters the curated DEMO_LISTINGS by
+// slice.filter ({ assets: ["SOL"] }) and reports a LIVE count of the matched
 // rows. The curated pool has two SOL listings (sol-strategist-pro, meme-radar).
 
 function render(sliceId = "sol-7d") {
@@ -32,7 +32,7 @@ describe("LeaderboardSlice", () => {
   it("renders the live slice count (matched rows in the curated pool)", async () => {
     render();
     await screen.findByTestId("slice-label");
-    // Two SOL listings in the curated catalogue.
+    // Two SOL listings in the curated collection.
     expect(screen.getByText(/2 strategies/)).toBeInTheDocument();
   });
 

@@ -10,7 +10,7 @@ import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import type { Receipt } from "@/features/marketplace/data/types";
 import { TxChip } from "@/features/marketplace/components/TxChip";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
-import { humanize } from "./browse/CatalogueEntry";
+import { humanize } from "./browse/ListingEntry";
 import { InstallSteps } from "./InstallSteps";
 import { ShareComposer } from "./ShareComposer";
 

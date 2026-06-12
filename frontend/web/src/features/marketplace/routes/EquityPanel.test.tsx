@@ -1,6 +1,6 @@
 // src/features/marketplace/routes/EquityPanel.test.tsx
 //
-// EquityPanel is now a thin delegator over PerformanceSection (catalogue
+// EquityPanel is now a thin delegator over PerformanceSection (marketplace
 // overhaul §3.2B). These tests assert the new structure: a ChartFrame-wrapped
 // equity pane when there is data, an inline MarkerDock when trades exist, and
 // the designed empty state when there is neither equity nor trades — never a
