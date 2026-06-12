@@ -146,7 +146,7 @@ describe("HomeRoute", () => {
   });
 
   // Redesign: with nothing live, the execution chip must say so HONESTLY.
-  it("renders the honest paper execution chip when nothing is live-money", async () => {
+  it("renders the central no-live-capital execution chip when nothing is live-money", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
 
@@ -156,7 +156,7 @@ describe("HomeRoute", () => {
       ).not.toBeNull();
     });
     expect(screen.getByTestId("execution-chip")).toHaveTextContent(
-      /paper · no live capital deployed/i,
+      /no live capital · paper\/sim only/i,
     );
   });
 

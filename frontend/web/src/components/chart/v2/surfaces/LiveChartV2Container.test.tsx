@@ -162,4 +162,33 @@ describe("LiveChartV2Container", () => {
     expect(screen.getByText("Waiting for first event…")).toBeInTheDocument();
     expect(screen.queryByTestId("live-chart-v2")).not.toBeInTheDocument();
   });
+
+  it("uses an injected live stream instead of opening a second chart stream", () => {
+    setStream(undefined, "snapshot");
+    render(
+      <LiveChartV2Container
+        runId="run-1"
+        stream={{ data: runPayload("run-1"), status: "streaming" }}
+      />,
+    );
+
+    expect(useRunStreamMock).toHaveBeenCalledWith("");
+    expect(screen.getByTestId("live-chart-v2")).toHaveAttribute(
+      "data-connection",
+      "connected",
+    );
+  });
+
+  it("shows a truthful empty state for an empty live chart snapshot", () => {
+    setStream({ ...runPayload(), bars: [], equity: [] }, "streaming");
+    render(<LiveChartV2Container runId="run-1" />);
+
+    expect(screen.getByText("No live chart data yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This run is wired to the live chart feed, but no bars, equity points, or trade markers have arrived yet.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("live-chart-v2")).not.toBeInTheDocument();
+  });
 });

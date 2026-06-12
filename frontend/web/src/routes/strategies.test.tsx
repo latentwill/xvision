@@ -12,6 +12,7 @@ import { MemoryRouter } from "react-router-dom";
 import { StrategiesRoute } from "./strategies";
 import * as strategiesApi from "@/api/strategies";
 import * as folderApi from "@/api/strategies-folder";
+import * as evalApi from "@/api/eval";
 
 vi.mock("@/api/strategies-folder", async () => {
   const actual = await vi.importActual<typeof import("@/api/strategies-folder")>(
@@ -34,6 +35,16 @@ vi.mock("@/api/strategies", async () => {
     cloneStrategy: vi.fn(),
     listStrategies: vi.fn(),
     listStrategiesPaged: vi.fn(),
+  };
+});
+
+vi.mock("@/api/eval", async () => {
+  const actual = await vi.importActual<typeof import("@/api/eval")>(
+    "@/api/eval",
+  );
+  return {
+    ...actual,
+    listRuns: vi.fn(),
   };
 });
 
@@ -78,6 +89,7 @@ describe("StrategiesRoute", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     stubMatchMediaDesktop();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -338,6 +350,176 @@ describe("StrategiesRoute", () => {
       expect(screen.getAllByText(/Alpha Strategy/).length).toBeGreaterThan(0),
     );
     expect(screen.queryByText(/Beta Strategy/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["model", "sonnet", "Model Match"],
+    ["capability", "filter", "Capability Match"],
+    ["author", "@alice", "Author Match"],
+  ])("filters strategies by %s from the search box", async (_field, query, expected) => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01MODEL",
+          display_name: "Model Match",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+          model: "claude-sonnet-4",
+          capabilities: ["trader"],
+          creator: "@bob",
+        },
+        {
+          agent_id: "01CAPABILITY",
+          display_name: "Capability Match",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+          model: "gpt-4.1-mini",
+          capabilities: ["filter"],
+          creator: "@carol",
+        },
+        {
+          agent_id: "01AUTHOR",
+          display_name: "Author Match",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+          model: "gpt-4.1-mini",
+          capabilities: ["trader"],
+          creator: "@alice",
+        },
+      ],
+      total: 3,
+    });
+
+    renderRoute(`/strategies?q=${encodeURIComponent(query)}`);
+
+    await waitFor(() =>
+      expect(screen.getAllByText(expected).length).toBeGreaterThan(0),
+    );
+    for (const hidden of ["Model Match", "Capability Match", "Author Match"]) {
+      if (hidden !== expected) {
+        expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+      }
+    }
+  });
+
+  it("hydrates leaderboard sort from the URL and ranks by latest eval return then Sharpe", async () => {
+    vi.mocked(strategiesApi.listStrategiesPaged).mockResolvedValue({
+      items: [
+        {
+          agent_id: "01ALPHA",
+          display_name: "Alpha Strategy",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+        },
+        {
+          agent_id: "01BETA",
+          display_name: "Beta Strategy",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+        },
+        {
+          agent_id: "01GAMMA",
+          display_name: "Gamma Strategy",
+          template: "trend_follower",
+          decision_cadence_minutes: 60,
+        },
+      ],
+      total: 3,
+    });
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      {
+        id: "run-alpha",
+        agent_id: "01ALPHA",
+        scenario_id: "scn",
+        strategy: null,
+        scenario: null,
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-06-10T09:00:00Z",
+        completed_at: "2026-06-10T10:00:00Z",
+        total_return_pct: 12,
+        sharpe: 0.9,
+        max_drawdown_pct: 4,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
+        auto_fire_review: false,
+        review_model: null,
+        max_annotations_per_review: null,
+        paused: false,
+        paused_at: null,
+        flatten_requested: false,
+      },
+      {
+        id: "run-beta",
+        agent_id: "01BETA",
+        scenario_id: "scn",
+        strategy: null,
+        scenario: null,
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-06-10T09:00:00Z",
+        completed_at: "2026-06-10T10:00:00Z",
+        total_return_pct: 12,
+        sharpe: 1.4,
+        max_drawdown_pct: 4,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
+        auto_fire_review: false,
+        review_model: null,
+        max_annotations_per_review: null,
+        paused: false,
+        paused_at: null,
+        flatten_requested: false,
+      },
+      {
+        id: "run-gamma",
+        agent_id: "01GAMMA",
+        scenario_id: "scn",
+        strategy: null,
+        scenario: null,
+        mode: "backtest",
+        status: "completed",
+        started_at: "2026-06-10T09:00:00Z",
+        completed_at: "2026-06-10T10:00:00Z",
+        total_return_pct: -3,
+        sharpe: 2.1,
+        max_drawdown_pct: 4,
+        error: null,
+        actual_input_tokens: null,
+        actual_output_tokens: null,
+        inference_cost_quote_total: null,
+        net_return_pct: null,
+        filter_summaries: [],
+        auto_fire_review: false,
+        review_model: null,
+        max_annotations_per_review: null,
+        paused: false,
+        paused_at: null,
+        flatten_requested: false,
+      },
+    ]);
+
+    renderRoute("/strategies?sort=leaderboard");
+
+    await screen.findByText("Beta Strategy");
+    await waitFor(() => expect(evalApi.listRuns).toHaveBeenCalledWith({ limit: 100 }));
+    const strategyLinks = screen
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("href")?.startsWith("/strategies/"))
+      .map((link) => link.textContent);
+    expect(strategyLinks.slice(0, 3)).toEqual([
+      "Beta Strategy",
+      "Alpha Strategy",
+      "Gamma Strategy",
+    ]);
   });
 
   it("renders the List | Folder segmented control", async () => {

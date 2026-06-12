@@ -60,6 +60,7 @@ export function StrategyHistoryChartV2({
           leadId={visibleChart.series[0]?.id}
           height={360}
           syncKey={`strategy-history-${payload.strategy_id}`}
+          compactXAxisLabels
         />
       </ChartFrame>
     </div>

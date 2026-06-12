@@ -4,8 +4,6 @@ import {
   fireEvent,
   render,
   screen,
-  act,
-  waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -89,6 +87,13 @@ describe("SettingsGeneralRoute", () => {
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 
+  it("does not render accent color controls", () => {
+    renderRoute();
+
+    expect(screen.queryByText("Accent color")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /accent/i })).not.toBeInTheDocument();
+  });
+
   it("does not render retention mode controls", async () => {
     renderRoute();
 
@@ -97,30 +102,5 @@ describe("SettingsGeneralRoute", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /Full debug/ })).not.toBeInTheDocument();
     expect(settingsApi.setObservabilityMode).not.toHaveBeenCalled();
-  });
-
-  it("shows helper text clarifying accent changes apply instantly", () => {
-    renderRoute();
-
-    // The accent section must contain text that tells the user no Save
-    // button is needed — changes are auto-saved immediately.
-    expect(
-      screen.getByText(/applies instantly|saved automatically|auto.?saved/i),
-    ).toBeInTheDocument();
-  });
-
-  it("shows a transient saved confirmation after clicking an accent swatch", async () => {
-    renderRoute();
-
-    // Click the Azure accent swatch (not the default green).
-    const azureButton = screen.getByRole("button", { name: /azure accent/i });
-    await act(async () => {
-      fireEvent.click(azureButton);
-    });
-
-    // A non-modal "Saved" affordance must appear inline.
-    await waitFor(() => {
-      expect(screen.getByText(/saved/i)).toBeInTheDocument();
-    });
   });
 });

@@ -130,7 +130,10 @@ fn print_report(report: &DoctorReport) {
     println!("provider_secrets      {}", report.provider_secrets_exists);
     println!("broker_secrets        {}", report.broker_secrets_exists);
     println!("strategies_on_disk    {}", report.strategies_on_disk);
-    println!("strategies_on_disk_and_indexed    {}", report.strategies_on_disk_and_indexed);
+    println!(
+        "strategies_on_disk_and_indexed    {}",
+        report.strategies_on_disk_and_indexed
+    );
     println!("strategies_orphaned   {}", report.strategies_orphaned);
     println!("templates             (registry removed; see $XVN_HOME/strategies/library)");
     if report.strategies_orphaned > 0 {
@@ -179,14 +182,21 @@ async fn collect_strategy_counts(xvn_home: &std::path::Path) -> (usize, usize, u
     let db_path = xvn_home.join("xvn.db");
     let indexed_ids = api_search::indexed_strategy_ids_raw(&db_path).await;
     let indexed_set: HashSet<&str> = indexed_ids.iter().map(|s| s.as_str()).collect();
-    let indexed_count = on_disk.iter().filter(|id| indexed_set.contains(id.as_str())).count();
+    let indexed_count = on_disk
+        .iter()
+        .filter(|id| indexed_set.contains(id.as_str()))
+        .count();
     let orphaned = on_disk.len().saturating_sub(indexed_count);
     (on_disk.len(), indexed_count, orphaned)
 }
 
 fn check_docker_home(cli_home: &str) -> Option<String> {
     let out = std::process::Command::new("docker")
-        .args(["inspect", "--format={{range .Config.Env}}{{println .}}{{end}}", "xvn-app"])
+        .args([
+            "inspect",
+            "--format={{range .Config.Env}}{{println .}}{{end}}",
+            "xvn-app",
+        ])
         .output()
         .ok()?;
     if !out.status.success() {

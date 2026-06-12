@@ -379,15 +379,13 @@ pub async fn start_cycle(
         match memory::open_default_store().await {
             Ok(store) => Some(DspyContext {
                 store,
-                bridge: std::sync::Arc::new(
-                    xvision_engine::autooptimizer::gepa::GepaBridge {
-                        dispatch: std::sync::Arc::clone(&metered_mutator),
-                        model: cfg.mutator.model.clone(),
-                        provider: cfg.mutator.provider.clone(),
-                        candidates: cfg.gepa_candidates,
-                        generations: cfg.gepa_generations,
-                    }
-                ),
+                bridge: std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
+                    dispatch: std::sync::Arc::clone(&metered_mutator),
+                    model: cfg.mutator.model.clone(),
+                    provider: cfg.mutator.provider.clone(),
+                    candidates: cfg.gepa_candidates,
+                    generations: cfg.gepa_generations,
+                }),
                 namespace: "autooptimizer:dspy".to_string(),
                 pool: pool.clone(),
             }),

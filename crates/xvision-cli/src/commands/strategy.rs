@@ -12,10 +12,10 @@ use xvision_engine::agent::pipeline::{
 use xvision_engine::agents::{AgentSlot, AgentStore, Capability};
 use xvision_engine::api::eval::{self as api_eval, ListRunsRequest};
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::api::{agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError};
-use xvision_engine::diagnostics::{
-    self, assert_launchable, DiagnosticsError, StrategyDiagnostics,
+use xvision_engine::api::{
+    agents as api_agents, search as api_search, strategy as api_strategy, Actor, ApiContext, ApiError,
 };
+use xvision_engine::diagnostics::{self, assert_launchable, DiagnosticsError, StrategyDiagnostics};
 use xvision_engine::eval::run::RunStatus;
 use xvision_engine::strategies::agent_ref::{canonical_role, EdgePredicate};
 use xvision_engine::strategies::slot::LLMSlot;
@@ -561,7 +561,12 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         } => edit_strategy(&id, no_filter_warning, clear_no_filter_warning, fields).await,
         StrategyAction::Validate { id, scenario, json } => validate(&id, scenario.as_deref(), json).await,
         StrategyAction::Diagnostics { id, json } => diagnostics(&id, json).await,
-        StrategyAction::Ls { format, json, filter, orphans } => ls(format, json, filter.as_deref(), orphans).await,
+        StrategyAction::Ls {
+            format,
+            json,
+            filter,
+            orphans,
+        } => ls(format, json, filter.as_deref(), orphans).await,
         StrategyAction::Show { id, format } => show(&id, format).await,
         StrategyAction::Templates { json } => templates(json).await,
         StrategyAction::AddAgent {
@@ -647,11 +652,11 @@ async fn reindex() -> CliResult<()> {
     let fs_store = store();
     let on_disk_ids = fs_store.list().await.exit_with(XvnExit::Upstream)?;
     let db_path = home_dir.join("xvn.db");
-    let indexed: std::collections::HashSet<String> =
-        api_search::indexed_strategy_ids_raw(&db_path).await.into_iter().collect();
-    let orphaned: Vec<&String> = on_disk_ids.iter()
-        .filter(|id| !indexed.contains(*id))
+    let indexed: std::collections::HashSet<String> = api_search::indexed_strategy_ids_raw(&db_path)
+        .await
+        .into_iter()
         .collect();
+    let orphaned: Vec<&String> = on_disk_ids.iter().filter(|id| !indexed.contains(*id)).collect();
     if orphaned.is_empty() {
         println!("all {} strategies indexed", on_disk_ids.len());
         return Ok(());
@@ -1653,8 +1658,7 @@ async fn ls(format: Option<ListFormat>, json: bool, filter: Option<&str>, orphan
 
     if orphans {
         let disk_ids = store().list().await.exit_with(XvnExit::Upstream)?;
-        let indexed_set: std::collections::HashSet<&str> =
-            indexed_ids.iter().map(String::as_str).collect();
+        let indexed_set: std::collections::HashSet<&str> = indexed_ids.iter().map(String::as_str).collect();
         for id in &disk_ids {
             if !indexed_set.contains(id.as_str()) {
                 println!("ORPHAN {id}");

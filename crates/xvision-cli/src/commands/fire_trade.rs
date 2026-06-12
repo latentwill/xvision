@@ -82,7 +82,10 @@ pub async fn run(
         tp1_close_fraction: None,
         tp2_pct: None,
     };
-    let risk = RiskDecision::Approved { decision, warnings: Vec::new() };
+    let risk = RiskDecision::Approved {
+        decision,
+        warnings: Vec::new(),
+    };
 
     println!(
         "→ submitting cycle_id={cycle_id} venue={venue:?} side={side:?} \

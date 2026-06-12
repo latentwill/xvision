@@ -45,7 +45,11 @@ export interface MultiStrategyEquityPaneProps {
    *  cursor-sync group so other panes (e.g. drawdown) move in lockstep. */
   syncKey?: string;
   height?: number;
+  compactXAxisLabels?: boolean;
 }
+
+const MIN_X_AXIS_LABEL_SIZE = 44;
+const MIN_X_AXIS_LABEL_GAP = 8;
 
 /**
  * Build uPlot AlignedData from the shared timeline + per-strategy series.
@@ -72,6 +76,25 @@ export function resolveLeadIndex(
   return idx === -1 ? 0 : idx;
 }
 
+export function compactXAxisLabel(unixSeconds: number): string {
+  if (!Number.isFinite(unixSeconds)) return "";
+  const date = new Date(unixSeconds * 1000);
+  return `${date.getUTCMonth() + 1}/${date.getUTCDate()}`;
+}
+
+function axisNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readableXAxis(baseAxis: uPlot.Axis | undefined): uPlot.Axis {
+  return {
+    ...(baseAxis ?? {}),
+    size: Math.max(axisNumber(baseAxis?.size, 0), MIN_X_AXIS_LABEL_SIZE),
+    gap: Math.max(axisNumber(baseAxis?.gap, 0), MIN_X_AXIS_LABEL_GAP),
+    values: (_u: uPlot, vals: number[]) => vals.map(compactXAxisLabel),
+  };
+}
+
 export function MultiStrategyEquityPane({
   time,
   series,
@@ -80,6 +103,7 @@ export function MultiStrategyEquityPane({
   nonLeadStrokeWidth = 1.15,
   syncKey,
   height = 280,
+  compactXAxisLabels = false,
 }: MultiStrategyEquityPaneProps): ReactElement {
   const hostRef = useRef<HTMLDivElement>(null);
   const theme = useChart2Theme();
@@ -106,7 +130,7 @@ export function MultiStrategyEquityPane({
     height,
     cursor: cursorOpts,
     axes: [
-      baseAxes[0] ?? {},
+      compactXAxisLabels ? readableXAxis(baseAxes[0]) : (baseAxes[0] ?? {}),
       {
         ...baseAxes[1],
         values: (_u: uPlot, vals: number[]) =>

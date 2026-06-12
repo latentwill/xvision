@@ -36,7 +36,6 @@ import { LivePositionsTable } from "./LivePositionsTable";
 import { VenueAccountPanel } from "./VenueAccountPanel";
 import { StrategyStrip } from "./StrategyStrip";
 import { WalletBanner } from "./WalletBanner";
-import { loadStripMetric, saveStripMetric, type StripMetricId } from "./strip-metrics";
 import { pickDefaultRun } from "./strip-status";
 import { useTransport } from "./useTransport";
 
@@ -80,13 +79,6 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
     }
     return pickDefaultRun(runs)?.run_id ?? null;
   }, [runId, userPicked, runs]);
-
-  // Configurable strip metric, persisted to localStorage.
-  const [metric, setMetric] = useState<StripMetricId>(() => loadStripMetric());
-  const onMetricChange = (m: StripMetricId) => {
-    setMetric(m);
-    saveStripMetric(m);
-  };
 
   // Keep the trace dock pointed at the selected run (parity with the old
   // /live/:id route).
@@ -149,8 +141,6 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
         runs={runs}
         selectedId={selectedId}
         onSelect={onSelect}
-        metric={metric}
-        onMetricChange={onMetricChange}
         selectedConnStatus={selectedConnStatus}
         walletDisabled={walletDisabled}
         transportFor={transportFor}

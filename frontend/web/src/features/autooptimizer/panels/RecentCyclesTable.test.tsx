@@ -45,23 +45,23 @@ describe("RecentCyclesTable", () => {
     expect(link).toHaveAttribute("href", "/optimizer/cycle/cyc-1");
   });
 
-  // UI3: a Strategy column identifies which strategy each cycle optimized.
-  it("shows the strategy for each cycle, linking to the agent", async () => {
+  it("does not show a misleading Strategy column from stale cycle metadata", async () => {
     vi.spyOn(client, "apiFetch").mockResolvedValue([
       row({ cycle_id: "cyc-1", strategy_id: "strat-abc" }),
     ]);
     renderWithProviders(<RecentCyclesTable />);
-    const strat = await screen.findByRole("link", { name: "strat-abc" });
-    expect(strat).toHaveAttribute("href", "/agents/strat-abc");
+    await screen.findByRole("link", { name: /cyc-1/ });
+    expect(screen.queryByRole("columnheader", { name: "Strategy" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "strat-abc" })).toBeNull();
   });
 
-  it("renders an em dash when a cycle has no strategy", async () => {
+  it("renders a cycle when no strategy metadata exists", async () => {
     vi.spyOn(client, "apiFetch").mockResolvedValue([
       row({ cycle_id: "cyc-nostrat", strategy_id: null }),
     ]);
     renderWithProviders(<RecentCyclesTable />);
     await screen.findByRole("link", { name: /cyc-nostrat/ });
-    // No agent link rendered for a sessionless cycle.
+    expect(screen.queryByRole("columnheader", { name: "Strategy" })).toBeNull();
     expect(screen.queryByRole("link", { name: /agents/ })).toBeNull();
   });
 

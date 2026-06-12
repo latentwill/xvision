@@ -3,13 +3,13 @@
 // Home hero ("Pulse band", dashboard redesign / audit F3): equity area chart
 // of the latest meaningful completed run with a client-side drawdown band,
 // flanked by Geist-Mono KPI numerals with micro-sparklines, an HONEST
-// execution-state chip (live-money vs paper), and a freshness stamp.
+// execution-state chip (live capital vs no live capital), and a freshness stamp.
 //
 // Honesty rules (docs/design/README.md): numbers come from the latest
 // completed eval and say so; drawdown always rides next to return; "no live
 // capital deployed" is a designed first-class state, not an apologetic dash.
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
@@ -24,6 +24,7 @@ import {
   evalThroughput,
   formatRelativeTime,
   isChartableRun,
+  latestEvaluatedStrategyRuns,
   latestCompletionStamp,
   normalizePulseView,
   pickHeroRun,
@@ -79,7 +80,7 @@ function ExecutionChip({ liveness }: { liveness: LivenessCounts | null }) {
         className="inline-flex items-center gap-1.5 rounded-sm border border-gold/40 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-gold xvn-live-glow"
       >
         <span className="h-1.5 w-1.5 rounded-full bg-gold" aria-hidden />
-        Live money · {liveCount}
+        Live capital deployed · {liveCount}
       </span>
     );
   }
@@ -89,7 +90,7 @@ function ExecutionChip({ liveness }: { liveness: LivenessCounts | null }) {
       className="inline-flex items-center gap-1.5 rounded-sm border border-border-soft px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-text-3"
     >
       <span className="h-1.5 w-1.5 rounded-full bg-text-4" aria-hidden />
-      Paper · no live capital deployed
+      No live capital · paper/sim only
     </span>
   );
 }
@@ -201,8 +202,23 @@ export function PulseBand({
   liveness,
   runsPending = false,
 }: PulseBandProps) {
-  const heroRun = pickHeroRun(runs);
+  const selectableRuns = useMemo(() => latestEvaluatedStrategyRuns(runs), [runs]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const selectedRun =
+    selectedRunId != null
+      ? selectableRuns.find((run) => run.id === selectedRunId)
+      : undefined;
+  const heroRun = selectedRun ?? selectableRuns[0] ?? pickHeroRun(runs);
   const heroRunId = heroRun?.id ?? "";
+
+  useEffect(() => {
+    if (
+      selectedRunId != null &&
+      !selectableRuns.some((run) => run.id === selectedRunId)
+    ) {
+      setSelectedRunId(null);
+    }
+  }, [selectableRuns, selectedRunId]);
 
   // View selection — read localStorage in the initializer so the lazy view's
   // query is enabled on first render (no flash-fire of the default view).
@@ -293,6 +309,36 @@ export function PulseBand({
           </div>
           <ExecutionChip liveness={liveness} />
         </div>
+
+        {selectableRuns.length > 1 && !runsPending ? (
+          <div
+            role="group"
+            aria-label="Pulse strategy selector"
+            data-testid="pulse-strategy-selector"
+            className="relative flex flex-wrap items-center gap-1.5 px-5 pb-2"
+          >
+            {selectableRuns.map((run) => {
+              const label = displayStrategyName(run.agent_id ?? "", strategies);
+              const selected = run.id === heroRunId;
+              return (
+                <button
+                  key={run.id}
+                  type="button"
+                  aria-pressed={selected}
+                  title={label}
+                  onClick={() => setSelectedRunId(run.id)}
+                  className={`max-w-[180px] truncate rounded-sm border px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                    selected
+                      ? "border-gold/40 text-gold"
+                      : "border-border-soft text-text-3 hover:text-text"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
         {/* View switcher — full-width sub-row below the header */}
         {heroRun !== null && !runsPending ? (

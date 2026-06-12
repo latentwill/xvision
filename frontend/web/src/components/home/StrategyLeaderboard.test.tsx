@@ -135,6 +135,14 @@ describe("StrategyLeaderboard", () => {
     expect(screen.getByText(/no strategies configured/i)).toBeInTheDocument();
   });
 
+  it("links View all to the strategies leaderboard sort", () => {
+    renderBoard([strategy({})], [run({})]);
+    expect(screen.getByRole("link", { name: /view all/i })).toHaveAttribute(
+      "href",
+      "/strategies?sort=leaderboard",
+    );
+  });
+
   it("caps the board at 6 rows", () => {
     const strategies = Array.from({ length: 9 }, (_, i) =>
       strategy({ agent_id: `s${i}`, display_name: `S${i}` }),

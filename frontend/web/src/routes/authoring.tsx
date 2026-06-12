@@ -20,7 +20,6 @@ import {
   validateDraft,
   type AgentRef,
   type ClosePolicy,
-  type DecisionMode,
   type EntryDirection,
   type EntryRule,
   type PipelineDef,
@@ -103,26 +102,38 @@ function InspectorPage({ id }: { id: string }) {
               />
             </Card>
           ) : strategyQ.data ? (
-            <StrategyEditor strategy={strategyQ.data} />
+            <>
+              <StrategyQuickPerformanceCard strategyId={id} />
+              <StrategyEditor strategy={strategyQ.data} />
+            </>
           ) : null}
-          <PerformanceHistoryCard strategyId={id} />
         </div>
       </div>
     </>
   );
 }
 
-function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
+function StrategyQuickPerformanceCard({ strategyId }: { strategyId: string }) {
   const chart = useQuery({
     queryKey: strategyChartKeys.strategy(strategyId),
     queryFn: () => getStrategyChart(strategyId),
   });
+  const chartPayload = chart.data
+    ? {
+        strategy_id: chart.data.strategy_id ?? strategyId,
+        scenarios: chart.data.scenarios ?? [],
+        run_series: Array.isArray(chart.data.run_series) ? chart.data.run_series : [],
+      }
+    : null;
+  const summary = chartPayload
+    ? summarizeStrategyRuns(chartPayload.run_series)
+    : null;
 
   return (
     <Card>
       <SectionHeader
-        label="Performance history"
-        hint="Equity curves from all completed eval runs, colour-coded by scenario."
+        label="Quick performance"
+        hint="Completed eval history for this strategy, before setup details."
       />
       <div className="px-5 pt-4 pb-5">
         {chart.isPending && (
@@ -133,91 +144,112 @@ function PerformanceHistoryCard({ strategyId }: { strategyId: string }) {
             Could not load chart.
           </div>
         )}
-        {chart.data && <StrategyHistoryChartV2 payload={chart.data} />}
+        {chartPayload && summary && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              <QuickMetric
+                label="Completed evals"
+                value={formatEvalCount(summary.evalCount)}
+              />
+              <QuickMetric label="Best PnL" value={fmtPnlUsd(summary.bestPnl)} />
+              <QuickMetric label="Best Sharpe" value={fmtMetric(summary.bestSharpe)} />
+              <QuickMetric
+                label="Max drawdown"
+                value={fmtSignedPct(summary.maxDrawdown)}
+              />
+            </div>
+            <StrategyHistoryChartV2 payload={chartPayload} />
+          </div>
+        )}
       </div>
     </Card>
   );
+}
+
+function QuickMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border-soft bg-surface-elev px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-text-3">
+        {label}
+      </div>
+      <div className="mt-1 font-mono text-[16px] text-text">{value}</div>
+    </div>
+  );
+}
+
+type StrategyRunSummary = {
+  evalCount: number;
+  bestPnl: number | null;
+  bestSharpe: number | null;
+  maxDrawdown: number | null;
+};
+
+function summarizeStrategyRuns(
+  runs: Array<{
+    final_pnl_usd?: number | null;
+    sharpe?: number | null;
+    max_drawdown_pct?: number | null;
+  }>,
+): StrategyRunSummary {
+  return {
+    evalCount: runs.length,
+    bestPnl: maxFinite(runs.map((run) => run.final_pnl_usd)),
+    bestSharpe: maxFinite(runs.map((run) => run.sharpe)),
+    maxDrawdown: minFinite(runs.map((run) => run.max_drawdown_pct)),
+  };
+}
+
+function maxFinite(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => Number.isFinite(value));
+  return finite.length > 0 ? Math.max(...finite) : null;
+}
+
+function minFinite(values: Array<number | null | undefined>): number | null {
+  const finite = values.filter((value): value is number => Number.isFinite(value));
+  return finite.length > 0 ? Math.min(...finite) : null;
+}
+
+function formatEvalCount(count: number): string {
+  return `${count} ${count === 1 ? "eval" : "evals"}`;
+}
+
+function fmtMetric(value: number | null): string {
+  return value === null ? "—" : value.toFixed(2);
+}
+
+function fmtPnlUsd(value: number | null): string {
+  if (value === null) return "—";
+  const abs = `$${Math.abs(value).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+  if (value > 0) return `+${abs}`;
+  if (value < 0) return `−${abs}`;
+  return abs;
+}
+
+function fmtSignedPct(value: number | null): string {
+  if (value === null) return "—";
+  const abs = `${Math.abs(value).toFixed(2)}%`;
+  if (value > 0) return `+${abs}`;
+  if (value < 0) return `−${abs}`;
+  return abs;
 }
 
 function StrategyEditor({ strategy }: { strategy: Strategy }) {
   const isMechanistic = strategy.decision_mode === "mechanistic";
   return (
     <>
-      <ValidationCard strategy={strategy} />
-      <DecisionModeStatusCard strategy={strategy} />
       <ManifestCard strategy={strategy} />
       <FilterCard strategy={strategy} />
-      <DecisionModeCard strategy={strategy} />
       {isMechanistic ? (
         <MechanisticConfigCard strategy={strategy} />
       ) : (
         <AgentsCard strategy={strategy} />
       )}
       <RiskCard strategy={strategy} />
+      <ValidationCard strategy={strategy} />
     </>
-  );
-}
-
-function decisionModeInfo(strategy: Strategy): {
-  label: string;
-  tone: "success" | "warning" | "danger";
-  detail: string;
-} {
-  const mode = strategy.activation_mode ?? (strategy.filter ? "filter_gated" : "every_bar");
-  const agentCount = strategy.agents?.length ?? 0;
-  if (mode === "compiled_rules") {
-    return {
-      label: "Rules-only mechanical",
-      tone: "warning",
-      detail:
-        agentCount === 0
-          ? "Compiled rules decide directly. No trader agent is required in this mode."
-          : "Compiled rules decide directly; attached agents are not expected to produce trade decisions.",
-    };
-  }
-  if (mode === "filter_gated") {
-    return {
-      label: "Filter-gated agent",
-      tone: agentCount > 0 ? "success" : "danger",
-      detail:
-        agentCount > 0
-          ? "Default path: the saved filter checks each bar and wakes the trader agent only on valid setups."
-          : "Agent required: filter-gated mode cannot run until a complete trader agent is attached.",
-    };
-  }
-  return {
-    label: "Agent-direct",
-    tone: "warning",
-    detail:
-      agentCount > 0
-        ? "Legacy/discouraged path: the trader agent runs every bar without a saved deterministic prefilter."
-        : "Broken state: agent-direct mode needs a trader agent, or the strategy must explicitly switch to rules-only mechanical.",
-  };
-}
-
-function DecisionModeStatusCard({ strategy }: { strategy: Strategy }) {
-  const info = decisionModeInfo(strategy);
-  const tone =
-    info.tone === "success"
-      ? "border-success/40 bg-success/[0.08] text-success"
-      : info.tone === "danger"
-        ? "border-danger/40 bg-danger/[0.08] text-danger"
-        : "border-warn/40 bg-warn/[0.08] text-warn";
-  return (
-    <Card>
-      <SectionHeader
-        label="Decision mode"
-        hint="Who makes trade decisions, and whether a missing agent is valid."
-      />
-      <div className="px-5 pt-4 pb-5">
-        <div className={`inline-flex rounded-sm border px-2 py-1 text-[12px] font-medium ${tone}`}>
-          {info.label}
-        </div>
-        <p className="mt-2 mb-0 text-[13px] leading-relaxed text-text-2">
-          {info.detail}
-        </p>
-      </div>
-    </Card>
   );
 }
 
@@ -485,7 +517,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
             hint={
               pipeline.kind === "graph"
                 ? "Graph strategies are view-only here; graph runtime intentionally errors today."
-                : "Single requires one agent. Sequential runs refs in the order below."
+                : "Filter-gated agent uses one trader AgentRef. Sequential runs refs in the order below."
             }
           >
             <select
@@ -497,7 +529,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
               disabled={pipeline.kind === "graph" || pipelineMut.isPending}
             >
               <option value="single" disabled={attached.length > 1}>
-                single
+                filter-gated agent
               </option>
               <option value="sequential">sequential</option>
               <option value="graph" disabled>
@@ -517,7 +549,7 @@ function AgentsCard({ strategy }: { strategy: Strategy }) {
                   ? "No agents attached. OK: rules-only mechanical mode does not call a trader agent."
                   : "No agents attached. This strategy is not eval-ready until a complete trader agent is attached."
                 : pipeline.kind === "single"
-                  ? "The first AgentRef is the only executable stage."
+                  ? "The first AgentRef is the gated trader."
                   : pipeline.kind === "sequential"
                     ? "Execution order follows the AgentRef list from top to bottom."
                     : "Graph edges are preserved from the backend, but editing is intentionally deferred."}
@@ -964,73 +996,6 @@ export function AttachedAgentRow({
         </div>
       ) : null}
     </div>
-  );
-}
-
-function DecisionModeCard({ strategy }: { strategy: Strategy }) {
-  const qc = useQueryClient();
-  const current = strategy.decision_mode ?? "agentic";
-  const [mode, setMode] = useState<DecisionMode>(current);
-  const dirty = mode !== current;
-
-  useEffect(() => {
-    setMode(strategy.decision_mode ?? "agentic");
-  }, [strategy.decision_mode]);
-
-  const save = useMutation({
-    mutationFn: () =>
-      setMechanisticConfig(strategy.manifest.id, {
-        decision_mode: mode,
-        mechanistic_config:
-          mode === "mechanistic"
-            ? (strategy.mechanistic_config ?? { entry_rules: [], close_policies: [] })
-            : null,
-      }),
-    onSuccess: (updated) => {
-      qc.setQueryData(strategyKeys.detail(strategy.manifest.id), updated);
-      qc.invalidateQueries({ queryKey: strategyKeys.validate(strategy.manifest.id) });
-    },
-  });
-
-  return (
-    <Card>
-      <SectionHeader
-        label="Decision mode"
-        hint="Agentic uses LLM agents; Mechanistic uses deterministic entry/exit rules."
-      />
-      <div className="px-5 pt-4 pb-5 space-y-4">
-        <div className="flex items-center gap-3" role="group" aria-label="Decision mode">
-          {(["agentic", "mechanistic"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={mode === m}
-              onClick={() => setMode(m)}
-              className={`px-3 py-1.5 rounded text-[13px] border capitalize ${
-                mode === m
-                  ? "border-gold text-gold bg-gold/10"
-                  : "border-border text-text-2 hover:border-text-3"
-              }`}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => save.mutate()}
-            disabled={!dirty || save.isPending}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors motion-safe:active:scale-[0.96]"
-          >
-            {save.isPending ? "Saving..." : "Save mode"}
-          </button>
-          {save.isError ? (
-            <span className="text-[12px] text-danger">{errorMessage(save.error)}</span>
-          ) : null}
-        </div>
-      </div>
-    </Card>
   );
 }
 

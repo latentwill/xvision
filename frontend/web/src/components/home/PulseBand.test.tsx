@@ -132,10 +132,10 @@ describe("PulseBand", () => {
     expect(await screen.findByTestId("pulse-equity-chart")).toBeInTheDocument();
   });
 
-  it("shows the honest paper chip when nothing is live-money", async () => {
+  it("shows the central no-live-capital chip when nothing is live-money", async () => {
     renderBand();
     const chip = await screen.findByTestId("execution-chip");
-    expect(chip).toHaveTextContent(/paper · no live capital deployed/i);
+    expect(chip).toHaveTextContent(/no live capital · paper\/sim only/i);
   });
 
   it("shows a glowing live chip when live-money runs exist", async () => {
@@ -143,7 +143,7 @@ describe("PulseBand", () => {
       liveness: { liveActive: 2, livePaused: 1, paper: 0, stale: 0 },
     });
     const chip = await screen.findByTestId("execution-chip");
-    expect(chip).toHaveTextContent(/live money · 3/i);
+    expect(chip).toHaveTextContent(/live capital deployed · 3/i);
     expect(chip.className).toContain("xvn-live-glow");
   });
 
@@ -176,6 +176,46 @@ describe("PulseBand", () => {
     renderBand();
     expect(await screen.findByTestId("pulse-freshness")).toHaveTextContent(
       /updated .*ago|updated just now/i,
+    );
+  });
+
+  it("lets the main graph switch among the five latest evaluated strategies", async () => {
+    const user = userEvent.setup();
+    renderBand({
+      runs: [
+        run({ id: "run-alpha", agent_id: "alpha", completed_at: "2026-06-10T09:00:00Z" }),
+        run({ id: "run-beta", agent_id: "beta", completed_at: "2026-06-10T08:00:00Z" }),
+        run({ id: "run-gamma", agent_id: "gamma", completed_at: "2026-06-10T07:00:00Z" }),
+        run({ id: "run-delta", agent_id: "delta", completed_at: "2026-06-10T06:00:00Z" }),
+        run({ id: "run-epsilon", agent_id: "epsilon", completed_at: "2026-06-10T05:00:00Z" }),
+        run({ id: "run-zeta", agent_id: "zeta", completed_at: "2026-06-10T04:00:00Z" }),
+      ],
+      strategies: [
+        { agent_id: "alpha", display_name: "Alpha", template: "blank", decision_cadence_minutes: 60 },
+        { agent_id: "beta", display_name: "Beta", template: "blank", decision_cadence_minutes: 60 },
+        { agent_id: "gamma", display_name: "Gamma", template: "blank", decision_cadence_minutes: 60 },
+        { agent_id: "delta", display_name: "Delta", template: "blank", decision_cadence_minutes: 60 },
+        { agent_id: "epsilon", display_name: "Epsilon", template: "blank", decision_cadence_minutes: 60 },
+        { agent_id: "zeta", display_name: "Zeta", template: "blank", decision_cadence_minutes: 60 },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(chartApi.getRunChart).toHaveBeenCalledWith("run-alpha", ["equity"]);
+    });
+
+    const selector = screen.getByTestId("pulse-strategy-selector");
+    expect(selector.querySelectorAll("button")).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: /zeta/i })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /beta/i }));
+
+    await waitFor(() => {
+      expect(chartApi.getRunChart).toHaveBeenCalledWith("run-beta", ["equity"]);
+    });
+    expect(screen.getByRole("button", { name: /beta/i })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
   });
 

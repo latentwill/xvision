@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -25,6 +26,7 @@ vi.mock("@/api/strategies", async () => {
     validateDraft: vi.fn(),
     deleteStrategy: vi.fn(),
     setRiskConfig: vi.fn(),
+    setMechanisticConfig: vi.fn(),
     updateSlot: vi.fn(),
     setStrategyPipeline: vi.fn(),
     addStrategyAgent: vi.fn(),
@@ -146,6 +148,7 @@ beforeEach(() => {
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.deleteStrategy).mockReset();
   vi.mocked(strategyApi.setRiskConfig).mockReset();
+  vi.mocked(strategyApi.setMechanisticConfig).mockReset();
   vi.mocked(strategyApi.setStrategyPipeline).mockReset();
   vi.mocked(strategyApi.addStrategyAgent).mockReset();
   vi.mocked(agentApi.createAgent).mockReset();
@@ -201,6 +204,92 @@ describe("AuthoringRoute risk editor", () => {
     expect(screen.getByLabelText(/Strategy ID 01TEST/)).toHaveValue("01TEST");
     expect(screen.getByText("No saved filter")).toBeInTheDocument();
     expect(screen.queryByText("Mechanical params")).not.toBeInTheDocument();
+  });
+
+  it("edits Agentic/Mechanistic decision mode inside the Filter module", async () => {
+    vi.mocked(agentApi.listAgents).mockResolvedValue([]);
+    vi.mocked(strategyApi.getStrategy).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Trend 4H",
+        template: "trend_follower",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: [],
+        decision_cadence_minutes: 240,
+        attested_with: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      decision_mode: "agentic",
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+    vi.mocked(strategyApi.setMechanisticConfig).mockResolvedValue({
+      manifest: {
+        id: "01TEST",
+        display_name: "Trend 4H",
+        template: "trend_follower",
+        creator: "@t",
+        plain_summary: "",
+        regime_fit: [],
+        asset_universe: [],
+        decision_cadence_minutes: 240,
+        attested_with: [],
+        required_tools: [],
+        risk_preset_or_config: "balanced",
+        published_at: null,
+      },
+      decision_mode: "mechanistic",
+      mechanistic_config: { entry_rules: [], close_policies: [] },
+      regime_slot: null,
+      intern_slot: null,
+      trader_slot: null,
+      risk: {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 2,
+        max_leverage: 3,
+        stop_loss_atr_multiple: 2,
+        daily_loss_kill_pct: 0.05,
+      },
+      mechanical_params: {},
+    });
+
+    renderRoute();
+
+    const filterCard = await screen.findByTestId("strategy-filter-card");
+    expect(
+      screen.queryByText(/Who makes trade decisions/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Agent-direct")).not.toBeInTheDocument();
+    const decisionModeGroups = await screen.findAllByRole("group", {
+      name: /decision mode/i,
+    });
+    expect(decisionModeGroups).toHaveLength(1);
+    expect(filterCard).toContainElement(decisionModeGroups[0]);
+
+    fireEvent.click(
+      within(filterCard).getByRole("button", { name: /mechanistic/i }),
+    );
+    fireEvent.click(within(filterCard).getByRole("button", { name: /save mode/i }));
+
+    await waitFor(() => {
+      expect(strategyApi.setMechanisticConfig).toHaveBeenCalledWith("01TEST", {
+        decision_mode: "mechanistic",
+        mechanistic_config: { entry_rules: [], close_policies: [] },
+      });
+    });
   });
 
   it("does not render the old validation box in the Inspector rail", async () => {
@@ -646,8 +735,23 @@ describe("AuthoringRoute agent composition", () => {
 
     renderRoute();
 
+    const pipelineSelect = await screen.findByRole("combobox", {
+      name: /pipeline kind/i,
+    });
+    expect(
+      within(pipelineSelect).getByRole("option", {
+        name: /filter-gated agent/i,
+      }),
+    ).toHaveValue("single");
+    expect(
+      within(pipelineSelect).queryByRole("option", { name: /^single$/i }),
+    ).toBeNull();
+    expect(
+      screen.getByText(/first AgentRef is the gated trader/i),
+    ).toBeInTheDocument();
+
     fireEvent.change(
-      await screen.findByRole("combobox", { name: /pipeline kind/i }),
+      pipelineSelect,
       { target: { value: "sequential" } },
     );
 

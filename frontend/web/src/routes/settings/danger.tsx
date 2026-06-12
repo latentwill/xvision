@@ -52,8 +52,8 @@ export function SettingsDangerRoute() {
             <p className="m-0 mt-1 text-text-3">
               <span className="text-text-2">Preserved:</span> API keys
               + secrets, config, review-agent profiles, bars cache,
-              skills registry, the audit trail, and the four canonical
-              seed scenarios. File-backed strategy drafts under{" "}
+              skills registry, the audit trail, and built-in seed
+              scenario definitions. File-backed strategy drafts under{" "}
               <code className="font-mono">$XVN_HOME/strategies/</code>{" "}
               are removed; <code className="font-mono">secrets/</code>{" "}
               and <code className="font-mono">config/</code> stay.

@@ -175,9 +175,6 @@ export type CycleNodeDetail = LineageNode & {
 /** One historic optimizer cycle (grouped from lineage) with F23 tokens + cost. */
 export type CycleRunSummary = {
   cycle_id: string;
-  /** The strategy (agent_id) this cycle optimized, resolved via the
-   *  events→session bridge. Absent for pre-bridge / sessionless CLI cycles. */
-  strategy_id?: string | null;
   node_count: number;
   active_count: number;
   /** Quarantined (Suspect) nodes — partial-pass across regimes. */

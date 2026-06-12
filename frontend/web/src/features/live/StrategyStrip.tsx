@@ -1,42 +1,54 @@
-// Live Trading strategy strip (spec §2.4).
+// Live Trading run list (spec §2.4).
 //
 // Fixed horizontal strip, always visible (does not scroll with the body).
 // One horizontal band, left → right:
 //
-//   [ALL n] [LIVE n] [PAUSED n] [STOPPED n] | pills… | metric picker · deploy
+//   [ALL n] [LIVE n] [PAUSED n] [STOPPED n] | run list… | deploy
 //
-// Status filter chips gate which runs render as pills. Default filter is
+// Status filter chips gate which runs render as rows. Default filter is
 // LIVE — only runs where `isLiveRun()` is true (real money moving now) may
 // appear there; backtests, orphans, and terminal runs land under their real
 // bucket (see `stripFilterBucket`). Zero live runs ⇒ a quiet empty state
-// with the deploy link instead of stale capsules.
+// with the deploy link instead of stale rows.
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { AgentRunSummary } from "@/api/types-agent-runs";
 import type { LiveStatus } from "@/components/chart/use-run-stream";
-import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
-import type { NamedStrategy } from "@/lib/run-display";
-import { StrategyPill } from "./StrategyPill";
+import { displayStrategyName, type NamedStrategy } from "@/lib/run-display";
+import { ConnectionDot } from "./ConnectionDot";
+import { TransportControls } from "./TransportControls";
 import {
   filterRunsForStrip,
   isLiveRun,
   STRIP_FILTERS,
   stripFilterCounts,
+  deriveStripStatus,
+  type StripStatus,
   type StripFilter,
 } from "./strip-status";
 import {
-  STRIP_METRIC_OPTIONS,
-  type StripMetricId,
+  computeStripMetric,
 } from "./strip-metrics";
 import type { RunTransport } from "./useTransport";
+
+const STATUS_STYLE: Record<StripStatus, string> = {
+  ACTIVE: "bg-info/15 text-info",
+  PAUSED: "bg-warn/15 text-warn",
+  STOPPED: "bg-surface-elev text-text-3",
+  STALE: "bg-surface-elev text-text-3",
+};
+
+const METRIC_TONE: Record<"pos" | "neg" | "neutral", string> = {
+  pos: "text-info",
+  neg: "text-danger",
+  neutral: "text-text-2",
+};
 
 export interface StrategyStripProps {
   runs: AgentRunSummary[];
   selectedId: string | null;
   onSelect: (runId: string) => void;
-  metric: StripMetricId;
-  onMetricChange: (metric: StripMetricId) => void;
   /** Real SSE status of the currently-selected run's chart stream. */
   selectedConnStatus: LiveStatus;
   walletDisabled: boolean;
@@ -51,19 +63,12 @@ export function StrategyStrip({
   runs,
   selectedId,
   onSelect,
-  metric,
-  onMetricChange,
   selectedConnStatus,
   walletDisabled,
   strategies,
   transportFor,
 }: StrategyStripProps) {
-  const metricOptions = STRIP_METRIC_OPTIONS.map((o) => ({
-    value: o.id,
-    label: o.label,
-  }));
-
-  // Status filter — LIVE by default so dead/backtest capsules never greet
+  // Status filter — LIVE by default so dead/backtest rows never greet
   // the operator. Local state only; the chart selection is independent.
   const [filter, setFilter] = useState<StripFilter>("LIVE");
   const counts = stripFilterCounts(runs);
@@ -105,12 +110,14 @@ export function StrategyStrip({
         </div>
 
         {/*
-          The pill list is the only flexible child (flex-1 + min-w-0) and is
-          its own scroll container, so scrolled pills clip at this box's edge
-          and can never paint under the right-side controls. `overscroll-x-
-          contain` stops a trackpad fling from chaining into page scroll.
+          The run list is the only flexible child (flex-1 + min-w-0). It owns
+          overflow, so long strategy names or many launches never paint under
+          the right-side controls.
         */}
-        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto overscroll-x-contain pb-0.5">
+        <div
+          data-testid="live-run-list"
+          className="flex min-w-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-y-contain"
+        >
           {visible.length === 0 ? (
             <span
               data-testid="strip-empty-state"
@@ -136,11 +143,10 @@ export function StrategyStrip({
             visible.map((run) => {
               const isSelected = run.run_id === selectedId;
               return (
-                <StrategyPill
+                <LiveRunRow
                   key={run.run_id}
                   run={run}
                   selected={isSelected}
-                  metric={metric}
                   strategies={strategies}
                   // Selected pill reflects the real chart stream status;
                   // others get a lightweight derived status so we don't
@@ -164,17 +170,9 @@ export function StrategyStrip({
         {/*
           Right control group: never shrinks, and a left border gives the
           scrolling pill list a hard visual boundary to clip against instead
-          of pills appearing to run into the metric picker.
+          of rows appearing to run into the deploy link.
         */}
         <div className="flex shrink-0 items-center gap-3 border-l border-border pl-3">
-          <SignalSelectMenu
-            label="Metric"
-            icon="sliders"
-            value={metric}
-            options={metricOptions}
-            onChange={(v) => onMetricChange(v as StripMetricId)}
-            align="right"
-          />
           <Link
             to="/strategies"
             className="whitespace-nowrap text-[13px] font-medium text-text-2 hover:text-text"
@@ -184,5 +182,118 @@ export function StrategyStrip({
         </div>
       </div>
     </div>
+  );
+}
+
+interface LiveRunRowProps {
+  run: AgentRunSummary;
+  selected: boolean;
+  connStatus: LiveStatus;
+  onSelect: () => void;
+  walletDisabled: boolean;
+  strategies?: NamedStrategy[];
+  transport?: RunTransport;
+}
+
+function LiveRunRow({
+  run,
+  selected,
+  connStatus,
+  onSelect,
+  walletDisabled,
+  strategies,
+  transport,
+}: LiveRunRowProps) {
+  const status = deriveStripStatus(run);
+  const name = run.agent_id
+    ? displayStrategyName(run.agent_id, strategies)
+    : run.objective || run.strategy_id || run.run_id.slice(0, 8);
+  const pnl = computeStripMetric("daily_pnl_usd", run);
+  const sharpe = computeStripMetric("sharpe", run);
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      aria-label={`Live run ${name}`}
+      data-selected={selected || undefined}
+      data-testid={`live-run-row-${run.run_id}`}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      className={[
+        "grid min-w-0 grid-cols-[minmax(200px,1fr)_74px_96px_76px_82px_80px_92px] items-center gap-3",
+        "border px-3 py-2 text-[13px] transition-colors focus:outline-none",
+        selected
+          ? "border-gold/45 bg-gold/10"
+          : "border-border bg-surface hover:bg-surface-hover focus:bg-surface-hover",
+      ].join(" ")}
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        <ConnectionDot status={connStatus} />
+        <span className="min-w-0 truncate font-medium text-text">{name}</span>
+        <span
+          className={`w-fit shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-semibold tracking-wide ${STATUS_STYLE[status]}`}
+        >
+          {status}
+        </span>
+      </div>
+      <MetricCell label="PnL" value={pnl.text} tone={pnl.tone} />
+      <MetricCell label="Decisions" value={String(run.model_call_count)} />
+      <MetricCell label="Trades" value={String(run.tool_call_count)} />
+      <MetricCell label="Sharpe" value={sharpe.text} tone={sharpe.tone} />
+      {run.span_count > 0 ? (
+        <Link
+          to={`/live/runs/${encodeURIComponent(run.run_id)}`}
+          onClick={(e) => e.stopPropagation()}
+          className="w-fit font-mono text-[12px] text-text-2 hover:text-text"
+        >
+          Trace {run.span_count}
+        </Link>
+      ) : (
+        <span className="font-mono text-[12px] text-text-3">Trace —</span>
+      )}
+      <div className="justify-self-end">
+        <TransportControls
+          status={status}
+          walletDisabled={walletDisabled}
+          onPause={transport?.onPause}
+          onResume={transport?.onResume}
+          onStop={transport?.onStop}
+          onStopConfirm={transport?.onStopConfirm}
+          onStopCancel={transport?.onStopCancel}
+          onFlatten={transport?.onFlatten}
+          onKeepOpen={transport?.onKeepOpen}
+          pausedExpanderOpen={transport?.pausedExpanderOpen}
+          flattenPending={transport?.flattenPending}
+          stopConfirmOpen={transport?.stopConfirmOpen}
+          error={transport?.error}
+          busy={transport?.busy}
+          confirmWord={name}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MetricCell({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  tone?: "pos" | "neg" | "neutral";
+}) {
+  return (
+    <span className="min-w-0 font-mono text-[12px] text-text-3">
+      {label}{" "}
+      <span className={`tabular-nums ${METRIC_TONE[tone]}`}>{value}</span>
+    </span>
   );
 }

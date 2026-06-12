@@ -130,7 +130,7 @@ describe("LiveSummaryStrip", () => {
     expect(screen.queryByText(/no live strategies running/i)).toBeNull();
   });
 
-  it("counts paper/sim runs separately — they are NOT live", async () => {
+  it("counts non-live running rows separately — they are NOT live", async () => {
     vi.mocked(agentRunsApi.listAgentRuns).mockResolvedValue([
       live({ run_id: "a" }),
       paper({ run_id: "bt1" }),
@@ -141,9 +141,10 @@ describe("LiveSummaryStrip", () => {
 
     const liveCount = await screen.findByTestId("live-count");
     expect(liveCount).toHaveTextContent("1");
-    const paperCount = screen.getByTestId("paper-count");
-    expect(paperCount).toHaveTextContent("2");
-    expect(paperCount).toHaveTextContent(/paper/i);
+    const nonLiveCount = screen.getByTestId("non-live-count");
+    expect(nonLiveCount).toHaveTextContent("2");
+    expect(nonLiveCount).toHaveTextContent(/non-live/i);
+    expect(nonLiveCount).not.toHaveTextContent(/paper/i);
   });
 
   it("renders stale orphans as stale — never live (xvision-9pi)", async () => {
@@ -177,8 +178,9 @@ describe("LiveSummaryStrip", () => {
 
     renderStrip();
 
-    const paperCount = await screen.findByTestId("paper-count");
-    expect(paperCount).toHaveTextContent("1");
+    const nonLiveCount = await screen.findByTestId("non-live-count");
+    expect(nonLiveCount).toHaveTextContent("1");
+    expect(nonLiveCount).toHaveTextContent(/non-live/i);
     expect(screen.queryByTestId("live-count")).toBeNull();
   });
 
@@ -215,5 +217,6 @@ describe("LiveSummaryStrip", () => {
     expect(screen.getByTestId("live-summary-strip")).toBeInTheDocument();
     expect(screen.getByText(/live trading/i)).toBeInTheDocument();
     expect(screen.queryByText(/real money/i)).toBeNull();
+    expect(screen.queryByTestId("paper-count")).toBeNull();
   });
 });

@@ -9,6 +9,7 @@ import {
   formatRelativeTime,
   holdCompareSeries,
   isChartableRun,
+  latestEvaluatedStrategyRuns,
   latestCompletionStamp,
   normalizePulseView,
   pickHeroRun,
@@ -126,6 +127,30 @@ describe("pickHeroRun", () => {
     const noScenario = run({ id: "no-scn", scenario_id: " " });
     const running = run({ id: "running", status: "running" });
     expect(pickHeroRun([live, noScenario, running])).toBeNull();
+  });
+});
+
+describe("latestEvaluatedStrategyRuns", () => {
+  it("returns the newest chartable eval per strategy, capped at five", () => {
+    const rows = [
+      run({ id: "alpha-old", agent_id: "alpha", completed_at: "2026-06-10T01:00:00Z" }),
+      run({ id: "alpha-new", agent_id: "alpha", completed_at: "2026-06-10T08:00:00Z" }),
+      run({ id: "beta", agent_id: "beta", completed_at: "2026-06-10T07:00:00Z" }),
+      run({ id: "gamma", agent_id: "gamma", completed_at: "2026-06-10T06:00:00Z" }),
+      run({ id: "delta", agent_id: "delta", completed_at: "2026-06-10T05:00:00Z" }),
+      run({ id: "epsilon", agent_id: "epsilon", completed_at: "2026-06-10T04:00:00Z" }),
+      run({ id: "zeta", agent_id: "zeta", completed_at: "2026-06-10T03:00:00Z" }),
+      run({ id: "live", agent_id: "live", mode: "live", completed_at: "2026-06-10T09:00:00Z" }),
+      run({ id: "running", agent_id: "running", status: "running", completed_at: "2026-06-10T10:00:00Z" }),
+    ];
+
+    expect(latestEvaluatedStrategyRuns(rows).map((r) => r.id)).toEqual([
+      "alpha-new",
+      "beta",
+      "gamma",
+      "delta",
+      "epsilon",
+    ]);
   });
 });
 

@@ -8,7 +8,7 @@
 //! dispatcher. The dashboard's Inspector route calls these; the MCP tool
 //! layer (PR #31) goes through `engine::authoring::*` directly.
 
-use crate::agents::AgentStore;
+use crate::agents::{AgentStore, Capability};
 use crate::api::{
     audit::{self, Outcome},
     search as api_search, ApiContext, ApiError, ApiResult,
@@ -26,6 +26,7 @@ use crate::strategies::{
     },
     ActivationMode, AgentRef, Filter, PipelineDef, PipelineEdge, PipelineKind, Strategy,
 };
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Instant;
 use ulid::Ulid;
@@ -42,6 +43,9 @@ pub struct StrategySummary {
     pub agent_id: String,
     pub display_name: String,
     pub template: String,
+    /// Manifest creator / author handle.
+    #[serde(default)]
+    pub creator: String,
     pub decision_cadence_minutes: u32,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -62,6 +66,9 @@ pub struct StrategySummary {
     /// Explicit provider-model pairs required by this strategy's executable slots.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_models: Vec<ProviderModelPair>,
+    /// Capability classes activated by this strategy's agents/filters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
     /// Number of attached strategy AgentRefs. Deterministic filters are not
     /// agents and must not be counted here.
     #[serde(default)]
@@ -392,6 +399,7 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
         };
         let model = model_summary(&inventory.models);
         let tags = strategy_tags(&strategy);
+        let capabilities = strategy_capabilities(&strategy);
         let execution_mode = execution_mode_string(&strategy.manifest.execution_mode);
         // Same hash the autooptimizer mints for lineage nodes and the CLI
         // stamps into `eval_runs.agent_id`: blake3 over the bundle's
@@ -403,6 +411,7 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             agent_id: strategy.manifest.id.clone(),
             display_name: strategy.manifest.display_name.clone(),
             template: strategy.manifest.template.clone(),
+            creator: strategy.manifest.creator.clone(),
             decision_cadence_minutes: strategy.manifest.decision_cadence_minutes,
             tags,
             color: strategy.manifest.color.clone(),
@@ -410,6 +419,7 @@ async fn hydrate_strategy_summaries(ctx: &ApiContext, ids: &[String]) -> ApiResu
             providers: inventory.providers,
             models: inventory.models,
             provider_models: inventory.provider_models,
+            capabilities,
             agent_count: strategy.agents.len(),
             filter_count: usize::from(strategy.filter.is_some()),
             activation_mode: strategy.activation_mode,
@@ -665,6 +675,28 @@ fn push_unique_provider_model(inventory: &mut ProviderModelInventory, provider: 
         inventory
             .provider_models
             .push(ProviderModelPair { provider, model });
+    }
+}
+
+fn strategy_capabilities(strategy: &Strategy) -> Vec<String> {
+    let mut capabilities = BTreeSet::new();
+    for agent_ref in &strategy.agents {
+        let capability = agent_ref.activates.unwrap_or(Capability::Trader);
+        capabilities.insert(capability_string(capability).to_string());
+    }
+    if strategy.filter.is_some() {
+        capabilities.insert("filter".to_string());
+    }
+    capabilities.into_iter().collect()
+}
+
+fn capability_string(capability: Capability) -> &'static str {
+    match capability {
+        Capability::Trader => "trader",
+        Capability::Filter => "filter",
+        Capability::Critic => "critic",
+        Capability::Intern => "intern",
+        Capability::Router => "router",
     }
 }
 
@@ -2542,7 +2574,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn strategy_summary_carries_asset_universe_and_execution_mode() {
+    async fn strategy_summary_carries_creator_asset_universe_and_execution_mode() {
         let (ctx, _d) = ctx_with_audit().await;
         let created = create_strategy(
             &ctx,
@@ -2572,6 +2604,10 @@ mod tests {
             .find(|s| s.agent_id == created.id)
             .expect("strategy in list");
 
+        assert_eq!(
+            summary.creator, "@tester",
+            "creator must flow through to StrategySummary"
+        );
         assert_eq!(
             summary.asset_universe,
             vec!["BTC/USD".to_string(), "ETH/USD".to_string()],

@@ -22,14 +22,12 @@ import { useSearchParams } from "react-router-dom";
 
 import { AgentForm } from "./AgentForm";
 import { MemoryTab } from "./MemoryTab";
-import { AgentDiagnosticsView } from "@/components/diagnostics/AgentDiagnosticsView";
 import type { AgentSlot } from "@/api/agents";
 
-type Tab = "configuration" | "diagnostics" | "memory";
+type Tab = "configuration" | "memory";
 
 function tabFromParam(param: string | null): Tab {
   if (param === "memory") return "memory";
-  if (param === "diagnostics") return "diagnostics";
   return "configuration";
 }
 
@@ -63,8 +61,6 @@ export function AgentDetailTabs({
       <TabBar value={tab} onChange={setTab} />
       {tab === "configuration" ? (
         <AgentForm agentId={agentId} initialSlots={initialSlots} />
-      ) : tab === "diagnostics" ? (
-        <AgentDiagnosticsView agentId={agentId} />
       ) : (
         <MemoryTab agentId={agentId} highlightPatternId={highlightPatternId} />
       )}
@@ -81,7 +77,6 @@ function TabBar({
 }) {
   const tabs: [Tab, string][] = [
     ["configuration", "Configuration"],
-    ["diagnostics", "Diagnostics"],
     ["memory", "Memory"],
   ];
   return (

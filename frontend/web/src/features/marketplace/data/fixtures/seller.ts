@@ -20,16 +20,13 @@ export function buildPublishDraft(strategyId: string): PublishDraft {
     tier: "sealed",
     priceUsdc: 49,
     acceptedPayers: { humans: true, agents: true },
-    ingredients: [
-      { name: "Claude Haiku 4.5", kind: "model", installed: true },
-      { name: "Birdeye MCP", kind: "mcp", installed: true },
-    ],
+    ingredients: [],
     preview: {
       id: s?.name ?? strategyId, lineageId: s?.name ?? strategyId, version: s?.version ?? "v0.1",
       creator: { address: "0xa83e", handle: "@ed" }, model: "Claude · Haiku 4.5", style: "Day",
       assets: s?.assets ?? [], return30dPct: 0, sharpe: 0, buyers: { humans: 0, agents: 0 },
       priceUsdc: 49, tier: "sealed", verification: "unverified", acceptsX402: true, clones: 0,
-      transferableLicense: false, genArtSeed: `${s?.name ?? strategyId}-preview`,
+      transferableLicense: false, genArtSeed: strategyId,
     },
   };
 }
