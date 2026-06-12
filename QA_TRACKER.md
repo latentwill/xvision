@@ -12,6 +12,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | 2026-06-12 | C. Batch plan reviewed | Plan Review Gate passed with three read-only Codex reviewers: feasibility PASS, completeness PASS, scope/alignment PASS. Gemini review was unavailable because Gemini CLI had no auth configured. |
 | 2026-06-12 | D. Batch B implemented and locally verified | PF-17/PF-18 red tests failed first, implementation wired into executor/schema/Cline recovery path, focused green checks passed. Awaiting read-only adversarial implementation review. |
 | 2026-06-12 | E. Batch B adversarial review passed | First read-only review found P1s in PF-18 schema optionality and Cline `?` keys, plus PF-17 missing no-extra-dispatch assertion. Fixes landed; second read-only review returned PASS for PF-17 and PF-18 with no P0/P1 findings. |
+| 2026-06-12 | F. Batch B branch published | Commit `cdb19c99` pushed on `qa/release-manager-20260612`; PR #949 opened for review/merge. |
 
 ## Reconciled Counts
 
@@ -26,7 +27,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 
 | Branch/worktree | Purpose | File scope | Status |
 |---|---|---|---|
-| `qa/release-manager-20260612` / `.worktrees/qa-release-manager-20260612` | QA reconciliation and first implementation batch | `QA_TRACKER.md`, `docs/research/2026-06-12-qa-findings-action-list.md`, batch-specific files listed below | Active |
+| `qa/release-manager-20260612` / `.worktrees/qa-release-manager-20260612` | QA reconciliation and first implementation batch | `QA_TRACKER.md`, `docs/research/2026-06-12-qa-findings-action-list.md`, batch-specific files listed below | Open PR #949 |
 
 ## Batch Plan
 
