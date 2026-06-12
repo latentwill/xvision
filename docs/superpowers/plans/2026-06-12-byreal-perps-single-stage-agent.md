@@ -10,6 +10,62 @@
 
 ---
 
+## Execution status — 2026-06-12 (PR #1, branch `feat/byreal-perps-single-stage`)
+
+Phase 1 executed inline. **Three highest-value, well-isolated pieces landed and
+green**; two surfaces deferred after they proved more under-plumbed/risky than
+this plan assumed. Findings recorded below so the follow-up doesn't re-discover
+them.
+
+**DONE (committed, all tests passing):**
+
+- ✅ **Tasks 1+2 — filter perps indicators (dimension D).** 5 periodless
+  `IndicatorName` variants (`FundingRate`, `OpenInterest`, `MarkPrice`,
+  `MarkIndexBasis`, `LongShortRatio`) backed by 5 optional `Bar` fields, wired
+  through `IndicatorEngine` push/value + DSL parser. 5 tests.
+  - *Finding:* `Bar::new` takes **4 args**, not 6 (plan was wrong). The enum is
+    closed with exhaustive matches only in `xvision-filters` — full workspace
+    build confirms no downstream match broke.
+- ✅ **Tasks 5+6 — `ByrealPerpsExecutor` (dimension B, headline).** Venue-agnostic
+  `Executor` impl over a mockable `ByrealPerpsApi` subprocess seam
+  (`npx @byreal-io/byreal-perps-cli`, routes to Hyperliquid), `venue="byreal"`.
+  `submit`/`close_position`/`portfolio`, 5 mock-seam tests.
+  - *Finding:* `RiskDecision` has **no `approved()`/`vetoed()` constructors** — it
+    is a struct-variant enum; `Approved`/`Modified` carry a `warnings: Vec<String>`
+    field. Patched 3 **pre-existing-broken** Orderly test fixtures (1214/1747/1807)
+    that predate `warnings` and were blocking the execution test binary.
+  - *Finding:* `AssetSymbol` has no `from_ticker`; use `str::parse::<AssetSymbol>()`.
+- ✅ **Task 7 — Hyperliquid public perps feed (dimension C, partial).**
+  `parse_perp_snapshot` + `apply_to_onchain` (populates `OnchainPanel`) +
+  `fetch_perp_snapshot` against the public no-auth HL info endpoint. 3 tests.
+  - *Finding (blocks full wiring):* there is **no live (non-test) `MarketSnapshot`
+    build site** — every `OnchainPanel::default()` is a test fixture. The live
+    agent path uses `build_decision_seed` (`backtest.rs`), so the feed's live
+    call-site is `DecisionSeedInput` perps fields = **inside Task 4**. The clean
+    wiring API (`apply_to_onchain`) is shipped; the call-site is deferred with A.
+
+**DEFERRED (with the real reason):**
+
+- ⬜ **Task 8 — capability badge (F).** *Recon was wrong:* `StrategyListItem`
+  (`frontend/web/src/api/strategies.ts`) has **no `capabilities`/`skills` field**
+  in this checkout. The badge needs a **backend API change** to surface those on
+  the list item first — not the isolated frontend task originally scoped.
+- ⬜ **Tasks 3+4 — fold the Intern (A).** The invasive single-stage refactor
+  (5,000-line `backtest.rs` + `dispatch_capability.rs` + eval baselines).
+  Deprioritized for risk/budget. The feed's live call-site (above) and any
+  perps-in-agent-context work gate on Task 4's `DecisionSeedInput` change.
+
+**PHASE 2 / STRETCH — not started.** Tasks 9–11 (positions perps fields) and all
+stretch items remain. Note: `ByrealPosition` (Task 5) already carries `leverage`,
+`liq_price`, `funding_paid_usd`, `unrealized_pnl_usd`, so Task 9's executor-side
+parsing is partly pre-built.
+
+**Recommended follow-up order:** Task 4 (`DecisionSeedInput` perps fields →
+unblocks feed live-wiring + agent context) → Task 3 (retire Intern stage) →
+Task 8 backend field + badge → Task 9 positions.
+
+---
+
 ## Pre-flight (do once, before Task 1)
 
 - [ ] Create an isolated worktree (REQUIRED — never branch in the main checkout):
