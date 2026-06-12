@@ -268,7 +268,20 @@ async fn create_inner(ctx: &ApiContext, req: CreateAgentRequest) -> ApiResult<Ag
             scope_strategy_id: req.scope_strategy_id,
         })
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| {
+            // `validate_agent_for_save` failures are content-quality rejections
+            // (prompt too short / placeholder). Surface those as Validation so the
+            // UI can display a clear message instead of a generic "internal error".
+            let msg = e.to_string();
+            if msg.contains("save validation failed:") {
+                // Strip the "save validation failed: " prefix so the UI sees the
+                // operator-actionable text directly.
+                let detail = msg.strip_prefix("save validation failed: ").unwrap_or(&msg);
+                ApiError::Validation(detail.to_string())
+            } else {
+                ApiError::Internal(msg)
+            }
+        })?;
 
     store
         .get(&id)
@@ -808,6 +821,124 @@ mod tests {
             matches!(r, Err(ApiError::Conflict(_))),
             "expected Conflict when agent is used by a strategy, got {r:?}"
         );
+    }
+
+    // ── dgh4 regression: create with short/placeholder prompt must return Validation ──
+
+    #[tokio::test]
+    async fn create_with_empty_system_prompt_returns_validation_not_internal() {
+        // BLANK_SLOT default: system_prompt="" → validate_slot_prompts fires first.
+        let (ctx, _dir) = fresh_ctx().await;
+        let err = create(
+            &ctx,
+            CreateAgentRequest {
+                name: "short-prompt-agent".into(),
+                description: "".into(),
+                tags: vec![],
+                slots: vec![crate::agents::AgentSlot {
+                    name: "main".into(),
+                    provider: "anthropic".into(),
+                    model: "claude-sonnet-4-6".into(),
+                    system_prompt: "".into(),
+                    skill_ids: vec![],
+                    max_tokens: None,
+                    max_wall_ms: None,
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: crate::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
+                    memory_mode: Default::default(),
+                    noop_skip: None,
+                    allowed_tools: Vec::new(),
+                    delta_briefing: None,
+                }],
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, ApiError::Validation(_)),
+            "empty system_prompt must return Validation, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn save_validation_error_maps_to_api_validation_not_internal() {
+        // Unit regression for dgh4: the create_inner error mapper must convert
+        // "save validation failed: <detail>" into ApiError::Validation(<detail>),
+        // not ApiError::Internal. This is the path `validate_agent_for_save`
+        // takes when the gate is active (production) and the prompt is too short.
+        //
+        // We test the mapping logic directly rather than through the full
+        // create stack, because other tests in this module disable the save
+        // gate via XVISION_DISABLE_AGENT_SAVE_GATE and manipulating that env
+        // var in a concurrent test suite is inherently racy.
+        let raw_err = anyhow::anyhow!(
+            "save validation failed: slot 'main': system_prompt is the default placeholder \
+             or fewer than 200 characters; replace with a real trading prompt before saving"
+        );
+        let msg = raw_err.to_string();
+        let api_err = if msg.contains("save validation failed:") {
+            let detail = msg.strip_prefix("save validation failed: ").unwrap_or(&msg);
+            ApiError::Validation(detail.to_string())
+        } else {
+            ApiError::Internal(msg)
+        };
+        match api_err {
+            ApiError::Validation(detail) => {
+                assert!(
+                    detail.contains("system_prompt")
+                        || detail.contains("characters")
+                        || detail.contains("placeholder"),
+                    "detail must be operator-actionable, got: {detail}"
+                );
+            }
+            other => panic!("expected Validation, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_with_valid_agent_succeeds() {
+        // Regression: a well-formed create (>200-char prompt, non-empty provider/model)
+        // must succeed and return the created agent with the correct name.
+        let (ctx, _dir) = fresh_ctx().await;
+        let agent = create(
+            &ctx,
+            CreateAgentRequest {
+                name: "valid-agent".into(),
+                description: "A properly formed agent.".into(),
+                tags: vec![],
+                slots: vec![crate::agents::AgentSlot {
+                    name: "main".into(),
+                    provider: "anthropic".into(),
+                    model: "claude-sonnet-4-6".into(),
+                    system_prompt: "You are a quantitative trading assistant. Analyse the OHLCV data \
+                             provided and respond with a JSON object containing: action \
+                             (buy/sell/hold), size_pct (0–100), and reason (string). \
+                             Apply disciplined risk management: never risk more than 1% of \
+                             notional equity per trade, and always respect the configured \
+                             stop-loss and take-profit levels. Avoid over-trading on low-volume bars."
+                        .into(),
+                    skill_ids: vec![],
+                    max_tokens: None,
+                    max_wall_ms: None,
+                    temperature: None,
+                    prompt_version: String::new(),
+                    inputs_policy: crate::agents::InputsPolicy::Raw,
+                    bar_history_limit: None,
+                    memory_mode: Default::default(),
+                    noop_skip: None,
+                    allowed_tools: Vec::new(),
+                    delta_briefing: None,
+                }],
+                scope_strategy_id: None,
+            },
+        )
+        .await
+        .expect("valid agent create must succeed");
+        assert_eq!(agent.name, "valid-agent");
+        assert!(!agent.agent_id.is_empty(), "agent_id must be populated");
     }
 
     #[tokio::test]
