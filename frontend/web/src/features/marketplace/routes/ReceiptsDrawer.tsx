@@ -34,7 +34,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
       <button
         data-testid="receipts-toggle"
         onClick={onToggle}
-        className="w-full flex items-center gap-2.5 px-7 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
+        className="w-full flex items-center gap-2.5 px-7 py-3.5 text-left hover:bg-surface-hover transition-colors"
       >
         {/* Chevron — right when closed, down when open */}
         <svg
@@ -55,7 +55,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
             strokeLinejoin="round"
           />
         </svg>
-        <span className="text-[13.5px] font-medium text-foreground">
+        <span className="text-[13.5px] font-medium text-text">
           {open ? "Hide" : "View"} on-chain receipts
         </span>
         <span className="font-mono text-[11px] text-text-3">
@@ -86,7 +86,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
         >
           {/* Identity NFT & manifest */}
           <div className="rounded-md border border-border bg-surface-card p-4">
-            <div className="text-[12px] font-medium text-foreground mb-0.5">
+            <div className="text-[12px] font-medium text-text mb-0.5">
               Identity NFT &amp; manifest
             </div>
             <div className="font-mono text-[10.5px] text-text-3 mb-3">
@@ -124,7 +124,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
                           ? "text-text-3"
                           : tone === "link"
                             ? "text-info underline decoration-dotted"
-                            : "text-foreground",
+                            : "text-text",
                     ].join(" ")}
                   >
                     {val}
@@ -142,7 +142,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
           {onChain.attestations.length > 0 && (
           <div className="rounded-md border border-border bg-surface-card">
             <div className="px-4 py-3 border-b border-border">
-              <span className="text-[12px] font-medium text-foreground">
+              <span className="text-[12px] font-medium text-text">
                 Attestation verdicts
               </span>
               <span className="ml-2 font-mono text-[10.5px] text-text-3">
@@ -168,7 +168,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
                     {att.verdict}
                   </span>
                   <span className="font-mono text-[11px] text-text-2">{att.attester}</span>
-                  <span className="font-mono text-[11px] text-foreground ml-auto">
+                  <span className="font-mono text-[11px] text-text ml-auto">
                     → {att.targetVersion}
                   </span>
                   <span className="font-mono text-[10.5px] text-text-3">{att.at}</span>
@@ -181,7 +181,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
           {/* Anchor history — full width */}
           <div className="rounded-md border border-border bg-surface-card col-span-2">
             <div className="px-4 py-3 border-b border-border">
-              <span className="text-[12px] font-medium text-foreground">Anchor history</span>
+              <span className="text-[12px] font-medium text-text">Anchor history</span>
               <span className="ml-2 font-mono text-[10.5px] text-text-3">
                 {onChain.anchors.length} events
               </span>

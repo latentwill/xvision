@@ -156,10 +156,16 @@ export function mapListingRow(
   const price = priceUsdcOrNull(l.priceUSDC, l.tier);
   const acceptsX402 =
     (price ?? 0) > 0 || (l.sales ?? []).some((s) => s.purchasePath === 1);
+  // QA11: agent.id is always present (it is the on-chain entity id); use it
+  // as the seed with a defensive fallback to the listing id in case of an
+  // empty value from a future schema change.
+  const genArtSeed = l.agent.id || l.id;
   return {
     id: l.id,
     lineageId: l.agent.id,
     version: "v1", // off-chain: no version on-chain (manifest may refine)
+    // QA9: populate name from the manifest when present.
+    name: meta?.name,
     creator: { address: l.agent.owner },
     model: meta?.model ?? "—", // manifest
     style: meta?.style ?? "—", // manifest
@@ -173,7 +179,7 @@ export function mapListingRow(
     verification: verificationOf(l.agent),
     acceptsX402,
     clones: 0, // off-chain: no clone event indexed
-    genArtSeed: l.agent.id, // deterministic seed from the agent id
+    genArtSeed, // deterministic seed from the agent id
   };
 }
 

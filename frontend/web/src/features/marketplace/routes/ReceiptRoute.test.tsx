@@ -1,5 +1,6 @@
 // src/features/marketplace/routes/ReceiptRoute.test.tsx
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -43,17 +44,27 @@ function renderWithQuery(path: string) {
 }
 
 describe("ReceiptRoute", () => {
-  it("renders the success header with strategy id from fixture", async () => {
+  it("renders 'Acquired' in the success header for a paid receipt", async () => {
     renderWithQuery("/marketplace/receipts/0xdemo-tx");
-    expect(await screen.findByText(/You bought/)).toBeInTheDocument();
-    // btc-momentum-v3 appears in header, license card, and OG card — use findAllByText
-    const matches = await screen.findAllByText("btc-momentum-v3");
+    // fixture pricePaidUsdc=49 > 0, so header says "Acquired" with the display
+    // name (not the raw URL slug): "Acquired BTC Momentum v3".
+    expect(await screen.findByText(/Acquired BTC Momentum v3/)).toBeInTheDocument();
+    // The display name appears in the header and the licence STRATEGY row.
+    const matches = await screen.findAllByText("BTC Momentum v3");
     expect(matches.length).toBeGreaterThan(0);
+    // The raw URL slug is never shown as the title.
+    expect(screen.queryByText("btc-momentum-v3")).not.toBeInTheDocument();
+  });
+
+  it("does not say 'You bought' in the success header", async () => {
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    await screen.findByText(/Acquired/);
+    expect(screen.queryByText(/You bought/)).toBeNull();
   });
 
   it("renders the fee breakdown line with price, token id, and net-to-creator", async () => {
     renderWithQuery("/marketplace/receipts/0xdemo-tx");
-    // these values appear in multiple panels (header, license card, OG card preview)
+    // these values appear in multiple panels (header, license card)
     const priceMatches = await screen.findAllByText(/49 USDC/);
     expect(priceMatches.length).toBeGreaterThan(0);
     const tokenMatches = await screen.findAllByText(/#0184/);
@@ -62,17 +73,63 @@ describe("ReceiptRoute", () => {
     expect(netMatches.length).toBeGreaterThan(0);
   });
 
-  it("renders a TxChip with the receipt txHash", async () => {
+  it("paid row in license card shows price only (no fee parenthetical)", async () => {
     renderWithQuery("/marketplace/receipts/0xdemo-tx");
-    // TxChip renders the hash as a link; fixture txHash is "0xdemo-tx"
+    await screen.findByText(/Acquired/);
+    // The paid row value is "49 USDC" without fee breakdown
+    expect(screen.queryByText(/5% fee/)).toBeNull();
+    expect(screen.queryByText(/2\.45/)).toBeNull();
+  });
+
+  it("renders a TxChip explorer link with the receipt txHash", async () => {
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    // TxChip with label="View on explorer" renders the hash as a link
     expect(await screen.findByRole("link", { name: /0xdemo-tx/ })).toBeInTheDocument();
   });
 
-  it("renders all three panel headings", async () => {
+  it("explorer link points at explorer.sepolia.mantle.xyz (via TxChip, QA16)", async () => {
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    const link = await screen.findByRole("link", { name: /0xdemo-tx/ });
+    expect(link.getAttribute("href")).toContain("explorer.sepolia.mantle.xyz");
+    expect(link.getAttribute("href")).not.toContain("mantlescan.xyz");
+  });
+
+  it("renders License NFT and Install in your XVN panel headings", async () => {
     renderWithQuery("/marketplace/receipts/0xdemo-tx");
     expect(await screen.findByText(/License NFT/i)).toBeInTheDocument();
     expect(await screen.findByText(/Install in your XVN/i)).toBeInTheDocument();
-    expect(await screen.findByText(/Share/i)).toBeInTheDocument();
+  });
+
+  it("renders 2-column layout (no 380px third column)", async () => {
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    await screen.findByText(/Acquired/);
+    // The body grid should be 320px 1fr only — no '380px' in gridTemplateColumns
+    const grids = document.querySelectorAll("[style*='grid']");
+    for (const el of grids) {
+      expect((el as HTMLElement).style.gridTemplateColumns).not.toContain("380px");
+    }
+  });
+
+  it("Share collapsed by default — collapse panel is not shown initially", async () => {
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    await screen.findByText(/Acquired/);
+    // OG preview should not be visible in collapsed state
+    expect(document.querySelector("[data-og-preview]")).toBeNull();
+  });
+
+  it("Share accordion expands on 'Customize post' click", async () => {
+    const user = userEvent.setup();
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    await screen.findByText(/Acquired/);
+    const customizeBtn = screen.getByRole("button", { name: /Customize post/i });
+    await user.click(customizeBtn);
+    // OG preview should now be visible
+    expect(document.querySelector("[data-og-preview]")).not.toBeNull();
+  });
+
+  it("renders inline share strip with 'Share this acquisition' label", async () => {
+    renderWithQuery("/marketplace/receipts/0xdemo-tx");
+    expect(await screen.findByText(/Share this acquisition/i)).toBeInTheDocument();
   });
 
   it("shows loading state before receipt resolves", () => {

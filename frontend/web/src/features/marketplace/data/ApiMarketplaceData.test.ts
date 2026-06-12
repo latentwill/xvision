@@ -9,6 +9,21 @@ import { FixtureMarketplaceData, type MarketplaceData } from "./MarketplaceData"
 import { defaultFilterState } from "./filter";
 import type { ListingDetail } from "./types";
 
+// Mock chain so getViewer tests don't need real wallet state.
+vi.mock("../lib/chain", () => ({
+  currentAddress: vi.fn(async () => null),
+  ensureMantleSepolia: vi.fn(),
+  usdcBalance: vi.fn(),
+  signTransferAuthorization: vi.fn(),
+  approveUsdc: vi.fn(),
+  buyDirect: vi.fn(),
+  getContracts: vi.fn(),
+  faucetUsdc: vi.fn(),
+}));
+
+import * as chain from "../lib/chain";
+const mockedChain = vi.mocked(chain);
+
 // One on-chain listing as the backend indexer serves it.
 const indexedListing = {
   listing_id: 3,
@@ -43,6 +58,14 @@ const freeListing = {
   attestation_count: 0,
   units_sold: 0,
   earned_usdc: 0,
+};
+
+// Listing with an empty gen_art_seed — should fall back to String(listing_id).
+const noSeedListing = {
+  ...indexedListing,
+  listing_id: 5,
+  gen_art_seed: "",
+  name: "No Seed",
 };
 
 function mockOkJson(body: unknown) {
@@ -105,6 +128,8 @@ describe("ApiMarketplaceData.listListings", () => {
     expect(sealed.sharpe).toBe(0);
     expect(sealed.assets).toEqual([]);
     expect(sealed.genArtSeed).toBe("seed-xyz");
+    // QA9: name field populated from IndexedListing.name
+    expect(sealed.name).toBe("BTC Momentum");
 
     const open = rows.find((r) => r.id === "4")!;
     expect(open.tier).toBe("open");
@@ -112,13 +137,23 @@ describe("ApiMarketplaceData.listListings", () => {
     expect(open.lineageId).toBe("4"); // empty agent_id falls back to listing id
     expect(open.verification).toBe("unverified"); // zero attestations
     expect(open.buyers).toEqual({ humans: 0, agents: 0 });
+    expect(open.name).toBe("Open One");
+  });
+
+  it("QA11: genArtSeed falls back to String(listing_id) when gen_art_seed is empty", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [noSeedListing], total: 1 }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const { rows } = await api.listListings(defaultFilterState());
+    expect(rows[0].genArtSeed).toBe("5");
   });
 });
 
 describe("ApiMarketplaceData.getListing", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("maps the detail honestly: real chain fields, zeroed metrics, empty activity", async () => {
+  it("maps the detail honestly: real chain fields, zeroed metrics, empty activity (sealed tier — no bundle)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       mockOkJson(indexedListing),
     );
@@ -128,6 +163,7 @@ describe("ApiMarketplaceData.getListing", () => {
 
     expect(d.id).toBe("3");
     expect(d.genArtSeed).toBe("seed-xyz");
+    // Sealed tier: promise falls back to chain metadata name (no bundle fetch)
     expect(d.promise).toBe("BTC Momentum"); // chain metadata name
     expect(d.verification).toBe("verified"); // attestation_count 2
     expect(d.buyers).toEqual({ humans: 3, agents: 0 }); // units_sold approximation
@@ -149,7 +185,91 @@ describe("ApiMarketplaceData.getListing", () => {
     expect(d.onChain.trades).toEqual([]);
   });
 
-  it("falls back to the fixture client on 404", async () => {
+  it("open-tier: enriches promise/name/assets from the bundle manifest", async () => {
+    const openIndexed = { ...indexedListing, listing_id: 4, tier: 0 };
+    const bundleResponse = {
+      listing_id: 4,
+      content_uri: "ipfs://bafy456",
+      verified: true,
+      manifest: {
+        manifest: {
+          display_name: "ETH Momentum Pro",
+          plain_summary: "Trades ETH breakouts on 15m candles.",
+          asset_universe: ["ETH/USD", "ETH/BTC"],
+        },
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) return mockOkJson(bundleResponse);
+      return mockOkJson(openIndexed);
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const d = await api.getListing("4");
+
+    // promise from plain_summary
+    expect(d.promise).toBe("Trades ETH breakouts on 15m candles.");
+    // name from display_name
+    expect(d.name).toBe("ETH Momentum Pro");
+    // assets deduped from asset_universe ("ETH/USD" and "ETH/BTC" both → "ETH")
+    expect(d.assets).toEqual(["ETH"]);
+  });
+
+  it("open-tier: tolerates bundle fetch failure — detail page must not throw", async () => {
+    const openIndexed = { ...indexedListing, listing_id: 4, tier: 0, name: "Fallback Name" };
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) return Promise.reject(new TypeError("network error"));
+      return mockOkJson(openIndexed);
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const d = await api.getListing("4");
+
+    // No throw; falls back to chain metadata
+    expect(d.id).toBe("4");
+    // promise falls back to l.name when manifest unavailable
+    expect(d.promise).toBe("Fallback Name");
+  });
+
+  it("open-tier: memoizes the bundle so repeat getListing calls fetch the bundle only once", async () => {
+    const openIndexed = { ...indexedListing, listing_id: 4, tier: 0 };
+    const bundleResponse = {
+      listing_id: 4,
+      content_uri: "ipfs://bafy456",
+      verified: true,
+      manifest: { manifest: { display_name: "Cached", plain_summary: "cached desc" } },
+    };
+    let bundleCallCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) { bundleCallCount++; return mockOkJson(bundleResponse); }
+      return mockOkJson(openIndexed);
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    await api.getListing("4");
+    await api.getListing("4");
+
+    expect(bundleCallCount).toBe(1); // second call uses cache
+  });
+
+  it("sealed-tier: never fetches the bundle manifest (no readable manifest pre-purchase)", async () => {
+    let bundleFetched = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) { bundleFetched = true; return mockOkJson({}); }
+      return mockOkJson(indexedListing); // tier: 1 (sealed)
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    await api.getListing("3");
+
+    expect(bundleFetched).toBe(false);
+  });
+
+  it("falls back to the fixture client on 404 for slug (non-numeric) ids", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       mockErrorJson(404, { code: "not_found", message: "listing not found" }),
     );
@@ -161,6 +281,19 @@ describe("ApiMarketplaceData.getListing", () => {
     const d = await api.getListing("btc-momentum-v3");
     expect(spy).toHaveBeenCalledWith("btc-momentum-v3");
     expect(d.id).toBe("btc-momentum-v3");
+  });
+
+  it("QA11: throws (no fixture fallback) for numeric on-chain id that 404s", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockErrorJson(404, { code: "not_found", message: "listing not found" }),
+    );
+
+    const fallback = makeFallback();
+    const spy = vi.spyOn(fallback, "getListing");
+    const api = new ApiMarketplaceData(fallback);
+
+    await expect(api.getListing("999")).rejects.toThrow();
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 
@@ -182,21 +315,98 @@ describe("ApiMarketplaceData.getStats", () => {
   });
 });
 
+describe("ApiMarketplaceData.dataSource", () => {
+  it("exposes dataSource = 'api'", () => {
+    const api = new ApiMarketplaceData(makeFallback());
+    expect(api.dataSource).toBe("api");
+  });
+});
+
+describe("ApiMarketplaceData.getViewer", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("QA1: returns isConnected:false when no wallet is connected", async () => {
+    mockedChain.currentAddress.mockResolvedValue(null);
+    const api = new ApiMarketplaceData(makeFallback());
+    const viewer = await api.getViewer();
+    expect(viewer.isConnected).toBe(false);
+    expect(viewer.createdListingIds).toEqual([]);
+    expect(viewer.ownedListingIds).toEqual([]);
+    expect(viewer.address).toBeUndefined();
+  });
+
+  it("QA1: returns isConnected:true with address when wallet is connected", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+    const api = new ApiMarketplaceData(makeFallback());
+    const viewer = await api.getViewer();
+    expect(viewer.isConnected).toBe(true);
+    expect(viewer.address).toBe(ADDR);
+    expect(viewer.createdListingIds).toEqual([]);
+    expect(viewer.ownedListingIds).toEqual([]);
+  });
+
+  it("QA1: does NOT return fixture @ed viewer", async () => {
+    mockedChain.currentAddress.mockResolvedValue(null);
+    const api = new ApiMarketplaceData(makeFallback());
+    const viewer = await api.getViewer();
+    // The fixture viewer has @ed handle — the real client must not return it
+    expect(viewer.handle).toBeUndefined();
+  });
+});
+
+describe("ApiMarketplaceData.subscribePurchases", () => {
+  it("QA1: returns a no-op cleanup function — no fake purchase events", () => {
+    const api = new ApiMarketplaceData(makeFallback());
+    const events: unknown[] = [];
+    const cleanup = api.subscribePurchases((e) => events.push(e));
+    expect(typeof cleanup).toBe("function");
+    // No events emitted synchronously
+    expect(events).toHaveLength(0);
+    // Cleanup is callable without error
+    expect(() => cleanup()).not.toThrow();
+  });
+});
+
+describe("ApiMarketplaceData.getSlices", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("QA1: computes live slice counts from real listing rows", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing, freeListing], total: 2 }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const slices = await api.getSlices();
+    // Slices should have real (computed) counts, not fixture literals like 1247
+    expect(slices.length).toBeGreaterThan(0);
+    // Every count is a number
+    for (const s of slices) {
+      expect(typeof s.count).toBe("number");
+    }
+    // The "free" slice should match the open-tier row
+    const freeSlice = slices.find((s) => s.id === "free");
+    expect(freeSlice).toBeDefined();
+    // freeListing has tier=0 (open) and return30dPct=0; sealed listing doesn't match "free"
+    // The count is the real computed value from our two test rows
+    expect(freeSlice!.count).toBe(1); // only freeListing matches tier=["open"]
+  });
+});
+
 describe("ApiMarketplaceData delegation", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("delegates getSlices / getViewer (and the rest) to the fallback", async () => {
+  it("delegates getSlices to compute live counts (not fallback)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing], total: 1 }),
+    );
     const fallback = makeFallback();
     const slicesSpy = vi.spyOn(fallback, "getSlices");
-    const viewerSpy = vi.spyOn(fallback, "getViewer");
     const api = new ApiMarketplaceData(fallback);
 
     const slices = await api.getSlices();
-    const viewer = await api.getViewer();
-    expect(slicesSpy).toHaveBeenCalled();
-    expect(viewerSpy).toHaveBeenCalled();
+    // getSlices is now overridden; fallback.getSlices should NOT be called
+    expect(slicesSpy).not.toHaveBeenCalled();
     expect(slices.length).toBeGreaterThan(0);
-    expect(viewer).toEqual(await fallback.getViewer());
   });
 });
 

@@ -27,7 +27,7 @@ export function IngredientBanner({ ingredients }: Props) {
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="text-[13.5px] text-foreground">
+        <p className="text-[13.5px] text-text">
           <strong>
             Ingredient check · {missing.length} of {ingredients.length} installed in your XVN.
           </strong>{" "}
@@ -69,7 +69,7 @@ export function IngredientBanner({ ingredients }: Props) {
       </div>
 
       {/* TODO(install-flow): no navigation target in F2 */}
-      <button className="flex-shrink-0 px-3 py-1.5 rounded border border-border-strong text-[11.5px] font-medium text-text-2 hover:text-foreground hover:border-gold/50 transition-colors">
+      <button className="flex-shrink-0 px-3 py-1.5 rounded border border-border-strong text-[11.5px] font-medium text-text-2 hover:text-text hover:border-gold/50 transition-colors">
         Install missing
       </button>
     </div>

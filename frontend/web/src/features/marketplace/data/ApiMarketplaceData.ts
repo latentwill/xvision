@@ -22,7 +22,8 @@ import {
 } from "../lib/purchaseErrors";
 import { decryptSealedBundle } from "../lib/sealed";
 import { FixtureMarketplaceData, type MarketplaceData } from "./MarketplaceData";
-import { applyFilter } from "./filter";
+import { applyFilter, defaultFilterState } from "./filter";
+import { SLICES } from "./fixtures/slices";
 import { publishListing } from "./publish";
 import type {
   CreatorProfile, FilterState, Id, ListableStrategy, ListingDetail, ListingRow,
@@ -86,10 +87,29 @@ export function bundleCidFromContentUri(contentUri: string | undefined): string 
 }
 
 /**
+ * PublicManifest fields the marketplace surfaces from an open-tier bundle.
+ * All optional defensively — the bundle is author-supplied JSON.
+ * asset_universe entries are "BASE/QUOTE" pair strings, e.g. "ETH/USD".
+ */
+export interface PublicManifest {
+  display_name?: string;
+  plain_summary?: string;
+  asset_universe?: string[];
+  risk_preset_or_config?: unknown;
+  decision_cadence_minutes?: number;
+  creator?: string;
+  attested_with?: string[];
+  required_tools?: string[];
+}
+
+/**
  * `GET /api/marketplace/listings/:id/bundle` response. For OPEN listings this
  * carries `{verified, manifest}`; for SEALED listings it carries
  * `{encrypted:true, ciphertext, content_hash}` instead — the manifest is
  * undecryptable without satisfying the Lit gate.
+ *
+ * `manifest` is the canonical Strategy JSON; the human-readable fields live
+ * one level deeper at `manifest.manifest` (PublicManifest).
  */
 export interface BundleOut {
   listing_id: number;
@@ -98,7 +118,8 @@ export interface BundleOut {
   ciphertext?: string;
   content_hash?: string;
   verified?: boolean;
-  manifest?: unknown;
+  /** Full canonical Strategy JSON. PublicManifest is at manifest.manifest. */
+  manifest?: { manifest?: PublicManifest };
 }
 
 /** Fetch a listing's bundle (open manifest or sealed ciphertext). */
@@ -146,6 +167,9 @@ function toRow(l: IndexedListing): ListingRow {
     id: String(l.listing_id),
     lineageId: l.agent_id || String(l.listing_id),
     version: "v1",
+    // QA9: populate name from the IndexedListing.name field so the browse
+    // entry can display a human-readable title instead of the raw id.
+    name: l.name || undefined,
     creator: { address: l.seller },
     model: "",
     style: l.symmetry,
@@ -164,7 +188,9 @@ function toRow(l: IndexedListing): ListingRow {
     verification: l.attestation_count > 0 ? "verified" : "unverified",
     acceptsX402: true,
     clones: 0,
-    genArtSeed: l.gen_art_seed,
+    // QA11: fallback to String(listing_id) when gen_art_seed is absent so
+    // the gen-art plate never renders with an empty seed.
+    genArtSeed: l.gen_art_seed || String(l.listing_id),
   };
 }
 
@@ -211,8 +237,45 @@ function toDetail(l: IndexedListing): ListingDetail {
   };
 }
 
+/**
+ * Convert an asset_universe entry ("ETH/USD", "BTC/USDT", …) to its base
+ * ticker ("ETH", "BTC"). Falls back to the original string when the separator
+ * is absent. Deduplication is handled at the call site.
+ */
+function assetTicker(pair: string): string {
+  const slash = pair.indexOf("/");
+  return slash > 0 ? pair.slice(0, slash) : pair;
+}
+
 export class ApiMarketplaceData implements MarketplaceData {
+  // W2-DATA: required by the MarketplaceData interface (added by W1-FOUNDATION).
+  readonly dataSource = "api" as const;
+
+  /** Memoised PublicManifest per numeric listing id. Failures cache as null. */
+  private readonly bundleCache = new Map<string, PublicManifest | null>();
+
   constructor(private fallback: MarketplaceData) {}
+
+  /**
+   * Fetch and memoize the PublicManifest for an OPEN-tier listing.
+   * Returns null when the listing is sealed (no manifest pre-purchase), when
+   * the fetch fails, or when the id is not numeric (fixture slug).
+   * Never throws — callers degrade gracefully when null.
+   */
+  private async fetchPublicManifest(listingId: string): Promise<PublicManifest | null> {
+    if (!/^\d+$/.test(listingId)) return null;
+    if (this.bundleCache.has(listingId)) return this.bundleCache.get(listingId)!;
+    try {
+      const bundle = await fetchBundle(listingId);
+      // Sealed bundles carry ciphertext, not a readable manifest.
+      const manifest = (!bundle.encrypted && bundle.manifest?.manifest) || null;
+      this.bundleCache.set(listingId, manifest);
+      return manifest;
+    } catch {
+      this.bundleCache.set(listingId, null);
+      return null;
+    }
+  }
 
   async listListings(f: FilterState) {
     const out = await apiFetch<{ items: IndexedListing[]; total: number }>(
@@ -226,10 +289,28 @@ export class ApiMarketplaceData implements MarketplaceData {
       const l = await apiFetch<IndexedListing>(
         `/api/marketplace/listings/${encodeURIComponent(idOrName)}`,
       );
-      return toDetail(l);
-    } catch {
-      // Unknown on-chain id (404) or indexer unreachable — fixture detail
-      // pages (slug ids) keep working.
+      const detail = toDetail(l);
+      // For OPEN-tier listings, enrich the detail with the verified bundle
+      // manifest. Tolerate failure — manifest unavailable must not throw the
+      // detail page down.
+      if (l.tier === 0) {
+        const manifest = await this.fetchPublicManifest(String(l.listing_id));
+        if (manifest) {
+          if (manifest.plain_summary) detail.promise = manifest.plain_summary;
+          if (manifest.display_name) detail.name = manifest.display_name;
+          if (manifest.asset_universe && manifest.asset_universe.length > 0) {
+            // Deduplicate base tickers ("ETH/USD","ETH/BTC" both → "ETH").
+            detail.assets = [...new Set(manifest.asset_universe.map(assetTicker))];
+          }
+        }
+      }
+      return detail;
+    } catch (e) {
+      // QA11: for purely-numeric (on-chain) ids that 404, rethrow so the
+      // caller surfaces the designed not-found state rather than silently
+      // serving a wrong-seed fixture. Slug ids (non-numeric) may still fall
+      // back to the fixture client for demo/dev use.
+      if (/^\d+$/.test(idOrName)) throw e;
       return this.fallback.getListing(idOrName);
     }
   }
@@ -245,10 +326,40 @@ export class ApiMarketplaceData implements MarketplaceData {
     return publishListing(d);
   }
 
-  // ——— everything else delegates to the fixture client ———
-  getSlices(): Promise<Slice[]> {
-    return this.fallback.getSlices();
+  // ——— overrides with live/honest implementations ———
+
+  // QA1: return real slice counts by recomputing each slice's count from
+  // actual listing rows. Slice definitions (id/label/hint/filter) come from
+  // SLICES; counts are computed by applying each slice's filter to live rows.
+  async getSlices(): Promise<Slice[]> {
+    const out = await apiFetch<{ items: IndexedListing[]; total: number }>(
+      "/api/marketplace/listings",
+    );
+    const rows = out.items.map(toRow);
+    return SLICES.map((slice) => ({
+      ...slice,
+      count: applyFilter(rows, { ...defaultFilterState(), ...slice.filter } as FilterState).matched,
+    }));
   }
+
+  // QA1: return a real wallet-based viewer instead of delegating to the
+  // fixture @ed viewer. When no wallet is connected, return isConnected:false.
+  // The wallet→listing join is deferred; listing id arrays are empty for now.
+  async getViewer(): Promise<Viewer> {
+    const address = await currentAddress();
+    if (!address) {
+      return { isConnected: false, createdListingIds: [], ownedListingIds: [] };
+    }
+    return { isConnected: true, address, createdListingIds: [], ownedListingIds: [] };
+  }
+
+  // QA1: return a no-op cleanup instead of delegating to the fixture 5-second
+  // fake purchase feed. No fake purchase events in the real client.
+  subscribePurchases(_cb: (e: PurchaseEvent) => void): () => void {
+    return () => {};
+  }
+
+  // ——— everything else delegates to the fixture client ———
   getCreator(handleOrAddress: string): Promise<CreatorProfile> {
     return this.fallback.getCreator(handleOrAddress);
   }
@@ -317,9 +428,6 @@ export class ApiMarketplaceData implements MarketplaceData {
         notificationHint: "",
       },
     };
-  }
-  getViewer(): Promise<Viewer> {
-    return this.fallback.getViewer();
   }
   listListableStrategies(): Promise<ListableStrategy[]> {
     return this.fallback.listListableStrategies();
@@ -391,9 +499,6 @@ export class ApiMarketplaceData implements MarketplaceData {
   }
   cloneIntent(listingId: Id): Promise<TxRef> {
     return this.fallback.cloneIntent(listingId);
-  }
-  subscribePurchases(cb: (e: PurchaseEvent) => void): () => void {
-    return this.fallback.subscribePurchases(cb);
   }
 }
 

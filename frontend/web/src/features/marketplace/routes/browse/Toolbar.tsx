@@ -1,7 +1,12 @@
 // src/features/marketplace/routes/browse/Toolbar.tsx
+// The marketplace browse toolbar (spec 3.1B). Sort is wired to SignalSelectMenu
+// (the project-approved portal dropdown with built-in click-outside + Escape —
+// NOT a focus-stealing modal, QA5). The Filters button toggles the inline
+// filter accordion (no absolute overlay). A segmented List | Index view toggle.
+import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import type { FilterState, SortKey } from "@/features/marketplace/data/types";
 
-const SORT_LABELS: Record<SortKey, string> = {
+export const SORT_LABELS: Record<SortKey, string> = {
   return30d: "30d return",
   sharpe: "Sharpe",
   buyers: "Buyers",
@@ -15,20 +20,64 @@ const SEGMENTS: { key: FilterState["segment"]; label: string }[] = [
   { key: "mine", label: "Mine" },
 ];
 
+export type BrowseView = "list" | "index";
+
+const VIEW_LABELS: Record<BrowseView, string> = {
+  list: "List",
+  index: "Index",
+};
+
 interface ToolbarProps {
   filter: FilterState;
   setFilter: (patch: Partial<FilterState>) => void;
   filterCount: number;
-  onOpenDrawer: () => void;
+  /** Toggle the inline filter accordion (no popup). */
+  onToggleFilters: () => void;
+  filtersOpen: boolean;
   matchCount: number;
+  view: BrowseView;
+  setView: (v: BrowseView) => void;
+  /**
+   * When false (real client whose return/sharpe data is all zero), omit the
+   * return30d + sharpe sort options so we never sort on zeros (spec 3.1B).
+   */
+  allowPerformanceSort: boolean;
+  /**
+   * Fixture/demo client. When the active sort is a performance sort, annotate
+   * the Sort control with a quiet DEMO tag so the seeded-RNG-driven ordering is
+   * never presented as authoritative live data.
+   */
+  isDemo?: boolean;
 }
 
-export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: ToolbarProps) {
+export function Toolbar({
+  filter,
+  setFilter,
+  filterCount,
+  onToggleFilters,
+  filtersOpen,
+  view,
+  setView,
+  allowPerformanceSort,
+  isDemo = false,
+}: ToolbarProps) {
+  // Build the sort options, dropping performance sorts when they'd sort on zeros.
+  const sortKeys: SortKey[] = allowPerformanceSort
+    ? ["return30d", "sharpe", "buyers", "mostCloned", "newest"]
+    : ["newest", "buyers", "mostCloned"];
+  const sortOptions = sortKeys.map((k) => ({ value: k, label: SORT_LABELS[k] }));
+  // If the active sort was hidden (performance sort on a zeroed client), fall
+  // back to "newest" for the menu's displayed value.
+  const sortValue = sortKeys.includes(filter.sort) ? filter.sort : "newest";
+  // On the demo client, performance-based ordering is driven by illustrative
+  // returns — surface a quiet DEMO tag so it never reads as authoritative.
+  const showSortDemoTag = isDemo && (sortValue === "return30d" || sortValue === "sharpe");
+
   return (
     <div className="relative border-b border-border">
-      <div className="px-7 py-3.5 flex items-center gap-3 flex-wrap">
+      <div className="px-4 sm:px-7 py-3.5 flex items-center gap-2.5 sm:gap-3 flex-wrap">
         {/* Segmented: Trending | New | Mine */}
-        <div className="inline-flex border border-border-strong rounded bg-surface-elev p-0.5">
+        <div className="inline-flex border border-border rounded overflow-hidden order-1">
           {SEGMENTS.map((s) => {
             const isActive = filter.segment === s.key;
             return (
@@ -38,10 +87,10 @@ export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: Toolba
                 aria-label={s.label}
                 onClick={() => setFilter({ segment: s.key })}
                 className={[
-                  "px-3 py-1 rounded-[3px] text-[12px] font-semibold cursor-pointer transition-colors",
+                  "px-3 py-1 text-[12.5px] font-medium cursor-pointer transition-colors",
                   isActive
-                    ? "bg-gold text-[#001A0A]"
-                    : "bg-transparent text-text-2 hover:text-text",
+                    ? "bg-surface-elev text-text"
+                    : "text-text-3 hover:text-text-2",
                 ].join(" ")}
               >
                 {s.label}
@@ -50,8 +99,8 @@ export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: Toolba
           })}
         </div>
 
-        {/* Search */}
-        <div className="flex-1 min-w-[240px] max-w-[380px] flex items-center gap-2 px-2.5 py-1.5 border border-border-strong rounded bg-surface-elev">
+        {/* Search — full-width own row on mobile, inline flex-1 on desktop */}
+        <div className="order-last w-full sm:order-2 sm:w-auto sm:flex-1 sm:min-w-[240px] sm:max-w-[380px] flex items-center gap-2 px-2.5 py-1.5 border border-border rounded bg-surface-elev">
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-text-3 shrink-0" aria-hidden="true">
             <circle cx="6" cy="6" r="4" />
             <path d="M9.5 9.5l2.5 2.5" strokeLinecap="round" />
@@ -61,34 +110,44 @@ export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: Toolba
             placeholder="name · creator · tag"
             value={filter.search}
             onChange={(e) => setFilter({ search: e.target.value })}
-            className="flex-1 bg-transparent font-mono text-[12px] text-text-3 placeholder:text-text-3 outline-none"
+            className="flex-1 bg-transparent text-[12px] text-text placeholder:text-text-3 outline-none"
           />
-          <kbd className="ml-auto border border-border-strong rounded-[3px] font-mono text-[9.5px] text-text-3 px-1.5 py-0.5 tracking-[0.06em]">/</kbd>
+          <kbd className="ml-auto border border-border rounded font-mono text-[9.5px] text-text-3 px-1.5 py-0.5 tracking-[0.06em]">/</kbd>
         </div>
 
-        {/* Sort button */}
-        <button
-          type="button"
-          aria-label={`sort by ${SORT_LABELS[filter.sort]}`}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border-strong bg-surface-elev text-text-2 text-[12px] font-medium hover:border-border"
-        >
-          <span className="font-medium">Sort</span>
-          <span className="pl-1.5 ml-0.5 border-l border-border font-mono text-[11px] text-text-3">
-            {SORT_LABELS[filter.sort]}
-          </span>
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-            <path d="M2 4l3 3 3-3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        {/* Sort — wired to SignalSelectMenu (click-outside + Escape built in) */}
+        <div className="inline-flex items-center gap-1.5 order-2 sm:order-3">
+          <SignalSelectMenu
+            label="Sort"
+            value={sortValue}
+            options={sortOptions}
+            onChange={(v) => setFilter({ sort: v as SortKey })}
+          />
+          {showSortDemoTag && (
+            <span
+              data-testid="sort-demo-tag"
+              title="Demo ordering — returns are illustrative"
+              className="font-mono text-[8.5px] tracking-[0.04em] rounded border border-border bg-surface-elev px-1 py-0.5 text-text-3"
+            >
+              demo
+            </span>
+          )}
+        </div>
 
-        <span className="w-px h-[22px] bg-border" />
+        <span className="hidden sm:block w-px h-[22px] bg-border order-3 sm:order-4" />
 
-        {/* Filters button */}
+        {/* Filters — toggles the inline accordion (no overlay) */}
         <button
           type="button"
           aria-label="filters"
-          onClick={onOpenDrawer}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border border-border-strong bg-surface-elev text-text-2 text-[12px] font-medium hover:border-border"
+          aria-expanded={filtersOpen}
+          onClick={onToggleFilters}
+          className={[
+            "order-3 sm:order-5 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] font-medium transition-colors",
+            filtersOpen
+              ? "border-border-strong bg-surface-elev text-text"
+              : "border-border bg-surface-elev text-text-2 hover:border-border-strong hover:text-text",
+          ].join(" ")}
         >
           <span className="font-medium">Filters</span>
           {filterCount > 0 && (
@@ -103,18 +162,28 @@ export function Toolbar({ filter, setFilter, filterCount, onOpenDrawer }: Toolba
           </svg>
         </button>
 
-        {/* Save view (disabled until F4 slice-save) */}
-        {/* TODO(Phase F4/slice save): wire Save view to createSlice */}
-        <div className="ml-auto">
-          <button
-            type="button"
-            disabled
-            aria-label="save view"
-            title="Save view — available in a future phase"
-            className="opacity-40 inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-border-strong bg-transparent text-text-2 text-[12px] font-medium cursor-not-allowed"
-          >
-            Save view
-          </button>
+        {/* View toggle: List | Index */}
+        <div className="order-4 sm:order-6 ml-auto inline-flex border border-border rounded overflow-hidden">
+          {(["list", "index"] as BrowseView[]).map((v) => {
+            const isActive = view === v;
+            return (
+              <button
+                key={v}
+                type="button"
+                aria-label={`${v} view`}
+                aria-pressed={isActive}
+                onClick={() => setView(v)}
+                className={[
+                  "px-2.5 py-1 text-[12px] font-medium cursor-pointer transition-colors",
+                  isActive
+                    ? "bg-surface-elev text-text"
+                    : "text-text-3 hover:text-text-2",
+                ].join(" ")}
+              >
+                {VIEW_LABELS[v]}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

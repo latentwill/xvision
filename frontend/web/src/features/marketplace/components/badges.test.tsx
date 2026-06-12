@@ -15,9 +15,13 @@ describe("badges", () => {
     render(<AssetPill asset="WIF" />);
     expect(screen.getByText("WIF")).toBeInTheDocument();
   });
-  it("VerifiedBadge has an accessible title", () => {
+  it("VerifiedBadge renders the app-native 'Verified' chip with a backtest title", () => {
     render(<VerifiedBadge />);
-    expect(screen.getByTitle(/backtested/i)).toBeInTheDocument();
+    // App-native badge: bordered accent chip labeled "Verified" (see main).
+    expect(screen.getByText("Verified")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/backtested \+ live-paper data committed on chain/i),
+    ).toBeInTheDocument();
   });
   it("X402Badge labels x402", () => {
     render(<X402Badge />);

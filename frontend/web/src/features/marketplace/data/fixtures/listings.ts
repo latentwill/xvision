@@ -6,42 +6,49 @@ const vibe = { address: "0x9f12aa55bb77cc88dd99ee00ff11223344556677", handle: "@
 
 export const NAMED_LISTINGS: ListingRow[] = [
   {
-    id: "sol-strategist-pro", lineageId: "sol-strategist", version: "v4.2", creator: vibe,
+    id: "sol-strategist-pro", lineageId: "sol-strategist", version: "v4.2", name: "SOL Strategist Pro", creator: vibe,
     model: "Claude · Haiku 4.5", style: "Day", assets: ["SOL"], return30dPct: 89.4, sharpe: 1.84,
     buyers: { humans: 412, agents: 38 }, priceUsdc: 79, tier: "sealed", verification: "verified",
     acceptsX402: true, clones: 21, transferableLicense: false, genArtSeed: "sol-strategist-12fa",
   },
   {
-    id: "meme-radar", lineageId: "meme-radar", version: "v1.0", creator: { address: "0xdead00beef", handle: "@degenray" },
+    id: "meme-radar", lineageId: "meme-radar", version: "v1.0", name: "Meme Radar", creator: { address: "0xdead00beef", handle: "@degenray" },
     model: "GPT-5", style: "Momentum", assets: ["DOGE", "SOL"], return30dPct: 124.8, sharpe: 0.92,
     buyers: { humans: 88, agents: 12 }, priceUsdc: null, tier: "open", verification: "unverified",
     acceptsX402: true, clones: 9, transferableLicense: true, genArtSeed: "meme-radar-77aa",
   },
   {
-    id: "doge-vol", lineageId: "doge-vol", version: "v1.1", creator: { address: "0xc0a4f3b2", handle: "@quantnext" },
+    id: "doge-vol", lineageId: "doge-vol", version: "v1.1", name: "DOGE Volatility", creator: { address: "0xc0a4f3b2", handle: "@quantnext" },
     model: "Gemini 3 Pro", style: "Swing", assets: ["DOGE"], return30dPct: -2.3, sharpe: -0.18,
     buyers: { humans: 12, agents: 0 }, priceUsdc: 29, tier: "sealed", verification: "unverified",
     acceptsX402: false, clones: 0, transferableLicense: false, genArtSeed: "doge-vol-3b22",
   },
   {
-    id: "btc-momentum-v3", lineageId: "btc-momentum", version: "v3.0", creator: ed,
+    id: "btc-momentum-v3", lineageId: "btc-momentum", version: "v3.0", name: "BTC Momentum v3", creator: ed,
     model: "Claude · Haiku 4.5", style: "Day", assets: ["BTC"], return30dPct: 47.2, sharpe: 1.31,
     buyers: { humans: 247, agents: 14 }, priceUsdc: 49, tier: "sealed", verification: "verified",
     acceptsX402: true, clones: 8, transferableLicense: false, genArtSeed: "btc-momentum-7a91-v3",
   },
   {
-    id: "btc-grid-v2", lineageId: "btc-grid", version: "v2.0", creator: ed,
+    id: "btc-grid-v2", lineageId: "btc-grid", version: "v2.0", name: "BTC Grid v2", creator: ed,
     model: "Claude · Haiku 4.5", style: "Mean-reversion", assets: ["BTC"], return30dPct: 31.4, sharpe: 1.12,
     buyers: { humans: 134, agents: 9 }, priceUsdc: 39, tier: "sealed", verification: "verified",
     acceptsX402: false, clones: 3, transferableLicense: false, genArtSeed: "btc-grid-6f5b",
   },
   {
-    id: "eth-mr-v2", lineageId: "eth-mr", version: "v2.0", creator: ed,
+    id: "eth-mr-v2", lineageId: "eth-mr", version: "v2.0", name: "ETH Mean-Reversion v2", creator: ed,
     model: "Claude · Haiku 4.5", style: "Mean-reversion", assets: ["ETH"], return30dPct: 12.8, sharpe: 0.74,
     buyers: { humans: 88, agents: 3 }, priceUsdc: 0, tier: "open", verification: "unverified",
     acceptsX402: false, clones: 0, transferableLicense: true, genArtSeed: "eth-mr-3b22",
   },
 ];
+
+// The curated demo collection — the small set the fixture client actually
+// serves to browse/stats/slices/leaderboard. Wall strats (below) are at-scale
+// validation fixtures only; they are NEVER part of the browse pool, because
+// every wall-strat slug has no detail fixture and would link to the designed
+// not-found page, undermining "Inspect freely".
+export const DEMO_LISTINGS: ListingRow[] = NAMED_LISTINGS;
 
 const WALL_ASSETS = ["BTC", "ETH", "SOL", "DOGE", "MNT", "AVAX"];
 const WALL_MODELS = ["Claude · Haiku 4.5", "GPT-5", "Gemini 3 Pro", "Llama 4"];
@@ -66,7 +73,12 @@ export function makeWallListings(n = 200): ListingRow[] {
   return out;
 }
 
-export const ALL_LISTINGS: ListingRow[] = [...NAMED_LISTINGS, ...makeWallListings()];
+// QA1: wall fixtures (200 seeded rows) are only included in dev builds so the
+// production client never shows placeholder data. In production, ALL_LISTINGS
+// is just NAMED_LISTINGS. Keep makeWallListings exported for dev use.
+export const ALL_LISTINGS: ListingRow[] = import.meta.env.DEV
+  ? [...NAMED_LISTINGS, ...makeWallListings()]
+  : [...NAMED_LISTINGS];
 
 export const LISTING_DETAILS: Record<string, ListingDetail> = {
   "btc-momentum-v3": {
@@ -125,3 +137,78 @@ export const LISTING_DETAILS: Record<string, ListingDetail> = {
     },
   },
 };
+
+// Synthesize a dignified ListingDetail from a ListingRow so EVERY curated
+// entry is inspectable in the demo (not just the one hand-authored detail).
+// Real on-chain listings ship their own backend detail; this is the demo-only
+// path that keeps "Inspect freely" honest across the full collection.
+// Performance is left as a designed empty record (no equity points, no trades)
+// so the detail page renders the honest "pending first live cycle" empty state
+// rather than a fabricated curve.
+export function synthDetailFromRow(row: ListingRow): ListingDetail {
+  const tokenId = `#${tokenId4(row.id)}`;
+  return {
+    ...row,
+    promise: `${row.assets.join("/")} ${row.style.toLowerCase()} strategy on ${row.model}.`,
+    metrics: {
+      return30dPct: row.return30dPct,
+      sharpe: row.sharpe,
+      winRatePct: 0,
+      maxDrawdownPct: 0,
+      avgDurationDays: 0,
+    },
+    paidToCreatorUsd: 0,
+    platformFeeBps: 500,
+    ingredients: [{ name: row.model, kind: "model", installed: false }],
+    variants: [
+      { version: row.version, parent: null, genArtSeed: row.genArtSeed, sharpe: row.sharpe, current: true },
+    ],
+    recentBuyers: [],
+    creatorOther: [],
+    equityCurve: { base: 1000, points: [] },
+    whatYouGet: ["Full prompts", "Agent topology + ordering", "Threshold values"],
+    whatYouDont: ["Creator's data sources", "Future updates without re-purchase"],
+    onChain: {
+      nft: {
+        tokenId,
+        lineageId: row.lineageId,
+        agentURI: `ipfs://${row.genArtSeed}`,
+        manifestHash: `blake3:${row.genArtSeed}`,
+        parentLineage: null,
+        bornAt: "2026-05-13T04:12:00Z",
+        operatorSig: `ed25519:${row.genArtSeed}`,
+        contract: "0xCa5522Be",
+        network: "mantle-sepolia",
+      },
+      attestations: [],
+      anchors: [],
+      trades: [],
+      tradesMeta: {
+        totalOnChain: 0,
+        lastAnchorAt: row.return30dPct ? "2026-05-26T12:30:00Z" : "",
+        receiptKind: "TradeBatch",
+        netPnlUsd: 0,
+        window: "7d",
+        anchorTx: "",
+      },
+    },
+  };
+}
+
+// Stable 4-digit NFT token id for a slug id.
+function tokenId4(id: string): string {
+  if (/^\d+$/.test(id)) return id.padStart(4, "0");
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return String(h % 10000).padStart(4, "0");
+}
+
+// Resolve a demo detail for a listing: prefer a hand-authored detail, otherwise
+// synthesize one from the curated row. Returns undefined when the id is not in
+// the curated collection at all (→ designed not-found state).
+export function getDemoDetail(idOrName: string): ListingDetail | undefined {
+  const explicit = LISTING_DETAILS[idOrName];
+  if (explicit) return explicit;
+  const row = DEMO_LISTINGS.find((r) => r.id === idOrName);
+  return row ? synthDetailFromRow(row) : undefined;
+}

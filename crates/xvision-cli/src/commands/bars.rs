@@ -52,7 +52,7 @@ pub enum BarsOp {
     Fetch(FetchArgs),
     /// List cached entries.
     #[command(visible_alias = "list")]
-    Ls,
+    Ls(LsArgs),
     /// Remove a cached entry by `cache_key`.
     Rm {
         /// The blake3 cache key (full hex string).
@@ -63,6 +63,16 @@ pub enum BarsOp {
         #[arg(long)]
         older_than: String,
     },
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct LsArgs {
+    /// Only show cached windows for this asset (accepts BTC or BTC/USD).
+    #[arg(long)]
+    pub asset: Option<String>,
+    /// Only show cached windows for this bar granularity.
+    #[arg(long, visible_alias = "timeframe")]
+    pub granularity: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -86,7 +96,7 @@ pub async fn run(cmd: BarsCmd) -> CliResult<()> {
     let (ctx, rpm) = open_ctx(cmd.xvn_home.clone()).await.map_err(CliError::upstream)?;
     match cmd.op {
         BarsOp::Fetch(a) => run_fetch(&ctx, a, rpm).await,
-        BarsOp::Ls => run_ls(&ctx).await,
+        BarsOp::Ls(a) => run_ls(&ctx, a).await,
         BarsOp::Rm { cache_key } => run_rm(&ctx, cache_key).await,
         BarsOp::Gc { older_than } => run_gc(&ctx, older_than).await,
     }
@@ -184,8 +194,8 @@ async fn run_fetch(ctx: &ApiContext, a: FetchArgs, rpm: u32) -> CliResult<()> {
     Ok(())
 }
 
-async fn run_ls(ctx: &ApiContext) -> CliResult<()> {
-    let rows = list_bars_cache(ctx).await?;
+async fn run_ls(ctx: &ApiContext, args: LsArgs) -> CliResult<()> {
+    let rows = filter_bars_cache_rows(list_bars_cache(ctx).await?, &args);
     if rows.is_empty() {
         println!("(no cached bar windows)");
         return Ok(());
@@ -356,6 +366,44 @@ async fn list_bars_cache(ctx: &ApiContext) -> CliResult<Vec<BarsCacheRow>> {
         .collect())
 }
 
+fn filter_bars_cache_rows(rows: Vec<BarsCacheRow>, args: &LsArgs) -> Vec<BarsCacheRow> {
+    rows.into_iter()
+        .filter(|row| {
+            args.asset
+                .as_deref()
+                .map(|asset| asset_filter_matches(&row.asset, asset))
+                .unwrap_or(true)
+        })
+        .filter(|row| {
+            args.granularity
+                .as_deref()
+                .map(|granularity| granularity_filter_matches(&row.granularity, granularity))
+                .unwrap_or(true)
+        })
+        .collect()
+}
+
+fn asset_filter_matches(row_asset: &str, filter: &str) -> bool {
+    if row_asset.eq_ignore_ascii_case(filter) {
+        return true;
+    }
+    AssetSymbol::from_str(filter)
+        .map(|asset| row_asset.eq_ignore_ascii_case(&asset.as_alpaca_pair()))
+        .unwrap_or(false)
+}
+
+fn granularity_filter_matches(row_granularity: &str, filter: &str) -> bool {
+    if row_granularity.eq_ignore_ascii_case(filter) {
+        return true;
+    }
+    BarGranularity::from_str(filter)
+        .map(|granularity| {
+            row_granularity.eq_ignore_ascii_case(&granularity.as_alpaca_str())
+                || row_granularity.eq_ignore_ascii_case(&granularity.canonical())
+        })
+        .unwrap_or(false)
+}
+
 async fn delete_bars_cache(ctx: &ApiContext, cache_key: &str) -> CliResult<()> {
     sqlx::query("DELETE FROM bars_cache WHERE cache_key = ?")
         .bind(cache_key)
@@ -429,6 +477,64 @@ mod tests {
             bar_count: 1,
             data_source: HISTORICAL_DATA_SOURCE_TAG.into(),
         }
+    }
+
+    #[test]
+    fn bars_ls_accepts_asset_and_granularity_filters() {
+        use clap::Parser;
+
+        let cli = crate::Cli::try_parse_from([
+            "xvn",
+            "bars",
+            "ls",
+            "--asset",
+            "BTC/USD",
+            "--granularity",
+            "1Hour",
+        ])
+        .expect("bars ls filters must parse");
+        let crate::Command::Bars(cmd) = cli.command else {
+            panic!("expected bars command");
+        };
+        let BarsOp::Ls(args) = cmd.op else {
+            panic!("expected bars ls op");
+        };
+        assert_eq!(args.asset.as_deref(), Some("BTC/USD"));
+        assert_eq!(args.granularity.as_deref(), Some("1Hour"));
+    }
+
+    #[test]
+    fn bars_ls_filters_rows_by_asset_and_granularity() {
+        let rows = vec![
+            row(
+                "BTC/USD",
+                "1Hour",
+                "2025-01-01T00:00:00Z",
+                "2025-01-02T00:00:00Z",
+                "btc-hour",
+            ),
+            row(
+                "ETH/USD",
+                "1Hour",
+                "2025-01-01T00:00:00Z",
+                "2025-01-02T00:00:00Z",
+                "eth-hour",
+            ),
+            row(
+                "BTC/USD",
+                "1Day",
+                "2025-01-01T00:00:00Z",
+                "2025-01-02T00:00:00Z",
+                "btc-day",
+            ),
+        ];
+        let args = LsArgs {
+            asset: Some("BTC/USD".into()),
+            granularity: Some("1Hour".into()),
+        };
+        let filtered = filter_bars_cache_rows(rows, &args);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].cache_key, "btc-hour");
     }
 
     #[test]
