@@ -1,6 +1,6 @@
-// BrowseRoute.buy.test.tsx — The Catalogue removes the list-row buy flow.
+// BrowseRoute.buy.test.tsx — the browse list has no list-row buy flow.
 // Rows are whole <Link>s to the inspector (inspect-before-buy); no tx fires from
-// the list and no inline buy-error strip exists. Clicking a catalogue entry
+// the list and no inline buy-error strip exists. Clicking a list entry
 // navigates to /marketplace/lineage/:name (spec 3.1E, QA10/QA12).
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -11,7 +11,7 @@ import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
 import { BrowseRoute } from "./BrowseRoute";
 
-// The demo catalogue now renders a real MiniSparkline (uPlot pane) for the
+// The dev fixture client renders a real MiniSparkline (uPlot pane) for the
 // curated named listings. Mock uPlot so tests don't need a canvas-backed DOM
 // (same pattern as LineageRoute.test.tsx).
 vi.mock("uplot", () => ({
@@ -58,7 +58,7 @@ function Wrapper({ client }: { client: FixtureMarketplaceData }) {
 }
 
 describe("BrowseRoute entries route to the inspector", () => {
-  it("navigates to the inspector (not a receipt) when a catalogue entry is clicked", async () => {
+  it("navigates to the inspector (not a receipt) when a list entry is clicked", async () => {
     const client = new FixtureMarketplaceData();
     const buySpy = vi.spyOn(client, "purchaseIntent");
     render(<Wrapper client={client} />);

@@ -1,7 +1,7 @@
 // src/features/marketplace/routes/EquityPanel.tsx
 //
 // Thin delegator kept for backward-compat with existing call sites. The
-// catalogue overhaul (§3.2B, QA17) moves all performance rendering into
+// performance overhaul (§3.2B, QA17) moves all performance rendering into
 // `PerformanceSection` — a full-width ChartFrame + time-aligned equity series
 // + on-chain `xvnTradeMarkers` + inline MarkerDock + designed empty state.
 //

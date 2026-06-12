@@ -49,14 +49,6 @@ describe("SellRoute", () => {
     expect(screen.queryByTestId("sell-step-2-body")).not.toBeInTheDocument();
   });
 
-  it("renders the catalogue eyebrow above the heading", async () => {
-    renderSell();
-    expect(await screen.findByTestId("sell-eyebrow")).toBeInTheDocument();
-    expect(screen.getByTestId("sell-eyebrow").textContent).toMatch(
-      /SUBMIT A WORK TO THE CATALOGUE/i,
-    );
-  });
-
   it("step 1: lists all 3 fixture strategies", async () => {
     renderSell();
     // strategy names from LISTABLE_STRATEGIES
@@ -115,7 +107,7 @@ describe("SellRoute", () => {
     await screen.findByTestId("sell-step-2-body");
     await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
     await screen.findByTestId("sell-step-3-body");
-    // ListingPreviewCard renders the catalogue-style entry with the humanized title
+    // ListingPreviewCard renders the app-native card with the humanized title
     expect(await screen.findByTestId("sell-step-3-body")).toBeInTheDocument();
     // The preview card element is present
     expect(document.querySelector("[data-preview='listing']")).toBeInTheDocument();

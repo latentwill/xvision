@@ -1,5 +1,5 @@
 // src/features/marketplace/routes/browse/browse.test.tsx
-// Tests for the Catalogue browse sub-components (spec 3.1, 7).
+// Tests for the marketplace browse sub-components (spec 3.1, 7).
 import { render, screen, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -9,7 +9,7 @@ import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
 import { HeaderStrip } from "./HeaderStrip";
 
-// MiniSparkline (used by CatalogueEntry's demo performance caption) renders a
+// MiniSparkline (used by the entry's demo performance caption) renders a
 // uPlot pane behind a ResizeObserver. jsdom provides neither a canvas context
 // nor ResizeObserver — mock uPlot as a no-op and stub ResizeObserver (matches
 // the pattern in EquityPanel.test.tsx / LineageRoute tests).
@@ -50,42 +50,44 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("HeaderStrip", () => {
-  it("renders the Fraunces 'The Catalogue' headline", async () => {
+  it("renders the plain 'Marketplace' page title", async () => {
     render(<HeaderStrip />, { wrapper: Wrapper });
-    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("The Catalogue");
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("Marketplace");
   });
 
-  it("renders the editorial eyebrow", async () => {
+  it("renders a one-line product description and no editorial eyebrow", async () => {
     render(<HeaderStrip />, { wrapper: Wrapper });
     expect(
-      await screen.findByText(/XVISION · STRATEGY CATALOGUE · MANTLE TESTNET/i)
+      await screen.findByText(/Buy and sell trading strategies as on-chain agents on Mantle\./i)
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/XVISION · STRATEGY CATALOGUE · MANTLE TESTNET/i)
+    ).not.toBeInTheDocument();
   });
 
-  it("renders the honest stat ledger (entries / creators / paid to creators em-dash) and not the fixture cells", async () => {
+  it("renders the honest stats line (entries / creators) and not the fixture cells", async () => {
     const rows = [
       { creator: { address: "0xAAA" } },
       { creator: { address: "0xbbb" } },
       { creator: { address: "0xAAA" } },
     ] as never;
     render(<HeaderStrip rows={rows} />, { wrapper: Wrapper });
-    // The three honest ledger cells render (labels are case-exact in markup).
-    expect(await screen.findByText(/^Entries$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^Creators$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^Paid to creators$/i)).toBeInTheDocument();
+    // The two honest stat cells render.
+    expect(await screen.findByText(/entries/i)).toBeInTheDocument();
+    expect(screen.getByText(/creators/i)).toBeInTheDocument();
     // Removed fixture-or-zero cells: paid this week / agent purchases / minted 24h.
     expect(screen.queryByText(/paid this week/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/agent purchases/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/minted in 24h/i)).not.toBeInTheDocument();
+    // No fabricated "paid to creators" line at all anymore.
+    expect(screen.queryByText(/paid to creators/i)).not.toBeInTheDocument();
     // Distinct creators from the two unique addresses above.
     expect(screen.getByText("2")).toBeInTheDocument();
-    // Paid-to-creators is an honest em-dash (no real backing total).
-    expect(screen.getByText("—")).toBeInTheDocument();
   });
 
-  it("shows the DEMO CATALOGUE marker on the fixture client", async () => {
+  it("shows the dev-fixtures marker on the fixture client in dev", async () => {
     render(<HeaderStrip />, { wrapper: Wrapper });
-    expect(await screen.findByTestId("demo-catalogue-marker")).toBeInTheDocument();
+    expect(await screen.findByTestId("dev-fixtures-marker")).toBeInTheDocument();
   });
 
   it("renders the List-your-strategy CTA and no Share button", async () => {
@@ -128,7 +130,7 @@ function toolbarProps(overrides: Partial<React.ComponentProps<typeof Toolbar>> =
     filtersOpen: false,
     onToggleFilters: vi.fn(),
     matchCount: 100,
-    view: "catalogue" as const,
+    view: "list" as const,
     setView: vi.fn(),
     allowPerformanceSort: true,
     ...overrides,
@@ -192,7 +194,7 @@ describe("Toolbar", () => {
     expect(onToggleFilters).toHaveBeenCalledOnce();
   });
 
-  it("renders a Catalogue | Index view toggle and switches view", () => {
+  it("renders a List | Index view toggle and switches view", () => {
     const setView = vi.fn();
     render(<Toolbar {...toolbarProps({ setView })} />, { wrapper: Wrapper });
     act(() => screen.getByRole("button", { name: /index view/i }).click());
@@ -253,7 +255,7 @@ const SLICES_FIXTURE: Slice[] = [
 ];
 
 describe("SliceChips", () => {
-  it("renders a gilt chip per slice with a real count > 0 and omits count-0 slices", () => {
+  it("renders a chip per slice with a real count > 0 and omits count-0 slices", () => {
     render(
       <SliceChips slices={SLICES_FIXTURE} activeSliceId={undefined} onSliceClick={() => {}} />,
       { wrapper: Wrapper }
@@ -302,9 +304,9 @@ describe("SliceChips", () => {
   });
 });
 
-// --- CatalogueEntry (replaces ListingCard) ---
+// --- ListingEntry (replaces ListingCard) ---
 
-import { CatalogueEntry, humanize, plateNumber } from "./CatalogueEntry";
+import { ListingEntry, humanize } from "./ListingEntry";
 import type { ListingRow } from "@/features/marketplace/data/types";
 
 const PAID_ROW: ListingRow = {
@@ -340,11 +342,11 @@ const OPEN_ROW: ListingRow = {
   assets: [],
 };
 
-function renderEntry(row: ListingRow, props: Partial<React.ComponentProps<typeof CatalogueEntry>> = {}) {
-  return render(<CatalogueEntry row={row} {...props} />, { wrapper: Wrapper });
+function renderEntry(row: ListingRow, props: Partial<React.ComponentProps<typeof ListingEntry>> = {}) {
+  return render(<ListingEntry row={row} {...props} />, { wrapper: Wrapper });
 }
 
-describe("humanize / plateNumber helpers", () => {
+describe("humanize helper", () => {
   it("humanize slug → Title Case with acronyms upper-cased and version segments lowercase", () => {
     expect(humanize("btc-momentum-v3")).toBe("BTC Momentum v3");
   });
@@ -355,16 +357,9 @@ describe("humanize / plateNumber helpers", () => {
   it("humanize numeric → Strategy #id", () => {
     expect(humanize("42")).toBe("Strategy #42");
   });
-  it("plateNumber numeric is zero-padded", () => {
-    expect(plateNumber("43")).toBe("0043");
-  });
-  it("plateNumber slug is a stable 4-digit hash", () => {
-    expect(plateNumber("btc-momentum-v3")).toBe(plateNumber("btc-momentum-v3"));
-    expect(plateNumber("btc-momentum-v3")).toMatch(/^\d{4}$/);
-  });
 });
 
-describe("CatalogueEntry", () => {
+describe("ListingEntry", () => {
   it("wraps the whole entry in a Link to the inspector (no list-row tx)", () => {
     renderEntry(PAID_ROW);
     const link = screen.getByRole("link");
@@ -373,7 +368,7 @@ describe("CatalogueEntry", () => {
     expect(screen.queryByRole("button", { name: /^buy$/i })).not.toBeInTheDocument();
   });
 
-  it("renders the display name (Fraunces title) with a title attr", () => {
+  it("renders the display name with a title attr", () => {
     renderEntry(PAID_ROW);
     const title = screen.getByText("BTC Momentum");
     expect(title).toHaveAttribute("title", "BTC Momentum");
@@ -384,12 +379,14 @@ describe("CatalogueEntry", () => {
     expect(screen.getByText("Meme Radar")).toBeInTheDocument();
   });
 
-  it("renders the plate number in gilt", () => {
-    renderEntry(PAID_ROW);
-    expect(screen.getByText(/№/)).toBeInTheDocument();
+  it("does not render an editorial plate number glyph", () => {
+    const { container } = renderEntry(PAID_ROW);
+    // The plate-number glyph (numero sign, U+2116) must not appear anywhere.
+    const numeroSign = String.fromCharCode(0x2116);
+    expect(container.textContent ?? "").not.toContain(numeroSign);
   });
 
-  it("renders a GenArtPlaceholder plate", () => {
+  it("renders a GenArtPlaceholder thumbnail", () => {
     const { container } = renderEntry(PAID_ROW);
     expect(container.querySelector('[data-genart="bitfields-v3"]')).not.toBeNull();
   });
@@ -435,11 +432,16 @@ describe("CatalogueEntry", () => {
     expect(screen.queryByText(/fee/i)).not.toBeInTheDocument();
   });
 
-  it("renders a VerifiedBadge (gilt wax-seal) for verified listings only", () => {
-    const { rerender } = renderEntry(PAID_ROW);
-    expect(screen.getByTitle(/attested on-chain/i)).toBeInTheDocument();
-    rerender(<CatalogueEntry row={OPEN_ROW} />);
-    expect(screen.queryByTitle(/attested on-chain/i)).not.toBeInTheDocument();
+  it("renders a VerifiedBadge for verified listings only", () => {
+    // VerifiedBadge is a shared component (owned elsewhere); assert via its
+    // testid so this stays robust to the badge's own copy/styling.
+    const { rerender } = render(
+      <ListingEntry row={{ ...PAID_ROW, verification: "verified" }} />,
+      { wrapper: Wrapper },
+    );
+    expect(screen.getByText("Verified")).toBeInTheDocument();
+    rerender(<ListingEntry row={OPEN_ROW} />);
+    expect(screen.queryByText("Verified")).not.toBeInTheDocument();
   });
 
   it("does not render a per-row Testnet badge", () => {

@@ -153,7 +153,7 @@ describe("ApiMarketplaceData.listListings", () => {
 describe("ApiMarketplaceData.getListing", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("maps the detail honestly: real chain fields, zeroed metrics, empty activity", async () => {
+  it("maps the detail honestly: real chain fields, zeroed metrics, empty activity (sealed tier — no bundle)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       mockOkJson(indexedListing),
     );
@@ -163,6 +163,7 @@ describe("ApiMarketplaceData.getListing", () => {
 
     expect(d.id).toBe("3");
     expect(d.genArtSeed).toBe("seed-xyz");
+    // Sealed tier: promise falls back to chain metadata name (no bundle fetch)
     expect(d.promise).toBe("BTC Momentum"); // chain metadata name
     expect(d.verification).toBe("verified"); // attestation_count 2
     expect(d.buyers).toEqual({ humans: 3, agents: 0 }); // units_sold approximation
@@ -182,6 +183,90 @@ describe("ApiMarketplaceData.getListing", () => {
     expect(d.onChain.nft.manifestHash).toBe(indexedListing.content_hash);
     expect(d.onChain.nft.agentURI).toBe("ipfs://bafy123");
     expect(d.onChain.trades).toEqual([]);
+  });
+
+  it("open-tier: enriches promise/name/assets from the bundle manifest", async () => {
+    const openIndexed = { ...indexedListing, listing_id: 4, tier: 0 };
+    const bundleResponse = {
+      listing_id: 4,
+      content_uri: "ipfs://bafy456",
+      verified: true,
+      manifest: {
+        manifest: {
+          display_name: "ETH Momentum Pro",
+          plain_summary: "Trades ETH breakouts on 15m candles.",
+          asset_universe: ["ETH/USD", "ETH/BTC"],
+        },
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) return mockOkJson(bundleResponse);
+      return mockOkJson(openIndexed);
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const d = await api.getListing("4");
+
+    // promise from plain_summary
+    expect(d.promise).toBe("Trades ETH breakouts on 15m candles.");
+    // name from display_name
+    expect(d.name).toBe("ETH Momentum Pro");
+    // assets deduped from asset_universe ("ETH/USD" and "ETH/BTC" both → "ETH")
+    expect(d.assets).toEqual(["ETH"]);
+  });
+
+  it("open-tier: tolerates bundle fetch failure — detail page must not throw", async () => {
+    const openIndexed = { ...indexedListing, listing_id: 4, tier: 0, name: "Fallback Name" };
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) return Promise.reject(new TypeError("network error"));
+      return mockOkJson(openIndexed);
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const d = await api.getListing("4");
+
+    // No throw; falls back to chain metadata
+    expect(d.id).toBe("4");
+    // promise falls back to l.name when manifest unavailable
+    expect(d.promise).toBe("Fallback Name");
+  });
+
+  it("open-tier: memoizes the bundle so repeat getListing calls fetch the bundle only once", async () => {
+    const openIndexed = { ...indexedListing, listing_id: 4, tier: 0 };
+    const bundleResponse = {
+      listing_id: 4,
+      content_uri: "ipfs://bafy456",
+      verified: true,
+      manifest: { manifest: { display_name: "Cached", plain_summary: "cached desc" } },
+    };
+    let bundleCallCount = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) { bundleCallCount++; return mockOkJson(bundleResponse); }
+      return mockOkJson(openIndexed);
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    await api.getListing("4");
+    await api.getListing("4");
+
+    expect(bundleCallCount).toBe(1); // second call uses cache
+  });
+
+  it("sealed-tier: never fetches the bundle manifest (no readable manifest pre-purchase)", async () => {
+    let bundleFetched = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation((url: string | URL | Request) => {
+      const u = typeof url === "string" ? url : String(url);
+      if (u.includes("/bundle")) { bundleFetched = true; return mockOkJson({}); }
+      return mockOkJson(indexedListing); // tier: 1 (sealed)
+    });
+
+    const api = new ApiMarketplaceData(makeFallback());
+    await api.getListing("3");
+
+    expect(bundleFetched).toBe(false);
   });
 
   it("falls back to the fixture client on 404 for slug (non-numeric) ids", async () => {

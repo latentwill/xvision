@@ -87,10 +87,29 @@ export function bundleCidFromContentUri(contentUri: string | undefined): string 
 }
 
 /**
+ * PublicManifest fields the marketplace surfaces from an open-tier bundle.
+ * All optional defensively — the bundle is author-supplied JSON.
+ * asset_universe entries are "BASE/QUOTE" pair strings, e.g. "ETH/USD".
+ */
+export interface PublicManifest {
+  display_name?: string;
+  plain_summary?: string;
+  asset_universe?: string[];
+  risk_preset_or_config?: unknown;
+  decision_cadence_minutes?: number;
+  creator?: string;
+  attested_with?: string[];
+  required_tools?: string[];
+}
+
+/**
  * `GET /api/marketplace/listings/:id/bundle` response. For OPEN listings this
  * carries `{verified, manifest}`; for SEALED listings it carries
  * `{encrypted:true, ciphertext, content_hash}` instead — the manifest is
  * undecryptable without satisfying the Lit gate.
+ *
+ * `manifest` is the canonical Strategy JSON; the human-readable fields live
+ * one level deeper at `manifest.manifest` (PublicManifest).
  */
 export interface BundleOut {
   listing_id: number;
@@ -99,7 +118,8 @@ export interface BundleOut {
   ciphertext?: string;
   content_hash?: string;
   verified?: boolean;
-  manifest?: unknown;
+  /** Full canonical Strategy JSON. PublicManifest is at manifest.manifest. */
+  manifest?: { manifest?: PublicManifest };
 }
 
 /** Fetch a listing's bundle (open manifest or sealed ciphertext). */
@@ -217,11 +237,45 @@ function toDetail(l: IndexedListing): ListingDetail {
   };
 }
 
+/**
+ * Convert an asset_universe entry ("ETH/USD", "BTC/USDT", …) to its base
+ * ticker ("ETH", "BTC"). Falls back to the original string when the separator
+ * is absent. Deduplication is handled at the call site.
+ */
+function assetTicker(pair: string): string {
+  const slash = pair.indexOf("/");
+  return slash > 0 ? pair.slice(0, slash) : pair;
+}
+
 export class ApiMarketplaceData implements MarketplaceData {
   // W2-DATA: required by the MarketplaceData interface (added by W1-FOUNDATION).
   readonly dataSource = "api" as const;
 
+  /** Memoised PublicManifest per numeric listing id. Failures cache as null. */
+  private readonly bundleCache = new Map<string, PublicManifest | null>();
+
   constructor(private fallback: MarketplaceData) {}
+
+  /**
+   * Fetch and memoize the PublicManifest for an OPEN-tier listing.
+   * Returns null when the listing is sealed (no manifest pre-purchase), when
+   * the fetch fails, or when the id is not numeric (fixture slug).
+   * Never throws — callers degrade gracefully when null.
+   */
+  private async fetchPublicManifest(listingId: string): Promise<PublicManifest | null> {
+    if (!/^\d+$/.test(listingId)) return null;
+    if (this.bundleCache.has(listingId)) return this.bundleCache.get(listingId)!;
+    try {
+      const bundle = await fetchBundle(listingId);
+      // Sealed bundles carry ciphertext, not a readable manifest.
+      const manifest = (!bundle.encrypted && bundle.manifest?.manifest) || null;
+      this.bundleCache.set(listingId, manifest);
+      return manifest;
+    } catch {
+      this.bundleCache.set(listingId, null);
+      return null;
+    }
+  }
 
   async listListings(f: FilterState) {
     const out = await apiFetch<{ items: IndexedListing[]; total: number }>(
@@ -235,7 +289,22 @@ export class ApiMarketplaceData implements MarketplaceData {
       const l = await apiFetch<IndexedListing>(
         `/api/marketplace/listings/${encodeURIComponent(idOrName)}`,
       );
-      return toDetail(l);
+      const detail = toDetail(l);
+      // For OPEN-tier listings, enrich the detail with the verified bundle
+      // manifest. Tolerate failure — manifest unavailable must not throw the
+      // detail page down.
+      if (l.tier === 0) {
+        const manifest = await this.fetchPublicManifest(String(l.listing_id));
+        if (manifest) {
+          if (manifest.plain_summary) detail.promise = manifest.plain_summary;
+          if (manifest.display_name) detail.name = manifest.display_name;
+          if (manifest.asset_universe && manifest.asset_universe.length > 0) {
+            // Deduplicate base tickers ("ETH/USD","ETH/BTC" both → "ETH").
+            detail.assets = [...new Set(manifest.asset_universe.map(assetTicker))];
+          }
+        }
+      }
+      return detail;
     } catch (e) {
       // QA11: for purely-numeric (on-chain) ids that 404, rethrow so the
       // caller surfaces the designed not-found state rather than silently

@@ -116,6 +116,28 @@ describe("SubgraphMarketplaceData", () => {
     expect(rows[0].name).toBe("BTC Momentum");
   });
 
+  it("getListing: promise comes from meta.description (no fabrication), empty string when absent", async () => {
+    const fullListing = {
+      ...listing("7", "42"),
+      agent: { ...listing("7", "42").agent, reputation: [] },
+    };
+    // With description in meta
+    const withDesc = new SubgraphMarketplaceData({
+      client: stubClient({ listing: fullListing }),
+      manifest: { resolve: async () => ({ description: "Trades ETH on 15m breakouts." }) },
+    });
+    const d1 = await withDesc.getListing("7");
+    expect(d1.promise).toBe("Trades ETH on 15m breakouts.");
+
+    // Without description in meta (null resolver)
+    const withoutDesc = new SubgraphMarketplaceData({
+      client: stubClient({ listing: fullListing }),
+      manifest: { resolve: async () => null },
+    });
+    const d2 = await withoutDesc.getListing("7");
+    expect(d2.promise).toBe(""); // honest empty, no fabrication
+  });
+
   it("delegates off-chain / write methods to the fallback", async () => {
     const fallback = spyFallback();
     const mp = new SubgraphMarketplaceData({

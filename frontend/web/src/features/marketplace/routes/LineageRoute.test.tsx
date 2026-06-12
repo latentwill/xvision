@@ -71,17 +71,53 @@ function Wrapper({
 }
 
 describe("LineageRoute", () => {
-  it("renders the hero info stack with title, promise, and 30d return", async () => {
+  it("renders the hero info stack with title, description, and 30d return", async () => {
     render(<Wrapper />);
     expect(await screen.findByTestId("lineage-info-stack")).toBeInTheDocument();
-    // The hero title uses the listing's display name (no raw tech slug in the
-    // Fraunces display serif): btc-momentum-v3 → "BTC Momentum v3".
+    // The hero title uses the listing's display name (app-native title style,
+    // no raw tech slug): btc-momentum-v3 → "BTC Momentum v3".
     expect(screen.getByText("BTC Momentum v3")).toBeInTheDocument();
     expect(screen.getByText(/BTC momentum/)).toBeInTheDocument();
     // 30D RETURN label
     expect(screen.getByText(/30D Return/i)).toBeInTheDocument();
     // value shown as percentage
     expect(screen.getByText(/47\.2/)).toBeInTheDocument();
+  });
+
+  it("renders the strategy description above the fold from detail.promise", async () => {
+    render(<Wrapper />);
+    const desc = await screen.findByTestId("strategy-description");
+    // Fixture promise text appears in the dedicated description block.
+    expect(desc).toHaveTextContent(/BTC momentum with Claude regime detection/i);
+    // The sealed-fallback line is NOT shown when a promise exists.
+    expect(
+      screen.queryByTestId("strategy-description-sealed"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the honest sealed-strategy line when the promise is empty", async () => {
+    const client = new FixtureMarketplaceData();
+    const base = await new FixtureMarketplaceData().getListing("btc-momentum-v3");
+    vi.spyOn(client, "getListing").mockResolvedValue({ ...base, promise: "" });
+    render(<Wrapper client={client} />);
+    const sealed = await screen.findByTestId("strategy-description-sealed");
+    expect(sealed).toHaveTextContent(
+      /sealed strategy — contents verified on-chain, revealed after purchase/i,
+    );
+    expect(screen.queryByTestId("strategy-description")).not.toBeInTheDocument();
+  });
+
+  it("renders all five metric cells with values that fit (tabular-nums, nowrap)", async () => {
+    render(<Wrapper />);
+    await screen.findByTestId("lineage-info-stack");
+    // Labels present
+    for (const label of ["30D Return", "Sharpe", "Win rate", "Max DD", "Avg dur"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    // The value cell uses whitespace-nowrap + tabular-nums so values never clip.
+    const ret = screen.getByText(/\+?47\.2%/);
+    expect(ret.className).toMatch(/whitespace-nowrap/);
+    expect(ret.className).toMatch(/tabular-nums/);
   });
 
   it("renders asset pills and badges in the hero", async () => {
@@ -113,13 +149,7 @@ describe("LineageRoute", () => {
     expect(screen.getAllByText(/14/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("plate number is stamped under the gen-art plate (№ 0043)", async () => {
-    render(<Wrapper />);
-    await screen.findByTestId("lineage-hero");
-    expect(screen.getByText(/№\s*0043/)).toBeInTheDocument();
-  });
-
-  it("clicking the plate inline-expands the artifact & provenance inspector", async () => {
+  it("clicking the gen-art thumbnail inline-expands the artifact & provenance inspector", async () => {
     render(<Wrapper />);
     await screen.findByTestId("lineage-hero");
     // Closed by default
@@ -254,14 +284,14 @@ describe("LineageRoute", () => {
     expect(await screen.findByTestId("receipts-body")).toBeInTheDocument();
   });
 
-  it("shows the designed catalogue-miss state for an unknown strategy name", async () => {
+  it("shows the app-native not-found state for an unknown strategy name", async () => {
     render(<Wrapper initialPath="/marketplace/lineage/does-not-exist" />);
     expect(
-      await screen.findByText(/this entry is not in the catalogue/i),
+      await screen.findByText(/strategy not found/i),
     ).toBeInTheDocument();
     expect(screen.getByTestId("lineage-not-found")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: /back to the catalogue/i }),
+      screen.getByRole("link", { name: /back to marketplace/i }),
     ).toBeInTheDocument();
   });
 });

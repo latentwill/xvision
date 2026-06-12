@@ -5,7 +5,7 @@
 // height-animated: transitions on grid-template-rows fr values or max-height
 // freeze at their start value (panel reads as permanently collapsed) under
 // animation-paused environments like CDP screenshot tooling, and the crisp
-// state change suits the catalogue's print-like voice. The content caps itself
+// state change keeps the reveal predictable. The content caps itself
 // at 60vh (FilterDrawerContent) with a sticky footer. The owner (BrowseRoute)
 // wires an Escape-to-close useEffect, a scroll-into-view on open, and a
 // "Done" button.
@@ -30,7 +30,7 @@ export function FilterDrawer({
       aria-label={title}
       data-filter-accordion
       data-open={open || undefined}
-      className={open ? "shrink-0 border-b border-ink-rule" : "shrink-0"}
+      className={open ? "shrink-0 border-b border-border" : "shrink-0"}
     >
       {open && <div className="overflow-hidden">{children}</div>}
     </section>

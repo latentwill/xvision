@@ -1,6 +1,6 @@
 // src/features/marketplace/routes/PerformanceSection.tsx
 //
-// The catalogue's first-class performance citizen (overhaul §3.2B, QA17).
+// The inspector's first-class performance citizen (QA17). App-native styling.
 // Full-width, min-height 360px. Built entirely from the existing chart v2
 // stack — no new chart infrastructure:
 //   - ChartFrame wrapper (range presets, no-popup inline expand)
@@ -145,7 +145,7 @@ export function PerformanceSection({ curve, trades }: Props): ReactElement {
         data-testid="performance-section"
         className="space-y-3"
       >
-        <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-gilt">
+        <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-text-3">
           Performance
         </div>
         <div data-testid="performance-empty">
@@ -158,7 +158,7 @@ export function PerformanceSection({ curve, trades }: Props): ReactElement {
                 — the empty-state context is "run a backtest", not "publish". */}
             <Link
               to="/eval-runs"
-              className="font-mono text-[11.5px] text-gilt hover:underline"
+              className="font-mono text-[11.5px] text-gold hover:underline"
             >
               Run a backtest →
             </Link>
@@ -170,7 +170,7 @@ export function PerformanceSection({ curve, trades }: Props): ReactElement {
 
   return (
     <section data-testid="performance-section" className="space-y-3">
-      <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-gilt">
+      <div className="font-mono text-[11px] tracking-[0.18em] uppercase text-text-3">
         Performance
       </div>
       <ChartFrame title="Equity" range={range} onRange={setRange}>

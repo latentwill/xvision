@@ -21,17 +21,6 @@
   --duration-slow: 320ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Catalogue display font — Fraunces (editorial serif). Inherits into both
-     data-theme blocks since neither overrides it. */
-  --font-display: "Fraunces", Georgia, serif;
-
-  /* Catalogue color tokens — dark/default values (mirrored in [data-theme="dark"]). */
-  --paper:          #0d0f12;   /* catalogue page ground — a hair lighter than --bg */
-  --ink-rule:       #2a2f38;   /* hairline rules between entries */
-  --ink-rule-faint: #1b1f26;   /* faint inter-entry divider */
-  --gilt:           #c9a96a;   /* muted antique-gold: plate numbers, seals, hover underlines */
-  --gilt-bg:        rgba(201, 169, 106, 0.10);
-
   --bg: #070809;
   --surface-sidebar: #070809;
   --surface-card: #111318;
@@ -64,13 +53,6 @@
 }
 
 [data-theme="dark"] {
-  /* Catalogue color tokens — dark values (mirrored from :root). */
-  --paper:          #0d0f12;
-  --ink-rule:       #2a2f38;
-  --ink-rule-faint: #1b1f26;
-  --gilt:           #c9a96a;
-  --gilt-bg:        rgba(201, 169, 106, 0.10);
-
   --bg: #070809;
   --surface-sidebar: #070809;
   --surface-card: #111318;
@@ -101,13 +83,6 @@
 }
 
 [data-theme="light"] {
-  /* Catalogue color tokens — light values. */
-  --paper:          #faf8f3;
-  --ink-rule:       #d8d2c4;
-  --ink-rule-faint: #ece8de;
-  --gilt:           #9a7b3f;
-  --gilt-bg:        rgba(154, 123, 63, 0.10);
-
   --bg: #f7f8fa;
   --surface-sidebar: #ffffff;
   --surface-card: #ffffff;

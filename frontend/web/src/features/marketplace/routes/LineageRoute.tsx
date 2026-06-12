@@ -1,11 +1,13 @@
 // src/features/marketplace/routes/LineageRoute.tsx
 //
-// /marketplace/lineage/:name — "The Plate" inspector (catalogue overhaul §3.2).
-// Single full-width column. No popups, no right-side fourth column. The plate
-// inline-expands an "Artifact & provenance" accordion via ?inspect=art; the
-// receipts drawer expands via ?receipts=open. Performance is a first-class
-// full-width ChartFrame citizen with on-chain trade markers.
+// /marketplace/lineage/:name — the strategy inspector.
+// App-native styling (matches the strategies / eval detail pages). Single
+// full-width column. No popups, no right-side fourth column. The gen-art
+// thumbnail inline-expands an "Artifact & provenance" accordion via
+// ?inspect=art; the receipts drawer expands via ?receipts=open. Performance is
+// a first-class full-width ChartFrame citizen with on-chain trade markers.
 // Data: useQuery from @tanstack/react-query + useMarketplaceData() seam.
+import { useState } from "react";
 import { Link, useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiFetch } from "@/api/client";
@@ -20,8 +22,6 @@ import { useWallet } from "@/features/marketplace/lib/wallet";
 import { faucetUsdc } from "@/features/marketplace/lib/chain";
 import { InsufficientUsdcError } from "@/features/marketplace/lib/purchaseErrors";
 import { GenArtPlaceholder } from "@/features/marketplace/components/GenArtPlaceholder";
-import { GrainOverlay } from "@/components/chart/v2/primitives/GrainOverlay";
-import { KpiCard } from "@/components/chart/v2/primitives/KpiCard";
 import { VerifiedBadge } from "@/features/marketplace/components/VerifiedBadge";
 import { X402Badge } from "@/features/marketplace/components/X402Badge";
 import { AssetPill } from "@/features/marketplace/components/AssetPill";
@@ -94,7 +94,7 @@ function BuyerCard({
           {isDemo && (
             <span
               data-testid="buyers-demo-marker"
-              className="font-mono text-[8.5px] tracking-[0.12em] uppercase bg-gilt-bg text-gilt border border-gilt/30 rounded-[2px] px-1 py-0.5"
+              className="font-mono text-[8.5px] tracking-[0.12em] uppercase bg-surface-elev text-text-3 border border-border rounded-[2px] px-1 py-0.5"
             >
               Demo
             </span>
@@ -300,6 +300,67 @@ function MoreFromCreatorCard({
   );
 }
 
+// ── Strategy description (above the fold, inline "more" expand) ─────────────
+// Renders detail.promise directly under the title/creator line. Clamped to 3
+// lines with an inline "more" toggle when longer; no popup. When the promise is
+// empty (sealed listings pre-purchase) the caller passes the honest fallback.
+function DescriptionBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  // Heuristic: anything past ~3 lines of body copy gets a "more" affordance.
+  const isLong = text.length > 180;
+  return (
+    <p
+      data-testid="strategy-description"
+      className={[
+        "text-[13.5px] text-text-2 leading-relaxed max-w-[640px]",
+        !expanded && isLong ? "line-clamp-3" : "",
+      ].join(" ")}
+    >
+      {text}
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="ml-1.5 align-baseline text-[12.5px] font-medium text-text-3 hover:text-text"
+        >
+          {expanded ? "less" : "more"}
+        </button>
+      )}
+    </p>
+  );
+}
+
+// ── Metric cell — one cell in the 5-up KPI strip ────────────────────────────
+// Rebuilt so every value FITS (operator complaint): the old KpiCard hardcodes a
+// 30px value + 100px min-height that clips inside a 5-up grid on narrow cards.
+// Label and value sizing mirror the app's compact metric chrome; the value is
+// tabular-nums + whitespace-nowrap so "+12.8%" and "—" never wrap or clip.
+function MetricCell({
+  label,
+  value,
+  intent = "default",
+}: {
+  label: string;
+  value: string;
+  intent?: "default" | "danger";
+}) {
+  return (
+    <div className="border border-border rounded-card bg-surface-card p-3 min-w-0">
+      <div className="text-[11px] uppercase tracking-wide text-text-3 truncate">
+        {label}
+      </div>
+      <div
+        className={[
+          "mt-1 text-lg sm:text-xl font-semibold tabular-nums whitespace-nowrap",
+          intent === "danger" ? "text-danger" : "text-text",
+        ].join(" ")}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 // ── Eval attestations (on-chain, permissionless self-attestation) ───────────
 // Wording: this section says "attested", never "verified" — v1 attestations
 // are permissionless self-attestations (anyone, including the seller, can
@@ -477,37 +538,38 @@ export function LineageRoute() {
     return <div className="px-6 py-8 text-[13px] text-text-3">Loading…</div>;
   }
   if (isError || !detail) {
-    // Designed catalogue-miss (overhaul §3.6) — never a bare error string.
+    // App-native not-found — matches the other detail routes' 404 pattern.
     return (
       <div
         data-testid="lineage-not-found"
-        className="flex flex-col items-center justify-center gap-4 px-6 py-16 text-center"
+        className="px-6 py-12 text-center"
       >
-        <div className="flex flex-col items-center gap-2">
-          <div className="p-[3px] border-2 border-ink-rule ring-1 ring-gilt/15">
-            <div className="flex items-center justify-center w-[104px] h-[104px] bg-surface-elev">
-              <span className="font-mono text-[11px] tracking-[0.1em] text-text-3">№ ——</span>
-            </div>
-          </div>
+        <div className="text-[24px] font-semibold text-text-3 mb-3">
+          Strategy not found
         </div>
-        <p className="font-display text-[20px] text-text">
-          This entry is not in the catalogue.
+        <p className="m-0 mb-5 text-text-2 text-[13px]">
+          No strategy with id <code className="font-mono text-text">{name}</code>.
         </p>
         <Link
           to="/marketplace"
-          className="font-mono text-[11.5px] text-gilt hover:underline"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text hover:border-text-3"
         >
-          ← Back to the catalogue
+          ← Back to marketplace
         </Link>
       </div>
     );
   }
 
-  // Title fallback chain (spec §3.2 title-plate): verified manifest display
-  // name → the listing's own name → a humanized form of the id. NEVER the raw
-  // tech slug in the Fraunces display serif — `humanize('btc-momentum-v3')`
-  // yields "Btc Momentum V3", keeping the editorial voice intact (QA fix).
+  // Title fallback chain: verified manifest display name → the listing's own
+  // name → a humanized form of the id. Never the raw tech slug —
+  // `humanize('btc-momentum-v3')` yields "Btc Momentum V3" (QA fix).
   const title = manifest?.display_name || detail.name || humanize(detail.id);
+
+  // R3: surface the strategy description above the fold. The fixture carries
+  // `promise`; R4 wires this to the real manifest `plain_summary` on the API
+  // path. When empty (sealed listings pre-purchase) we show an honest line
+  // rather than a blank gap.
+  const description = detail.promise?.trim() ?? "";
   const platformFeePct = detail.platformFeeBps / 100;
   const netToCreator =
     detail.priceUsdc != null
@@ -516,38 +578,43 @@ export function LineageRoute() {
 
   return (
     <div data-testid="lineage-page">
-      {/* ===== PROVENANCE EYEBROW ===== */}
-      <div className="px-6 pt-6 font-mono text-[11px] tracking-[0.18em] uppercase text-gilt">
-        XVISION · STRATEGY CATALOGUE · {detail.onChain.nft.network.toUpperCase()}
+      {/* ===== BACK LINK + PROVENANCE EYEBROW ===== */}
+      <div className="px-6 pt-6">
+        <Link
+          to="/marketplace"
+          data-testid="lineage-back"
+          className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
+        >
+          ← Back to marketplace
+        </Link>
+        <div className="font-mono text-[11px] tracking-[0.14em] uppercase text-text-3">
+          Marketplace · {detail.onChain.nft.network.toUpperCase()}
+        </div>
       </div>
 
-      {/* ===== HERO (two zones: plate + caption/price) ===== */}
+      {/* ===== HERO (two zones: thumbnail + info/price) ===== */}
       <section
         data-testid="lineage-hero"
-        className="grid gap-6 p-6 border-b border-ink-rule"
+        className="grid gap-6 p-6 border-b border-border"
         style={{ gridTemplateColumns: "360px 1fr" }}
       >
-        {/* Zone A: the plate — clickable, inline-expands the inspector accordion */}
+        {/* Zone A: gen-art thumbnail — clickable, inline-expands the inspector */}
         <div className="flex flex-col gap-2">
           <button
             type="button"
             data-testid="plate-inspect-toggle"
             onClick={toggleInspect}
             aria-pressed={inspectOpen}
-            className="relative block p-[3px] border-2 border-ink-rule ring-1 ring-gilt/15 hover:ring-gilt/40 transition-[box-shadow] group/plate text-left"
+            className="block rounded-card border border-border hover:border-border-strong transition-colors overflow-hidden text-left"
           >
             <GenArtPlaceholder
               seed={detail.genArtSeed}
               size={340}
-              className="block motion-safe:animate-[xvn-plate-develop_var(--duration-base)_var(--ease-out)_both]"
+              className="block"
             />
-            <GrainOverlay />
           </button>
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[12px] tracking-[0.1em] text-gilt">
-              № {String(detail.onChain.nft.tokenId).replace(/^#/, "").padStart(4, "0")}
-            </span>
-            <span className="font-mono text-[10px] tracking-[0.14em] text-text-3 uppercase inline-flex items-center gap-1.5">
+          <div className="flex items-center justify-end">
+            <span className="font-mono text-[10px] tracking-[0.1em] text-text-3 uppercase inline-flex items-center gap-1.5">
               {inspectOpen ? "Hide artifact" : "Artifact & provenance"}
               <svg
                 width="9"
@@ -568,12 +635,12 @@ export function LineageRoute() {
           </div>
         </div>
 
-        {/* Zone B: caption, metrics, purchase block (folded into the right edge) */}
+        {/* Zone B: title, description, metrics, purchase block */}
         <div data-testid="lineage-info-stack" className="flex flex-col gap-3 min-w-0">
           {/* Title row */}
           <div className="flex items-center flex-wrap gap-2">
             <h1
-              className="font-display text-[26px] font-semibold tracking-[-0.015em] leading-[1.1]"
+              className="text-[24px] font-semibold tracking-tight leading-tight text-text"
               title={title}
             >
               {title}
@@ -614,34 +681,44 @@ export function LineageRoute() {
             )}
           </div>
 
-          {/* Promise */}
-          <p className="text-[14.5px] leading-[1.45] max-w-[480px]">{detail.promise}</p>
+          {/* Description — above the fold, directly under the creator line. */}
+          {description ? (
+            <DescriptionBlock text={description} />
+          ) : (
+            <p
+              data-testid="strategy-description-sealed"
+              className="text-[13.5px] text-text-3 leading-relaxed max-w-[640px]"
+            >
+              Sealed strategy — contents verified on-chain, revealed after
+              purchase.
+            </p>
+          )}
 
-          {/* Metric strip — KpiCard cells; each shows its real value or "—". */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-1">
-            <KpiCard
+          {/* Metric strip — every value FITS: tabular-nums + whitespace-nowrap,
+              "—" for absent values (never 0). */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 pt-1">
+            <MetricCell
               label="30D Return"
               value={
                 detail.metrics.return30dPct === 0
                   ? "—"
                   : `${detail.metrics.return30dPct > 0 ? "+" : ""}${detail.metrics.return30dPct}%`
               }
-              cornerGlow={detail.metrics.return30dPct > 0 ? "gold" : null}
             />
-            <KpiCard
+            <MetricCell
               label="Sharpe"
-              value={detail.metrics.sharpe === 0 ? "—" : detail.metrics.sharpe}
+              value={detail.metrics.sharpe === 0 ? "—" : String(detail.metrics.sharpe)}
             />
-            <KpiCard
+            <MetricCell
               label="Win rate"
               value={detail.metrics.winRatePct === 0 ? "—" : `${detail.metrics.winRatePct}%`}
             />
-            <KpiCard
+            <MetricCell
               label="Max DD"
               value={detail.metrics.maxDrawdownPct === 0 ? "—" : `${detail.metrics.maxDrawdownPct}%`}
               intent="danger"
             />
-            <KpiCard
+            <MetricCell
               label="Avg dur"
               value={detail.metrics.avgDurationDays === 0 ? "—" : `${detail.metrics.avgDurationDays}d`}
             />
@@ -772,7 +849,7 @@ export function LineageRoute() {
       {inspectOpen && (
         <section
           data-testid="inspect-art"
-          className="mx-6 mt-6 rounded-md border border-ink-rule bg-surface-card p-4"
+          className="mx-6 mt-6 rounded-md border border-border bg-surface-card p-4"
         >
           <div className="text-[12px] font-medium text-text mb-3">Artifact &amp; provenance</div>
           <div className="space-y-0">
@@ -789,7 +866,7 @@ export function LineageRoute() {
                 key={key}
                 className={[
                   "grid gap-2.5 py-1.5",
-                  i < arr.length - 1 ? "border-b border-ink-rule-faint" : "",
+                  i < arr.length - 1 ? "border-b border-border-soft" : "",
                 ].join(" ")}
                 style={{ gridTemplateColumns: "130px 1fr" }}
               >

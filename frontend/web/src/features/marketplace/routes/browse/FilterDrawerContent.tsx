@@ -128,7 +128,7 @@ function CheckRow({
         aria-hidden="true"
       >
         {checked && (
-          <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="#001A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="var(--on-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M1.5 4.5L4 7l4-5" />
           </svg>
         )}
@@ -170,7 +170,7 @@ function ToggleSwitch({
       >
         <span
           className={[
-            "absolute top-0.5 w-[13px] h-[13px] rounded-full bg-[#000] transition-[left]",
+            "absolute top-0.5 w-[13px] h-[13px] rounded-full bg-[var(--on-accent)] transition-[left]",
             checked ? "left-[15px]" : "left-0.5",
           ].join(" ")}
         />
@@ -270,7 +270,7 @@ interface FilterDrawerContentProps {
   filter: FilterState;
   setFilter: (patch: Partial<FilterState>) => void;
   matchCount: number;
-  /** Total listings in the catalogue (drives the "of N match" line, QA1). */
+  /** Total listings in the marketplace (drives the "of N match" line, QA1). */
   totalCount: number;
   onClose: () => void;
 }
@@ -544,7 +544,7 @@ export function FilterDrawerContent({
       </div>
 
       {/* Footer — pinned at the bottom of the capped accordion (always reachable). */}
-      <div className="shrink-0 px-4 py-3 border-t border-ink-rule bg-bg flex items-center gap-2">
+      <div className="shrink-0 px-4 py-3 border-t border-border bg-bg flex items-center gap-2">
         <button
           type="button"
           onClick={clearAll}
@@ -553,13 +553,13 @@ export function FilterDrawerContent({
           Clear all
         </button>
         <span className="ml-auto font-mono text-[11px] text-text-3">
-          <span className="text-gold">{matchCount.toLocaleString()}</span> matches
+          <span className="text-text-2">{matchCount.toLocaleString()}</span> matches
         </span>
         <button
           type="button"
           aria-label="done"
           onClick={onClose}
-          className="px-5 py-1.5 rounded bg-gold text-[#001A0A] text-[12px] font-bold hover:opacity-90 transition-opacity motion-safe:active:scale-[0.96]"
+          className="px-4 py-1.5 rounded bg-gold text-bg text-[12px] font-medium transition-colors hover:bg-gold-soft motion-safe:active:scale-[0.96]"
         >
           Done
         </button>

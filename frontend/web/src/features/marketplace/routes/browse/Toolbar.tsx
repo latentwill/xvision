@@ -1,8 +1,8 @@
 // src/features/marketplace/routes/browse/Toolbar.tsx
-// The Catalogue toolbar (spec 3.1B). Sort is wired to SignalSelectMenu (the
-// project-approved portal dropdown with built-in click-outside + Escape — NOT
-// a focus-stealing modal, QA5). The Filters button toggles the inline filter
-// accordion (no absolute overlay). A segmented Catalogue | Index view toggle.
+// The marketplace browse toolbar (spec 3.1B). Sort is wired to SignalSelectMenu
+// (the project-approved portal dropdown with built-in click-outside + Escape —
+// NOT a focus-stealing modal, QA5). The Filters button toggles the inline
+// filter accordion (no absolute overlay). A segmented List | Index view toggle.
 import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import type { FilterState, SortKey } from "@/features/marketplace/data/types";
 
@@ -20,7 +20,12 @@ const SEGMENTS: { key: FilterState["segment"]; label: string }[] = [
   { key: "mine", label: "Mine" },
 ];
 
-export type BrowseView = "catalogue" | "index";
+export type BrowseView = "list" | "index";
+
+const VIEW_LABELS: Record<BrowseView, string> = {
+  list: "List",
+  index: "Index",
+};
 
 interface ToolbarProps {
   filter: FilterState;
@@ -69,10 +74,10 @@ export function Toolbar({
   const showSortDemoTag = isDemo && (sortValue === "return30d" || sortValue === "sharpe");
 
   return (
-    <div className="relative border-b border-ink-rule">
+    <div className="relative border-b border-border">
       <div className="px-4 sm:px-7 py-3.5 flex items-center gap-2.5 sm:gap-3 flex-wrap">
         {/* Segmented: Trending | New | Mine */}
-        <div className="inline-flex border border-border-strong rounded bg-surface-elev p-0.5 order-1">
+        <div className="inline-flex border border-border rounded overflow-hidden order-1">
           {SEGMENTS.map((s) => {
             const isActive = filter.segment === s.key;
             return (
@@ -82,13 +87,10 @@ export function Toolbar({
                 aria-label={s.label}
                 onClick={() => setFilter({ segment: s.key })}
                 className={[
-                  "px-3 py-1 rounded-[3px] text-[12px] font-semibold cursor-pointer transition-colors",
-                  // Active state is gilt, NOT green: §2.2 rations green to live
-                  // positive returns, the single primary CTA, and the live dot.
-                  // A filter-nav tab is none of those — mirror the view-toggle.
+                  "px-3 py-1 text-[12.5px] font-medium cursor-pointer transition-colors",
                   isActive
-                    ? "bg-gilt-bg text-gilt"
-                    : "bg-transparent text-text-2 hover:text-text",
+                    ? "bg-surface-elev text-text"
+                    : "text-text-3 hover:text-text-2",
                 ].join(" ")}
               >
                 {s.label}
@@ -98,7 +100,7 @@ export function Toolbar({
         </div>
 
         {/* Search — full-width own row on mobile, inline flex-1 on desktop */}
-        <div className="order-last w-full sm:order-2 sm:w-auto sm:flex-1 sm:min-w-[240px] sm:max-w-[380px] flex items-center gap-2 px-2.5 py-1.5 border border-border-strong rounded bg-surface-elev">
+        <div className="order-last w-full sm:order-2 sm:w-auto sm:flex-1 sm:min-w-[240px] sm:max-w-[380px] flex items-center gap-2 px-2.5 py-1.5 border border-border rounded bg-surface-elev">
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-text-3 shrink-0" aria-hidden="true">
             <circle cx="6" cy="6" r="4" />
             <path d="M9.5 9.5l2.5 2.5" strokeLinecap="round" />
@@ -108,9 +110,9 @@ export function Toolbar({
             placeholder="name · creator · tag"
             value={filter.search}
             onChange={(e) => setFilter({ search: e.target.value })}
-            className="flex-1 bg-transparent font-mono text-[12px] text-text-3 placeholder:text-text-3 outline-none"
+            className="flex-1 bg-transparent text-[12px] text-text placeholder:text-text-3 outline-none"
           />
-          <kbd className="ml-auto border border-border-strong rounded-[3px] font-mono text-[9.5px] text-text-3 px-1.5 py-0.5 tracking-[0.06em]">/</kbd>
+          <kbd className="ml-auto border border-border rounded font-mono text-[9.5px] text-text-3 px-1.5 py-0.5 tracking-[0.06em]">/</kbd>
         </div>
 
         {/* Sort — wired to SignalSelectMenu (click-outside + Escape built in) */}
@@ -125,9 +127,9 @@ export function Toolbar({
             <span
               data-testid="sort-demo-tag"
               title="Demo ordering — returns are illustrative"
-              className="font-mono text-[8.5px] tracking-[0.12em] uppercase bg-gilt-bg text-gilt border border-gilt/30 rounded-[2px] px-1 py-0.5"
+              className="font-mono text-[8.5px] tracking-[0.04em] rounded border border-border bg-surface-elev px-1 py-0.5 text-text-3"
             >
-              Demo
+              demo
             </span>
           )}
         </div>
@@ -141,10 +143,10 @@ export function Toolbar({
           aria-expanded={filtersOpen}
           onClick={onToggleFilters}
           className={[
-            "order-3 sm:order-5 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] font-medium",
+            "order-3 sm:order-5 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded border text-[12px] font-medium transition-colors",
             filtersOpen
-              ? "border-gilt/45 bg-gilt-bg text-gilt"
-              : "border-border-strong bg-surface-elev text-text-2 hover:border-border",
+              ? "border-border-strong bg-surface-elev text-text"
+              : "border-border bg-surface-elev text-text-2 hover:border-border-strong hover:text-text",
           ].join(" ")}
         >
           <span className="font-medium">Filters</span>
@@ -160,9 +162,9 @@ export function Toolbar({
           </svg>
         </button>
 
-        {/* View toggle: Catalogue | Index */}
-        <div className="order-4 sm:order-6 ml-auto inline-flex border border-border-strong rounded bg-surface-elev p-0.5">
-          {(["catalogue", "index"] as BrowseView[]).map((v) => {
+        {/* View toggle: List | Index */}
+        <div className="order-4 sm:order-6 ml-auto inline-flex border border-border rounded overflow-hidden">
+          {(["list", "index"] as BrowseView[]).map((v) => {
             const isActive = view === v;
             return (
               <button
@@ -172,13 +174,13 @@ export function Toolbar({
                 aria-pressed={isActive}
                 onClick={() => setView(v)}
                 className={[
-                  "px-2.5 py-1 rounded-[3px] text-[11.5px] font-medium capitalize cursor-pointer transition-colors",
+                  "px-2.5 py-1 text-[12px] font-medium cursor-pointer transition-colors",
                   isActive
-                    ? "bg-gilt-bg text-gilt"
-                    : "bg-transparent text-text-3 hover:text-text",
+                    ? "bg-surface-elev text-text"
+                    : "text-text-3 hover:text-text-2",
                 ].join(" ")}
               >
-                {v}
+                {VIEW_LABELS[v]}
               </button>
             );
           })}

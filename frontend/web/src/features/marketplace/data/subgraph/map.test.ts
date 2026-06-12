@@ -158,6 +158,7 @@ describe("mapListingDetail", () => {
     const d = mapListingDetail(detail, { description: "does a thing" });
     expect(d.id).toBe("7");
     expect(d.platformFeeBps).toBe(500);
+    // promise comes from meta.description (no fabrication)
     expect(d.promise).toBe("does a thing");
     expect(d.paidToCreatorUsd).toBeCloseTo(1.425, 3);
     expect(d.onChain.nft.tokenId).toBe("42");
@@ -174,6 +175,11 @@ describe("mapListingDetail", () => {
     expect(d.metrics.sharpe).toBe(0);
     expect(d.equityCurve.points).toEqual([]);
     expect(d.onChain.trades).toEqual([]);
+  });
+
+  it("promise is empty string when meta is null (no fabrication)", () => {
+    const d = mapListingDetail(detail, null);
+    expect(d.promise).toBe("");
   });
 });
 

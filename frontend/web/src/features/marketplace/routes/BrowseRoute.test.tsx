@@ -8,7 +8,7 @@ import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
 import { BrowseRoute } from "./BrowseRoute";
 
-// The demo catalogue now renders a real MiniSparkline (uPlot pane) for the
+// The dev fixture client renders a real MiniSparkline (uPlot pane) for the
 // curated named listings. Mock uPlot so tests don't need a canvas-backed DOM
 // (same pattern as LineageRoute.test.tsx).
 vi.mock("uplot", () => ({
@@ -51,12 +51,12 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 }
 
 describe("BrowseRoute", () => {
-  it("renders the Catalogue hero headline", async () => {
+  it("renders the Marketplace page title", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
-    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("The Catalogue");
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent("Marketplace");
   });
 
-  it("renders catalogue entries from listListings as links to the inspector", async () => {
+  it("renders entries from listListings as links to the inspector", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
     // fixture NAMED_LISTINGS includes btc-momentum-v3 with name "BTC Momentum v3"
     const entry = await screen.findByText("BTC Momentum v3");
@@ -77,7 +77,7 @@ describe("BrowseRoute", () => {
     expect(screen.queryByText(/LEADERBOARDS/i)).not.toBeInTheDocument();
   });
 
-  it("renders at least one GenArtPlaceholder plate", async () => {
+  it("renders at least one GenArtPlaceholder thumbnail", async () => {
     const { container } = render(<BrowseRoute />, { wrapper: Wrapper });
     await waitFor(() => {
       expect(container.querySelectorAll('[data-genart="bitfields-v3"]').length).toBeGreaterThan(0);
@@ -129,7 +129,7 @@ describe("BrowseRoute", () => {
     });
   });
 
-  it("clicking a slice chip narrows the catalogue", async () => {
+  it("clicking a slice chip narrows the list", async () => {
     render(<BrowseRoute />, { wrapper: Wrapper });
     const chip = await screen.findByTestId("slice-chip-sol-7d");
     act(() => chip.click());

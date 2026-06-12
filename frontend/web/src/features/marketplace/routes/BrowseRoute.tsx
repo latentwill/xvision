@@ -1,9 +1,9 @@
 // src/features/marketplace/routes/BrowseRoute.tsx
-// "The Catalogue" — the /marketplace browse surface (spec 3.1).
-// Single full-width vertical stack: Hero → Toolbar → AppliedChips → SliceChips
-// → catalogue list of CatalogueEntry. No leaderboard rail, no list-row buy flow,
+// The /marketplace browse surface (spec 3.1).
+// Single full-width vertical stack: header → Toolbar → AppliedChips → SliceChips
+// → list of ListingEntry rows. No leaderboard rail, no list-row buy flow,
 // no popups (the filter panel is an inline accordion in document flow). Rows are
-// whole <Link>s to the inspector — inspect-before-buy is the catalogue ethos.
+// whole <Link>s to the inspector — inspect-before-buy is the browse ethos.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -15,7 +15,7 @@ import { HeaderStrip } from "./browse/HeaderStrip";
 import { Toolbar, type BrowseView } from "./browse/Toolbar";
 import { AppliedChips } from "./browse/AppliedChips";
 import { SliceChips } from "./browse/SliceChips";
-import { CatalogueEntry, humanize, plateNumber } from "./browse/CatalogueEntry";
+import { ListingEntry, humanize } from "./browse/ListingEntry";
 import { FilterDrawerContent } from "./browse/FilterDrawerContent";
 import type { FilterState, ListingRow, Slice, SliceId } from "@/features/marketplace/data/types";
 
@@ -45,7 +45,7 @@ export function BrowseRoute() {
   const mp = useMarketplaceData();
   const { filter, setFilter } = useFilterState();
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [view, setView] = useState<BrowseView>("catalogue");
+  const [view, setView] = useState<BrowseView>("list");
 
   // Whether the active client is the fixture/demo client (drives the DEMO
   // marker and the sort-options gating).
@@ -146,26 +146,26 @@ export function BrowseRoute() {
         onSliceClick={handleSliceClick}
       />
 
-      {/* Catalogue list (single full-width column) */}
+      {/* Listing list (single full-width column) */}
       <div className="flex-1 min-h-0 overflow-auto pb-6">
         {total === 0 ? (
           <div className="px-4 sm:px-7 py-10">
             <EmptyState
-              title="The catalogue is empty"
+              title="No strategies yet"
               message="No strategies minted yet."
             />
             <div className="mt-4 text-center">
               <Link
                 to="/marketplace/sell"
-                className="font-mono text-[12px] text-gilt hover:underline underline-offset-2"
+                className="text-[12px] text-gold hover:underline underline-offset-2"
               >
-                List your strategy →
+                List your strategy
               </Link>
             </div>
           </div>
         ) : matched === 0 ? (
-          <div className="px-4 sm:px-7 py-10 text-center font-display italic text-[13px] text-text-3">
-            No entries match the current filters.
+          <div className="px-4 sm:px-7 py-10 text-center text-[13px] text-text-3">
+            No strategies match the current filters.
           </div>
         ) : view === "index" ? (
           <IndexTable rows={rows} />
@@ -174,14 +174,14 @@ export function BrowseRoute() {
           // series, so they fall through to the dignified "pending first live
           // cycle" caption — never a fabricated micro-curve.
           //
-          // In the DEMO CATALOGUE only (fixture client), the curated named
-          // listings carry real curated returns (e.g. btc-momentum-v3 at
-          // +47.2%); the spec (§3.1E) calls for a real MiniSparkline there so
-          // the demo doesn't look uniformly blank on performance. The 200
-          // deterministic `wall-strat-*` filler rows are NOT real data, so they
-          // stay on the honest pending caption.
+          // On the dev fixture client only, the curated named listings carry
+          // real curated returns (e.g. btc-momentum-v3 at +47.2%); the spec
+          // (§3.1E) calls for a real MiniSparkline there so the demo doesn't
+          // look uniformly blank on performance. The 200 deterministic
+          // `wall-strat-*` filler rows are NOT real data, so they stay on the
+          // honest pending caption.
           rows.map((row, i) => (
-            <CatalogueEntry
+            <ListingEntry
               key={row.id}
               row={row}
               index={i}
@@ -195,14 +195,14 @@ export function BrowseRoute() {
 }
 
 // Dense mono fallback table for power users (spec 3.1B view toggle). Real
-// fields only, hairline rules, NO sparkline. The Catalogue view is the thesis;
+// fields only, hairline rules, NO sparkline. The List view is the default;
 // the Index view is opt-in.
 function IndexTable({ rows }: { rows: ListingRow[] }) {
   return (
     <table className="w-full border-collapse font-mono text-[12px]">
       <thead>
-        <tr className="border-b border-ink-rule text-left">
-          {["№", "Strategy", "Tier", "Price", "Creator"].map((h) => (
+        <tr className="border-b border-border text-left">
+          {["Strategy", "Tier", "Price", "Creator"].map((h) => (
             <th
               key={h}
               className="px-4 sm:px-7 py-2 font-semibold text-[9px] tracking-[0.18em] uppercase text-text-3"
@@ -216,12 +216,11 @@ function IndexTable({ rows }: { rows: ListingRow[] }) {
         {rows.map((row) => {
           const isOpen = row.priceUsdc === null || row.tier === "open";
           return (
-            <tr key={row.id} className="border-b border-ink-rule-faint hover:bg-surface-hover">
-              <td className="px-4 sm:px-7 py-2 text-gilt">№ {plateNumber(row.id)}</td>
+            <tr key={row.id} className="border-b border-border-soft hover:bg-surface-hover">
               <td className="px-4 sm:px-7 py-2">
                 <Link
                   to={`/marketplace/lineage/${row.id}`}
-                  className="text-text hover:text-gilt hover:underline underline-offset-2"
+                  className="text-text hover:underline underline-offset-2"
                 >
                   {row.name ?? humanize(row.id)}
                 </Link>

@@ -82,13 +82,7 @@ export function SellRoute() {
 
   return (
     <div className="px-7 py-8 max-w-2xl" data-page="sell">
-      <p
-        data-testid="sell-eyebrow"
-        className="text-[11px] font-mono uppercase tracking-[0.18em] text-gilt mb-2"
-      >
-        SUBMIT A WORK TO THE CATALOGUE
-      </p>
-      <h1 className="text-[22px] font-display font-semibold tracking-tight mb-1">
+      <h1 className="text-[20px] font-sans font-semibold tracking-tight mb-1">
         List your strategy
       </h1>
       <p className="text-[13px] text-text-2 mb-8">
