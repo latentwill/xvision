@@ -240,7 +240,7 @@ export function ReceiptRoute() {
                   onClick={() => {
                     try {
                       navigator.clipboard?.writeText(
-                        `${receipt.share.caption} https://${receipt.share.ogCard.url}`
+                        `https://${receipt.share.ogCard.url}`
                       );
                     } catch {
                       // clipboard not available

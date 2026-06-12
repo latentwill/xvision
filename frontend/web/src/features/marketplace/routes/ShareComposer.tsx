@@ -59,7 +59,7 @@ export function ShareComposer({
         <button
           onClick={() => {
             try {
-              navigator.clipboard?.writeText(`${caption} ${shareUrl}`);
+              navigator.clipboard?.writeText(shareUrl);
             } catch {
               // clipboard not available in this context (tests, insecure context)
             }

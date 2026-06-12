@@ -3,10 +3,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RouterProvider, createMemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarketplaceLayout } from "./MarketplaceLayout";
 import { ReceiptRoute } from "./ReceiptRoute";
 import { MARKETPLACE_OPTIN_KEY } from "@/features/marketplace/lib/optin";
+import { RECEIPTS } from "@/features/marketplace/data/fixtures/receipts";
 
 // C8: MarketplaceLayout gates on the opt-in (default OFF). Enable it so the
 // receipt surface behind the gate renders instead of redirecting.
@@ -136,5 +137,26 @@ describe("ReceiptRoute", () => {
     renderWithQuery("/marketplace/receipts/0xdemo-tx");
     // The loading placeholder must be in the document synchronously
     expect(document.body.textContent).toMatch(/Loading|receipt/i);
+  });
+
+  describe("'Copy link' button in share strip — copies URL only, never caption", () => {
+    it("writes only the URL (no caption) to the clipboard when the share-strip 'Copy link' is clicked", async () => {
+      const user = userEvent.setup();
+      // userEvent.setup() installs its own clipboard stub on navigator.clipboard.
+      // Spy on that stub after it is in place so our spy captures the real call.
+      const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+      renderWithQuery("/marketplace/receipts/0xdemo-tx");
+      // Wait for receipt to load
+      await screen.findByText(/Share this acquisition/i);
+      const copyBtn = screen.getByRole("button", { name: /Copy link/i });
+      await user.click(copyBtn);
+      expect(writeText).toHaveBeenCalledTimes(1);
+      const receipt = RECEIPTS["0xdemo-tx"];
+      const expectedUrl = `https://${receipt.share.ogCard.url}`;
+      expect(writeText).toHaveBeenCalledWith(expectedUrl);
+      // Confirm caption text is NOT in the argument
+      expect(writeText.mock.calls[0][0]).not.toContain(receipt.share.caption);
+      writeText.mockRestore();
+    });
   });
 });
