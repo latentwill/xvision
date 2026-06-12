@@ -22,6 +22,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
+import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
 import { PulseBand } from "@/components/home/PulseBand";
 import { AttentionBand } from "@/components/home/AttentionBand";
 import { OptimizerPanel } from "@/components/home/OptimizerPanel";
@@ -102,6 +103,8 @@ export function HomeRoute() {
 
       <div className="space-y-5">
         <SafetyPauseBanner />
+
+        <HomeOutcomeStrip runs={runs.data ?? []} strategies={strategies.data ?? []} />
 
         <div className="xvn-card-in" style={{ animationDelay: "0ms" }}>
           <PulseBand

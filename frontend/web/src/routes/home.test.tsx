@@ -289,4 +289,22 @@ describe("HomeRoute", () => {
       await screen.findByTestId("optimizer-empty"),
     ).toHaveTextContent(/no optimizer cycles recorded yet/i);
   });
+
+  // CT4 — home outcome strip renders completed/inflight eval counts and
+  // per-strategy return/Sharpe from existing eval data. Must not show
+  // live-money labels (PnL, deployed capital, real money).
+  it("renders the home outcome strip with eval metrics, no live-money labels", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    expect(await screen.findByTestId("home-outcome-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("home-outcome-completed")).toBeInTheDocument();
+    expect(screen.getByTestId("home-outcome-inflight")).toBeInTheDocument();
+    expect(screen.getByTestId("home-outcome-best-return")).toBeInTheDocument();
+    expect(screen.getByTestId("home-outcome-median-sharpe")).toBeInTheDocument();
+
+    expect(screen.queryByText(/PnL/i)).toBeNull();
+    expect(screen.queryByText(/deployed capital/i)).toBeNull();
+    expect(screen.queryByText(/real money/i)).toBeNull();
+  });
 });
