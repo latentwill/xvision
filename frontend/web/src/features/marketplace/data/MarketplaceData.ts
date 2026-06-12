@@ -46,7 +46,11 @@ const fakeTx = (): TxRef => ({
 export class FixtureMarketplaceData implements MarketplaceData {
   readonly dataSource = "fixture" as const;
   async getStats(): Promise<MarketplaceStats> {
-    return { totalStrategies: 1247, paidThisWeekUsd: 34820, agentPurchases: 218, mintedLast24h: 64 };
+    // ENTRIES must equal the number of rows actually in the catalogue — a
+    // hard-coded 1,247 against ~206 visible rows reads as an internal
+    // contradiction even inside a DEMO CATALOGUE (QA fix). Derive from the
+    // same source the rows come from so the stat ledger and the row count agree.
+    return { totalStrategies: ALL_LISTINGS.length, paidThisWeekUsd: 34820, agentPurchases: 218, mintedLast24h: 64 };
   }
   async listListings(f: FilterState) {
     const pool =

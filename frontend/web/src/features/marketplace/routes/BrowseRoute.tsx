@@ -156,13 +156,23 @@ export function BrowseRoute() {
         ) : view === "index" ? (
           <IndexTable rows={rows} />
         ) : (
-          // Honest-data spine (spec §3.1E): ListingRow carries no equity
-          // series, so every catalogue row falls through to the dignified
-          // "pending first live cycle" caption — no fabricated per-row
-          // micro-curves on the catalogue. The MiniSparkline path on
-          // CatalogueEntry is reserved for surfaces that carry real equity.
+          // Honest-data spine (spec §3.1E): real on-chain rows carry no equity
+          // series, so they fall through to the dignified "pending first live
+          // cycle" caption — never a fabricated micro-curve.
+          //
+          // In the DEMO CATALOGUE only (fixture client), the curated named
+          // listings carry real curated returns (e.g. btc-momentum-v3 at
+          // +47.2%); the spec (§3.1E) calls for a real MiniSparkline there so
+          // the demo doesn't look uniformly blank on performance. The 200
+          // deterministic `wall-strat-*` filler rows are NOT real data, so they
+          // stay on the honest pending caption.
           rows.map((row, i) => (
-            <CatalogueEntry key={row.id} row={row} index={i} />
+            <CatalogueEntry
+              key={row.id}
+              row={row}
+              index={i}
+              showSparkline={isDemo && !row.id.startsWith("wall-strat-")}
+            />
           ))
         )}
       </div>

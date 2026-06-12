@@ -73,8 +73,11 @@ export function Toolbar({
                 onClick={() => setFilter({ segment: s.key })}
                 className={[
                   "px-3 py-1 rounded-[3px] text-[12px] font-semibold cursor-pointer transition-colors",
+                  // Active state is gilt, NOT green: §2.2 rations green to live
+                  // positive returns, the single primary CTA, and the live dot.
+                  // A filter-nav tab is none of those — mirror the view-toggle.
                   isActive
-                    ? "bg-gold text-[#001A0A]"
+                    ? "bg-gilt-bg text-gilt"
                     : "bg-transparent text-text-2 hover:text-text",
                 ].join(" ")}
               >

@@ -34,7 +34,7 @@ export function ReceiptsDrawer({ onChain, open, onToggle }: Props) {
       <button
         data-testid="receipts-toggle"
         onClick={onToggle}
-        className="w-full flex items-center gap-2.5 px-7 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
+        className="w-full flex items-center gap-2.5 px-7 py-3.5 text-left hover:bg-surface-hover transition-colors"
       >
         {/* Chevron — right when closed, down when open */}
         <svg

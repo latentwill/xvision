@@ -154,8 +154,10 @@ export function PerformanceSection({ curve, trades }: Props): ReactElement {
             message="This strategy hasn't completed a trading cycle on-chain."
           />
           <div className="mt-3 text-center">
+            {/* Routes to the eval surface (run a backtest), NOT the mint funnel
+                — the empty-state context is "run a backtest", not "publish". */}
             <Link
-              to="/marketplace/sell"
+              to="/eval-runs"
               className="font-mono text-[11.5px] text-gilt hover:underline"
             >
               Run a backtest →

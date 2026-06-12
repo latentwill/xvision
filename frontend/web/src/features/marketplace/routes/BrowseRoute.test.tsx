@@ -3,10 +3,39 @@ import { render, screen, act, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
 import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
 import { BrowseRoute } from "./BrowseRoute";
+
+// The demo catalogue now renders a real MiniSparkline (uPlot pane) for the
+// curated named listings. Mock uPlot so tests don't need a canvas-backed DOM
+// (same pattern as LineageRoute.test.tsx).
+vi.mock("uplot", () => ({
+  default: class {
+    constructor() {}
+    setSize() {}
+    setData() {}
+    destroy() {}
+  },
+}));
+
+// usePlot wires a ResizeObserver; jsdom doesn't provide one.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+beforeAll(() => {
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    writable: true,
+    configurable: true,
+    value: ResizeObserverStub,
+  });
+});
+afterAll(() => {
+  delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+});
 
 function Wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

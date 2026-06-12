@@ -28,6 +28,7 @@ import { AssetPill } from "@/features/marketplace/components/AssetPill";
 import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { TxChip } from "@/features/marketplace/components/TxChip";
 import { relativeTime } from "@/features/marketplace/lib/time";
+import { humanize } from "./browse/CatalogueEntry";
 import { IngredientBanner } from "./IngredientBanner";
 import { PerformanceSection } from "./PerformanceSection";
 import { ReceiptsDrawer } from "./ReceiptsDrawer";
@@ -252,7 +253,7 @@ function MoreFromCreatorCard({
             key={row.id}
             onClick={() => navigate(`/marketplace/lineage/${row.id}`)}
             className={[
-              "w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-white/[0.02] transition-colors",
+              "w-full flex items-center gap-2.5 px-4 py-2.5 text-left hover:bg-surface-hover transition-colors",
               i < rows.length - 1 ? "border-b border-border-soft" : "",
             ].join(" ")}
           >
@@ -474,7 +475,11 @@ export function LineageRoute() {
     );
   }
 
-  const title = manifest?.display_name || detail.name || detail.id;
+  // Title fallback chain (spec §3.2 title-plate): verified manifest display
+  // name → the listing's own name → a humanized form of the id. NEVER the raw
+  // tech slug in the Fraunces display serif — `humanize('btc-momentum-v3')`
+  // yields "Btc Momentum V3", keeping the editorial voice intact (QA fix).
+  const title = manifest?.display_name || detail.name || humanize(detail.id);
   const platformFeePct = detail.platformFeeBps / 100;
   const netToCreator =
     detail.priceUsdc != null

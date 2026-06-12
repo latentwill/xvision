@@ -8,6 +8,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { TestnetBadge } from "@/features/marketplace/components/TestnetBadge";
+import { GrainOverlay } from "@/components/chart/v2/primitives/GrainOverlay";
 import type { ListingRow, MarketplaceStats } from "@/features/marketplace/data/types";
 
 function fmt(n: number): string {
@@ -36,7 +37,10 @@ export function HeaderStrip({ rows = [] }: HeaderStripProps) {
 
   return (
     <div className="relative px-4 sm:px-7 py-6 border-b border-ink-rule">
-      <div className="flex flex-col gap-5 sm:flex-row sm:justify-between sm:items-end sm:gap-6">
+      {/* Subtle paper texture — spec §2.3 (hero + detail surfaces get a low-opacity
+          GrainOverlay). Sits behind the content (pointer-events-none, zIndex 0). */}
+      <GrainOverlay />
+      <div className="relative flex flex-col gap-5 sm:flex-row sm:justify-between sm:items-end sm:gap-6">
         <div className="min-w-0 max-w-[640px]">
           {/* Eyebrow */}
           <div className="flex items-center gap-2 flex-wrap">

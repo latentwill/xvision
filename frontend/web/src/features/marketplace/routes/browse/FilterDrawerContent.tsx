@@ -326,7 +326,11 @@ export function FilterDrawerContent({
   }
 
   return (
-    <>
+    // Cap the accordion body at ~60vh with internal scroll so the sticky
+    // footer (Clear all · matches · Done) is always reachable without scrolling
+    // the whole page (QA fix: Done button was ~790px below the fold at 1440×900).
+    <div className="flex flex-col max-h-[60vh]">
+      <div className="overflow-y-auto min-h-0 flex-1">
       {/* Header meta line */}
       <div className="px-[18px] pb-2 pt-1 font-mono text-[10.5px] text-text-3">
         {filter.assets.length + filter.models.length + filter.styles.length +
@@ -537,9 +541,10 @@ export function FilterDrawerContent({
           onChange={(v) => setFilter({ minBuyers: v })}
         />
       </DrawerSection>
+      </div>
 
-      {/* Footer */}
-      <div className="px-4 py-3 border-t border-ink-rule flex items-center gap-2">
+      {/* Footer — pinned at the bottom of the capped accordion (always reachable). */}
+      <div className="shrink-0 px-4 py-3 border-t border-ink-rule bg-bg flex items-center gap-2">
         <button
           type="button"
           onClick={clearAll}
@@ -559,6 +564,6 @@ export function FilterDrawerContent({
           Done
         </button>
       </div>
-    </>
+    </div>
   );
 }
