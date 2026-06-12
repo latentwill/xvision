@@ -14,6 +14,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | 2026-06-12 | E. Batch B adversarial review passed | First read-only review found P1s in PF-18 schema optionality and Cline `?` keys, plus PF-17 missing no-extra-dispatch assertion. Fixes landed; second read-only review returned PASS for PF-17 and PF-18 with no P0/P1 findings. |
 | 2026-06-12 | F. Batch B branch published | Commit `cdb19c99` pushed on `qa/release-manager-20260612`; PR #949 opened for review/merge. |
 | 2026-06-12 | G. Live/eval parity gate added | Third-agent branch `qa/parity-crosswalk-20260612` added a release gate and per-item parity classification so new profitability work cannot land backtest-only or live-only by accident. |
+| 2026-06-12 | H. PF-11 implemented | Branch `qa/pf11-bars-filters-20260612` added `xvn bars ls --asset/--granularity` filtering, updated CLI surface snapshot, and removed stale `tool-policy` undocumented exemption now that the wiki documents it. |
 
 ## Reconciled Counts
 
@@ -87,7 +88,7 @@ of the final states before release closeout.
 | PF-08 | Platform | #939 | Medium | not-started |  |  |  |  | `explicit-exclusion-ok` | Scenario regime classification/warning. |
 | PF-09 | Platform | #938 | Medium | not-started |  |  |  |  | `covered-by-WS2` | `n_trades` liquidation semantics. |
 | PF-10 | Platform | #940 | Low | not-started |  |  |  |  | `not-profitability-relevant` | Strategy response envelope inconsistency. |
-| PF-11 | Platform | #940 | Low | not-started |  |  |  |  | `not-profitability-relevant` | `bars ls` filters. |
+| PF-11 | Platform | #940 | Low | verified | `BarsOp::Ls` now takes `LsArgs` with `--asset` and `--granularity` filters; listing filters rows before rendering entries and coverage. | `run_ls` applies `filter_bars_cache_rows` to the DB rows before both per-entry output and union coverage rendering; filters accept exact cache values plus normalized `BTC`/`BTC/USD` and compact/cache granularity forms. | RED: `scripts/cargo test -p xvision-cli commands::bars::tests::bars_ls -- --nocapture` failed on missing `LsArgs`/filter helper. GREEN: same focused command passed 2/2; `UPDATE_CLI_SURFACE=1 scripts/cargo test -p xvision-cli --test cli_surface` passed 3/3. | Pending implementation review | `not-profitability-relevant` | `bars ls` filters. |
 | PF-12 | Platform | #940 | Low | not-started |  |  |  |  | `shared-path-required` | Filter fire reason not propagated. |
 | PF-13 | Platform | #940 | Low | not-started |  |  |  |  | `not-profitability-relevant` | Filter status stays draft after set-filter. |
 | PF-14 | Platform | #940 | Low | not-started |  |  |  |  | `not-profitability-relevant` | Stale smoke default model. |
