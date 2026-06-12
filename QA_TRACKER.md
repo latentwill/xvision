@@ -20,6 +20,7 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | 2026-06-12 | K. Batch D isolated and scoped | Worktree `.worktrees/qa-pf15-provider-models-20260612` on branch `qa/pf15-provider-models-20260612` created from Batch C checkpoint. Scope is PF-15 only: `crates/xvision-cli/src/commands/provider.rs` plus `QA_TRACKER.md`. Ownership search found no active owner for `provider.rs`; `qa-pf11-bars-filters-20260612` exists separately, so PF-11 remains untouched. |
 | 2026-06-12 | L. Batch D implemented and locally verified; review blocked | PF-15 RED test failed first on the hard-error path, implementation changed the missing configured catalog path to print the refresh hint and return success, focused GREEN checks passed. External adversarial review is blocked for now: Codex reviewer hit usage limit, Gemini CLI has no auth, Claude CLI hung without a verdict and was terminated. |
 | 2026-06-12 | M. Batch D adversarial review passed | Fresh read-only Codex implementation review returned PASS with no P0/P1 blockers. Reviewer confirmed only scoped files changed, configured/no-cache catalog returns success with a refresh hint, unknown providers still error through `providers_catalog::get`, and enable/disable paths remain before the catalog lookup. |
+| 2026-06-12 | N. Batch C and D branches published | Batch C blocker record pushed and opened as PR #952 against `main`. PF-15 pushed and opened as stacked PR #953 against `qa/batch-c-brackets-20260612`, limiting the PF-15 diff to the provider CLI change plus tracker updates. |
 
 ## Reconciled Counts
 
@@ -35,8 +36,8 @@ because `QA_TRACKER.md` was absent on `origin/main` at audit time.
 | Branch/worktree | Purpose | File scope | Status |
 |---|---|---|---|
 | `qa/release-manager-20260612` / `.worktrees/qa-release-manager-20260612` | QA reconciliation and first implementation batch | `QA_TRACKER.md`, `docs/research/2026-06-12-qa-findings-action-list.md`, batch-specific files listed below | Open PR #949 |
-| `qa/batch-c-brackets-20260612` / `.worktrees/qa-batch-c-brackets-20260612` | Batch C `PF-19`/`PF-20` bracket persistence and take-profit config | `QA_TRACKER.md`, `docs/superpowers/plans/2026-06-12-qa-batch-c-bracket-persistence-config.md` only; implementation files were not edited because required files are actively owned by other tracks | Blocked pending ownership/contract coordination |
-| `qa/pf15-provider-models-20260612` / `.worktrees/qa-pf15-provider-models-20260612` | Batch D `PF-15` provider models soft miss | `QA_TRACKER.md`, `crates/xvision-cli/src/commands/provider.rs` | Verified locally; pending commit/PR |
+| `qa/batch-c-brackets-20260612` / `.worktrees/qa-batch-c-brackets-20260612` | Batch C `PF-19`/`PF-20` bracket persistence and take-profit config | `QA_TRACKER.md`, `docs/superpowers/plans/2026-06-12-qa-batch-c-bracket-persistence-config.md` only; implementation files were not edited because required files are actively owned by other tracks | Open PR #952; blocked pending ownership/contract coordination |
+| `qa/pf15-provider-models-20260612` / `.worktrees/qa-pf15-provider-models-20260612` | Batch D `PF-15` provider models soft miss | `QA_TRACKER.md`, `crates/xvision-cli/src/commands/provider.rs` | Open stacked PR #953 |
 
 ## Batch Plan
 
