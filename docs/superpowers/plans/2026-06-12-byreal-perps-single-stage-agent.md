@@ -44,8 +44,27 @@ them.
     call-site is `DecisionSeedInput` perps fields = **inside Task 4**. The clean
     wiring API (`apply_to_onchain`) is shipped; the call-site is deferred with A.
 
+- ✅ **Task 4 — perps context in the decision seed (partial A; the unblock).**
+  `PerpsContext` (funding/OI/basis/long-short) added to `DecisionSeedInput`,
+  emitted as `market_data.perps` (only populated fields; `null` when empty).
+  Backtest passes default (spot-only). 2 tests. The live decision call-site now
+  carries a documented **LIVE PERPS ATTACH POINT** comment for an out-of-band
+  `perp_feed` poller — a network fetch in that sync hot loop is the wrong shape.
+  - *Finding:* only **3** `DecisionSeedInput` construction sites total (test +
+    backtest + live), so the contract was cheap to thread.
+  - *Finding:* the `eval_causal_input_sanitization` test binary has **2
+    pre-existing unrelated failures** (`migration_020_up_down_up_preserves_rows`,
+    `agent_slot_round_trips_through_store_for_each_policy`) — same baseline-rot
+    category as the Orderly `warnings` breakage; not caused by this change (the
+    2 new perps tests pass; the change is purely additive).
+
 **DEFERRED (with the real reason):**
 
+- ⬜ **Task 9 — positions perps fields (E).** `OpenPosition` has **13 construction
+  sites across 9 files** (several carrying the pre-existing test rot), so adding
+  `leverage`/`liquidation_price`/`funding_paid_usd` is high-churn. `ByrealPosition`
+  already carries the data, so the executor-side mapping is pre-built — the cost
+  is purely the struct-literal fan-out. Best done as its own focused PR.
 - ⬜ **Task 8 — capability badge (F).** *Recon was wrong:* `StrategyListItem`
   (`frontend/web/src/api/strategies.ts`) has **no `capabilities`/`skills` field**
   in this checkout. The badge needs a **backend API change** to surface those on
