@@ -30,7 +30,9 @@ use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
-use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput, PerpsContext};
+use xvision_engine::eval::executor::backtest::{
+    build_decision_seed, DecisionSeedInput, PerpsContext, SeedContext,
+};
 
 const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_agent_slot_prompt_version.sql");
@@ -222,6 +224,106 @@ fn raw_per_bar_shape_is_byte_identical_to_pre_f6() {
         );
     }
     assert_eq!(obj.len(), 6, "Raw must not gain or drop fields");
+}
+
+/// Seed fields the live and backtest paths are ALLOWED to differ on, with the
+/// reason. Everything else must be byte-identical given equivalent state — the
+/// parity guard below enforces it. Adding to this list is a deliberate act that
+/// documents a new intentional divergence.
+const INTENTIONALLY_DIVERGENT: &[&str] = &[
+    // Live has no T+1 bar, so next_bar_open is the current close; backtest uses
+    // the real next bar's open.
+    "next_bar_open",
+    // Origin label only.
+    "reference_price_source",
+];
+
+/// Recursively assert two seed JSON values have identical key structure and
+/// identical values, EXCEPT leaf keys named in `allow` (whose values may
+/// differ). Catches both shape drift (a field emitted by one path but not the
+/// other) and value drift (a derivation that diverges).
+fn assert_seed_parity(a: &serde_json::Value, b: &serde_json::Value, allow: &[&str], path: &str) {
+    use std::collections::BTreeSet;
+    match (a, b) {
+        (serde_json::Value::Object(ma), serde_json::Value::Object(mb)) => {
+            let ka: BTreeSet<&String> = ma.keys().collect();
+            let kb: BTreeSet<&String> = mb.keys().collect();
+            assert_eq!(ka, kb, "seed key-set mismatch at `{path}`");
+            for (k, va) in ma {
+                assert_seed_parity(va, &mb[k], allow, &format!("{path}.{k}"));
+            }
+        }
+        _ => {
+            let leaf = path.rsplit('.').next().unwrap_or(path);
+            if !allow.contains(&leaf) {
+                assert_eq!(a, b, "seed value drift at `{path}` (not allowlisted)");
+            }
+        }
+    }
+}
+
+#[test]
+fn live_and_backtest_seeds_diverge_only_on_allowlisted_fields() {
+    // Equivalent decision state run through the SHARED constructor twice, once
+    // with the backtest's next_open/source and once with the live path's. The
+    // only differences in the emitted seed must be the allowlisted fields —
+    // proving the upnl/entry derivations don't leak the divergent inputs.
+    let bar = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
+    let active = vec!["BTC/USD".to_string()];
+    let history: Vec<&xvision_core::market::Ohlcv> = vec![];
+    let ctx = |next_open: f64, source: &'static str| SeedContext {
+        decision_idx: 0,
+        asset: "BTC/USD",
+        active_assets: &active,
+        bar: &bar,
+        history_slice: &history,
+        inputs_policy: InputsPolicy::Causal,
+        equity: 10_000.0,
+        position_size: 0.02,
+        entry_price: 100.0,
+        mark_price: 108.0,
+        next_bar_open: next_open,
+        reference_price_source: source,
+        bars_held: 4,
+        stop_loss_price: 95.0,
+        take_profit_price: 120.0,
+        perps: PerpsContext::default(),
+    };
+    let backtest = build_decision_seed(DecisionSeedInput::from_context(ctx(109.0, "eval_bar.close")));
+    let live = build_decision_seed(DecisionSeedInput::from_context(ctx(108.0, "live_bar.close")));
+    assert_seed_parity(&backtest, &live, INTENTIONALLY_DIVERGENT, "");
+}
+
+#[test]
+fn from_context_derives_unrealized_pnl_for_long_and_flat() {
+    let bar = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
+    let active = vec!["BTC/USD".to_string()];
+    let history: Vec<&xvision_core::market::Ohlcv> = vec![];
+    let base = |pos: f64, entry: f64| SeedContext {
+        decision_idx: 0,
+        asset: "BTC/USD",
+        active_assets: &active,
+        bar: &bar,
+        history_slice: &history,
+        inputs_policy: InputsPolicy::Causal,
+        equity: 10_000.0,
+        position_size: pos,
+        entry_price: entry,
+        mark_price: 110.0,
+        next_bar_open: 109.0,
+        reference_price_source: "eval_bar.close",
+        bars_held: 0,
+        stop_loss_price: 0.0,
+        take_profit_price: 0.0,
+        perps: PerpsContext::default(),
+    };
+    // Long 100 → 110 mark = +10%.
+    let long = build_decision_seed(DecisionSeedInput::from_context(base(0.02, 100.0)));
+    assert!((long["portfolio_state"]["unrealized_pnl_pct"].as_f64().unwrap() - 10.0).abs() < 1e-9);
+    // Flat → upnl 0 and entry_price zeroed for the trader's view.
+    let flat = build_decision_seed(DecisionSeedInput::from_context(base(0.0, 100.0)));
+    assert_eq!(flat["portfolio_state"]["unrealized_pnl_pct"].as_f64(), Some(0.0));
+    assert_eq!(flat["portfolio_state"]["entry_price"].as_f64(), Some(0.0));
 }
 
 #[test]
