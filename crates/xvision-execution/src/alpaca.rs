@@ -72,6 +72,12 @@ pub trait AlpacaApi: Send + Sync {
     /// GET /v2/orders/{id}
     async fn get_order(&self, order_id: &str) -> Result<AlpacaOrder, ExecutorError>;
 
+    /// GET /v2/orders?status=open&symbols=...
+    async fn list_open_orders(&self, symbols: &[String]) -> Result<Vec<AlpacaOrder>, ExecutorError>;
+
+    /// DELETE /v2/orders/{id}
+    async fn cancel_order(&self, order_id: &str) -> Result<(), ExecutorError>;
+
     /// GET /v2/account
     async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError>;
 
@@ -268,6 +274,31 @@ impl AlpacaApi for ApacClientApi {
         let order = self.client.issue::<Get>(&id).await.map_err(map_apca_err)?;
 
         Ok(apca_order_to_plain(&order))
+    }
+
+    async fn list_open_orders(&self, symbols: &[String]) -> Result<Vec<AlpacaOrder>, ExecutorError> {
+        use apca::api::v2::orders::{List, ListReq, Status};
+
+        let req = ListReq {
+            symbols: symbols.to_vec(),
+            status: Status::Open,
+            limit: Some(500),
+            nested: true,
+            _non_exhaustive: (),
+        };
+        let orders = self.client.issue::<List>(&req).await.map_err(map_apca_err)?;
+        Ok(orders.iter().map(apca_order_to_plain).collect())
+    }
+
+    async fn cancel_order(&self, order_id: &str) -> Result<(), ExecutorError> {
+        use apca::api::v2::order::{Delete, Id};
+        use uuid::Uuid;
+
+        let uuid = Uuid::parse_str(order_id)
+            .map_err(|e| ExecutorError::Internal(format!("invalid order id: {e}")))?;
+        let id = Id(uuid);
+        self.client.issue::<Delete>(&id).await.map_err(map_apca_err)?;
+        Ok(())
     }
 
     async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
@@ -643,6 +674,8 @@ mod tests {
         get_order_result: Arc<Mutex<Option<AlpacaOrder>>>,
         account: AlpacaAccount,
         positions: Vec<AlpacaPosition>,
+        open_orders: Arc<Mutex<Vec<AlpacaOrder>>>,
+        cancelled_order_ids: Arc<Mutex<Vec<String>>>,
         /// Captured request sent to create_order for assertion.
         captured_request: Arc<Mutex<Option<OrderRequest>>>,
     }
@@ -659,6 +692,8 @@ mod tests {
                 get_order_result: Arc::new(Mutex::new(filled_order)),
                 account,
                 positions,
+                open_orders: Arc::new(Mutex::new(Vec::new())),
+                cancelled_order_ids: Arc::new(Mutex::new(Vec::new())),
                 captured_request: Arc::new(Mutex::new(None)),
             }
         }
@@ -682,6 +717,18 @@ mod tests {
                 .clone()
                 .map(Ok)
                 .unwrap_or_else(|| Err(ExecutorError::Internal("no mock filled order".into())))
+        }
+
+        async fn list_open_orders(&self, _symbols: &[String]) -> Result<Vec<AlpacaOrder>, ExecutorError> {
+            Ok(self.open_orders.lock().unwrap().clone())
+        }
+
+        async fn cancel_order(&self, order_id: &str) -> Result<(), ExecutorError> {
+            self.cancelled_order_ids
+                .lock()
+                .unwrap()
+                .push(order_id.to_string());
+            Ok(())
         }
 
         async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
@@ -913,6 +960,12 @@ mod tests {
             }
             async fn get_order(&self, _: &str) -> Result<AlpacaOrder, ExecutorError> {
                 panic!("get_order must not be called for a vetoed decision")
+            }
+            async fn list_open_orders(&self, _: &[String]) -> Result<Vec<AlpacaOrder>, ExecutorError> {
+                panic!("list_open_orders must not be called for a vetoed decision")
+            }
+            async fn cancel_order(&self, _: &str) -> Result<(), ExecutorError> {
+                panic!("cancel_order must not be called for a vetoed decision")
             }
             async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
                 panic!("get_account must not be called for a vetoed decision")

@@ -3,4 +3,4 @@
 /**
  * How capital is shared across assets in a run.
  */
-export type CapitalMode = "pooled" | "per_asset";
+export type CapitalMode = "pooled" | "account_equity" | "per_asset";

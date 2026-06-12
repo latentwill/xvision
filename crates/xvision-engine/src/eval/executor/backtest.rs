@@ -19,7 +19,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -29,8 +29,11 @@ use xvision_core::market::Ohlcv;
 use xvision_core::providers::Catalog;
 use xvision_data::fixtures::load_ohlcv_fixture;
 
-use xvision_eval::bootstrap::bootstrap_metric_ci;
 use xvision_eval::baselines::bar_baselines;
+use xvision_eval::bootstrap::bootstrap_metric_ci;
+
+const LIVE_RECOVERABLE_BROKER_RETRY_BUDGET: u32 = 3;
+const LIVE_RECOVERABLE_BROKER_BACKOFF_BASE_MS: u64 = 10;
 
 use crate::agent::llm::LlmDispatch;
 use crate::agent::observability::ObsEmitter;
@@ -55,7 +58,6 @@ use crate::eval::executor::trace_types::{AggressorSide, FillBranch};
 use crate::eval::executor::traits::{
     eval_only_token, Clock, FillRecord, FillRequest, FillSink, InstantClock, SimulatedFills,
 };
-use crate::eval::orders::OrderState;
 use crate::eval::executor::wall_clock::WallClock;
 use crate::eval::executor::RunExecutor;
 use crate::eval::findings::{make_volume_share_excess_finding, Finding, Severity};
@@ -68,10 +70,12 @@ use crate::eval::metrics::{
     annualization_calendar_for_asset_class, annualization_periods_per_year_for_asset_class,
     equity_to_returns, max_drawdown_pct, sharpe_from_returns, total_return_pct,
 };
+use crate::eval::orders::OrderState;
 use crate::eval::progress::{send_event, ProgressEvent, ProgressTx};
 use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, MetricsSummary, Run, RunStatus};
 use crate::eval::scenario::{AssetClass, FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
 use crate::eval::store::{DecisionRow, RunStore};
+use crate::safety::{SafetyGate, VenueLabel};
 use crate::strategies::agent_ref::canonical_role;
 use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
 use crate::tools::ToolRegistry;
@@ -209,9 +213,38 @@ impl Executor {
         clock: WallClock,
         obs_emitter: Option<ObsEmitter>,
     ) -> anyhow::Result<Self> {
+        Self::live_with_safety_gate(
+            live_config,
+            broker,
+            bar_source,
+            clock,
+            obs_emitter,
+            SafetyGate::allow_all(),
+            live_config.venue_label,
+        )
+    }
+
+    /// Safety-aware live constructor used by production API wiring. Tests
+    /// that only need a broker mock can continue to use [`Self::live`], which
+    /// keeps its historical allow-all gate.
+    pub fn live_with_safety_gate(
+        live_config: &LiveConfig,
+        broker: Arc<dyn BrokerSurface>,
+        bar_source: MultiLiveStream,
+        clock: WallClock,
+        obs_emitter: Option<ObsEmitter>,
+        safety_gate: SafetyGate,
+        broker_venue_label: VenueLabel,
+    ) -> anyhow::Result<Self> {
         live_config
             .validate()
             .map_err(|e| anyhow!("invalid LiveConfig: {e:?}"))?;
+        let fill_sink = RealBrokerFills::new(broker).with_safety_gate(
+            safety_gate,
+            live_config.venue_label,
+            broker_venue_label,
+            live_config.safety_limits.clone(),
+        );
         Ok(Self {
             progress: None,
             injected_bars: None,
@@ -225,7 +258,7 @@ impl Executor {
             live_runtime: Some(tokio::sync::Mutex::new(LiveRuntime {
                 bar_source,
                 clock,
-                fill_sink: RealBrokerFills::new(broker),
+                fill_sink,
                 stop_policy: live_config.stop_policy.clone(),
             })),
             fill_sink_override: None,
@@ -612,7 +645,10 @@ impl Executor {
             }
         }
         if strategy.manifest.capital_mode != CapitalMode::Pooled {
-            anyhow::bail!("capital_mode `per_asset` not yet implemented");
+            anyhow::bail!(
+                "capital_mode `{:?}` not implemented for backtest",
+                strategy.manifest.capital_mode
+            );
         }
 
         // Multi-asset (B4) — per-asset bars. Three sources, in precedence:
@@ -2786,8 +2822,13 @@ impl Executor {
         // slice the strategy saw. `decision_bars` was populated by the loop
         // above — one push per cadence-gate pass, matching the strategy's
         // iteration exactly.
-        let baselines =
-            build_baselines_report(&decision_bars, initial, cadence_minutes, scenario.asset_class, strategy_return_pct);
+        let baselines = build_baselines_report(
+            &decision_bars,
+            initial,
+            cadence_minutes,
+            scenario.asset_class,
+            strategy_return_pct,
+        );
 
         // inference_cost_quote_total + net_return_pct populated post-finalize by
         // api::eval::enrich_with_inference_cost.
@@ -2977,9 +3018,11 @@ impl Executor {
                 anyhow::bail!("execution_mode `custom:{name}` not yet implemented")
             }
         }
-        if strategy.manifest.capital_mode != CapitalMode::Pooled {
-            anyhow::bail!("capital_mode `per_asset` not yet implemented");
-        }
+        let account_equity_sizing = match strategy.manifest.capital_mode {
+            CapitalMode::Pooled => false,
+            CapitalMode::AccountEquity => true,
+            CapitalMode::PerAsset => anyhow::bail!("capital_mode `per_asset` not yet implemented"),
+        };
 
         let inputs_policy = resolve_inputs_policy(agent_slots);
         let bar_history_limit = resolve_bar_history_limit(agent_slots);
@@ -3047,6 +3090,7 @@ impl Executor {
         // daily kill check applies to the whole run's realized PnL.
         let mut daily_loss_day: Option<chrono::NaiveDate> = None;
         let mut daily_realized_at_day_start: f64 = 0.0;
+        let mut recoverable_broker_retries = 0u32;
 
         // Pull the runtime out of the executor for the duration of the
         // loop. The `Mutex` is held across `.await`s on the stream + fills;
@@ -3058,6 +3102,29 @@ impl Executor {
             .lock()
             .await;
         let stop_policy = runtime.stop_policy.clone();
+        runtime.fill_sink.set_account_equity_sizing(account_equity_sizing);
+
+        let broker_positions = runtime
+            .fill_sink
+            .open_positions(&active_venue_symbols)
+            .await
+            .map_err(|e| anyhow::anyhow!("live launch reconciliation unavailable: {e:#}"))?;
+        if !broker_positions.is_empty() {
+            let summary = broker_positions
+                .iter()
+                .map(|p| {
+                    let entry = p
+                        .entry_price
+                        .map(|price| format!("@{price:.4}"))
+                        .unwrap_or_default();
+                    format!("{}:{}{}", p.asset, p.size, entry)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!(
+                "live launch reconciliation refused: broker already has open positions for this run asset set ({summary}); flatten externally before launch"
+            );
+        }
 
         let mut bar_count: u32 = 0;
         // F36: capture-on-interrupt for the live loop too — a cancelled or
@@ -3333,142 +3400,175 @@ impl Executor {
             if let Some(crate::eval::executor::sltp::SltpTrigger::FullExit { reason }) =
                 pre_dispatch_sltp_trigger
             {
-                        let pre_fill_position = book.position(asset_sym);
-                        let pre_fill_entry = book.entry_price(asset_sym);
-                        let fill = runtime
-                            .fill_sink
-                            .submit(FillRequest {
-                                pos: pre_fill_position,
-                                entry: pre_fill_entry,
-                                action: "flat".to_string(),
-                                next_open: bar.close,
-                                bar_volume: bar.volume,
-                                slip_bps: 0.0,
-                                spread_bps: 0.0,
-                                taker_bps: scenario.venue.fees.taker_bps as f64,
-                                maker_bps: scenario.venue.fees.maker_bps as f64,
-                                equity,
-                                risk_pct: strategy.risk.risk_pct_per_trade,
-                                slippage_model: scenario.venue.slippage.clone(),
-                                fee_source: crate::eval::scenario::FeeSource::Default,
-                                asset: asset.clone(),
-                                bar_ts: bar.timestamp,
-                                bar_open: bar.open,
-                                bar_high: bar.high,
-                                bar_low: bar.low,
-                                bar_close: bar.close,
-                                decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
-                                bar_duration_ms: scenario.granularity.seconds() * 1_000,
-                            })
-                            .await;
-                        let broker_error = fill.broker_error.clone();
-                        book.set_position(asset_sym, fill.new_pos, fill.new_entry);
-                        book.add_realized(fill.realized_pnl);
-                        let mut net_realized_pnl = fill.realized_pnl;
-                        if pre_fill_position < -f64::EPSILON && fill.fill_price.is_some() {
-                            let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
-                            let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
-                                .and_then(|o| o.borrow_bps_per_day)
-                                .unwrap_or(scenario.venue.borrow_bps_per_day);
-                            let borrow_cost = compute_borrow_cost(
-                                pre_fill_position.abs(),
-                                pre_fill_entry,
-                                borrow_bps,
-                                held,
-                                scenario.granularity.seconds(),
-                            );
-                            if borrow_cost > 0.0 {
-                                book.add_realized(-borrow_cost);
-                                net_realized_pnl -= borrow_cost;
-                            }
-                        }
-                        if pre_fill_position != 0.0 && fill.new_pos.abs() <= f64::EPSILON {
-                            realized_count += 1;
-                            if net_realized_pnl > 0.0 {
-                                wins += 1;
-                            }
-                        }
-                        if fill.fill_price.is_some() {
-                            n_trades += 1;
-                            self.emit(ProgressEvent::FillRecorded {
-                                run_id: run.id.clone(),
-                                side: fill_side_for_action("flat", pre_fill_position).into(),
-                                price: fill.fill_price.unwrap_or(0.0),
-                                qty: fill.fill_size.unwrap_or(0.0),
-                                fee: fill.fee.unwrap_or(0.0),
-                            });
-                        }
-                        sltp_state.remove(&asset_sym);
-                        last_open_direction.insert(asset_sym, None);
+                let pre_fill_position = book.position(asset_sym);
+                let pre_fill_entry = book.entry_price(asset_sym);
+                let fill = runtime
+                    .fill_sink
+                    .submit(FillRequest {
+                        pos: pre_fill_position,
+                        entry: pre_fill_entry,
+                        action: "flat".to_string(),
+                        next_open: bar.close,
+                        bar_volume: bar.volume,
+                        slip_bps: 0.0,
+                        spread_bps: 0.0,
+                        taker_bps: scenario.venue.fees.taker_bps as f64,
+                        maker_bps: scenario.venue.fees.maker_bps as f64,
+                        equity,
+                        risk_pct: strategy.risk.risk_pct_per_trade,
+                        slippage_model: scenario.venue.slippage.clone(),
+                        fee_source: crate::eval::scenario::FeeSource::Default,
+                        asset: asset.clone(),
+                        bar_ts: bar.timestamp,
+                        bar_open: bar.open,
+                        bar_high: bar.high,
+                        bar_low: bar.low,
+                        bar_close: bar.close,
+                        decision_to_fill_ms: scenario.venue.latency.decision_to_fill_ms,
+                        bar_duration_ms: scenario.granularity.seconds() * 1_000,
+                    })
+                    .await;
+                let broker_error = fill.broker_error.clone();
+                book.set_position(asset_sym, fill.new_pos, fill.new_entry);
+                book.add_realized(fill.realized_pnl);
+                let mut net_realized_pnl = fill.realized_pnl;
+                if pre_fill_position < -f64::EPSILON && fill.fill_price.is_some() {
+                    let held = short_bars_held.remove(&asset_sym).unwrap_or(0);
+                    let borrow_bps = resolve_asset_override(&scenario.venue.overrides, &asset)
+                        .and_then(|o| o.borrow_bps_per_day)
+                        .unwrap_or(scenario.venue.borrow_bps_per_day);
+                    let borrow_cost = compute_borrow_cost(
+                        pre_fill_position.abs(),
+                        pre_fill_entry,
+                        borrow_bps,
+                        held,
+                        scenario.granularity.seconds(),
+                    );
+                    if borrow_cost > 0.0 {
+                        book.add_realized(-borrow_cost);
+                        net_realized_pnl -= borrow_cost;
+                    }
+                }
+                if pre_fill_position != 0.0 && fill.new_pos.abs() <= f64::EPSILON {
+                    realized_count += 1;
+                    if net_realized_pnl > 0.0 {
+                        wins += 1;
+                    }
+                }
+                if fill.fill_price.is_some() {
+                    n_trades += 1;
+                    self.emit(ProgressEvent::FillRecorded {
+                        run_id: run.id.clone(),
+                        side: fill_side_for_action("flat", pre_fill_position).into(),
+                        price: fill.fill_price.unwrap_or(0.0),
+                        qty: fill.fill_size.unwrap_or(0.0),
+                        fee: fill.fee.unwrap_or(0.0),
+                    });
+                }
+                sltp_state.remove(&asset_sym);
+                last_open_direction.insert(asset_sym, None);
 
-                        let decision_row = DecisionRow {
-                            run_id: run.id.clone(),
-                            decision_index: decision_idx,
-                            timestamp: decision_ts,
-                            asset: asset.clone(),
-                            action: reason.to_string(),
-                            conviction: Some(1.0),
-                            justification: Some(format!("sltp: {reason}")),
-                            reasoning: Some(format!("sltp: {reason}")),
-                            order_size: fill.fill_size,
-                            fill_price: fill.fill_price,
-                            fill_size: fill.fill_size,
-                            fee: fill.fee,
-                            pnl_realized: if net_realized_pnl != 0.0 {
-                                Some(net_realized_pnl)
-                            } else {
-                                None
-                            },
-                        };
-                        store.record_decision(&decision_row).await?;
-                        self.emit_chart(
-                            &run.id,
-                            RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
-                        )
-                        .await;
+                let decision_row = DecisionRow {
+                    run_id: run.id.clone(),
+                    decision_index: decision_idx,
+                    timestamp: decision_ts,
+                    asset: asset.clone(),
+                    action: reason.to_string(),
+                    conviction: Some(1.0),
+                    justification: Some(format!("sltp: {reason}")),
+                    reasoning: Some(format!("sltp: {reason}")),
+                    order_size: fill.fill_size,
+                    fill_price: fill.fill_price,
+                    fill_size: fill.fill_size,
+                    fee: fill.fee,
+                    pnl_realized: if net_realized_pnl != 0.0 {
+                        Some(net_realized_pnl)
+                    } else {
+                        None
+                    },
+                };
+                store.record_decision(&decision_row).await?;
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Decision(LiveDecisionRow::from(&decision_row)),
+                )
+                .await;
 
-                        let asset_hist = history.entry(asset_sym).or_default();
-                        asset_hist.push(bar.clone());
-                        if history_window > 0 && asset_hist.len() > history_window {
-                            let drop_n = asset_hist.len() - history_window;
-                            asset_hist.drain(0..drop_n);
+                let asset_hist = history.entry(asset_sym).or_default();
+                asset_hist.push(bar.clone());
+                if history_window > 0 && asset_hist.len() > history_window {
+                    let drop_n = asset_hist.len() - history_window;
+                    asset_hist.drain(0..drop_n);
+                }
+                book.mark(asset_sym, bar.close);
+                let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
+                equity = book.equity(&marks);
+                if book.position(asset_sym) < -f64::EPSILON {
+                    *short_bars_held.entry(asset_sym).or_insert(0) += 1;
+                }
+                equity_samples_buf.push((decision_ts, equity));
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::Equity(ChartEquityPoint {
+                        time: decision_ts.timestamp(),
+                        equity_usd: equity,
+                    }),
+                )
+                .await;
+                equity_curve.push(equity);
+                if equity > peak_equity {
+                    peak_equity = equity;
+                }
+                let drawdown_pct = if peak_equity > 0.0 {
+                    ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
+                } else {
+                    0.0
+                };
+                self.emit(ProgressEvent::MetricsUpdated {
+                    run_id: run.id.clone(),
+                    equity,
+                    drawdown_pct,
+                    n_trades,
+                });
+                decision_idx += 1;
+                n_synthesized_decisions += 1;
+                if let Some((class, msg)) = broker_error {
+                    if class == BrokerErrorClass::UnsupportedAsset {
+                        tracing::warn!(
+                            target: "xvision_engine::live_executor",
+                            error_class = class.as_tag(),
+                            error_message = %msg,
+                            "live broker: unsupported trade skipped (no-fill, run continues)"
+                        );
+                    } else if class.is_recoverable() {
+                        recoverable_broker_retries = recoverable_broker_retries.saturating_add(1);
+                        if recoverable_broker_retries > LIVE_RECOVERABLE_BROKER_RETRY_BUDGET {
+                            anyhow::bail!(
+                                        "[broker_retry_exhausted] live broker submit failed after {} recoverable retries; last [{}]: {}",
+                                        LIVE_RECOVERABLE_BROKER_RETRY_BUDGET,
+                                        class.as_tag(),
+                                        msg
+                                    );
                         }
-                        book.mark(asset_sym, bar.close);
-                        let marks = std::collections::BTreeMap::from([(asset_sym, bar.close)]);
-                        equity = book.equity(&marks);
-                        if book.position(asset_sym) < -f64::EPSILON {
-                            *short_bars_held.entry(asset_sym).or_insert(0) += 1;
-                        }
-                        equity_samples_buf.push((decision_ts, equity));
-                        self.emit_chart(
-                            &run.id,
-                            RunChartEvent::Equity(ChartEquityPoint {
-                                time: decision_ts.timestamp(),
-                                equity_usd: equity,
-                            }),
-                        )
-                        .await;
-                        equity_curve.push(equity);
-                        if equity > peak_equity {
-                            peak_equity = equity;
-                        }
-                        let drawdown_pct = if peak_equity > 0.0 {
-                            ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-                        } else {
-                            0.0
-                        };
-                        self.emit(ProgressEvent::MetricsUpdated {
-                            run_id: run.id.clone(),
-                            equity,
-                            drawdown_pct,
-                            n_trades,
-                        });
-                        decision_idx += 1;
-                        n_synthesized_decisions += 1;
-                        if let Some((class, msg)) = broker_error {
-                            anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
-                        }
-                        continue;
+                        let backoff_ms = LIVE_RECOVERABLE_BROKER_BACKOFF_BASE_MS
+                            .saturating_mul(1_u64 << (recoverable_broker_retries - 1).min(8));
+                        let note = format!(
+                            "recoverable broker error {}; retry {}/{} after {}ms: {}",
+                            class.as_tag(),
+                            recoverable_broker_retries,
+                            LIVE_RECOVERABLE_BROKER_RETRY_BUDGET,
+                            backoff_ms,
+                            msg
+                        );
+                        store
+                            .record_supervisor_note(&run.id, "broker", "warn", &note)
+                            .await?;
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                    } else {
+                        anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
+                    }
+                }
+                continue;
             }
 
             // Run one decision cycle for THIS (asset, bar). The pooled book
@@ -3592,9 +3692,35 @@ impl Executor {
                         error_message = %msg,
                         "live broker: unsupported trade skipped (no-fill, run continues)"
                     );
+                } else if class.is_recoverable() {
+                    recoverable_broker_retries = recoverable_broker_retries.saturating_add(1);
+                    if recoverable_broker_retries > LIVE_RECOVERABLE_BROKER_RETRY_BUDGET {
+                        anyhow::bail!(
+                            "[broker_retry_exhausted] live broker submit failed after {} recoverable retries; last [{}]: {}",
+                            LIVE_RECOVERABLE_BROKER_RETRY_BUDGET,
+                            class.as_tag(),
+                            msg
+                        );
+                    }
+                    let backoff_ms = LIVE_RECOVERABLE_BROKER_BACKOFF_BASE_MS
+                        .saturating_mul(1_u64 << (recoverable_broker_retries - 1).min(8));
+                    let note = format!(
+                        "recoverable broker error {}; retry {}/{} after {}ms: {}",
+                        class.as_tag(),
+                        recoverable_broker_retries,
+                        LIVE_RECOVERABLE_BROKER_RETRY_BUDGET,
+                        backoff_ms,
+                        msg
+                    );
+                    store
+                        .record_supervisor_note(&run.id, "broker", "warn", &note)
+                        .await?;
+                    tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
                 } else {
                     anyhow::bail!("[{}] live broker submit failed: {}", class.as_tag(), msg);
                 }
+            } else {
+                recoverable_broker_retries = 0;
             }
 
             // Mark-to-market on the bar close + record the pooled equity
@@ -4362,6 +4488,27 @@ impl Executor {
             } else {
                 entry
             };
+            if let Err(e) = fill_sink.cancel_open_orders(&asset).await {
+                tracing::warn!(
+                    target: "xvision_engine::live_executor",
+                    run_id = %run.id,
+                    asset = %asset,
+                    reason = reason.tag(),
+                    error = %e,
+                    "live flatten: failed to cancel working broker orders before close"
+                );
+                let _ = store
+                    .record_supervisor_note(
+                        &run.id,
+                        "executor",
+                        "warn",
+                        &format!(
+                            "{}-close could not cancel working orders for {asset}: {e:#}",
+                            reason.tag()
+                        ),
+                    )
+                    .await;
+            }
             let fill: FillRecord = fill_sink
                 .submit(FillRequest {
                     pos,

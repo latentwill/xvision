@@ -8,7 +8,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
-use crate::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
+use crate::broker_surface::{BrokerPosition, BrokerSurface, OrderConfirmation, OrderRequest, Side};
 
 // ── Asset symbol mapping ─────────────────────────────────────────────────────
 
@@ -352,5 +352,26 @@ impl<A: BybitApi + 'static> BrokerSurface for BybitPaperSurface<A> {
 
     async fn balance(&self) -> anyhow::Result<f64> {
         self.api.wallet_balance().await.context("bybit wallet_balance")
+    }
+
+    async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        let mut positions = Vec::new();
+        for asset in assets {
+            let symbol = to_bybit_symbol(asset);
+            let size = self.api.positions(&symbol).await.context("bybit positions")?;
+            if size.abs() <= f64::EPSILON {
+                continue;
+            }
+            positions.push(BrokerPosition {
+                asset: asset.clone(),
+                size,
+                entry_price: None,
+            });
+        }
+        Ok(positions)
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }

@@ -480,6 +480,7 @@ impl AppState {
             self.xvn_home.clone(),
         )
         .with_event_bus(self.event_bus.clone())
+        .with_safety_manager(self.safety_manager.clone())
         // qa-eval-observability-wiring (2026-05-17): hand the
         // dashboard's singleton observability bus to every
         // engine-side eval run so spans + errors land in

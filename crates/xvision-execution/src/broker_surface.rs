@@ -114,6 +114,14 @@ pub struct OrderConfirmation {
     pub fee: Option<f64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BrokerPosition {
+    pub asset: String,
+    /// Base-asset units, signed: positive = long, negative = short.
+    pub size: f64,
+    pub entry_price: Option<f64>,
+}
+
 /// Coarse classification of a broker-side failure. The shared
 /// surface lets the eval executor + future live daemon pick the
 /// same recover-vs-terminate boundary without re-encoding the broker
@@ -440,6 +448,18 @@ pub trait BrokerSurface: Send + Sync {
     async fn buying_power(&self, _asset: &str) -> anyhow::Result<f64> {
         self.balance().await
     }
+
+    /// Open broker positions for the requested venue asset strings.
+    ///
+    /// No default implementation: live reconciliation must fail closed when a
+    /// broker cannot prove flatness.
+    async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>>;
+
+    /// Cancel all working orders for `asset` before flattening/stopping.
+    ///
+    /// No default implementation: venues with resting bracket/algo orders must
+    /// make the behavior explicit.
+    async fn cancel_open_orders(&self, asset: &str) -> anyhow::Result<()>;
 }
 
 // ── AlpacaPaperSurface ───────────────────────────────────────────────────────
@@ -646,6 +666,50 @@ impl BrokerSurface for AlpacaPaperSurface {
             Ok(acct.buying_power)
         }
     }
+
+    async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        let positions = self
+            .api
+            .list_positions()
+            .await
+            .map_err(|e| anyhow::anyhow!("alpaca list_positions: {e}"))?;
+        Ok(positions
+            .into_iter()
+            .filter(|p| assets.iter().any(|asset| asset == &p.symbol))
+            .filter_map(|p| {
+                let signed = if p.side.eq_ignore_ascii_case("long") {
+                    p.qty
+                } else if p.side.eq_ignore_ascii_case("short") {
+                    -p.qty
+                } else {
+                    return None;
+                };
+                if signed.abs() <= f64::EPSILON {
+                    return None;
+                }
+                Some(BrokerPosition {
+                    asset: p.symbol,
+                    size: signed,
+                    entry_price: Some(p.avg_entry_price),
+                })
+            })
+            .collect())
+    }
+
+    async fn cancel_open_orders(&self, asset: &str) -> anyhow::Result<()> {
+        let orders = self
+            .api
+            .list_open_orders(&[asset.to_string()])
+            .await
+            .map_err(|e| anyhow::anyhow!("alpaca list_open_orders: {e}"))?;
+        for order in orders {
+            self.api
+                .cancel_order(&order.id)
+                .await
+                .map_err(|e| anyhow::anyhow!("alpaca cancel_order {}: {e}", order.id))?;
+        }
+        Ok(())
+    }
 }
 
 /// Alpaca crypto symbols are pair-formatted (`BTC/USD`, `ETH/USD`). Equities
@@ -698,6 +762,14 @@ impl BrokerSurface for AlpacaLiveSurface {
     }
 
     async fn balance(&self) -> anyhow::Result<f64> {
+        Err(anyhow::anyhow!("AlpacaLiveSurface stubbed"))
+    }
+
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Err(anyhow::anyhow!("AlpacaLiveSurface stubbed"))
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
         Err(anyhow::anyhow!("AlpacaLiveSurface stubbed"))
     }
 }
@@ -928,6 +1000,40 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
             .map_err(|e| anyhow::anyhow!("orderly get_account: {e}"))?;
         Ok(account.equity())
     }
+
+    async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        let requested: Vec<(String, String)> = assets
+            .iter()
+            .map(|asset| Self::resolve_symbol(asset).map(|symbol| (asset.clone(), symbol)))
+            .collect::<anyhow::Result<_>>()?;
+        let positions = self
+            .api
+            .get_positions()
+            .await
+            .map_err(|e| anyhow::anyhow!("orderly get_positions: {e}"))?;
+        Ok(positions
+            .into_iter()
+            .filter_map(|p| {
+                let (asset, _) = requested.iter().find(|(_, symbol)| symbol == &p.symbol)?;
+                if p.position_qty.abs() <= f64::EPSILON {
+                    return None;
+                }
+                Some(BrokerPosition {
+                    asset: asset.clone(),
+                    size: p.position_qty,
+                    entry_price: Some(p.average_open_price),
+                })
+            })
+            .collect())
+    }
+
+    async fn cancel_open_orders(&self, asset: &str) -> anyhow::Result<()> {
+        let symbol = Self::resolve_symbol(asset)?;
+        self.api
+            .cancel_open_orders(&symbol)
+            .await
+            .map_err(|e| anyhow::anyhow!("orderly cancel_open_orders: {e}"))
+    }
 }
 
 // ── MockBrokerSurface ────────────────────────────────────────────────────────
@@ -948,6 +1054,7 @@ struct MockState {
     balance: f64,
     submitted: Vec<OrderRequest>,
     positions: std::collections::HashMap<String, f64>,
+    cancelled_assets: Vec<String>,
 }
 
 impl MockBrokerSurface {
@@ -971,6 +1078,10 @@ impl MockBrokerSurface {
     /// Returns a clone of every order ever submitted to this mock.
     pub fn submitted(&self) -> Vec<OrderRequest> {
         self.state.lock().unwrap().submitted.clone()
+    }
+
+    pub fn cancelled_assets(&self) -> Vec<String> {
+        self.state.lock().unwrap().cancelled_assets.clone()
     }
 }
 
@@ -1002,11 +1113,157 @@ impl BrokerSurface for MockBrokerSurface {
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(self.state.lock().unwrap().balance)
     }
+
+    async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        let s = self.state.lock().unwrap();
+        Ok(assets
+            .iter()
+            .filter_map(|asset| {
+                let size = s.positions.get(asset).copied().unwrap_or(0.0);
+                if size.abs() <= f64::EPSILON {
+                    return None;
+                }
+                Some(BrokerPosition {
+                    asset: asset.clone(),
+                    size,
+                    entry_price: Some(self.fill_price),
+                })
+            })
+            .collect())
+    }
+
+    async fn cancel_open_orders(&self, asset: &str) -> anyhow::Result<()> {
+        self.state
+            .lock()
+            .unwrap()
+            .cancelled_assets
+            .push(asset.to_string());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod helper_tests {
     use super::*;
+    use crate::alpaca::{AlpacaAccount, AlpacaOrder, AlpacaPosition};
+    use crate::ExecutorError;
+
+    #[tokio::test]
+    async fn mock_surface_reports_open_positions_for_requested_assets() {
+        let broker = MockBrokerSurface::new(100_000.0);
+        broker
+            .submit_order(OrderRequest {
+                asset: "BTC/USD".to_string(),
+                side: Side::Buy,
+                size: 0.25,
+                reference_price_usd: 70_000.0,
+                stop_loss_pct: None,
+                take_profit_pct: None,
+                idempotency_key: "seed-long".to_string(),
+            })
+            .await
+            .expect("seed order fills");
+
+        let positions = broker
+            .open_positions(&["BTC/USD".to_string(), "ETH/USD".to_string()])
+            .await
+            .expect("mock positions");
+
+        assert_eq!(positions.len(), 1);
+        assert_eq!(positions[0].asset, "BTC/USD");
+        assert_eq!(positions[0].size, 0.25);
+    }
+
+    #[tokio::test]
+    async fn mock_surface_records_open_order_cancellation_requests() {
+        let broker = MockBrokerSurface::new(100_000.0);
+
+        broker
+            .cancel_open_orders("BTC/USD")
+            .await
+            .expect("mock cancel succeeds");
+
+        assert_eq!(broker.cancelled_assets(), vec!["BTC/USD".to_string()]);
+    }
+
+    struct TestAlpacaApi {
+        open_orders: Mutex<Vec<AlpacaOrder>>,
+        cancelled_order_ids: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl AlpacaApi for TestAlpacaApi {
+        async fn create_order(&self, _req: ApacOrderRequest) -> Result<AlpacaOrder, ExecutorError> {
+            Err(ExecutorError::Internal("unused".into()))
+        }
+
+        async fn get_order(&self, _order_id: &str) -> Result<AlpacaOrder, ExecutorError> {
+            Err(ExecutorError::Internal("unused".into()))
+        }
+
+        async fn list_open_orders(&self, symbols: &[String]) -> Result<Vec<AlpacaOrder>, ExecutorError> {
+            assert_eq!(symbols, &["BTC/USD".to_string()]);
+            Ok(self.open_orders.lock().unwrap().clone())
+        }
+
+        async fn cancel_order(&self, order_id: &str) -> Result<(), ExecutorError> {
+            self.cancelled_order_ids
+                .lock()
+                .unwrap()
+                .push(order_id.to_string());
+            Ok(())
+        }
+
+        async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
+            Err(ExecutorError::Internal("unused".into()))
+        }
+
+        async fn list_positions(&self) -> Result<Vec<AlpacaPosition>, ExecutorError> {
+            Ok(Vec::new())
+        }
+
+        async fn get_position(&self, _symbol: &str) -> Result<Option<AlpacaPosition>, ExecutorError> {
+            Ok(None)
+        }
+    }
+
+    #[tokio::test]
+    async fn alpaca_surface_cancels_each_open_order_for_asset() {
+        let api = Arc::new(TestAlpacaApi {
+            open_orders: Mutex::new(vec![
+                AlpacaOrder {
+                    id: "order-1".to_string(),
+                    client_order_id: "client-1".to_string(),
+                    status: "new".to_string(),
+                    filled_qty: 0.0,
+                    avg_fill_price: None,
+                    submitted_at: None,
+                    filled_at: None,
+                },
+                AlpacaOrder {
+                    id: "order-2".to_string(),
+                    client_order_id: "client-2".to_string(),
+                    status: "accepted".to_string(),
+                    filled_qty: 0.0,
+                    avg_fill_price: None,
+                    submitted_at: None,
+                    filled_at: None,
+                },
+            ]),
+            cancelled_order_ids: Mutex::new(Vec::new()),
+        });
+        let surface = AlpacaPaperSurface::with_api(api.clone());
+
+        surface
+            .cancel_open_orders("BTC/USD")
+            .await
+            .expect("alpaca cancel open orders");
+
+        assert_eq!(
+            *api.cancelled_order_ids.lock().unwrap(),
+            vec!["order-1".to_string(), "order-2".to_string()]
+        );
+    }
 
     #[test]
     fn is_alpaca_crypto_accepts_whitelist_forms() {
@@ -1122,6 +1379,10 @@ mod orderly_live_surface_tests {
 
         async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
             Ok(self.positions.clone())
+        }
+
+        async fn cancel_open_orders(&self, _symbol: &str) -> Result<(), ExecutorError> {
+            Ok(())
         }
 
         async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {

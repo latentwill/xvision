@@ -8,20 +8,26 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use xvision_data::fixtures::ensure_test_fixture;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
 use xvision_engine::agents::{AgentSlot, AgentStore, NewAgent};
 use xvision_engine::api::eval::{self, EvalRunRequest};
 use xvision_engine::api::{ApiContext, ApiError};
 use xvision_engine::eval::canonical_scenarios;
+use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+use xvision_engine::eval::scenario::{AssetClass, AssetRef};
 use xvision_engine::eval::RunStore;
+use xvision_engine::safety::VenueLabel;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::store::{FilesystemStore, StrategyStore};
 use xvision_engine::strategies::{AgentRef, PipelineDef, Strategy};
 use xvision_engine::tools::ToolRegistry;
-use xvision_execution::broker_surface::{BrokerSurface, MockBrokerSurface};
+use xvision_execution::broker_surface::{
+    BrokerPosition, BrokerSurface, MockBrokerSurface, OrderConfirmation, OrderRequest,
+};
 
 mod support;
 use support::{
@@ -30,6 +36,39 @@ use support::{
 
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const FLASH_SCENARIO_ID: &str = "flash-crash-2024-08";
+
+struct OrphanPositionBroker;
+
+#[async_trait]
+impl BrokerSurface for OrphanPositionBroker {
+    async fn submit_order(&self, _req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        unreachable!("orphan reconciliation must not submit orders")
+    }
+
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(0.0)
+    }
+
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(100_000.0)
+    }
+
+    async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(assets
+            .iter()
+            .filter(|asset| asset.as_str() == "BTC/USD")
+            .map(|asset| BrokerPosition {
+                asset: asset.clone(),
+                size: 0.25,
+                entry_price: Some(50_000.0),
+            })
+            .collect())
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
 
 struct EnvGuard {
     key: &'static str,
@@ -49,6 +88,33 @@ fn scoped_unset(key: &'static str) -> EnvGuard {
     let prev = std::env::var(key).ok();
     std::env::remove_var(key);
     EnvGuard { key, prev }
+}
+
+fn live_config_for_orphan(agent_id: &str) -> LiveConfig {
+    LiveConfig {
+        strategy_id: agent_id.to_string(),
+        assets: vec![AssetRef {
+            class: AssetClass::Crypto,
+            symbol: "BTC/USD".into(),
+            venue_symbol: "BTC/USD".into(),
+        }],
+        capital: xvision_core::Capital {
+            initial: 100_000.0,
+            currency: "USD".into(),
+        },
+        broker_creds_ref: "alpaca".into(),
+        stop_policy: StopPolicy {
+            bar_limit: Some(10),
+            ..Default::default()
+        },
+        venue_label: VenueLabel::Paper,
+        warmup_bars: Some(0),
+        safety_limits: None,
+        display_name: "orphan live run".into(),
+        description: None,
+        tags: vec![],
+        notes: None,
+    }
 }
 
 async fn save_test_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
@@ -504,6 +570,45 @@ async fn run_rejects_live_mode_without_live_config() {
         }
         other => panic!("live mode must reject as Validation before queueing, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn orphan_sweep_records_live_broker_positions_before_failing_run() {
+    let (ctx, _d) = ctx_with_tables().await;
+    let agent_id = "01TESTSTRATEGY0000ORPHANLIVE";
+    save_test_strategy(&ctx, agent_id).await;
+    let store = RunStore::new(ctx.db.clone());
+    let run = Run::new_queued(agent_id.into(), String::new(), RunMode::Live)
+        .with_live_config(live_config_for_orphan(agent_id));
+    let run_id = run.id.clone();
+    store.create(&run).await.unwrap();
+    store
+        .ensure_agent_run_baseline(&run_id, "hash_only")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE eval_runs SET status = 'running' WHERE id = ?1")
+        .bind(&run_id)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+
+    let failed = eval::fail_orphan_runs_with_broker_override(&ctx, Some(Arc::new(OrphanPositionBroker)))
+        .await
+        .expect("orphan sweep should complete");
+
+    assert_eq!(failed, 1);
+    let persisted = store.get(&run_id).await.unwrap();
+    assert_eq!(persisted.status, RunStatus::Failed);
+    let notes = store.read_supervisor_notes(&run_id).await.unwrap();
+    assert!(
+        notes.iter().any(|(role, severity, content)| {
+            role == "broker"
+                && severity == "warn"
+                && content.contains("orphaned_position")
+                && content.contains("BTC/USD")
+        }),
+        "orphaned broker position must be reported before failure, got {notes:?}"
+    );
 }
 
 #[tokio::test]

@@ -36,7 +36,9 @@ use xvision_core::Capital;
 use xvision_data::alpaca::{BarGranularity, MarketBar};
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials, LiveBarItem};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError, LivePollFetcher};
-use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
+use xvision_execution::broker_surface::{
+    BrokerPosition, BrokerSurface, OrderConfirmation, OrderRequest, Side,
+};
 
 use xvision_core::trading::AssetSymbol;
 use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
@@ -45,10 +47,11 @@ use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::{AssetClass, AssetRef, Scenario};
 use xvision_engine::eval::store::RunStore;
-use xvision_engine::safety::VenueLabel;
+use xvision_engine::safety::{AuthContext, SafetyGate, SafetyManager, VenueLabel};
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
+use xvision_engine::strategies::CapitalMode;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
 use xvision_filters::{parse_toml, Filter};
@@ -171,6 +174,12 @@ impl BrokerSurface for PerAssetRecordingBroker {
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
     }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 /// Build a strategy over a two-asset (BTC + ETH) universe for the
@@ -207,6 +216,9 @@ struct RecordingBroker {
     fill_price: f64,
     fill_size: Option<f64>,
     fee: Option<f64>,
+    open_positions: Mutex<Vec<BrokerPosition>>,
+    cancelled_assets: Mutex<Vec<String>>,
+    balance: f64,
 }
 
 impl RecordingBroker {
@@ -216,11 +228,35 @@ impl RecordingBroker {
             fill_price,
             fill_size: None,
             fee: None,
+            open_positions: Mutex::new(Vec::new()),
+            cancelled_assets: Mutex::new(Vec::new()),
+            balance: 0.0,
+        })
+    }
+
+    fn with_balance(fill_price: f64, balance: f64) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            fill_price,
+            fill_size: None,
+            fee: None,
+            open_positions: Mutex::new(Vec::new()),
+            cancelled_assets: Mutex::new(Vec::new()),
+            balance,
         })
     }
 
     fn submitted(&self) -> Vec<OrderRequest> {
         self.submitted.lock().unwrap().clone()
+    }
+
+    fn with_open_position(self: &Arc<Self>, asset: &str, size: f64, entry_price: f64) -> Arc<Self> {
+        self.open_positions.lock().unwrap().push(BrokerPosition {
+            asset: asset.to_string(),
+            size,
+            entry_price: Some(entry_price),
+        });
+        Arc::clone(self)
     }
 }
 
@@ -239,7 +275,21 @@ impl BrokerSurface for RecordingBroker {
         Ok(0.0)
     }
     async fn balance(&self) -> anyhow::Result<f64> {
-        Ok(0.0)
+        Ok(self.balance)
+    }
+    async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(self
+            .open_positions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|pos| assets.iter().any(|asset| asset == &pos.asset))
+            .cloned()
+            .collect())
+    }
+    async fn cancel_open_orders(&self, asset: &str) -> anyhow::Result<()> {
+        self.cancelled_assets.lock().unwrap().push(asset.to_string());
+        Ok(())
     }
 }
 
@@ -250,7 +300,7 @@ struct ErrorBroker;
 impl BrokerSurface for ErrorBroker {
     async fn submit_order(&self, _req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
         Err(anyhow::anyhow!(
-            "alpaca create_order: insufficient buying power for this order"
+            "alpaca create_order: 401 Unauthorized: invalid_api_key"
         ))
     }
     async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
@@ -258,6 +308,71 @@ impl BrokerSurface for ErrorBroker {
     }
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
+    }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+struct RecoveringBroker {
+    remaining_failures: Mutex<u32>,
+    submitted: Mutex<Vec<OrderRequest>>,
+    position: Mutex<f64>,
+}
+
+impl RecoveringBroker {
+    fn rate_limited_then_success(failures: u32) -> Arc<Self> {
+        Arc::new(Self {
+            remaining_failures: Mutex::new(failures),
+            submitted: Mutex::new(Vec::new()),
+            position: Mutex::new(0.0),
+        })
+    }
+
+    fn submitted(&self) -> Vec<OrderRequest> {
+        self.submitted.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl BrokerSurface for RecoveringBroker {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        self.submitted.lock().unwrap().push(req.clone());
+        let mut remaining = self.remaining_failures.lock().unwrap();
+        if *remaining > 0 {
+            *remaining -= 1;
+            return Err(anyhow::anyhow!("HTTP 429: rate limit exceeded"));
+        }
+        let signed = match req.side {
+            Side::Buy => req.size,
+            Side::Sell => -req.size,
+        };
+        *self.position.lock().unwrap() += signed;
+        Ok(OrderConfirmation {
+            broker_order_id: format!("recovered-{}", req.idempotency_key),
+            fill_price: Some(req.reference_price_usd),
+            fill_size: req.size,
+            fee: None,
+        })
+    }
+
+    async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+        Ok(*self.position.lock().unwrap())
+    }
+
+    async fn balance(&self) -> anyhow::Result<f64> {
+        Ok(100_000.0)
+    }
+
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -479,6 +594,133 @@ async fn one_live_bar_drives_exactly_one_decision_through_the_broker() {
         "fill price must be the broker's reported price, not a simulated bar fill",
     );
     assert!(metrics.n_trades >= 1, "the filled order counts as a trade");
+}
+
+#[tokio::test]
+async fn live_account_equity_capital_mode_sizes_from_broker_balance() {
+    let (store, mut strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    strategy.manifest.capital_mode = CapitalMode::AccountEquity;
+    let broker = RecordingBroker::with_balance(50_123.0, 120_000.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .expect("live executor builds");
+
+    executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    let submitted = broker.submitted();
+    assert_eq!(submitted.len(), 1, "account-equity run must submit one order");
+    let expected = 120_000.0 * strategy.risk.risk_pct_per_trade / 50_000.0;
+    assert!(
+        (submitted[0].size - expected).abs() < 1e-9,
+        "expected broker-balance sizing {expected}, got {}",
+        submitted[0].size
+    );
+}
+
+#[tokio::test]
+async fn live_safety_pause_blocks_submit_before_broker_order() {
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let manager = SafetyManager::new(store.pool().clone());
+    manager.bootstrap(false).await.unwrap();
+    manager
+        .pause(Some("operator pause".into()), &AuthContext::api_anonymous())
+        .await
+        .unwrap();
+    let broker = RecordingBroker::new(50_123.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
+
+    let executor = Executor::live_with_safety_gate(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+        SafetyGate::new(manager),
+        VenueLabel::Paper,
+    )
+    .expect("live executor builds");
+
+    let err = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect_err("global safety pause must fail the live run");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("safety_paused"),
+        "live failure should surface the SafetyGate pause reason, got {msg}"
+    );
+    assert!(
+        broker.submitted().is_empty(),
+        "SafetyGate denial must happen before broker submit"
+    );
+}
+
+#[tokio::test]
+async fn live_launch_refuses_preexisting_broker_position_before_first_decision() {
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_123.0).with_open_position("BTC/USD", 0.25, 48_000.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .expect("live executor builds");
+
+    let err = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect_err("preexisting broker exposure must refuse launch");
+
+    let msg = format!("{err:#}");
+    assert!(msg.contains("live launch reconciliation refused"));
+    assert!(msg.contains("BTC/USD"));
+    assert!(
+        broker.submitted().is_empty(),
+        "reconciliation must run before the first broker submit"
+    );
+    assert!(
+        store.read_decisions(&run.id).await.unwrap().is_empty(),
+        "reconciliation must run before the first decision row"
+    );
 }
 
 #[tokio::test]
@@ -813,7 +1055,10 @@ async fn live_loop_enforces_sltp_before_dispatch_and_counts_realized_round_trips
         metrics.n_decisions, 2,
         "one model decision plus one deterministic SLTP decision should be counted",
     );
-    assert_eq!(metrics.n_trades, 2, "open plus SLTP close should both count as fills");
+    assert_eq!(
+        metrics.n_trades, 2,
+        "open plus SLTP close should both count as fills"
+    );
     assert_eq!(
         metrics.win_rate, 0.0,
         "closed losing round trip should produce a non-null zero win_rate",
@@ -966,7 +1211,11 @@ async fn live_loop_applies_short_borrow_cost_on_realized_close() {
         .await
         .expect("live run completes on stream end");
 
-    assert_eq!(broker.submitted().len(), 2, "short open and close should reach broker");
+    assert_eq!(
+        broker.submitted().len(),
+        2,
+        "short open and close should reach broker"
+    );
     assert_eq!(metrics.n_trades, 2);
     assert_eq!(metrics.win_rate, 0.0);
     assert!(
@@ -1030,6 +1279,7 @@ struct CancelAfterOpenBroker {
     open_fill_price: f64,
     close_fill_price: f64,
     cancel_hook: Mutex<Option<(RunStore, String)>>,
+    cancelled_assets: Mutex<Vec<String>>,
 }
 
 impl CancelAfterOpenBroker {
@@ -1039,6 +1289,7 @@ impl CancelAfterOpenBroker {
             open_fill_price,
             close_fill_price,
             cancel_hook: Mutex::new(None),
+            cancelled_assets: Mutex::new(Vec::new()),
         })
     }
     /// Arm the cancel hook so the first Buy cancels `run_id` on `store`.
@@ -1047,6 +1298,9 @@ impl CancelAfterOpenBroker {
     }
     fn submitted(&self) -> Vec<OrderRequest> {
         self.submitted.lock().unwrap().clone()
+    }
+    fn cancelled_assets(&self) -> Vec<String> {
+        self.cancelled_assets.lock().unwrap().clone()
     }
 }
 
@@ -1083,6 +1337,13 @@ impl BrokerSurface for CancelAfterOpenBroker {
     }
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
+    }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        self.cancelled_assets.lock().unwrap().push(_asset.to_string());
+        Ok(())
     }
 }
 
@@ -1139,6 +1400,11 @@ async fn live_cancel_closes_open_positions_through_the_broker() {
     assert!(
         (submitted[0].size - submitted[1].size).abs() < 1e-9,
         "the close must flatten exactly the open size",
+    );
+    assert_eq!(
+        broker.cancelled_assets(),
+        vec!["BTC/USD".to_string()],
+        "cancel-close must cancel working broker orders before flattening"
     );
 
     // A `flat` closing decision row was recorded with the realized PnL from
@@ -1250,6 +1516,12 @@ impl BrokerSurface for PerAssetCancelAfterOpenBroker {
     }
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
+    }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -1478,6 +1750,12 @@ impl BrokerSurface for RejectCloseBroker {
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
     }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[tokio::test]
@@ -1638,6 +1916,12 @@ impl BrokerSurface for PartialCloseOnCancelBroker {
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
     }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[tokio::test]
@@ -1735,7 +2019,7 @@ async fn live_cancel_partial_close_recomputes_equity_from_realized_pnl() {
 }
 
 #[tokio::test]
-async fn live_loop_surfaces_broker_error_as_run_failure() {
+async fn live_loop_surfaces_fatal_broker_error_as_run_failure() {
     let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
     let broker = Arc::new(ErrorBroker);
     let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
@@ -1766,8 +2050,8 @@ async fn live_loop_surfaces_broker_error_as_run_failure() {
     let err = result.expect_err("broker error must fail the run");
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("broker_insufficient_funds"),
-        "failure must carry the classified broker error tag, got: {msg}",
+        msg.contains("broker_auth"),
+        "failure must carry the fatal broker error tag, got: {msg}"
     );
 
     // The decision row was still recorded (no fill) for the trace.
@@ -1776,6 +2060,105 @@ async fn live_loop_surfaces_broker_error_as_run_failure() {
     assert!(
         decisions[0].fill_price.is_none(),
         "a rejected order produces no fill price",
+    );
+}
+
+#[tokio::test]
+async fn live_loop_retries_recoverable_broker_error_on_next_bar() {
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecoveringBroker::rate_limited_then_success(1);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0), market_bar_at(120, 50_100.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("recoverable broker error must not terminate the live run before retry");
+
+    assert_eq!(
+        broker.submitted().len(),
+        2,
+        "first submit is 429, second submit recovers on the next bar"
+    );
+    assert_eq!(metrics.n_decisions, 2);
+    let notes = store.read_supervisor_notes(&run.id).await.unwrap();
+    assert!(
+        notes.iter().any(|(role, severity, content)| {
+            role == "broker" && severity == "warn" && content.contains("broker_rate_limited")
+        }),
+        "recoverable retry must be visible in supervisor_notes, got {notes:?}"
+    );
+}
+
+#[tokio::test]
+async fn live_loop_exhausts_recoverable_broker_retry_budget() {
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecoveringBroker::rate_limited_then_success(4);
+    let stream = single_asset_stream(vec![
+        market_bar_at(60, 50_000.0),
+        market_bar_at(120, 50_100.0),
+        market_bar_at(180, 50_200.0),
+        market_bar_at(240, 50_300.0),
+    ]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .unwrap();
+
+    let err = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect_err("persistent recoverable broker errors must exhaust the retry budget");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("broker_retry_exhausted") && msg.contains("broker_rate_limited"),
+        "budget exhaustion must name the retry class, got: {msg}"
+    );
+    assert_eq!(
+        broker.submitted().len(),
+        4,
+        "budget of 3 retries permits the fourth rejected submit to trip exhaustion"
+    );
+    let notes = store.read_supervisor_notes(&run.id).await.unwrap();
+    assert!(
+        notes
+            .iter()
+            .filter(|(role, severity, content)| {
+                role == "broker" && severity == "warn" && content.contains("broker_rate_limited")
+            })
+            .count()
+            >= 3,
+        "retry attempts must be visible in supervisor_notes, got {notes:?}"
     );
 }
 
@@ -2116,6 +2499,12 @@ impl BrokerSurface for FlattenAfterOpenBroker {
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
     }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[tokio::test]
@@ -2355,6 +2744,12 @@ impl BrokerSurface for PauseFlattenAfterOpenBroker {
     }
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
+    }
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 

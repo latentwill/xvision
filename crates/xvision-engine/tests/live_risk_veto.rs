@@ -20,7 +20,7 @@ use xvision_core::Capital;
 use xvision_data::alpaca::{BarGranularity, MarketBar};
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials, LiveBarItem};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError, LivePollFetcher};
-use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest};
+use xvision_execution::broker_surface::{BrokerPosition, BrokerSurface, OrderConfirmation, OrderRequest};
 
 use xvision_core::trading::AssetSymbol;
 use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
@@ -140,6 +140,14 @@ impl BrokerSurface for RecordingBroker {
     }
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
+    }
+
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 

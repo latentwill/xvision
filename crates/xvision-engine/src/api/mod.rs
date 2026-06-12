@@ -329,6 +329,11 @@ pub struct ApiContext {
     /// dispatcher treats `None` the same as a slot whose
     /// `memory_mode == Off` — no recall, no write, no events.
     pub memory_recorder: Option<Arc<crate::agent::memory_recorder::MemoryRecorder>>,
+    /// Process-wide safety pause/limit manager used by live broker-submit
+    /// gates. Production dashboard contexts override this with the
+    /// bootstrapped `AppState` singleton; direct test/CLI contexts get a
+    /// fresh running manager over the same pool.
+    pub safety_manager: crate::safety::SafetyManager,
 }
 
 // `AlpacaBarsFetcher` doesn't derive Debug (it holds a reqwest::Client
@@ -343,6 +348,7 @@ impl std::fmt::Debug for ApiContext {
             .field("alpaca", &"<AlpacaBarsFetcher>")
             .field("bars_singleflight", &"<SingleflightMap>")
             .field("event_bus", &"<RunEventBus>")
+            .field("safety_manager", &"<SafetyManager>")
             .finish()
     }
 }
@@ -480,6 +486,7 @@ impl ApiContext {
         };
 
         let mut ctx = Self::new(pool, actor, xvn_home.to_path_buf());
+        ctx.safety_manager.bootstrap(false).await?;
         ctx.memory_recorder = memory_recorder;
         let ctx = ctx;
 
@@ -513,6 +520,7 @@ impl ApiContext {
     /// `AlpacaData::DEFAULT_RATE_LIMIT_RPM` to match `config/default.toml`.
     pub fn new(db: SqlitePool, actor: Actor, xvn_home: PathBuf) -> Self {
         let finalize_writer = crate::eval::finalize_writer::FinalizeWriter::start(db.clone());
+        let safety_manager = crate::safety::SafetyManager::new(db.clone());
         Self {
             db,
             actor,
@@ -530,6 +538,7 @@ impl ApiContext {
             launch_gate: Arc::new(crate::eval::concurrency::LaunchConcurrencyGate::from_env()),
             finalize_writer,
             memory_recorder: None,
+            safety_manager,
         }
     }
 
@@ -542,6 +551,14 @@ impl ApiContext {
         recorder: Arc<crate::agent::memory_recorder::MemoryRecorder>,
     ) -> Self {
         self.memory_recorder = Some(recorder);
+        self
+    }
+
+    /// Builder override for the process-wide safety manager. Dashboard
+    /// request contexts use this to share the singleton that backs the
+    /// safety routes and live broker-submit gate.
+    pub fn with_safety_manager(mut self, manager: crate::safety::SafetyManager) -> Self {
+        self.safety_manager = manager;
         self
     }
 

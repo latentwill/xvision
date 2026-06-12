@@ -44,7 +44,7 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
 use xvision_engine::tools::ToolRegistry;
-use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest};
+use xvision_execution::broker_surface::{BrokerPosition, BrokerSurface, OrderConfirmation, OrderRequest};
 
 async fn pool_with_migration() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
@@ -252,6 +252,14 @@ impl BrokerSurface for ScriptedBroker {
 
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(self.balance)
+    }
+
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 

@@ -283,8 +283,14 @@ async fn run_apca_subscription_task(
                 Ok(api_info) => api_info,
                 Err(e) => {
                     last_disconnect_reason = format!("alpaca api info: {e}");
-                    if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                        .await
+                    if !handle_disconnect_with_backoff(
+                        &tx,
+                        &mut consecutive_disconnects,
+                        &last_disconnect_reason,
+                        budget,
+                        true,
+                    )
+                    .await
                     {
                         return;
                     }
@@ -301,8 +307,14 @@ async fn run_apca_subscription_task(
             Ok(pair) => pair,
             Err(e) => {
                 last_disconnect_reason = format!("alpaca live connect: {e}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                    true,
+                )
+                .await
                 {
                     return;
                 }
@@ -318,8 +330,14 @@ async fn run_apca_subscription_task(
             Ok(Ok(Ok(()))) => {}
             Ok(Ok(Err(e))) => {
                 last_disconnect_reason = format!("alpaca live subscribe rejected: {e}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                    true,
+                )
+                .await
                 {
                     return;
                 }
@@ -328,8 +346,14 @@ async fn run_apca_subscription_task(
             }
             Ok(Err(e)) => {
                 last_disconnect_reason = format!("alpaca live subscribe transport: {e}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                    true,
+                )
+                .await
                 {
                     return;
                 }
@@ -338,8 +362,14 @@ async fn run_apca_subscription_task(
             }
             Err(e) => {
                 last_disconnect_reason = format!("alpaca live subscribe stream: {e:?}");
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget)
-                    .await
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &last_disconnect_reason,
+                    budget,
+                    true,
+                )
+                .await
                 {
                     return;
                 }
@@ -390,7 +420,15 @@ async fn run_apca_subscription_task(
         if last_disconnect_reason.is_empty() {
             last_disconnect_reason = "alpaca live stream closed".to_string();
         }
-        if !handle_disconnect(&tx, &mut consecutive_disconnects, &last_disconnect_reason, budget).await {
+        if !handle_disconnect_with_backoff(
+            &tx,
+            &mut consecutive_disconnects,
+            &last_disconnect_reason,
+            budget,
+            true,
+        )
+        .await
+        {
             return;
         }
         suppress_next_gap_check = true;
@@ -430,12 +468,16 @@ async fn run_subscription_task<S>(
             }
             LiveBarItem::Disconnect { reason } => {
                 last_disconnect_reason = reason.clone();
-                if !handle_disconnect(&tx, &mut consecutive_disconnects, &reason, budget).await {
+                if !handle_disconnect_with_backoff(
+                    &tx,
+                    &mut consecutive_disconnects,
+                    &reason,
+                    budget,
+                    backoff_enabled,
+                )
+                .await
+                {
                     return;
-                }
-                if backoff_enabled {
-                    let backoff = compute_backoff(consecutive_disconnects);
-                    tokio::time::sleep(backoff).await;
                 }
                 // On reconnect the next bar's gap check is suppressed
                 // — we have no meaningful "previous" because the
@@ -543,6 +585,34 @@ fn asset_matches(requested: &str, bar: &MarketBar) -> bool {
     true
 }
 
+async fn handle_disconnect_with_backoff(
+    tx: &mpsc::Sender<BarStreamEvent>,
+    consecutive_disconnects: &mut u32,
+    reason: &str,
+    budget: u32,
+    backoff_enabled: bool,
+) -> bool {
+    if !handle_disconnect(tx, consecutive_disconnects, reason, budget).await {
+        return false;
+    }
+    if let Some(backoff) = reconnect_backoff_duration(backoff_enabled, *consecutive_disconnects, budget) {
+        tokio::time::sleep(backoff).await;
+    }
+    true
+}
+
+fn reconnect_backoff_duration(
+    backoff_enabled: bool,
+    consecutive_disconnects: u32,
+    budget: u32,
+) -> Option<Duration> {
+    if !backoff_enabled || consecutive_disconnects > budget {
+        None
+    } else {
+        Some(compute_backoff(consecutive_disconnects))
+    }
+}
+
 fn compute_backoff(attempt: u32) -> Duration {
     let exp = 2u64.saturating_pow(attempt.min(16));
     let base = (RECONNECT_BACKOFF_BASE_MS.saturating_mul(exp)).min(RECONNECT_BACKOFF_CAP_MS);
@@ -565,5 +635,21 @@ mod backoff_tests {
                 d
             );
         }
+    }
+
+    #[test]
+    fn production_reconnect_path_enables_backoff_until_budget_exhaustion() {
+        assert!(
+            reconnect_backoff_duration(true, 1, 5).is_some(),
+            "production reconnects must wait before the next attempt"
+        );
+        assert!(
+            reconnect_backoff_duration(false, 1, 5).is_none(),
+            "test stream seam keeps backoff disabled"
+        );
+        assert!(
+            reconnect_backoff_duration(true, 6, 5).is_none(),
+            "budget-exhausted disconnects must not sleep before closing"
+        );
     }
 }

@@ -77,6 +77,14 @@ impl AlpacaApi for MockAlpacaApi {
             .ok_or_else(|| ExecutorError::Internal("no mock filled order".into()))
     }
 
+    async fn list_open_orders(&self, _symbols: &[String]) -> Result<Vec<AlpacaOrder>, ExecutorError> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel_order(&self, _order_id: &str) -> Result<(), ExecutorError> {
+        Ok(())
+    }
+
     async fn get_account(&self) -> Result<AlpacaAccount, ExecutorError> {
         Ok(self.account.clone())
     }

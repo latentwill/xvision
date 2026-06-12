@@ -40,13 +40,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use xvision_execution::broker_surface::{
-    classify_broker_error_message, BrokerErrorClass, BrokerSurface, OrderRequest, Side,
+    classify_broker_error_message, BrokerErrorClass, BrokerPosition, BrokerSurface, OrderRequest, Side,
 };
 
 use crate::agent::observability::{fresh_span_id, ObsEmitter};
 use crate::eval::executor::traits::{FillRecord, FillRequest, FillSink};
 use crate::eval::orders::OrderState;
 use crate::eval::scenario::FillProvenance;
+use crate::safety::{AuthContext, SafetyGate, SafetyLimitCheck, SafetyLimits, VenueLabel};
 use xvision_observability::BrokerCallOutcome;
 
 /// Live [`FillSink`] backed by an `Arc<dyn BrokerSurface>`.
@@ -57,17 +58,65 @@ use xvision_observability::BrokerCallOutcome;
 pub struct RealBrokerFills {
     broker: Arc<dyn BrokerSurface>,
     obs: Option<ObsEmitter>,
+    safety_gate: SafetyGate,
+    run_venue_label: VenueLabel,
+    broker_venue_label: VenueLabel,
+    safety_limits: Option<SafetyLimits>,
+    submitted_notional_usd: f64,
+    submitted_order_count: u32,
+    account_equity_sizing: bool,
 }
 
 impl RealBrokerFills {
     pub fn new(broker: Arc<dyn BrokerSurface>) -> Self {
-        Self { broker, obs: None }
+        Self {
+            broker,
+            obs: None,
+            safety_gate: SafetyGate::allow_all(),
+            run_venue_label: VenueLabel::Paper,
+            broker_venue_label: VenueLabel::Paper,
+            safety_limits: None,
+            submitted_notional_usd: 0.0,
+            submitted_order_count: 0,
+            account_equity_sizing: false,
+        }
     }
 
     /// Attach an [`ObsEmitter`] so live fills are traced.
     pub fn with_obs(mut self, obs: ObsEmitter) -> Self {
         self.obs = Some(obs);
         self
+    }
+
+    pub fn with_safety_gate(
+        mut self,
+        safety_gate: SafetyGate,
+        run_venue_label: VenueLabel,
+        broker_venue_label: VenueLabel,
+        safety_limits: Option<SafetyLimits>,
+    ) -> Self {
+        self.safety_gate = safety_gate;
+        self.run_venue_label = run_venue_label;
+        self.broker_venue_label = broker_venue_label;
+        self.safety_limits = safety_limits;
+        self
+    }
+
+    pub fn with_account_equity_sizing(mut self, enabled: bool) -> Self {
+        self.account_equity_sizing = enabled;
+        self
+    }
+
+    pub fn set_account_equity_sizing(&mut self, enabled: bool) {
+        self.account_equity_sizing = enabled;
+    }
+
+    pub async fn open_positions(&self, assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        self.broker.open_positions(assets).await
+    }
+
+    pub async fn cancel_open_orders(&self, asset: &str) -> anyhow::Result<()> {
+        self.broker.cancel_open_orders(asset).await
     }
 }
 
@@ -99,10 +148,43 @@ impl FillSink for RealBrokerFills {
         };
         let side = if trade_long { Side::Buy } else { Side::Sell };
 
+        let sizing_equity = if self.account_equity_sizing && !want_flat {
+            match self.broker.balance().await {
+                Ok(equity) if equity.is_finite() && equity > 0.0 => equity,
+                Ok(equity) => {
+                    tracing::warn!(
+                        target: "xvision_engine::real_broker_fills",
+                        asset = %req.asset,
+                        action = %req.action,
+                        equity,
+                        "RealBrokerFills: refusing account-equity sizing with invalid broker balance"
+                    );
+                    return rejected_no_fill(
+                        &req,
+                        BrokerErrorClass::Unknown,
+                        "account_equity_invalid".into(),
+                    );
+                }
+                Err(e) => {
+                    let msg = format!("account_equity_unavailable: {e:#}");
+                    tracing::warn!(
+                        target: "xvision_engine::real_broker_fills",
+                        asset = %req.asset,
+                        action = %req.action,
+                        error_message = %msg,
+                        "RealBrokerFills: broker balance unavailable for account-equity sizing"
+                    );
+                    return rejected_no_fill(&req, BrokerErrorClass::Unknown, msg);
+                }
+            }
+        } else {
+            req.equity
+        };
+
         let target_pos = if want_flat {
             0.0
         } else {
-            let usd_at_risk = req.equity * req.risk_pct;
+            let usd_at_risk = sizing_equity * req.risk_pct;
             let units = (usd_at_risk / req.next_open).max(0.0);
             if want_long {
                 units
@@ -142,6 +224,42 @@ impl FillSink for RealBrokerFills {
             take_profit_pct: None,
             idempotency_key,
         };
+
+        let notional_usd = size * req.next_open;
+        let next_notional = self.submitted_notional_usd + notional_usd;
+        let next_order_count = self.submitted_order_count.saturating_add(1);
+        let limit_check = SafetyLimitCheck {
+            cumulative_notional_usd: next_notional,
+            order_count: next_order_count,
+            ..Default::default()
+        };
+        if let Err(e) = self
+            .safety_gate
+            .check_broker_submit(
+                &AuthContext::api_anonymous(),
+                "live",
+                Some(req.asset.as_str()),
+                Some(notional_usd),
+                self.run_venue_label,
+                self.broker_venue_label,
+                self.safety_limits.as_ref(),
+                Some(&limit_check),
+            )
+            .await
+        {
+            let msg = e.to_string();
+            tracing::warn!(
+                target: "xvision_engine::real_broker_fills",
+                asset = %req.asset,
+                action = %req.action,
+                error_class = "safety_gate",
+                error_message = %msg,
+                "RealBrokerFills: SafetyGate rejected order before broker submit"
+            );
+            return rejected_no_fill(&req, BrokerErrorClass::Unknown, msg);
+        }
+        self.submitted_notional_usd = next_notional;
+        self.submitted_order_count = next_order_count;
 
         // 3. Submit + translate the outcome.
         // Emit broker.call span if an ObsEmitter is attached, matching

@@ -28,6 +28,7 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 
 use crate::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
 use crate::agent::pipeline::ResolvedAgentSlot;
@@ -54,13 +55,16 @@ use crate::eval::scenario::{
     SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use crate::eval::store::{ListFilter, RunStore};
+use crate::safety::{SafetyGate, VenueLabel};
 use crate::tools::ToolRegistry;
 use xvision_agent_client::{AgentClient, ToolDispatch, ToolDispatchError};
 use xvision_core::config::{self, AgentRuntime, ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
 use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
-use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface, OrderlyLiveSurface};
+use xvision_execution::broker_surface::{
+    AlpacaPaperSurface, BrokerPosition, BrokerSurface, OrderlyLiveSurface,
+};
 use xvision_filters::{FilterEventV1, FilterSummary};
 
 // ---------------------------------------------------------------------------
@@ -3728,6 +3732,10 @@ async fn build_live_executor(
             ),
         },
     };
+    let broker_venue_label = match venue {
+        LiveVenue::AlpacaPaper => VenueLabel::Paper,
+        LiveVenue::OrderlyTestnet => VenueLabel::Testnet,
+    };
     let granularity = xvision_data::alpaca::BarGranularity::Minute1;
     let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
         key_id: key_id.clone(),
@@ -3774,10 +3782,18 @@ async fn build_live_executor(
         sub_streams.push((asset_sym, stream));
     }
     let multi = crate::eval::executor::MultiLiveStream::new(sub_streams);
-    let mut live = Executor::live(cfg, broker, multi, crate::eval::executor::WallClock::new(), obs)
-        .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
-        .with_event_bus(ctx.event_bus.clone())
-        .with_provider_catalogs(provider_catalogs);
+    let mut live = Executor::live_with_safety_gate(
+        cfg,
+        broker,
+        multi,
+        crate::eval::executor::WallClock::new(),
+        obs,
+        SafetyGate::new(ctx.safety_manager.clone()),
+        broker_venue_label,
+    )
+    .map_err(|e| ApiError::Validation(format!("build Live executor: {e}")))?
+    .with_event_bus(ctx.event_bus.clone())
+    .with_provider_catalogs(provider_catalogs);
     if let Some(recorder) = ctx.memory_recorder.clone() {
         live = live.with_memory_recorder(recorder);
     }
@@ -4339,11 +4355,157 @@ fn fire_chain_attestation_after_finalize(_run: &Run) {}
 /// produces a burst. Routing through the writer would just add
 /// boot-time complexity for no batching benefit.
 pub async fn fail_orphan_runs(ctx: &ApiContext) -> ApiResult<u64> {
+    fail_orphan_runs_with_broker_override(ctx, None).await
+}
+
+pub async fn fail_orphan_runs_with_broker_override(
+    ctx: &ApiContext,
+    broker_override: Option<Arc<dyn BrokerSurface>>,
+) -> ApiResult<u64> {
     let store = RunStore::new(ctx.db.clone());
+    reconcile_live_orphan_positions(ctx, &store, broker_override).await?;
     store
         .fail_active_runs("daemon restarted before run completed")
         .await
         .map_err(|e| ApiError::Internal(format!("fail orphan runs: {e}")))
+}
+
+async fn reconcile_live_orphan_positions(
+    ctx: &ApiContext,
+    store: &RunStore,
+    broker_override: Option<Arc<dyn BrokerSurface>>,
+) -> ApiResult<()> {
+    let rows = sqlx::query(
+        "SELECT id, live_config_json \
+         FROM eval_runs \
+         WHERE mode = 'live' AND status IN ('queued', 'running') AND live_config_json IS NOT NULL",
+    )
+    .fetch_all(&ctx.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("load live orphan candidates: {e}")))?;
+
+    for row in rows {
+        let run_id: String = row
+            .try_get("id")
+            .map_err(|e| ApiError::Internal(format!("read orphan run id: {e}")))?;
+        let live_config_json: String = row
+            .try_get("live_config_json")
+            .map_err(|e| ApiError::Internal(format!("read orphan live_config_json: {e}")))?;
+        let cfg: LiveConfig = match serde_json::from_str(&live_config_json) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                let content = format!("orphan_reconciliation_unavailable: invalid live_config_json: {e}");
+                store
+                    .record_supervisor_note(&run_id, "broker", "warn", &content)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("record orphan note: {e}")))?;
+                continue;
+            }
+        };
+        let assets: Vec<String> = cfg
+            .assets
+            .iter()
+            .map(|asset| asset.venue_symbol.clone())
+            .collect();
+        let broker = match broker_override.clone() {
+            Some(broker) => broker,
+            None => match broker_for_orphan_reconciliation(ctx, &cfg).await {
+                Ok(broker) => broker,
+                Err(e) => {
+                    let content = format!("orphan_reconciliation_unavailable: {e}");
+                    store
+                        .record_supervisor_note(&run_id, "broker", "warn", &content)
+                        .await
+                        .map_err(|e| ApiError::Internal(format!("record orphan note: {e}")))?;
+                    continue;
+                }
+            },
+        };
+        match broker.open_positions(&assets).await {
+            Ok(positions) if positions.is_empty() => {}
+            Ok(positions) => {
+                let content = format!("orphaned_position: {}", format_orphan_positions(&positions));
+                store
+                    .record_supervisor_note(&run_id, "broker", "warn", &content)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("record orphan position note: {e}")))?;
+            }
+            Err(e) => {
+                let content = format!("orphan_reconciliation_unavailable: open_positions failed: {e:#}");
+                store
+                    .record_supervisor_note(&run_id, "broker", "warn", &content)
+                    .await
+                    .map_err(|e| ApiError::Internal(format!("record orphan note: {e}")))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn broker_for_orphan_reconciliation(
+    ctx: &ApiContext,
+    cfg: &LiveConfig,
+) -> ApiResult<Arc<dyn BrokerSurface>> {
+    let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
+    let venue = resolve_live_venue(&cfg.broker_creds_ref, orderly_base_url.as_deref())?;
+    match venue {
+        LiveVenue::AlpacaPaper => {
+            let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
+            let (key_id, secret, trade_base_url) = if let Some(c) = stored {
+                (
+                    c.api_key_id,
+                    c.api_secret_key,
+                    c.base_url
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
+                )
+            } else {
+                let key_id = std::env::var("APCA_API_KEY_ID").map_err(|_| {
+                    ApiError::Validation("no Alpaca credentials configured for orphan reconciliation".into())
+                })?;
+                let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
+                    ApiError::Validation(
+                        "no Alpaca credentials configured for orphan reconciliation (APCA_API_SECRET_KEY unset)"
+                            .into(),
+                    )
+                })?;
+                let trade_base_url = std::env::var("APCA_API_BASE_URL")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "https://paper-api.alpaca.markets".into());
+                (key_id, secret, trade_base_url)
+            };
+            if !trade_base_url.contains("paper-api.alpaca.markets") {
+                return Err(ApiError::Validation(format!(
+                    "orphan reconciliation only supports Alpaca paper trading for broker_creds_ref='alpaca' (got '{trade_base_url}')"
+                )));
+            }
+            Ok(Arc::new(
+                AlpacaPaperSurface::from_credentials(&key_id, &secret, &trade_base_url)
+                    .map_err(|e| ApiError::Validation(format!("build Alpaca paper broker: {e}")))?,
+            ))
+        }
+        LiveVenue::OrderlyTestnet => {
+            Ok(Arc::new(OrderlyLiveSurface::from_env().map_err(|e| {
+                ApiError::Validation(format!("build Orderly testnet broker: {e}"))
+            })?))
+        }
+    }
+}
+
+fn format_orphan_positions(positions: &[BrokerPosition]) -> String {
+    positions
+        .iter()
+        .map(|pos| {
+            let entry = pos
+                .entry_price
+                .map(|price| format!("@{price:.4}"))
+                .unwrap_or_default();
+            format!("{}:{}{}", pos.asset, pos.size, entry)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn effective_obs_config(ctx: &ApiContext) -> Arc<xvision_observability::ObservabilityConfig> {

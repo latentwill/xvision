@@ -36,6 +36,8 @@ pub enum CapitalMode {
     /// v1: one capital pool, per-asset positions, shared equity.
     #[default]
     Pooled,
+    /// Live-only: size new positions from broker account equity.
+    AccountEquity,
     /// Reserved: segregated per-asset sub-portfolios.
     PerAsset,
 }
@@ -82,6 +84,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(CapitalMode::PerAsset).unwrap(),
             serde_json::json!("per_asset")
+        );
+        assert_eq!(
+            serde_json::to_value(CapitalMode::AccountEquity).unwrap(),
+            serde_json::json!("account_equity")
         );
         let back: CapitalMode = serde_json::from_value(serde_json::json!("per_asset")).unwrap();
         assert_eq!(back, CapitalMode::PerAsset);

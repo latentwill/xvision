@@ -279,6 +279,7 @@ pub trait OrderlyApi: Send + Sync {
     async fn get_order(&self, order_id: u64) -> Result<OrderlyOrder, ExecutorError>;
     async fn get_account(&self) -> Result<OrderlyAccount, ExecutorError>;
     async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError>;
+    async fn cancel_open_orders(&self, symbol: &str) -> Result<(), ExecutorError>;
 
     /// Mark price from the PUBLIC futures endpoint
     /// (`GET /v1/public/futures/{symbol}`, no auth). Used to convert a
@@ -606,6 +607,25 @@ impl OrderlyApi for ReqwestOrderlyApi {
                 unsettled_pnl: p.unsettled_pnl,
             })
             .collect())
+    }
+
+    async fn cancel_open_orders(&self, symbol: &str) -> Result<(), ExecutorError> {
+        let orders_path = format!("/v1/orders?symbol={symbol}");
+        self.signed_request(reqwest::Method::DELETE, &orders_path, None)
+            .await?;
+
+        let algo_path = format!("/v1/algo-orders?symbol={symbol}");
+        if let Err(e) = self
+            .signed_request(reqwest::Method::DELETE, &algo_path, None)
+            .await
+        {
+            tracing::warn!(
+                target: "xvision::orderly",
+                symbol,
+                "orderly cancel open algo orders failed after regular-order cancel: {e}"
+            );
+        }
+        Ok(())
     }
 
     async fn get_mark_price(&self, symbol: &str) -> Result<f64, ExecutorError> {
@@ -1076,6 +1096,7 @@ mod tests {
         create_order_err: Option<ExecutorError>,
         captured_create: Arc<Mutex<Option<CreateOrderCall>>>,
         captured_algo: Arc<Mutex<Vec<AlgoOrderCall>>>,
+        cancelled_symbols: Arc<Mutex<Vec<String>>>,
     }
 
     impl MockOrderlyApi {
@@ -1093,6 +1114,7 @@ mod tests {
                 create_order_err: None,
                 captured_create: Arc::new(Mutex::new(None)),
                 captured_algo: Arc::new(Mutex::new(Vec::new())),
+                cancelled_symbols: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -1158,6 +1180,11 @@ mod tests {
 
         async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
             Ok(self.positions.clone())
+        }
+
+        async fn cancel_open_orders(&self, symbol: &str) -> Result<(), ExecutorError> {
+            self.cancelled_symbols.lock().unwrap().push(symbol.to_string());
+            Ok(())
         }
 
         async fn get_mark_price(&self, _symbol: &str) -> Result<f64, ExecutorError> {
@@ -1234,6 +1261,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: Vec::new(),
         }
     }
 
@@ -1419,6 +1447,9 @@ mod tests {
             }
             async fn get_positions(&self) -> Result<Vec<OrderlyPosition>, ExecutorError> {
                 panic!("get_positions must not be called")
+            }
+            async fn cancel_open_orders(&self, _: &str) -> Result<(), ExecutorError> {
+                panic!("cancel_open_orders must not be called")
             }
             async fn get_mark_price(&self, _: &str) -> Result<f64, ExecutorError> {
                 panic!("get_mark_price must not be called")
@@ -1767,6 +1798,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: Vec::new(),
         };
 
         let receipt = executor.submit(&decision).await.expect("ETH submit must succeed");
@@ -1827,6 +1859,7 @@ mod tests {
                 tp1_close_fraction: None,
                 tp2_pct: None,
             },
+            warnings: Vec::new(),
         };
 
         let receipt = executor

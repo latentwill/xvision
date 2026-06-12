@@ -7,18 +7,23 @@
 //!   - no-op handling (`action == "hold"`)
 //!   - broker-error classification
 
+mod support;
+
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use tracing_subscriber::prelude::*;
-use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
+use xvision_execution::broker_surface::{
+    BrokerPosition, BrokerSurface, OrderConfirmation, OrderRequest, Side,
+};
 
 use xvision_engine::eval::executor::traits::{FillRequest, FillSink};
 use xvision_engine::eval::executor::RealBrokerFills;
 use xvision_engine::eval::orders::OrderState;
 use xvision_engine::eval::scenario::{FeeSource, SlippageModel};
+use xvision_engine::safety::{AuthContext, SafetyGate, SafetyManager, VenueLabel};
 
 fn ts() -> DateTime<Utc> {
     Utc.timestamp_opt(1_700_000_000, 0).unwrap()
@@ -55,6 +60,7 @@ struct RecordingBroker {
     fill_price: f64,
     fill_size: Option<f64>,
     fee: Option<f64>,
+    balances: Mutex<Vec<f64>>,
 }
 
 impl RecordingBroker {
@@ -64,6 +70,7 @@ impl RecordingBroker {
             fill_price,
             fill_size: None,
             fee: None,
+            balances: Mutex::new(vec![0.0]),
         })
     }
 
@@ -73,6 +80,17 @@ impl RecordingBroker {
             fill_price,
             fill_size: Some(fill_size),
             fee: None,
+            balances: Mutex::new(vec![0.0]),
+        })
+    }
+
+    fn with_balances(fill_price: f64, balances: Vec<f64>) -> Arc<Self> {
+        Arc::new(Self {
+            submitted: Mutex::new(Vec::new()),
+            fill_price,
+            fill_size: None,
+            fee: None,
+            balances: Mutex::new(balances),
         })
     }
 
@@ -98,7 +116,20 @@ impl BrokerSurface for RecordingBroker {
     }
 
     async fn balance(&self) -> anyhow::Result<f64> {
-        Ok(0.0)
+        let mut balances = self.balances.lock().unwrap();
+        if balances.len() > 1 {
+            Ok(balances.remove(0))
+        } else {
+            Ok(*balances.first().unwrap_or(&0.0))
+        }
+    }
+
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -128,6 +159,21 @@ async fn long_open_translates_to_market_buy_with_risk_sized_quantity() {
     assert_eq!(record.order_state, Some(OrderState::Filled));
     assert_eq!(record.fill_price, Some(50_123.0));
     assert_eq!(record.fill_size, Some(0.04));
+}
+
+#[tokio::test]
+async fn account_equity_sizing_reads_broker_balance_before_sizing_open() {
+    let mock = RecordingBroker::with_balances(50_000.0, vec![120_000.0]);
+    let mut sink = RealBrokerFills::new(mock.clone()).with_account_equity_sizing(true);
+
+    let record = sink
+        .submit(req("long_open", 0.0, 100_000.0, 0.02, 50_000.0))
+        .await;
+
+    let submitted = mock.submitted();
+    assert_eq!(submitted.len(), 1, "broker must see the account-sized order");
+    assert!((submitted[0].size - 0.048).abs() < 1e-9);
+    assert_eq!(record.order_state, Some(OrderState::Filled));
 }
 
 #[tokio::test]
@@ -246,6 +292,14 @@ impl BrokerSurface for ErrorBroker {
     async fn balance(&self) -> anyhow::Result<f64> {
         Ok(0.0)
     }
+
+    async fn open_positions(&self, _assets: &[String]) -> anyhow::Result<Vec<BrokerPosition>> {
+        Ok(Vec::new())
+    }
+
+    async fn cancel_open_orders(&self, _asset: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -315,4 +369,33 @@ async fn broker_rejection_maps_to_rejected_order_state() {
         captured.values.lock().unwrap().as_slice(),
         &["broker_insufficient_funds"]
     );
+}
+
+#[tokio::test]
+async fn paused_safety_gate_blocks_submit_before_broker_call() {
+    let pool = support::safety_pool_with_migrations().await;
+    let manager = SafetyManager::new(pool);
+    manager.bootstrap(false).await.unwrap();
+    manager
+        .pause(Some("operator pause".into()), &AuthContext::api_anonymous())
+        .await
+        .unwrap();
+    let gate = SafetyGate::new(manager);
+    let mock = RecordingBroker::new(50_000.0);
+    let mut sink =
+        RealBrokerFills::new(mock.clone()).with_safety_gate(gate, VenueLabel::Paper, VenueLabel::Paper, None);
+
+    let record = sink
+        .submit(req("long_open", 0.0, 100_000.0, 0.02, 50_000.0))
+        .await;
+
+    assert!(
+        mock.submitted().is_empty(),
+        "SafetyGate denial must not reach broker"
+    );
+    assert_eq!(record.order_state, Some(OrderState::Rejected));
+    let (_, reason) = record
+        .broker_error
+        .expect("denial must be surfaced as broker_error");
+    assert!(reason.contains("safety_paused"), "unexpected reason: {reason}");
 }
