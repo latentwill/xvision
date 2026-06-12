@@ -260,7 +260,17 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
       setError(null);
       refresh();
     },
-    onError: (err) => setError(errorMessage(err)),
+    onError: (err) => {
+      const raw = errorMessage(err);
+      // Translate the backend validation error into operator-friendly copy.
+      if (/not enough observations/i.test(raw)) {
+        setError(
+          "Not enough observations to stage a pattern. Run at least 2 cycles with this agent first.",
+        );
+      } else {
+        setError(raw);
+      }
+    },
   });
 
   const optimizeMutation = useMutation({
@@ -628,14 +638,28 @@ export function FlywheelPanel(props: FlywheelPanelProps) {
               className="w-full px-3 py-2 bg-surface-panel border border-border rounded-sm text-[13px] text-text font-mono focus:outline-none focus:border-gold/40"
             />
           </label>
-          <button
-            type="button"
-            onClick={() => autooptimizerMutation.mutate()}
-            disabled={autooptimizerMutation.isPending}
-            className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
-          >
-            {autooptimizerMutation.isPending ? "Staging..." : "Stage Pattern"}
-          </button>
+          {(() => {
+            const MIN_OBSERVATIONS = 2;
+            const obsCount = status?.observations ?? 0;
+            const tooFewObs =
+              !statusQuery.isPending && obsCount < MIN_OBSERVATIONS;
+            const isDisabled = autooptimizerMutation.isPending || tooFewObs;
+            return (
+              <button
+                type="button"
+                onClick={() => autooptimizerMutation.mutate()}
+                disabled={isDisabled}
+                title={
+                  tooFewObs
+                    ? `Needs at least ${MIN_OBSERVATIONS} observations to stage a pattern (currently ${obsCount})`
+                    : undefined
+                }
+                className="inline-flex justify-center px-3 py-2 rounded text-[12.5px] font-medium border border-border text-text hover:border-border-strong disabled:opacity-50"
+              >
+                {autooptimizerMutation.isPending ? "Staging..." : "Stage Pattern"}
+              </button>
+            );
+          })()}
         </div>
 
         {props.mode === "agent" ? (
