@@ -7,6 +7,8 @@ pub mod asset_whitelist;
 pub mod fixtures;
 pub mod indicators;
 pub mod manifest;
+pub mod perp_feed;
 pub mod validate;
 
 pub use indicators::*;
+pub use perp_feed::{apply_to_onchain, fetch_perp_snapshot, parse_perp_snapshot, PerpSnapshot};

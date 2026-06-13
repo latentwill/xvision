@@ -664,6 +664,31 @@ impl AppState {
         .await
         .context("create auth_audit session_token_hash index")?;
 
+        // publish_receipts: idempotency key for marketplace publishing
+        // (bead xvision-4dn). One row per published agent_id (the strategy
+        // ULID / NFT token id); the publish handler short-circuits a
+        // re-publish with 409 Conflict when a receipt is present, so a
+        // re-click / retry cannot mint a duplicate NFT + listing.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS publish_receipts (
+                agent_id     TEXT NOT NULL PRIMARY KEY,
+                token_id     TEXT NOT NULL,
+                listing_id   TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                published_at TEXT NOT NULL
+            )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("create publish_receipts table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_publish_receipts_token_id ON publish_receipts (token_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("create publish_receipts token_id index")?;
+
         Ok(())
     }
 }

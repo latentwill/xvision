@@ -30,7 +30,9 @@ use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
-use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput};
+use xvision_engine::eval::executor::backtest::{
+    build_decision_seed, DecisionSeedInput, PerpsContext, SeedContext,
+};
 use xvision_engine::strategies::risk::RiskConfig;
 
 const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
@@ -49,6 +51,8 @@ const MIGRATION_033: &str = include_str!("../migrations/033_agent_slot_capabilit
 const MIGRATION_036: &str = include_str!("../migrations/036_agents_scope_strategy_id.sql");
 // max_wall_ms column on agent_slots (migration 047).
 const MIGRATION_047: &str = include_str!("../migrations/047_agent_slot_max_wall_ms.sql");
+// allowed_tools_json column on agent_slots (migration 056).
+const MIGRATION_056: &str = include_str!("../migrations/056_agent_slot_allowed_tools.sql");
 
 /// In-memory pool with the agents table and migrations 005 + 019 +
 /// 020 + 025 applied. Mirrors the runtime boot path.
@@ -66,6 +70,7 @@ async fn fresh_pool() -> SqlitePool {
     sqlx::query(MIGRATION_033).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_036).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_047).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_056).execute(&pool).await.unwrap();
     pool
 }
 
@@ -113,6 +118,7 @@ async fn migration_020_up_down_up_preserves_rows() {
     sqlx::query(MIGRATION_033).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_036).execute(&pool).await.unwrap();
     sqlx::query(MIGRATION_047).execute(&pool).await.unwrap();
+    sqlx::query(MIGRATION_056).execute(&pool).await.unwrap();
 
     let store = AgentStore::new(pool.clone());
     let id = store
@@ -217,6 +223,7 @@ fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
         stop_loss_price: 0.0,
         take_profit_price: 0.0,
         risk_config: &risk,
+        perps: PerpsContext::default(),
     })
 }
 
@@ -237,6 +244,156 @@ fn raw_per_bar_shape_is_byte_identical_to_pre_f6() {
         );
     }
     assert_eq!(obj.len(), 6, "Raw must not gain or drop fields");
+}
+
+/// Seed fields the live and backtest paths are ALLOWED to differ on, with the
+/// reason. Everything else must be byte-identical given equivalent state — the
+/// parity guard below enforces it. Adding to this list is a deliberate act that
+/// documents a new intentional divergence.
+const INTENTIONALLY_DIVERGENT: &[&str] = &[
+    // Live has no T+1 bar, so next_bar_open is the current close; backtest uses
+    // the real next bar's open.
+    "next_bar_open",
+    // Origin label only.
+    "reference_price_source",
+];
+
+/// Recursively assert two seed JSON values have identical key structure and
+/// identical values, EXCEPT leaf keys named in `allow` (whose values may
+/// differ). Catches both shape drift (a field emitted by one path but not the
+/// other) and value drift (a derivation that diverges).
+fn assert_seed_parity(a: &serde_json::Value, b: &serde_json::Value, allow: &[&str], path: &str) {
+    use std::collections::BTreeSet;
+    match (a, b) {
+        (serde_json::Value::Object(ma), serde_json::Value::Object(mb)) => {
+            let ka: BTreeSet<&String> = ma.keys().collect();
+            let kb: BTreeSet<&String> = mb.keys().collect();
+            assert_eq!(ka, kb, "seed key-set mismatch at `{path}`");
+            for (k, va) in ma {
+                assert_seed_parity(va, &mb[k], allow, &format!("{path}.{k}"));
+            }
+        }
+        _ => {
+            let leaf = path.rsplit('.').next().unwrap_or(path);
+            if !allow.contains(&leaf) {
+                assert_eq!(a, b, "seed value drift at `{path}` (not allowlisted)");
+            }
+        }
+    }
+}
+
+#[test]
+fn live_and_backtest_seeds_diverge_only_on_allowlisted_fields() {
+    // Equivalent decision state run through the SHARED constructor twice, once
+    // with the backtest's next_open/source and once with the live path's. The
+    // only differences in the emitted seed must be the allowlisted fields —
+    // proving the upnl/entry derivations don't leak the divergent inputs.
+    let bar = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
+    let active = vec!["BTC/USD".to_string()];
+    let history: Vec<&xvision_core::market::Ohlcv> = vec![];
+    let risk = distinctive_risk();
+    let ctx = |next_open: f64, source: &'static str| SeedContext {
+        decision_idx: 0,
+        asset: "BTC/USD",
+        active_assets: &active,
+        bar: &bar,
+        history_slice: &history,
+        inputs_policy: InputsPolicy::Causal,
+        equity: 10_000.0,
+        position_size: 0.02,
+        entry_price: 100.0,
+        mark_price: 108.0,
+        next_bar_open: next_open,
+        reference_price_source: source,
+        bars_held: 4,
+        stop_loss_price: 95.0,
+        take_profit_price: 120.0,
+        risk_config: &risk,
+        perps: PerpsContext::default(),
+    };
+    let backtest = build_decision_seed(DecisionSeedInput::from_context(ctx(109.0, "eval_bar.close")));
+    let live = build_decision_seed(DecisionSeedInput::from_context(ctx(108.0, "live_bar.close")));
+    assert_seed_parity(&backtest, &live, INTENTIONALLY_DIVERGENT, "");
+}
+
+#[test]
+fn from_context_derives_unrealized_pnl_for_long_and_flat() {
+    let bar = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
+    let active = vec!["BTC/USD".to_string()];
+    let history: Vec<&xvision_core::market::Ohlcv> = vec![];
+    let risk = distinctive_risk();
+    let base = |pos: f64, entry: f64| SeedContext {
+        decision_idx: 0,
+        asset: "BTC/USD",
+        active_assets: &active,
+        bar: &bar,
+        history_slice: &history,
+        inputs_policy: InputsPolicy::Causal,
+        equity: 10_000.0,
+        position_size: pos,
+        entry_price: entry,
+        mark_price: 110.0,
+        next_bar_open: 109.0,
+        reference_price_source: "eval_bar.close",
+        bars_held: 0,
+        stop_loss_price: 0.0,
+        take_profit_price: 0.0,
+        risk_config: &risk,
+        perps: PerpsContext::default(),
+    };
+    // Long 100 → 110 mark = +10%.
+    let long = build_decision_seed(DecisionSeedInput::from_context(base(0.02, 100.0)));
+    assert!((long["portfolio_state"]["unrealized_pnl_pct"].as_f64().unwrap() - 10.0).abs() < 1e-9);
+    // Flat → upnl 0 and entry_price zeroed for the trader's view.
+    let flat = build_decision_seed(DecisionSeedInput::from_context(base(0.0, 100.0)));
+    assert_eq!(flat["portfolio_state"]["unrealized_pnl_pct"].as_f64(), Some(0.0));
+    assert_eq!(flat["portfolio_state"]["entry_price"].as_f64(), Some(0.0));
+}
+
+#[test]
+fn perps_context_emitted_in_market_data_when_present() {
+    let current = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
+    let active_assets = vec!["BTC/USD".to_string()];
+    let history_refs: Vec<&xvision_core::market::Ohlcv> = vec![];
+    let risk = distinctive_risk();
+    let seed = build_decision_seed(DecisionSeedInput {
+        decision_idx: 0,
+        asset: "BTC/USD",
+        active_assets: &active_assets,
+        bar: &current,
+        next_bar_open: 109.0,
+        reference_price_source: "eval_bar.close",
+        position_size: 0.0,
+        equity: 10_000.0,
+        mark_price: current.close,
+        history_slice: &history_refs,
+        inputs_policy: InputsPolicy::Causal,
+        entry_price: 0.0,
+        unrealized_pnl_pct: 0.0,
+        bars_held: 0,
+        stop_loss_price: 0.0,
+        take_profit_price: 0.0,
+        risk_config: &risk,
+        perps: PerpsContext {
+            funding_rate: Some(0.0002),
+            open_interest: Some(9_000_000.0),
+            ..Default::default()
+        },
+    });
+    let perps = &seed["market_data"]["perps"];
+    assert_eq!(perps["funding_rate"].as_f64(), Some(0.0002));
+    assert_eq!(perps["open_interest"].as_f64(), Some(9_000_000.0));
+    // Unset fields are omitted, not null-filled.
+    assert!(perps.get("long_short_ratio").is_none());
+}
+
+#[test]
+fn perps_absent_emits_null() {
+    let seed = production_seed_shape(InputsPolicy::Causal);
+    assert!(
+        seed["market_data"]["perps"].is_null(),
+        "default (empty) PerpsContext must serialize as null so the prompt skips it",
+    );
 }
 
 #[test]

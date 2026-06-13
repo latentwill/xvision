@@ -39,8 +39,10 @@ use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError, LivePollFe
 use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
 
 use xvision_core::trading::AssetSymbol;
-use xvision_engine::agent::llm::{LlmDispatch, MockDispatch};
-use xvision_engine::eval::executor::{Executor, LiveStream, MultiLiveStream, RunExecutor, WallClock};
+use xvision_engine::agent::llm::{ContentBlock, LlmDispatch, LlmResponse, MockDispatch, StopReason};
+use xvision_engine::eval::executor::{
+    AttestHook, AttestSummary, Executor, LiveStream, MultiLiveStream, RunExecutor, WallClock,
+};
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::{AssetClass, AssetRef, Scenario};
@@ -2103,4 +2105,215 @@ async fn live_flatten_while_paused_still_closes_position_and_stays_paused() {
         "flatten decision must carry a flatten:-prefixed justification, got {:?}",
         close_row.justification,
     );
+}
+
+// ---------------------------------------------------------------------------
+// LANE byu — 20-trade auto-attest loop (bead xvision-byu)
+//
+// The live executor counts executed (filled) trades and invokes an injected
+// `AttestHook` every N trades (default 20). The hook is dependency-inverted:
+// the engine defines the trait with a `NoopAttestHook` default; the concrete
+// identity-backed impl is injected from the dashboard so NO hard
+// `xvision-engine -> xvision-identity` Cargo edge is added.
+// ---------------------------------------------------------------------------
+
+/// Test hook that records the cumulative `n_trades` value the executor
+/// passed in on each `maybe_attest` call. Lets a test assert the hook fired at
+/// exactly the N-trade boundaries and never between.
+#[derive(Clone, Default)]
+struct CountingAttestHook {
+    /// `n_trades` (trades-so-far) at each call, in call order.
+    calls_at: Arc<Mutex<Vec<u32>>>,
+}
+
+impl CountingAttestHook {
+    fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    fn calls_at(&self) -> Vec<u32> {
+        self.calls_at.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl AttestHook for CountingAttestHook {
+    async fn maybe_attest(&self, summary: AttestSummary) {
+        self.calls_at.lock().unwrap().push(summary.n_trades);
+    }
+}
+
+/// Build a `MockDispatch` whose responses alternate between `long_open` and
+/// `flat` so every bar produces exactly one fill leg. The live executor
+/// pyramid-guards against opening the same direction twice in a row, so
+/// bare `long_open` repeated for N bars only fills once (on bar 1). By
+/// alternating open/flat each bar transitions: flat→long (fill), long→flat
+/// (fill), flat→long (fill), … — giving one fill leg per bar regardless of
+/// `n_bars`.
+fn alternating_open_flat_dispatch(n_bars: usize) -> Arc<dyn LlmDispatch> {
+    let responses: Vec<LlmResponse> = (0..n_bars)
+        .map(|i| {
+            let action = if i % 2 == 0 { "long_open" } else { "flat" };
+            LlmResponse {
+                content: vec![ContentBlock::Text {
+                    text: format!(
+                        r#"{{"action":"{action}","conviction":0.9,"justification":"attest-test-bar-{i}"}}"#,
+                    ),
+                }],
+                stop_reason: StopReason::EndTurn,
+                input_tokens: 1,
+                output_tokens: 1,
+            }
+        })
+        .collect();
+    Arc::new(MockDispatch::sequence(responses))
+}
+
+/// Drive the live loop with alternating `long_open`/`flat` responses so every
+/// bar produces exactly one fill leg. Over 11 bars with N=5 the hook must fire
+/// at exactly trade 5 and trade 10 — twice total — and every recorded boundary
+/// must be a positive multiple of 5.
+#[tokio::test]
+async fn attest_hook_fires_once_per_n_trades_and_not_before() {
+    const N: u32 = 5;
+    const BARS: usize = 11; // 11 fills → fires at 5 and 10
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_000.0);
+    // 11 bars: alternating long_open/flat => 11 fill legs (one per bar).
+    let bars: Vec<MarketBar> = (1..=BARS)
+        .map(|i| market_bar_at(60 * i as i64, 50_000.0 + i as f64))
+        .collect();
+    let stream = single_asset_stream(bars);
+    let hook = CountingAttestHook::new();
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .expect("live executor builds")
+    .with_attest_hook(hook.clone(), N);
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            alternating_open_flat_dispatch(BARS),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    // Sanity: every bar produces one fill leg.
+    assert_eq!(
+        metrics.n_trades,
+        BARS as u32,
+        "each alternating bar fills exactly once, got {}",
+        metrics.n_trades,
+    );
+
+    let calls = hook.calls_at();
+    assert_eq!(
+        calls,
+        vec![N, 2 * N],
+        "hook must fire at trade {N} and {two_n} only (not {N_m1}/{N_p1}/{two_n_m1}/{two_n_p1}/{BARS}), got {calls:?}",
+        N_m1 = N - 1,
+        N_p1 = N + 1,
+        two_n = 2 * N,
+        two_n_m1 = 2 * N - 1,
+        two_n_p1 = 2 * N + 1,
+    );
+    // Defensive invariant: every boundary is a positive multiple of N.
+    assert!(
+        calls.iter().all(|&t| t % N == 0 && t > 0),
+        "every attest boundary must be a positive multiple of N={N}, got {calls:?}",
+    );
+}
+
+/// With fewer fills than N the hook must NEVER fire. Uses N=5 and 4 bars
+/// (alternating open/flat → 4 fills) — one short of the first boundary.
+#[tokio::test]
+async fn attest_hook_does_not_fire_below_n_trades() {
+    const N: u32 = 5;
+    const BARS: usize = 4; // 4 fills < N=5 => no fire
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_000.0);
+    let bars: Vec<MarketBar> = (1..=BARS)
+        .map(|i| market_bar_at(60 * i as i64, 50_000.0 + i as f64))
+        .collect();
+    let stream = single_asset_stream(bars);
+    let hook = CountingAttestHook::new();
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .expect("live executor builds")
+    .with_attest_hook(hook.clone(), N);
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            alternating_open_flat_dispatch(BARS),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    assert_eq!(
+        metrics.n_trades,
+        BARS as u32,
+        "{BARS} filled legs expected, got {}",
+        metrics.n_trades,
+    );
+    assert!(
+        hook.calls_at().is_empty(),
+        "the hook must not fire before the first N-trade boundary, got {:?}",
+        hook.calls_at(),
+    );
+}
+
+/// A live run WITHOUT an attest hook (the default) completes byte-identically
+/// to the pre-existing one-bar flow — the no-op default path must not regress.
+#[tokio::test]
+async fn live_run_without_attest_hook_completes_unchanged() {
+    let (store, strategy, scenario, mut run, _dir) = live_fixtures(100_000.0).await;
+    let broker = RecordingBroker::new(50_123.0);
+    let stream = single_asset_stream(vec![market_bar_at(60, 50_000.0)]);
+
+    let executor = Executor::live(
+        &live_config(),
+        broker.clone(),
+        stream,
+        WallClock::with_now_fn(|| ts(60)),
+        None,
+    )
+    .expect("live executor builds");
+
+    let metrics = executor
+        .run(
+            &mut run,
+            &strategy,
+            &scenario,
+            &[],
+            long_open_dispatch(),
+            Arc::new(ToolRegistry::empty()),
+            &store,
+        )
+        .await
+        .expect("live run completes on stream end");
+
+    assert_eq!(metrics.n_decisions, 1, "one bar => one decision");
+    assert!(metrics.n_trades >= 1, "the filled order counts as a trade");
 }

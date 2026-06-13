@@ -3,7 +3,6 @@ import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
 import { Layout } from "@/components/shell/Layout";
 import { AppErrorBoundary } from "@/components/AppErrorBoundary";
 import { noteSuccessfulPageLoad } from "@/lib/chunk-reload";
-import { useLineageNode } from "./features/autooptimizer/api";
 
 const LoginRoute = lazy(() => import("./routes/login").then((m) => ({ default: m.LoginRoute })));
 
@@ -68,6 +67,11 @@ const OptimizerStrategyInspector = lazy(() =>
     default: m.StrategyInspector,
   }))
 );
+const OptimizerExperiment = lazy(() =>
+  import("./features/autooptimizer/screens/ExperimentDetail").then((m) => ({
+    default: m.ExperimentDetail,
+  }))
+);
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
@@ -98,21 +102,6 @@ export function OptimizerRunRedirect() {
   const { sessionId } = useParams<{ sessionId: string }>();
   if (!sessionId) return <Navigate to="/optimizer" replace />;
   return <Navigate to={`/optimizer?session=${sessionId}`} replace />;
-}
-
-/** Experiment detail folded into CycleDetail (?exp= deep link). Looks up the
- *  owning cycle for the hash, then forwards; unknown hashes fall back to the
- *  optimizer home rather than a dead detail page. */
-export function ExperimentRedirect() {
-  const { hash } = useParams<{ hash: string }>();
-  const node = useLineageNode(hash ?? "");
-  if (node.isLoading) {
-    return <div className="p-6 text-[12px] text-text-3">Locating experiment…</div>;
-  }
-  if (node.data?.cycle_id) {
-    return <Navigate to={`/optimizer/cycle/${node.data.cycle_id}?exp=${hash}`} replace />;
-  }
-  return <Navigate to="/optimizer" replace />;
 }
 
 export function LegacyDiffRedirect() {
@@ -245,7 +234,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: page(<OptimizerHome />) },
           { path: "cycle/:cycleId", element: page(<OptimizerCycle />) },
-          { path: "experiment/:hash", element: <ExperimentRedirect /> },
+          { path: "experiment/:hash", element: page(<OptimizerExperiment />) },
           { path: "run/:sessionId", element: <OptimizerRunRedirect /> },
           { path: "strategy/:hash", element: page(<OptimizerStrategyInspector />) },
         ],

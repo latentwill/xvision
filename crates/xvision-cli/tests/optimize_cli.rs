@@ -8,12 +8,13 @@
 //! (it emits `CycleProgressEvent::FlywheelCompiled`), so the redundant manual
 //! CLI surface — and every test that drove it — was deleted.
 //!
-//! The surviving `xvn optimize` cycle verbs (run/run-cycle, mutate-once, demo,
+//! The surviving `xvn optimize` cycle verbs (run [--max-cycles/--ipc-socket],
 //! ls, show, lineage, unlock) are covered by:
 //!   - autooptimizer_cli.rs
 //!   - autooptimizer_cli_inspect.rs
-//!   - autooptimizer_cli_mutate_once.rs
 //!   - autooptimizer_e2e.rs
 //!   - cli_surface.rs (clap surface snapshot)
+//!
+//! Removed verbs: run-cycle (alias), mutate-once, demo.
 //!
 //! This file is intentionally left with no tests.

@@ -154,6 +154,39 @@ mod tests {
         );
     }
 
+    /// Guard against wiki drift on the `wake_when_in_position` default.
+    /// The runtime default is `WakeInPosition::OnInvalidationOrTargetOnly`
+    /// (`crates/xvision-filters/src/types.rs::default_wake_in_position`).
+    /// The baked filter-dsl-catalog page must document that exact default
+    /// and must NOT claim the stale `"always"` default (the previous,
+    /// per-bar-polling default that was removed). It must also enumerate
+    /// all three accepted enum tokens so authors know the full surface.
+    #[tokio::test]
+    async fn filter_catalog_documents_correct_wake_default() {
+        let body = page(AxumPath("filter-dsl-catalog".to_string()))
+            .await
+            .expect("filter-dsl-catalog must resolve");
+
+        // The runtime default token must be the documented default.
+        assert!(
+            body.contains("wake_when_in_position: \"on_invalidation_or_target_only\""),
+            "filter-dsl-catalog must document the real default \
+             `on_invalidation_or_target_only`",
+        );
+        // The stale `"always"` default must be gone.
+        assert!(
+            !body.contains("wake_when_in_position: \"always\""),
+            "filter-dsl-catalog still claims the removed `\"always\"` default",
+        );
+        // All three enum tokens must be enumerated.
+        for token in ["on_invalidation_or_target_only", "always", "never"] {
+            assert!(
+                body.contains(token),
+                "filter-dsl-catalog must document the `{token}` wake mode",
+            );
+        }
+    }
+
     #[tokio::test]
     async fn page_returns_404_for_unknown_slug() {
         let err = page(AxumPath("not-a-real-doc".to_string()))

@@ -29,9 +29,15 @@
 //! and messages as the old per-request env reads (xvision-df3). All pure
 //! logic (tier mapping, USDC scaling) is unit-testable without a chain.
 //!
-//! Idempotency: deliberately none in v1 (testnet). Re-publishing the same
-//! strategy mints a new NFT and listing; double-click protection is the
-//! frontend's job. Revisit with a publish-receipt store before mainnet.
+//! Idempotency: enforced via the `publish_receipts` store (bead xvision-4dn).
+//! The first successful publish records a receipt keyed by `agent_id` (the
+//! strategy ULID / NFT token id); a re-publish of an already-published
+//! agent_id short-circuits with 409 Conflict BEFORE any chain or IPFS work,
+//! so a re-click / retry / refresh cannot mint a duplicate NFT + listing.
+//! Residual: the receipt is inserted AFTER the on-chain mint, so two
+//! genuinely-concurrent first-publishes can still both mint before either
+//! receipt lands — the store collapses the dominant sequential case, not a
+//! hard mutex (see `publish_receipts`).
 
 use axum::{
     extract::{Path, State},
@@ -56,6 +62,7 @@ use xvision_marketplace::IpfsStore;
 
 use crate::chain_config::{chain_call_timeout, with_chain_timeout};
 use crate::error::DashboardError;
+use crate::routes::publish_receipts::{find_receipt, insert_receipt};
 use crate::state::AppState;
 
 /// Request body for `POST /api/marketplace/publish`.
@@ -166,6 +173,21 @@ pub async fn post_publish(
 
     // c. The strategy ULID IS the pre-mint agent id.
     let agent_id = body.strategy_id.clone();
+
+    // c.1. Idempotency gate (bead xvision-4dn). If this agent_id was already
+    //      published, short-circuit with 409 Conflict BEFORE any tokenURI gen,
+    //      chain gate, IPFS pin, or mint — so a re-click / retry / refresh
+    //      cannot mint a duplicate NFT + listing. This lookup is cheap and
+    //      precedes ALL chain/IPFS side effects (it must stay above the chain
+    //      gate at step `e`). See `publish_receipts` for the residual
+    //      concurrent-first-publish race.
+    if let Some(r) = find_receipt(&state.pool, &agent_id).await? {
+        return Err(DashboardError::Conflict(format!(
+            "agent_id {agent_id} already published (token_id {}, listing_id {}); \
+             re-publishing would mint a duplicate NFT",
+            r.token_id, r.listing_id
+        )));
+    }
 
     // d. Genart tokenURI (data:application/json;base64,…).
     let token_uri =
@@ -302,7 +324,35 @@ pub async fn post_publish(
         ))
     })?;
 
-    // i. 201 + receipt.
+    // i. Persist the publish receipt (bead xvision-4dn) so a re-publish 409s
+    //    at step `c.1` above. This runs AFTER the on-chain mint+list, so a DB
+    //    failure here must NOT 500 the response — the NFT already exists on
+    //    chain, and surfacing an error would make the operator retry, which is
+    //    the exact duplicate-mint bug being fixed. Log-only is therefore the
+    //    safer no-duplicate posture: a missed receipt leaves the next publish
+    //    able to duplicate (rare), but a hard-fail GUARANTEES the operator
+    //    retries into a duplicate.
+    if let Err(e) = insert_receipt(
+        &state.pool,
+        &agent_id,
+        &token_id.to_string(),
+        &listing.listing_id.to_string(),
+        &manifest_hash,
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .await
+    {
+        tracing::error!(
+            error = %e,
+            agent_id = %agent_id,
+            token_id = %token_id,
+            listing_id = %listing.listing_id,
+            "publish succeeded on chain but the receipt insert failed; a future \
+             re-publish will not be short-circuited by the idempotency gate"
+        );
+    }
+
+    // j. 201 + receipt.
     Ok((
         StatusCode::CREATED,
         Json(PublishOut {

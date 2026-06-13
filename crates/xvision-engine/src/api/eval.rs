@@ -61,6 +61,7 @@ use xvision_core::market::Ohlcv;
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
 use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface, OrderlyLiveSurface};
+use xvision_execution::ByrealLiveSurface;
 use xvision_filters::{FilterEventV1, FilterSummary};
 
 // ---------------------------------------------------------------------------
@@ -3582,13 +3583,20 @@ async fn build_backtest_executor(
 enum LiveVenue {
     AlpacaPaper,
     OrderlyTestnet,
+    /// Byreal perps (executes on Hyperliquid via the perps CLI) while Alpaca
+    /// supplies the live market-data stream. Testnet-only in the current scope.
+    ByrealLive,
 }
 
 /// Gate `broker_creds_ref` to the supported live venues. For
 /// `"orderly_testnet"`, HARD-REQUIRE that `ORDERLY_BASE_URL` is set and
 /// points at a testnet gateway — mirroring the Alpaca paper-only guard, so a
 /// mainnet (real-money) Orderly config can never slip through by omission.
-fn resolve_live_venue(broker_creds_ref: &str, orderly_base_url: Option<&str>) -> ApiResult<LiveVenue> {
+fn resolve_live_venue(
+    broker_creds_ref: &str,
+    orderly_base_url: Option<&str>,
+    byreal_network: Option<&str>,
+) -> ApiResult<LiveVenue> {
     match broker_creds_ref {
         "alpaca" => Ok(LiveVenue::AlpacaPaper),
         "orderly_testnet" => {
@@ -3610,10 +3618,32 @@ fn resolve_live_venue(broker_creds_ref: &str, orderly_base_url: Option<&str>) ->
             }
             Ok(LiveVenue::OrderlyTestnet)
         }
+        "byreal" => {
+            // Testnet-only guard, mirroring the Orderly testnet gate: refuse to
+            // run live-eval against real-money Byreal/Hyperliquid mainnet by
+            // omission. Mainnet execution is available via the direct CLI.
+            // We name the env var rather than echoing its value (cred-safety
+            // policy: never interpolate env values into error responses).
+            let is_testnet = byreal_network
+                .map(str::trim)
+                .map(|n| n.to_ascii_lowercase().contains("testnet"))
+                .unwrap_or(false);
+            if !is_testnet {
+                return Err(ApiError::Validation(
+                    "live-eval Byreal is testnet-only in the current live scope: set \
+                     BYREAL_NETWORK to a testnet value (its current value is not 'testnet'). \
+                     Real-money Byreal/Hyperliquid mainnet is out of scope for live runs. \
+                     For mainnet execution use the direct CLI: `xvn fire-trade --venue byreal`."
+                        .into(),
+                ));
+            }
+            Ok(LiveVenue::ByrealLive)
+        }
         other => Err(ApiError::Validation(format!(
             "live_config.broker_creds_ref '{other}' is not supported in the current live scope. \
-             Supported venues: \"alpaca\" (Alpaca paper trading) and \"orderly_testnet\" \
-             (Orderly Network testnet execution with Alpaca market data). \
+             Supported venues: \"alpaca\" (Alpaca paper trading), \"orderly_testnet\" \
+             (Orderly Network testnet execution with Alpaca market data), and \"byreal\" \
+             (Byreal perps testnet execution with BYREAL_NETWORK=testnet and Alpaca market data). \
              Real-money venues are out of scope for now."
         ))),
     }
@@ -3630,7 +3660,12 @@ async fn build_live_executor(
     cfg.validate()
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
     let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
-    let venue = resolve_live_venue(&cfg.broker_creds_ref, orderly_base_url.as_deref())?;
+    let byreal_network = std::env::var("BYREAL_NETWORK").ok();
+    let venue = resolve_live_venue(
+        &cfg.broker_creds_ref,
+        orderly_base_url.as_deref(),
+        byreal_network.as_deref(),
+    )?;
     if cfg.assets.is_empty() {
         return Err(ApiError::Validation(
             "live_config.assets must contain at least one asset".into(),
@@ -3648,6 +3683,12 @@ async fn build_live_executor(
             "no Alpaca credentials configured for Live run: Orderly testnet runs still need Alpaca \
              credentials because Alpaca supplies the live market-data stream while Orderly executes \
              the orders. Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
+                .to_string()
+        }
+        LiveVenue::ByrealLive => {
+            "no Alpaca credentials configured for Live run: Byreal runs still need Alpaca \
+             credentials because Alpaca supplies the live market-data stream while Byreal executes \
+             the orders (on Hyperliquid). Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
                 .to_string()
         }
     }
@@ -3692,6 +3733,10 @@ async fn build_live_executor(
             LiveVenue::OrderlyTestnet => Arc::new(
                 OrderlyLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Orderly testnet broker: {e}")))?,
+            ),
+            LiveVenue::ByrealLive => Arc::new(
+                ByrealLiveSurface::from_env()
+                    .map_err(|e| ApiError::Validation(format!("build Byreal live broker: {e}")))?,
             ),
         },
     };
@@ -4748,14 +4793,14 @@ mod tests {
     #[test]
     fn live_venue_alpaca_resolves_regardless_of_orderly_env() {
         for url in [None, Some("https://testnet-api-evm.orderly.org")] {
-            assert_eq!(resolve_live_venue("alpaca", url).unwrap(), LiveVenue::AlpacaPaper);
+            assert_eq!(resolve_live_venue("alpaca", url, None).unwrap(), LiveVenue::AlpacaPaper);
         }
     }
 
     #[test]
     fn live_venue_orderly_testnet_requires_base_url_set() {
         for url in [None, Some(""), Some("   ")] {
-            let err = resolve_live_venue("orderly_testnet", url)
+            let err = resolve_live_venue("orderly_testnet", url, None)
                 .expect_err("orderly_testnet without ORDERLY_BASE_URL must be rejected");
             let msg = err.to_string();
             assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
@@ -4766,7 +4811,7 @@ mod tests {
 
     #[test]
     fn live_venue_orderly_testnet_rejects_mainnet_base_url() {
-        let err = resolve_live_venue("orderly_testnet", Some("https://api-evm.orderly.org"))
+        let err = resolve_live_venue("orderly_testnet", Some("https://api-evm.orderly.org"), None)
             .expect_err("mainnet ORDERLY_BASE_URL must be rejected");
         let msg = err.to_string();
         assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
@@ -4783,14 +4828,41 @@ mod tests {
     #[test]
     fn live_venue_orderly_testnet_accepts_testnet_base_url() {
         assert_eq!(
-            resolve_live_venue("orderly_testnet", Some("https://testnet-api-evm.orderly.org")).unwrap(),
+            resolve_live_venue("orderly_testnet", Some("https://testnet-api-evm.orderly.org"), None)
+                .unwrap(),
             LiveVenue::OrderlyTestnet,
         );
     }
 
     #[test]
+    fn live_venue_byreal_requires_testnet_network() {
+        // Unset / empty / mainnet must all be rejected (fail-closed).
+        for net in [None, Some(""), Some("   "), Some("mainnet")] {
+            let err = resolve_live_venue("byreal", None, net)
+                .expect_err("byreal without BYREAL_NETWORK=testnet must be rejected");
+            let msg = err.to_string();
+            assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+            assert!(msg.contains("BYREAL_NETWORK"), "must name the env var: {msg}");
+            assert!(msg.contains("fire-trade --venue byreal"), "must point to the CLI: {msg}");
+            // Cred-safety: must NOT echo the env value into the error.
+            assert!(!msg.contains("mainnet'"), "must not echo the env value: {msg}");
+        }
+    }
+
+    #[test]
+    fn live_venue_byreal_accepts_testnet_network() {
+        for net in [Some("testnet"), Some("hyperliquid-testnet"), Some(" TESTNET ")] {
+            assert_eq!(
+                resolve_live_venue("byreal", None, net).unwrap(),
+                LiveVenue::ByrealLive,
+                "network {net:?} should resolve to ByrealLive",
+            );
+        }
+    }
+
+    #[test]
     fn live_venue_unknown_ref_names_both_supported_venues() {
-        let err = resolve_live_venue("bybit", Some("https://testnet-api-evm.orderly.org"))
+        let err = resolve_live_venue("bybit", Some("https://testnet-api-evm.orderly.org"), None)
             .expect_err("unknown broker_creds_ref must be rejected");
         let msg = err.to_string();
         assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
@@ -4799,6 +4871,7 @@ mod tests {
             msg.contains("\"orderly_testnet\""),
             "must name orderly_testnet: {msg}"
         );
+        assert!(msg.contains("\"byreal\""), "must name byreal: {msg}");
     }
 
     // --- U13: agentd registry / cancel-degrades (2026-06-11) ----------------

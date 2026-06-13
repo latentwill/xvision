@@ -342,6 +342,38 @@ Always save:
 - **Likely cause:**
 - **Recommendation:**
 
+## wake_when_in_position — verify the default and sparse-decision behavior
+
+`wake_when_in_position` controls whether the trader LLM is re-invoked while a
+position is open. The runtime default is `"on_invalidation_or_target_only"`
+(NOT `"always"` — the old per-bar-polling default was removed). When QAing a
+filter-gated strategy, confirm the persisted value and the resulting decision
+count rather than assuming.
+
+- **Confirm the persisted default.** When `set-filter` omits the field, the
+  saved filter must read `"on_invalidation_or_target_only"`:
+  ```bash
+  xvn strategy show <strategy_id> --json | jq '.filter.wake_when_in_position'
+  # expect: "on_invalidation_or_target_only"
+  ```
+  If any surface (wiki, API echo, UI) reports `"always"` as the default, that
+  is drift — the canonical source is
+  `crates/xvision-filters/src/types.rs::default_wake_in_position`.
+- **Sparse-decision runs are expected, not a bug.** With the default, the
+  filter does NOT re-fire while a position is open, so a strategy whose entry
+  condition stays true and has no distinct exit signal can complete a whole
+  backtest with only 1–2 decisions. Before filing a "no decisions" finding,
+  check the run detail for `filter_blocked` events with
+  `reason = position_open` — that confirms the gate suppressed re-fires by
+  design. The fix is a real exit signal or `risk.stop_loss_atr_multiple`, not
+  changing the wake mode.
+- **Decision-count sanity by mode.** The three tokens trade decisions for
+  cost: `"never"` (fewest), `"on_invalidation_or_target_only"` (default),
+  `"always"` (one trader-LLM call per in-position bar — most). One session
+  recorded a 21-trade SORB strategy producing 14 decisions with `"never"` vs
+  153 with `"on_invalidation_or_target_only"`. A huge decision jump after only
+  a wake-mode change is the expected cost signature, not a regression.
+
 ## Indicator warmup requirements
 
 Some indicators require more history than the standard warmup. Check before running evals:
@@ -375,5 +407,5 @@ See `references/xvision-api-quirks.md` for the concrete endpoint quirks, payload
 *Skills owner: any track that adds or changes an `/api/*` route, the
 corresponding `xvn` verb, Filter DSL contract, or a QA-critical operator
 workflow is responsible for updating this file in the same PR. Last
-refresh: 2026-06-08 (indicator warmup table, prompt-gate reliability note,
-eval chain race condition).*
+refresh: 2026-06-13 (wake_when_in_position QA section: default verification,
+sparse-decision/`filter_blocked` behavior, decision-count-by-mode sanity).*

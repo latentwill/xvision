@@ -136,13 +136,26 @@ const STRICT_TEMPLATES: &[Template] = &[
             "--yes",
         ],
     },
-    // UI-launched optimizer cycle. The dashboard job supervisor makes it
-    // cancellable and caps runtime/output; --mock is optional for smoke runs.
-    // The cycle verb was consolidated to `xvn optimize` (run-cycle kept as a
-    // visible alias of `run`), so the dashboard launches `optimize run-cycle`.
+    // UI/agent-launched optimizer. The dashboard job supervisor makes it
+    // cancellable and caps runtime/output. The cycle verb is `xvn optimize run`
+    // — the SAME one operators use — so CLI runs and the dashboard converge on a
+    // single path (GH #965/#968). `--max-cycles` bounds a multi-cycle run;
+    // `--ipc-socket` streams live progress into the dashboard; `--mock` is an
+    // optional internal smoke switch.
     Template {
-        head: &["optimize", "run-cycle"],
-        permitted_flags: &["--session-id", "--config", "--db", "--strategy", "--budget"],
+        head: &["optimize", "run"],
+        permitted_flags: &[
+            "--session-id",
+            "--config",
+            "--db",
+            "--strategy",
+            "--budget",
+            "--provider",
+            "--model",
+            "--objective",
+            "--max-cycles",
+            "--ipc-socket",
+        ],
         permitted_switches: &["--mock"],
     },
 ];
@@ -183,7 +196,7 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
-    "optimize", // bounded via STRICT_TEMPLATES (optimize run-cycle only)
+    "optimize", // bounded via STRICT_TEMPLATES (optimize run only)
     "portfolio",
     "provider",
     "report",
@@ -369,7 +382,7 @@ pub fn check_argv(argv: &[String]) -> AllowlistDecision {
         }
     } else if head == "optimize" {
         return AllowlistDecision::Reject(
-            "subcommand `optimize` is only allowed over remote cli as `optimize run-cycle`".into(),
+            "subcommand `optimize` is only allowed over remote cli as `optimize run`".into(),
         );
     }
 
@@ -539,10 +552,10 @@ mod tests {
     }
 
     #[test]
-    fn optimizer_run_cycle_mock_is_allowed() {
+    fn optimizer_run_mock_is_allowed() {
         assert_allow(&[
             "optimize",
-            "run-cycle",
+            "run",
             "--session-id",
             "ui-01",
             "--mock",
@@ -554,10 +567,10 @@ mod tests {
     }
 
     #[test]
-    fn optimizer_run_cycle_non_mock_is_allowed() {
+    fn optimizer_run_non_mock_is_allowed() {
         assert_allow(&[
             "optimize",
-            "run-cycle",
+            "run",
             "--session-id",
             "ui-01",
             "--strategy",
@@ -568,22 +581,38 @@ mod tests {
     }
 
     #[test]
+    fn optimizer_run_continuous_and_ipc_are_allowed() {
+        // GH #965/#968: the unified verb accepts --max-cycles (multi-cycle /
+        // fire-and-forget) and --ipc-socket (live dashboard streaming).
+        assert_allow(&[
+            "optimize",
+            "run",
+            "--strategy",
+            "st_1",
+            "--max-cycles",
+            "0",
+            "--ipc-socket",
+            "/tmp/xvn-optimizer.sock",
+        ]);
+    }
+
+    #[test]
     fn optimizer_other_subcommands_are_rejected() {
         // `optimize` (the consolidated cycle verb) is only remotely launchable
-        // as `optimize run-cycle`; the DSPy memory-demos / inspect subcommands
-        // and a bare `optimize` are rejected.
+        // as `optimize run`; a bare `optimize` and any other subcommand are
+        // rejected.
         assert_reject(
             &["optimize", "memory-demos", "--agent", "ag_1"],
-            "only allowed over remote cli as `optimize run-cycle`",
+            "only allowed over remote cli as `optimize run`",
         );
     }
 
     #[test]
-    fn optimizer_run_cycle_unknown_flag_is_rejected() {
+    fn optimizer_run_unknown_flag_is_rejected() {
         assert_reject(
             &[
                 "optimize",
-                "run-cycle",
+                "run",
                 "--session-id",
                 "ui-01",
                 "--real-broker",

@@ -206,13 +206,12 @@ impl SearchIndex {
 
     /// Return all artifact IDs of the given kind, newest-first.
     pub async fn list_ids(pool: &SqlitePool, kind: SearchKind) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT artifact_id FROM search_index WHERE kind = ?1 ORDER BY updated_at DESC",
-        )
-        .bind(kind.as_str())
-        .fetch_all(pool)
-        .await
-        .context("list search_index ids")?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT artifact_id FROM search_index WHERE kind = ?1 ORDER BY updated_at DESC")
+                .bind(kind.as_str())
+                .fetch_all(pool)
+                .await
+                .context("list search_index ids")?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -553,7 +552,9 @@ mod tests {
         SearchIndex::upsert(&pool, &entry("s2", SearchKind::Strategy, "gone", "x", &[]))
             .await
             .unwrap();
-        SearchIndex::delete(&pool, SearchKind::Strategy, "s2").await.unwrap();
+        SearchIndex::delete(&pool, SearchKind::Strategy, "s2")
+            .await
+            .unwrap();
 
         let ids = SearchIndex::list_ids(&pool, SearchKind::Strategy).await.unwrap();
         assert_eq!(ids, vec!["s1"]);

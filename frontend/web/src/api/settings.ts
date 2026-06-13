@@ -151,7 +151,7 @@ export function getBrokers(): Promise<BrokersReport> {
     .then((report) => {
       trace.debug("settings.broker.load.ok", {
         duration_ms: durationSince(started),
-        broker_count: 2,
+        broker_count: 3,
       });
       return report;
     })
@@ -164,7 +164,13 @@ export function getBrokers(): Promise<BrokersReport> {
     });
 }
 
-// ─── Brokers (Alpaca) CRUD ─────────────────────────────────────────────────
+// ─── Brokers (Alpaca, Byreal) CRUD ────────────────────────────────────────
+
+// Byreal is a report-only broker surface — credentials are env-var-only
+// (BYREAL_PRIVATE_KEY / BYREAL_NETWORK / BYREAL_ACCOUNT). The frontend
+// surfaces a read-only BrokerCard for it (mirroring the Orderly treatment);
+// there is no `setByrealCredentials` because the backend exposes no store
+// endpoint for Byreal at this revision.
 
 // Hand-written wire shapes for the Alpaca-credentials surface. The
 // engine-side `AlpacaStored` and `SetAlpacaReq` types don't carry
