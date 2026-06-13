@@ -350,3 +350,26 @@ Affected sections of this lock: the 2026-06-01 amendment header (top), §10 (CLI
 verb structure). Cross-reference: the project `/CLAUDE.md` "Operator-facing
 names (autooptimizer subsurface)" section carries the matching amendment.
 Operator approval recorded 2026-06-11.
+
+---
+
+## Amendment 2026-06-13 — trader-failure resilience (errored bucket + circuit breaker)
+
+New operator-facing concepts on the optimizer surface (per the "any new
+operator-facing concept requires a row" rule). Developer-surface names stay
+precise; operator-surface names are plain-language.
+
+| dev | ops |
+|---|---|
+| `errored` session outcome / `errored_count` column | "Errored" — a cycle whose candidate eval crashed (distinct from "Dropped" = gate-rejected, and "No experiment produced" = nothing proposed) |
+| `CycleProgressEvent::CandidateError`, wire `candidate_error` | "Candidate eval failed" (dashboard SSE label) |
+| `ConsecutiveErrors` circuit breaker | consecutive-error halt (honest fail-fast) |
+| `--max-consecutive-errors <N>` (CLI flag) | same (plain flag; default 3) |
+
+**Rationale:** a single candidate's eval failure (e.g. the trader model returns
+an invalid action or truncates mid-JSON) is recorded as `errored` and the
+session continues; N consecutive candidate errors halt loudly (systemic
+misconfiguration). Surfacing "Errored" distinctly from "Dropped" preserves the
+honesty-check philosophy — operators can tell "evals are crashing" from
+"experiment fizzled". See
+`docs/superpowers/specs/2026-06-13-optimizer-trader-failure-resilience-design.md`.
