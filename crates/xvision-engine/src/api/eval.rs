@@ -182,6 +182,11 @@ pub struct ListRunsRequest {
     pub limit: Option<i64>,
     #[serde(default)]
     pub offset: Option<i64>,
+    /// bead-008: optional INCLUSIVE lower bound on `started_at` (RFC-3339,
+    /// already validated/parsed by the dashboard route). `None` applies no
+    /// time filter.
+    #[serde(default)]
+    pub since: Option<DateTime<Utc>>,
 }
 
 /// Paged-list envelope used by the dashboard's `/api/eval/runs` route.
@@ -379,6 +384,7 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
         status: req.status,
         limit: req.limit,
         offset: req.offset,
+        since: req.since,
     };
     store
         .list(filter)
@@ -420,6 +426,7 @@ async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> 
         status: req.status,
         limit: req.limit,
         offset: req.offset,
+        since: req.since,
     };
     // Compute total BEFORE slicing so the pager renders an honest
     // "of N" even when the active page is the last and partial.

@@ -107,4 +107,33 @@ describe("AttentionBand", () => {
     renderBand([], [], []);
     expect(screen.queryByTestId("nag-strip")).toBeNull();
   });
+
+  it("forwards suspicious failed-run findings into the findings surface", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <AttentionBand
+            runs={[]}
+            strategies={[]}
+            nagItems={[]}
+            failedRunFindings={[
+              {
+                id: "failed-run:run-7",
+                runId: "run-7",
+                strategyName: "Gamma",
+                summary: "panic in scoring",
+              },
+            ]}
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("panic in scoring")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /view run/i }),
+    ).toHaveAttribute("href", "/eval-runs/run-7");
+  });
 });

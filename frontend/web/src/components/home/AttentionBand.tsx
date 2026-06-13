@@ -16,6 +16,7 @@ import {
   coverageCounts,
   strategyEvalCoverage,
 } from "@/features/strategies/coverage";
+import type { FailedRunFinding } from "@/features/home/failed-runs";
 import { ActiveTasksStrip } from "./ActiveTasksStrip";
 import { CriticalFindingsRow } from "./CriticalFindingsRow";
 import { LiveSummaryStrip } from "./LiveSummaryStrip";
@@ -24,16 +25,27 @@ import { NagStrip, type AttentionItem } from "./NagStrip";
 export interface AttentionBandProps {
   runs: RunSummary[];
   strategies: StrategyListItem[];
-  /** Config nags (provider keys, broker credentials) — empty for none. */
+  /** Config + stale-infra-failure nags. Stale infra failures lead, config
+   * nags after; empty for none. */
   nagItems: AttentionItem[];
+  /** Suspicious failed-run findings (bead xvision-1zs) — merged into the
+   * Recent Findings surface after human-reviewed criticals. */
+  failedRunFindings?: FailedRunFinding[];
+  /** Runs that scope the Recent Findings surface only (bead-008 time window).
+   * Coverage / awaiting-eval counts keep using the unscoped `runs`; only the
+   * CriticalFindingsRow rescopes. Defaults to `runs` when unset. */
+  findingsRuns?: RunSummary[];
 }
 
 export function AttentionBand({
   runs,
   strategies,
   nagItems,
+  failedRunFindings = [],
+  findingsRuns,
 }: AttentionBandProps) {
   const counts = coverageCounts(strategyEvalCoverage(strategies, runs));
+  const findingsScope = findingsRuns ?? runs;
 
   return (
     <section data-testid="attention-band" aria-label="Live and attention">
@@ -41,7 +53,10 @@ export function AttentionBand({
         <div className="divide-y divide-border-soft">
           <LiveSummaryStrip />
           <ActiveTasksStrip />
-          <CriticalFindingsRow runs={runs} />
+          <CriticalFindingsRow
+            runs={findingsScope}
+            failedRunFindings={failedRunFindings}
+          />
           {counts.userAwaitingFirstEval > 0 ? (
             <div
               data-testid="awaiting-eval-action"

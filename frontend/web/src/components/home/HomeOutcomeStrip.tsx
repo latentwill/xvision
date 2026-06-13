@@ -66,7 +66,7 @@ function Cell({ label, value, testId, tone }: CellProps) {
   const toneClass = tone === "pos" ? "text-pos" : tone === "neg" ? "text-neg" : "";
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+      <span className="text-[10px] uppercase tracking-wide text-text-3">
         {label}
       </span>
       <span

@@ -5,6 +5,8 @@ import { MemoryRouter } from "react-router-dom";
 
 import { NagStrip } from "./NagStrip";
 import type { AttentionItem } from "./NagStrip";
+import { failedRunNags } from "@/features/home/failed-runs";
+import type { RunSummary } from "@/api/types.gen";
 
 function renderStrip(items: AttentionItem[]) {
   return render(
@@ -146,5 +148,57 @@ describe("NagStrip", () => {
     const link = screen.getByRole("link", { name: /configure/i });
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute("href", "/settings/providers");
+  });
+
+  // ─── stale-infra-failure nag rows (bead xvision-1zs) ───────────────────────
+
+  it("renders a stale-infra-failure nag routed to the run, with config nags after it", () => {
+    const NOW = Date.parse("2026-06-13T12:00:00Z");
+    const staleIso = new Date(NOW - 3 * 60 * 60 * 1000).toISOString();
+
+    const failedRun: RunSummary = {
+      id: "run-stale-1",
+      agent_id: "a-1",
+      scenario_id: "sc-1",
+      strategy: { id: "s-1", display_name: "Momentum V2" },
+      scenario: null,
+      mode: "backtest",
+      status: "failed",
+      started_at: staleIso,
+      completed_at: staleIso,
+      sharpe: null,
+      max_drawdown_pct: null,
+      total_return_pct: null,
+      error: "Connection refused (os error 61)",
+      actual_input_tokens: null,
+      actual_output_tokens: null,
+      inference_cost_quote_total: null,
+      net_return_pct: null,
+      filter_summaries: [],
+      auto_fire_review: false,
+      review_model: null,
+      max_annotations_per_review: null,
+      paused: false,
+      paused_at: null,
+      flatten_requested: false,
+    };
+
+    // Composition mirrors home.tsx: infra nags FIRST, config nags after.
+    const items = [...failedRunNags([failedRun], NOW), PROVIDER_ITEM];
+    renderStrip(items);
+
+    // Infra nag row routes to the run with a "view run" link.
+    const viewRun = screen.getByRole("link", { name: /view run/i });
+    expect(viewRun).toHaveAttribute("href", "/eval-runs/run-stale-1");
+    expect(screen.getByText(/Momentum V2 run failed/i)).toBeInTheDocument();
+
+    // Config nag still renders after the infra nag.
+    expect(screen.getByText("1 provider missing API key")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /configure/i }),
+    ).toBeInTheDocument();
+
+    // Calm: warn tone dot, never danger, for the infra nag.
+    expect(document.querySelectorAll("[data-tone='danger']").length).toBe(0);
   });
 });

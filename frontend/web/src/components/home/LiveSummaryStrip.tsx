@@ -1,5 +1,14 @@
 // frontend/web/src/components/home/LiveSummaryStrip.tsx
 //
+// nsk BOUNDARY NOTE (Control Tower s78): this is the AGGREGATE live COUNT strip
+// — the single at-a-glance "how many are live?" surface ("N live · M paper").
+// Per-run live ROWS (each deployment's running P&L / last decision) do NOT
+// belong here; they live in ActiveTasksStrip once the CT5 LiveDeploymentSummary
+// contract lands (bead n0k). Keep these two surfaces distinct: this answers
+// "how many are live?", ActiveTasksStrip answers "what is each one doing now?".
+// Do not re-introduce a per-run live list here (that was the deleted
+// LiveStrategiesSection).
+//
 // Compact home-page summary strip for live trading (spec §2.10). Replaces the
 // old per-run LiveStrategiesSection list — the full console lives at /live only.
 //
