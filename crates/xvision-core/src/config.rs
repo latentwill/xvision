@@ -283,6 +283,7 @@ pub enum RunMode {
 pub enum ExecutorKind {
     Alpaca,
     Orderly,
+    Byreal,
 }
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]

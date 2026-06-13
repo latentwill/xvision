@@ -148,6 +148,17 @@ pub struct AutoOptimizerConfig {
     /// More generations improve quality at the cost of more LLM calls. Default: 2.
     #[serde(default = "default_gepa_generations")]
     pub gepa_generations: usize,
+
+    /// B22 follow-up (xvision-71k): opt-in override of the [`MAX_WINDOW_DAYS`]
+    /// evaluation-window cap for the primary `day_window` and
+    /// `baseline_untouched_window`. Unset (the default) keeps the safe
+    /// `MAX_WINDOW_DAYS` (120-day) cap that guards against the per-candidate
+    /// bar-fetch OOM. Power users who have the memory headroom and explicitly
+    /// accept the cost can RAISE the cap here (e.g. `max_window_days = 365`) to
+    /// run longer windows. `regime_set` / `scenario_pool` windows are NOT
+    /// affected and remain capped at `MAX_WINDOW_DAYS`. Must be >= 1 when set.
+    #[serde(default)]
+    pub max_window_days: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,6 +266,7 @@ impl Default for AutoOptimizerConfig {
             baseline_direction: TradeDirection::Both,
             gepa_candidates: default_gepa_candidates(),
             gepa_generations: default_gepa_generations(),
+            max_window_days: None,
         }
     }
 }
@@ -456,12 +468,30 @@ impl AutoOptimizerConfig {
         Ok(home.join(".xvn").join("autooptimizer.toml"))
     }
 
+    /// The effective evaluation-window cap (days): the operator's
+    /// `max_window_days` opt-in when set, else the safe [`MAX_WINDOW_DAYS`]
+    /// default (xvision-71k). Applies to `day_window` /
+    /// `baseline_untouched_window` only.
+    pub fn effective_max_window_days(&self) -> i64 {
+        self.max_window_days.unwrap_or(MAX_WINDOW_DAYS)
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.min_improvement <= 0.0 {
             bail!(
                 "min_improvement must be greater than 0 (got {})",
                 self.min_improvement
             );
+        }
+        if let Some(cap) = self.max_window_days {
+            if cap < 1 {
+                bail!(
+                    "max_window_days must be >= 1 when set (got {}); omit it to use the \
+                     default {}-day cap",
+                    cap,
+                    MAX_WINDOW_DAYS,
+                );
+            }
         }
         if self.baseline_untouched_window.start >= self.baseline_untouched_window.end {
             bail!(
@@ -481,30 +511,42 @@ impl AutoOptimizerConfig {
         // load enough bars per candidate to OOM the container after the cycle
         // lock is taken. Applied here (right after the ordering checks, before
         // the lock/bars) so both the CLI and dashboard entrypoints get it for
-        // free via their existing cfg.validate() call.
+        // free via their existing cfg.validate() call. xvision-71k: the cap is
+        // the operator's opt-in `max_window_days` when set, else the safe
+        // default — so a >120-day window now fails with an actionable message
+        // pointing at the override instead of being a silent breaking change.
+        let max_window_days = self.effective_max_window_days();
+        let raise_hint = if self.max_window_days.is_none() {
+            " (or raise the cap with `max_window_days` in autooptimizer.toml if you \
+             have the memory headroom)"
+        } else {
+            ""
+        };
         let baseline_span =
             (self.baseline_untouched_window.end - self.baseline_untouched_window.start).num_days();
-        if baseline_span > MAX_WINDOW_DAYS {
+        if baseline_span > max_window_days {
             bail!(
                 "baseline_untouched_window span ({} days, {} – {}) exceeds the {}-day cap; \
-                 shrink it via --baseline-start/--baseline-end or autooptimizer.toml \
+                 shrink it via --baseline-start/--baseline-end or autooptimizer.toml{} \
                  (a window this large loads too many bars per candidate and can OOM the cycle)",
                 baseline_span,
                 self.baseline_untouched_window.start,
                 self.baseline_untouched_window.end,
-                MAX_WINDOW_DAYS,
+                max_window_days,
+                raise_hint,
             );
         }
         let day_span = (self.day_window.end - self.day_window.start).num_days();
-        if day_span > MAX_WINDOW_DAYS {
+        if day_span > max_window_days {
             bail!(
                 "day_window span ({} days, {} – {}) exceeds the {}-day cap; \
-                 shrink it via --day-start/--day-end or autooptimizer.toml \
+                 shrink it via --day-start/--day-end or autooptimizer.toml{} \
                  (a window this large loads too many bars per candidate and can OOM the cycle)",
                 day_span,
                 self.day_window.start,
                 self.day_window.end,
-                MAX_WINDOW_DAYS,
+                max_window_days,
+                raise_hint,
             );
         }
         if self.mutator.max_retries > 10 {
@@ -656,6 +698,66 @@ mod tests {
         assert!(
             msg.contains("day_window") && msg.contains("120"),
             "message must name day_window and the cap; got: {msg}"
+        );
+        // xvision-71k: the default-cap rejection points the operator at the
+        // opt-in override so the breaking change is discoverable.
+        assert!(
+            msg.contains("max_window_days"),
+            "default-cap rejection must mention the max_window_days override; got: {msg}"
+        );
+    }
+
+    // ── xvision-71k: opt-in max_window_days override ─────────────────────────
+
+    #[test]
+    fn validate_accepts_overlong_day_window_when_max_window_days_raised() {
+        // A power user who raises the cap can run a longer day window.
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.day_window = DayWindow {
+            start: NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date"),
+            end: NaiveDate::from_ymd_opt(2024, 9, 1).expect("valid date"), // ~244 days
+        };
+        cfg.baseline_untouched_window = BaselineUntouchedWindow {
+            start: NaiveDate::from_ymd_opt(2024, 9, 1).expect("valid date"),
+            end: NaiveDate::from_ymd_opt(2024, 10, 1).expect("valid date"),
+        };
+        cfg.max_window_days = Some(365);
+        assert!(
+            cfg.validate().is_ok(),
+            "a 244-day window must pass when max_window_days is raised to 365"
+        );
+    }
+
+    #[test]
+    fn validate_still_rejects_when_window_exceeds_raised_cap() {
+        // The override raises the cap but is still a cap: a window beyond it fails,
+        // and the message names the raised value (not the default 120).
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.day_window = DayWindow {
+            start: NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date"),
+            end: NaiveDate::from_ymd_opt(2025, 9, 1).expect("valid date"), // ~608 days
+        };
+        cfg.max_window_days = Some(200);
+        let err = cfg.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("day_window") && msg.contains("200"),
+            "message must name day_window and the raised 200-day cap; got: {msg}"
+        );
+        assert!(
+            !msg.contains("max_window_days"),
+            "when the cap is already raised, do not re-suggest the override; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_nonpositive_max_window_days() {
+        let mut cfg = AutoOptimizerConfig::default();
+        cfg.max_window_days = Some(0);
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("max_window_days must be >= 1"),
+            "max_window_days=0 must be rejected; got: {err}"
         );
     }
 

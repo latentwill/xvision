@@ -154,11 +154,33 @@ pub enum ScanCadence {
     feature = "ts-export",
     ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
 )]
+/// Whether the trader agent is re-invoked while a position is open in the
+/// filter's asset. Controls per-bar polling cost during a hold; it does NOT
+/// change entry firing (a flat asset always fires on a fresh trip).
+///
+/// Serializes to snake_case tokens: `always`, `on_invalidation_or_target_only`,
+/// `never`. The runtime default is [`WakeInPosition::OnInvalidationOrTargetOnly`]
+/// (see `default_wake_in_position`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WakeInPosition {
+    /// Wake the trader on every bar the condition tree is true while holding —
+    /// the first true bar AND every sustained-true bar after it. Expensive: a
+    /// level operator that stays true drives a trader-LLM call on every
+    /// in-position bar. Opt-in only; almost never correct outside
+    /// stop-management strategies.
     Always,
+    /// Default. Wake only on a fresh trip — the bar the condition tree first
+    /// becomes true again — so a new invalidation/target signal still lets the
+    /// trader close, while the sustained-true bars in between are suppressed.
+    /// The position is NOT re-evaluated every bar, so this is the cost-safe
+    /// default. Pair with a distinct exit signal or
+    /// `risk.stop_loss_atr_multiple`; otherwise an entry condition that stays
+    /// true never re-wakes the trader to close.
     OnInvalidationOrTargetOnly,
+    /// Never wake the trader while holding. Exits rely entirely on the
+    /// deterministic risk gate (e.g. `risk.stop_loss_atr_multiple`). Produces
+    /// the fewest decisions; use for hold-to-target mean-reversion strategies.
     Never,
 }
 
@@ -246,6 +268,13 @@ pub enum IndicatorName {
     KeltnerMiddle,
     KeltnerLower,
     WilliamsR,
+    // Perpetual-futures scalars (periodless; latest reading only). Backed by
+    // the optional perps fields on `Bar`; `None` on spot bars.
+    FundingRate,
+    OpenInterest,
+    MarkPrice,
+    MarkIndexBasis,
+    LongShortRatio,
 }
 
 impl IndicatorName {
@@ -288,6 +317,11 @@ impl IndicatorName {
                 | IndicatorName::GapPct
                 | IndicatorName::GapUp
                 | IndicatorName::GapDown
+                | IndicatorName::FundingRate
+                | IndicatorName::OpenInterest
+                | IndicatorName::MarkPrice
+                | IndicatorName::MarkIndexBasis
+                | IndicatorName::LongShortRatio
         )
     }
 
@@ -365,6 +399,11 @@ impl IndicatorName {
             IndicatorName::KeltnerMiddle => "keltner_middle",
             IndicatorName::KeltnerLower => "keltner_lower",
             IndicatorName::WilliamsR => "williams_r",
+            IndicatorName::FundingRate => "funding_rate",
+            IndicatorName::OpenInterest => "open_interest",
+            IndicatorName::MarkPrice => "mark_price",
+            IndicatorName::MarkIndexBasis => "mark_index_basis",
+            IndicatorName::LongShortRatio => "long_short_ratio",
         }
     }
 
@@ -404,7 +443,12 @@ impl IndicatorName {
             | IndicatorName::PremarketLow
             | IndicatorName::GapPct
             | IndicatorName::GapUp
-            | IndicatorName::GapDown => None,
+            | IndicatorName::GapDown
+            | IndicatorName::FundingRate
+            | IndicatorName::OpenInterest
+            | IndicatorName::MarkPrice
+            | IndicatorName::MarkIndexBasis
+            | IndicatorName::LongShortRatio => None,
             IndicatorName::Ema | IndicatorName::Sma | IndicatorName::Wma => Some((2, 500)),
             IndicatorName::Rsi
             | IndicatorName::Atr
@@ -527,6 +571,11 @@ impl IndicatorRef {
             "gap_pct" => Some(IndicatorName::GapPct),
             "gap_up" => Some(IndicatorName::GapUp),
             "gap_down" => Some(IndicatorName::GapDown),
+            "funding_rate" => Some(IndicatorName::FundingRate),
+            "open_interest" => Some(IndicatorName::OpenInterest),
+            "mark_price" => Some(IndicatorName::MarkPrice),
+            "mark_index_basis" => Some(IndicatorName::MarkIndexBasis),
+            "long_short_ratio" => Some(IndicatorName::LongShortRatio),
             "macd" | "macd_line" | "macd_12_26_9" | "macd_line_12_26_9" => Some(IndicatorName::MacdLine),
             "macd_signal" | "macd_signal_12_26_9" => Some(IndicatorName::MacdSignal),
             "macd_hist" | "macd_hist_12_26_9" | "macd_histogram" | "macd_histogram_12_26_9" => {

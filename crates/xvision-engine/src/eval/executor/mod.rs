@@ -22,6 +22,7 @@
 //! invocation.
 
 pub mod asset_set;
+pub mod attest_hook;
 pub mod backtest;
 pub mod book;
 pub mod live_source;
@@ -44,6 +45,9 @@ use crate::eval::store::RunStore;
 use crate::strategies::Strategy;
 use crate::tools::ToolRegistry;
 
+pub use attest_hook::{
+    clamp_every_n, is_attest_boundary, AttestHook, AttestSummary, NoopAttestHook,
+};
 pub use backtest::Executor;
 pub use live_source::{LiveStream, LiveStreamError, MultiLiveStream, TaggedBar};
 pub use real_broker_fills::RealBrokerFills;

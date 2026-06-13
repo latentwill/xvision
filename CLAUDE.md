@@ -108,8 +108,8 @@ The subsystem formerly called the "autoresearcher" has two names:
 
 **Operator CLI verb (amended 2026-06-11): the cycle's one CLI home is
 `xvn optimize`, NOT `xvn optimizer`.** Running `xvn optimize` with no
-subcommand runs the full cycle (aliases `run` / `run-cycle`); subcommands are
-`ls`, `show <cycle_id>`, `lineage ls|show`, `unlock`, `mutate-once`, `demo`.
+subcommand runs the full cycle (alias `run`); subcommands are
+`ls`, `show <cycle_id>`, `lineage ls|show`, `unlock`.
 The old top-level `xvn optimizer` verb **was removed**, and the standalone DSPy
 prompt-optimizer CLI verbs (`memory-demos`, `export/import-demos`,
 `accept-as-child-agent`, `revert-accepted`, `explain-missing-data`,
@@ -119,6 +119,19 @@ automatically and emits `CycleProgressEvent::FlywheelCompiled`. Rationale: one
 operator surface, less agent confusion / wasted tokens (operator decision). See
 the dated amendment in
 `docs/superpowers/specs/2026-05-27-autooptimizer-terminology-lock.md`.
+
+**Amended 2026-06-13 (GH #965-#968, CLI/UI unification — see PR #972):** the
+manual-control verbs were removed so the operator (and agents) have exactly ONE
+way to drive the optimizer — `xvn optimize run` — behaving identically to the
+dashboard Run button. Specifically: the `run-cycle` alias, `mutate-once`, and
+`demo` subcommands **were removed**; `--mock` remains but is **hidden** from
+help (internal/CI smoke only). `xvn optimize run` now drives the engine's
+`run_session` loop with `--max-cycles` (unset = one cycle; `N` = N; `0` = run
+until SIGINT/SIGTERM / `--budget` / convergence), writes live session state on
+start, auto-clears a heartbeat-stale lock on the normal kill→restart path (so
+`unlock` is only for foreign hosts), and exposes `--ipc-socket` (auto-connects
+to `/tmp/xvn-optimizer.sock`) so CLI runs stream live into the dashboard. The
+dashboard remote-CLI allowlist now permits `optimize run` (not `run-cycle`).
 
 The codename is deliberately `autooptimizer` (NOT `optimizer`) to stay
 distinct from the **pre-existing, unrelated DSPy prompt-optimizer**

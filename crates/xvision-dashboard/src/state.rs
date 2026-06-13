@@ -147,6 +147,12 @@ pub struct AppState {
     /// sealed-publish encrypt path is exercised without a live Lit endpoint —
     /// mirroring how `marketplace_snapshot` / `marketplace_chain` are injected.
     sealed_crypto_override: Option<Arc<dyn xvision_marketplace::SealedBundleCrypto>>,
+    /// Lane cgz: server-issued, single-use, time-bounded nonce store backing
+    /// the sealed-import proof-of-address challenge
+    /// (`GET /api/marketplace/listings/:id/import-challenge` issues, the
+    /// sealed-import route consumes). In-memory + Arc-shared so single-use holds
+    /// across the per-request `AppState` clones, like the autooptimizer maps.
+    marketplace_nonces: crate::marketplace_nonce::NonceStore,
 }
 
 /// Adapts an `Arc<dyn SealedBundleCrypto>` (the test-injection shape) into a
@@ -387,7 +393,14 @@ impl AppState {
             marketplace_indexer_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             marketplace_chain: None,
             sealed_crypto_override: None,
+            marketplace_nonces: crate::marketplace_nonce::NonceStore::new(),
         })
+    }
+
+    /// Lane cgz: the server-issued single-use nonce store for sealed-import
+    /// proof-of-address challenges.
+    pub fn marketplace_nonces(&self) -> &crate::marketplace_nonce::NonceStore {
+        &self.marketplace_nonces
     }
 
     /// The startup-resolved marketplace chain config (`None` = dormant).
@@ -663,6 +676,31 @@ impl AppState {
         .execute(&self.pool)
         .await
         .context("create auth_audit session_token_hash index")?;
+
+        // publish_receipts: idempotency key for marketplace publishing
+        // (bead xvision-4dn). One row per published agent_id (the strategy
+        // ULID / NFT token id); the publish handler short-circuits a
+        // re-publish with 409 Conflict when a receipt is present, so a
+        // re-click / retry cannot mint a duplicate NFT + listing.
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS publish_receipts (
+                agent_id     TEXT NOT NULL PRIMARY KEY,
+                token_id     TEXT NOT NULL,
+                listing_id   TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                published_at TEXT NOT NULL
+            )"#,
+        )
+        .execute(&self.pool)
+        .await
+        .context("create publish_receipts table")?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_publish_receipts_token_id ON publish_receipts (token_id)",
+        )
+        .execute(&self.pool)
+        .await
+        .context("create publish_receipts token_id index")?;
 
         Ok(())
     }

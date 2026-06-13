@@ -180,7 +180,26 @@ pub struct Executor {
     /// min_order_size_violation` that an operator cannot distinguish from a
     /// real fault. `None` (every real run) keeps the `WARN` intact.
     canary_sabotage: Option<String>,
+    /// LANE byu — optional periodic attest sink for the LIVE loop. When
+    /// `Some`, the executor invokes `maybe_attest` every
+    /// `attest_every_n_trades` executed (filled) trades with a listed-
+    /// performance snapshot. Dependency-inverted: the engine defines the
+    /// trait + a no-op default; the concrete identity-backed impl is injected
+    /// from the dashboard (which depends on both engine and identity), so NO
+    /// hard `xvision-engine -> xvision-identity` Cargo edge is added. `None`
+    /// (every backtest, every test that does not wire it) keeps the seam
+    /// dormant. See `attest_hook.rs`.
+    attest_hook: Option<Arc<dyn super::attest_hook::AttestHook>>,
+    /// Trade interval for the attest hook (default 20). Clamped to at least 1
+    /// at the call site so the boundary modulo never divides by zero. Only
+    /// consulted when `attest_hook` is `Some`.
+    attest_every_n_trades: u32,
 }
+
+/// LANE byu — default cadence (in executed trades) at which the live loop
+/// fires the periodic [`super::attest_hook::AttestHook`]. The dashboard can
+/// override per-run via [`Executor::with_attest_hook`].
+pub const DEFAULT_ATTEST_EVERY_N_TRADES: u32 = 20;
 
 impl Executor {
     /// Backtest constructor — wires `InjectedBars + InstantClock +
@@ -234,6 +253,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         })
     }
 
@@ -266,6 +287,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         }
     }
 
@@ -294,6 +317,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         }
     }
 
@@ -316,6 +341,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         }
     }
 
@@ -416,6 +443,27 @@ impl Executor {
     #[doc(hidden)]
     pub fn with_fill_sink(mut self, sink: Box<dyn FillSink>) -> Self {
         self.fill_sink_override = Some(tokio::sync::Mutex::new(sink));
+        self
+    }
+
+    /// LANE byu — attach a periodic attest sink to the LIVE loop, firing every
+    /// `every_n` executed (filled) trades with a listed-performance snapshot.
+    /// Builder-style so the dashboard can chain after `Executor::live(...)`:
+    ///   `Executor::live(..)?.with_attest_hook(identity_hook, 20)`.
+    ///
+    /// `every_n` is clamped to at least 1 (a `0` becomes "every trade") so the
+    /// boundary modulo can never divide by zero. The hook is invoked
+    /// fire-and-forget from `run_inner_live` — a slow/failing attestation
+    /// never blocks or aborts the trading loop. The concrete
+    /// `xvision-identity` implementation is injected here from the dashboard,
+    /// which keeps the engine free of a hard identity dependency.
+    pub fn with_attest_hook(
+        mut self,
+        hook: Arc<dyn super::attest_hook::AttestHook>,
+        every_n: u32,
+    ) -> Self {
+        self.attest_hook = Some(hook);
+        self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
     }
 
@@ -717,12 +765,13 @@ impl Executor {
             })
             .collect();
 
-        // F-6: per-run seed-sanitization policy. Mirror of the paper
-        // executor path; `Raw` (default) reproduces the pre-F-6 JSON
-        // byte-for-byte so this branch is a no-op for every existing
-        // scenario+strategy combination that didn't opt into `Causal`.
+        // F-6: per-run seed-sanitization policy. Shared implementation used
+        // by both the backtest and live executor paths; `Raw` (default)
+        // reproduces the pre-F-6 JSON byte-for-byte so this branch is a
+        // no-op for every existing scenario+strategy combination that didn't
+        // opt into `Causal`.
         let inputs_policy = resolve_inputs_policy(agent_slots);
-        // F-8: optional rolling-window cap (paper executor mirror).
+        // F-8: optional rolling-window cap; shared by both executor paths.
         // `None` keeps today's behavior; `Some(n)` trims the slice to
         // the most-recent `n` entries.
         let bar_history_limit = resolve_bar_history_limit(agent_slots);
@@ -1107,31 +1156,15 @@ impl Executor {
                 let history_start = combined_idx.saturating_sub(history_window);
                 let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
                 // F-8: optional rolling-window cap. `None` preserves the
-                // pre-022 wire shape; `Some(n)` trims to the most-recent
-                // `n` entries — when the slice is already smaller we
-                // send everything that's there.
-                let history_slice: &[&Ohlcv] = match bar_history_limit {
-                    Some(n) if (n as usize) < history_slice.len() => {
-                        let take = n as usize;
-                        &history_slice[history_slice.len() - take..]
-                    }
-                    _ => history_slice,
-                };
+                // pre-022 wire shape; `Some(n)` trims to the most-recent `n`
+                // entries. Shared with the live loop via `bar_history_limit_offset`.
+                let history_slice: &[&Ohlcv] =
+                    &history_slice[bar_history_limit_offset(history_slice.len(), bar_history_limit)..];
                 let source_window_start = history_slice
                     .first()
                     .map(|b| b.timestamp)
                     .unwrap_or(bar.timestamp);
                 let source_window_end = bar.timestamp;
-                let seed_pos_size = book.position(asset_sym);
-                let seed_entry = book.entry_price(asset_sym);
-                let seed_mark = bar.close;
-                let seed_upnl_pct = if seed_pos_size.abs() < f64::EPSILON || seed_entry <= 0.0 {
-                    0.0
-                } else if seed_pos_size > f64::EPSILON {
-                    (seed_mark - seed_entry) / seed_entry * 100.0
-                } else {
-                    (seed_entry - seed_mark) / seed_entry * 100.0
-                };
                 let (seed_sl_price, seed_tp_price, seed_bars_held) =
                     if let Some(sltp) = sltp_state.get(&asset_sym) {
                         (
@@ -1142,28 +1175,29 @@ impl Executor {
                     } else {
                         (0.0, 0.0, 0)
                     };
-                let seed = build_decision_seed(DecisionSeedInput {
-                    decision_idx,
-                    asset: &asset,
-                    active_assets: &active_venue_symbols,
+                // Shared seed-context prologue: position/entry/mark are derived
+                // inside `build_seed_context` (single source of truth), so this
+                // path can't drift from the live one.
+                let seed = build_decision_seed(DecisionSeedInput::from_context(build_seed_context(
+                    &book,
+                    asset_sym,
                     bar,
-                    next_bar_open,
-                    reference_price_source: "eval_bar.close",
-                    position_size: seed_pos_size,
-                    equity,
-                    mark_price: seed_mark,
-                    history_slice,
-                    inputs_policy,
-                    entry_price: if seed_pos_size.abs() > f64::EPSILON {
-                        seed_entry
-                    } else {
-                        0.0
+                    SeedContextParams {
+                        decision_idx,
+                        asset: &asset,
+                        active_assets: &active_venue_symbols,
+                        history_slice,
+                        inputs_policy,
+                        equity,
+                        next_bar_open,
+                        reference_price_source: "eval_bar.close",
+                        bars_held: seed_bars_held,
+                        stop_loss_price: seed_sl_price,
+                        take_profit_price: seed_tp_price,
+                        // Backtest is spot-only: no perps context (deferred).
+                        perps: PerpsContext::default(),
                     },
-                    unrealized_pnl_pct: seed_upnl_pct,
-                    bars_held: seed_bars_held,
-                    stop_loss_price: seed_sl_price,
-                    take_profit_price: seed_tp_price,
-                });
+                )));
                 // When the DSL filter fired this bar, inject its trigger context
                 // (indicator snapshot + fire.reason/priority/tags) into the seed
                 // so the trader's briefing includes the values that caused the
@@ -3344,6 +3378,35 @@ impl Executor {
 
             decision_idx += 1;
 
+            // LANE byu — periodic auto-attest. Only a FILLED trade advances
+            // `n_trades`, so checking the boundary here fires the injected
+            // attest sink exactly once each time the cumulative trade count
+            // crosses an `attest_every_n_trades` boundary (20, 40, …) and
+            // never between. The hook is fire-and-forget: we `.await` it but a
+            // conforming impl returns promptly (spawning its own background
+            // chain submit) so a slow/failing attestation never stalls or
+            // aborts the loop while we hold the runtime mutex. No hook (every
+            // backtest, every test that does not wire one) is a no-op.
+            if let Some(hook) = self.attest_hook.as_ref() {
+                if super::attest_hook::is_attest_boundary(n_trades, self.attest_every_n_trades) {
+                    let summary = super::attest_hook::AttestSummary {
+                        run_id: run.id.clone(),
+                        agent_id: strategy.manifest.id.clone(),
+                        n_trades,
+                        n_decisions: decision_idx,
+                        realized_count,
+                        wins,
+                        gross_return_pct: if initial != 0.0 {
+                            (equity - initial) / initial * 100.0
+                        } else {
+                            0.0
+                        },
+                        equity,
+                    };
+                    hook.maybe_attest(summary).await;
+                }
+            }
+
             // (b) StopPolicy — evaluate after the decision is fully
             // recorded so a limit of N yields N decisions. Whichever fires
             // first terminates the loop cleanly (not an error).
@@ -3465,13 +3528,10 @@ impl Executor {
         let history_slice: Vec<&Ohlcv> = {
             let start = history.len().saturating_sub(history_window);
             let slice = &history[start..];
-            match bar_history_limit {
-                Some(n) if (n as usize) < slice.len() => {
-                    let take = n as usize;
-                    slice[slice.len() - take..].iter().collect()
-                }
-                _ => slice.iter().collect(),
-            }
+            // F-8 cap shared with the backtest loop via `bar_history_limit_offset`.
+            slice[bar_history_limit_offset(slice.len(), bar_history_limit)..]
+                .iter()
+                .collect()
         };
         let source_window_start = history_slice
             .first()
@@ -3483,39 +3543,39 @@ impl Executor {
         // don't have a T+1 bar yet (the broker fills at the live market
         // price; `next_open` is only the reference price for sizing).
         let next_open = bar.close;
-        let live_pos_size = book.position(asset_sym);
-        let live_entry = book.entry_price(asset_sym);
-        let live_mark = bar.close;
-        let live_upnl_pct = if live_pos_size.abs() < f64::EPSILON || live_entry <= 0.0 {
-            0.0
-        } else if live_pos_size > f64::EPSILON {
-            (live_mark - live_entry) / live_entry * 100.0
-        } else {
-            (live_entry - live_mark) / live_entry * 100.0
-        };
-        let seed = build_decision_seed(DecisionSeedInput {
-            decision_idx,
-            asset,
-            active_assets: active_venue_symbols,
+        // Shared seed-context prologue: position/entry/mark are derived inside
+        // `build_seed_context` (single source of truth), so this path can't
+        // drift from the backtest one.
+        let seed = build_decision_seed(DecisionSeedInput::from_context(build_seed_context(
+            book,
+            asset_sym,
             bar,
-            next_bar_open: next_open,
-            reference_price_source: "live_bar.close",
-            position_size: live_pos_size,
-            equity,
-            mark_price: live_mark,
-            history_slice: &history_slice,
-            inputs_policy,
-            entry_price: if live_pos_size.abs() > f64::EPSILON {
-                live_entry
-            } else {
-                0.0
+            SeedContextParams {
+                decision_idx,
+                asset,
+                active_assets: active_venue_symbols,
+                history_slice: &history_slice,
+                inputs_policy,
+                equity,
+                next_bar_open: next_open,
+                reference_price_source: "live_bar.close",
+                // PARITY GAP (explicit): the live path does not yet thread SLTP
+                // state / position age. Backtest fills these from `sltp_state`;
+                // the live book exposes the same, so wiring them here closes the
+                // gap.
+                bars_held: 0,
+                stop_loss_price: 0.0,
+                take_profit_price: 0.0,
+                // LIVE PERPS ATTACH POINT: this is the call-site for the perps
+                // feed. A network fetch in this sync hot loop is the wrong shape
+                // — an out-of-band poller
+                // (xvision_data::perp_feed::fetch_perp_snapshot) should cache the
+                // latest reading per asset; read that cache here and build
+                // PerpsContext { funding_rate, open_interest, .. }. Until that
+                // poller exists the agent simply sees no perps block (None).
+                perps: PerpsContext::default(),
             },
-            unrealized_pnl_pct: live_upnl_pct,
-            // SLTP state and bars_held not threaded into the live context.
-            bars_held: 0,
-            stop_loss_price: 0.0,
-            take_profit_price: 0.0,
-        });
+        )));
 
         let outs = run_pipeline(PipelineInputs {
             strategy,
@@ -5103,6 +5163,50 @@ fn build_baselines_report(
     }
 }
 
+/// Perpetual-futures context threaded into the trader's `market_data`.
+/// All fields optional — only the populated ones are emitted, and the whole
+/// `perps` object is omitted (`null`) when nothing is set. Backtest passes
+/// the default (all `None`); the live path attaches an out-of-band perps
+/// feed reading (see `xvision_data::perp_feed`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PerpsContext {
+    pub funding_rate: Option<f64>,
+    pub open_interest: Option<f64>,
+    pub mark_index_basis: Option<f64>,
+    pub long_short_ratio: Option<f64>,
+}
+
+impl PerpsContext {
+    fn is_empty(&self) -> bool {
+        self.funding_rate.is_none()
+            && self.open_interest.is_none()
+            && self.mark_index_basis.is_none()
+            && self.long_short_ratio.is_none()
+    }
+
+    /// JSON object with only the populated fields, or `null` when empty so the
+    /// trader prompt builder can skip it (mirrors the indicator-panel pattern).
+    fn to_json(self) -> serde_json::Value {
+        if self.is_empty() {
+            return serde_json::Value::Null;
+        }
+        let mut obj = serde_json::Map::new();
+        if let Some(v) = self.funding_rate {
+            obj.insert("funding_rate".into(), serde_json::json!(v));
+        }
+        if let Some(v) = self.open_interest {
+            obj.insert("open_interest".into(), serde_json::json!(v));
+        }
+        if let Some(v) = self.mark_index_basis {
+            obj.insert("mark_index_basis".into(), serde_json::json!(v));
+        }
+        if let Some(v) = self.long_short_ratio {
+            obj.insert("long_short_ratio".into(), serde_json::json!(v));
+        }
+        serde_json::Value::Object(obj)
+    }
+}
+
 /// Input for [`build_decision_seed`], the production seed payload builder
 /// shared by backtest/live execution and integration tests.
 pub struct DecisionSeedInput<'a> {
@@ -5127,6 +5231,153 @@ pub struct DecisionSeedInput<'a> {
     pub stop_loss_price: f64,
     /// Effective take-profit price from the SLTP state; `0.0` when none active.
     pub take_profit_price: f64,
+    /// Perps context (funding/OI/basis/long-short). Default (all `None`) on the
+    /// spot/backtest path; populated live from `xvision_data::perp_feed`.
+    pub perps: PerpsContext,
+}
+
+/// Raw per-decision executor state, *before* seed derivations. Both the
+/// backtest and live decision loops build this and route through
+/// [`DecisionSeedInput::from_context`], so the unrealized-PnL and
+/// entry-price-when-flat derivations live in exactly one place — the live and
+/// backtest paths cannot silently drift on them.
+///
+/// Fields here are the raw values the executor knows (signed book position,
+/// raw book entry price, mark, equity, …). The derived `unrealized_pnl_pct`
+/// and the flat-zeroed `entry_price` that the trader actually sees are computed
+/// in `from_context`, never at the call-site.
+pub struct SeedContext<'a> {
+    pub decision_idx: u32,
+    pub asset: &'a str,
+    pub active_assets: &'a [String],
+    pub bar: &'a Ohlcv,
+    pub history_slice: &'a [&'a Ohlcv],
+    pub inputs_policy: InputsPolicy,
+    pub equity: f64,
+    /// Signed position size from the book (`>0` long, `<0` short, `~0` flat).
+    pub position_size: f64,
+    /// Raw entry price from the book; may be stale when flat (the derivation
+    /// zeroes it for the trader's view).
+    pub entry_price: f64,
+    pub mark_price: f64,
+    pub next_bar_open: f64,
+    /// Label distinguishing the reference-price origin (`"eval_bar.close"` vs
+    /// `"live_bar.close"`). One of the two intentionally-divergent seed fields.
+    pub reference_price_source: &'a str,
+    pub bars_held: u32,
+    pub stop_loss_price: f64,
+    pub take_profit_price: f64,
+    pub perps: PerpsContext,
+}
+
+impl<'a> DecisionSeedInput<'a> {
+    /// Build the seed input from raw executor state, deriving
+    /// `unrealized_pnl_pct` and the flat-zeroed `entry_price` once. This is the
+    /// single shared constructor both decision paths route through.
+    pub fn from_context(ctx: SeedContext<'a>) -> Self {
+        // Unrealized PnL %: flat (or no valid entry) → 0; long → (mark-entry);
+        // short → (entry-mark). Single source of truth for both paths.
+        let unrealized_pnl_pct = if ctx.position_size.abs() < f64::EPSILON || ctx.entry_price <= 0.0 {
+            0.0
+        } else if ctx.position_size > f64::EPSILON {
+            (ctx.mark_price - ctx.entry_price) / ctx.entry_price * 100.0
+        } else {
+            (ctx.entry_price - ctx.mark_price) / ctx.entry_price * 100.0
+        };
+        // The trader sees entry_price 0 when flat (no open position).
+        let entry_price = if ctx.position_size.abs() > f64::EPSILON {
+            ctx.entry_price
+        } else {
+            0.0
+        };
+        DecisionSeedInput {
+            decision_idx: ctx.decision_idx,
+            asset: ctx.asset,
+            active_assets: ctx.active_assets,
+            bar: ctx.bar,
+            next_bar_open: ctx.next_bar_open,
+            reference_price_source: ctx.reference_price_source,
+            position_size: ctx.position_size,
+            equity: ctx.equity,
+            mark_price: ctx.mark_price,
+            history_slice: ctx.history_slice,
+            inputs_policy: ctx.inputs_policy,
+            entry_price,
+            unrealized_pnl_pct,
+            bars_held: ctx.bars_held,
+            stop_loss_price: ctx.stop_loss_price,
+            take_profit_price: ctx.take_profit_price,
+            perps: ctx.perps,
+        }
+    }
+}
+
+/// Path-specific inputs to [`build_seed_context`] — the fields the shared
+/// prologue cannot derive from the book + current bar. The backtest and live
+/// loops legitimately differ on these (history-slice source, next-open
+/// reference, the reference-price label, and — until the live SLTP gap is
+/// closed — the stop/target/age triple); everything else is derived once, in
+/// one place, so the two `SeedContext`s cannot silently drift.
+struct SeedContextParams<'a> {
+    decision_idx: u32,
+    asset: &'a str,
+    active_assets: &'a [String],
+    history_slice: &'a [&'a Ohlcv],
+    inputs_policy: InputsPolicy,
+    equity: f64,
+    next_bar_open: f64,
+    reference_price_source: &'a str,
+    bars_held: u32,
+    stop_loss_price: f64,
+    take_profit_price: f64,
+    perps: PerpsContext,
+}
+
+/// Shared seed-context prologue for both decision loops. Derives the
+/// position/entry/mark snapshot from the book + current bar — `position_size`,
+/// `entry_price`, and `mark_price` now have a single source of truth and can no
+/// longer differ between the backtest and live paths — then assembles the
+/// [`SeedContext`]. Path-specific values arrive via [`SeedContextParams`]. The
+/// resulting context still routes through [`DecisionSeedInput::from_context`]
+/// (upnl/flat-entry derivation) and [`build_decision_seed`] (JSON), so all
+/// three shared seed stages are now reached by exactly one construction site.
+fn build_seed_context<'a>(
+    book: &crate::eval::executor::book::PortfolioBook,
+    asset_sym: xvision_core::trading::AssetSymbol,
+    bar: &'a Ohlcv,
+    params: SeedContextParams<'a>,
+) -> SeedContext<'a> {
+    SeedContext {
+        decision_idx: params.decision_idx,
+        asset: params.asset,
+        active_assets: params.active_assets,
+        bar,
+        history_slice: params.history_slice,
+        inputs_policy: params.inputs_policy,
+        equity: params.equity,
+        position_size: book.position(asset_sym),
+        entry_price: book.entry_price(asset_sym),
+        mark_price: bar.close,
+        next_bar_open: params.next_bar_open,
+        reference_price_source: params.reference_price_source,
+        bars_held: params.bars_held,
+        stop_loss_price: params.stop_loss_price,
+        take_profit_price: params.take_profit_price,
+        perps: params.perps,
+    }
+}
+
+/// Leading entries to drop from an already-windowed history slice to honor the
+/// optional F-8 rolling-window cap (`Some(n)` keeps the most-recent `n`;
+/// `None` keeps all). Shared by the backtest and live decision loops so this
+/// truncation math can't drift between them. Returns an offset (zero-alloc) so
+/// each loop slices its own container — backtest holds `&[&Ohlcv]`, the live
+/// loop owns `&[Ohlcv]` and collects, and neither is forced to allocate here.
+fn bar_history_limit_offset(len: usize, limit: Option<u32>) -> usize {
+    match limit {
+        Some(n) if (n as usize) < len => len - n as usize,
+        _ => 0,
+    }
 }
 
 /// Build the trader seed JSON for one decision cycle. F-6: `Causal`
@@ -5148,6 +5399,7 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "reference_price_usd": input.bar.close,
                 "reference_price_source": input.reference_price_source,
                 "bar_history": bar_history,
+                "perps": input.perps.to_json(),
             },
             "portfolio_state": {
                 "position_size": input.position_size,
@@ -5170,6 +5422,7 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "reference_price_usd": input.bar.close,
                 "reference_price_source": input.reference_price_source,
                 "bar_history": bar_history,
+                "perps": input.perps.to_json(),
             },
             "portfolio_state": {
                 "position_size": input.position_size,
@@ -5210,9 +5463,10 @@ fn ohlcv_to_json(bar: &Ohlcv, policy: InputsPolicy) -> serde_json::Value {
     }
 }
 
-/// Build the `bar_history` slice. Mirror of `paper::build_bar_history`
-/// — kept in lock-step so the two executor paths produce identical
-/// JSON under the same policy.
+/// Build the `bar_history` JSON array for the trader seed. The backtest and
+/// live decision loops both call this one function, so their `bar_history`
+/// payloads are identical under the same policy by construction (there is no
+/// separate `paper` module anymore — it was folded into this module).
 fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::Value> {
     match policy {
         InputsPolicy::Raw | InputsPolicy::Oracle => bars.iter().map(|b| ohlcv_to_json(b, policy)).collect(),
@@ -5233,9 +5487,9 @@ fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::V
     }
 }
 
-/// Mirror of `paper::resolve_inputs_policy`. Sourced from the
-/// trader-role `ResolvedAgentSlot`; defaults to `Raw` so legacy
-/// strategy shapes (no attached agents) keep today's behavior.
+/// Resolve the trader's `InputsPolicy` from the trader-role
+/// `ResolvedAgentSlot`; defaults to `Raw` so legacy strategy shapes (no
+/// attached agents) keep today's behavior. Used by both decision loops.
 fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
     agent_slots
         .iter()
@@ -5244,7 +5498,8 @@ fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
         .unwrap_or(InputsPolicy::Raw)
 }
 
-/// Mirror of `paper::resolve_bar_history_limit`. F-8 per-trader cap.
+/// Resolve the F-8 per-trader `bar_history_limit` cap from the trader-role
+/// `ResolvedAgentSlot`. Used by both decision loops.
 fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
     agent_slots
         .iter()
@@ -5255,6 +5510,17 @@ fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The F-8 truncation math is shared by the backtest and live decision
+    /// loops via `bar_history_limit_offset`; pin it so the two can't drift.
+    #[test]
+    fn bar_history_limit_offset_shared_truncation() {
+        assert_eq!(bar_history_limit_offset(10, None), 0); // no cap → keep all
+        assert_eq!(bar_history_limit_offset(3, Some(5)), 0); // cap >= len → keep all
+        assert_eq!(bar_history_limit_offset(5, Some(5)), 0); // cap == len → keep all
+        assert_eq!(bar_history_limit_offset(10, Some(4)), 6); // keep most-recent 4
+        assert_eq!(bar_history_limit_offset(10, Some(0)), 10); // cap 0 → drop all
+    }
 
     // Updated because <reason>: `SimulateFillArgs` gained new fields for the
     // V2E cost-model rewrite (bar_volume, spread_bps, slippage_model,

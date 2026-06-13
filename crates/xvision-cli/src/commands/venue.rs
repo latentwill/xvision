@@ -4,7 +4,9 @@
 use std::str::FromStr;
 
 use xvision_core::AssetSymbol;
-use xvision_execution::{AlpacaExecutor, Executor, OrderlyExecutor};
+use xvision_execution::{
+    AlpacaExecutor, ByrealPerpsExecutor, Executor, OrderlyExecutor, SubprocessByrealApi,
+};
 
 use crate::commands::asset::parse_asset;
 
@@ -12,6 +14,7 @@ use crate::commands::asset::parse_asset;
 pub enum Venue {
     Alpaca,
     Orderly,
+    Byreal,
 }
 
 impl FromStr for Venue {
@@ -20,7 +23,8 @@ impl FromStr for Venue {
         match s.to_ascii_lowercase().as_str() {
             "alpaca" => Ok(Venue::Alpaca),
             "orderly" => Ok(Venue::Orderly),
-            other => Err(format!("unknown venue '{other}'; want alpaca|orderly")),
+            "byreal" => Ok(Venue::Byreal),
+            other => Err(format!("unknown venue '{other}'; want alpaca|orderly|byreal")),
         }
     }
 }
@@ -38,6 +42,11 @@ fn executor_from_env(venue: Venue) -> anyhow::Result<Box<dyn Executor>> {
                 "OrderlyExecutor::from_env() failed: {e} — check ORDERLY_KEY, ORDERLY_SECRET, ORDERLY_ACCOUNT_ID, ORDERLY_BASE_URL"
             )
         })?)),
+        Venue::Byreal => Ok(Box::new(ByrealPerpsExecutor::new(SubprocessByrealApi::from_env().map_err(|e| {
+            anyhow::anyhow!(
+                "SubprocessByrealApi::from_env() failed: {e} — check BYREAL_PRIVATE_KEY, BYREAL_NETWORK, BYREAL_ACCOUNT"
+            )
+        })?))),
     }
 }
 

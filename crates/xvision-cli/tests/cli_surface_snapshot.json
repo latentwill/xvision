@@ -2499,17 +2499,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "optimize",
-        "demo"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -2552,17 +2541,6 @@
         "help",
         "optimize",
         "ls"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "optimize",
-        "mutate-once"
       ]
     },
     {
@@ -4709,37 +4687,12 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--fixture",
-        "--help",
-        "--verbose"
-      ],
-      "mutates": false,
-      "path": [
-        "optimize",
-        "demo"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
       "path": [
         "optimize",
         "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "optimize",
-        "help",
-        "demo"
       ]
     },
     {
@@ -4797,17 +4750,6 @@
         "optimize",
         "help",
         "ls"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "optimize",
-        "help",
-        "mutate-once"
       ]
     },
     {
@@ -4953,27 +4895,6 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
-        "--blob-dir",
-        "--config",
-        "--cycle-id",
-        "--db",
-        "--dry-run",
-        "--help",
-        "--ipc-socket",
-        "--mock"
-      ],
-      "mutates": false,
-      "path": [
-        "optimize",
-        "mutate-once"
-      ]
-    },
-    {
-      "aliases": [
-        "run-cycle"
-      ],
-      "has_subcommands": false,
-      "long_flags": [
         "--baseline-end",
         "--baseline-start",
         "--budget",
@@ -4983,6 +4904,8 @@
         "--db",
         "--experiments-per-cycle",
         "--help",
+        "--ipc-socket",
+        "--max-cycles",
         "--max-output-tokens",
         "--mock",
         "--model",
@@ -4991,7 +4914,7 @@
         "--session-id",
         "--strategy"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "optimize",
         "run"

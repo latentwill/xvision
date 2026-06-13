@@ -33,6 +33,10 @@ use crate::eval::scenario::Scenario;
 use crate::strategies::Strategy;
 
 /// Per-cycle configuration.
+///
+/// `Clone` so the CLI session loop can derive a fresh per-cycle config from one
+/// base, varying only `sustained_no_pass_cycles` across cycles (GH #965).
+#[derive(Clone)]
 pub struct CycleConfig {
     pub num_parents: usize,
     pub mutations_per_parent: usize,

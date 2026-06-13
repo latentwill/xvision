@@ -164,6 +164,17 @@ pub struct MutationDiff {
     pub tools: ToolDiff,
     #[serde(default)]
     pub filter: Vec<FilterEdit>,
+    /// vxn (structural filter creation): the full Filter JSON the experiment
+    /// writer authored, INSTALLED when the parent strategy has no filter
+    /// (`base.filter` is `None`). Distinct from `filter` (path-level edits that
+    /// TUNE an existing filter). Materialized and validated through the same
+    /// authoring parse/validate path operators use (`xvision_filters::validate`),
+    /// so an invalid filter is rejected on a clean retry rather than reaching
+    /// backtest. `None` (the common case) means "no structural filter change".
+    /// Always serialized (as `null` when absent) so the wire shape matches the
+    /// `create_filter`-required `mutation_diff` response schema.
+    #[serde(default)]
+    pub create_filter: Option<serde_json::Value>,
     pub rationale: String,
 }
 
@@ -177,6 +188,7 @@ pub fn empty_mutation() -> MutationDiff {
             removed: Vec::new(),
         },
         filter: Vec::new(),
+        create_filter: None,
         rationale: String::new(),
     }
 }
@@ -672,24 +684,25 @@ pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Val
 /// a prose edit sets `AgentRef.prompt_override` and changes the strategy content
 /// hash, so it is a real change — not a no-op — on any agent strategy. For
 /// agentless/pre-refactor strategies there is still no home, so prose is
-/// excluded there. `filter` is applicable when the strategy has a `filter`
-/// (`base.filter.is_some()`); the AST-walk tunable-path enumeration and
-/// apply/validate support (Phase 2) back this arm.
+/// excluded there. `filter` is always applicable: with an existing filter the
+/// AST-walk tunable-path enumeration drives TUNING; with none, the writer may
+/// CREATE one (xvision-vxn) via `MutationDiff::create_filter`.
 pub fn applicable_mutation_kinds(base: &Strategy, allowed: &[String]) -> Vec<String> {
     let has_params = !tunable_param_keys(base).is_empty();
     // Prose is applicable iff the strategy has at least one agent to carry a
     // `prompt_override` (Phase 0). For agentless/pre-refactor strategies there
     // is still no home, so prose stays excluded there.
     let has_prompt_home = !base.agents.is_empty();
-    // Filter is applicable when the strategy has a typed Filter to walk.
-    let has_filter = base.filter.is_some();
     allowed
         .iter()
         .filter(|k| match k.as_str() {
             "param" => has_params,
             "tool" => true,
             "prose" => has_prompt_home,
-            "filter" => has_filter,
+            // Filter is always an applicable lever: TUNE the typed Filter AST
+            // when one exists, or CREATE one (xvision-vxn) when `base.filter` is
+            // None so a filterless strategy can still be gated/throttled.
+            "filter" => true,
             _ => false,
         })
         .cloned()
@@ -703,6 +716,9 @@ impl MutationDiff {
             && self.tools.added.is_empty()
             && self.tools.removed.is_empty()
             && self.filter.is_empty()
+            // xvision-vxn: a create-only diff (authored filter, no other edits)
+            // is a real structural change, not an empty mutation.
+            && self.create_filter.is_none()
     }
 
     /// Apply this diff to `base`, returning the candidate strategy.
@@ -761,6 +777,21 @@ impl MutationDiff {
             let target = crate::strategies::agent_ref::canonical_role(&edit.agent_role);
             if let Some(a) = s.agents.iter_mut().find(|a| a.canonical_role() == target) {
                 a.prompt_override = Some(edit.after.clone());
+            }
+        }
+        // xvision-vxn: structural filter CREATION. When the parent has no filter
+        // and the writer authored one, install it through the same authoring
+        // parse/validate path operators use (stamps id + strategy_id, runs
+        // `xvision_filters::validate`) and gate activation. An existing filter is
+        // never clobbered — that case is a TUNE via filter edits below. An invalid
+        // payload is a silent no-op here (the validator rejects it upstream; apply
+        // stays total).
+        if s.filter.is_none() {
+            if let Some(create) = &self.create_filter {
+                if let Ok(filter) = crate::authoring::parse_filter_value(create.clone(), &s.manifest.id) {
+                    s.filter = Some(filter);
+                    s.activation_mode = xvision_filters::ActivationMode::FilterGated;
+                }
             }
         }
         // Filter edits resolve path → AST node and write `after`. An unresolved
@@ -886,6 +917,7 @@ impl Mutator {
                 avoid.len(),
                 &prose_roles,
                 attempt as usize,
+                base.filter.is_some(),
             );
             let req = LlmRequest {
                 model: self.model.clone(),
@@ -1044,7 +1076,7 @@ fn exploration_temperature(exploration_seed: u64) -> f64 {
 /// window-op set is the shared `FILTER_U32_WINDOW_OPS` from the validator.
 /// Returns `None` for paths with no special integer/positivity constraint (e.g.
 /// `conditions.<i>.rhs.numeric`), which must not get the integer marker.
-fn filter_path_constraint_hint(path: &str) -> Option<&'static str> {
+pub(crate) fn filter_path_constraint_hint(path: &str) -> Option<&'static str> {
     // Parameterized operator paths look like `conditions.<i>.op.<suffix>`.
     let suffix = path
         .strip_prefix("conditions.")
@@ -1059,59 +1091,17 @@ fn filter_path_constraint_hint(path: &str) -> Option<&'static str> {
     }
 }
 
-fn build_user_payload(
-    program_md: &str,
+/// B17 (xvision-ds0): the "Tunable filter paths" prompt section, each path
+/// annotated with its domain-constraint hint via [`filter_path_constraint_hint`].
+/// Shared by both proposal paths — the single-shot `build_user_payload` and the
+/// tournament `build_proposal_user` — so the filter-domain guidance can never
+/// drift between them. Empty unless `filter` is an allowed kind and the strategy
+/// actually has tunable filter paths.
+pub(crate) fn annotated_filter_paths_section(
     allowed_kinds: &[String],
-    param_keys: &[String],
     filter_paths: &[(String, serde_json::Value)],
-    previous_errors: Option<&[ValidationError]>,
-    exploration_seed: u64,
-    // Position of this writer in the outer mutations_per_parent loop (0-based).
-    // Drives balanced kind rotation across the cycle's N concurrent writers so
-    // every applicable kind gets a dedicated slot rather than competing via hash
-    // modulo (which can cluster). `exploration_seed` still diversifies the
-    // specific target chosen within the selected kind.
-    mutation_idx: usize,
-    memory_context: Option<&str>,
-    avoid_count: usize,
-    // Issues 1/2 (QA 2026-06-08): the agent roles that can carry a
-    // `prompt_override`, so the exploration focus can rotate onto the PROSE lever
-    // (rewrite an agent's prompt) and not only numeric levers. Empty when prose is
-    // not an applicable kind for this strategy.
-    prose_roles: &[String],
-    // B6: the propose retry attempt index (0-based). `mutation_idx` is fixed for
-    // the whole propose call, so on its own it re-focuses the SAME kind on every
-    // retry — a failing kind then consumes the entire attempt budget. Offsetting
-    // the kind index by `attempt` rotates successive retries onto DIFFERENT kinds.
-    // Target rotation within a kind still comes from `exploration_seed`.
-    attempt: usize,
 ) -> String {
-    let kinds_text = allowed_kinds.join(", ");
-    let param_allowed = allowed_kinds.iter().any(|k| k == "param");
-    // Codex P2: only show param key list when `param` is actually allowed. A
-    // filter-only config that still shows risk.* keys steers the model to propose
-    // a param mutation that the cycle loop accepts (validate_mutation_diff does not
-    // enforce the allowed-kinds list). Gate the section and the F32 focus directive
-    // together so the prompt never references a disallowed mutation axis.
-    let keys_section = if !param_allowed {
-        String::new()
-    } else if param_keys.is_empty() {
-        "\n\nThis strategy exposes no tunable parameter keys; do not propose a `param` experiment."
-            .to_string()
-    } else {
-        format!(
-            "\n\nTunable parameter keys (a `param` experiment's `key` MUST be exactly one of these):\n{}",
-            param_keys
-                .iter()
-                .map(|k| format!("  - {k}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    };
-    // Filter paths section: only included when "filter" is in allowed kinds and
-    // the strategy has a filter (non-empty paths list). Guides the experiment
-    // writer to propose valid dotted paths from the live AST.
-    let filter_section = if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+    if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
         format!(
             "\n\nTunable filter paths (a `filter` experiment's `path` MUST be exactly one of these; \
              `before` must match the current value shown):\n{}",
@@ -1126,41 +1116,25 @@ fn build_user_payload(
         )
     } else {
         String::new()
-    };
-    let errors_section = match previous_errors {
-        None => String::new(),
-        Some(errs) => {
-            format!(
-                "\n\nPrevious attempt errors — you MUST fix all of these:\n\n{}",
-                format_validation_errors(errs)
-            )
-        }
-    };
+    }
+}
 
-    // F32: a SUBSTANTIVE per-cycle exploration directive. The previous version
-    // only passed a cosmetic "variant N" nonce + a non-zero temperature, which a
-    // real model (e.g. gemini-flash-lite) ignores — it collapses the constrained
-    // experiment space to the single most obvious tweak every cycle, so repeat
-    // cycles re-derived the byte-identical candidate and never explored. Instead,
-    // NAME a concrete focus the writer must experiment on. (Pairs with the hard
-    // `already_tried` reject in `propose`, which guarantees a previously-seen
-    // candidate is never re-emitted.)
-    //
-    // Issues 1/2 (QA 2026-06-08): the focus must rotate across the applicable
-    // mutation KINDS, not just param keys. The previous version only ever named a
-    // `risk.*` param whenever `param` was allowed (the default), so a weak
-    // experiment-writer was steered onto the numeric risk lever every single
-    // cycle — prose (prompt) and filter levers were never focused and so never
-    // exercised (QA: gemma mutated only risk.* across all 7 cycles).
-    //
-    // KIND rotation via mutation_idx (writer position in the outer
-    // mutations_per_parent loop): writer 0 → kinds[0], writer 1 → kinds[1], etc.,
-    // cycling through all applicable kinds. This guarantees that within a single
-    // cycle of N writers, every kind gets proportional coverage regardless of hash
-    // values. The exploration_seed then picks the SPECIFIC TARGET within the
-    // selected kind (which param key, which filter path, which agent role) — so
-    // different cycles land on different concrete levers even for the same writer
-    // position.
+/// B6 (xvision-ds0): the per-attempt exploration/kind-rotation directive. The
+/// focused mutation KIND rotates by `(slot + attempt) % n_kinds` so successive
+/// retries (and successive writer slots / tournament candidates) focus DIFFERENT
+/// levers instead of re-hammering one failing kind until the attempt budget is
+/// gone; the specific TARGET within the kind is chosen by `exploration_seed`.
+/// Shared by both proposal paths to keep the rotation identical.
+pub(crate) fn kind_focus_directive(
+    allowed_kinds: &[String],
+    param_keys: &[String],
+    filter_paths: &[(String, serde_json::Value)],
+    prose_roles: &[String],
+    slot: usize,
+    attempt: usize,
+    exploration_seed: u64,
+) -> String {
+    let param_allowed = allowed_kinds.iter().any(|k| k == "param");
     let mut focus_groups: Vec<(&str, Vec<String>)> = Vec::new();
     if allowed_kinds.iter().any(|k| k == "prose") && !prose_roles.is_empty() {
         focus_groups.push(("prose", prose_roles.to_vec()));
@@ -1171,7 +1145,7 @@ fn build_user_payload(
     if param_allowed && !param_keys.is_empty() {
         focus_groups.push(("param", param_keys.to_vec()));
     }
-    let exploration_section = if focus_groups.is_empty() {
+    if focus_groups.is_empty() {
         format!(
             "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
              the single most obvious one, so repeated runs explore rather than re-propose one tweak."
@@ -1179,11 +1153,9 @@ fn build_user_payload(
     } else {
         let n_kinds = focus_groups.len();
         // B6: offset the kind index by the retry `attempt` so successive retries
-        // within one propose call focus DIFFERENT kinds instead of re-hammering the
-        // same (often failing) kind until the budget is gone. When n_kinds == 1
-        // (e.g. param-only) the offset is a no-op. The target WITHIN a kind is
-        // still chosen by `exploration_seed` below, keeping that rotation intact.
-        let (kind, targets) = &focus_groups[(mutation_idx + attempt) % n_kinds];
+        // focus DIFFERENT kinds. When n_kinds == 1 the offset is a no-op. The
+        // target WITHIN a kind is still chosen by `exploration_seed`.
+        let (kind, targets) = &focus_groups[(slot + attempt) % n_kinds];
         let target = &targets[(exploration_seed as usize) % targets.len()];
         match *kind {
             "prose" => format!(
@@ -1212,7 +1184,109 @@ fn build_user_payload(
                  target another listed lever instead."
             ),
         }
+    }
+}
+
+/// xvision-vxn: the structural filter-CREATION directive. When `filter` is an
+/// allowed kind and the strategy has NO filter (`filter_exists == false`), invite
+/// the writer to AUTHOR a complete filter under the `create_filter` field (rather
+/// than the path-level `filter` edits, which only TUNE an existing filter). Empty
+/// when a filter already exists or `filter` is not an allowed kind. Shared by both
+/// proposal paths so the guidance can never drift.
+pub(crate) fn filter_create_directive(allowed_kinds: &[String], filter_exists: bool) -> String {
+    if filter_exists || !allowed_kinds.iter().any(|k| k == "filter") {
+        return String::new();
+    }
+    "\n\nThis strategy has NO filter yet. To use the filter lever you must CREATE one: set \
+     `create_filter` to a COMPLETE filter object (with `display_name`, `asset_scope`, \
+     `timeframe`, a non-empty `conditions` tree, and optionally `cooldown_bars` / \
+     `max_wakeups_per_day` to throttle trade frequency). Do NOT use the `filter` edit list \
+     for this (that only TUNES an existing filter). Leave `create_filter` null if you are \
+     proposing a different kind of experiment."
+        .to_string()
+}
+
+fn build_user_payload(
+    program_md: &str,
+    allowed_kinds: &[String],
+    param_keys: &[String],
+    filter_paths: &[(String, serde_json::Value)],
+    previous_errors: Option<&[ValidationError]>,
+    exploration_seed: u64,
+    // Position of this writer in the outer mutations_per_parent loop (0-based).
+    // Drives balanced kind rotation across the cycle's N concurrent writers so
+    // every applicable kind gets a dedicated slot rather than competing via hash
+    // modulo (which can cluster). `exploration_seed` still diversifies the
+    // specific target chosen within the selected kind.
+    mutation_idx: usize,
+    memory_context: Option<&str>,
+    avoid_count: usize,
+    // Issues 1/2 (QA 2026-06-08): the agent roles that can carry a
+    // `prompt_override`, so the exploration focus can rotate onto the PROSE lever
+    // (rewrite an agent's prompt) and not only numeric levers. Empty when prose is
+    // not an applicable kind for this strategy.
+    prose_roles: &[String],
+    // B6: the propose retry attempt index (0-based). `mutation_idx` is fixed for
+    // the whole propose call, so on its own it re-focuses the SAME kind on every
+    // retry — a failing kind then consumes the entire attempt budget. Offsetting
+    // the kind index by `attempt` rotates successive retries onto DIFFERENT kinds.
+    // Target rotation within a kind still comes from `exploration_seed`.
+    attempt: usize,
+    // xvision-vxn: whether the parent already has a filter. Drives the
+    // create-vs-tune guidance (`filter_create_directive`).
+    filter_exists: bool,
+) -> String {
+    let kinds_text = allowed_kinds.join(", ");
+    let param_allowed = allowed_kinds.iter().any(|k| k == "param");
+    // Codex P2: only show param key list when `param` is actually allowed. A
+    // filter-only config that still shows risk.* keys steers the model to propose
+    // a param mutation that the cycle loop accepts (validate_mutation_diff does not
+    // enforce the allowed-kinds list). Gate the section and the F32 focus directive
+    // together so the prompt never references a disallowed mutation axis.
+    let keys_section = if !param_allowed {
+        String::new()
+    } else if param_keys.is_empty() {
+        "\n\nThis strategy exposes no tunable parameter keys; do not propose a `param` experiment."
+            .to_string()
+    } else {
+        format!(
+            "\n\nTunable parameter keys (a `param` experiment's `key` MUST be exactly one of these):\n{}",
+            param_keys
+                .iter()
+                .map(|k| format!("  - {k}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
     };
+    // Filter paths section (B17): shared with the tournament path so the
+    // filter-domain hints never drift between proposers.
+    let filter_section = annotated_filter_paths_section(allowed_kinds, filter_paths);
+    // xvision-vxn: when the strategy has no filter, invite a structural create.
+    let create_section = filter_create_directive(allowed_kinds, filter_exists);
+    let errors_section = match previous_errors {
+        None => String::new(),
+        Some(errs) => {
+            format!(
+                "\n\nPrevious attempt errors — you MUST fix all of these:\n\n{}",
+                format_validation_errors(errs)
+            )
+        }
+    };
+
+    // F32/B6: the per-attempt exploration + kind-rotation directive, shared
+    // with the tournament path via `kind_focus_directive`. `mutation_idx` is
+    // this writer's slot in the outer mutations_per_parent loop; `attempt`
+    // rotates the focused kind across retries; `exploration_seed` picks the
+    // target within the kind.
+    let exploration_section = kind_focus_directive(
+        allowed_kinds,
+        param_keys,
+        filter_paths,
+        prose_roles,
+        mutation_idx,
+        attempt,
+        exploration_seed,
+    );
     // F32: when this parent has already produced candidates in prior experiments,
     // tell the writer so it aims for genuinely new territory (the `already_tried`
     // gate will reject any duplicate and force a retry regardless).
@@ -1238,7 +1312,7 @@ fn build_user_payload(
     };
 
     format!(
-        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{filter_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds_text}{keys_section}{filter_section}{create_section}{errors_section}{exploration_section}{no_repeat_section}{memory_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -1314,6 +1388,7 @@ mod tests {
             params,
             tools: ToolDiff { added, removed },
             filter: Vec::new(),
+            create_filter: None,
             rationale: "test".into(),
         }
     }
@@ -1434,6 +1509,33 @@ mod tests {
     }
 
     #[test]
+    fn applicable_kinds_offer_filter_when_strategy_has_no_filter() {
+        // xvision-vxn: a filterless strategy can now be helped by the filter
+        // lever via structural CREATION, so "filter" must be offered even when
+        // base.filter is None (previously excluded).
+        let base = fixture_strategy(); // no filter
+        assert!(base.filter.is_none(), "fixture must be filterless");
+        let allowed = vec!["param".into(), "filter".into()];
+        let kinds = applicable_mutation_kinds(&base, &allowed);
+        assert!(
+            kinds.contains(&"filter".to_string()),
+            "filter must be applicable on a filterless strategy (create path); got {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn mutation_diff_schema_exposes_create_filter() {
+        // xvision-vxn: the LLM response schema must carry create_filter so a
+        // grammar-constrained writer can emit a structural filter creation.
+        let fmt = crate::agent::llm::ResponseSchema::mutation_diff().openai_response_format();
+        let s = serde_json::to_string(&fmt).expect("schema serializes");
+        assert!(
+            s.contains("create_filter"),
+            "mutation_diff schema must expose create_filter; got:\n{s}"
+        );
+    }
+
+    #[test]
     fn identity_diff_detected_for_noop_change() {
         let base = fixture_strategy();
         // Setting a param to its current value is a no-op at the hash level.
@@ -1485,6 +1587,7 @@ mod tests {
             0,
             &[],
             0,
+        true,
         );
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
@@ -1498,7 +1601,7 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0);
+        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1520,6 +1623,7 @@ mod tests {
             0,
             &[],
             0,
+        true,
         );
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
@@ -1535,7 +1639,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
         assert!(
             payload.contains("Tunable filter paths"),
             "filter section header must be present: {payload}"
@@ -1563,6 +1667,7 @@ mod tests {
             0,
             &[],
             0,
+        true,
         );
         assert!(
             !no_filter_payload.contains("Tunable filter paths"),
@@ -1585,7 +1690,7 @@ mod tests {
             ("conditions.1.op.within_pct".to_string(), serde_json::json!(1.5)),
             ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
 
         // The window-op path must be listed AND annotated as a positive integer.
         assert!(
@@ -1641,7 +1746,7 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0);
+        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
 
         // Param key list and risk.* references must be absent.
         assert!(
@@ -1693,6 +1798,7 @@ mod tests {
                 0,
                 &prose_roles,
                 0,
+            true,
             );
             // Exactly one lever is focused per cycle (the three directive
             // signatures are mutually exclusive).
@@ -1734,6 +1840,7 @@ mod tests {
                 0,
                 &[],
                 0,
+            true,
             );
             assert!(
                 !p.contains("agent's system prompt"),
@@ -1762,6 +1869,7 @@ mod tests {
                 removed: vec![],
             },
             filter: Vec::new(),
+            create_filter: None,
             rationale: "test".into(),
         };
         let child = diff.apply_to(&base);
@@ -1799,6 +1907,7 @@ mod tests {
                 removed: vec![],
             },
             filter: Vec::new(),
+            create_filter: None,
             rationale: "t".into(),
         };
         assert!(
@@ -1901,6 +2010,7 @@ mod tests {
                 before: serde_json::json!(25.0),
                 after: serde_json::json!(28.0),
             }],
+            create_filter: None,
             rationale: "increase ADX threshold for stronger trend signal".into(),
         };
         let json = serde_json::to_string(&diff).expect("serialize");
@@ -1934,6 +2044,7 @@ mod tests {
                 before: serde_json::json!(25.0),
                 after: serde_json::json!(28.0),
             }],
+            create_filter: None,
             rationale: "increase ADX threshold".into(),
         };
         let child = diff.apply_to(&base);
@@ -1956,6 +2067,99 @@ mod tests {
         );
     }
 
+    // ── xvision-vxn: structural filter CREATION ──────────────────────────────
+
+    #[test]
+    fn apply_to_create_filter_installs_authored_filter_and_gates() {
+        // Applying a create_filter diff to a filterless strategy installs the
+        // authored filter, stamps its strategy_id to the parent, and flips
+        // activation to FilterGated (mirrors the operator authoring path).
+        let base = fixture_strategy(); // no filter
+        assert!(base.filter.is_none(), "fixture must be filterless");
+        let mut diff = empty_mutation();
+        diff.kind = MutationKind::Filter;
+        diff.create_filter = Some(serde_json::json!({
+            "display_name": "RSI oversold gate (optimizer-created)",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "1h",
+            "conditions": { "all": [ { "lhs": "rsi_14", "op": "<", "rhs": 30.0 } ] },
+            "cooldown_bars": 3
+        }));
+        diff.rationale = "add an oversold/throttle filter to a filterless strategy".into();
+
+        let child = diff.apply_to(&base);
+        let filter = child
+            .filter
+            .as_ref()
+            .expect("create_filter must install a filter");
+        assert_eq!(
+            filter.strategy_id.as_str(),
+            base.manifest.id.as_str(),
+            "installed filter must be stamped with the parent strategy id"
+        );
+        assert_eq!(
+            child.activation_mode,
+            xvision_filters::ActivationMode::FilterGated,
+            "installing a filter must gate activation"
+        );
+        assert!(
+            !is_identity_diff(&diff, &base),
+            "creating a filter must not be an identity no-op"
+        );
+    }
+
+    #[test]
+    fn apply_to_create_filter_is_noop_when_filter_already_present() {
+        // create_filter must never clobber an existing filter — that case is a
+        // TUNE (filter edits), not a create.
+        let base = fixture_filter_strategy();
+        let original = base.filter.clone().expect("fixture has a filter");
+        let mut diff = empty_mutation();
+        diff.kind = MutationKind::Filter;
+        diff.create_filter = Some(serde_json::json!({
+            "display_name": "should be ignored",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "1h",
+            "conditions": { "all": [ { "lhs": "rsi_14", "op": "<", "rhs": 30.0 } ] }
+        }));
+        let child = diff.apply_to(&base);
+        assert_eq!(
+            child.filter.as_ref(),
+            Some(&original),
+            "an existing filter must not be replaced by create_filter"
+        );
+    }
+
+    #[test]
+    fn build_user_payload_offers_filter_creation_when_strategy_has_no_filter() {
+        // When `filter` is allowed and the strategy has no filter, the prompt
+        // must invite the writer to AUTHOR one via create_filter.
+        let kinds = vec!["param".to_string(), "filter".to_string()];
+        let keys = vec!["risk.risk_pct_per_trade".to_string()];
+        let filter_paths: Vec<(String, serde_json::Value)> = vec![]; // no filter
+        let out = build_user_payload(
+            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, false,
+        );
+        assert!(
+            out.contains("create_filter"),
+            "filterless + filter allowed must invite create_filter; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn build_user_payload_no_create_offer_when_filter_exists() {
+        let kinds = vec!["filter".to_string()];
+        let keys: Vec<String> = vec![];
+        let filter_paths = vec![("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0))];
+        let out = build_user_payload(
+            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, true,
+        );
+        assert!(
+            !out.contains("create_filter"),
+            "a strategy that already has a filter must not be offered create_filter; got:\n{out}"
+        );
+    }
+
     #[test]
     fn apply_to_filter_edit_unknown_path_is_noop() {
         let base = fixture_filter_strategy();
@@ -1972,6 +2176,7 @@ mod tests {
                 before: serde_json::json!(25.0),
                 after: serde_json::json!(50.0),
             }],
+            create_filter: None,
             rationale: "invalid path".into(),
         };
         // Should be identity since path doesn't resolve
@@ -2107,6 +2312,7 @@ mod tests {
             0,
             &[],
             0,
+        true,
         );
         let p1 = build_user_payload(
             "prog",
@@ -2120,6 +2326,7 @@ mod tests {
             0,
             &[],
             0,
+        true,
         );
         // The focus directive must name a different key for attempt 0 vs attempt 1.
         // Since `build_user_payload` embeds the focus in the exploration_section,
@@ -2177,6 +2384,7 @@ mod tests {
                 0,
                 &prose_roles,
                 attempt,
+            true,
             );
             // Detect kind via the existing directive substrings the tests already use.
             if p.contains("agent system prompt") || p.contains("agent's system prompt") {

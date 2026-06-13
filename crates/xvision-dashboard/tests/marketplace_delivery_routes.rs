@@ -419,11 +419,23 @@ async fn import_sealed_unknown_listing_is_404() {
 
 #[tokio::test]
 async fn import_sealed_without_license_env_is_503() {
+    // A VALID proof gets past the proof stage; the license gate then 503s
+    // because no license-token env is configured. The proof must run first so
+    // a legit buyer hits the gate (not a proof rejection).
     let (server, state, _tmp) = boot().await;
     inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let (nonce, expiry) = get_challenge(&server, 1).await;
+    let buyer = buyer_signer();
+    let message = challenge_message(1, &nonce, expiry);
+    let signature = sign(&buyer, &message);
     let response = server
         .post("/api/marketplace/listings/1/import-sealed")
-        .json(&serde_json::json!({ "address": ALICE, "manifest": {} }))
+        .json(&serde_json::json!({
+            "address": format!("{:#x}", buyer.address()),
+            "manifest": {},
+            "message": message,
+            "signature": signature,
+        }))
         .await;
     response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 }
@@ -447,9 +459,20 @@ async fn import_sealed_with_token_but_no_indexer_is_503() {
     let (state, _tmp) = support::state_with_chain_config(cfg).await;
     let server = TestServer::new(build_router(state.clone())).unwrap();
     inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    // Valid proof so the request reaches the license gate (which then 503s on
+    // the missing indexer chain access).
+    let (nonce, expiry) = get_challenge(&server, 1).await;
+    let buyer = buyer_signer();
+    let message = challenge_message(1, &nonce, expiry);
+    let signature = sign(&buyer, &message);
     let response = server
         .post("/api/marketplace/listings/1/import-sealed")
-        .json(&serde_json::json!({ "address": ALICE, "manifest": {} }))
+        .json(&serde_json::json!({
+            "address": format!("{:#x}", buyer.address()),
+            "manifest": {},
+            "message": message,
+            "signature": signature,
+        }))
         .await;
     response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
     let body: Value = response.json();
@@ -590,5 +613,215 @@ async fn publish_open_does_not_encrypt() {
             "strategy_id": id, "tier": "open", "price_usdc": 49.0
         }))
         .await;
+    response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+}
+
+// ── POST /api/marketplace/listings/:id/import-sealed (proof-of-address) ───────
+//
+// Lane cgz: the sealed-import route requires a real EIP-191 personal_sign
+// proof-of-address. The proof check runs BEFORE the license gate, so a wrong
+// signer is rejected with 403 (not the 503 the no-chain license gate would
+// otherwise return) — these tests assert that ordering.
+
+use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::SignerSync;
+
+/// Well-known Anvil dev key #0 — its address is the claimed buyer address.
+fn buyer_signer() -> PrivateKeySigner {
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        .parse()
+        .unwrap()
+}
+
+/// Sign `message` with `s`, returning the 0x-prefixed 65-byte hex signature
+/// (viem/wagmi `signMessage` shape).
+fn sign(s: &PrivateKeySigner, message: &str) -> String {
+    let sig = s.sign_message_sync(message.as_bytes()).unwrap();
+    format!("0x{}", alloy::hex::encode(sig.as_bytes()))
+}
+
+/// Build the exact challenge message the gate/server expect (byte-compatible
+/// with `buildSealedMessage` in sealed.ts).
+fn challenge_message(listing_id: u64, nonce: &str, expiry_unix: u64) -> String {
+    format!(
+        "xvision sealed-bundle license request\nListing: {listing_id}\nNonce: {nonce}\nExpiry: {expiry_unix}"
+    )
+}
+
+/// GET the import-challenge for a listing and return `(nonce, expiry_unix)`.
+async fn get_challenge(server: &TestServer, listing_id: u64) -> (String, u64) {
+    let response = server
+        .get(&format!(
+            "/api/marketplace/listings/{listing_id}/import-challenge"
+        ))
+        .await;
+    response.assert_status_ok();
+    let body: Value = response.json();
+    let nonce = body["nonce"].as_str().unwrap().to_string();
+    let expiry = body["expiry_unix"].as_u64().unwrap();
+    (nonce, expiry)
+}
+
+#[tokio::test]
+async fn import_challenge_unknown_listing_is_404() {
+    let (server, _state, _tmp) = boot().await;
+    let response = server
+        .get("/api/marketplace/listings/99/import-challenge")
+        .await;
+    response.assert_status(StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn import_challenge_issues_nonce_and_message() {
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let response = server
+        .get("/api/marketplace/listings/1/import-challenge")
+        .await;
+    response.assert_status_ok();
+    let body: Value = response.json();
+    let nonce = body["nonce"].as_str().unwrap();
+    assert!(nonce.len() >= 8, "nonce must clear MIN_NONCE_LEN: {nonce}");
+    assert!(body["expiry_unix"].as_u64().unwrap() > 1_700_000_000);
+    // The returned message must be the exact byte string the client signs and
+    // embed the listing + the issued nonce.
+    let message = body["message"].as_str().unwrap();
+    assert!(message.starts_with("xvision sealed-bundle license request"), "{message}");
+    assert!(message.contains("Listing: 1"), "{message}");
+    assert!(message.contains(&format!("Nonce: {nonce}")), "{message}");
+}
+
+#[tokio::test]
+async fn import_sealed_missing_signature_is_400() {
+    // Body without `signature`/`message` must be rejected (serde requires them).
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let response = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&serde_json::json!({ "address": ALICE, "manifest": {} }))
+        .await;
+    response.assert_status(StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn import_sealed_wrong_signer_is_403() {
+    // The proof gate runs BEFORE the license gate: a signature from a DIFFERENT
+    // key than the claimed `address` must 403 at the proof stage — proving the
+    // proof runs first (a passing-proof request would 503 at the no-chain
+    // license gate instead).
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let (nonce, expiry) = get_challenge(&server, 1).await;
+
+    let buyer = buyer_signer();
+    // A different key signs the message, but the body claims buyer's address.
+    let attacker: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+            .parse()
+            .unwrap();
+    let message = challenge_message(1, &nonce, expiry);
+    let signature = sign(&attacker, &message);
+
+    let response = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&serde_json::json!({
+            "address": format!("{:#x}", buyer.address()),
+            "manifest": {},
+            "message": message,
+            "signature": signature,
+        }))
+        .await;
+    response.assert_status(StatusCode::FORBIDDEN);
+    let body: Value = response.json();
+    assert!(
+        body["message"].as_str().unwrap().contains("does not prove control"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn import_sealed_unknown_nonce_is_401() {
+    // A never-issued nonce → 401 (the proof itself is valid, but the nonce was
+    // never issued so it cannot be consumed).
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+
+    let buyer = buyer_signer();
+    let nonce = "deadbeefdeadbeefdeadbeefdeadbeef"; // never issued
+    let expiry = 9_999_999_999u64;
+    let message = challenge_message(1, nonce, expiry);
+    let signature = sign(&buyer, &message);
+
+    let response = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&serde_json::json!({
+            "address": format!("{:#x}", buyer.address()),
+            "manifest": {},
+            "message": message,
+            "signature": signature,
+        }))
+        .await;
+    response.assert_status(StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn import_sealed_replayed_nonce_is_401() {
+    // Issue one nonce, use it once (it reaches the proof + nonce-consume stage,
+    // then 503s at the no-chain license gate), then reuse the SAME nonce +
+    // signature → 401 (the nonce was already consumed). Proves single-use.
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let (nonce, expiry) = get_challenge(&server, 1).await;
+
+    let buyer = buyer_signer();
+    let message = challenge_message(1, &nonce, expiry);
+    let signature = sign(&buyer, &message);
+    let body = serde_json::json!({
+        "address": format!("{:#x}", buyer.address()),
+        "manifest": {},
+        "message": message,
+        "signature": signature,
+    });
+
+    // First use: passes the proof + consumes the nonce, then 503 at the
+    // no-chain license gate (proof ran, nonce is now spent).
+    let first = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&body)
+        .await;
+    first.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+
+    // Replay the identical request → 401, because the nonce is consumed.
+    let replay = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&body)
+        .await;
+    replay.assert_status(StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn import_sealed_valid_proof_passes_to_license_gate() {
+    // A valid signature from the claimed address over a fresh issued nonce gets
+    // PAST the proof stage and reaches the license gate, which 503s in the
+    // no-chain test env. The point: a good proof fails LATER (503) than a bad
+    // proof (403/401) — proving the signature stage accepts a correct proof.
+    let (server, state, _tmp) = boot().await;
+    inject_snapshot(&state, vec![sealed_listing(1, "ipfs://x", &"ab".repeat(32))]).await;
+    let (nonce, expiry) = get_challenge(&server, 1).await;
+
+    let buyer = buyer_signer();
+    let message = challenge_message(1, &nonce, expiry);
+    let signature = sign(&buyer, &message);
+
+    let response = server
+        .post("/api/marketplace/listings/1/import-sealed")
+        .json(&serde_json::json!({
+            "address": format!("{:#x}", buyer.address()),
+            "manifest": {},
+            "message": message,
+            "signature": signature,
+        }))
+        .await;
+    // 503 = passed the proof, stopped at the no-chain license gate.
     response.assert_status(StatusCode::SERVICE_UNAVAILABLE);
 }
