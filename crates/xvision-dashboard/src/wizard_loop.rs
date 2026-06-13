@@ -1895,6 +1895,9 @@ impl WizardLoop {
                         status,
                         limit: req.limit,
                         offset: req.offset,
+                        // bead-008: the wizard's eval-run list does not expose a
+                        // time filter — no `since` lower bound.
+                        since: None,
                     },
                 )
                 .await?;

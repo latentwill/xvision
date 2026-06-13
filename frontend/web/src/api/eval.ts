@@ -52,6 +52,10 @@ export type ListRunsParams = {
   limit?: number;
   /// Row offset. Server treats `undefined` as 0.
   offset?: number;
+  /// Inclusive lower bound on `started_at`, RFC-3339 (e.g.
+  /// `2026-06-06T00:00:00Z`). Backend returns rows WHERE
+  /// `started_at >= since`; absent/empty => no filter (bead-008).
+  since?: string;
 };
 
 export const evalKeys = {
@@ -68,13 +72,16 @@ export const evalKeys = {
       params?.status ?? "",
       params?.limit ?? null,
       params?.offset ?? null,
+      // Empty `since` is treated identically to absent so the default 'All'
+      // window collapses onto the unscoped key (no extra fetch on first paint).
+      params?.since || "",
     ] as const,
   run: (id: string) => [...evalKeys.all, "run", id] as const,
   compare: (ids: string[]) =>
     [...evalKeys.all, "compare", ids.join(",")] as const,
 };
 
-function buildRunsListUrl(params?: ListRunsParams): string {
+export function buildRunsListUrl(params?: ListRunsParams): string {
   const qs = new URLSearchParams();
   if (params?.agent_id) {
     qs.set("agent_id", params.agent_id);
@@ -90,6 +97,9 @@ function buildRunsListUrl(params?: ListRunsParams): string {
   }
   if (params?.offset !== undefined) {
     qs.set("offset", String(params.offset));
+  }
+  if (params?.since) {
+    qs.set("since", params.since);
   }
   const suffix = qs.size > 0 ? `?${qs.toString()}` : "";
   return `/api/eval/runs${suffix}`;

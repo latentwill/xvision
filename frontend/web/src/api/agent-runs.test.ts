@@ -5,6 +5,7 @@ import {
   fetchAgentRunBlob,
   getAgentRun,
   getAgentRunMemoryEvents,
+  listAgentRuns,
   openAgentRunStream,
   shouldUseMockAgentRuns,
   validateAgentRunDetail,
@@ -759,5 +760,51 @@ describe("normalizeAgentRunExport — broker.call projection", () => {
     for (const span of detail.spans) {
       expect(span.broker_call).toBeUndefined();
     }
+  });
+});
+
+// bead-008: listAgentRuns threads the `since` time-window param into the
+// `GET /api/agent-runs` query string (and only when present).
+describe("listAgentRuns — since (real-mode)", () => {
+  beforeEach(() => {
+    vi.stubEnv("VITE_USE_MOCK_AGENT_RUNS", "0");
+    vi.stubEnv("MODE", "production");
+    (vi.stubEnv as unknown as (k: string, v: boolean) => void)("DEV", false);
+    (vi.stubEnv as unknown as (k: string, v: boolean) => void)("PROD", true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  function mockRunsFetch() {
+    return vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ runs: [], total: 0 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+  }
+
+  test("omits since when not provided", async () => {
+    const fetchSpy = mockRunsFetch();
+    await listAgentRuns({ status: "running" });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).not.toContain("since=");
+  });
+
+  test("appends a URL-encoded since param", async () => {
+    const fetchSpy = mockRunsFetch();
+    await listAgentRuns({ since: "2026-06-06T00:00:00Z" });
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url).toContain("since=2026-06-06T00%3A00%3A00Z");
+  });
+
+  test("agentRunKeys.list varies on since", () => {
+    const a = agentRunKeys.list({ status: "running" });
+    const b = agentRunKeys.list({ status: "running", since: "2026-06-06T00:00:00Z" });
+    expect(b).not.toEqual(a);
   });
 });

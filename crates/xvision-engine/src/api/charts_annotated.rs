@@ -315,6 +315,7 @@ pub async fn build_annotated_live(store: &RunStore, symbol: &str) -> ApiResult<A
             status: None,
             limit: Some(50),
             offset: Some(0),
+            since: None,
         })
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;

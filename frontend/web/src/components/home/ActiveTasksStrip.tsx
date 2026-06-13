@@ -1,3 +1,14 @@
+// frontend/web/src/components/home/ActiveTasksStrip.tsx
+//
+// nsk BOUNDARY NOTE (Control Tower s78): this is the SINGLE home for per-run
+// live/paper ROWS once the CT5 LiveDeploymentSummary contract lands (bead n0k)
+// — each deployment's running P&L / last decision will render as rows here.
+// Today it shows only the eval QUEUE (in-flight eval runs + the optimizer
+// cycle); no live rows exist pre-CT5. The aggregate live COUNT ("N live")
+// lives in LiveSummaryStrip — that strip answers "how many are live?", this
+// one answers "what is each task doing now?". Do not duplicate the aggregate
+// live count here.
+//
 // Shows in-flight eval runs (queued | running) with elapsed time, stuck warning, cancel,
 // plus the running optimizer cycle (if any) with pause/resume controls (S0 / O2+O3).
 
