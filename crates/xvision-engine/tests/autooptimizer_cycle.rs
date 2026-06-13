@@ -82,6 +82,7 @@ async fn fresh_pool() -> sqlx::SqlitePool {
         include_str!("../migrations/036_agents_scope_strategy_id.sql"),
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
+        include_str!("../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
         include_str!("../migrations/039_run_trajectory_mode.sql"),
         include_str!("../migrations/040_trajectory_frames.sql"),
         include_str!("../migrations/041_chat_session_rail_state.sql"),

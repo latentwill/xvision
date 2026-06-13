@@ -50,6 +50,14 @@ pub async fn open_legacy_eval_run_context() -> (ApiContext, TempDir) {
         include_str!("../../migrations/015_eval_decisions_reasoning.sql"),
     )
     .await;
+    // CT5 migration 065: `source` + `unrealized_pnl_usd`, now projected by the
+    // shared `RunStore` SELECTs. Mirrors the precedent of carrying the
+    // shared-SELECT `live_config` column (038) into hand-picked legacy schemas.
+    execute_migration(
+        &pool,
+        include_str!("../../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
+    )
+    .await;
 
     let dir = tempfile::tempdir().expect("create test xvn_home");
     std::fs::create_dir_all(dir.path().join("strategies")).expect("create strategies dir");

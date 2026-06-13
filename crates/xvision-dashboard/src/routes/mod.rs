@@ -19,6 +19,7 @@ pub mod flywheel;
 pub mod focus;
 pub mod health;
 pub mod live_broker;
+pub mod live_deployments;
 pub mod marketplace;
 pub mod marketplace_auth;
 pub mod marketplace_read;
