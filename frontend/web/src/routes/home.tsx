@@ -45,6 +45,7 @@ import { StrategyLeaderboard } from "@/components/home/StrategyLeaderboard";
 import type { AttentionItem } from "@/components/home/NagStrip";
 import { chartKeys, getRunChart } from "@/api/chart";
 import { evalKeys, listRuns } from "@/api/eval";
+import { deploymentKeys, listDeployments } from "@/api/live-deployments";
 import { strategyKeys, listStrategies } from "@/api/strategies";
 import { getBrokers, listProviders, settingsKeys, testAlpacaConnection } from "@/api/settings";
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
@@ -78,6 +79,11 @@ const LIVENESS_PARAMS = { status: "running,queued", limit: 100 } as const;
 // In-flight eval runs for the deploy-readiness "no blocking eval" check —
 // same shape ActiveTasksStrip uses, so the stuck-run story stays consistent.
 const INFLIGHT_PARAMS = { status: "queued,running" } as const;
+
+// n0k/awm (CT5 §9): active live/paper deployments for the ActiveTasksStrip live
+// rows. Capital / P&L / drawdown come from THIS 5s poll (per-tick capital
+// streaming is deferred; CT5 §4), filtered to the active window.
+const DEPLOYMENTS_PARAMS = { status: "running,paused" } as const;
 
 export function HomeRoute() {
   const runs = useQuery({
@@ -142,6 +148,15 @@ export function HomeRoute() {
     queryKey: evalKeys.runs(INFLIGHT_PARAMS),
     queryFn: () => listRuns(INFLIGHT_PARAMS),
     refetchInterval: 10_000,
+  });
+
+  // n0k/awm: live/paper deployments for the ActiveTasksStrip live rows. 5s
+  // poll matches the CT5 contract (§3) — list membership AND the honest
+  // capital/P&L/drawdown fields both ride this poll.
+  const deployments = useQuery({
+    queryKey: deploymentKeys.list(DEPLOYMENTS_PARAMS),
+    queryFn: () => listDeployments(DEPLOYMENTS_PARAMS),
+    refetchInterval: 5_000,
   });
 
   // jlm: findings for the "since you were last here" delta. Shares the exact
@@ -239,6 +254,7 @@ export function HomeRoute() {
             strategies={strategies.data ?? []}
             nagItems={attentionItems}
             failedRunFindings={failedRunFindings(windowedRuns)}
+            deployments={deployments.data ?? []}
           />
         </div>
 
