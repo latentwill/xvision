@@ -1,6 +1,14 @@
 // frontend/web/src/components/home/NagStrip.tsx
 //
-// Muted config-nag strip — provider API keys and broker credentials only.
+// Muted nag strip rendering routed `AttentionItem` rows. Shape-agnostic: it
+// renders whatever `items` the caller composes, each as a tone-dot row with
+// an optional routed link. Today that is:
+//   - stale-infra-failure rows (failed runs sitting unresolved >2h; bead
+//     xvision-1zs, via `features/home/failed-runs.ts` `failedRunNags`), then
+//   - config nags — provider API keys and broker credentials.
+// home.tsx composes infra nags BEFORE config nags so the most actionable
+// "something upstream broke" rows lead. Suspicious failures do NOT come here
+// — they route to the Recent Findings surface (CriticalFindingsRow).
 // Renders at the bottom of the home page, below all other content.
 // Returns null when there are no nag items (clean state).
 

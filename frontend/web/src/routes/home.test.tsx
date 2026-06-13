@@ -7,6 +7,11 @@ import { HomeRoute } from "./home";
 import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as strategyApi from "@/api/strategies";
+import type { RunSummary } from "@/api/types.gen";
+import {
+  LAST_VISIT_LS,
+  __resetVisitSessionForTest,
+} from "@/features/home/last-visit";
 
 vi.mock("@/api/safety", () => ({
   safetyKeys: {
@@ -90,6 +95,13 @@ vi.mock("@/api/settings", () => ({
       credentials: [],
     },
   }),
+  testAlpacaConnection: vi.fn().mockResolvedValue({
+    ok: true,
+    latency_ms: 12,
+    account_status: "ACTIVE",
+    equity: null,
+    error: null,
+  }),
 }));
 
 function renderRoute() {
@@ -105,11 +117,52 @@ function renderRoute() {
   );
 }
 
+// Minimal completed RunSummary for the last-visit delta tests.
+function homeRun(over: Partial<RunSummary>): RunSummary {
+  return {
+    id: "run-1",
+    agent_id: "strat-1",
+    scenario_id: "scn-1",
+    strategy: null,
+    scenario: null,
+    mode: "backtest",
+    status: "completed",
+    started_at: "2026-06-13T00:30:00Z",
+    completed_at: "2026-06-13T01:00:00Z",
+    sharpe: 1.2,
+    max_drawdown_pct: 0.5,
+    total_return_pct: 0.1,
+    error: null,
+    actual_input_tokens: null,
+    actual_output_tokens: null,
+    inference_cost_quote_total: null,
+    net_return_pct: null,
+    filter_summaries: [],
+    auto_fire_review: false,
+    review_model: null,
+    max_annotations_per_review: null,
+    paused: false,
+    paused_at: null,
+    flatten_requested: false,
+    ...over,
+  };
+}
+
 describe("HomeRoute", () => {
   beforeEach(() => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
     vi.mocked(strategyApi.listStrategies).mockResolvedValue([]);
+    // Each test starts with a clean last-visit boundary; tests that exercise
+    // the populated delta seed localStorage explicitly. Reset the module-scoped
+    // page-load-session snapshot too, so each test's first render re-reads the
+    // (seeded or cleared) boundary instead of a frozen leftover.
+    try {
+      localStorage.clear();
+    } catch {
+      /* storage may be blocked in some environments */
+    }
+    __resetVisitSessionForTest();
   });
 
   it("renders the dashboard shell without the removed home chrome", async () => {
@@ -136,13 +189,38 @@ describe("HomeRoute", () => {
   });
 
   // CT0: home must not imply live trading exists (no agent_runs labeled as
-  // "Live strategies / Real money / active live deployments")
+  // "Live strategies / Real money / active live deployments"). The nsk
+  // reconcile keeps LiveSummaryStrip's honest aggregate COUNT ("N live") but
+  // forbids the old per-run "Live strategies" section copy.
   it("does not imply live trading exists on the home dashboard", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
 
     expect(screen.queryByText(/Real money/i)).toBeNull();
     expect(screen.queryByText(/active live deployments/i)).toBeNull();
+    // nsk: the deleted LiveStrategiesSection's "Live strategies" header must
+    // never come back — the only at-a-glance live surface is the aggregate
+    // LiveSummaryStrip ("Live trading"), not a per-run "Live strategies" list.
+    expect(screen.queryByText(/Live strategies/i)).toBeNull();
+  });
+
+  // nsk: exactly ONE at-a-glance live-owning surface exists on the home
+  // dashboard. LiveSummaryStrip is the aggregate count owner; ActiveTasksStrip
+  // is the future home for per-run live/paper ROWS (n0k/CT5) but renders no
+  // live rows today. There must be a single live-summary surface, never two
+  // competing live lists.
+  it("has exactly one at-a-glance live-owning surface", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-testid="live-summary-strip"]'),
+      ).not.toBeNull();
+    });
+    expect(
+      document.querySelectorAll('[data-testid="live-summary-strip"]'),
+    ).toHaveLength(1);
   });
 
   // Redesign: with nothing live, the execution chip must say so HONESTLY.
@@ -158,6 +236,81 @@ describe("HomeRoute", () => {
     expect(screen.getByTestId("execution-chip")).toHaveTextContent(
       /paper · no live capital deployed/i,
     );
+  });
+
+  // e17: the deploy-readiness strip mounts as its own slim safety-gate band,
+  // directly under the SafetyPauseBanner and ABOVE the pulse/attention bands.
+  it("renders the deploy-readiness strip above the pulse band", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const strip = await screen.findByTestId("deploy-readiness-strip");
+    const pulse = await screen.findByTestId("pulse-band");
+
+    // Strip precedes the pulse band in DOM order (it is a gate, not a nag).
+    expect(
+      strip.compareDocumentPosition(pulse) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  // jlm: the "since you were last here" delta subtitle renders in the Topbar
+  // sub slot (replacing the static strategy-count subtitle).
+  it("renders the home delta subtitle in the topbar", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    expect(await screen.findByTestId("home-delta-subtitle")).toBeInTheDocument();
+  });
+
+  // jlm read-before-write (end to end): seed a PRIOR boundary plus runs that
+  // completed after it; the first paint must show the non-zero delta since that
+  // boundary — not the value this visit is about to persist.
+  it("shows the non-zero delta since the prior visit on first paint", async () => {
+    localStorage.setItem(LAST_VISIT_LS, "2026-06-13T00:00:00Z");
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      homeRun({ id: "a", completed_at: "2026-06-13T01:00:00Z" }),
+      homeRun({ id: "b", completed_at: "2026-06-13T02:00:00Z" }),
+    ]);
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const sub = await screen.findByTestId("home-delta-subtitle");
+    await waitFor(() => expect(sub).toHaveTextContent(/2 runs/));
+    expect(sub).toHaveTextContent(/since you were last here/i);
+    expect(sub).not.toHaveTextContent(/welcome/i);
+  });
+
+  // jlm remount-safety: the prior-visit boundary is frozen for the page-load
+  // session, so an in-session remount (SPA nav away and back) still measures
+  // from the original boundary instead of collapsing to ~0 after this visit's
+  // write. The module session is NOT reset between the two renders here.
+  it("keeps the same baseline across an in-session remount", async () => {
+    localStorage.setItem(LAST_VISIT_LS, "2026-06-13T00:00:00Z");
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      homeRun({ id: "a", completed_at: "2026-06-13T01:00:00Z" }),
+      homeRun({ id: "b", completed_at: "2026-06-13T02:00:00Z" }),
+    ]);
+
+    const first = renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    await waitFor(() =>
+      expect(screen.getByTestId("home-delta-subtitle")).toHaveTextContent(
+        /2 runs/,
+      ),
+    );
+    first.unmount();
+
+    // First visit persisted "now" to storage; the remount must still read 2.
+    const second = renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    await waitFor(() =>
+      expect(screen.getByTestId("home-delta-subtitle")).toHaveTextContent(
+        /2 runs/,
+      ),
+    );
+    second.unmount();
   });
 
   // S1-W7: NagStrip renders (inside the attention band) when there are nag
@@ -240,11 +393,15 @@ describe("HomeRoute", () => {
     ).not.toBeNull();
   });
 
-  // S1-W2: Topbar subtitle shows strategy count
-  it("shows strategy count subtitle in topbar", async () => {
+  // jlm: the Topbar subtitle is now the honest "since you were last here"
+  // delta. On a first visit (no stored boundary) it shows the neutral welcome
+  // line rather than a "0 runs since…" non-event.
+  it("shows the neutral first-visit delta subtitle on a fresh boundary", async () => {
     renderRoute();
     await screen.findByRole("heading", { name: "Dashboard" });
-    expect(screen.getByText("0 strategies")).toBeInTheDocument();
+    expect(await screen.findByTestId("home-delta-subtitle")).toHaveTextContent(
+      /welcome/i,
+    );
   });
 
   // Reachability gate: the optimizer last-run digest must actually be MOUNTED
@@ -270,12 +427,16 @@ describe("HomeRoute", () => {
 
     await screen.findByRole("heading", { name: "Dashboard" });
     expect(await screen.findByText(/Last run:/)).toBeInTheDocument();
-    expect(screen.getByText(/12 experiments/)).toBeInTheDocument();
+    // zn2 reshaped the digest so the count and the word "experiments" live in
+    // adjacent spans; assert on the strip's full text rather than a single
+    // contiguous text node.
+    const digest = document.querySelector(
+      '[data-testid="optimizer-digest-strip"]',
+    )!;
+    expect(digest.textContent).toMatch(/12\s*experiments/);
     // Mounted inside the Optimizer panel.
     expect(
-      document
-        .querySelector('[data-testid="optimizer-digest-strip"]')!
-        .closest('[data-testid="optimizer-panel"]'),
+      digest.closest('[data-testid="optimizer-panel"]'),
     ).not.toBeNull();
   });
 

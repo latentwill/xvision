@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { MutatorScore, StatsRow } from "@/features/autooptimizer/api";
 import {
+  bestHoldoutDelta,
+  costAnomaly,
   cumulativeSpendUsd,
   cycleTrend,
   ladderTotals,
   lastCycle,
+  rollingAcceptanceRate,
   shortModelName,
   topWriters,
 } from "./optimizer-summary";
@@ -129,5 +132,161 @@ describe("lastCycle", () => {
 
   it("returns null for empty stats", () => {
     expect(lastCycle([])).toBeNull();
+  });
+});
+
+// ─── zn2: FE-derivable digest slices (acceptance rate / holdout Δ / cost) ─────
+
+describe("rollingAcceptanceRate", () => {
+  const NOW = new Date("2026-06-13T00:00:00Z");
+
+  it("computes kept / (kept+suspect+dropped) over the 30d window", () => {
+    const rows = [
+      stat({ ts: "2026-06-10T00:00:00Z", kept: 3, suspect: 1, dropped: 0 }),
+      stat({ ts: "2026-06-11T00:00:00Z", kept: 1, suspect: 0, dropped: 4 }),
+    ];
+    // kept 4 / total 9 = 0.444…
+    const r = rollingAcceptanceRate(rows, { now: NOW });
+    expect(r.rate).toBeCloseTo(4 / 9, 6);
+    expect(r.kept).toBe(4);
+    expect(r.total).toBe(9);
+  });
+
+  it("excludes rows older than the 30d window", () => {
+    const rows = [
+      // 40 days before NOW — out of window, must not count
+      stat({ ts: "2026-05-04T00:00:00Z", kept: 100, suspect: 0, dropped: 0 }),
+      stat({ ts: "2026-06-12T00:00:00Z", kept: 1, suspect: 0, dropped: 1 }),
+    ];
+    const r = rollingAcceptanceRate(rows, { now: NOW });
+    expect(r.total).toBe(2);
+    expect(r.kept).toBe(1);
+    expect(r.rate).toBeCloseTo(0.5, 6);
+  });
+
+  it("returns null rate (0 denominator) when no in-window cycles produced candidates", () => {
+    const rows = [stat({ ts: "2026-06-12T00:00:00Z", kept: 0, suspect: 0, dropped: 0 })];
+    const r = rollingAcceptanceRate(rows, { now: NOW });
+    expect(r.rate).toBeNull();
+    expect(r.total).toBe(0);
+    expect(r.degraded).toBe(false);
+  });
+
+  it("returns null rate for an empty window", () => {
+    const r = rollingAcceptanceRate([], { now: NOW });
+    expect(r.rate).toBeNull();
+    expect(r.degraded).toBe(false);
+  });
+
+  it("flags degradation when the recent half's rate drops well below the older half", () => {
+    // older half (4 cycles) mostly kept; recent half (4 cycles) mostly dropped.
+    const rows = [
+      stat({ ts: "2026-06-01T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
+      stat({ ts: "2026-06-02T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
+      stat({ ts: "2026-06-03T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
+      stat({ ts: "2026-06-04T00:00:00Z", kept: 4, suspect: 0, dropped: 0 }),
+      stat({ ts: "2026-06-10T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
+      stat({ ts: "2026-06-11T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
+      stat({ ts: "2026-06-12T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
+      stat({ ts: "2026-06-13T00:00:00Z", kept: 0, suspect: 0, dropped: 4 }),
+    ];
+    const r = rollingAcceptanceRate(rows, { now: NOW });
+    expect(r.degraded).toBe(true);
+  });
+
+  it("does not flag degradation when the recent half holds up", () => {
+    const rows = [
+      stat({ ts: "2026-06-01T00:00:00Z", kept: 2, suspect: 0, dropped: 2 }),
+      stat({ ts: "2026-06-02T00:00:00Z", kept: 2, suspect: 0, dropped: 2 }),
+      stat({ ts: "2026-06-12T00:00:00Z", kept: 2, suspect: 0, dropped: 2 }),
+      stat({ ts: "2026-06-13T00:00:00Z", kept: 2, suspect: 0, dropped: 2 }),
+    ];
+    const r = rollingAcceptanceRate(rows, { now: NOW });
+    expect(r.degraded).toBe(false);
+  });
+});
+
+describe("bestHoldoutDelta", () => {
+  it("returns the max best_delta_holdout across rows", () => {
+    const rows = [
+      stat({ best_delta_holdout: 0.12 }),
+      stat({ best_delta_holdout: 0.41 }),
+      stat({ best_delta_holdout: -0.05 }),
+    ];
+    expect(bestHoldoutDelta(rows)).toBeCloseTo(0.41, 6);
+  });
+
+  it("skips null/undefined deltas (unpriced or pre-gate cycles)", () => {
+    const rows = [
+      stat({ best_delta_holdout: null }),
+      stat({ best_delta_holdout: 0.2 }),
+      stat({ best_delta_holdout: undefined as unknown as number }),
+    ];
+    expect(bestHoldoutDelta(rows)).toBeCloseTo(0.2, 6);
+  });
+
+  it("returns null when no row carries a finite delta", () => {
+    expect(bestHoldoutDelta([])).toBeNull();
+    expect(bestHoldoutDelta([stat({ best_delta_holdout: null })])).toBeNull();
+  });
+
+  it("can return a negative best when all deltas are negative", () => {
+    const rows = [
+      stat({ best_delta_holdout: -0.3 }),
+      stat({ best_delta_holdout: -0.1 }),
+    ];
+    expect(bestHoldoutDelta(rows)).toBeCloseTo(-0.1, 6);
+  });
+});
+
+describe("costAnomaly", () => {
+  it("flags the current cycle as anomalous when its cost far exceeds the trailing median", () => {
+    // trailing median of [0.10, 0.12, 0.11, 0.09] ≈ 0.105; current 0.80 ≫ 2×median.
+    const rows = [
+      stat({ ts: "2026-06-09T00:00:00Z", cost_usd: 0.1 }),
+      stat({ ts: "2026-06-10T00:00:00Z", cost_usd: 0.12 }),
+      stat({ ts: "2026-06-11T00:00:00Z", cost_usd: 0.11 }),
+      stat({ ts: "2026-06-12T00:00:00Z", cost_usd: 0.09 }),
+      stat({ ts: "2026-06-13T00:00:00Z", cost_usd: 0.8 }),
+    ];
+    const a = costAnomaly(rows);
+    expect(a.anomalous).toBe(true);
+    expect(a.currentUsd).toBeCloseTo(0.8, 6);
+    expect(a.medianUsd).toBeCloseTo(0.105, 6);
+  });
+
+  it("does not flag when the current cost is in line with the trailing median", () => {
+    const rows = [
+      stat({ ts: "2026-06-11T00:00:00Z", cost_usd: 0.1 }),
+      stat({ ts: "2026-06-12T00:00:00Z", cost_usd: 0.12 }),
+      stat({ ts: "2026-06-13T00:00:00Z", cost_usd: 0.11 }),
+    ];
+    const a = costAnomaly(rows);
+    expect(a.anomalous).toBe(false);
+  });
+
+  it("returns a non-anomalous result with null median when there is no trailing history", () => {
+    const a = costAnomaly([stat({ cost_usd: 0.5 })]);
+    expect(a.anomalous).toBe(false);
+    expect(a.medianUsd).toBeNull();
+    expect(a.currentUsd).toBeCloseTo(0.5, 6);
+  });
+
+  it("returns nulls for an empty stats list", () => {
+    const a = costAnomaly([]);
+    expect(a.anomalous).toBe(false);
+    expect(a.currentUsd).toBeNull();
+    expect(a.medianUsd).toBeNull();
+  });
+
+  it("never flags when the trailing median is zero (no division blow-up)", () => {
+    const rows = [
+      stat({ ts: "2026-06-11T00:00:00Z", cost_usd: 0 }),
+      stat({ ts: "2026-06-12T00:00:00Z", cost_usd: 0 }),
+      stat({ ts: "2026-06-13T00:00:00Z", cost_usd: 0.5 }),
+    ];
+    const a = costAnomaly(rows);
+    expect(a.anomalous).toBe(false);
+    expect(a.medianUsd).toBe(0);
   });
 });

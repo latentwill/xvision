@@ -185,4 +185,124 @@ describe("CriticalFindingsRow", () => {
     // (the function itself slices to maxRuns=3 internally)
     expect(evalReviewApi.listCriticalFindings).toHaveBeenCalledWith(runs);
   });
+
+  // ─── suspicious-failed-run merge (bead xvision-1zs) ────────────────────────
+
+  function renderRowWithFailures(
+    runs: RunSummary[],
+    failedRunFindings: Parameters<
+      typeof CriticalFindingsRow
+    >[0]["failedRunFindings"],
+  ) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <CriticalFindingsRow
+            runs={runs}
+            failedRunFindings={failedRunFindings}
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("renders suspicious failed-run chips routed to the run", async () => {
+    vi.mocked(evalReviewApi.listCriticalFindings).mockResolvedValue([]);
+
+    renderRowWithFailures(
+      [makeRun("run-1")],
+      [
+        {
+          id: "failed-run:run-99",
+          runId: "run-99",
+          strategyName: "Mean Reversion",
+          summary: "strategy produced no decisions for any cycle",
+        },
+      ],
+    );
+
+    await screen.findByText("strategy produced no decisions for any cycle");
+    expect(screen.getByText("Mean Reversion")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /view run/i });
+    expect(link).toHaveAttribute("href", "/eval-runs/run-99");
+  });
+
+  it("orders human-reviewed criticals BEFORE suspicious failed runs", async () => {
+    vi.mocked(evalReviewApi.listCriticalFindings).mockResolvedValue([
+      makeFinding("f-1", "critical", "Human reviewed critical", "run-1", "Alpha"),
+    ]);
+
+    renderRowWithFailures(
+      [makeRun("run-1", "Alpha")],
+      [
+        {
+          id: "failed-run:run-77",
+          runId: "run-77",
+          strategyName: "Beta",
+          summary: "panic in scoring",
+        },
+      ],
+    );
+
+    await screen.findByText("Human reviewed critical");
+    const reviewed = screen.getByText("Human reviewed critical");
+    const failed = screen.getByText("panic in scoring");
+    // The reviewed-critical chip precedes the failed-run chip in DOM order.
+    expect(
+      reviewed.compareDocumentPosition(failed) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("renders suspicious failures even when there are no reviewed criticals", async () => {
+    vi.mocked(evalReviewApi.listCriticalFindings).mockResolvedValue([]);
+
+    renderRowWithFailures(
+      [makeRun("run-1")],
+      [
+        {
+          id: "failed-run:run-55",
+          runId: "run-55",
+          summary: "unexpected null in equity curve",
+        },
+      ],
+    );
+
+    await screen.findByText("unexpected null in equity curve");
+    // The empty-state copy must NOT show when a failed-run chip is present.
+    expect(
+      screen.queryByText(/no critical findings in recent runs/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render a failed-run chip section when no failures supplied", async () => {
+    vi.mocked(evalReviewApi.listCriticalFindings).mockResolvedValue([]);
+
+    renderRowWithFailures([makeRun("run-1")], []);
+
+    await screen.findByText(/no critical findings in recent runs/i);
+    expect(screen.queryByRole("link", { name: /view run/i })).toBeNull();
+  });
+
+  it("renders no dialog/modal (chips inline, no popups)", async () => {
+    vi.mocked(evalReviewApi.listCriticalFindings).mockResolvedValue([]);
+
+    renderRowWithFailures(
+      [makeRun("run-1")],
+      [{ id: "failed-run:r", runId: "r", summary: "boom" }],
+    );
+
+    await screen.findByText("boom");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("backward compatible: failedRunFindings prop is optional", async () => {
+    vi.mocked(evalReviewApi.listCriticalFindings).mockResolvedValue([]);
+
+    renderRow([makeRun("run-1")]);
+    await screen.findByText(/no critical findings in recent runs/i);
+  });
 });
