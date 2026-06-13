@@ -1107,16 +1107,10 @@ impl Executor {
                 let history_start = combined_idx.saturating_sub(history_window);
                 let history_slice: &[&Ohlcv] = &combined_bars[history_start..combined_idx];
                 // F-8: optional rolling-window cap. `None` preserves the
-                // pre-022 wire shape; `Some(n)` trims to the most-recent
-                // `n` entries — when the slice is already smaller we
-                // send everything that's there.
-                let history_slice: &[&Ohlcv] = match bar_history_limit {
-                    Some(n) if (n as usize) < history_slice.len() => {
-                        let take = n as usize;
-                        &history_slice[history_slice.len() - take..]
-                    }
-                    _ => history_slice,
-                };
+                // pre-022 wire shape; `Some(n)` trims to the most-recent `n`
+                // entries. Shared with the live loop via `bar_history_limit_offset`.
+                let history_slice: &[&Ohlcv] =
+                    &history_slice[bar_history_limit_offset(history_slice.len(), bar_history_limit)..];
                 let source_window_start = history_slice
                     .first()
                     .map(|b| b.timestamp)
@@ -3457,13 +3451,10 @@ impl Executor {
         let history_slice: Vec<&Ohlcv> = {
             let start = history.len().saturating_sub(history_window);
             let slice = &history[start..];
-            match bar_history_limit {
-                Some(n) if (n as usize) < slice.len() => {
-                    let take = n as usize;
-                    slice[slice.len() - take..].iter().collect()
-                }
-                _ => slice.iter().collect(),
-            }
+            // F-8 cap shared with the backtest loop via `bar_history_limit_offset`.
+            slice[bar_history_limit_offset(slice.len(), bar_history_limit)..]
+                .iter()
+                .collect()
         };
         let source_window_start = history_slice
             .first()
@@ -5243,6 +5234,19 @@ impl<'a> DecisionSeedInput<'a> {
     }
 }
 
+/// Leading entries to drop from an already-windowed history slice to honor the
+/// optional F-8 rolling-window cap (`Some(n)` keeps the most-recent `n`;
+/// `None` keeps all). Shared by the backtest and live decision loops so this
+/// truncation math can't drift between them. Returns an offset (zero-alloc) so
+/// each loop slices its own container — backtest holds `&[&Ohlcv]`, the live
+/// loop owns `&[Ohlcv]` and collects, and neither is forced to allocate here.
+fn bar_history_limit_offset(len: usize, limit: Option<u32>) -> usize {
+    match limit {
+        Some(n) if (n as usize) < len => len - n as usize,
+        _ => 0,
+    }
+}
+
 /// Build the trader seed JSON for one decision cycle. F-6: `Causal`
 /// drops `decision_index` and top-level `timestamp`, while Raw/Oracle
 /// keep the pre-F-6 shape.
@@ -5326,9 +5330,10 @@ fn ohlcv_to_json(bar: &Ohlcv, policy: InputsPolicy) -> serde_json::Value {
     }
 }
 
-/// Build the `bar_history` slice. Mirror of `paper::build_bar_history`
-/// — kept in lock-step so the two executor paths produce identical
-/// JSON under the same policy.
+/// Build the `bar_history` JSON array for the trader seed. The backtest and
+/// live decision loops both call this one function, so their `bar_history`
+/// payloads are identical under the same policy by construction (there is no
+/// separate `paper` module anymore — it was folded into this module).
 fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::Value> {
     match policy {
         InputsPolicy::Raw | InputsPolicy::Oracle => bars.iter().map(|b| ohlcv_to_json(b, policy)).collect(),
@@ -5349,9 +5354,9 @@ fn build_bar_history(bars: &[&Ohlcv], policy: InputsPolicy) -> Vec<serde_json::V
     }
 }
 
-/// Mirror of `paper::resolve_inputs_policy`. Sourced from the
-/// trader-role `ResolvedAgentSlot`; defaults to `Raw` so legacy
-/// strategy shapes (no attached agents) keep today's behavior.
+/// Resolve the trader's `InputsPolicy` from the trader-role
+/// `ResolvedAgentSlot`; defaults to `Raw` so legacy strategy shapes (no
+/// attached agents) keep today's behavior. Used by both decision loops.
 fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
     agent_slots
         .iter()
@@ -5360,7 +5365,8 @@ fn resolve_inputs_policy(agent_slots: &[ResolvedAgentSlot]) -> InputsPolicy {
         .unwrap_or(InputsPolicy::Raw)
 }
 
-/// Mirror of `paper::resolve_bar_history_limit`. F-8 per-trader cap.
+/// Resolve the F-8 per-trader `bar_history_limit` cap from the trader-role
+/// `ResolvedAgentSlot`. Used by both decision loops.
 fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
     agent_slots
         .iter()
@@ -5371,6 +5377,17 @@ fn resolve_bar_history_limit(agent_slots: &[ResolvedAgentSlot]) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The F-8 truncation math is shared by the backtest and live decision
+    /// loops via `bar_history_limit_offset`; pin it so the two can't drift.
+    #[test]
+    fn bar_history_limit_offset_shared_truncation() {
+        assert_eq!(bar_history_limit_offset(10, None), 0); // no cap → keep all
+        assert_eq!(bar_history_limit_offset(3, Some(5)), 0); // cap >= len → keep all
+        assert_eq!(bar_history_limit_offset(5, Some(5)), 0); // cap == len → keep all
+        assert_eq!(bar_history_limit_offset(10, Some(4)), 6); // keep most-recent 4
+        assert_eq!(bar_history_limit_offset(10, Some(0)), 10); // cap 0 → drop all
+    }
 
     // Updated because <reason>: `SimulateFillArgs` gained new fields for the
     // V2E cost-model rewrite (bar_volume, spread_bps, slippage_model,
