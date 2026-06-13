@@ -31,6 +31,12 @@ pub enum DashboardError {
     /// asserted wallet). 403.
     #[error("forbidden: {0}")]
     Forbidden(String),
+    /// The caller failed to authenticate the request — e.g. a replayed or
+    /// expired single-use import challenge nonce, or a signed license message
+    /// that fails binding/freshness validation (lane cgz, sealed import
+    /// proof-of-address). 401.
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
     /// A required external dependency (e.g. chain RPC env config) is not
     /// available; the route degrades loudly with 503 rather than guessing.
     #[error("service unavailable: {0}")]
@@ -96,6 +102,11 @@ impl IntoResponse for DashboardError {
             DashboardError::Forbidden(m) => (
                 StatusCode::FORBIDDEN,
                 Json(json!({ "code": "forbidden", "message": m.clone() })),
+            )
+                .into_response(),
+            DashboardError::Unauthorized(m) => (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "code": "unauthorized", "message": m.clone() })),
             )
                 .into_response(),
             DashboardError::ServiceUnavailable(m) => (

@@ -163,6 +163,7 @@
 //  R68. GET  /api/marketplace/receipts/:tx_hash
 //  R69. GET  /api/marketplace/listings/:id/bundle
 //  R70. GET  /api/marketplace/listings/:id/attestations
+//  R70b. GET /api/marketplace/listings/:id/import-challenge (sealed proof nonce)
 //  R71. GET  /api/live/venue-account     (live venue status snapshot)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
@@ -496,6 +497,14 @@ fn readonly_router(state: AppState) -> Router {
         .route(
             "/api/marketplace/listings/:id/attestations",
             get(marketplace_read_route::get_attestations),
+        )
+        // Sealed-import proof-of-address challenge (lane cgz): issue a fresh,
+        // single-use, time-bounded nonce + the exact message the buyer signs.
+        // 404 unknown listing. The nonce alone grants nothing — it is only
+        // useful with a valid signature + license at import-sealed.
+        .route(
+            "/api/marketplace/listings/:id/import-challenge",
+            get(marketplace_route::get_import_challenge),
         )
         .with_state(state)
 }

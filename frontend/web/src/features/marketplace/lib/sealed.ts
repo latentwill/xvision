@@ -99,11 +99,33 @@ export function buildSealedMessage(params: {
   ].join("\n");
 }
 
-/** 32-byte random hex nonce (no 0x prefix) for the signed message. */
-export function randomSealedNonce(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+/**
+ * Response of `GET /api/marketplace/listings/:id/import-challenge` (lane cgz):
+ * a fresh, server-issued, single-use, time-bounded nonce plus the EXACT byte
+ * string the client must `personal_sign`. The server owns the nonce so it can
+ * enforce single-use server-side (the Lit gate is deliberately stateless and
+ * cannot detect replays) — the client signs the SERVER's `message`, not a
+ * self-minted one, so the same signature proves address control at BOTH the
+ * Lit gate and the server's import-sealed proof check.
+ */
+export interface ImportChallenge {
+  nonce: string;
+  expiry_unix: number;
+  message: string;
+}
+
+/**
+ * Fetch a server-issued import challenge for `listingId`. The returned
+ * `message` embeds the listing id, the server nonce, and an expiry, and is the
+ * exact string to `personal_sign`. 404 → the listing is not in the indexed
+ * snapshot (surfaced as an ApiError by `apiFetch`).
+ */
+export async function fetchImportChallenge(
+  listingId: string | number,
+): Promise<ImportChallenge> {
+  return apiFetch<ImportChallenge>(
+    `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/import-challenge`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -264,14 +286,35 @@ function gateErrorDetail(response: unknown): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Decrypt a sealed bundle's ciphertext into its plaintext manifest object.
+ * The decrypted manifest PLUS the proof-of-address the caller must replay to
+ * the server's import-sealed route (lane cgz). `message`/`signature` are the
+ * SERVER-issued challenge string and its `personal_sign`; the server recovers
+ * the signer, requires it to equal the wallet address, validates the message
+ * binding/freshness, and consumes the nonce single-use.
+ */
+export interface DecryptedSealedBundle {
+  manifest: Record<string, unknown>;
+  /** The server-issued challenge message that was signed. */
+  message: string;
+  /** EIP-191 `personal_sign` of `message` by the connected wallet. */
+  signature: string;
+}
+
+/**
+ * Decrypt a sealed bundle's ciphertext into its plaintext manifest object AND
+ * return the proof-of-address (server-issued `message` + `signature`) so the
+ * caller can replay it to import-sealed (lane cgz).
  *
  * Flow:
  *   1. Fetch Lit + contracts config from /api/marketplace/status.
  *      (throws SealedNotConfiguredError when `lit` is null.)
  *   2. Resolve the connected wallet (throws WalletRequiredError if none).
- *   3. Build a fresh, listing-bound, 10-minute message; personal_sign it.
- *   4. Invoke the pinned gate action with the ciphertext + signature.
+ *   3. Fetch a SERVER-issued challenge (`GET …/import-challenge`): a fresh,
+ *      single-use, time-bounded nonce + the exact message to sign. Signing the
+ *      server's string (not a self-minted nonce) is what lets the server
+ *      enforce single-use replay defense — the Lit gate stays stateless.
+ *   4. personal_sign the server's message; invoke the pinned gate action with
+ *      the ciphertext + signature.
  *   5. JSON.parse the returned plaintext; sanity-check it's an object.
  *      (Integrity authority is the server's import-sealed 409 hash recheck —
  *      see the module header. We do NOT recompute the canonical hash here.)
@@ -279,7 +322,7 @@ function gateErrorDetail(response: unknown): string {
 export async function decryptSealedBundle(params: {
   listingId: string | number;
   ciphertext: string;
-}): Promise<Record<string, unknown>> {
+}): Promise<DecryptedSealedBundle> {
   const { listingId, ciphertext } = params;
 
   const status = await apiFetch<SealedStatusOut>("/api/marketplace/status");
@@ -295,9 +338,11 @@ export async function decryptSealedBundle(params: {
   const address = await currentAddress();
   if (!address) throw new WalletRequiredError();
 
-  const nonce = randomSealedNonce();
-  const expirySec = Math.floor(Date.now() / 1000) + 600;
-  const message = buildSealedMessage({ listingId, nonce, expirySec });
+  // Server-issued single-use nonce challenge (lane cgz). The server owns the
+  // nonce; we sign its canonical `message` so the SAME signature proves address
+  // control at the Lit gate AND at the server's import-sealed proof check.
+  const challenge = await fetchImportChallenge(listingId);
+  const message = challenge.message;
 
   const signature = await walletClient().signMessage({ account: address, message });
 
@@ -321,5 +366,5 @@ export async function decryptSealedBundle(params: {
   if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw new SealedGateError("Decrypted bundle is not a manifest object.");
   }
-  return manifest as Record<string, unknown>;
+  return { manifest: manifest as Record<string, unknown>, message, signature };
 }

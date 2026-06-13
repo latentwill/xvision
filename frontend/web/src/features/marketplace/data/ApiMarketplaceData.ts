@@ -143,7 +143,10 @@ export async function importSealedListing(
   if (!bundle.encrypted || !bundle.ciphertext) {
     throw new Error("Listing is not a sealed bundle.");
   }
-  const manifest = await decryptSealedBundle({
+  // decrypt also returns the server-issued challenge `message` + its
+  // `signature` (lane cgz): the server re-recovers the signer, requires it to
+  // equal `address`, and consumes the single-use nonce before granting import.
+  const { manifest, message, signature } = await decryptSealedBundle({
     listingId,
     ciphertext: bundle.ciphertext,
   });
@@ -151,7 +154,7 @@ export async function importSealedListing(
   if (!address) throw new WalletRequiredError();
   return apiFetch<{ agent_id: string }>(
     `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/import-sealed`,
-    { method: "POST", body: JSON.stringify({ address, manifest }) },
+    { method: "POST", body: JSON.stringify({ address, manifest, message, signature }) },
   );
 }
 
