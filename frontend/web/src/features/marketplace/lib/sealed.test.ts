@@ -50,6 +50,28 @@ function stubStatus(over?: { lit?: LitConfig | null; license_token?: string | nu
   });
 }
 
+const NONCE = "3f9a1c8e7b2d40563f9a1c8e7b2d4056";
+const EXPIRY = 1_760_000_000;
+
+/**
+ * Queue the server-issued import-challenge as the NEXT apiFetch call (lane
+ * cgz). decryptSealedBundle calls apiFetch twice: status, then challenge — the
+ * `mockResolvedValueOnce` here takes priority over the `stubStatus` default for
+ * exactly one call (the challenge fetch), so callers do `stubStatus();
+ * stubChallenge(listingId);`.
+ */
+function stubChallenge(listingId: number, nonce = NONCE, expiry = EXPIRY) {
+  mockedApiFetch.mockResolvedValueOnce({
+    lit: LIT,
+    contracts: { license_token: LICENSE_TOKEN },
+  }); // 1st call: status
+  mockedApiFetch.mockResolvedValueOnce({
+    nonce,
+    expiry_unix: expiry,
+    message: `xvision sealed-bundle license request\nListing: ${listingId}\nNonce: ${nonce}\nExpiry: ${expiry}`,
+  }); // 2nd call: import-challenge
+}
+
 function stubWalletSign(sig = ("0x" + "ab".repeat(65)) as `0x${string}`) {
   const signMessage = vi.fn().mockResolvedValue(sig);
   mockedWalletClient.mockReturnValue({ signMessage } as never);
@@ -185,8 +207,8 @@ describe("invokeGateAction", () => {
 
 // ── decryptSealedBundle flow ────────────────────────────────────────────────
 describe("decryptSealedBundle", () => {
-  it("happy path: signs, invokes the gate, parses the manifest object", async () => {
-    stubStatus();
+  it("fetches the server challenge, signs IT, invokes the gate, returns manifest + proof", async () => {
+    stubChallenge(42);
     mockedAddress.mockResolvedValue(ADDR);
     const signMessage = stubWalletSign();
     const fetchMock = vi.fn().mockResolvedValue({
@@ -198,13 +220,24 @@ describe("decryptSealedBundle", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const manifest = await decryptSealedBundle({ listingId: 42, ciphertext: "CT" });
-    expect(manifest).toEqual({ name: "Strat", agents: [] });
+    const out = await decryptSealedBundle({ listingId: 42, ciphertext: "CT" });
+    expect(out.manifest).toEqual({ name: "Strat", agents: [] });
 
-    // signed message is listing-bound and uses the canonical header
+    // The SERVER-issued challenge message is what gets signed (lane cgz): the
+    // client signs the server's nonce, not a self-minted one.
+    const expectedMsg = `xvision sealed-bundle license request\nListing: 42\nNonce: ${NONCE}\nExpiry: ${EXPIRY}`;
     const signedMsg = signMessage.mock.calls[0][0].message as string;
-    expect(signedMsg).toMatch(/^xvision sealed-bundle license request\nListing: 42\nNonce: /);
-    expect(signedMsg).toMatch(/\nExpiry: \d+$/);
+    expect(signedMsg).toBe(expectedMsg);
+    // The proof returned for replay to import-sealed is the server message +
+    // the wallet signature.
+    expect(out.message).toBe(expectedMsg);
+    expect(out.signature).toBe("0x" + "ab".repeat(65));
+
+    // The challenge was fetched from the server route.
+    expect(mockedApiFetch).toHaveBeenNthCalledWith(
+      2,
+      "/api/marketplace/listings/42/import-challenge",
+    );
 
     // jsParams carry the ciphertext, license token, pkp, signature
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
@@ -216,6 +249,7 @@ describe("decryptSealedBundle", () => {
       address: ADDR,
       nftAddress: LICENSE_TOKEN,
       listingId: "42",
+      message: expectedMsg,
     });
   });
 
@@ -237,7 +271,7 @@ describe("decryptSealedBundle", () => {
 
   it("throws SealedNotConfiguredError when the client key is unset", async () => {
     vi.stubEnv("VITE_LIT_CLIENT_KEY", "");
-    stubStatus();
+    stubChallenge(1);
     mockedAddress.mockResolvedValue(ADDR);
     stubWalletSign();
     await expect(
@@ -246,7 +280,7 @@ describe("decryptSealedBundle", () => {
   });
 
   it("propagates a gate {error} as SealedGateError", async () => {
-    stubStatus();
+    stubChallenge(1);
     mockedAddress.mockResolvedValue(ADDR);
     stubWalletSign();
     vi.stubGlobal(
@@ -265,7 +299,7 @@ describe("decryptSealedBundle", () => {
   });
 
   it("rejects a decrypted payload that is not a JSON object", async () => {
-    stubStatus();
+    stubChallenge(1);
     mockedAddress.mockResolvedValue(ADDR);
     stubWalletSign();
     vi.stubGlobal(
