@@ -56,6 +56,7 @@ function brokers(over: Partial<BrokersReport> = {}): BrokersReport {
   return {
     alpaca: broker(),
     orderly: broker({ name: "Orderly Network", kind: "orderly", configured: false }),
+    byreal: broker({ name: "Byreal", kind: "byreal", configured: false }),
     ...over,
   };
 }
