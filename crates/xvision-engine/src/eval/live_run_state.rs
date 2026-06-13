@@ -28,6 +28,14 @@ pub struct LiveRunState {
     pub risk_veto_count: i64,
     pub last_decision_at: Option<String>,
     pub updated_at: String,
+    /// Daily-loss budget in USD = kill_pct × initial capital. `None` when
+    /// the strategy has no kill percentage configured (kill_pct == 0.0).
+    /// Unlocks the strip's buffer %-gradient (remaining / budget).
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock deadline (RFC-3339) = started_at + time_limit_secs. `None`
+    /// when the stop policy is bar- or decision-bounded (no wall-clock ETA).
+    /// Unlocks awm's ETA display.
+    pub stop_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -46,8 +54,9 @@ impl LiveStateStore {
              (run_id, strategy_id, strategy_name, deployed_capital_usd, equity_usd, \
               unrealized_pnl_usd, realized_pnl_usd, realized_today_usd, \
               daily_loss_remaining_usd, drawdown_pct, peak_equity_usd, \
-              risk_veto_count, last_decision_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+              risk_veto_count, last_decision_at, updated_at, \
+              daily_loss_budget_usd, stop_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(run_id) DO UPDATE SET \
               strategy_id=excluded.strategy_id, strategy_name=excluded.strategy_name, \
               deployed_capital_usd=excluded.deployed_capital_usd, equity_usd=excluded.equity_usd, \
@@ -56,7 +65,9 @@ impl LiveStateStore {
               daily_loss_remaining_usd=excluded.daily_loss_remaining_usd, \
               drawdown_pct=excluded.drawdown_pct, peak_equity_usd=excluded.peak_equity_usd, \
               risk_veto_count=excluded.risk_veto_count, last_decision_at=excluded.last_decision_at, \
-              updated_at=excluded.updated_at",
+              updated_at=excluded.updated_at, \
+              daily_loss_budget_usd=excluded.daily_loss_budget_usd, \
+              stop_at=excluded.stop_at",
         )
         .bind(&s.run_id)
         .bind(&s.strategy_id)
@@ -72,6 +83,8 @@ impl LiveStateStore {
         .bind(s.risk_veto_count)
         .bind(&s.last_decision_at)
         .bind(&s.updated_at)
+        .bind(s.daily_loss_budget_usd)
+        .bind(&s.stop_at)
         .execute(&self.pool)
         .await
         .with_context(|| format!("upsert live_run_state run_id={}", s.run_id))?;

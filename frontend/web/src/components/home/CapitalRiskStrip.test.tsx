@@ -33,6 +33,8 @@ function dep(over: Partial<LiveDeploymentSummary>): LiveDeploymentSummary {
     unrealized_pnl_usd: null,
     drawdown_pct: null,
     daily_loss_limit_remaining_usd: null,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     risk_veto_count_since_last_visit: null,
     paused: false,
     flatten_requested: false,

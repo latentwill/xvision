@@ -137,6 +137,14 @@ pub struct LiveDeploymentSummary {
     /// kill policy or no day baseline yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_loss_limit_remaining_usd: Option<f64>,
+    /// Daily-loss budget denominator for buffer percentage. `None` when no
+    /// daily-loss kill policy exists or the budget is not yet sourced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock stop deadline (RFC3339). `None` when the stop policy is not
+    /// time-bounded or the deadline is not yet sourced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_at: Option<String>,
     /// Count of risk vetoes since the operator's last visit. `None` until
     /// last-visit tracking lands (Wave 5) — render `None`, not `0`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -178,6 +186,10 @@ pub struct ExecutionTruth {
     /// Headroom before the daily-loss kill. `None` ⇒ no kill policy / day
     /// baseline.
     pub daily_loss_limit_remaining_usd: Option<f64>,
+    /// Daily-loss budget denominator for the strip's buffer percentage.
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock deadline for time-bounded stop policies.
+    pub stop_at: Option<String>,
     /// Live reachability probe. `false` ⇒ capital fields are forced `null`.
     pub venue_connected: bool,
     /// Why the venue is unavailable / no snapshot (connection-as-data).
@@ -277,6 +289,8 @@ pub fn project_deployment(run: Run, truth: ExecutionTruth) -> LiveDeploymentSumm
         unrealized_pnl_usd: run.unrealized_pnl_usd,
         drawdown_pct,
         daily_loss_limit_remaining_usd,
+        daily_loss_budget_usd: truth.daily_loss_budget_usd,
+        stop_at: truth.stop_at,
         // Wave 5: last-visit tracking. `None` until then (never a faked `0`).
         risk_veto_count_since_last_visit: None,
         paused: run.paused,

@@ -75,6 +75,16 @@ drawdown_pct: number | null,
  */
 daily_loss_limit_remaining_usd: number | null,
 /**
+ * Daily-loss budget denominator for buffer percentage. `None` when no
+ * daily-loss kill policy exists or the budget is not yet sourced.
+ */
+daily_loss_budget_usd: number | null,
+/**
+ * Wall-clock stop deadline (RFC3339). `None` when the stop policy is not
+ * time-bounded or the deadline is not yet sourced.
+ */
+stop_at: string | null,
+/**
  * Count of risk vetoes since the operator's last visit. `None` until
  * last-visit tracking lands (Wave 5) — render `None`, not `0`.
  */

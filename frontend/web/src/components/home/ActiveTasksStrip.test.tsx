@@ -168,6 +168,8 @@ function makeDeployment(
     unrealized_pnl_usd: 42.5,
     drawdown_pct: 1.0,
     daily_loss_limit_remaining_usd: 500,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     risk_veto_count_since_last_visit: null,
     paused: false,
     flatten_requested: false,
