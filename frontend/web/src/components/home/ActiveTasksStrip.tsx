@@ -15,7 +15,16 @@
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cancelRun, evalKeys, listRuns } from "@/api/eval";
+import { liveDeploymentKeys, listLiveDeployments } from "@/api/live-deployments";
 import type { RunSummary } from "@/api/types.gen";
+import type { LiveDeploymentSummary } from "@/api/types.gen/LiveDeploymentSummary";
+import type { VenueLabel } from "@/api/safety";
+import { VenueBadge } from "@/components/primitives/VenueBadge";
+import {
+  runningPnl,
+  formatUsd,
+  type RiskTone,
+} from "@/features/live/deployment-risk";
 import {
   useOptimizerStatus,
   usePauseCycle,
@@ -24,6 +33,33 @@ import {
 } from "@/features/autooptimizer/api";
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+function toneClass(tone: RiskTone): string {
+  switch (tone) {
+    case "gold":    return "text-gold";
+    case "warn":    return "text-warn";
+    case "danger":  return "text-danger";
+    case "neutral": return "";
+  }
+}
+
+/** Format a last_decision_at timestamp as "decided N ago" (e.g. "decided 3m ago"). */
+function formatDecisionAgo(lastDecisionAt: string | null): string {
+  if (!lastDecisionAt) return "no decisions yet";
+  const ms = Date.now() - new Date(lastDecisionAt).getTime();
+  if (ms < 0) return "decided just now";
+  const totalSecs = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
+  if (hours > 0) {
+    return `decided ${hours}h ${mins}m ago`;
+  }
+  if (mins > 0) {
+    return `decided ${mins}m ago`;
+  }
+  return `decided ${secs}s ago`;
+}
 
 function formatElapsed(startedAt: string | null | undefined): string {
   if (!startedAt) return "—";
@@ -54,6 +90,50 @@ function statusPillClass(status: string): string {
     default:
       return "bg-surface-elev text-text-3";
   }
+}
+
+/**
+ * n0k: one live (paper/testnet) deployment row in the Active tasks strip.
+ * Shows: strategy name link → VenueBadge → last-decision relative time → running P&L.
+ * HONESTY: VenueBadge always present (paper/testnet — never live money).
+ *          P&L is simulated; null P&L → "—".
+ */
+function LiveDeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
+  const name = dep.strategy_name ?? "—";
+  const decisionText = formatDecisionAgo(dep.last_decision_at);
+  const p = runningPnl(dep);
+  const pnlText = p.value !== null ? `${p.glyph} ${formatUsd(p.value)}` : "—";
+
+  return (
+    <div
+      data-testid={`live-deployment-row-${dep.deployment_id}`}
+      className="flex items-center gap-3 py-2 px-3 rounded-md hover:bg-surface-hover transition-colors min-w-0"
+    >
+      {/* Strategy name → eval run detail (deployment_id maps to eval run id) */}
+      <Link
+        to={`/eval-runs/${dep.deployment_id}`}
+        className="text-[13px] font-medium text-text hover:underline truncate min-w-0 flex-1"
+      >
+        {name}
+      </Link>
+
+      {/* Venue badge — always paper or testnet (honesty mandate) */}
+      <VenueBadge label={dep.venue_label as VenueLabel} />
+
+      {/* Last decision time */}
+      <span className="shrink-0 text-[12px] text-text-3">
+        {decisionText}
+      </span>
+
+      {/* Running P&L — glyph + sign + value, colored by tone. Never color alone. */}
+      <span
+        key={String(p.value)}
+        className={`xvn-num-pop shrink-0 text-[12px] font-mono font-semibold tabular-nums ${toneClass(p.tone)}`}
+      >
+        {pnlText}
+      </span>
+    </div>
+  );
 }
 
 function RunRow({ run }: { run: RunSummary }) {
@@ -186,6 +266,13 @@ export function ActiveTasksStrip() {
     refetchInterval: 5_000,
   });
 
+  // n0k (CT5): running live/paper deployments — each renders as a LiveDeploymentRow.
+  const liveDeployments = useQuery({
+    queryKey: liveDeploymentKeys.list({ status: "running" }),
+    queryFn: () => listLiveDeployments({ status: "running" }),
+    refetchInterval: 5_000,
+  });
+
   // S0 / O2: the running optimizer cycle belongs in Active tasks too.
   const status = useOptimizerStatus();
   const session = status?.active_session ?? null;
@@ -198,15 +285,18 @@ export function ActiveTasksStrip() {
     (r) => r.status === "queued" || r.status === "running",
   );
 
-  // While the eval list is still loading AND there's no optimizer cycle to show,
-  // skip render entirely. A live cycle should surface even before evals load.
-  if (data === undefined && !showCycle) return null;
+  const liveRows = liveDeployments.data ?? [];
 
-  const total = inflight.length + (showCycle ? 1 : 0);
+  // While the eval list is still loading AND there's no optimizer cycle or live
+  // deployments to show, skip render entirely. Live rows should surface even
+  // before evals load.
+  if (data === undefined && !showCycle && liveRows.length === 0) return null;
+
+  const total = inflight.length + liveRows.length + (showCycle ? 1 : 0);
 
   // CT2: never render a permanent empty card above the fold. Once the eval list
-  // has loaded and there is nothing in flight (and no optimizer cycle), the
-  // panel renders nothing at all.
+  // has loaded and there is nothing in flight (and no optimizer cycle, no live
+  // deployments), the panel renders nothing at all.
   if (data !== undefined && total === 0) return null;
 
   return (
@@ -224,6 +314,9 @@ export function ActiveTasksStrip() {
         )}
         {inflight.map((run) => (
           <RunRow key={run.id} run={run} />
+        ))}
+        {liveRows.map((dep) => (
+          <LiveDeploymentRow key={dep.deployment_id} dep={dep} />
         ))}
       </div>
     </div>

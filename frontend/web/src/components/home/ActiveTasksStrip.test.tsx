@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import * as evalApi from "@/api/eval";
+import * as liveDeploymentsApi from "@/api/live-deployments";
 import type { RunSummary } from "@/api/types.gen";
+import type { LiveDeploymentSummary } from "@/api/types.gen/LiveDeploymentSummary";
 import { ActiveTasksStrip } from "./ActiveTasksStrip";
 
 vi.mock("@/api/eval", async () => {
@@ -16,6 +18,16 @@ vi.mock("@/api/eval", async () => {
     ...actual,
     listRuns: vi.fn(),
     cancelRun: vi.fn(),
+  };
+});
+
+vi.mock("@/api/live-deployments", async () => {
+  const actual = await vi.importActual<typeof import("@/api/live-deployments")>(
+    "@/api/live-deployments",
+  );
+  return {
+    ...actual,
+    listLiveDeployments: vi.fn(),
   };
 });
 
@@ -104,6 +116,36 @@ function renderStrip() {
     </MemoryRouter>,
   );
 }
+
+function makeLiveDeployment(
+  overrides: Partial<LiveDeploymentSummary> = {},
+): LiveDeploymentSummary {
+  return {
+    deployment_id: "dep-1",
+    strategy_id: "strat-1",
+    strategy_name: "PaperAlpha",
+    venue_label: "paper",
+    status: "running",
+    paused: false,
+    started_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    last_decision_at: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+    deployed_capital_usd: 10000,
+    equity_usd: 10200,
+    realized_pnl_usd: 50,
+    unrealized_pnl_usd: 150,
+    realized_today_usd: 50,
+    drawdown_pct: 2,
+    daily_loss_limit_remaining_usd: 500,
+    risk_veto_count: 0,
+    ...overrides,
+  };
+}
+
+// Default: each test starts with an empty live-deployments list so existing
+// eval-only tests don't need to be touched.
+beforeEach(() => {
+  vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([]);
+});
 
 afterEach(() => {
   cleanup();
@@ -251,5 +293,144 @@ describe("ActiveTasksStrip", () => {
 
     await screen.findByTestId("active-tasks-strip");
     expect(screen.queryByTestId("active-optimizer-cycle")).toBeNull();
+  });
+});
+
+// ─── n0k: live deployment rows in ActiveTasksStrip ───────────────────────────
+
+describe("ActiveTasksStrip — live deployment rows (n0k)", () => {
+  it("renders a LiveDeploymentRow with VenueBadge, last-decision text, and P&L", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({
+        deployment_id: "dep-abc",
+        strategy_name: "PaperAlpha",
+        venue_label: "paper",
+        // realized_today_usd=50, unrealized_pnl_usd=150 → runningPnl = +200 → gold ▲
+        realized_today_usd: 50,
+        unrealized_pnl_usd: 150,
+        last_decision_at: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+      }),
+    ]);
+
+    renderStrip();
+
+    const row = await screen.findByTestId("live-deployment-row-dep-abc");
+    expect(row).toBeInTheDocument();
+
+    // VenueBadge
+    expect(row.querySelector("[data-testid='venue-badge-paper']")).not.toBeNull();
+
+    // Strategy name link
+    const link = screen.getByRole("link", { name: /PaperAlpha/i });
+    expect(link).toHaveAttribute("href", "/eval-runs/dep-abc");
+
+    // Last decision (3 minutes ago)
+    expect(row.textContent).toMatch(/decided.*ago/i);
+
+    // P&L: gold tone, ▲ glyph, $200
+    expect(row.textContent).toContain("▲");
+    expect(row.textContent).toContain("$200");
+  });
+
+  it("shows 'no decisions yet' when last_decision_at is null", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-nodec", last_decision_at: null }),
+    ]);
+
+    renderStrip();
+
+    const row = await screen.findByTestId("live-deployment-row-dep-nodec");
+    expect(row.textContent).toMatch(/no decisions yet/i);
+  });
+
+  it("shows '—' P&L when both P&L components are null (neutral tone)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({
+        deployment_id: "dep-nopnl",
+        unrealized_pnl_usd: null,
+        realized_today_usd: null,
+      }),
+    ]);
+
+    renderStrip();
+
+    const row = await screen.findByTestId("live-deployment-row-dep-nopnl");
+    // The P&L element should show —
+    expect(row.textContent).toContain("—");
+  });
+
+  it("danger glyph (▼) when P&L is negative", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({
+        deployment_id: "dep-loss",
+        unrealized_pnl_usd: -300,
+        realized_today_usd: -100,
+      }),
+    ]);
+
+    renderStrip();
+
+    const row = await screen.findByTestId("live-deployment-row-dep-loss");
+    expect(row.textContent).toContain("▼");
+    expect(row.textContent).toContain("$400");
+  });
+
+  it("includes live deployment in the total count", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeRun({ id: "run-1", status: "running" }),
+    ]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-1" }),
+    ]);
+
+    renderStrip();
+
+    // 1 eval run + 1 live deployment = 2 in flight
+    await screen.findByTestId("active-tasks-strip");
+    expect(screen.getByText(/2 in flight/i)).toBeInTheDocument();
+  });
+
+  it("does NOT show empty state when there are no eval runs but there is a live deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-only" }),
+    ]);
+
+    const { container } = renderStrip();
+
+    await screen.findByTestId("live-deployment-row-dep-only");
+    // The strip renders (not null)
+    expect(screen.getByTestId("active-tasks-strip")).toBeInTheDocument();
+    // No empty-state text
+    expect(container.textContent).not.toMatch(/nothing active/i);
+    expect(container.textContent).not.toMatch(/no active tasks/i);
+  });
+
+  it("renders live rows AFTER eval rows", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeRun({ id: "run-first", status: "running", strategy: { id: "s1", display_name: "EvalRun" } }),
+    ]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-second", strategy_name: "LiveRow" }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-deployment-row-dep-second");
+    const strip = screen.getByTestId("active-tasks-strip");
+    const allText = strip.textContent ?? "";
+    // EvalRun should appear before LiveRow in the rendered output
+    expect(allText.indexOf("EvalRun")).toBeLessThan(allText.indexOf("LiveRow"));
   });
 });
