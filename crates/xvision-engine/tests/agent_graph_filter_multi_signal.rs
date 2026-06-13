@@ -167,7 +167,6 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
             edges: Vec::new(),
         },
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

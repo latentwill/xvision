@@ -41,13 +41,6 @@ fn fixture_strategy() -> Strategy {
             provider: None,
             model: None,
         }),
-        intern_slot: Some(LLMSlot {
-            role: "intern".into(),
-            attested_with: "mock".into(),
-            allowed_tools: vec!["ohlcv".into()],
-            provider: None,
-            model: None,
-        }),
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "mock".into(),
@@ -122,12 +115,11 @@ fn request_text(req: &LlmRequest) -> String {
 }
 
 #[tokio::test]
-async fn three_slot_pipeline_chains_outputs() {
+async fn two_slot_pipeline_chains_outputs() {
     let strategy = fixture_strategy();
     let dispatch = Arc::new(RecordingDispatch::sequence(vec![
         text_response(r#"{"stage":"regime","regime_id":"range-bound-42"}"#),
-        text_response(r#"{"stage":"intern","briefing_id":"briefing-77"}"#),
-        text_response(r#"{"action":"hold","conviction":0.12,"justification":"uses briefing-77"}"#),
+        text_response(r#"{"action":"hold","conviction":0.12,"justification":"uses range-bound-42"}"#),
     ]));
     let pipeline_dispatch: Arc<dyn LlmDispatch> = dispatch.clone();
     let tools = Arc::new(ToolRegistry::default_with_builtins());
@@ -165,28 +157,18 @@ async fn three_slot_pipeline_chains_outputs() {
         Some(r#"{"stage":"regime","regime_id":"range-bound-42"}"#)
     );
     assert_eq!(
-        outs.intern.as_ref().map(LlmResponse::text).as_deref(),
-        Some(r#"{"stage":"intern","briefing_id":"briefing-77"}"#)
-    );
-    assert_eq!(
         outs.trader.as_ref().map(LlmResponse::text).as_deref(),
-        Some(r#"{"action":"hold","conviction":0.12,"justification":"uses briefing-77"}"#)
+        Some(r#"{"action":"hold","conviction":0.12,"justification":"uses range-bound-42"}"#)
     );
     assert!(outs.total_input_tokens > 0);
     assert!(outs.total_output_tokens > 0);
 
     let requests = dispatch.requests();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 2);
 
-    let intern_request = request_text(&requests[1]);
-    assert!(intern_request.contains("regime_output"));
-    assert!(intern_request.contains("range-bound-42"));
-
-    let trader_request = request_text(&requests[2]);
+    let trader_request = request_text(&requests[1]);
     assert!(trader_request.contains("regime_output"));
     assert!(trader_request.contains("range-bound-42"));
-    assert!(trader_request.contains("intern_output"));
-    assert!(trader_request.contains("briefing-77"));
 }
 
 #[tokio::test]
@@ -225,7 +207,6 @@ async fn skips_missing_optional_slots() {
     .await
     .unwrap();
     assert!(outs.regime.is_none());
-    assert!(outs.intern.is_some());
     assert!(outs.trader.is_some());
 }
 
@@ -233,7 +214,6 @@ async fn skips_missing_optional_slots() {
 async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
     let mut strategy = fixture_strategy();
     strategy.regime_slot = None;
-    strategy.intern_slot = None;
     strategy.trader_slot = None;
     strategy.pipeline = PipelineDef::sequential();
     let agent_slots = vec![
@@ -309,7 +289,6 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
     .await
     .unwrap();
     assert!(outs.regime.is_none());
-    assert!(outs.intern.is_none());
     assert!(outs.trader.is_some());
     assert!(outs.total_input_tokens > 0);
 }
@@ -318,7 +297,6 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
 async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() {
     let mut strategy = fixture_strategy();
     strategy.regime_slot = None;
-    strategy.intern_slot = None;
     strategy.trader_slot = None;
     strategy.pipeline = PipelineDef::sequential();
     let agent_slots = vec![

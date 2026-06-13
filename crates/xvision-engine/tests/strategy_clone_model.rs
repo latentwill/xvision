@@ -156,7 +156,6 @@ fn seed_strategy(id: &str, agent_id: &str) -> Strategy {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

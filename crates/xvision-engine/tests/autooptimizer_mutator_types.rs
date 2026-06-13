@@ -50,7 +50,7 @@ fn is_empty_reflects_content() {
     let with_prose = MutationDiff {
         kind: MutationKind::Prose,
         prose: vec![ProseEdit {
-            agent_role: "intern".into(),
+            agent_role: "trader".into(),
             before: "a".into(),
             after: "b".into(),
         }],

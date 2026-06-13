@@ -217,7 +217,6 @@ fn minimal_strategy(agent_id: &str) -> Strategy {
         agents: Vec::new(),
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "anthropic.claude-sonnet-4.6+".into(),

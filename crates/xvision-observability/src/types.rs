@@ -302,7 +302,7 @@ pub struct SpanAttributes {
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// Slot role label ("regime" / "intern" / "trader" / free-form
+    /// Slot role label ("regime" / "trader" / free-form
     /// per strategy). Sourced from `LLMSlot.role` at the engine
     /// dispatch site.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -412,7 +412,7 @@ mod span_attributes_tests {
         let attrs = SpanAttributes {
             run_id: Some("r".into()),
             agent_id: Some("a".into()),
-            stage: Some("intern".into()),
+            stage: Some("trader".into()),
             model: Some("m".into()),
             provider: Some("p".into()),
             tool_name: Some("get_quote".into()),

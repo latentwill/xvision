@@ -206,7 +206,7 @@ export function TraceDock() {
 
   // F-7 (qa round 7): the Trade quick-filter is enabled iff the run
   // carries at least one broker.call span. When the executor stage
-  // hasn't emitted a broker submit (intern-only runs, planning runs,
+  // hasn't emitted a broker submit (briefing-only runs, planning runs,
   // or any cycle that never reached the trader's APPROVED branch) the
   // button is rendered disabled — the affordance still exists so the
   // operator knows it's a first-class concept, but a click would be a

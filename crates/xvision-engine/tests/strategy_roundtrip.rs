@@ -37,7 +37,6 @@ fn sample_strategy() -> Strategy {
             provider: None,
             model: None,
         }),
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "anthropic.claude-sonnet-4.6".into(),
@@ -122,7 +121,6 @@ fn strategy_roundtrip() {
     let parsed: Strategy = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.manifest.template, "mean_reversion");
     assert!(parsed.regime_slot.is_some());
-    assert!(parsed.intern_slot.is_none());
     assert!(parsed.trader_slot.is_some());
 }
 
@@ -138,7 +136,6 @@ fn valid_strategy_passes() {
 fn strategy_without_any_llm_slot_fails() {
     let mut strategy = sample_strategy();
     strategy.regime_slot = None;
-    strategy.intern_slot = None;
     strategy.trader_slot = None;
     let err = validate_strategy(&strategy).unwrap_err();
     assert!(matches!(err, ValidationError::NoAgents));

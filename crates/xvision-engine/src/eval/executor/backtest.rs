@@ -458,11 +458,7 @@ impl Executor {
     /// never blocks or aborts the trading loop. The concrete
     /// `xvision-identity` implementation is injected here from the dashboard,
     /// which keeps the engine free of a hard identity dependency.
-    pub fn with_attest_hook(
-        mut self,
-        hook: Arc<dyn super::attest_hook::AttestHook>,
-        every_n: u32,
-    ) -> Self {
+    pub fn with_attest_hook(mut self, hook: Arc<dyn super::attest_hook::AttestHook>, every_n: u32) -> Self {
         self.attest_hook = Some(hook);
         self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
@@ -5856,7 +5852,6 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),

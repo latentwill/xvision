@@ -8032,12 +8032,10 @@ dependencies = [
  "xvision-filters",
  "xvision-harness",
  "xvision-identity",
- "xvision-intern",
  "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
  "xvision-risk",
- "xvision-trader",
 ]
 
 [[package]]
@@ -8196,10 +8194,8 @@ dependencies = [
  "uuid",
  "xvision-core",
  "xvision-execution",
- "xvision-intern",
  "xvision-observability",
  "xvision-risk",
- "xvision-trader",
 ]
 
 [[package]]
@@ -8264,22 +8260,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "uuid",
- "xvision-core",
-]
-
-[[package]]
-name = "xvision-intern"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "chrono",
- "garde",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
  "uuid",
  "xvision-core",
 ]
@@ -8378,24 +8358,6 @@ dependencies = [
  "tracing",
  "uuid",
  "xvision-core",
-]
-
-[[package]]
-name = "xvision-trader"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "chrono",
- "garde",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
- "xvision-core",
- "xvision-intern",
 ]
 
 [[package]]

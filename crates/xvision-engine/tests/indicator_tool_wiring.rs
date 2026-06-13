@@ -192,7 +192,6 @@ fn strategy_with_required_tools(required: Vec<String>) -> Strategy {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: json!({}),

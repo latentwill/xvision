@@ -53,7 +53,7 @@ pub struct OptimizationRun {
     pub agent_id: String,
     /// Free-text slot/role label within the agent.
     pub slot_name: String,
-    /// Capability key: `trader`, `filter`, `decision_grader`, `intern`, `chat_authoring`.
+    /// Capability key: `trader`, `filter`, `decision_grader`, `chat_authoring`.
     pub capability: String,
     /// Optimizer name: `mipro`, `gepa`, `copro`.
     pub optimizer: String,

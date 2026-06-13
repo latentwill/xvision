@@ -679,7 +679,7 @@ pub async fn execute_slot<'a>(input: SlotInput<'a>) -> anyhow::Result<LlmRespons
                     // on typed data rather than free-form blobs.
                     //
                     // * Flat/hold decisions are skipped — no episodic signal.
-                    // * Non-JSON responses (intern/risk slots) fall back to raw text.
+                    // * Non-JSON responses (regime/risk slots) fall back to raw text.
                     // * IndicatorSnapshot is unavailable here; executor-level U5
                     //   writes carry the full indicator context.
                     let memory_text: String = {
@@ -1137,7 +1137,7 @@ mod tests {
 
     #[test]
     fn non_trader_slots_do_not_force_the_trader_schema() {
-        assert!(response_schema_for_slot(&slot("intern")).is_none());
+        assert!(response_schema_for_slot(&slot("regime")).is_none());
     }
 
     /// Dispatch double that captures the last `LlmRequest` it saw so we

@@ -270,7 +270,6 @@ async fn list_returns_summaries_for_existing_strategys() {
         agents: Vec::new(),
         pipeline: xvision_engine::strategies::PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

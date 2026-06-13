@@ -91,7 +91,6 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: json!({}),

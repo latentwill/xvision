@@ -588,13 +588,9 @@ fn single_executable_provider_model(strategy: &Strategy, agents: &[Agent]) -> Op
     let mut pairs: Vec<(String, String)> = Vec::new();
 
     if strategy.agents.is_empty() {
-        for slot in [
-            strategy.regime_slot.as_ref(),
-            strategy.intern_slot.as_ref(),
-            strategy.trader_slot.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
+        for slot in [strategy.regime_slot.as_ref(), strategy.trader_slot.as_ref()]
+            .into_iter()
+            .flatten()
         {
             pairs.push(provider_model_pair(
                 slot.provider.as_deref(),
@@ -810,7 +806,6 @@ mod roundtrip {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: Some(slot),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
@@ -1320,7 +1315,6 @@ mod provider_attestation {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
                 attested_with: attested_with.into(),

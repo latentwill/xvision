@@ -77,12 +77,12 @@ pub enum ProviderKind {
     Vllm,
 }
 
-impl From<InternProvider> for ProviderKind {
-    fn from(p: InternProvider) -> Self {
+impl From<DefaultLlmProvider> for ProviderKind {
+    fn from(p: DefaultLlmProvider) -> Self {
         match p {
-            InternProvider::Anthropic => Self::Anthropic,
-            InternProvider::OpenaiCompat => Self::OpenaiCompat,
-            InternProvider::LocalCandle => Self::LocalCandle,
+            DefaultLlmProvider::Anthropic => Self::Anthropic,
+            DefaultLlmProvider::OpenaiCompat => Self::OpenaiCompat,
+            DefaultLlmProvider::LocalCandle => Self::LocalCandle,
         }
     }
 }
@@ -212,12 +212,11 @@ pub struct RuntimeConfig {
     #[garde(dive)]
     pub providers: Vec<ProviderEntry>,
     /// Optional workspace-level default LLM (used by chat-rail, wizard, and
-    /// any agent slot that doesn't override its own provider/model). Accepts
-    /// `[default_llm]` (canonical) or `[intern]` (legacy alias kept for one
-    /// release for backward compatibility with existing user configs).
-    #[serde(default, alias = "intern")]
+    /// any agent slot that doesn't override its own provider/model). Configured
+    /// via `[default_llm]` in the TOML config.
+    #[serde(default)]
     #[garde(skip)]
-    pub default_llm: Option<Intern>,
+    pub default_llm: Option<DefaultLlmConfig>,
     #[garde(dive)]
     pub trader: Trader,
     #[garde(dive)]
@@ -287,9 +286,9 @@ pub enum ExecutorKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Validate, Serialize, Deserialize)]
-pub struct Intern {
+pub struct DefaultLlmConfig {
     #[garde(skip)]
-    pub provider: InternProvider,
+    pub provider: DefaultLlmProvider,
     #[garde(skip)]
     pub base_url: String,
     #[garde(length(min = 1))]
@@ -307,7 +306,7 @@ pub struct Intern {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum InternProvider {
+pub enum DefaultLlmProvider {
     Anthropic,
     OpenaiCompat,
     LocalCandle,
@@ -956,7 +955,7 @@ kind = "openai-compat"
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 api_key_env = "GEMINI_API_KEY"
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"
@@ -1018,7 +1017,7 @@ mode = "backtest"
 executor = "alpaca"
 random_seed = 42
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"
@@ -1066,7 +1065,7 @@ mode = "backtest"
 executor = "alpaca"
 random_seed = 42
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"
@@ -1151,7 +1150,7 @@ mode = "backtest"
 executor = "alpaca"
 random_seed = 42
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"
@@ -1366,7 +1365,7 @@ kind = "openai-compat"
 base_url = "http://localhost:11434/v1"
 api_key_env = ""
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "claude-haiku-4-5"
@@ -1517,7 +1516,7 @@ kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "claude-haiku-4-5"
@@ -1574,7 +1573,7 @@ kind = "openai-compat"
 base_url = "https://b.example"
 api_key_env = "B"
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"
@@ -1628,7 +1627,7 @@ kind = "anthropic"
 base_url = "https://a.example"
 api_key_env = "A"
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"
@@ -1697,7 +1696,7 @@ mode = "backtest"
 executor = "alpaca"
 random_seed = 42
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"

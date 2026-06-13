@@ -107,7 +107,6 @@ fn fixture_strategy(agents: Vec<AgentRef>, kind: PipelineKind, edges: Vec<Pipeli
         agents,
         pipeline: PipelineDef { kind, edges },
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -126,7 +125,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, kind: PipelineKind, edges: Vec<Pipeli
 async fn router_jumps_pipeline_forward_to_target_index() {
     // Three-agent Sequential pipeline: Router → (skipped) → Trader.
     // Router selects target_agent_ref_index=2 (Trader), so the middle
-    // agent (also a Critic stub here) is skipped entirely.
+    // agent (a Filter stub here) is skipped entirely.
     let agents = vec![
         AgentRef {
             agent_id: "01HZR".into(),
@@ -137,8 +136,8 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         },
         AgentRef {
             agent_id: "01HZC".into(),
-            role: "critic_middle".into(),
-            activates: Some(Capability::Critic),
+            role: "middle_agent".into(),
+            activates: Some(Capability::Filter),
             prompt_override: None,
             model_override: None,
         },
@@ -151,9 +150,9 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         },
     ];
     let strategy = fixture_strategy(agents, PipelineKind::Sequential, Vec::new());
-    let slots = vec![resolved("router"), resolved("critic_middle"), resolved("trader")];
+    let slots = vec![resolved("router"), resolved("middle_agent"), resolved("trader")];
 
-    // Router output → Trader output. Critic is a stub (no LLM call).
+    // Router output → Trader output. Middle agent (Filter) is a stub (no LLM call).
     let dispatch = Arc::new(QueueDispatch::new(vec![
         text_response(r#"{"target_agent_ref_index": 2}"#),
         text_response(r#"{"action":"hold","conviction":0.1,"justification":"r"}"#),
@@ -185,8 +184,7 @@ async fn router_jumps_pipeline_forward_to_target_index() {
     .expect("pipeline runs");
 
     // Exactly two LLM calls: one for Router, one for Trader. The
-    // Critic agent in the middle was skipped because the Router jumped
-    // to index 2.
+    // middle agent was skipped because the Router jumped to index 2.
     let requests = dispatch.requests();
     assert_eq!(
         requests.len(),

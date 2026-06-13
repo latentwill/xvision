@@ -48,7 +48,9 @@ use ulid::Ulid;
 
 use tokio::io::AsyncWriteExt;
 
-use xvision_core::config::{self, ConfigError, InternProvider, ProviderEntry, ProviderKind, RuntimeConfig};
+use xvision_core::config::{
+    self, ConfigError, DefaultLlmProvider, ProviderEntry, ProviderKind, RuntimeConfig,
+};
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, MockDispatch, OpenaiCompatDispatch};
 use xvision_engine::api::memory;
 use xvision_engine::api::{Actor, ApiContext};
@@ -1789,11 +1791,11 @@ fn default_runtime_config_path(xvn_home: Option<&Path>) -> CliResult<PathBuf> {
     Ok(home.join("config").join("default.toml"))
 }
 
-fn provider_entry_from_default_llm(default_llm: &xvision_core::config::Intern) -> ProviderEntry {
+fn provider_entry_from_default_llm(default_llm: &xvision_core::config::DefaultLlmConfig) -> ProviderEntry {
     let name = match default_llm.provider {
-        InternProvider::Anthropic => "anthropic",
-        InternProvider::OpenaiCompat => "openai-compat",
-        InternProvider::LocalCandle => "local-candle",
+        DefaultLlmProvider::Anthropic => "anthropic",
+        DefaultLlmProvider::OpenaiCompat => "openai-compat",
+        DefaultLlmProvider::LocalCandle => "local-candle",
     };
     ProviderEntry {
         name: name.into(),

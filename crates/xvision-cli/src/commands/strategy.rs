@@ -1341,7 +1341,6 @@ async fn new_atomic(
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: xvision_engine::strategies::risk::RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
@@ -2757,7 +2756,6 @@ async fn migrate_agents(dry_run: bool) -> CliResult<()> {
             PipelineDef::sequential()
         };
         strategy.regime_slot = None;
-        strategy.intern_slot = None;
         strategy.trader_slot = None;
         validate_strategy(&strategy).exit_with(XvnExit::Usage)?;
         store().save(&strategy).await.exit_with(XvnExit::Upstream)?;
@@ -2773,9 +2771,6 @@ fn legacy_slots(strategy: &xvision_engine::strategies::Strategy) -> Vec<(String,
     let mut slots = Vec::new();
     if let Some(slot) = strategy.regime_slot.clone() {
         slots.push(("regime".to_string(), slot));
-    }
-    if let Some(slot) = strategy.intern_slot.clone() {
-        slots.push(("intern".to_string(), slot));
     }
     if let Some(slot) = strategy.trader_slot.clone() {
         slots.push(("trader".to_string(), slot));
@@ -3738,7 +3733,6 @@ pub mod atomic_create {
             }],
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
@@ -3813,7 +3807,6 @@ pub mod atomic_create {
             }],
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),

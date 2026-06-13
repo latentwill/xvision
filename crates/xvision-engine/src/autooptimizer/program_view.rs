@@ -92,7 +92,6 @@ pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
         hypothesis: base.hypothesis.clone(),
         pipeline: base.pipeline.clone(),
         regime_slot: base.regime_slot.clone(),
-        intern_slot: base.intern_slot.clone(),
         trader_slot: base.trader_slot.clone(),
         activation_mode: base.activation_mode,
         filter: base.filter.clone(),

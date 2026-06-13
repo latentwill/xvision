@@ -2,7 +2,7 @@
 //!
 //! Post-CV-extraction (ADR 0011) the substrate types (steering tensor +
 //! manifest) live in xvision-play. This crate is now trading-domain only:
-//! market snapshots, briefings, decisions, risk verdicts, persistence.
+//! market snapshots, decisions, risk verdicts, persistence.
 
 pub mod agent_profiles;
 pub mod asset_registry;
@@ -21,6 +21,6 @@ pub use market::{IndicatorPanel, MarketSnapshot, Ohlcv, OnchainPanel, SkillRef};
 pub use risk::{Capital, RiskCaps};
 
 pub use trading::{
-    Action, AssetSymbol, Direction, EvidenceTag, InternBriefing, OpenPosition, PortfolioState, Regime,
-    RiskDecision, TraderDecision, VetoReason,
+    Action, AssetSymbol, Direction, OpenPosition, PortfolioState, Regime, RiskDecision, TraderDecision,
+    VetoReason,
 };

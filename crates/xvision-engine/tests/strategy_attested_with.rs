@@ -52,7 +52,6 @@ fn strategy_with(
         agents: Vec::new(),
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(trader_slot(slot_attested, provider, model)),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: json!({}),
