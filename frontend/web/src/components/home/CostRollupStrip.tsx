@@ -60,6 +60,16 @@ function fmtUsd(v: number | null | undefined): string {
   return v != null && Number.isFinite(v) ? `$${v.toFixed(2)}` : "—";
 }
 
+/// Whole days a window spans, from its RFC-3339 `since` to now (min 1). Used to
+/// scale the daily cap to the window for an honest cumulative-vs-budget compare.
+function windowDaysFrom(sinceIso: string | null | undefined): number {
+  if (!sinceIso) return 1;
+  const t = Date.parse(sinceIso);
+  if (!Number.isFinite(t)) return 1;
+  const days = Math.ceil((Date.now() - t) / 86_400_000);
+  return Number.isFinite(days) && days > 0 ? days : 1;
+}
+
 // Saturated token tints; all meet ≥4.5:1 on the strip surface in both themes.
 const CAP_TONE: Record<CapState, string> = {
   none: "text-text-3",
@@ -82,16 +92,25 @@ function WindowSegment({
   label,
   spendUsd,
   capUsd,
+  windowDays = 1,
   emptyLabel,
 }: {
   testid: string;
   label: string;
   spendUsd: number | null;
   capUsd: number | null;
+  /// Days this window spans, so the DAILY cap is scaled to a like-for-like
+  /// budget (cumulative window spend vs cap × days). Defaults to 1.
+  windowDays?: number;
   /// Override copy when there is no usable spend datum (first visit / unknown).
   emptyLabel?: string;
 }) {
-  const state = capState(spendUsd, capUsd);
+  // Scale the per-day cap to the window so a week of spend is compared to a
+  // week's budget, not a single day's (bead xvision-s78.3). null stays null.
+  const days = Number.isFinite(windowDays) && windowDays > 0 ? windowDays : 1;
+  const windowCap =
+    capUsd != null && Number.isFinite(capUsd) ? capUsd * days : capUsd;
+  const state = capState(spendUsd, windowCap);
   const cue = CAP_GLYPH[state];
 
   // First-visit / unknown-spend windows show their honest empty copy and no
@@ -102,7 +121,7 @@ function WindowSegment({
     <>
       <span className="font-mono tabular-nums">{fmtUsd(spendUsd)}</span>
       <span aria-hidden="true"> / </span>
-      <span className="font-mono tabular-nums">{fmtUsd(capUsd)}</span>
+      <span className="font-mono tabular-nums">{fmtUsd(windowCap)}</span>
       {cue && (
         <span className={`ml-1.5 text-[11px] font-medium ${CAP_TONE[state]}`}>
           {cue}
@@ -161,6 +180,7 @@ export function CostRollupStrip({
         label="since last here"
         spendUsd={sinceSpend}
         capUsd={dailyCapUsd}
+        windowDays={windowDaysFrom(sinceLastVisit?.since)}
         emptyLabel={sinceEmpty}
       />
       <WindowSegment
@@ -168,6 +188,7 @@ export function CostRollupStrip({
         label="this week"
         spendUsd={weekSpend}
         capUsd={dailyCapUsd}
+        windowDays={7}
         emptyLabel={weekEmpty}
       />
       </section>

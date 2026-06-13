@@ -65,9 +65,11 @@ describe("CostRollupStrip", () => {
       dailyCapUsd: 50,
     });
     const week = screen.getByTestId("cost-rollup-week");
-    // Honest numerator over the operator cap.
+    // Honest numerator over the WINDOW budget: the daily cap scaled to the
+    // 7-day window ($50 × 7 = $350), so cumulative week spend compares
+    // like-for-like (bead s78.3).
     expect(week.textContent).toContain("$12.50");
-    expect(week.textContent).toContain("$50.00");
+    expect(week.textContent).toContain("$350.00");
   });
 
   it("renders an em-dash denominator (never a faked cap) when the cap is UNSET", () => {
@@ -123,7 +125,8 @@ describe("CostRollupStrip", () => {
   it("flags over-cap spend with a NON-COLOR cue (glyph/word), not color alone", () => {
     renderStrip({
       sinceLastVisit: rollup({ spend_usd: 1.0 }),
-      thisWeek: rollup({ spend_usd: 60, daily_cap_usd: 50 }),
+      // $360 over the 7-day window budget ($50 × 7 = $350).
+      thisWeek: rollup({ spend_usd: 360, daily_cap_usd: 50 }),
       dailyCapUsd: 50,
     });
     const week = screen.getByTestId("cost-rollup-week");
@@ -135,7 +138,8 @@ describe("CostRollupStrip", () => {
   it("flags approaching-cap spend with a NON-COLOR cue", () => {
     renderStrip({
       sinceLastVisit: rollup({ spend_usd: 1.0 }),
-      thisWeek: rollup({ spend_usd: 45, daily_cap_usd: 50 }),
+      // $320 is within 10% of the 7-day window budget ($350), i.e. "near".
+      thisWeek: rollup({ spend_usd: 320, daily_cap_usd: 50 }),
       dailyCapUsd: 50,
     });
     const week = screen.getByTestId("cost-rollup-week");

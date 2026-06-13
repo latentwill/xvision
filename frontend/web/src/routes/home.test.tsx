@@ -483,7 +483,9 @@ describe("HomeRoute", () => {
     await screen.findByRole("heading", { name: "Dashboard" });
     const strip = await screen.findByTestId("cost-rollup-strip");
     await waitFor(() => expect(strip.textContent).toContain("$7.50"));
-    await waitFor(() => expect(strip.textContent).toContain("$50.00"));
+    // The this-week window scales the $50 daily cap to its 7-day budget ($350)
+    // so cumulative spend compares like-for-like (bead s78.3).
+    await waitFor(() => expect(strip.textContent).toContain("$350.00"));
   });
 
   // Honesty: the Optimizer panel never renders a "Waiting for connection…"
