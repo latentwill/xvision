@@ -529,9 +529,9 @@ async fn build_cached_backtest_executor(
     .with_warmup(warmup)
     .with_event_bus(ctx.event_bus.clone());
 
-    if let Some(recorder) = ctx.memory_recorder.clone() {
-        executor = executor.with_memory_recorder(recorder);
-    }
+    // Parity (2026-06-13): trader runs on Cline, which does NOT do execute_slot-layer per-decision
+    // memory recall/write (matching live). No with_memory_recorder here — adding it back would
+    // re-invert the optimizer vs production.
     // F9: tag honesty-check (canary) runs so the executor relabels the
     // by-design broker-rule rejections as expected honesty-check noise.
     if let Some(variant) = canary {

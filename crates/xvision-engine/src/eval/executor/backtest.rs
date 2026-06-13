@@ -458,11 +458,7 @@ impl Executor {
     /// never blocks or aborts the trading loop. The concrete
     /// `xvision-identity` implementation is injected here from the dashboard,
     /// which keeps the engine free of a hard identity dependency.
-    pub fn with_attest_hook(
-        mut self,
-        hook: Arc<dyn super::attest_hook::AttestHook>,
-        every_n: u32,
-    ) -> Self {
+    pub fn with_attest_hook(mut self, hook: Arc<dyn super::attest_hook::AttestHook>, every_n: u32) -> Self {
         self.attest_hook = Some(hook);
         self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
@@ -484,6 +480,17 @@ impl Executor {
         self.agent_runtime = runtime;
         self.cline = cline;
         self
+    }
+
+    /// Returns `true` when the executor has a live `ClineDispatchCtx`, meaning
+    /// the trader slot will be dispatched via `execute_slot_cline` rather than
+    /// falling back to `LlmDispatch`.
+    ///
+    /// **Test-only accessor.** Production code must not branch on this;
+    /// use `should_use_cline` inside the pipeline dispatch path instead.
+    /// `pub` (not `#[cfg(test)]`) so integration tests in `tests/` can reach it.
+    pub fn cline_is_wired(&self) -> bool {
+        self.cline.is_some()
     }
 
     fn emit(&self, event: ProgressEvent) {
