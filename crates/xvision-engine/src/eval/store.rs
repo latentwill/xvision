@@ -77,6 +77,14 @@ pub struct DecisionRow {
     pub pnl_realized: Option<f64>,
 }
 
+async fn eval_runs_has_column(pool: &SqlitePool, column: &str) -> Result<bool> {
+    let rows = sqlx::query("PRAGMA table_info(eval_runs)")
+        .fetch_all(pool)
+        .await
+        .context("inspect eval_runs columns")?;
+    Ok(rows.iter().any(|row| row.get::<String, _>("name") == column))
+}
+
 impl RunStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
@@ -162,52 +170,91 @@ impl RunStore {
             .map(|c| c.venue_label)
             .unwrap_or(crate::safety::venue::VenueLabel::Paper);
 
-        // NOTE: `paused` (migration 061) is intentionally NOT written here.
-        // A run is never *created* paused — pausing is a later UPDATE via
-        // `set_paused`. Omitting the column lets `create` work against an
-        // older schema that predates 061 (the column's DB DEFAULT 0 applies
-        // when it exists), keeping the prior binary's tables forward-usable.
-        sqlx::query(
-            "INSERT INTO eval_runs \
-             (id, agent_id, agents_agent_id, scenario_id, params_override_json, mode, status, \
-              started_at, completed_at, metrics_json, error, \
-              estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
-              bars_content_hash, manifest_canonical, bars_manifest, \
-              auto_fire_review, review_model_json, max_annotations_per_review, live_config_json, \
-              venue_label, source, unrealized_pnl_usd) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&run.id)
-        .bind(&run.agent_id)
-        .bind(&run.agents_agent_id)
-        .bind(scenario_id)
-        .bind(params_override_json)
-        .bind(run.mode.as_str())
-        .bind(run.status.as_str())
-        .bind(run.started_at.to_rfc3339())
-        .bind(run.completed_at.map(|t| t.to_rfc3339()))
-        .bind(metrics_json)
-        .bind(&run.error)
-        .bind(run.estimated_total_tokens.map(|n| n as i64))
-        .bind(run.actual_input_tokens.map(|n| n as i64))
-        .bind(run.actual_output_tokens.map(|n| n as i64))
-        .bind(&run.bars_content_hash)
-        .bind(&run.manifest_canonical)
-        .bind(bars_manifest_json)
-        .bind(if run.auto_fire_review { 1_i64 } else { 0_i64 })
-        .bind(review_model_json)
-        .bind(run.max_annotations_per_review.map(|n| n as i64))
-        .bind(live_config_json)
-        .bind(venue_label.as_str())
-        // CT5 migration 065: deployment-source discriminator + per-run
-        // unrealized PnL. `source` is set at queue time (Human/Optimizer);
-        // `unrealized_pnl_usd` is None at create (written later by the live
-        // loop's equity flush) — persisted as SQL NULL, never a faked 0.
-        .bind(run.source.as_str())
-        .bind(run.unrealized_pnl_usd)
-        .execute(&self.pool)
-        .await
-        .with_context(|| format!("insert eval_runs id={}", run.id))?;
+        // NOTE: additive migration columns are intentionally probed before
+        // writing. Several regression tests construct older/minimal eval_runs
+        // schemas directly; omitting absent additive columns lets their DB
+        // defaults apply and keeps those compatibility tests meaningful.
+        let has_venue_label = eval_runs_has_column(&self.pool, "venue_label").await?;
+        let has_source = eval_runs_has_column(&self.pool, "source").await?;
+        let has_unrealized_pnl = eval_runs_has_column(&self.pool, "unrealized_pnl_usd").await?;
+
+        let mut columns = vec![
+            "id",
+            "agent_id",
+            "agents_agent_id",
+            "scenario_id",
+            "params_override_json",
+            "mode",
+            "status",
+            "started_at",
+            "completed_at",
+            "metrics_json",
+            "error",
+            "estimated_total_tokens",
+            "actual_input_tokens",
+            "actual_output_tokens",
+            "bars_content_hash",
+            "manifest_canonical",
+            "bars_manifest",
+            "auto_fire_review",
+            "review_model_json",
+            "max_annotations_per_review",
+            "live_config_json",
+        ];
+        if has_venue_label {
+            columns.push("venue_label");
+        }
+        if has_source {
+            columns.push("source");
+        }
+        if has_unrealized_pnl {
+            columns.push("unrealized_pnl_usd");
+        }
+        let placeholders = std::iter::repeat("?")
+            .take(columns.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO eval_runs ({}) VALUES ({})",
+            columns.join(", "),
+            placeholders
+        );
+
+        let mut query = sqlx::query(&sql)
+            .bind(&run.id)
+            .bind(&run.agent_id)
+            .bind(&run.agents_agent_id)
+            .bind(scenario_id)
+            .bind(params_override_json)
+            .bind(run.mode.as_str())
+            .bind(run.status.as_str())
+            .bind(run.started_at.to_rfc3339())
+            .bind(run.completed_at.map(|t| t.to_rfc3339()))
+            .bind(metrics_json)
+            .bind(&run.error)
+            .bind(run.estimated_total_tokens.map(|n| n as i64))
+            .bind(run.actual_input_tokens.map(|n| n as i64))
+            .bind(run.actual_output_tokens.map(|n| n as i64))
+            .bind(&run.bars_content_hash)
+            .bind(&run.manifest_canonical)
+            .bind(bars_manifest_json)
+            .bind(if run.auto_fire_review { 1_i64 } else { 0_i64 })
+            .bind(review_model_json)
+            .bind(run.max_annotations_per_review.map(|n| n as i64))
+            .bind(live_config_json);
+        if has_venue_label {
+            query = query.bind(venue_label.as_str());
+        }
+        if has_source {
+            query = query.bind(run.source.as_str());
+        }
+        if has_unrealized_pnl {
+            query = query.bind(run.unrealized_pnl_usd);
+        }
+        query
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("insert eval_runs id={}", run.id))?;
         Ok(())
     }
 
