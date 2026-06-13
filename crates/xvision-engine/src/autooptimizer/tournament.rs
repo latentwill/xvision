@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message, ResponseSchema};
 use crate::autooptimizer::config::AutoOptimizerConfig;
-use crate::autooptimizer::mutator::{empty_mutation, MutationDiff, Mutator};
+use crate::autooptimizer::mutator::{
+    annotated_filter_paths_section, applicable_mutation_kinds, empty_mutation, filter_tunable_paths,
+    kind_focus_directive, tunable_param_keys, MutationDiff, Mutator,
+};
 use crate::autooptimizer::program_view;
 use crate::autooptimizer::validator::{validate_mutation_diff, ValidationError};
 use crate::strategies::Strategy;
@@ -84,9 +87,12 @@ impl TournamentRunner {
         };
         let adversarial_sys = system_section(ADVERSARIAL_PROMPT);
         let synthesis_sys = system_section(SYNTHESIS_PROMPT);
+        // xvision-ds0: give each candidate a distinct rotation slot (0 / 1) so
+        // B6 kind-rotation focuses different levers across the two writers, the
+        // same way `mutation_idx` does on the single-shot path.
         let (adv_diff, syn_diff) = tokio::try_join!(
-            self.propose_diff(parent, config, &adversarial_sys, resolved_agent_prompts),
-            self.propose_diff(parent, config, &synthesis_sys, resolved_agent_prompts),
+            self.propose_diff(parent, config, &adversarial_sys, resolved_agent_prompts, 0),
+            self.propose_diff(parent, config, &synthesis_sys, resolved_agent_prompts, 1),
         )?;
         let adv_strategy = apply_params(parent, &adv_diff);
         let syn_strategy = apply_params(parent, &syn_diff);
@@ -111,16 +117,54 @@ impl TournamentRunner {
         config: &AutoOptimizerConfig,
         system_prompt: &str,
         resolved_agent_prompts: Option<&std::collections::HashMap<String, String>>,
+        candidate_slot: usize,
     ) -> Result<MutationDiff> {
         let empty_map = std::collections::HashMap::new();
         let resolved = resolved_agent_prompts.unwrap_or(&empty_map);
         let program_md = program_view::to_markdown_with_resolved_prompts(parent, resolved);
+
+        // xvision-ds0: compute the same per-parent lever inputs the single-shot
+        // mutator uses, so the tournament prompt carries the B17 filter
+        // domain-constraint hints and the B6 kind-rotation directive instead of a
+        // bare kind list. Enumerated once (filter/kinds don't change per attempt).
+        let kinds = applicable_mutation_kinds(parent, &config.allowed_mutation_kinds);
+        let kinds = if kinds.is_empty() {
+            vec!["param".to_string()]
+        } else {
+            kinds
+        };
+        let param_keys = tunable_param_keys(parent);
+        let filter_paths: Vec<(String, serde_json::Value)> = if kinds.iter().any(|k| k == "filter") {
+            parent.filter.as_ref().map(filter_tunable_paths).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let prose_roles: Vec<String> = if kinds.iter().any(|k| k == "prose") {
+            parent.agents.iter().map(|a| a.role.clone()).collect()
+        } else {
+            Vec::new()
+        };
+
         let mut last_err: Option<String> = None;
         let max_attempts = self.max_retries.saturating_add(1);
         assert!(max_attempts >= 1, "max_attempts must be at least 1");
         for attempt in 0..max_attempts {
-            let user_text =
-                build_proposal_user(&program_md, &config.allowed_mutation_kinds, last_err.as_deref());
+            // Seed the target-within-kind rotation off the candidate slot so the
+            // two tournament writers explore different concrete levers.
+            let exploration_seed = (candidate_slot as u64)
+                .wrapping_mul(31)
+                .wrapping_add(attempt as u64);
+            let user_text = build_proposal_user(
+                &program_md,
+                &kinds,
+                &param_keys,
+                &filter_paths,
+                &prose_roles,
+                candidate_slot,
+                attempt as usize,
+                exploration_seed,
+                last_err.as_deref(),
+            );
             let req = LlmRequest {
                 model: self.model.clone(),
                 system_prompt: system_prompt.to_string(),
@@ -265,12 +309,39 @@ fn system_section(prompt_template: &str) -> String {
     }
 }
 
-fn build_proposal_user(program_md: &str, allowed_kinds: &[String], prev_err: Option<&str>) -> String {
+#[allow(clippy::too_many_arguments)]
+fn build_proposal_user(
+    program_md: &str,
+    allowed_kinds: &[String],
+    param_keys: &[String],
+    filter_paths: &[(String, serde_json::Value)],
+    prose_roles: &[String],
+    candidate_slot: usize,
+    attempt: usize,
+    exploration_seed: u64,
+    prev_err: Option<&str>,
+) -> String {
     let kinds = allowed_kinds.join(", ");
+    // B17 (xvision-ds0): list tunable filter paths with their domain-constraint
+    // hints, shared verbatim with the single-shot mutator path.
+    let filter_section = annotated_filter_paths_section(allowed_kinds, filter_paths);
+    // B6 (xvision-ds0): rotate the focused mutation kind across retries / slots.
+    let focus_section = kind_focus_directive(
+        allowed_kinds,
+        param_keys,
+        filter_paths,
+        prose_roles,
+        candidate_slot,
+        attempt,
+        exploration_seed,
+    );
     let err_section = prev_err
         .map(|e| format!("\n\nPrevious attempt errors — fix all:\n\n{e}"))
         .unwrap_or_default();
-    format!("Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: {kinds}{err_section}\n\nPropose ONE experiment as a JSON object.")
+    format!(
+        "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: \
+         {kinds}{filter_section}{focus_section}{err_section}\n\nPropose ONE experiment as a JSON object."
+    )
 }
 
 fn build_candidate_summary(candidates: &[TournamentCandidate]) -> String {
@@ -410,6 +481,76 @@ mod tests {
             provider: "test".into(),
             max_retries: 0,
         }
+    }
+
+    // ── xvision-ds0: tournament proposer mirrors B6 + B17 ────────────────────
+
+    #[test]
+    fn tournament_proposal_user_annotates_filter_path_domain_constraints() {
+        // B17: the tournament prompt must carry the same per-path domain hints as
+        // the single-shot mutator, so the writer stops proposing out-of-domain
+        // filter values that the validator rejects.
+        let allowed = vec!["filter".to_string()];
+        let filter_paths = vec![
+            ("conditions.0.op.zscore_lt".to_string(), serde_json::json!(3)),
+            ("conditions.1.op.within_pct".to_string(), serde_json::json!(1.5)),
+            ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
+        ];
+        let out = build_proposal_user(
+            "PROGRAM", &allowed, &[], &filter_paths, &[], 0, 0, 0, None,
+        );
+        assert!(
+            out.contains("conditions.0.op.zscore_lt: 3  (positive integer >= 1)"),
+            "zscore_lt must be annotated as a positive integer; got:\n{out}"
+        );
+        assert!(
+            out.contains("conditions.1.op.within_pct: 1.5  (positive number > 0)"),
+            "within_pct must be annotated as a positive number; got:\n{out}"
+        );
+        assert!(
+            out.contains("conditions.2.rhs.numeric: 25.0\n")
+                || out.trim_end().ends_with("conditions.2.rhs.numeric: 25.0"),
+            "plain numeric paths must NOT get a domain annotation; got:\n{out}"
+        );
+    }
+
+    #[test]
+    fn tournament_proposal_user_rotates_focus_kind_across_attempts() {
+        // B6: holding the candidate slot fixed and varying the retry attempt must
+        // rotate the focused mutation KIND, so retries don't re-hammer one
+        // failing kind until the attempt budget is gone.
+        let allowed = vec!["prose".to_string(), "filter".to_string(), "param".to_string()];
+        let param_keys = vec!["risk.risk_pct_per_trade".to_string()];
+        let filter_paths = vec![("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0))];
+        let prose_roles = vec!["trader".to_string()];
+
+        let focused_kind = |out: &str| -> &'static str {
+            if out.contains("agent's system prompt") {
+                "prose"
+            } else if out.contains("filter path") {
+                "filter"
+            } else if out.contains("parameter `") {
+                "param"
+            } else {
+                "none"
+            }
+        };
+
+        let mut kinds_seen = std::collections::HashSet::new();
+        for attempt in 0..3usize {
+            let out = build_proposal_user(
+                "PROGRAM", &allowed, &param_keys, &filter_paths, &prose_roles, 0, attempt, attempt as u64, None,
+            );
+            kinds_seen.insert(focused_kind(&out));
+        }
+        assert!(
+            kinds_seen.len() >= 2,
+            "retries must rotate across at least 2 distinct kinds; saw {kinds_seen:?}"
+        );
+        assert!(
+            !kinds_seen.contains("none"),
+            "every attempt must focus a concrete kind; saw {kinds_seen:?}"
+        );
     }
 
     #[test]
@@ -570,7 +711,7 @@ mod tests {
         let strategy = stub_strategy();
         let config = AutoOptimizerConfig::default();
         let _ = runner
-            .propose_diff(&strategy, &config, "sys", None)
+            .propose_diff(&strategy, &config, "sys", None, 0)
             .await
             .expect("propose_diff should succeed on a valid diff");
 

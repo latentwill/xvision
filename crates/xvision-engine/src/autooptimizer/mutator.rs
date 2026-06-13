@@ -1044,7 +1044,7 @@ fn exploration_temperature(exploration_seed: u64) -> f64 {
 /// window-op set is the shared `FILTER_U32_WINDOW_OPS` from the validator.
 /// Returns `None` for paths with no special integer/positivity constraint (e.g.
 /// `conditions.<i>.rhs.numeric`), which must not get the integer marker.
-fn filter_path_constraint_hint(path: &str) -> Option<&'static str> {
+pub(crate) fn filter_path_constraint_hint(path: &str) -> Option<&'static str> {
     // Parameterized operator paths look like `conditions.<i>.op.<suffix>`.
     let suffix = path
         .strip_prefix("conditions.")
@@ -1056,6 +1056,102 @@ fn filter_path_constraint_hint(path: &str) -> Option<&'static str> {
             Some("(positive integer >= 1)")
         }
         _ => None,
+    }
+}
+
+/// B17 (xvision-ds0): the "Tunable filter paths" prompt section, each path
+/// annotated with its domain-constraint hint via [`filter_path_constraint_hint`].
+/// Shared by both proposal paths — the single-shot `build_user_payload` and the
+/// tournament `build_proposal_user` — so the filter-domain guidance can never
+/// drift between them. Empty unless `filter` is an allowed kind and the strategy
+/// actually has tunable filter paths.
+pub(crate) fn annotated_filter_paths_section(
+    allowed_kinds: &[String],
+    filter_paths: &[(String, serde_json::Value)],
+) -> String {
+    if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+        format!(
+            "\n\nTunable filter paths (a `filter` experiment's `path` MUST be exactly one of these; \
+             `before` must match the current value shown):\n{}",
+            filter_paths
+                .iter()
+                .map(|(p, v)| match filter_path_constraint_hint(p) {
+                    Some(hint) => format!("  - {p}: {v}  {hint}"),
+                    None => format!("  - {p}: {v}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    } else {
+        String::new()
+    }
+}
+
+/// B6 (xvision-ds0): the per-attempt exploration/kind-rotation directive. The
+/// focused mutation KIND rotates by `(slot + attempt) % n_kinds` so successive
+/// retries (and successive writer slots / tournament candidates) focus DIFFERENT
+/// levers instead of re-hammering one failing kind until the attempt budget is
+/// gone; the specific TARGET within the kind is chosen by `exploration_seed`.
+/// Shared by both proposal paths to keep the rotation identical.
+pub(crate) fn kind_focus_directive(
+    allowed_kinds: &[String],
+    param_keys: &[String],
+    filter_paths: &[(String, serde_json::Value)],
+    prose_roles: &[String],
+    slot: usize,
+    attempt: usize,
+    exploration_seed: u64,
+) -> String {
+    let param_allowed = allowed_kinds.iter().any(|k| k == "param");
+    let mut focus_groups: Vec<(&str, Vec<String>)> = Vec::new();
+    if allowed_kinds.iter().any(|k| k == "prose") && !prose_roles.is_empty() {
+        focus_groups.push(("prose", prose_roles.to_vec()));
+    }
+    if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
+        focus_groups.push(("filter", filter_paths.iter().map(|(p, _)| p.clone()).collect()));
+    }
+    if param_allowed && !param_keys.is_empty() {
+        focus_groups.push(("param", param_keys.to_vec()));
+    }
+    if focus_groups.is_empty() {
+        format!(
+            "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
+             the single most obvious one, so repeated runs explore rather than re-propose one tweak."
+        )
+    } else {
+        let n_kinds = focus_groups.len();
+        // B6: offset the kind index by the retry `attempt` so successive retries
+        // focus DIFFERENT kinds. When n_kinds == 1 the offset is a no-op. The
+        // target WITHIN a kind is still chosen by `exploration_seed`.
+        let (kind, targets) = &focus_groups[(slot + attempt) % n_kinds];
+        let target = &targets[(exploration_seed as usize) % targets.len()];
+        match *kind {
+            "prose" => format!(
+                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
+                 `{target}` agent's system prompt — propose a `prose` experiment that rewrites its \
+                 trading logic, reasoning steps, or entry/exit criteria (NOT merely a number). This \
+                 focus rotates the optimizer across its levers so successive runs explore the prompt, \
+                 the filter, and the numeric parameters rather than re-proposing one fixed tweak. If \
+                 the prompt genuinely cannot be improved, you may target another listed lever instead."
+            ),
+            "filter" => format!(
+                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on filter \
+                 path `{target}` — propose a `filter` experiment changing its value with a clear \
+                 direction and magnitude (e.g. loosen a threshold to admit more trades, or tighten it \
+                 to be more selective). This focus rotates the optimizer across its levers so \
+                 successive runs explore the prompt, the filter, and the numeric parameters rather \
+                 than re-proposing one fixed tweak. If `{target}` genuinely cannot be improved, you \
+                 may target another listed lever instead."
+            ),
+            _ => format!(
+                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on \
+                 parameter `{target}` — propose a meaningful change to its value (a clear direction \
+                 and magnitude). This focus rotates the optimizer across its levers so successive \
+                 runs explore the prompt, the filter, and the numeric parameters rather than \
+                 re-proposing one fixed tweak. If `{target}` genuinely cannot be improved, you may \
+                 target another listed lever instead."
+            ),
+        }
     }
 }
 
@@ -1108,25 +1204,9 @@ fn build_user_payload(
                 .join("\n")
         )
     };
-    // Filter paths section: only included when "filter" is in allowed kinds and
-    // the strategy has a filter (non-empty paths list). Guides the experiment
-    // writer to propose valid dotted paths from the live AST.
-    let filter_section = if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
-        format!(
-            "\n\nTunable filter paths (a `filter` experiment's `path` MUST be exactly one of these; \
-             `before` must match the current value shown):\n{}",
-            filter_paths
-                .iter()
-                .map(|(p, v)| match filter_path_constraint_hint(p) {
-                    Some(hint) => format!("  - {p}: {v}  {hint}"),
-                    None => format!("  - {p}: {v}"),
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    } else {
-        String::new()
-    };
+    // Filter paths section (B17): shared with the tournament path so the
+    // filter-domain hints never drift between proposers.
+    let filter_section = annotated_filter_paths_section(allowed_kinds, filter_paths);
     let errors_section = match previous_errors {
         None => String::new(),
         Some(errs) => {
@@ -1137,82 +1217,20 @@ fn build_user_payload(
         }
     };
 
-    // F32: a SUBSTANTIVE per-cycle exploration directive. The previous version
-    // only passed a cosmetic "variant N" nonce + a non-zero temperature, which a
-    // real model (e.g. gemini-flash-lite) ignores — it collapses the constrained
-    // experiment space to the single most obvious tweak every cycle, so repeat
-    // cycles re-derived the byte-identical candidate and never explored. Instead,
-    // NAME a concrete focus the writer must experiment on. (Pairs with the hard
-    // `already_tried` reject in `propose`, which guarantees a previously-seen
-    // candidate is never re-emitted.)
-    //
-    // Issues 1/2 (QA 2026-06-08): the focus must rotate across the applicable
-    // mutation KINDS, not just param keys. The previous version only ever named a
-    // `risk.*` param whenever `param` was allowed (the default), so a weak
-    // experiment-writer was steered onto the numeric risk lever every single
-    // cycle — prose (prompt) and filter levers were never focused and so never
-    // exercised (QA: gemma mutated only risk.* across all 7 cycles).
-    //
-    // KIND rotation via mutation_idx (writer position in the outer
-    // mutations_per_parent loop): writer 0 → kinds[0], writer 1 → kinds[1], etc.,
-    // cycling through all applicable kinds. This guarantees that within a single
-    // cycle of N writers, every kind gets proportional coverage regardless of hash
-    // values. The exploration_seed then picks the SPECIFIC TARGET within the
-    // selected kind (which param key, which filter path, which agent role) — so
-    // different cycles land on different concrete levers even for the same writer
-    // position.
-    let mut focus_groups: Vec<(&str, Vec<String>)> = Vec::new();
-    if allowed_kinds.iter().any(|k| k == "prose") && !prose_roles.is_empty() {
-        focus_groups.push(("prose", prose_roles.to_vec()));
-    }
-    if allowed_kinds.iter().any(|k| k == "filter") && !filter_paths.is_empty() {
-        focus_groups.push(("filter", filter_paths.iter().map(|(p, _)| p.clone()).collect()));
-    }
-    if param_allowed && !param_keys.is_empty() {
-        focus_groups.push(("param", param_keys.to_vec()));
-    }
-    let exploration_section = if focus_groups.is_empty() {
-        format!(
-            "\n\nExploration directive (variant {exploration_seed}): pick a different change than \
-             the single most obvious one, so repeated runs explore rather than re-propose one tweak."
-        )
-    } else {
-        let n_kinds = focus_groups.len();
-        // B6: offset the kind index by the retry `attempt` so successive retries
-        // within one propose call focus DIFFERENT kinds instead of re-hammering the
-        // same (often failing) kind until the budget is gone. When n_kinds == 1
-        // (e.g. param-only) the offset is a no-op. The target WITHIN a kind is
-        // still chosen by `exploration_seed` below, keeping that rotation intact.
-        let (kind, targets) = &focus_groups[(mutation_idx + attempt) % n_kinds];
-        let target = &targets[(exploration_seed as usize) % targets.len()];
-        match *kind {
-            "prose" => format!(
-                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on the \
-                 `{target}` agent's system prompt — propose a `prose` experiment that rewrites its \
-                 trading logic, reasoning steps, or entry/exit criteria (NOT merely a number). This \
-                 focus rotates the optimizer across its levers so successive runs explore the prompt, \
-                 the filter, and the numeric parameters rather than re-proposing one fixed tweak. If \
-                 the prompt genuinely cannot be improved, you may target another listed lever instead."
-            ),
-            "filter" => format!(
-                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on filter \
-                 path `{target}` — propose a `filter` experiment changing its value with a clear \
-                 direction and magnitude (e.g. loosen a threshold to admit more trades, or tighten it \
-                 to be more selective). This focus rotates the optimizer across its levers so \
-                 successive runs explore the prompt, the filter, and the numeric parameters rather \
-                 than re-proposing one fixed tweak. If `{target}` genuinely cannot be improved, you \
-                 may target another listed lever instead."
-            ),
-            _ => format!(
-                "\n\nExploration directive (variant {exploration_seed}): FOCUS this experiment on \
-                 parameter `{target}` — propose a meaningful change to its value (a clear direction \
-                 and magnitude). This focus rotates the optimizer across its levers so successive \
-                 runs explore the prompt, the filter, and the numeric parameters rather than \
-                 re-proposing one fixed tweak. If `{target}` genuinely cannot be improved, you may \
-                 target another listed lever instead."
-            ),
-        }
-    };
+    // F32/B6: the per-attempt exploration + kind-rotation directive, shared
+    // with the tournament path via `kind_focus_directive`. `mutation_idx` is
+    // this writer's slot in the outer mutations_per_parent loop; `attempt`
+    // rotates the focused kind across retries; `exploration_seed` picks the
+    // target within the kind.
+    let exploration_section = kind_focus_directive(
+        allowed_kinds,
+        param_keys,
+        filter_paths,
+        prose_roles,
+        mutation_idx,
+        attempt,
+        exploration_seed,
+    );
     // F32: when this parent has already produced candidates in prior experiments,
     // tell the writer so it aims for genuinely new territory (the `already_tried`
     // gate will reject any duplicate and force a retry regardless).
