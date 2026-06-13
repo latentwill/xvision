@@ -252,9 +252,12 @@ export function CommandPalette() {
     setActiveIdx(0);
   }
 
+  const listboxId = "cmd-palette-listbox";
+
   return (
     <dialog
       ref={dialogRef}
+      role="dialog"
       onClick={onDialogClick}
       className="cmd-palette p-0 m-0 max-w-none w-full h-full bg-transparent backdrop:bg-black/60"
       aria-label="Command palette"
@@ -266,6 +269,11 @@ export function CommandPalette() {
         <input
           ref={inputRef}
           type="text"
+          role="combobox"
+          aria-expanded={flatRows.length > 0}
+          aria-haspopup="listbox"
+          aria-autocomplete="list"
+          aria-controls={listboxId}
           value={query}
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={onInputKey}
@@ -274,7 +282,12 @@ export function CommandPalette() {
           spellCheck={false}
           className="w-full bg-transparent text-text px-4 py-3 text-[15px] border-0 border-b border-border-soft outline-none placeholder:text-text-3"
         />
-        <div className="max-h-[60vh] overflow-y-auto">
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-label="Search results"
+          className="max-h-[60vh] overflow-y-auto"
+        >
           {flatRows.length === 0 ? (
             <div className="px-4 py-3 text-text-3 text-xs">
               {query ? "No results." : "Start typing to search…"}
@@ -335,6 +348,8 @@ function PaletteResults({
                 <li key={`${hit.kind}:${hit.artifact_id}`}>
                   <button
                     type="button"
+                    role="option"
+                    aria-selected={active}
                     onMouseEnter={() => onHover(flatIdx)}
                     onClick={() => onActivate(hit)}
                     className={`w-full text-left px-4 py-2 flex items-baseline gap-3 transition-colors ${
