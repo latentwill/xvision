@@ -73,6 +73,7 @@ use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, Metri
 use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
+use crate::strategies::risk::RiskConfig;
 use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
 use crate::tools::ToolRegistry;
 
@@ -1163,6 +1164,7 @@ impl Executor {
                     bars_held: seed_bars_held,
                     stop_loss_price: seed_sl_price,
                     take_profit_price: seed_tp_price,
+                    risk_config: &strategy.risk,
                 });
                 // When the DSL filter fired this bar, inject its trigger context
                 // (indicator snapshot + fire.reason/priority/tags) into the seed
@@ -3515,6 +3517,7 @@ impl Executor {
             bars_held: 0,
             stop_loss_price: 0.0,
             take_profit_price: 0.0,
+            risk_config: &strategy.risk,
         });
 
         let outs = run_pipeline(PipelineInputs {
@@ -5127,6 +5130,11 @@ pub struct DecisionSeedInput<'a> {
     pub stop_loss_price: f64,
     /// Effective take-profit price from the SLTP state; `0.0` when none active.
     pub take_profit_price: f64,
+    /// The strategy's live, typed risk configuration. Injected into the seed so
+    /// the trader/risk agents read the authoritative params from typed config
+    /// rather than hand-written prompt text that drifts when the optimizer
+    /// mutates `risk.*` (xvision-yzk).
+    pub risk_config: &'a RiskConfig,
 }
 
 /// Build the trader seed JSON for one decision cycle. F-6: `Causal`
@@ -5159,6 +5167,7 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "stop_loss_price": input.stop_loss_price,
                 "take_profit_price": input.take_profit_price,
             },
+            "risk_config": risk_config_json(input.risk_config),
         }),
         InputsPolicy::Causal => serde_json::json!({
             "asset": input.asset,
@@ -5181,8 +5190,19 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "stop_loss_price": input.stop_loss_price,
                 "take_profit_price": input.take_profit_price,
             },
+            "risk_config": risk_config_json(input.risk_config),
         }),
     }
+}
+
+/// Render the strategy's live, typed [`RiskConfig`] as the seed's
+/// authoritative `risk_config` block. xvision-yzk: the trader/risk agents
+/// read these values instead of hand-written prompt text that silently
+/// drifts when the optimizer mutates `risk.*`. Serialization is infallible
+/// for this plain-data struct; fall back to an empty object defensively
+/// rather than panic inside the per-cycle hot path.
+fn risk_config_json(risk: &RiskConfig) -> serde_json::Value {
+    serde_json::to_value(risk).unwrap_or_else(|_| serde_json::json!({}))
 }
 
 /// Serialize an Ohlcv bar as the same JSON shape used for

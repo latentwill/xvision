@@ -31,6 +31,7 @@ use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
 use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput};
+use xvision_engine::strategies::risk::RiskConfig;
 
 const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_agent_slot_prompt_version.sql");
@@ -175,6 +176,19 @@ fn ohlcv(idx: i64, open: f64, high: f64, low: f64, close: f64, volume: f64) -> O
     }
 }
 
+// Distinctive risk config so tests can prove the LIVE typed values flow into
+// the seed (xvision-yzk) rather than any default/hand-written prompt text.
+fn distinctive_risk() -> RiskConfig {
+    RiskConfig {
+        risk_pct_per_trade: 0.0137,
+        max_concurrent_positions: 4,
+        max_leverage: 3.5,
+        stop_loss_atr_multiple: 7.5,
+        daily_loss_kill_pct: 0.066,
+        max_position_pct_nav: 17.0,
+    }
+}
+
 fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
     let history = vec![
         ohlcv(0, 100.0, 110.0, 90.0, 105.0, 1_000.0),
@@ -184,6 +198,7 @@ fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
     let history_refs = history.iter().collect::<Vec<_>>();
     let current = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
     let active_assets = vec!["BTC/USD".to_string()];
+    let risk = distinctive_risk();
     build_decision_seed(DecisionSeedInput {
         decision_idx: 0,
         asset: "BTC/USD",
@@ -201,6 +216,7 @@ fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
         bars_held: 0,
         stop_loss_price: 0.0,
         take_profit_price: 0.0,
+        risk_config: &risk,
     })
 }
 
@@ -297,6 +313,54 @@ fn causal_top_level_seed_strips_decision_index_and_timestamp() {
     assert!(obj.contains_key("asset"));
     assert!(obj.contains_key("market_data"));
     assert!(obj.contains_key("portfolio_state"));
+}
+
+// ----- xvision-yzk: live risk config injected into the seed ----------
+//
+// The trader/risk agents must read the strategy's authoritative typed
+// RiskConfig from the seed, not from hand-written prompt text that drifts
+// when the optimizer mutates `risk.*`. Pin that the live params land in
+// the seed under every InputsPolicy, byte-for-byte with the typed config.
+
+#[test]
+fn seed_carries_live_risk_config_under_every_policy() {
+    let expected = distinctive_risk();
+    for policy in [InputsPolicy::Raw, InputsPolicy::Oracle, InputsPolicy::Causal] {
+        let seed = production_seed_shape(policy);
+        let rc = seed
+            .get("risk_config")
+            .unwrap_or_else(|| panic!("seed must carry `risk_config` under {policy:?}"));
+        assert_eq!(
+            rc["stop_loss_atr_multiple"].as_f64(),
+            Some(expected.stop_loss_atr_multiple),
+            "live stop_loss_atr_multiple must flow into the seed under {policy:?}",
+        );
+        assert_eq!(
+            rc["risk_pct_per_trade"].as_f64(),
+            Some(expected.risk_pct_per_trade),
+            "live risk_pct_per_trade must flow into the seed under {policy:?}",
+        );
+        assert_eq!(
+            rc["max_concurrent_positions"].as_u64(),
+            Some(u64::from(expected.max_concurrent_positions)),
+            "live max_concurrent_positions must flow into the seed under {policy:?}",
+        );
+        assert_eq!(
+            rc["max_leverage"].as_f64(),
+            Some(expected.max_leverage),
+            "live max_leverage must flow into the seed under {policy:?}",
+        );
+        assert_eq!(
+            rc["daily_loss_kill_pct"].as_f64(),
+            Some(expected.daily_loss_kill_pct),
+            "live daily_loss_kill_pct must flow into the seed under {policy:?}",
+        );
+        assert_eq!(
+            rc["max_position_pct_nav"].as_f64(),
+            Some(expected.max_position_pct_nav),
+            "live max_position_pct_nav must flow into the seed under {policy:?}",
+        );
+    }
 }
 
 // ----- AgentStore round-trip for each policy -------------------------
