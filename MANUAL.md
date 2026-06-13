@@ -457,9 +457,9 @@ export BYREAL_ACCOUNT=...                      # optional account id
 #   xvn portfolio --venue byreal
 #   xvn close-position --venue byreal BTC
 # Or in config: [runtime] executor = "byreal"
-# Note: live-eval engine runs (broker_creds_ref) do NOT yet support byreal —
-# that path needs a ByrealLiveSurface (BrokerSurface) adapter (follow-up).
-# Use the CLI verbs above for Byreal execution today.
+# Live-eval engine runs: set broker_creds_ref="byreal" with BYREAL_NETWORK=testnet
+# (testnet-only in the current live scope; use the CLI verbs above for mainnet).
+# Alpaca creds (APCA_*) are still required — Alpaca supplies the live bar stream.
 
 # Phase 11.5 Mantle (only if identity.enabled = true)
 export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # M7 (testnet, chain 5003)
