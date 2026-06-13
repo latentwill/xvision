@@ -42,6 +42,7 @@ pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<()
     validate_prose_edits(&diff.prose, base, &mut errors);
     validate_param_changes(&diff.params, base, &mut errors);
     validate_tools(&diff.tools.removed, &diff.tools.added, base, &mut errors);
+    validate_filter_create(&diff.create_filter, base, &mut errors);
     validate_filter_edits(&diff.filter, base, &mut errors);
     if errors.is_empty() {
         Ok(())
@@ -176,6 +177,33 @@ fn validate_param_after_value(
                 format!("params[{idx}].after"),
             ));
         }
+    }
+}
+
+/// xvision-vxn: validate a structural "create filter" payload. Only meaningful
+/// when the strategy has no filter (a TUNE, not a create, applies otherwise — so
+/// a stray payload on a strategy that already has a filter is ignored, never an
+/// error). The authored filter is parsed and validated through the SAME path
+/// operators' filters pass (`authoring::parse_filter_value` → `xvision_filters::validate`),
+/// so an out-of-domain or malformed filter is rejected on a clean retry rather
+/// than blowing up at backtest time.
+fn validate_filter_create(
+    create: &Option<serde_json::Value>,
+    base: &Strategy,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(payload) = create else {
+        return;
+    };
+    if base.filter.is_some() {
+        return;
+    }
+    if let Err(e) = crate::authoring::parse_filter_value(payload.clone(), &base.manifest.id) {
+        errors.push(ValidationError::with_path(
+            "invalid_filter_create",
+            format!("create_filter is not a valid filter: {e}"),
+            "create_filter",
+        ));
     }
 }
 
@@ -417,6 +445,7 @@ mod tests {
                 removed: vec![],
             },
             filter: vec![],
+            create_filter: None,
             rationale: "test".into(),
         }
     }
@@ -472,6 +501,7 @@ mod tests {
                 removed: vec![],
             },
             filter: edits,
+            create_filter: None,
             rationale: "test filter mutation".into(),
         }
     }
@@ -532,6 +562,76 @@ mod tests {
         assert!(
             errs.iter().any(|e| e.code == "no_filter"),
             "no filter must produce no_filter error: {errs:?}"
+        );
+    }
+
+    // ── xvision-vxn: structural filter CREATION on a filterless strategy ──────
+
+    fn create_filter_diff(payload: serde_json::Value) -> MutationDiff {
+        let mut diff = filter_diff(vec![]);
+        diff.create_filter = Some(payload);
+        diff
+    }
+
+    fn valid_created_filter() -> serde_json::Value {
+        // id + strategy_id are stamped by the authoring parse path; the rest are
+        // a minimal valid filter (one RSI-oversold leaf + a cooldown throttle).
+        serde_json::json!({
+            "display_name": "RSI oversold gate (optimizer-created)",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "1h",
+            "conditions": { "all": [ { "lhs": "rsi_14", "op": "<", "rhs": 30.0 } ] },
+            "cooldown_bars": 3
+        })
+    }
+
+    #[test]
+    fn filter_create_valid_payload_accepted_on_filterless_strategy() {
+        // A strategy with no filter can be GIVEN one (structural mutation) via
+        // create_filter — validated through the same filter-crate validator
+        // operators' authored filters pass.
+        let base = fixture_strategy(); // no filter
+        let diff = create_filter_diff(valid_created_filter());
+        assert!(
+            validate_mutation_diff(&diff, &base).is_ok(),
+            "a valid create_filter payload must be accepted on a filterless strategy"
+        );
+    }
+
+    #[test]
+    fn filter_create_invalid_payload_rejected() {
+        // An authored filter that fails the filter crate's validator (here: no
+        // conditions) is rejected on a clean retry, not at backtest time.
+        let base = fixture_strategy();
+        let diff = create_filter_diff(serde_json::json!({
+            "display_name": "broken",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "1h",
+            "conditions": { "all": [] }
+        }));
+        let errs = validate_mutation_diff(&diff, &base).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.code == "invalid_filter_create"),
+            "an invalid create_filter payload must produce invalid_filter_create: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn filter_create_ignored_when_strategy_already_has_filter() {
+        // create_filter only applies to filterless strategies; when a filter
+        // already exists the writer should TUNE it (filter edits), so a stray
+        // create payload is not validated as a creation here.
+        let base = fixture_filter_strategy();
+        let diff = create_filter_diff(valid_created_filter());
+        let result = validate_mutation_diff(&diff, &base);
+        assert!(
+            result.is_ok()
+                || result
+                    .as_ref()
+                    .unwrap_err()
+                    .iter()
+                    .all(|e| e.code != "invalid_filter_create"),
+            "create_filter must be a no-op (not a creation error) when a filter already exists: {result:?}"
         );
     }
 
