@@ -131,7 +131,6 @@ function pickStage(span: RunSpan): string | null {
   if (span.name && span.kind === "model.call") {
     const lower = span.name.toLowerCase();
     if (lower.includes("trader")) return "trader";
-    if (lower.includes("intern")) return "intern";
     if (lower.includes("risk")) return "risk";
     if (lower.includes("regime")) return "regime";
   }

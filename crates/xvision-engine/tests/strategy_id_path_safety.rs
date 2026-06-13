@@ -36,7 +36,6 @@ fn strategy_with_id(id: &str) -> Strategy {
         agents: vec![],
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

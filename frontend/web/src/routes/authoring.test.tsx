@@ -80,7 +80,6 @@ const baseStrategy = {
   agents: [{ agent_id: "01DEEPSEEK", role: "trader" }],
   pipeline: { kind: "single" as const },
   regime_slot: null,
-  intern_slot: null,
   trader_slot: null,
   risk: {
     risk_pct_per_trade: 0.015,

@@ -58,11 +58,11 @@ describe("formatTraceLabel — F-5", () => {
 
   test("non-trader response keeps stage + model", () => {
     const span = baseSpan({
-      attributes: { stage: "intern" },
+      attributes: { stage: "regime" },
       model: "claude-haiku-4",
     });
     expect(formatTraceLabel({ span, refKind: "response" })).toBe(
-      "response — intern · claude-haiku-4",
+      "response — regime · claude-haiku-4",
     );
   });
 

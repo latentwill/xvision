@@ -2537,13 +2537,6 @@ fn tools_for_strategy_role(strategy: &xvision_engine::strategies::Strategy, role
             .map(|slot| slot.allowed_tools.clone())
             .unwrap_or_default();
     }
-    if role == "intern" {
-        return strategy
-            .intern_slot
-            .as_ref()
-            .map(|slot| slot.allowed_tools.clone())
-            .unwrap_or_default();
-    }
     if role == "regime" {
         return strategy
             .regime_slot
@@ -3241,13 +3234,13 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         ToolDefinition {
             name: "update_slot".into(),
             description:
-                "Update a regime/intern/trader slot. `prompt` is not supported here; use `create_strategy_agent` for prompt updates. Only fields with non-null values are mutated."
+                "Update a regime/trader slot. `prompt` is not supported here; use `create_strategy_agent` for prompt updates. Only fields with non-null values are mutated."
                     .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "slot": {"type": "string", "enum": ["regime", "intern", "trader"]},
+                    "slot": {"type": "string", "enum": ["regime", "trader"]},
                     "attested_with": {"type": "string"},
                     "provider": {"type": "string"},
                     "model": {"type": "string"},

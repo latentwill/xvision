@@ -254,8 +254,7 @@ export function SettingsProvidersRoute() {
             LLM providers
           </h3>
           <p className="m-0 mt-1 text-text-3 text-[12px]">
-            Models xvn can call for the intern, agent rail, and
-            authoring wizard.
+            Models xvn can call for the agent rail and authoring wizard.
           </p>
         </div>
         {!adding && rows.length > 0 ? (

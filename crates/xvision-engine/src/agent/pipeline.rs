@@ -69,7 +69,7 @@ pub struct ResolvedAgentSlot {
     /// V2D: the owning agent's id, populated from the parent `Agent`
     /// row at strategy-resolution time so the recorder can scope memory
     /// per agent (`agent:<agent_id>`). Empty string when the slot has
-    /// no associated agent (legacy regime/intern/trader `LLMSlot` path,
+    /// no associated agent (legacy regime/trader `LLMSlot` path,
     /// unit tests). With `memory_mode = Off` this field is ignored.
     pub agent_id: String,
     /// Snapshotted `AgentSlot.noop_skip` at strategy-resolution time.
@@ -194,7 +194,6 @@ pub struct FilterPipelineCtx<'a> {
 #[derive(Debug)]
 pub struct PipelineOutputs {
     pub regime: Option<LlmResponse>,
-    pub intern: Option<LlmResponse>,
     pub trader: Option<LlmResponse>,
     pub total_input_tokens: u32,
     pub total_output_tokens: u32,
@@ -248,42 +247,6 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
         None
     };
 
-    let intern = if let Some(slot) = &input.strategy.intern_slot {
-        let max_tokens = default_max_tokens_for(slot);
-        let out = execute_slot(SlotInput {
-            slot,
-            system_prompt: String::new(),
-            upstream_inputs: accumulated.clone(),
-            dispatch: input.dispatch.clone(),
-            tools: input.tools.clone(),
-            response_schema: None,
-            max_tokens,
-            temperature: None,
-            obs: input.obs.clone(),
-            memory: None,
-            memory_mode: xvision_memory::types::MemoryMode::Off,
-            agent_id: String::new(),
-            scenario_start: None,
-            source_window_start: None,
-            source_window_end: None,
-            run_id: String::new(),
-            scenario_id: String::new(),
-            cycle_idx: 0,
-            catalog: catalog_for_slot(slot, &input.provider_catalogs),
-            delta_briefing: false,
-            prev_briefing: None,
-            trace_name: None,
-            trace_attrs: None,
-        })
-        .await?;
-        total_in += out.input_tokens;
-        total_out += out.output_tokens;
-        accumulated["intern_output"] = serde_json::Value::String(out.text());
-        Some(out)
-    } else {
-        None
-    };
-
     let trader = if let Some(slot) = &input.strategy.trader_slot {
         let max_tokens = default_max_tokens_for(slot);
         let out = execute_slot(SlotInput {
@@ -321,7 +284,6 @@ pub async fn run_pipeline<'a>(input: PipelineInputs<'a>) -> anyhow::Result<Pipel
 
     Ok(PipelineOutputs {
         regime,
-        intern,
         trader,
         total_input_tokens: total_in,
         total_output_tokens: total_out,
@@ -379,7 +341,6 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
     let mut total_in = 0u32;
     let mut total_out = 0u32;
     let mut regime = None;
-    let mut intern = None;
     let mut trader = None;
 
     // `indicator-tool-wiring` (2026-05-22): see the long comment kept
@@ -675,15 +636,12 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
 
         // Materialise the role's text output into the accumulated
         // briefing JSON. For Trader / Router (real LLM calls), use the
-        // raw response text. For stub capabilities (Filter / Critic /
-        // Intern), serialize the typed output so downstream agents see
-        // a predictable shape.
+        // raw response text. For stub capabilities (Filter), serialize
+        // the typed output so downstream agents see a predictable shape.
         let text_for_briefing = match outcome.raw_response.as_ref() {
             Some(r) => r.text(),
             None => match &outcome.output {
                 AgentOutput::Filter(s) => serde_json::to_string(s).unwrap_or_default(),
-                AgentOutput::Critic(c) => serde_json::to_string(c).unwrap_or_default(),
-                AgentOutput::Intern(o) => serde_json::to_string(o).unwrap_or_default(),
                 _ => String::new(),
             },
         };
@@ -774,14 +732,13 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
             }
         }
 
-        // Legacy harness shape: surface regime / intern / trader by
-        // role name into the `PipelineOutputs` struct for back-compat.
-        // Future Phase D refactor will replace the named slots with a
-        // typed `Vec<AgentOutput>`, but Phase B keeps the shape stable.
+        // Legacy harness shape: surface regime / trader by role name into
+        // the `PipelineOutputs` struct for back-compat. Future Phase D
+        // refactor will replace the named slots with a typed
+        // `Vec<AgentOutput>`, but Phase B keeps the shape stable.
         if let Some(raw) = outcome.raw_response.clone() {
             match role_key.as_str() {
                 "regime" => regime = Some(raw),
-                "intern" => intern = Some(raw),
                 // For Trader, only set if the multi-fire branch above
                 // didn't already overwrite `trader` with the
                 // last-invocation response.
@@ -805,7 +762,6 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
 
     Ok(PipelineOutputs {
         regime,
-        intern,
         trader,
         total_input_tokens: total_in,
         total_output_tokens: total_out,
@@ -978,7 +934,7 @@ pub fn apply_agent_ref_overrides(resolved: &mut ResolvedAgentSlot, agent_ref: &c
 ///
 /// Returns an empty vec for legacy strategies with no attached agents,
 /// mirroring `resolve_agent_slots`; the caller's executor still has the
-/// deprecated `trader_slot`/`intern_slot`/`regime_slot` fallback path.
+/// deprecated `trader_slot`/`regime_slot` fallback path.
 pub async fn resolve_agent_slots_for_strategy(
     pool: &sqlx::SqlitePool,
     strategy: &Strategy,
@@ -1007,14 +963,14 @@ pub async fn resolve_agent_slots_for_strategy(
     Ok(out)
 }
 
-/// Legacy `LLMSlot` path (regime/intern/trader slots on the older
-/// `Strategy` shape) has no operator-side `max_tokens` field. To keep
-/// existing legacy strategies on their previous budget after the q15
-/// `Option<u32>` rework, we auto-derive from the slot's model metadata
-/// so the dispatcher sees a concrete value — matching the pre-change
-/// behaviour exactly. (The agent-slot path, by contrast, exposes the
-/// `Option<u32>` to the operator and only fills in a fallback inside
-/// the Anthropic dispatcher where the API requires the field.)
+/// Legacy `LLMSlot` path (regime/trader slots on the older `Strategy`
+/// shape) has no operator-side `max_tokens` field. To keep existing
+/// legacy strategies on their previous budget after the q15 `Option<u32>`
+/// rework, we auto-derive from the slot's model metadata so the dispatcher
+/// sees a concrete value — matching the pre-change behaviour exactly.
+/// (The agent-slot path, by contrast, exposes the `Option<u32>` to the
+/// operator and only fills in a fallback inside the Anthropic dispatcher
+/// where the API requires the field.)
 fn default_max_tokens_for(slot: &LLMSlot) -> Option<u32> {
     let model = slot.effective_model();
     let model = model.trim();

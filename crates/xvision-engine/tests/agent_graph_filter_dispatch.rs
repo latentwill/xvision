@@ -96,7 +96,6 @@ fn fixture_strategy_with_pipeline(
         agents,
         pipeline: PipelineDef { kind, edges },
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

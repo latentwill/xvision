@@ -252,7 +252,6 @@ async fn seed_strategies(
         }],
         pipeline: PipelineDef::single(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({"ema_fast": 12, "ema_slow": 26}),
@@ -487,7 +486,6 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: Some(LLMSlot {
                 role: "trader".into(),
                 attested_with: "anthropic.claude-sonnet-4.6".into(),

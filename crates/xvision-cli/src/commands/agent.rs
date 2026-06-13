@@ -1,8 +1,7 @@
 //! `xvn agent` — inspect and author agent records in the workspace
 //! agent library. v1 was read-only (`get <id>`); the firing-filter
-//! operator surface adds `create` so script-driven setups (notably the
-//! "intern → filter agent" pattern from the capability-first refactor)
-//! don't require the SPA. See contract
+//! operator surface adds `create` so script-driven setups from
+//! the capability-first refactor don't require the SPA. See contract
 //! `team/contracts/agent-firing-filter-cli-verbs.md`.
 
 use std::path::PathBuf;

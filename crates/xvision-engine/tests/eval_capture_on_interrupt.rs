@@ -125,7 +125,6 @@ fn minimal_strategy() -> Strategy {
         agents: vec![],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "mock".into(),

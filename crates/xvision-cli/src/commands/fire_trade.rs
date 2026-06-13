@@ -2,7 +2,7 @@
 //!
 //! Builds a synthetic `RiskDecision::Approved` from CLI args and submits via
 //! the venue-specific executor. Used to validate executor wiring without
-//! standing up the full Intern → Risk → Trader pipeline.
+//! standing up the full Risk → Trader pipeline.
 //!
 //! Venues:
 //! - `alpaca`  — reads APCA_API_KEY_ID, APCA_API_SECRET_KEY, APCA_API_BASE_URL.

@@ -147,10 +147,6 @@ pub struct Strategy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regime_slot: Option<LLMSlot>,
 
-    /// DEPRECATED — see `regime_slot`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub intern_slot: Option<LLMSlot>,
-
     /// DEPRECATED — see `regime_slot`. Pre-refactor: at least one slot
     /// must be filled; trader was required. Post-refactor: presence in
     /// `agents` replaces this constraint.
@@ -179,7 +175,7 @@ pub struct Strategy {
     pub filter: Option<Filter>,
 
     /// Suppresses the no-Filter soft-warning that `validate_strategy`
-    /// emits when a Trader/Critic agent has no upstream Filter wired
+    /// emits when a Trader agent has no upstream Filter wired
     /// into the pipeline. Operators who deliberately want every-bar
     /// dispatch (e.g. a long-horizon trader where Filter would be over-
     /// optimization) set this to `true` to acknowledge the cost.
@@ -291,8 +287,6 @@ struct StrategyRaw {
     #[serde(default)]
     regime_slot: Option<LLMSlot>,
     #[serde(default)]
-    intern_slot: Option<LLMSlot>,
-    #[serde(default)]
     trader_slot: Option<LLMSlot>,
     risk: RiskConfig,
     mechanical_params: serde_json::Value,
@@ -322,7 +316,6 @@ impl<'de> Deserialize<'de> for Strategy {
             agents: raw.agents,
             pipeline: raw.pipeline,
             regime_slot: raw.regime_slot,
-            intern_slot: raw.intern_slot,
             trader_slot: raw.trader_slot,
             risk: raw.risk,
             mechanical_params: raw.mechanical_params,
@@ -356,7 +349,6 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: params,
@@ -443,7 +435,7 @@ mod tests {
 
     #[test]
     fn legacy_strategy_json_parses_with_empty_agents() {
-        // Strategy authored before the refactor: has regime/intern/trader_slot
+        // Strategy authored before the refactor: has regime/trader_slot
         // fields and no `agents`/`pipeline`. Must still parse — serde(default)
         // gives empty agents and Single pipeline.
         let raw = json!({
@@ -522,7 +514,6 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: json!({}),
@@ -564,7 +555,6 @@ mod tests {
             agents: Vec::new(),
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: json!({}),

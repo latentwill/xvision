@@ -690,7 +690,6 @@ mod tests {
             agents: vec![],
             pipeline: Default::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({"window": 14}),
@@ -914,7 +913,7 @@ mod tests {
                 UpdateAgent {
                     slots: Some(vec![
                         slot("trader", "MUTATED PROMPT for the trader slot decision."),
-                        slot("critic", "MUTATED second slot to critique the trade."),
+                        slot("reviewer", "MUTATED second slot to review the trade."),
                     ]),
                     ..Default::default()
                 },
