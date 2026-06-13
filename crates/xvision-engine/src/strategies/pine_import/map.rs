@@ -65,12 +65,24 @@ pub struct UnmappedNode {
 ///
 /// `strategy` is always a **valid** `Strategy` (passes `validate_strategy`).
 /// `unmapped` records anything that was dropped or approximated.
+/// `input_bindings` records provenance: `(input_var_name, tunable_path)` for
+/// each `input.*` variable that was traced to an optimizer mutation target.
+/// Fed to WU3 `input_mutation_targets`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapOutcome {
     /// The mapped strategy. Always valid.
     pub strategy: Strategy,
     /// Nodes that could not be mapped deterministically. Fed to WU4.
     pub unmapped: Vec<UnmappedNode>,
+    /// Provenance bindings: each entry is `(input_var_name, dotted_path)` where
+    /// `dotted_path` is the optimizer mutation path the input knob feeds.
+    /// - Filter numeric: `"conditions.<i>.rhs.numeric"`
+    /// - Mechanistic stop/profit/trail: `"mechanistic.close_policies.<i>.pct"`
+    /// - Mechanistic time exit: `"mechanistic.close_policies.<i>.bars"`
+    /// - Mechanistic target PnL: `"mechanistic.close_policies.<i>.usd"`
+    /// Inputs that do not bind to any tunable path are absent from this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_bindings: Vec<(String, String)>,
 }
 
 // ── Internal state ────────────────────────────────────────────────────────────
@@ -539,9 +551,23 @@ fn make_scaffold_manifest(title: Option<&str>) -> PublicManifest {
 /// `MapOutcome::strategy` always passes `validate_strategy`.
 pub fn map_script(script: &PineScript) -> MapOutcome {
     let mut unmapped: Vec<UnmappedNode> = Vec::new();
+    let mut input_bindings: Vec<(String, String)> = Vec::new();
 
     // Title from the header
     let title = script.header.as_ref().and_then(|h| h.title.as_deref());
+
+    // Build a set of all declared input variable names for provenance tracking.
+    let input_var_names: std::collections::HashSet<String> = script
+        .statements
+        .iter()
+        .filter_map(|stmt| {
+            if let Statement::Input { name, .. } = stmt {
+                Some(name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
 
     // ── Pass 1: collect indicator bindings from TaAssignment statements ────
     let mut indicator_table: Vec<IndicatorBinding> = Vec::new();
@@ -601,6 +627,16 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
     let mut entry_rules: Vec<EntryRule> = Vec::new();
     let mut close_policies: Vec<ClosePolicy> = Vec::new();
 
+    // WU3 provenance: (input_var_name, leaf_token) collected during exit processing.
+    // leaf_token is one of "pct", "bars", "usd" identifying the close-policy leaf.
+    // After dedup we resolve these to final path indices.
+    let mut exit_input_refs: Vec<(String, &'static str)> = Vec::new();
+
+    // WU3 provenance: (input_var_name, condition_index) for filter conditions
+    // where an input variable appears as the RHS numeric operand.
+    // Condition index here is the index into `filter_conditions` at time of push.
+    let mut condition_input_refs: Vec<(String, usize)> = Vec::new();
+
     for stmt in &script.statements {
         match stmt {
             Statement::Assignment { name, value, is_var } => {
@@ -608,6 +644,23 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
                 if let Some(cond) = map_expr_to_condition(value, &indicator_table) {
                     // Validate it before adding to the filter.
                     if validate_condition_ok(&cond) {
+                        // WU3: check if the RHS Ident references an input variable —
+                        // if so record the condition index for provenance binding.
+                        let cond_idx = filter_conditions.len();
+                        if let Operand::Numeric(_) = &cond.rhs {
+                            // Already a numeric literal — no input binding
+                        }
+                        // Detect if the original RHS expression was an input-variable
+                        // Ident that resolved to Numeric via… actually if it resolved
+                        // to Numeric it came from a literal.
+                        // Check the raw expression for an input-var Ident on the RHS.
+                        if let Expr::BinOp { right, .. } = value {
+                            if let Expr::Ident { name: rhs_name } = right.as_ref() {
+                                if input_var_names.contains(rhs_name) {
+                                    condition_input_refs.push((rhs_name.clone(), cond_idx));
+                                }
+                            }
+                        }
                         filter_conditions.push(cond);
                     } else {
                         // Demote: extract any indicator ref as a briefing indicator
@@ -643,12 +696,24 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
             Statement::StrategyExit { args } => {
                 let policies = map_exit_to_close_policies(args);
                 if policies.is_empty() {
-                    unmapped.push(UnmappedNode {
-                        reason: "strategy.exit with no mappable loss/profit/trail args".to_string(),
-                        raw: "strategy.exit(...)".to_string(),
-                    });
+                    // WU3: even if no literal-valued policy was mapped, scan for
+                    // input-variable references so we can bind them when the input
+                    // has a known default that would yield a valid policy.
+                    collect_exit_input_refs(args, &input_var_names, &mut exit_input_refs,
+                        &mut close_policies);
+                    // Record as unmapped only if STILL no policies were added.
+                    if close_policies.is_empty() {
+                        unmapped.push(UnmappedNode {
+                            reason: "strategy.exit with no mappable loss/profit/trail args".to_string(),
+                            raw: "strategy.exit(...)".to_string(),
+                        });
+                    }
                 } else {
                     close_policies.extend(policies);
+                    // WU3: also scan for input-variable args even when some policies
+                    // were successfully mapped with literal values. This handles mixed
+                    // cases where e.g. loss= uses a variable and profit= uses a literal.
+                    scan_exit_input_refs_non_empty(args, &input_var_names, &mut exit_input_refs);
                 }
             }
 
@@ -658,6 +723,35 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
 
     // Deduplicate close_policies by kind.
     close_policies.dedup_by(|a, b| std::mem::discriminant(a) == std::mem::discriminant(b));
+
+    // ── WU3: resolve input bindings to optimizer paths ─────────────────────────
+
+    // Filter condition bindings: map (input_var, condition_idx) → "conditions.<i>.rhs.numeric"
+    for (var_name, cond_idx) in &condition_input_refs {
+        let path = format!("conditions.{cond_idx}.rhs.numeric");
+        if !input_bindings.iter().any(|(v, p)| v == var_name && p == &path) {
+            input_bindings.push((var_name.clone(), path));
+        }
+    }
+
+    // Mechanistic close-policy bindings: (input_var, leaf) → "mechanistic.close_policies.<i>.<leaf>"
+    // Match each (input_var, leaf) to the close_policy at the first index with that leaf type.
+    for (var_name, leaf) in &exit_input_refs {
+        let policy_idx = close_policies.iter().enumerate().find_map(|(i, p)| {
+            let p_leaf: &'static str = match p {
+                ClosePolicy::StopLoss { .. } | ClosePolicy::TakeProfit { .. } | ClosePolicy::TrailingStop { .. } => "pct",
+                ClosePolicy::TimeExit { .. } => "bars",
+                ClosePolicy::TargetPnl { .. } => "usd",
+            };
+            if p_leaf == *leaf { Some(i) } else { None }
+        });
+        if let Some(idx) = policy_idx {
+            let path = format!("mechanistic.close_policies.{idx}.{leaf}");
+            if !input_bindings.iter().any(|(v, _)| v == var_name) {
+                input_bindings.push((var_name.clone(), path));
+            }
+        }
+    }
 
     // ── Decide: Mechanistic vs Agentic ──────────────────────────────────────
 
@@ -799,7 +893,7 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
     // If the strategy is invalid (should not happen by construction), demote
     // all mechanistic config and return a minimal Agentic strategy.
     match validate_strategy(&strategy) {
-        Ok(()) => MapOutcome { strategy, unmapped },
+        Ok(()) => MapOutcome { strategy, unmapped, input_bindings },
         Err(e) => {
             unmapped.push(UnmappedNode {
                 reason: format!("Strategy validation failed: {e:?}; demoted to minimal Agentic"),
@@ -829,7 +923,96 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
                 mechanistic_config: None,
                 briefing_indicators: Vec::new(),
             };
-            MapOutcome { strategy: fallback, unmapped }
+            // On fallback demote, input_bindings become meaningless (no mechanistic config).
+            MapOutcome { strategy: fallback, unmapped, input_bindings: Vec::new() }
+        }
+    }
+}
+
+// ── WU3 helpers: input provenance binding ─────────────────────────────────────
+
+/// Scan `strategy.exit(...)` args for input-variable references. When an arg
+/// that controls a close-policy scalar (loss, profit, trail_percent) is an
+/// `Ident` that names an input variable, we:
+///   1. Synthesize the `ClosePolicy` using the input's default value (to give the
+///      optimizer a valid starting point — the default from the `input.*` call).
+///   2. Record `(input_var_name, leaf)` in `exit_input_refs` for path resolution.
+///
+/// `input_var_names` is the set of all declared input variable names.
+/// This is called ONLY when `map_exit_to_close_policies` returned no policies.
+fn collect_exit_input_refs(
+    args: &[(Option<String>, Expr)],
+    input_var_names: &std::collections::HashSet<String>,
+    exit_input_refs: &mut Vec<(String, &'static str)>,
+    close_policies: &mut Vec<ClosePolicy>,
+) {
+    // We need the script to look up defaults; here we use a placeholder default
+    // of 1.0 pct (always valid). The real default is resolved in inputs.rs via
+    // the script's Input statement args. This call only establishes binding,
+    // not the exact default value on the ClosePolicy.
+    //
+    // loss=<var> → StopLoss(1.0), leaf="pct"
+    // profit=<var> → TakeProfit(1.0), leaf="pct"
+    // trail_percent=<var> → TrailingStop(1.0), leaf="pct"
+    for (name, expr) in args {
+        let key = name.as_deref().unwrap_or("");
+        if let Expr::Ident { name: var_name } = expr {
+            if input_var_names.contains(var_name) {
+                match key {
+                    "loss" => {
+                        if !close_policies.iter().any(|p| matches!(p, ClosePolicy::StopLoss { .. })) {
+                            close_policies.push(ClosePolicy::StopLoss { pct: 1.0 });
+                        }
+                        if !exit_input_refs.iter().any(|(v, _)| v == var_name) {
+                            exit_input_refs.push((var_name.clone(), "pct"));
+                        }
+                    }
+                    "profit" => {
+                        if !close_policies.iter().any(|p| matches!(p, ClosePolicy::TakeProfit { .. })) {
+                            close_policies.push(ClosePolicy::TakeProfit { pct: 1.0 });
+                        }
+                        if !exit_input_refs.iter().any(|(v, _)| v == var_name) {
+                            exit_input_refs.push((var_name.clone(), "pct"));
+                        }
+                    }
+                    "trail_percent" => {
+                        if !close_policies.iter().any(|p| matches!(p, ClosePolicy::TrailingStop { .. })) {
+                            close_policies.push(ClosePolicy::TrailingStop { pct: 1.0 });
+                        }
+                        if !exit_input_refs.iter().any(|(v, _)| v == var_name) {
+                            exit_input_refs.push((var_name.clone(), "pct"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Scan `strategy.exit(...)` args for input-variable references when some policies
+/// were ALREADY mapped from literal values. Records `(input_var, leaf)` for the
+/// variable-valued args so they can be tracked for WU3 binding.
+/// Unlike `collect_exit_input_refs`, this does NOT synthesize `ClosePolicy` entries.
+fn scan_exit_input_refs_non_empty(
+    args: &[(Option<String>, Expr)],
+    input_var_names: &std::collections::HashSet<String>,
+    exit_input_refs: &mut Vec<(String, &'static str)>,
+) {
+    for (name, expr) in args {
+        let key = name.as_deref().unwrap_or("");
+        if let Expr::Ident { name: var_name } = expr {
+            if input_var_names.contains(var_name) {
+                let leaf: Option<&'static str> = match key {
+                    "loss" | "profit" | "trail_percent" => Some("pct"),
+                    _ => None,
+                };
+                if let Some(leaf) = leaf {
+                    if !exit_input_refs.iter().any(|(v, _)| v == var_name) {
+                        exit_input_refs.push((var_name.clone(), leaf));
+                    }
+                }
+            }
         }
     }
 }
