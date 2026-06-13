@@ -492,7 +492,38 @@ fn parse_primary(ts: &mut TokenStream) -> Result<Expr, PineParseError> {
         }) => {
             let name = name.clone();
             ts.next_raw();
-            // User-defined function call → Unsupported
+            // Check for unknown namespaced call: `ns.method(...)` where `ns` is not
+            // a recognised namespace (ta/input/strategy — those are handled by the
+            // lexer as composite tokens). E.g. `request.security(...)`, `math.max(...)`.
+            if matches!(ts.peek_raw(), Some(t) if t.kind == TokenKind::Dot) {
+                let dot_mark = ts.mark();
+                ts.next_raw(); // consume '.'
+                if let Some(Token {
+                    kind: TokenKind::Ident(method),
+                    ..
+                }) = ts.peek_raw()
+                {
+                    let method = method.clone();
+                    ts.next_raw(); // consume method name
+                    if matches!(ts.peek_raw(), Some(t) if t.kind == TokenKind::LParen) {
+                        // Unknown namespaced call: ns.method(...) → Unsupported with full name
+                        let inner = skip_paren_group(ts).unwrap_or_default();
+                        return Ok(Expr::Unsupported {
+                            raw: format!("{name}.{method}({inner})"),
+                        });
+                    } else {
+                        // ns.property (no call) — restore to after the dot so the
+                        // Dot token is re-emitted as a binary Dot on the next parse step.
+                        // Return the namespace ident; the property access is not supported.
+                        ts.restore(dot_mark);
+                        return Ok(Expr::Ident { name });
+                    }
+                } else {
+                    // Dot not followed by ident — restore
+                    ts.restore(dot_mark);
+                }
+            }
+            // User-defined function call (no dot) → Unsupported
             if matches!(ts.peek_raw(), Some(t) if t.kind == TokenKind::LParen) {
                 if let Ok(inner) = skip_paren_group(ts) {
                     return Ok(Expr::Unsupported {
@@ -584,9 +615,9 @@ fn parse_header(ts: &mut TokenStream, kind: &str) -> Result<PineHeader, PinePars
 
 /// Keywords that introduce block-level constructs we capture as Unsupported
 /// (their body lines are still parsed individually).
-const UNSUPPORTED_BLOCK_KEYWORDS: &[&str] = &[
-    "if", "for", "while", "switch", "type", "method", "import", "export",
-];
+/// Note: `"if"` is NOT in this list — it has its own handler that produces
+/// `Statement::If { condition, body }` for condition capture.
+const UNSUPPORTED_BLOCK_KEYWORDS: &[&str] = &["for", "while", "switch", "type", "method", "import", "export"];
 
 // ── Main parse entry ──────────────────────────────────────────────────────────
 
@@ -703,7 +734,39 @@ pub fn parse(src: &str) -> Result<PineScript, PineParseError> {
                 statements.push(stmt);
             }
 
-            // Block-level unsupported keywords: `if`, `for`, etc.
+            // `if <condition>` block — capture condition + indented body
+            TokenKind::Ident(ref kw) if kw == "if" => {
+                ts.next_raw(); // consume 'if'
+                ts.skip_newlines();
+                // Try to parse the guard expression on the same line.
+                // We attempt parse_expr; if it fails we fall back to Unsupported.
+                let mark = ts.mark();
+                let condition = match parse_expr(&mut ts) {
+                    Ok(expr) => {
+                        // consume remainder of the if-header line
+                        skip_to_eol(&mut ts);
+                        expr
+                    }
+                    Err(_) => {
+                        ts.restore(mark);
+                        let raw = collect_line_raw(src, span_start);
+                        let span_end = span_start + raw.len();
+                        skip_to_eol(&mut ts);
+                        // Fallback: emit Unsupported for the entire if line and
+                        // let the main loop handle the body lines individually.
+                        statements.push(Statement::Unsupported {
+                            source_span: (span_start, span_end),
+                            raw,
+                        });
+                        continue;
+                    }
+                };
+                // Collect the indented body (lines indented more than the if keyword).
+                let body = parse_if_body(&mut ts, src);
+                statements.push(Statement::If { condition, body });
+            }
+
+            // Block-level unsupported keywords: `for`, `while`, etc.
             // We capture the keyword line as Unsupported but DON'T skip the body —
             // body lines are parsed individually on the next iterations.
             TokenKind::Ident(ref kw) if UNSUPPORTED_BLOCK_KEYWORDS.contains(&kw.as_str()) => {
@@ -892,6 +955,249 @@ pub fn parse(src: &str) -> Result<PineScript, PineParseError> {
     })
 }
 
+/// Parse the indented body of an `if` block.
+///
+/// Reads statements as long as the next non-newline token is indented
+/// (column > 1). Stops at EOF, at a top-level (`col == 1`) token, or at
+/// an `else`/`else if` keyword on a non-indented line (which is recorded
+/// as Unsupported and consumed so the main loop doesn't re-parse it).
+///
+/// Each body statement goes through the full statement parser so that
+/// `strategy.entry`, `strategy.close`, `strategy.exit`, assignments, and
+/// inputs are captured properly. Unrecognised body constructs become
+/// `Statement::Unsupported`.
+fn parse_if_body(ts: &mut TokenStream, src: &str) -> Vec<Statement> {
+    let mut body: Vec<Statement> = Vec::new();
+
+    loop {
+        // Skip newlines between body lines
+        while matches!(ts.peek_raw(), Some(t) if t.kind == TokenKind::Newline) {
+            ts.next_raw();
+        }
+
+        // Check if next token is at col > 1 (indented — part of body)
+        match ts.peek_raw() {
+            None => break,
+            Some(t) => {
+                if t.span.col <= 1 {
+                    // Non-indented token: body ends.
+                    // Check if it's an `else` keyword — if so, consume the else
+                    // branch as Unsupported so the main loop doesn't re-parse it.
+                    if let TokenKind::Ident(ref kw) = t.kind.clone() {
+                        if kw == "else" {
+                            let span_start = t.span.start;
+                            ts.next_raw(); // consume 'else'
+                            let raw = collect_line_raw(src, span_start);
+                            let span_end = span_start + raw.len();
+                            skip_to_eol(ts);
+                            body.push(Statement::Unsupported {
+                                source_span: (span_start, span_end),
+                                raw: format!("else {raw}").trim().to_string(),
+                            });
+                            // Consume the else body (indented lines after else)
+                            let _else_body = parse_if_body(ts, src);
+                            // Else body is discarded — we don't try to map it.
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        let span_start = ts.current_byte_offset();
+
+        // Clone the token kind to avoid borrow issues
+        let kind = match ts.peek_raw() {
+            Some(t) => t.kind.clone(),
+            None => break,
+        };
+
+        let stmt = match kind {
+            // `strategy.entry(...)` / `strategy.close(...)` / `strategy.exit(...)`
+            TokenKind::StrategyDot(method) => {
+                ts.next_raw();
+                let args = parse_arg_list(ts).unwrap_or_default();
+                skip_to_eol(ts);
+                match method.as_str() {
+                    "entry" => Statement::StrategyEntry { args },
+                    "close" => Statement::StrategyClose { args },
+                    "exit" => Statement::StrategyExit { args },
+                    _ => {
+                        let span_end = ts.last_byte_end();
+                        Statement::Unsupported {
+                            source_span: (span_start, span_end),
+                            raw: format!("strategy.{method}(...)"),
+                        }
+                    }
+                }
+            }
+
+            // `ta.*` as bare statement in body
+            TokenKind::TaDot(n) => {
+                ts.next_raw();
+                let _ = parse_positional_args(ts).ok();
+                let span_end = ts.last_byte_end();
+                skip_to_eol(ts);
+                Statement::Unsupported {
+                    source_span: (span_start, span_end),
+                    raw: format!("ta.{n}(...)"),
+                }
+            }
+
+            // `input.*` as bare statement in body
+            TokenKind::InputDot(_) => {
+                ts.next_raw();
+                let _ = parse_arg_list(ts).ok();
+                let span_end = ts.last_byte_end();
+                skip_to_eol(ts);
+                Statement::Unsupported {
+                    source_span: (span_start, span_end),
+                    raw: "input.(...)".into(),
+                }
+            }
+
+            // `var name = <rhs>`
+            TokenKind::Ident(ref kw) if kw == "var" => {
+                ts.next_raw(); // consume 'var'
+                ts.skip_newlines();
+                let name = match ts.peek_raw() {
+                    Some(Token {
+                        kind: TokenKind::Ident(n),
+                        ..
+                    }) => {
+                        let n = n.clone();
+                        ts.next_raw();
+                        n
+                    }
+                    _ => {
+                        let raw = collect_line_raw(src, span_start);
+                        let span_end = span_start + raw.len();
+                        skip_to_eol(ts);
+                        body.push(Statement::Unsupported {
+                            source_span: (span_start, span_end),
+                            raw,
+                        });
+                        continue;
+                    }
+                };
+                match ts.peek_raw() {
+                    Some(Token {
+                        kind: TokenKind::Eq, ..
+                    }) => {
+                        ts.next_raw();
+                    }
+                    _ => {
+                        let raw = collect_line_raw(src, span_start);
+                        let span_end = span_start + raw.len();
+                        skip_to_eol(ts);
+                        body.push(Statement::Unsupported {
+                            source_span: (span_start, span_end),
+                            raw,
+                        });
+                        continue;
+                    }
+                }
+                let stmt = parse_rhs_stmt(ts, src, span_start, name, true);
+                skip_to_eol(ts);
+                stmt
+            }
+
+            // Generic ident: may be assignment (`name =`), re-assignment (`name :=`),
+            // or bare call.
+            TokenKind::Ident(_) => {
+                let mark = ts.mark();
+                let name = match ts.next_raw().map(|t| t.kind.clone()) {
+                    Some(TokenKind::Ident(n)) => n,
+                    _ => {
+                        ts.restore(mark);
+                        let raw = collect_line_raw(src, span_start);
+                        let span_end = span_start + raw.len();
+                        skip_to_eol(ts);
+                        body.push(Statement::Unsupported {
+                            source_span: (span_start, span_end),
+                            raw,
+                        });
+                        continue;
+                    }
+                };
+
+                match ts.peek_raw().map(|t| t.kind.clone()) {
+                    Some(TokenKind::Eq) => {
+                        ts.next_raw();
+                        let stmt = parse_rhs_stmt(ts, src, span_start, name, false);
+                        skip_to_eol(ts);
+                        stmt
+                    }
+                    Some(TokenKind::ColonEq) => {
+                        ts.next_raw();
+                        match parse_expr(ts) {
+                            Ok(expr) => {
+                                skip_to_eol(ts);
+                                Statement::Assignment {
+                                    name,
+                                    value: expr,
+                                    is_var: false,
+                                }
+                            }
+                            Err(_) => {
+                                let raw = collect_line_raw(src, span_start);
+                                let span_end = span_start + raw.len();
+                                skip_to_eol(ts);
+                                Statement::Unsupported {
+                                    source_span: (span_start, span_end),
+                                    raw,
+                                }
+                            }
+                        }
+                    }
+                    Some(TokenKind::LParen) => {
+                        let inner = skip_paren_group(ts).unwrap_or_default();
+                        let span_end = ts.last_byte_end();
+                        skip_to_eol(ts);
+                        Statement::Unsupported {
+                            source_span: (span_start, span_end),
+                            raw: format!("{name}({inner})"),
+                        }
+                    }
+                    _ => {
+                        let raw = collect_line_raw(src, span_start);
+                        let span_end = span_start + raw.len();
+                        skip_to_eol(ts);
+                        Statement::Unsupported {
+                            source_span: (span_start, span_end),
+                            raw,
+                        }
+                    }
+                }
+            }
+
+            // Newline — skip
+            TokenKind::Newline => {
+                ts.next_raw();
+                continue;
+            }
+
+            // Anything else → Unsupported
+            _ => {
+                let raw = collect_line_raw(src, span_start);
+                let span_end = span_start + raw.len();
+                skip_to_eol(ts);
+                if raw.is_empty() {
+                    continue;
+                }
+                Statement::Unsupported {
+                    source_span: (span_start, span_end),
+                    raw,
+                }
+            }
+        };
+
+        body.push(stmt);
+    }
+
+    body
+}
+
 /// Parse the right-hand side of an assignment after `=` has been consumed.
 fn parse_rhs_stmt(
     ts: &mut TokenStream,
@@ -1019,15 +1325,23 @@ mod tests {
 
     #[test]
     fn strategy_calls_inside_if_block_are_captured() {
+        // With the if-guard feature, `strategy.entry` inside an `if` block is
+        // captured inside `Statement::If { body }`, NOT as a bare top-level StrategyEntry.
+        // The entry is accessible via the If body, not lost.
         let src =
             "//@version=5\nstrategy(\"T\")\nif close > 100\n    strategy.entry(\"Long\", strategy.long)\n";
         let script = parse(src).expect("should not error");
+        // The if block should produce Statement::If with the entry in the body.
+        let has_entry_in_if_body = script.statements.iter().any(|s| {
+            if let Statement::If { body, .. } = s {
+                body.iter().any(|b| matches!(b, Statement::StrategyEntry { .. }))
+            } else {
+                false
+            }
+        });
         assert!(
-            script
-                .statements
-                .iter()
-                .any(|s| matches!(s, Statement::StrategyEntry { .. })),
-            "strategy.entry inside if should be captured: {script:?}"
+            has_entry_in_if_body,
+            "strategy.entry inside if should be captured in Statement::If body: {script:?}"
         );
     }
 }

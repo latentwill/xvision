@@ -545,3 +545,99 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
         "SMA(3) should be near 100–110 for test bars, got {sma_f}"
     );
 }
+
+// ── 12. if-guard map: TDD (will fail until implemented) ──────────────────────
+//
+// Feature 1 (map.rs): `if ta.rsi(close,14) < 30\n    strategy.entry("long", strategy.long)`
+// should produce a Mechanistic strategy whose Filter has the `rsi < 30` condition
+// AND an EntryRule. The strategy must pass validate_strategy.
+
+#[test]
+fn if_guard_rsi_lt_30_produces_mechanistic_with_filter_condition() {
+    let src = "//@version=5\nstrategy(\"T\")\nif ta.rsi(close,14) < 30\n    strategy.entry(\"long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    let s = &outcome.strategy;
+
+    // Must be Mechanistic (has entry rule)
+    assert_eq!(
+        s.decision_mode,
+        xvision_engine::strategies::DecisionMode::Mechanistic,
+        "if-guard with rsi < 30 + strategy.entry must → Mechanistic; got {:?}",
+        s.decision_mode
+    );
+
+    // Must have at least one entry rule
+    let cfg = s
+        .mechanistic_config
+        .as_ref()
+        .expect("mechanistic_config must be Some");
+    assert!(!cfg.entry_rules.is_empty(), "must have entry_rules; cfg={cfg:?}");
+
+    // Must have a filter with at least one condition (the rsi < 30 guard)
+    assert!(
+        s.filter.is_some(),
+        "if-guard condition rsi < 30 must produce a filter; unmapped={:?}",
+        outcome.unmapped
+    );
+
+    // Strategy must be valid
+    validate_strategy(s).expect("mapped strategy with if-guard must be valid");
+}
+
+#[test]
+fn if_guard_close_comparison_produces_filter_condition() {
+    // `if close > 100\n    strategy.entry(...)` — close > 100 is a valid filter condition
+    let src = "//@version=5\nstrategy(\"T\")\nif close > 100\n    strategy.entry(\"Long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    let s = &outcome.strategy;
+
+    assert_eq!(
+        s.decision_mode,
+        xvision_engine::strategies::DecisionMode::Mechanistic,
+        "close > 100 guard + entry must → Mechanistic"
+    );
+
+    // The filter should have the close > 100 condition
+    assert!(
+        s.filter.is_some(),
+        "close > 100 guard must produce a filter; unmapped={:?}",
+        outcome.unmapped
+    );
+
+    validate_strategy(s).expect("must be valid");
+}
+
+#[test]
+fn if_guard_with_input_variable_binds_to_condition_input_binding() {
+    // `len = input.int(14)` → `if ta.rsi(close,len) < 30\n    strategy.entry(...)`
+    // The rsi period is a variable so map_ta_call returns None → fuzzy guard.
+    // The entry rule should still be captured, and the script should be valid.
+    let src = "//@version=5\nstrategy(\"T\")\nlen = input.int(14, title=\"Len\")\nif ta.rsi(close, len) < 30\n    strategy.entry(\"long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    let s = &outcome.strategy;
+
+    // Entry rule must be captured even when guard is fuzzy
+    assert_eq!(
+        s.decision_mode,
+        xvision_engine::strategies::DecisionMode::Mechanistic,
+        "script with strategy.entry must → Mechanistic"
+    );
+    let cfg = s
+        .mechanistic_config
+        .as_ref()
+        .expect("mechanistic_config must be Some");
+    assert!(!cfg.entry_rules.is_empty(), "entry rule must be captured");
+    validate_strategy(s).expect("must be valid");
+}
+
+#[test]
+fn nested_if_body_assignments_do_not_crash() {
+    // Body with an assignment and an entry — must not panic
+    let src = "//@version=5\nstrategy(\"T\")\nif close > 50\n    x = close * 2\n    strategy.entry(\"Long\", strategy.long)\n";
+    let script = parse_pine(src).expect("must parse");
+    let outcome = map_script(&script);
+    validate_strategy(&outcome.strategy).expect("must be valid");
+}

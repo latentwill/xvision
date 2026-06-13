@@ -570,6 +570,207 @@ fn make_scaffold_manifest(title: Option<&str>) -> PublicManifest {
     }
 }
 
+// ── Pass-2 statement mapper ───────────────────────────────────────────────────
+
+/// Map a single statement in pass-2, populating filter conditions, entry rules,
+/// and close policies.
+///
+/// `guard_condition` is `Some(cond)` when this statement is inside an `if` block
+/// whose guard has already been successfully mapped to a filter condition. In that
+/// case, the guard condition is applied to any `strategy.entry` or `strategy.exit`
+/// call found inside the body (as the filter condition for that entry rule).
+#[allow(clippy::too_many_arguments)]
+fn map_stmt(
+    stmt: &Statement,
+    indicator_table: &[IndicatorBinding],
+    input_var_names: &std::collections::HashSet<String>,
+    filter_conditions: &mut Vec<Condition>,
+    entry_rules: &mut Vec<EntryRule>,
+    close_policies: &mut Vec<ClosePolicy>,
+    fuzzy_indicators: &mut Vec<BriefingIndicator>,
+    unmapped: &mut Vec<UnmappedNode>,
+    condition_input_refs: &mut Vec<(String, usize)>,
+    exit_input_refs: &mut Vec<(String, &'static str)>,
+    guard_condition: Option<Condition>,
+) {
+    match stmt {
+        Statement::Assignment { name, value, is_var } => {
+            if let Some(cond) = map_expr_to_condition(value, indicator_table) {
+                if validate_condition_ok(&cond) {
+                    let cond_idx = filter_conditions.len();
+                    if let Expr::BinOp { right, .. } = value {
+                        if let Expr::Ident { name: rhs_name } = right.as_ref() {
+                            if input_var_names.contains(rhs_name) {
+                                condition_input_refs.push((rhs_name.clone(), cond_idx));
+                            }
+                        }
+                    }
+                    filter_conditions.push(cond);
+                } else {
+                    harvest_condition_as_briefing(value, indicator_table, fuzzy_indicators, unmapped);
+                }
+            } else if *is_var {
+                harvest_expr_as_briefing(value, indicator_table, fuzzy_indicators);
+                unmapped.push(UnmappedNode {
+                    reason: "var declaration with complex expression; mapped as briefing indicator"
+                        .to_string(),
+                    raw: format!("var {name} = ..."),
+                });
+            } else {
+                harvest_expr_as_briefing(value, indicator_table, fuzzy_indicators);
+                if expr_references_indicator(value, indicator_table) {
+                    unmapped.push(UnmappedNode {
+                        reason: "Assignment expression too complex to reduce to a filter condition"
+                            .to_string(),
+                        raw: format!("{name} = ..."),
+                    });
+                }
+            }
+        }
+
+        Statement::StrategyEntry { args } => {
+            let signal_name = extract_str_arg(args, "id", 0).unwrap_or_else(|| "entry".to_string());
+            let direction = extract_entry_direction(args).unwrap_or(EntryDirection::Long);
+            // If a guard condition was passed in, add it to filter_conditions now.
+            if let Some(guard) = guard_condition {
+                let cond_idx = filter_conditions.len();
+                // WU3: check if guard RHS was an input-variable reference.
+                // We don't have the original expr here, so we can't detect it.
+                // The guard binding is handled upstream in the If branch.
+                let _ = cond_idx;
+                filter_conditions.push(guard);
+            }
+            entry_rules.push(EntryRule {
+                signal_name,
+                direction,
+            });
+        }
+
+        Statement::StrategyExit { args } => {
+            let policies = map_exit_to_close_policies(args);
+            if policies.is_empty() {
+                collect_exit_input_refs(args, input_var_names, exit_input_refs, close_policies);
+                if close_policies.is_empty() {
+                    unmapped.push(UnmappedNode {
+                        reason: "strategy.exit with no mappable loss/profit/trail args".to_string(),
+                        raw: "strategy.exit(...)".to_string(),
+                    });
+                }
+            } else {
+                close_policies.extend(policies);
+                scan_exit_input_refs_non_empty(args, input_var_names, exit_input_refs);
+            }
+        }
+
+        Statement::If { condition, body } => {
+            // Try to map the guard expression to a filter condition.
+            let guard = map_expr_to_condition(condition, indicator_table).filter(validate_condition_ok);
+
+            // WU3: if guard RHS references an input variable, record the binding.
+            // We check the condition expression for an input-var Ident on the RHS.
+            if let Some(ref g) = guard {
+                // If there's already a valid condition we'll push it per-entry below.
+                // Pre-check for input binding on RHS of the guard expression.
+                if let Expr::BinOp { right, .. } = condition {
+                    if let Expr::Ident { name: rhs_name } = right.as_ref() {
+                        if input_var_names.contains(rhs_name) {
+                            // The guard will be pushed to filter_conditions when the
+                            // entry is mapped; record the binding at the prospective index.
+                            // (Approximate: index = current filter_conditions.len())
+                            let prospective_idx = filter_conditions.len();
+                            condition_input_refs.push((rhs_name.clone(), prospective_idx));
+                        }
+                    }
+                }
+                let _ = g;
+            }
+
+            if guard.is_none() {
+                // Fuzzy guard — harvest any indicators from the condition for briefing.
+                harvest_expr_as_briefing(condition, indicator_table, fuzzy_indicators);
+            }
+
+            // Process body statements.
+            for body_stmt in body {
+                map_stmt(
+                    body_stmt,
+                    indicator_table,
+                    input_var_names,
+                    filter_conditions,
+                    entry_rules,
+                    close_policies,
+                    fuzzy_indicators,
+                    unmapped,
+                    condition_input_refs,
+                    exit_input_refs,
+                    guard.clone(), // pass guard to each body statement
+                );
+            }
+        }
+
+        _ => {}
+    }
+}
+
+// ── Statement walking helpers ─────────────────────────────────────────────────
+
+/// Collect indicator bindings from a single statement, recursing into
+/// `Statement::If` bodies so that `ta.*` assignments inside if blocks are
+/// also added to the indicator table.
+fn collect_indicator_bindings_from_stmt(
+    stmt: &Statement,
+    indicator_table: &mut Vec<IndicatorBinding>,
+    fuzzy_indicators: &mut Vec<BriefingIndicator>,
+    unmapped: &mut Vec<UnmappedNode>,
+) {
+    match stmt {
+        Statement::TaAssignment { name, ta_name, args } => {
+            if let Some(ind_ref) = map_ta_call(ta_name, args) {
+                indicator_table.push(IndicatorBinding {
+                    var_name: name.clone(),
+                    indicator_ref: ind_ref.clone(),
+                    ta_name: ta_name.clone(),
+                });
+            } else {
+                match ta_name.as_str() {
+                    "crossover" | "crossunder" => {
+                        // Relational helpers — handled in predicate walk.
+                    }
+                    _ => {
+                        if let Some(bi_name) = ta_name_to_indicator_name_lossy(ta_name) {
+                            let period = extract_period_arg_lossy(args);
+                            fuzzy_indicators.push(BriefingIndicator {
+                                name: bi_name,
+                                params: period.map(|p| vec![p as f64]).unwrap_or_default(),
+                                source_token: name.clone(),
+                            });
+                        } else {
+                            unmapped.push(UnmappedNode {
+                                reason: format!("Unknown ta.* function: ta.{ta_name}"),
+                                raw: format!("{name} = ta.{ta_name}(...)"),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Statement::If { body, .. } => {
+            // Recurse into the body so ta.* assignments inside `if` blocks
+            // are also added to the indicator table.
+            for body_stmt in body {
+                collect_indicator_bindings_from_stmt(body_stmt, indicator_table, fuzzy_indicators, unmapped);
+            }
+        }
+        Statement::Unsupported { raw, .. } => {
+            unmapped.push(UnmappedNode {
+                reason: "Unsupported Pine construct".to_string(),
+                raw: raw.clone(),
+            });
+        }
+        _ => {}
+    }
+}
+
 // ── Main mapper ───────────────────────────────────────────────────────────────
 
 /// Map a parsed `PineScript` AST to a valid xvision `Strategy`.
@@ -601,52 +802,12 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
     let mut fuzzy_indicators: Vec<BriefingIndicator> = Vec::new();
 
     for stmt in &script.statements {
-        match stmt {
-            Statement::TaAssignment { name, ta_name, args } => {
-                if let Some(ind_ref) = map_ta_call(ta_name, args) {
-                    indicator_table.push(IndicatorBinding {
-                        var_name: name.clone(),
-                        indicator_ref: ind_ref.clone(),
-                        ta_name: ta_name.clone(),
-                    });
-                    // If the period was driven by a variable (input knob) we
-                    // may later demote to briefing; for now it's in the table.
-                } else {
-                    // Unknown ta.* or dynamic-period → always becomes a briefing
-                    // indicator if we can determine the indicator name at all.
-                    match ta_name.as_str() {
-                        "crossover" | "crossunder" => {
-                            // These are relational helpers, not value indicators.
-                            // They'll be handled in the predicate walk below.
-                        }
-                        _ => {
-                            // Harvest as a briefing indicator with whatever period
-                            // we can infer (default to 14 for common indicators).
-                            if let Some(bi_name) = ta_name_to_indicator_name_lossy(ta_name) {
-                                let period = extract_period_arg_lossy(args);
-                                fuzzy_indicators.push(BriefingIndicator {
-                                    name: bi_name,
-                                    params: period.map(|p| vec![p as f64]).unwrap_or_default(),
-                                    source_token: name.clone(),
-                                });
-                            } else {
-                                unmapped.push(UnmappedNode {
-                                    reason: format!("Unknown ta.* function: ta.{ta_name}"),
-                                    raw: format!("{name} = ta.{ta_name}(...)"),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            Statement::Unsupported { raw, .. } => {
-                unmapped.push(UnmappedNode {
-                    reason: "Unsupported Pine construct".to_string(),
-                    raw: raw.clone(),
-                });
-            }
-            _ => {}
-        }
+        collect_indicator_bindings_from_stmt(
+            stmt,
+            &mut indicator_table,
+            &mut fuzzy_indicators,
+            &mut unmapped,
+        );
     }
 
     // ── Pass 2: collect conditions from assignments and strategy calls ─────
@@ -665,100 +826,19 @@ pub fn map_script(script: &PineScript) -> MapOutcome {
     let mut condition_input_refs: Vec<(String, usize)> = Vec::new();
 
     for stmt in &script.statements {
-        match stmt {
-            Statement::Assignment { name, value, is_var } => {
-                // Try to map the value expression to a condition.
-                if let Some(cond) = map_expr_to_condition(value, &indicator_table) {
-                    // Validate it before adding to the filter.
-                    if validate_condition_ok(&cond) {
-                        // WU3: check if the RHS Ident references an input variable —
-                        // if so record the condition index for provenance binding.
-                        let cond_idx = filter_conditions.len();
-                        if let Operand::Numeric(_) = &cond.rhs {
-                            // Already a numeric literal — no input binding
-                        }
-                        // Detect if the original RHS expression was an input-variable
-                        // Ident that resolved to Numeric via… actually if it resolved
-                        // to Numeric it came from a literal.
-                        // Check the raw expression for an input-var Ident on the RHS.
-                        if let Expr::BinOp { right, .. } = value {
-                            if let Expr::Ident { name: rhs_name } = right.as_ref() {
-                                if input_var_names.contains(rhs_name) {
-                                    condition_input_refs.push((rhs_name.clone(), cond_idx));
-                                }
-                            }
-                        }
-                        filter_conditions.push(cond);
-                    } else {
-                        // Demote: extract any indicator ref as a briefing indicator
-                        harvest_condition_as_briefing(
-                            value,
-                            &indicator_table,
-                            &mut fuzzy_indicators,
-                            &mut unmapped,
-                        );
-                    }
-                } else if *is_var {
-                    // var declarations with complex expressions → fuzzy
-                    harvest_expr_as_briefing(value, &indicator_table, &mut fuzzy_indicators);
-                    unmapped.push(UnmappedNode {
-                        reason: "var declaration with complex expression; mapped as briefing indicator"
-                            .to_string(),
-                        raw: format!("var {name} = ..."),
-                    });
-                } else {
-                    // Simple assignment with complex rhs: if it references indicators, note them.
-                    harvest_expr_as_briefing(value, &indicator_table, &mut fuzzy_indicators);
-                    // Only record as unmapped if it actually references something indicator-like
-                    if expr_references_indicator(value, &indicator_table) {
-                        unmapped.push(UnmappedNode {
-                            reason: "Assignment expression too complex to reduce to a filter condition"
-                                .to_string(),
-                            raw: format!("{name} = ..."),
-                        });
-                    }
-                }
-            }
-
-            Statement::StrategyEntry { args } => {
-                let signal_name = extract_str_arg(args, "id", 0).unwrap_or_else(|| "entry".to_string());
-                let direction = extract_entry_direction(args).unwrap_or(EntryDirection::Long);
-                entry_rules.push(EntryRule {
-                    signal_name,
-                    direction,
-                });
-            }
-
-            Statement::StrategyExit { args } => {
-                let policies = map_exit_to_close_policies(args);
-                if policies.is_empty() {
-                    // WU3: even if no literal-valued policy was mapped, scan for
-                    // input-variable references so we can bind them when the input
-                    // has a known default that would yield a valid policy.
-                    collect_exit_input_refs(
-                        args,
-                        &input_var_names,
-                        &mut exit_input_refs,
-                        &mut close_policies,
-                    );
-                    // Record as unmapped only if STILL no policies were added.
-                    if close_policies.is_empty() {
-                        unmapped.push(UnmappedNode {
-                            reason: "strategy.exit with no mappable loss/profit/trail args".to_string(),
-                            raw: "strategy.exit(...)".to_string(),
-                        });
-                    }
-                } else {
-                    close_policies.extend(policies);
-                    // WU3: also scan for input-variable args even when some policies
-                    // were successfully mapped with literal values. This handles mixed
-                    // cases where e.g. loss= uses a variable and profit= uses a literal.
-                    scan_exit_input_refs_non_empty(args, &input_var_names, &mut exit_input_refs);
-                }
-            }
-
-            _ => {}
-        }
+        map_stmt(
+            stmt,
+            &indicator_table,
+            &input_var_names,
+            &mut filter_conditions,
+            &mut entry_rules,
+            &mut close_policies,
+            &mut fuzzy_indicators,
+            &mut unmapped,
+            &mut condition_input_refs,
+            &mut exit_input_refs,
+            None, // no guard condition at top level
+        );
     }
 
     // Deduplicate close_policies by kind.
