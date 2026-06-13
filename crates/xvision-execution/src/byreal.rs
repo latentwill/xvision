@@ -497,10 +497,23 @@ impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A> {
             Side::Buy => ByrealSide::Buy,
             Side::Sell => ByrealSide::Sell,
         };
-        // NOTE: SL/TP brackets are not yet supported through the perps-CLI seam
+        // SL/TP brackets are not yet supported through the perps-CLI seam
         // (OrderlyLiveSurface places reduce-only algo legs; the byreal CLI
-        // adapter does not expose that yet). The entry order stands on its own;
-        // bracket support is a follow-up.
+        // adapter does not expose that yet). The entry order stands on its own.
+        // CRITICAL: warn loudly when the caller asked for stops we cannot place,
+        // so an operator is never silently left with an UNPROTECTED position
+        // (mirrors OrderlyLiveSurface's warn-on-bracket-failure pattern).
+        if req.stop_loss_pct.is_some() || req.take_profit_pct.is_some() {
+            tracing::warn!(
+                target: "xvision::byreal",
+                asset = %req.asset,
+                stop_loss_pct = ?req.stop_loss_pct,
+                take_profit_pct = ?req.take_profit_pct,
+                "byreal entry placed WITHOUT stop-loss/take-profit legs — the perps-CLI seam \
+                 cannot place reduce-only brackets yet. The position is UNPROTECTED; manage exits \
+                 manually or via close-position until bracket support lands."
+            );
+        }
         let ack = self
             .api
             .order_market(&symbol, side, req.size, false, &req.idempotency_key)

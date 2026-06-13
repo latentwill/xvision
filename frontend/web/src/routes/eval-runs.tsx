@@ -780,9 +780,24 @@ function StartEvalPanel({
         setPreflightError("Enter a non-negative live warmup bar count.");
         return;
       }
+      // Alpaca is always required — it supplies the live market-data bar stream
+      // regardless of which venue executes the orders.
       if (brokers.data?.alpaca.configured !== true) {
         setPreflightError(
           "Configure Alpaca paper credentials in Settings -> Brokers before starting Live.",
+        );
+        return;
+      }
+      // The execution venue's own credentials must also be configured.
+      if (brokerCredsRef === "orderly_testnet" && brokers.data?.orderly.configured !== true) {
+        setPreflightError(
+          "Configure Orderly testnet credentials (ORDERLY_*) before starting a Live Orderly run.",
+        );
+        return;
+      }
+      if (brokerCredsRef === "byreal" && brokers.data?.byreal.configured !== true) {
+        setPreflightError(
+          "Configure Byreal credentials (BYREAL_PRIVATE_KEY) with BYREAL_NETWORK=testnet before starting a Live Byreal run.",
         );
         return;
       }
@@ -828,7 +843,7 @@ function StartEvalPanel({
                 ? "Alpaca paper"
                 : brokerCredsRef === "orderly_testnet"
                   ? "Orderly testnet"
-                  : "Byreal"
+                  : "Byreal testnet"
             } ${effectiveLiveAsset}`,
             description: null,
             tags: ["live", brokerCredsRef],
@@ -982,7 +997,7 @@ function StartEvalPanel({
                   [
                     ["alpaca", "Alpaca paper"],
                     ["orderly_testnet", "Orderly testnet"],
-                    ["byreal", "Byreal"],
+                    ["byreal", "Byreal testnet"],
                   ] as const
                 ).map(([value, label]) => (
                   <button

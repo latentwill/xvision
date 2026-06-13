@@ -456,7 +456,8 @@ export BYREAL_ACCOUNT=...                      # optional account id
 #   xvn fire-trade --venue byreal --asset BTC --side buy --size-bps 100 ...
 #   xvn portfolio --venue byreal
 #   xvn close-position --venue byreal BTC
-# Or in config: [runtime] executor = "byreal"
+# ([runtime] executor = "byreal" parses but is config-only / not yet dispatched,
+#  same as orderly — use --venue on the CLI verbs to select the venue.)
 # Live-eval engine runs: set broker_creds_ref="byreal" with BYREAL_NETWORK=testnet
 # (testnet-only in the current live scope; use the CLI verbs above for mainnet).
 # Alpaca creds (APCA_*) are still required — Alpaca supplies the live bar stream.

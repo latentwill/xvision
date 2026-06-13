@@ -182,7 +182,9 @@ xvn fire-trade --venue orderly ...    # Orderly (ORDERLY_KEY/SECRET/ACCOUNT_ID/B
 ```
 
 `xvn doctor` reports Byreal env readiness under `byreal_venue` (presence only —
-never the key). Config form: `[runtime] executor = "byreal"`.
+never the key). `[runtime] executor = "byreal"` parses but is currently
+config-only / not yet dispatched (same as `orderly` today) — venue selection
+for the CLI verbs comes from the `--venue` flag, not config.
 
 **Live-eval:** the engine path (`eval run --mode live`, `broker_creds_ref`)
 supports `alpaca`, `orderly_testnet`, and `byreal`. Byreal live-eval is

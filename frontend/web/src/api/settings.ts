@@ -167,7 +167,7 @@ export function getBrokers(): Promise<BrokersReport> {
 // ─── Brokers (Alpaca, Byreal) CRUD ────────────────────────────────────────
 
 // Byreal is a report-only broker surface — credentials are env-var-only
-// (BYREAL_API_KEY / BYREAL_API_SECRET / BYREAL_BASE_URL). The frontend
+// (BYREAL_PRIVATE_KEY / BYREAL_NETWORK / BYREAL_ACCOUNT). The frontend
 // surfaces a read-only BrokerCard for it (mirroring the Orderly treatment);
 // there is no `setByrealCredentials` because the backend exposes no store
 // endpoint for Byreal at this revision.
