@@ -329,15 +329,21 @@ pub async fn start_cycle(
     // F34: serialize cycles per workspace (cross-process via the shared DB lock).
     // Refuse to launch if a CLI or dashboard cycle is already running, instead of
     // starving each other.
-    match xvision_engine::autooptimizer::run_lock::try_acquire(
-        &state.pool,
-        &cycle_id,
-        "dashboard",
-        Utc::now(),
-    )
-    .await
-    .map_err(DashboardError::Internal)?
-    {
+    let lock_outcome =
+        xvision_engine::autooptimizer::run_lock::try_acquire(&state.pool, &cycle_id, "dashboard", Utc::now())
+            .await
+            .map_err(DashboardError::Internal)?;
+    if let Some(reclaimed) = &lock_outcome.reclaimed {
+        // GH #967: a stale prior lock was auto-cleared. Log it; the dashboard
+        // does not block on this — the new cycle proceeds.
+        tracing::warn!(
+            prior_cycle = %reclaimed.prior_cycle,
+            age_s = reclaimed.age_s,
+            reason = %reclaimed.reason,
+            "optimizer: cleared a stale cycle lock before launching",
+        );
+    }
+    match lock_outcome.acquire {
         xvision_engine::autooptimizer::run_lock::Acquire::Acquired => {}
         xvision_engine::autooptimizer::run_lock::Acquire::Busy {
             cycle_id: holder_cycle,
@@ -379,15 +385,13 @@ pub async fn start_cycle(
         match memory::open_default_store().await {
             Ok(store) => Some(DspyContext {
                 store,
-                bridge: std::sync::Arc::new(
-                    xvision_engine::autooptimizer::gepa::GepaBridge {
-                        dispatch: std::sync::Arc::clone(&metered_mutator),
-                        model: cfg.mutator.model.clone(),
-                        provider: cfg.mutator.provider.clone(),
-                        candidates: cfg.gepa_candidates,
-                        generations: cfg.gepa_generations,
-                    }
-                ),
+                bridge: std::sync::Arc::new(xvision_engine::autooptimizer::gepa::GepaBridge {
+                    dispatch: std::sync::Arc::clone(&metered_mutator),
+                    model: cfg.mutator.model.clone(),
+                    provider: cfg.mutator.provider.clone(),
+                    candidates: cfg.gepa_candidates,
+                    generations: cfg.gepa_generations,
+                }),
                 namespace: "autooptimizer:dspy".to_string(),
                 pool: pool.clone(),
             }),

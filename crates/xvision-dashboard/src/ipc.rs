@@ -1,19 +1,22 @@
 //! Unix socket IPC bridge for autooptimizer cycle progress events (AR-3).
 //!
-//! The dashboard listens on a Unix domain socket; `xvn optimizer
-//! mutate-once --ipc-socket <path>` connects and streams newline-delimited
-//! JSON `CycleProgressEvent` messages. Each line is deserialized and
-//! broadcast into the `AppState::autooptimizer_tx` channel, which feeds the
-//! `GET /api/autooptimizer/events` SSE endpoint in real time.
+//! The dashboard listens on a Unix domain socket; `xvn optimize run
+//! --ipc-socket <path>` connects and streams newline-delimited JSON
+//! `CycleProgressEvent` messages. Each line is deserialized and broadcast into
+//! the `AppState::autooptimizer_tx` channel, which feeds the
+//! `GET /api/autooptimizer/events` SSE endpoint in real time — so a CLI-driven
+//! optimizer run shows up live on the dashboard /optimizer page (GH #968).
 //!
 //! # Usage
 //!
 //! ```text
 //! # Terminal 1 — dashboard (socket path set via ServeOpts)
-//! xvn dashboard serve --autooptimizer-ipc-socket /tmp/xvn-events.sock
+//! xvn dashboard serve --autooptimizer-ipc-socket /tmp/xvn-optimizer.sock
 //!
-//! # Terminal 2 — optimizer cycle (events stream to connected browser tabs)
-//! xvn optimizer mutate-once <parent_hash> --ipc-socket /tmp/xvn-events.sock
+//! # Terminal 2 — optimizer run (events stream to connected browser tabs).
+//! # The CLI auto-connects to /tmp/xvn-optimizer.sock when it exists, so the
+//! # explicit --ipc-socket is only needed for a non-default path.
+//! xvn optimize run --strategy <id> --ipc-socket /tmp/xvn-optimizer.sock
 //! ```
 //!
 //! Multiple clients may connect simultaneously; each connection is handled
