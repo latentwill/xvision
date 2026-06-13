@@ -13,14 +13,14 @@
 //! `xvision_engine::api::live_deployments`; these handlers wire it to the pool,
 //! the global safety state, and the eval event bus.
 //!
-//! SSE-vs-poll capital scope (CT5, honest as-built): the per-deployment SSE
-//! carries equity ticks (`event: metrics`, equity-only) plus lifecycle/terminal
-//! `status` frames. The FULL capital metrics block (`deployed_capital_usd`,
+//! SSE-vs-poll capital scope (CT5, honest as-built): the per-deployment SSE now
+//! streams the FULL per-tick capital block (`deployed_capital_usd`,
 //! `unrealized_pnl_usd`, `realized_pnl_usd`, `daily_loss_limit_remaining_usd`,
-//! `drawdown_pct`) and `risk_veto` counts are read via the 5s poll above, NOT
-//! over the stream — they are emitted on the engine `ProgressBus` but not yet
-//! projected onto the `RunChartEvent` the SSE reads. Per-tick capital streaming
-//! is a DEFERRED follow-up (requires widening `RunChartEvent`).
+//! `drawdown_pct`) on `event: metrics` via `RunChartEvent::DeploymentMetrics`
+//! (bead s78.1) — null fields omitted, never a faked 0. The 5s poll above
+//! remains the list-membership source and the degrade floor (the SSE falls back
+//! to it via an equity-only heartbeat before the first capital tick). Still
+//! poll-only / deferred: `risk_veto` counts (need obs-event + last-visit tracking).
 
 use axum::{
     extract::{Path, Query, State},
@@ -541,6 +541,151 @@ mod tests {
             frames[0].contains("\"status\":\"stopped\""),
             "terminal frame carries the stopped snapshot, got: {}",
             frames[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_metrics_frame_carries_capital_block_not_just_equity() {
+        // CT5 §4 (s78.1): the per-deployment SSE `metrics` frame now carries the
+        // full capital block (`deployed_capital_usd` / `unrealized_pnl_usd` /
+        // `realized_pnl_usd` / `daily_loss_limit_remaining_usd` / `drawdown_pct`),
+        // delivered over the SAME RunEventBus the stream subscribes to.
+        use xvision_engine::api::chart::{DeploymentMetricsTick, RunChartEvent};
+
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "live1", "live", "human").await;
+
+        // Hold a handle to the SAME bus the stream subscribes to, so the spawned
+        // producer below emits into the live receiver.
+        let bus = state.event_bus.clone();
+
+        // Open the stream (subscribes the receiver, then builds the snapshot).
+        let sse = stream(State(state), Path("live1".into()))
+            .await
+            .expect("stream opens for a live deployment");
+
+        // Producer: emit a populated capital tick, then a terminal status so the
+        // drain loop ends instead of waiting on keep-alives.
+        tokio::spawn(async move {
+            // Small yield so the consumer is parked on recv before we emit.
+            tokio::task::yield_now().await;
+            bus.emit(
+                "live1",
+                RunChartEvent::DeploymentMetrics(DeploymentMetricsTick {
+                    time: 1_700_000_000,
+                    equity_usd: 10_500.0,
+                    drawdown_pct: Some(2.5),
+                    deployed_capital_usd: Some(3_000.0),
+                    unrealized_pnl_usd: Some(120.0),
+                    realized_pnl_usd: Some(380.0),
+                    daily_loss_limit_remaining_usd: Some(450.0),
+                    n_trades: 4,
+                }),
+            )
+            .await;
+            bus.emit(
+                "live1",
+                RunChartEvent::Status {
+                    phase: "completed".into(),
+                    message: None,
+                },
+            )
+            .await;
+        });
+
+        let frames = tokio::time::timeout(Duration::from_secs(5), drain_sse_frames(sse))
+            .await
+            .expect("stream must end after the terminal status frame");
+
+        // snapshot + metrics + status (terminal).
+        let metrics_frame = frames
+            .iter()
+            .find(|f| f.contains("event: metrics"))
+            .expect("a metrics frame must be present");
+
+        // The metrics frame carries the capital block — not equity-only.
+        assert!(
+            metrics_frame.contains("\"deployed_capital_usd\":3000"),
+            "metrics frame must carry deployed_capital_usd, got: {metrics_frame}"
+        );
+        assert!(
+            metrics_frame.contains("\"realized_pnl_usd\":380"),
+            "metrics frame must carry realized_pnl_usd, got: {metrics_frame}"
+        );
+        assert!(
+            metrics_frame.contains("\"daily_loss_limit_remaining_usd\":450"),
+            "metrics frame must carry the daily-loss buffer, got: {metrics_frame}"
+        );
+        assert!(
+            metrics_frame.contains("\"drawdown_pct\":2.5"),
+            "metrics frame must carry drawdown_pct, got: {metrics_frame}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_metrics_frame_omits_null_capital_fields() {
+        // HONESTY MANDATE (§8.1): a pre-first-fill tick has only equity; the
+        // null capital fields must be OMITTED from the wire, never a faked `0`.
+        use xvision_engine::api::chart::{DeploymentMetricsTick, RunChartEvent};
+
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "live1", "live", "human").await;
+        let bus = state.event_bus.clone();
+
+        let sse = stream(State(state), Path("live1".into()))
+            .await
+            .expect("stream opens");
+
+        tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            bus.emit(
+                "live1",
+                RunChartEvent::DeploymentMetrics(DeploymentMetricsTick {
+                    time: 1_700_000_000,
+                    equity_usd: 10_000.0,
+                    drawdown_pct: None,
+                    deployed_capital_usd: None,
+                    unrealized_pnl_usd: None,
+                    realized_pnl_usd: None,
+                    daily_loss_limit_remaining_usd: None,
+                    n_trades: 0,
+                }),
+            )
+            .await;
+            bus.emit(
+                "live1",
+                RunChartEvent::Status {
+                    phase: "completed".into(),
+                    message: None,
+                },
+            )
+            .await;
+        });
+
+        let frames = tokio::time::timeout(Duration::from_secs(5), drain_sse_frames(sse))
+            .await
+            .expect("stream must end");
+        let metrics_frame = frames
+            .iter()
+            .find(|f| f.contains("event: metrics"))
+            .expect("a metrics frame must be present");
+
+        assert!(
+            metrics_frame.contains("\"equity_usd\":10000"),
+            "equity is always present, got: {metrics_frame}"
+        );
+        // No faked zeros: null capital fields are omitted entirely.
+        assert!(
+            !metrics_frame.contains("deployed_capital_usd"),
+            "null deployed_capital_usd must be omitted, got: {metrics_frame}"
+        );
+        assert!(
+            !metrics_frame.contains("realized_pnl_usd"),
+            "null realized_pnl_usd must be omitted, got: {metrics_frame}"
+        );
+        assert!(
+            !metrics_frame.contains("daily_loss_limit_remaining_usd"),
+            "null daily-loss buffer must be omitted, got: {metrics_frame}"
         );
     }
 

@@ -11,15 +11,16 @@
 //!    break on the terminal `Status` lifecycle / channel close; 15s keep-alive.
 //!
 //! What the SSE carries vs. what the poll carries (CT5 §4, honest scope):
-//! the stream delivers equity ticks (`RunChartEvent::Equity` → `event: metrics`,
-//! equity-only) and lifecycle/terminal `status` frames. The widened CT5 capital
-//! block (`deployed_capital_usd`, `unrealized_pnl_usd`, `realized_pnl_usd`,
-//! `daily_loss_limit_remaining_usd`, `drawdown_pct`) and `risk_veto` are emitted
-//! on the engine `ProgressBus` but are NOT yet projected onto the
-//! `RunChartEvent` the SSE reads — consumers read the full capital metrics block
-//! via the 5s poll endpoint (`GET /api/live/deployments`). Per-tick capital
-//! streaming is a DEFERRED follow-up (it requires widening `RunChartEvent`,
-//! explicitly out of scope here).
+//! the stream delivers the full per-tick CT5 capital block on `event: metrics`
+//! via `RunChartEvent::DeploymentMetrics` (`deployed_capital_usd`,
+//! `unrealized_pnl_usd`, `realized_pnl_usd`, `daily_loss_limit_remaining_usd`,
+//! `drawdown_pct`, `equity_usd`, `n_trades`) — null fields are OMITTED, never a
+//! faked 0 — plus lifecycle/terminal `status` frames (bead s78.1). A bare
+//! `RunChartEvent::Equity` tick still maps to `event: metrics` as an equity-only
+//! heartbeat, so a client connecting before the first capital tick gets live
+//! equity and degrades to the 5s poll (`GET /api/live/deployments`) for capital.
+//! Still deferred: the `risk_veto` event (needs obs-event + last-visit tracking)
+//! and 250ms batching.
 //!
 //! Terminal pre-check: when the run is ALREADY stopped at subscribe time, the
 //! route handler builds the final snapshot and calls this builder in
@@ -42,11 +43,14 @@ use xvision_engine::api::live_deployments::LiveDeploymentSummary;
 /// Map a `RunChartEvent` variant to its deployment-stream SSE `event:` name.
 /// The frontend's `LIVE_SSE_EVENTS` const must match these exactly.
 ///
-/// NOTE on `metrics`: the SSE `metrics` frame carries the `RunChartEvent::Equity`
-/// payload, which is EQUITY ONLY (`{ time, equity_usd }`). The full CT5 capital
-/// block is NOT on this frame — it rides the engine `ProgressBus` and is read by
-/// consumers via the 5s poll endpoint. Per-tick capital streaming (widening
-/// `RunChartEvent`) is a deferred follow-up.
+/// CT5 §4: the SSE `metrics` frame carries the full per-tick capital block via
+/// `RunChartEvent::DeploymentMetrics` (`DeploymentMetricsTick` —
+/// `{ time, equity_usd, drawdown_pct?, deployed_capital_usd?, unrealized_pnl_usd?,
+/// realized_pnl_usd?, daily_loss_limit_remaining_usd?, n_trades }`). The bare
+/// `RunChartEvent::Equity` tick ALSO maps to `metrics` (equity-only) so a client
+/// that connects before the first capital tick still gets a live equity heartbeat
+/// and DEGRADES to the poll for the capital fields. Both honest; null capital
+/// fields are OMITTED, never a fabricated `0`.
 pub fn event_name(ev: &RunChartEvent) -> &'static str {
     match ev {
         RunChartEvent::Bar(_) => "bar",
@@ -54,6 +58,7 @@ pub fn event_name(ev: &RunChartEvent) -> &'static str {
         RunChartEvent::Decision(_) => "decision",
         RunChartEvent::Marker(_) => "marker",
         RunChartEvent::Equity(_) => "metrics",
+        RunChartEvent::DeploymentMetrics(_) => "metrics",
         RunChartEvent::Status { .. } => "status",
     }
 }
@@ -63,6 +68,24 @@ pub fn event_name(ev: &RunChartEvent) -> &'static str {
 /// after this), matching `eval_runs::stream`.
 fn is_terminal(ev: &RunChartEvent) -> bool {
     matches!(ev, RunChartEvent::Status { .. })
+}
+
+/// Serialize a `RunChartEvent` into the `data:` JSON for its SSE frame.
+///
+/// CT5 §4: the `DeploymentMetrics` capital tick serializes as its INNER
+/// `DeploymentMetricsTick` (the flat `{ equity_usd, drawdown_pct?,
+/// deployed_capital_usd?, unrealized_pnl_usd?, realized_pnl_usd?,
+/// daily_loss_limit_remaining_usd?, n_trades }` contract the FE builds on), NOT
+/// the `{event,data}` tagged envelope — the `event:` line already names the
+/// frame. HONESTY MANDATE: null capital fields are OMITTED (the tick's
+/// `skip_serializing_if`), never a fabricated `0`. All other variants keep the
+/// existing tagged-envelope serialization so the equity / decision / status wire
+/// contract is unchanged.
+fn sse_payload(ev: &RunChartEvent) -> Result<String, serde_json::Error> {
+    match ev {
+        RunChartEvent::DeploymentMetrics(tick) => serde_json::to_string(tick),
+        other => serde_json::to_string(other),
+    }
 }
 
 /// Build the per-deployment SSE response. `snapshot` is the full
@@ -113,7 +136,7 @@ pub fn live_deployment_sse(
                 Ok(ev) => {
                     let terminate = is_terminal(&ev);
                     let name = event_name(&ev);
-                    match serde_json::to_string(&ev) {
+                    match sse_payload(&ev) {
                         Ok(payload) => {
                             yield Ok(Event::default().event(name).data(payload));
                         }
@@ -148,7 +171,20 @@ pub fn live_deployment_sse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xvision_engine::api::chart::{ChartEquityPoint, RunChartEvent};
+    use xvision_engine::api::chart::{ChartEquityPoint, DeploymentMetricsTick, RunChartEvent};
+
+    fn full_tick() -> DeploymentMetricsTick {
+        DeploymentMetricsTick {
+            time: 1_700_000_000,
+            equity_usd: 10_500.0,
+            drawdown_pct: Some(2.5),
+            deployed_capital_usd: Some(3_000.0),
+            unrealized_pnl_usd: Some(120.0),
+            realized_pnl_usd: Some(380.0),
+            daily_loss_limit_remaining_usd: Some(450.0),
+            n_trades: 4,
+        }
+    }
 
     #[test]
     fn event_names_match_run_chart_variants() {
@@ -159,6 +195,11 @@ mod tests {
             })),
             "metrics"
         );
+        // CT5 §4: the capital tick maps to the SAME `metrics` frame name.
+        assert_eq!(
+            event_name(&RunChartEvent::DeploymentMetrics(full_tick())),
+            "metrics"
+        );
         assert_eq!(
             event_name(&RunChartEvent::Status {
                 phase: "running".into(),
@@ -166,6 +207,67 @@ mod tests {
             }),
             "status"
         );
+    }
+
+    #[test]
+    fn metrics_frame_serializes_the_capital_block_not_just_equity() {
+        // CT5 §4: the `metrics` frame's `data:` is the FLAT capital tick
+        // (`{ equity_usd, drawdown_pct, deployed_capital_usd, ... }`), NOT the
+        // `{event,data}` tagged envelope and NOT equity-only.
+        let payload = sse_payload(&RunChartEvent::DeploymentMetrics(full_tick())).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let obj = v.as_object().unwrap();
+        // No tagged envelope — the inner tick is at the top level.
+        assert!(!obj.contains_key("event"), "no tagged envelope, got {payload}");
+        assert!(!obj.contains_key("data"), "no tagged envelope, got {payload}");
+        assert_eq!(obj["equity_usd"], serde_json::json!(10_500.0));
+        assert_eq!(obj["deployed_capital_usd"], serde_json::json!(3_000.0));
+        assert_eq!(obj["unrealized_pnl_usd"], serde_json::json!(120.0));
+        assert_eq!(obj["realized_pnl_usd"], serde_json::json!(380.0));
+        assert_eq!(obj["daily_loss_limit_remaining_usd"], serde_json::json!(450.0));
+        assert_eq!(obj["drawdown_pct"], serde_json::json!(2.5));
+        assert_eq!(obj["n_trades"], serde_json::json!(4));
+    }
+
+    #[test]
+    fn metrics_frame_omits_null_capital_fields_no_faked_zero() {
+        // HONESTY MANDATE (§8.1): a null capital field is OMITTED, never `0`.
+        let tick = DeploymentMetricsTick {
+            time: 1_700_000_000,
+            equity_usd: 10_000.0,
+            drawdown_pct: None,
+            deployed_capital_usd: None,
+            unrealized_pnl_usd: None,
+            realized_pnl_usd: None,
+            daily_loss_limit_remaining_usd: None,
+            n_trades: 0,
+        };
+        let payload = sse_payload(&RunChartEvent::DeploymentMetrics(tick)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("equity_usd"));
+        assert!(!obj.contains_key("deployed_capital_usd"), "null omitted, got {payload}");
+        assert!(!obj.contains_key("realized_pnl_usd"), "null omitted, got {payload}");
+        assert!(!obj.contains_key("unrealized_pnl_usd"), "null omitted, got {payload}");
+        assert!(
+            !obj.contains_key("daily_loss_limit_remaining_usd"),
+            "null omitted, got {payload}"
+        );
+        assert!(!obj.contains_key("drawdown_pct"), "null omitted, got {payload}");
+    }
+
+    #[test]
+    fn equity_tick_still_keeps_tagged_envelope() {
+        // The bare equity heartbeat is UNCHANGED — tagged envelope preserved so
+        // the client degrades to the poll for capital while still ticking equity.
+        let payload = sse_payload(&RunChartEvent::Equity(ChartEquityPoint {
+            time: 1,
+            equity_usd: 99.0,
+        }))
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(v["event"], serde_json::json!("equity"));
+        assert_eq!(v["data"]["equity_usd"], serde_json::json!(99.0));
     }
 
     #[test]

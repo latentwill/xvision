@@ -3405,15 +3405,17 @@ impl Executor {
             // backtest path shares it), so per-tick `None` propagation over the
             // event is a deferred follow-up tied to widening that field.
             let drawdown_pct = session_tracker.drawdown_pct(equity).unwrap_or(0.0);
-            // CT5 capital fields derived in-loop from the book + tracker and
-            // emitted on the engine `ProgressBus` (`ProgressEvent::MetricsUpdated`).
-            // NOTE: these are NOT carried over the dashboard deployment SSE — that
-            // stream reads `RunChartEvent` (equity-only `metrics` + lifecycle
-            // `status`), not `ProgressEvent::MetricsUpdated`. `LiveDeploymentSummary`
-            // consumers read the full capital block via the 5s poll endpoint;
-            // per-tick capital streaming is a DEFERRED follow-up (would require
-            // widening `RunChartEvent`). HONESTY MANDATE: a realized figure with no
-            // fill history surfaces as None, never a faked 0.
+            // CT5 capital fields derived in-loop from the book + tracker. They
+            // are emitted on BOTH buses:
+            //  - the engine `ProgressBus` (`ProgressEvent::MetricsUpdated`), for
+            //    CLI / optimizer / progress-bar subscribers, and
+            //  - the `RunEventBus` as `RunChartEvent::DeploymentMetrics` (CT5
+            //    §4, delivered below), which the dashboard deployment SSE already
+            //    subscribes to. The SSE now streams the full capital block
+            //    per-tick (`event: metrics`); consumers (`n0k`/`awm`/`8s4`) no
+            //    longer have to wait on the 5s poll for live capital values.
+            // HONESTY MANDATE: a realized figure with no fill history surfaces as
+            // None, never a faked 0.
             let realized_now = book.realized();
             let realized_pnl_usd = if n_trades > 0 { Some(realized_now) } else { None };
             // Deployed capital = Σ |position| * mark over open legs.
@@ -3450,6 +3452,25 @@ impl Executor {
                 realized_pnl_usd,
                 daily_loss_limit_remaining_usd,
             });
+            // CT5 §4: project the SAME capital block onto the RunEventBus the
+            // dashboard deployment SSE reads. `drawdown_pct` carries the honest
+            // `Option` from the session tracker (the `MetricsUpdated.drawdown_pct`
+            // f64 above uses `unwrap_or(0.0)` only because the backtest path
+            // shares that field; here we keep `None` when there is no peak).
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::DeploymentMetrics(crate::api::chart::DeploymentMetricsTick {
+                    time: decision_ts.timestamp(),
+                    equity_usd: equity,
+                    drawdown_pct: session_tracker.drawdown_pct(equity),
+                    deployed_capital_usd,
+                    unrealized_pnl_usd,
+                    realized_pnl_usd,
+                    daily_loss_limit_remaining_usd,
+                    n_trades,
+                }),
+            )
+            .await;
 
             decision_idx += 1;
 
