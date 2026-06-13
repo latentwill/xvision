@@ -351,7 +351,10 @@ mod tests {
     async fn risk_outcome_keyed_by_arm() {
         let s = fresh_store().await;
         let d = make_decision();
-        let approved = RiskDecision::Approved { decision: d.clone(), warnings: vec![] };
+        let approved = RiskDecision::Approved {
+            decision: d.clone(),
+            warnings: vec![],
+        };
         let vetoed = RiskDecision::Vetoed {
             original: d,
             reason: VetoReason::DailyLossCircuitBreaker,

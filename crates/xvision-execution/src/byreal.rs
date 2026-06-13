@@ -443,6 +443,118 @@ impl ByrealPerpsApi for SubprocessByrealApi {
     }
 }
 
+// ── ByrealLiveSurface (BrokerSurface) ──────────────────────────────────────
+//
+// The live-eval engine drives execution through `BrokerSurface`, NOT the
+// `Executor` trait. This adapter exposes the same `ByrealPerpsApi` seam to the
+// live path so a live run can execute on Byreal (routing to Hyperliquid) while
+// Alpaca supplies the market-data stream — exactly mirroring `OrderlyLiveSurface`.
+
+use crate::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest, Side};
+
+/// Map a venue asset string (`"BTC"`, `"BTC/USD"`) to the bare Hyperliquid coin
+/// ticker the perps CLI expects.
+fn byreal_symbol_for_str(asset: &str) -> anyhow::Result<String> {
+    let sym: AssetSymbol = asset
+        .parse()
+        .map_err(|e| anyhow::anyhow!("byreal asset '{asset}': {e}"))?;
+    Ok(byreal_symbol_for(sym))
+}
+
+/// `BrokerSurface` over the Byreal perps CLI for live-eval runs.
+pub struct ByrealLiveSurface<A = SubprocessByrealApi> {
+    api: A,
+}
+
+impl ByrealLiveSurface<SubprocessByrealApi> {
+    /// Build from environment (`BYREAL_NETWORK`, `BYREAL_ACCOUNT`; the CLI reads
+    /// `BYREAL_PRIVATE_KEY` itself).
+    pub fn from_env() -> Result<Self, ExecutorError> {
+        Ok(Self {
+            api: SubprocessByrealApi::from_env()?,
+        })
+    }
+}
+
+impl<A: ByrealPerpsApi> ByrealLiveSurface<A> {
+    pub fn new(api: A) -> Self {
+        Self { api }
+    }
+}
+
+#[async_trait]
+impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A> {
+    async fn submit_order(&self, req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+        let symbol = byreal_symbol_for_str(&req.asset)?;
+        if !(req.size > 0.0) {
+            anyhow::bail!(
+                "byreal order size must be positive for {} (got {})",
+                req.asset,
+                req.size
+            );
+        }
+        let side = match req.side {
+            Side::Buy => ByrealSide::Buy,
+            Side::Sell => ByrealSide::Sell,
+        };
+        // SL/TP brackets are not yet supported through the perps-CLI seam
+        // (OrderlyLiveSurface places reduce-only algo legs; the byreal CLI
+        // adapter does not expose that yet). The entry order stands on its own.
+        // CRITICAL: warn loudly when the caller asked for stops we cannot place,
+        // so an operator is never silently left with an UNPROTECTED position
+        // (mirrors OrderlyLiveSurface's warn-on-bracket-failure pattern).
+        if req.stop_loss_pct.is_some() || req.take_profit_pct.is_some() {
+            tracing::warn!(
+                target: "xvision::byreal",
+                asset = %req.asset,
+                stop_loss_pct = ?req.stop_loss_pct,
+                take_profit_pct = ?req.take_profit_pct,
+                "byreal entry placed WITHOUT stop-loss/take-profit legs — the perps-CLI seam \
+                 cannot place reduce-only brackets yet. The position is UNPROTECTED; manage exits \
+                 manually or via close-position until bracket support lands."
+            );
+        }
+        let ack = self
+            .api
+            .order_market(&symbol, side, req.size, false, &req.idempotency_key)
+            .await
+            .map_err(|e| anyhow::anyhow!("byreal order_market: {e}"))?;
+        Ok(OrderConfirmation {
+            broker_order_id: ack.venue_order_id,
+            fill_price: (ack.avg_fill_price > 0.0).then_some(ack.avg_fill_price),
+            fill_size: if ack.filled_qty > 0.0 {
+                ack.filled_qty
+            } else {
+                req.size
+            },
+            fee: None,
+        })
+    }
+
+    async fn position(&self, asset: &str) -> anyhow::Result<f64> {
+        let symbol = byreal_symbol_for_str(asset)?;
+        let positions = self
+            .api
+            .position_list()
+            .await
+            .map_err(|e| anyhow::anyhow!("byreal position_list: {e}"))?;
+        Ok(positions
+            .iter()
+            .find(|p| p.symbol == symbol)
+            .map(|p| p.qty_signed)
+            .unwrap_or(0.0))
+    }
+
+    async fn balance(&self) -> anyhow::Result<f64> {
+        let acct = self
+            .api
+            .account_info()
+            .await
+            .map_err(|e| anyhow::anyhow!("byreal account_info: {e}"))?;
+        Ok(acct.equity_usd)
+    }
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -611,5 +723,65 @@ mod tests {
         let pf = exec.portfolio().await.unwrap();
         let pos = pf.open_positions.get(&AssetSymbol::Btc).expect("btc position");
         assert_eq!(pos.direction, Direction::Long);
+    }
+
+    // ── ByrealLiveSurface (BrokerSurface) ──────────────────────────────────
+    use crate::broker_surface::{BrokerSurface, OrderRequest, Side};
+
+    fn order_req(asset: &str, side: Side, size: f64) -> OrderRequest {
+        OrderRequest {
+            asset: asset.into(),
+            side,
+            size,
+            reference_price_usd: 60_000.0,
+            stop_loss_pct: Some(2.0),
+            take_profit_pct: Some(4.0),
+            idempotency_key: "cycle-xyz".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn live_surface_submit_order_returns_confirmation() {
+        let api = MockByrealApi {
+            equity_usd: 10_000.0,
+            mark: 60_000.0,
+            order_ack: Some(ByrealOrderAck {
+                venue_order_id: "ord-789".into(),
+                avg_fill_price: 60_000.0,
+                filled_qty: 0.01,
+            }),
+            ..Default::default()
+        };
+        let surface = ByrealLiveSurface::new(api);
+        let conf = surface
+            .submit_order(order_req("BTC/USD", Side::Buy, 0.01))
+            .await
+            .unwrap();
+        assert_eq!(conf.broker_order_id, "ord-789");
+        assert_eq!(conf.fill_price, Some(60_000.0));
+        assert_eq!(conf.fill_size, 0.01);
+    }
+
+    #[tokio::test]
+    async fn live_surface_position_and_balance() {
+        let api = MockByrealApi {
+            equity_usd: 12_345.0,
+            mark: 61_000.0,
+            positions: vec![long_position("BTC", 0.02)],
+            ..Default::default()
+        };
+        let surface = ByrealLiveSurface::new(api);
+        assert_eq!(surface.position("BTC/USD").await.unwrap(), 0.02);
+        assert_eq!(surface.position("ETH/USD").await.unwrap(), 0.0);
+        assert_eq!(surface.balance().await.unwrap(), 12_345.0);
+    }
+
+    #[tokio::test]
+    async fn live_surface_rejects_nonpositive_size() {
+        let surface = ByrealLiveSurface::new(MockByrealApi::default());
+        assert!(surface
+            .submit_order(order_req("BTC", Side::Buy, 0.0))
+            .await
+            .is_err());
     }
 }

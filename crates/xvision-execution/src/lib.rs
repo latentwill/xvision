@@ -18,6 +18,8 @@ pub use broker_surface::{
     OrderRequest as BrokerOrderRequest, OrderlyLiveSurface, Side,
 };
 pub use bybit::{BybitPaperSurface, BybitTestnetClient, MockBybitClient};
-pub use byreal::{ByrealPerpsApi, ByrealPerpsExecutor, ByrealPosition, ByrealSide, SubprocessByrealApi};
+pub use byreal::{
+    ByrealLiveSurface, ByrealPerpsApi, ByrealPerpsExecutor, ByrealPosition, ByrealSide, SubprocessByrealApi,
+};
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
 pub use orderly::{OrderlyExecutor, OrderlyPosition, VenueSnapshot};
