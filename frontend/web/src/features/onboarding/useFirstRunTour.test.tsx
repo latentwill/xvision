@@ -130,4 +130,18 @@ describe("RestartTourButton", () => {
     expect(localStorage.getItem(TOUR_COMPLETED_KEY)).toBeNull();
     await waitFor(() => expect(driveMock).toHaveBeenCalledTimes(1));
   });
+
+  it("restarts even when a prior tour left the launch guard set", async () => {
+    // Auto-launch the tour. The driver mock never invokes onDestroyed, so the
+    // module-level `tourLaunching` guard stays true — mirroring a real session
+    // where the user completed/closed the tour and later hits "Restart tour".
+    render(<Harness />);
+    await waitFor(() => expect(driveMock).toHaveBeenCalledTimes(1));
+
+    render(<RestartTourButton />);
+    fireEvent.click(screen.getByRole("button", { name: /restart tour/i }));
+
+    // Restart must bypass the stuck guard and drive a fresh tour.
+    await waitFor(() => expect(driveMock).toHaveBeenCalledTimes(2));
+  });
 });
