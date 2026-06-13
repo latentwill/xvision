@@ -157,6 +157,7 @@ async fn save_strategy(
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+            briefing_indicators: Vec::new(),
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

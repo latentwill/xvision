@@ -1,13 +1,26 @@
-//! Pine Script v5 ingestion — WU1: lexer + recursive-descent parser → typed AST.
+//! Pine Script v5 ingestion — WU1 (parser) + WU2 (mapper).
 //!
-//! Public surface for WU1. WU2 (Strategy mapping) and WU4 (fidelity reports)
-//! are NOT implemented here; this module is self-contained.
+//! ## WU1 public surface
+//!
+//! [`parse_pine`] — parse a Pine Script v5 source string into a typed
+//! [`PineScript`] AST. Unsupported constructs become [`Statement::Unsupported`]
+//! nodes rather than errors.
+//!
+//! ## WU2 public surface
+//!
+//! [`map_script`] — map a parsed [`PineScript`] to an xvision [`Strategy`].
+//! Returns a [`MapOutcome`] carrying the always-valid mapped strategy and any
+//! [`UnmappedNode`]s that could not be deterministically converted.
 
 mod ast;
 mod lexer;
 mod parser;
+pub mod map;
 
 pub use ast::{Expr, PineHeader, PineParseError, PineScript, Statement};
+pub use map::{map_script, MapOutcome, UnmappedNode};
+// Re-export BriefingIndicator from its canonical home in strategies::mod
+pub use crate::strategies::BriefingIndicator;
 
 /// Parse a Pine Script v5 source string into a typed [`PineScript`] AST.
 ///

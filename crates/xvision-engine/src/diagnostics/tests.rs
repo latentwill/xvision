@@ -80,6 +80,7 @@ fn strategy(required_tools: Vec<&str>) -> Strategy {
         acknowledge_no_filter: true,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     }
 }
 

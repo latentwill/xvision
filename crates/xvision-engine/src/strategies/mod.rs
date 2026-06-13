@@ -11,6 +11,31 @@ pub mod store;
 pub mod templates;
 pub mod validate;
 
+// ── WU2: BriefingIndicator ────────────────────────────────────────────────────
+
+/// A single indicator extracted from a Pine Script that cannot be reduced to a
+/// deterministic `Filter` `Condition` (e.g., because it appears in a fuzzy
+/// predicate, a `var`-counter expression, or a ternary condition).
+///
+/// These indicators are included in the decision seed as context for an Agentic
+/// strategy so the LLM trader has their latest values available at decision time.
+/// Populated by the WU2 mapper (`pine_import::map_script`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BriefingIndicator {
+    /// The indicator kind from the xvision-filters catalog.
+    pub name: xvision_filters::IndicatorName,
+    /// Parameters: for period-based indicators `params[0]` is the period.
+    /// For SuperTrend the packed `atr_period * 1000 + mult_times_10` is in
+    /// `params[0]`. For PivotHigh/PivotLow the packed `left * 1000 + right`
+    /// is in `params[0]`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<f64>,
+    /// The Pine Script variable name that held this indicator's value
+    /// (e.g. `"atr_val"`, `"ema_fast"`). Used for seed key naming and
+    /// WU4 fidelity reporting.
+    pub source_token: String,
+}
+
 use serde::{Deserialize, Serialize};
 pub use xvision_filters::{ActivationMode, Filter};
 
@@ -177,6 +202,21 @@ pub struct Strategy {
     /// `decision_mode == Mechanistic`, must be `None` for `Agentic`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mechanistic_config: Option<MechanisticConfig>,
+
+    // ── WU2: Pine Script import — briefing indicators ─────────────────────
+    /// Indicators harvested from an imported Pine Script that could not be
+    /// reduced to a deterministic `Filter` `Condition` (fuzzy predicates,
+    /// `var`-counter expressions, ternaries). Non-empty only for Agentic
+    /// strategies produced by `pine_import::map_script`.
+    ///
+    /// The decision seed builder injects their latest values into the seed
+    /// JSON under `"briefing_indicators"` so the LLM trader agent sees them
+    /// without needing to compute them from raw OHLCV bars.
+    ///
+    /// Skipped on serialization when empty so pre-WU2 strategy JSON files
+    /// remain byte-stable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub briefing_indicators: Vec<BriefingIndicator>,
 }
 
 fn default_activation_mode() -> ActivationMode {
@@ -266,6 +306,8 @@ struct StrategyRaw {
     decision_mode: DecisionMode,
     #[serde(default)]
     mechanistic_config: Option<MechanisticConfig>,
+    #[serde(default)]
+    briefing_indicators: Vec<BriefingIndicator>,
 }
 
 impl<'de> Deserialize<'de> for Strategy {
@@ -289,6 +331,7 @@ impl<'de> Deserialize<'de> for Strategy {
             acknowledge_no_filter: raw.acknowledge_no_filter,
             decision_mode: raw.decision_mode,
             mechanistic_config: raw.mechanistic_config,
+            briefing_indicators: raw.briefing_indicators,
         })
     }
 }
@@ -322,6 +365,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 
@@ -487,6 +531,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
@@ -528,6 +573,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(

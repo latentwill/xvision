@@ -816,6 +816,7 @@ mod roundtrip {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 
@@ -1328,6 +1329,7 @@ mod provider_attestation {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 

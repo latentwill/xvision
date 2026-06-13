@@ -1210,6 +1210,20 @@ impl Executor {
                         obj.insert("filter_context".to_string(), ctx.clone());
                     }
                 }
+                // WU2 Pine import: inject briefing_indicators latest values.
+                // When a Pine-imported Agentic strategy has briefing_indicators,
+                // compute each indicator over the history slice and inject the
+                // latest value into the seed under "briefing_indicators" so the
+                // trader LLM sees them without computing from raw bars.
+                // Mirrors the filter_context post-build insertion pattern.
+                if !strategy.briefing_indicators.is_empty() {
+                    inject_briefing_indicators_into_seed(
+                        &mut seed,
+                        &strategy.briefing_indicators,
+                        bar,
+                        history_slice,
+                    );
+                }
                 // U6: inject top-5 episodic recall observations when the store
                 // has relevant history. Query vector is derived from the
                 // filter_trigger_context indicators; falls back to zero-vector
@@ -5462,6 +5476,79 @@ fn risk_config_json(risk: &RiskConfig) -> serde_json::Value {
     serde_json::to_value(risk).unwrap_or_else(|_| serde_json::json!({}))
 }
 
+/// WU2 Pine import: inject `briefing_indicators` latest values into the
+/// decision seed under the `"briefing_indicators"` key.
+///
+/// Mirrors the `filter_context` post-build insertion pattern at the call-site
+/// (after `build_decision_seed`). For each `BriefingIndicator` in the strategy,
+/// we spin up an `IndicatorEngine`, push the history bars + current bar, and
+/// read the latest computed value. The result is a flat JSON object keyed by
+/// the `source_token` (Pine variable name).
+///
+/// This is additive — existing seed fields are not modified. Skipped entirely
+/// when `briefing_indicators` is empty (no overhead on non-pine-import strategies).
+pub fn inject_briefing_indicators_into_seed(
+    seed: &mut serde_json::Value,
+    briefing_indicators: &[crate::strategies::BriefingIndicator],
+    current_bar: &Ohlcv,
+    history_slice: &[&Ohlcv],
+) {
+    use xvision_filters::{Bar as FilterBar, IndicatorEngine, IndicatorRef};
+
+    if briefing_indicators.is_empty() {
+        return;
+    }
+
+    // Build IndicatorRefs from the BriefingIndicator list.
+    let refs: Vec<IndicatorRef> = briefing_indicators
+        .iter()
+        .filter_map(|bi| {
+            let period = bi.params.first().map(|p| *p as u32);
+            Some(IndicatorRef {
+                name: bi.name,
+                period,
+                bar_offset: None,
+            })
+        })
+        .collect();
+
+    // Instantiate the engine for just these refs.
+    let mut engine = IndicatorEngine::new(refs.iter());
+
+    // Push history bars (oldest first).
+    for bar in history_slice {
+        let fb = FilterBar::with_volume(bar.open, bar.high, bar.low, bar.close, bar.volume);
+        engine.push(&fb);
+    }
+    // Push current bar.
+    let fb = FilterBar::with_volume(
+        current_bar.open,
+        current_bar.high,
+        current_bar.low,
+        current_bar.close,
+        current_bar.volume,
+    );
+    engine.push(&fb);
+
+    // Collect computed values keyed by source_token.
+    let mut values = serde_json::Map::new();
+    for (bi, ind_ref) in briefing_indicators.iter().zip(refs.iter()) {
+        if let Some(v) = engine.value(ind_ref) {
+            values.insert(bi.source_token.clone(), serde_json::json!(v));
+        }
+        // If not yet warmed up (None), skip — the LLM sees the key absent.
+    }
+
+    if !values.is_empty() {
+        if let Some(obj) = seed.as_object_mut() {
+            obj.insert(
+                "briefing_indicators".to_string(),
+                serde_json::Value::Object(values),
+            );
+        }
+    }
+}
+
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are
 /// homogeneous with the current-bar shape the trader prompt already
@@ -5681,6 +5768,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 
