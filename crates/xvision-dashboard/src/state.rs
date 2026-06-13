@@ -147,6 +147,12 @@ pub struct AppState {
     /// sealed-publish encrypt path is exercised without a live Lit endpoint —
     /// mirroring how `marketplace_snapshot` / `marketplace_chain` are injected.
     sealed_crypto_override: Option<Arc<dyn xvision_marketplace::SealedBundleCrypto>>,
+    /// Lane cgz: server-issued, single-use, time-bounded nonce store backing
+    /// the sealed-import proof-of-address challenge
+    /// (`GET /api/marketplace/listings/:id/import-challenge` issues, the
+    /// sealed-import route consumes). In-memory + Arc-shared so single-use holds
+    /// across the per-request `AppState` clones, like the autooptimizer maps.
+    marketplace_nonces: crate::marketplace_nonce::NonceStore,
 }
 
 /// Adapts an `Arc<dyn SealedBundleCrypto>` (the test-injection shape) into a
@@ -387,7 +393,14 @@ impl AppState {
             marketplace_indexer_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             marketplace_chain: None,
             sealed_crypto_override: None,
+            marketplace_nonces: crate::marketplace_nonce::NonceStore::new(),
         })
+    }
+
+    /// Lane cgz: the server-issued single-use nonce store for sealed-import
+    /// proof-of-address challenges.
+    pub fn marketplace_nonces(&self) -> &crate::marketplace_nonce::NonceStore {
+        &self.marketplace_nonces
     }
 
     /// The startup-resolved marketplace chain config (`None` = dormant).

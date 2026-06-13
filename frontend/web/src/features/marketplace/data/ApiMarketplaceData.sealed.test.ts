@@ -27,6 +27,11 @@ const mockedDecrypt = vi.mocked(decryptSealedBundle);
 
 const ADDR = "0x7c2e000000000000000000000000000000000007" as const;
 const MANIFEST = { name: "Sealed Strat", agents: [] };
+// The server-issued proof decrypt now returns alongside the manifest (lane cgz).
+const MESSAGE =
+  "xvision sealed-bundle license request\nListing: 9\nNonce: 3f9a1c8e7b2d40563f9a1c8e7b2d4056\nExpiry: 1760000000";
+const SIGNATURE = "0x" + "ab".repeat(65);
+const DECRYPTED = { manifest: MANIFEST, message: MESSAGE, signature: SIGNATURE };
 
 function client() {
   return new ApiMarketplaceData(new FixtureMarketplaceData());
@@ -47,7 +52,7 @@ describe("ApiMarketplaceData.importSealed", () => {
         content_hash: "ab".repeat(32),
       }) // bundle
       .mockResolvedValueOnce({ agent_id: "01HSEALEDULID" }); // import-sealed
-    mockedDecrypt.mockResolvedValue(MANIFEST);
+    mockedDecrypt.mockResolvedValue(DECRYPTED);
     mockedAddress.mockResolvedValue(ADDR);
 
     const out = await client().importSealed("9");
@@ -58,12 +63,20 @@ describe("ApiMarketplaceData.importSealed", () => {
       "/api/marketplace/listings/9/bundle",
     );
     expect(mockedDecrypt).toHaveBeenCalledWith({ listingId: "9", ciphertext: "CIPHER" });
+    // The import POST now carries the server-issued proof (message + signature)
+    // so the server can recover the signer and consume the single-use nonce
+    // before granting import (lane cgz).
     expect(mockedApiFetch).toHaveBeenNthCalledWith(
       2,
       "/api/marketplace/listings/9/import-sealed",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ address: ADDR, manifest: MANIFEST }),
+        body: JSON.stringify({
+          address: ADDR,
+          manifest: MANIFEST,
+          message: MESSAGE,
+          signature: SIGNATURE,
+        }),
       }),
     );
   });
@@ -83,7 +96,7 @@ describe("ApiMarketplaceData.importSealed", () => {
     mockedApiFetch
       .mockResolvedValueOnce({ listing_id: 9, content_uri: "", encrypted: true, ciphertext: "C" })
       .mockRejectedValueOnce(new ApiError(403, "forbidden", "no license"));
-    mockedDecrypt.mockResolvedValue(MANIFEST);
+    mockedDecrypt.mockResolvedValue(DECRYPTED);
     mockedAddress.mockResolvedValue(ADDR);
     await expect(client().importSealed("9")).rejects.toMatchObject({ status: 403 });
   });
@@ -92,7 +105,7 @@ describe("ApiMarketplaceData.importSealed", () => {
     mockedApiFetch
       .mockResolvedValueOnce({ listing_id: 9, content_uri: "", encrypted: true, ciphertext: "C" })
       .mockRejectedValueOnce(new ApiError(409, "conflict", "content hash mismatch"));
-    mockedDecrypt.mockResolvedValue(MANIFEST);
+    mockedDecrypt.mockResolvedValue(DECRYPTED);
     mockedAddress.mockResolvedValue(ADDR);
     await expect(client().importSealed("9")).rejects.toMatchObject({ status: 409 });
   });
