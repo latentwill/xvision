@@ -327,24 +327,34 @@ enum StrategyAction {
     ///
     /// ## wake_when_in_position
     ///
-    /// Controls whether the trader agent is called while a position is open.
-    /// Set this field in the filter JSON payload:
+    /// Controls whether the trader agent is re-invoked while a position is
+    /// open in the filter's asset. It governs per-bar polling cost during a
+    /// hold; it does NOT change entry firing. Set this field in the filter
+    /// JSON payload to one of three tokens:
     ///
-    /// - `"never"` — no mid-position calls; recommended for mean-reversion
-    ///   strategies where you want to hold to a defined target.
-    ///   Produces the fewest decisions.
-    /// - `"on_invalidation_or_target_only"` — fire when the filter changes
-    ///   state while in position (e.g. condition flips from true to false).
-    ///   **Caution**: oscillating indicators (Ichimoku, ORB levels, MFI
-    ///   extremes) flip frequently — one session recorded 21 trades expanding
-    ///   to 153 decisions with this setting.
-    /// - `"always"` — fire on every bar while in position; almost never
-    ///   correct for anything other than stop-management strategies.
+    /// - `"never"` — no mid-position calls; exits rely entirely on the
+    ///   deterministic risk gate (`risk.stop_loss_atr_multiple`). Recommended
+    ///   for hold-to-target mean-reversion strategies. Produces the fewest
+    ///   decisions.
+    /// - `"on_invalidation_or_target_only"` — wake only on a fresh trip (the
+    ///   bar the condition tree first becomes true again), so a new
+    ///   invalidation/target signal still lets the trader close while the
+    ///   sustained-true bars in between are suppressed. The position is NOT
+    ///   re-evaluated every bar. **Caution**: oscillating indicators
+    ///   (Ichimoku, ORB levels, MFI extremes) trip frequently — one session
+    ///   recorded 21 trades expanding to 153 decisions with this setting.
+    /// - `"always"` — wake on every bar the tree is true while holding (the
+    ///   first true bar AND every sustained-true bar). Expensive — one
+    ///   trader-LLM call per in-position bar; almost never correct outside
+    ///   stop-management strategies.
     ///
-    /// Default: `"on_invalidation_or_target_only"`.
+    /// Default: `"on_invalidation_or_target_only"` (the cost-safe default).
     /// Rule of thumb: start with `"never"`. Only switch to
     /// `"on_invalidation_or_target_only"` if the strategy needs to exit
-    /// early when the signal reverses.
+    /// early when the signal reverses, and pair it with a distinct exit
+    /// signal or `risk.stop_loss_atr_multiple` — otherwise an entry condition
+    /// that stays true never re-wakes the trader to close, and a whole
+    /// backtest can complete with only 1–2 decisions.
     SetFilter {
         /// Strategy id returned from `xvn strategy create`.
         strategy_id: String,
