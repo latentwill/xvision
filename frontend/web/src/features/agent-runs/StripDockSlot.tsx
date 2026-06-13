@@ -19,6 +19,7 @@ import {
   type EvalCapsuleRow,
   type EvalCapsuleStatus,
 } from "./EvalCapsule";
+import { LiveCapsule } from "../live/LiveCapsule";
 import { TraceDock } from "./TraceDock";
 
 function deriveFocusedTone(
@@ -347,6 +348,23 @@ export function StripDockSlot() {
         pnl: formatPnlPct(r.total_return_pct ?? null),
       };
     });
+
+  // Live routes get the dedicated LiveCapsule: a single focused run row plus a
+  // compact orders section listing the run's `broker.call` spans. There's no
+  // sibling stack (live is single-run), so the eval-only sibling polling above
+  // simply yields an empty list for these runs. Eval routes keep the eval
+  // capsule (focused row + concurrent-cluster sibling stack) exactly as before.
+  if (scope === "live") {
+    const brokerCallSpans = q.data.spans.filter((s) => s.kind === "broker.call");
+    return (
+      <LiveCapsule
+        run={focused}
+        brokerSpans={brokerCallSpans}
+        onExpandDock={() => setHeight("working")}
+        onPopOut={() => navigate(`/live/runs/${activeRunId}`)}
+      />
+    );
+  }
 
   return (
     <EvalCapsule
