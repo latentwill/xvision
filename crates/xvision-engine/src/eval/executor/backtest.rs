@@ -717,12 +717,13 @@ impl Executor {
             })
             .collect();
 
-        // F-6: per-run seed-sanitization policy. Mirror of the paper
-        // executor path; `Raw` (default) reproduces the pre-F-6 JSON
-        // byte-for-byte so this branch is a no-op for every existing
-        // scenario+strategy combination that didn't opt into `Causal`.
+        // F-6: per-run seed-sanitization policy. Shared implementation used
+        // by both the backtest and live executor paths; `Raw` (default)
+        // reproduces the pre-F-6 JSON byte-for-byte so this branch is a
+        // no-op for every existing scenario+strategy combination that didn't
+        // opt into `Causal`.
         let inputs_policy = resolve_inputs_policy(agent_slots);
-        // F-8: optional rolling-window cap (paper executor mirror).
+        // F-8: optional rolling-window cap; shared by both executor paths.
         // `None` keeps today's behavior; `Some(n)` trims the slice to
         // the most-recent `n` entries.
         let bar_history_limit = resolve_bar_history_limit(agent_slots);
