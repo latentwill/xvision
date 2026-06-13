@@ -152,6 +152,19 @@ export type { Filter } from "./types.gen/Filter";
 import type { Filter } from "./types.gen/Filter";
 import type { ActivationMode } from "./types.gen/ActivationMode";
 
+/// One input knob declared in a Pine Script (or manually added) that the
+/// optimizer is allowed to tune. Mirrors `TunableBound` in the Rust engine
+/// (`crates/xvision-engine/src/strategies/mod.rs`). Added by WU-A; surfaced
+/// in the settings UI by WU-C.
+export type TunableBound = {
+  /// Dot-separated path into the strategy (e.g. `conditions.0.rhs.numeric`).
+  path: string;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  kind: "int" | "float" | "bool";
+};
+
 export type Strategy = {
   manifest: PublicManifest;
   regime_slot: LLMSlot | null;
@@ -171,6 +184,15 @@ export type Strategy = {
   /// Rule-based entry/exit config. Required when decision_mode is
   /// "mechanistic"; absent for agentic strategies.
   mechanistic_config?: MechanisticConfig | null;
+  /// Declared search-space bounds, one per Pine `input.*` knob (or
+  /// manually added). Populated by WU-A from `input_mutation_targets`.
+  /// Absent / empty for non-Pine strategies — treat as `[]`.
+  tunable_bounds?: TunableBound[];
+  /// Indicators referenced in briefings (e.g. RSI, EMA column names).
+  /// Added to the TS type for parity with the Rust engine field
+  /// (`briefing_indicators`) which landed in #998. Absent for strategies
+  /// that pre-date that release — treat as `[]`.
+  briefing_indicators?: string[];
 };
 
 export type SetFilterBody = {
