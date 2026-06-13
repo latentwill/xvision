@@ -458,11 +458,7 @@ impl Executor {
     /// never blocks or aborts the trading loop. The concrete
     /// `xvision-identity` implementation is injected here from the dashboard,
     /// which keeps the engine free of a hard identity dependency.
-    pub fn with_attest_hook(
-        mut self,
-        hook: Arc<dyn super::attest_hook::AttestHook>,
-        every_n: u32,
-    ) -> Self {
+    pub fn with_attest_hook(mut self, hook: Arc<dyn super::attest_hook::AttestHook>, every_n: u32) -> Self {
         self.attest_hook = Some(hook);
         self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
@@ -3058,8 +3054,7 @@ impl Executor {
         // written best-effort after each bar so the dashboard can display
         // capital-risk state without waiting for the run to finish.
         let mut risk_veto_count: i64 = 0;
-        let live_state =
-            crate::eval::live_run_state::LiveStateStore::new(store.pool().clone());
+        let live_state = crate::eval::live_run_state::LiveStateStore::new(store.pool().clone());
         let deployed_capital = initial;
         let strategy_id = run.live_config.as_ref().map(|c| c.strategy_id.clone());
         let strategy_name = run.live_config.as_ref().map(|c| c.display_name.clone());
@@ -3418,23 +3413,27 @@ impl Executor {
                     risk_veto_count,
                     last_decision_at: Some(decision_ts.to_rfc3339()),
                     updated_at: chrono::Utc::now().to_rfc3339(),
+                    daily_loss_budget_usd: Some(kill_pct * initial),
+                    stop_at: run
+                        .live_config
+                        .as_ref()
+                        .and_then(|c| c.stop_policy.time_limit_secs)
+                        .map(|secs| (run.started_at + chrono::Duration::seconds(secs as i64)).to_rfc3339()),
                 };
                 let _ = live_state.upsert(&snap).await;
                 // CT5 Task 8: broadcast the per-bar state snapshot over SSE so
                 // the live-deployments stream handler can forward it to clients.
                 self.emit_chart(
                     &run.id,
-                    RunChartEvent::LiveRunState(
-                        crate::api::chart::LiveRunStatePayload {
-                            equity_usd: snap.equity_usd,
-                            unrealized_pnl_usd: snap.unrealized_pnl_usd,
-                            realized_today_usd: snap.realized_today_usd,
-                            daily_loss_remaining_usd: snap.daily_loss_remaining_usd,
-                            drawdown_pct: snap.drawdown_pct,
-                            risk_veto_count: snap.risk_veto_count,
-                            last_decision_at: snap.last_decision_at.clone(),
-                        },
-                    ),
+                    RunChartEvent::LiveRunState(crate::api::chart::LiveRunStatePayload {
+                        equity_usd: snap.equity_usd,
+                        unrealized_pnl_usd: snap.unrealized_pnl_usd,
+                        realized_today_usd: snap.realized_today_usd,
+                        daily_loss_remaining_usd: snap.daily_loss_remaining_usd,
+                        drawdown_pct: snap.drawdown_pct,
+                        risk_veto_count: snap.risk_veto_count,
+                        last_decision_at: snap.last_decision_at.clone(),
+                    }),
                 )
                 .await;
             }

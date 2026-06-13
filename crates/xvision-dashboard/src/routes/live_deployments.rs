@@ -40,9 +40,7 @@ pub async fn get_one(
 ) -> Result<Json<LiveDeploymentSummary>, DashboardError> {
     match get_live_deployment(&state.api_context(), &id).await? {
         Some(d) => Ok(Json(d)),
-        None => Err(DashboardError::NotFound(format!(
-            "deployment '{id}' not found"
-        ))),
+        None => Err(DashboardError::NotFound(format!("deployment '{id}' not found"))),
     }
 }
 

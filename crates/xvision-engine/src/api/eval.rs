@@ -4802,7 +4802,10 @@ mod tests {
     #[test]
     fn live_venue_alpaca_resolves_regardless_of_orderly_env() {
         for url in [None, Some("https://testnet-api-evm.orderly.org")] {
-            assert_eq!(resolve_live_venue("alpaca", url, None).unwrap(), LiveVenue::AlpacaPaper);
+            assert_eq!(
+                resolve_live_venue("alpaca", url, None).unwrap(),
+                LiveVenue::AlpacaPaper
+            );
         }
     }
 
@@ -4837,8 +4840,12 @@ mod tests {
     #[test]
     fn live_venue_orderly_testnet_accepts_testnet_base_url() {
         assert_eq!(
-            resolve_live_venue("orderly_testnet", Some("https://testnet-api-evm.orderly.org"), None)
-                .unwrap(),
+            resolve_live_venue(
+                "orderly_testnet",
+                Some("https://testnet-api-evm.orderly.org"),
+                None
+            )
+            .unwrap(),
             LiveVenue::OrderlyTestnet,
         );
     }
@@ -4852,7 +4859,10 @@ mod tests {
             let msg = err.to_string();
             assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
             assert!(msg.contains("BYREAL_NETWORK"), "must name the env var: {msg}");
-            assert!(msg.contains("fire-trade --venue byreal"), "must point to the CLI: {msg}");
+            assert!(
+                msg.contains("fire-trade --venue byreal"),
+                "must point to the CLI: {msg}"
+            );
             // Cred-safety: must NOT echo the env value into the error.
             assert!(!msg.contains("mainnet'"), "must not echo the env value: {msg}");
         }
@@ -5375,6 +5385,14 @@ pub struct LiveDeploymentSummary {
     // i64 → JSON integer decodes as a JS `number`, not BigInt; pin the TS type.
     #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub risk_veto_count: i64,
+    /// Daily-loss budget in USD = kill_pct × initial capital. `None` when
+    /// no live_run_state row exists yet or kill_pct is 0. Unlocks the
+    /// strip's buffer %-gradient (remaining / budget).
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock deadline (RFC-3339) = started_at + time_limit_secs.
+    /// `None` for bar/decision stop policies (no wall-clock ETA) or when no
+    /// live_run_state row exists yet. Unlocks awm's ETA display.
+    pub stop_at: Option<String>,
 }
 
 /// Private row type for the `eval_runs LEFT JOIN live_run_state` query.
@@ -5397,6 +5415,8 @@ struct LiveDeploymentRow {
     drawdown_pct: Option<f64>,
     daily_loss_remaining_usd: Option<f64>,
     risk_veto_count: Option<i64>,
+    daily_loss_budget_usd: Option<f64>,
+    stop_at: Option<String>,
 }
 
 /// Base SELECT joining `eval_runs` to `live_run_state`, filtered to
@@ -5409,7 +5429,8 @@ const LIVE_DEPLOYMENT_SELECT: &str = "\
            s.equity_usd AS equity_usd, s.realized_pnl_usd AS realized_pnl_usd, \
            s.unrealized_pnl_usd AS unrealized_pnl_usd, s.realized_today_usd AS realized_today_usd, \
            s.drawdown_pct AS drawdown_pct, s.daily_loss_remaining_usd AS daily_loss_remaining_usd, \
-           s.risk_veto_count AS risk_veto_count \
+           s.risk_veto_count AS risk_veto_count, \
+           s.daily_loss_budget_usd AS daily_loss_budget_usd, s.stop_at AS stop_at \
     FROM eval_runs r LEFT JOIN live_run_state s ON s.run_id = r.id \
     WHERE r.mode = 'live' AND r.venue_label != 'live'";
 
@@ -5432,6 +5453,8 @@ impl From<LiveDeploymentRow> for LiveDeploymentSummary {
             drawdown_pct: r.drawdown_pct,
             daily_loss_limit_remaining_usd: r.daily_loss_remaining_usd,
             risk_veto_count: r.risk_veto_count.unwrap_or(0),
+            daily_loss_budget_usd: r.daily_loss_budget_usd,
+            stop_at: r.stop_at,
         }
     }
 }

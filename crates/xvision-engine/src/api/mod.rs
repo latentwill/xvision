@@ -162,8 +162,16 @@ const MIGRATION_063_EVAL_RUN_FLATTEN_REQUESTED: &str =
 /// which the executor upserts each bar so `GET /api/live/deployments` can
 /// join eval_runs ⨝ live_run_state in a single query. Applied via
 /// `migrate_live_run_state`, gated on the table's absence for idempotence.
-const MIGRATION_067_LIVE_RUN_STATE: &str =
-    include_str!("../../migrations/067_live_run_state.sql");
+const MIGRATION_067_LIVE_RUN_STATE: &str = include_str!("../../migrations/067_live_run_state.sql");
+/// Migration 068: daily-loss budget + stop ETA additive columns on
+/// `live_run_state`. Adds `daily_loss_budget_usd` (REAL, nullable) = kill_pct
+/// × initial capital, and `stop_at` (TEXT, nullable, RFC-3339) = started_at +
+/// time_limit_secs (only when the stop policy is time-bounded). Applied via
+/// `migrate_live_run_state_budget_eta`, which guards each column independently
+/// via `table_has_column` so a crash between the two non-atomic ALTERs never
+/// strands the DB with one column missing; re-opening converges to both columns.
+const MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA: &str =
+    include_str!("../../migrations/068_live_run_state_budget_eta.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -452,6 +460,7 @@ impl ApiContext {
         migrate_eval_run_paused(&pool).await?;
         migrate_eval_run_flatten_requested(&pool).await?;
         migrate_live_run_state(&pool).await?;
+        migrate_live_run_state_budget_eta(&pool).await?;
         // P1-W2: crash recovery — mark any in-flight sessions as failed.
         crate::autooptimizer::session::mark_interrupted_sessions(&pool)
             .await
@@ -1311,6 +1320,29 @@ async fn migrate_eval_run_flatten_requested(pool: &SqlitePool) -> ApiResult<()> 
 async fn migrate_live_run_state(pool: &SqlitePool) -> ApiResult<()> {
     if !table_exists(pool, "live_run_state").await? {
         sqlx::query(MIGRATION_067_LIVE_RUN_STATE).execute(pool).await?;
+    }
+    Ok(())
+}
+
+/// Apply migration 068 (CT5 strips unblock): additive `daily_loss_budget_usd`
+/// and `stop_at` columns on `live_run_state`. Mirrors `migrate_eval_run_paused`
+/// — each ALTER is guarded independently by `table_has_column` so a crash
+/// between the two non-atomic ALTERs (SQLite cannot batch them) never strands
+/// the DB with one column absent; re-opening always converges to both present.
+/// The DDL in `068_live_run_state_budget_eta.sql` (compiled in as
+/// `MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA`) is the authoritative source for
+/// a clean apply; the per-column ALTERs below mirror it exactly.
+async fn migrate_live_run_state_budget_eta(pool: &SqlitePool) -> ApiResult<()> {
+    let _ = MIGRATION_068_LIVE_RUN_STATE_BUDGET_ETA;
+    if !table_has_column(pool, "live_run_state", "daily_loss_budget_usd").await? {
+        sqlx::query("ALTER TABLE live_run_state ADD COLUMN daily_loss_budget_usd REAL")
+            .execute(pool)
+            .await?;
+    }
+    if !table_has_column(pool, "live_run_state", "stop_at").await? {
+        sqlx::query("ALTER TABLE live_run_state ADD COLUMN stop_at TEXT")
+            .execute(pool)
+            .await?;
     }
     Ok(())
 }

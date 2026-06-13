@@ -2210,8 +2210,7 @@ async fn attest_hook_fires_once_per_n_trades_and_not_before() {
 
     // Sanity: every bar produces one fill leg.
     assert_eq!(
-        metrics.n_trades,
-        BARS as u32,
+        metrics.n_trades, BARS as u32,
         "each alternating bar fills exactly once, got {}",
         metrics.n_trades,
     );
@@ -2272,8 +2271,7 @@ async fn attest_hook_does_not_fire_below_n_trades() {
         .expect("live run completes on stream end");
 
     assert_eq!(
-        metrics.n_trades,
-        BARS as u32,
+        metrics.n_trades, BARS as u32,
         "{BARS} filled legs expected, got {}",
         metrics.n_trades,
     );

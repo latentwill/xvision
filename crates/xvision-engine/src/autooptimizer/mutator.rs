@@ -1587,7 +1587,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
@@ -1601,7 +1601,20 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
+        let without = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1623,7 +1636,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
@@ -1639,7 +1652,20 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            5,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
         assert!(
             payload.contains("Tunable filter paths"),
             "filter section header must be present: {payload}"
@@ -1667,7 +1693,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             !no_filter_payload.contains("Tunable filter paths"),
@@ -1690,7 +1716,20 @@ mod tests {
             ("conditions.1.op.within_pct".to_string(), serde_json::json!(1.5)),
             ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            5,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
 
         // The window-op path must be listed AND annotated as a positive integer.
         assert!(
@@ -1746,7 +1785,20 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
 
         // Param key list and risk.* references must be absent.
         assert!(
@@ -1798,7 +1850,7 @@ mod tests {
                 0,
                 &prose_roles,
                 0,
-            true,
+                true,
             );
             // Exactly one lever is focused per cycle (the three directive
             // signatures are mutually exclusive).
@@ -1840,7 +1892,7 @@ mod tests {
                 0,
                 &[],
                 0,
-            true,
+                true,
             );
             assert!(
                 !p.contains("agent's system prompt"),
@@ -2138,7 +2190,18 @@ mod tests {
         let keys = vec!["risk.risk_pct_per_trade".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![]; // no filter
         let out = build_user_payload(
-            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, false,
+            "PROGRAM",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            3,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            false,
         );
         assert!(
             out.contains("create_filter"),
@@ -2152,7 +2215,18 @@ mod tests {
         let keys: Vec<String> = vec![];
         let filter_paths = vec![("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0))];
         let out = build_user_payload(
-            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, true,
+            "PROGRAM",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            3,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
         );
         assert!(
             !out.contains("create_filter"),
@@ -2312,7 +2386,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         let p1 = build_user_payload(
             "prog",
@@ -2326,7 +2400,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         // The focus directive must name a different key for attempt 0 vs attempt 1.
         // Since `build_user_payload` embeds the focus in the exploration_section,
@@ -2384,7 +2458,7 @@ mod tests {
                 0,
                 &prose_roles,
                 attempt,
-            true,
+                true,
             );
             // Detect kind via the existing directive substrings the tests already use.
             if p.contains("agent system prompt") || p.contains("agent's system prompt") {

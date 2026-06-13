@@ -83,9 +83,7 @@ async fn realized_today_is_populated_and_finite() {
         .await
         .unwrap()
         .expect("row present");
-    let rt = snap
-        .realized_today_usd
-        .expect("realized_today_usd must be Some");
+    let rt = snap.realized_today_usd.expect("realized_today_usd must be Some");
     assert!(rt.is_finite(), "realized_today_usd must be finite, got {rt}");
     // On a hold-only, no-fill run the realized PnL is 0 and so is realized_today.
     assert_eq!(
@@ -101,12 +99,11 @@ async fn realized_today_is_populated_and_finite() {
 #[tokio::test]
 async fn migration_creates_live_run_state_table() {
     let ctx = support::api_context_fresh().await; // production migration path → includes 065
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='live_run_state'",
-    )
-    .fetch_one(&ctx.db)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='live_run_state'")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap();
     assert_eq!(count, 1);
 }
 
@@ -117,7 +114,10 @@ async fn create_persists_venue_label_from_live_config() {
     let run = support::live_run_with_venue(xvision_engine::safety::venue::VenueLabel::Testnet);
     store.create(&run).await.unwrap();
     let venue: String = sqlx::query_scalar("SELECT venue_label FROM eval_runs WHERE id = ?")
-        .bind(&run.id).fetch_one(&ctx.db).await.unwrap();
+        .bind(&run.id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
     assert_eq!(venue, "testnet");
 }
 
@@ -156,22 +156,36 @@ async fn live_state_upsert_inserts_then_updates_in_place() {
 
     let lss = LiveStateStore::new(ctx.db.clone());
     let mut snap = LiveRunState {
-        run_id: run.id.clone(), strategy_id: Some("strat-1".into()),
-        strategy_name: Some("Trend v2".into()), deployed_capital_usd: 10_000.0,
-        equity_usd: Some(10_050.0), unrealized_pnl_usd: Some(50.0), realized_pnl_usd: Some(0.0),
-        realized_today_usd: Some(0.0), daily_loss_remaining_usd: Some(500.0), drawdown_pct: Some(0.0),
-        peak_equity_usd: Some(10_050.0), risk_veto_count: 0,
-        last_decision_at: Some("2026-06-13T12:00:00Z".into()), updated_at: "2026-06-13T12:00:00Z".into(),
+        run_id: run.id.clone(),
+        strategy_id: Some("strat-1".into()),
+        strategy_name: Some("Trend v2".into()),
+        deployed_capital_usd: 10_000.0,
+        equity_usd: Some(10_050.0),
+        unrealized_pnl_usd: Some(50.0),
+        realized_pnl_usd: Some(0.0),
+        realized_today_usd: Some(0.0),
+        daily_loss_remaining_usd: Some(500.0),
+        drawdown_pct: Some(0.0),
+        peak_equity_usd: Some(10_050.0),
+        risk_veto_count: 0,
+        last_decision_at: Some("2026-06-13T12:00:00Z".into()),
+        updated_at: "2026-06-13T12:00:00Z".into(),
+        daily_loss_budget_usd: Some(500.0),
+        stop_at: Some("2026-06-13T13:00:00Z".into()),
     };
     lss.upsert(&snap).await.unwrap();
-    snap.equity_usd = Some(9_800.0); snap.risk_veto_count = 2;
+    snap.equity_usd = Some(9_800.0);
+    snap.risk_veto_count = 2;
     lss.upsert(&snap).await.unwrap();
 
     let got = lss.get(&run.id).await.unwrap().expect("row present");
     assert_eq!(got.equity_usd, Some(9_800.0));
     assert_eq!(got.risk_veto_count, 2);
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM live_run_state WHERE run_id = ?")
-        .bind(&run.id).fetch_one(&ctx.db).await.unwrap();
+        .bind(&run.id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
     assert_eq!(n, 1);
 }
 
@@ -187,7 +201,10 @@ async fn list_live_deployments_excludes_backtests_and_live_venue() {
     let ctx = support::api_context_fresh().await;
     let store = RunStore::new(ctx.db.clone());
     store.create(&support::backtest_run()).await.unwrap();
-    store.create(&support::live_run_with_venue(VenueLabel::Paper)).await.unwrap();
+    store
+        .create(&support::live_run_with_venue(VenueLabel::Paper))
+        .await
+        .unwrap();
 
     let out: Vec<LiveDeploymentSummary> = list_live_deployments(&ctx, None).await.unwrap();
     assert_eq!(out.len(), 1);
@@ -230,10 +247,16 @@ async fn list_live_deployments_surfaces_testnet_label() {
     use xvision_engine::safety::venue::VenueLabel;
     let ctx = support::api_context_fresh().await;
     let store = RunStore::new(ctx.db.clone());
-    store.create(&support::live_run_with_venue(VenueLabel::Testnet)).await.unwrap();
+    store
+        .create(&support::live_run_with_venue(VenueLabel::Testnet))
+        .await
+        .unwrap();
     let out = list_live_deployments(&ctx, None).await.unwrap();
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0].venue_label, "testnet", "API response must carry the persisted venue_label");
+    assert_eq!(
+        out[0].venue_label, "testnet",
+        "API response must carry the persisted venue_label"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +285,8 @@ async fn bus_delivers_live_run_state_event_to_subscriber() {
         last_decision_at: Some("2026-06-13T12:00:00Z".into()),
     };
 
-    bus.emit(run_id, RunChartEvent::LiveRunState(payload.clone())).await;
+    bus.emit(run_id, RunChartEvent::LiveRunState(payload.clone()))
+        .await;
 
     let ev = timeout(Duration::from_secs(1), rx.recv())
         .await
@@ -281,6 +305,196 @@ async fn bus_delivers_live_run_state_event_to_subscriber() {
         }
         other => panic!("expected LiveRunState event, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task (migration 068): daily_loss_budget_usd + stop_at new fields
+// ---------------------------------------------------------------------------
+
+/// (a) LiveStateStore round-trips both new fields through upsert/get.
+#[tokio::test]
+async fn live_state_store_roundtrips_budget_and_stop_at() {
+    use xvision_engine::eval::live_run_state::{LiveRunState, LiveStateStore};
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::safety::venue::VenueLabel;
+
+    let ctx = support::api_context_fresh().await;
+    let store = RunStore::new(ctx.db.clone());
+    let run = support::live_run_with_venue(VenueLabel::Paper);
+    store.create(&run).await.unwrap();
+
+    let lss = LiveStateStore::new(ctx.db.clone());
+
+    // With both fields set.
+    let snap = LiveRunState {
+        run_id: run.id.clone(),
+        strategy_id: None,
+        strategy_name: None,
+        deployed_capital_usd: 10_000.0,
+        equity_usd: Some(10_000.0),
+        unrealized_pnl_usd: Some(0.0),
+        realized_pnl_usd: Some(0.0),
+        realized_today_usd: Some(0.0),
+        daily_loss_remaining_usd: Some(500.0),
+        drawdown_pct: Some(0.0),
+        peak_equity_usd: Some(10_000.0),
+        risk_veto_count: 0,
+        last_decision_at: None,
+        updated_at: "2026-06-13T00:00:00Z".into(),
+        daily_loss_budget_usd: Some(500.0),
+        stop_at: Some("2026-06-14T00:00:00Z".into()),
+    };
+    lss.upsert(&snap).await.unwrap();
+
+    let got = lss.get(&run.id).await.unwrap().expect("row present");
+    assert_eq!(
+        got.daily_loss_budget_usd,
+        Some(500.0),
+        "daily_loss_budget_usd must round-trip"
+    );
+    assert_eq!(
+        got.stop_at.as_deref(),
+        Some("2026-06-14T00:00:00Z"),
+        "stop_at must round-trip"
+    );
+}
+
+/// (a-null) LiveStateStore round-trips NULL for both fields when None.
+#[tokio::test]
+async fn live_state_store_roundtrips_null_budget_and_stop_at() {
+    use xvision_engine::eval::live_run_state::{LiveRunState, LiveStateStore};
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::safety::venue::VenueLabel;
+
+    let ctx = support::api_context_fresh().await;
+    let store = RunStore::new(ctx.db.clone());
+    let run = support::live_run_with_venue(VenueLabel::Paper);
+    store.create(&run).await.unwrap();
+
+    let lss = LiveStateStore::new(ctx.db.clone());
+    let snap = LiveRunState {
+        run_id: run.id.clone(),
+        strategy_id: None,
+        strategy_name: None,
+        deployed_capital_usd: 5_000.0,
+        equity_usd: None,
+        unrealized_pnl_usd: None,
+        realized_pnl_usd: None,
+        realized_today_usd: None,
+        daily_loss_remaining_usd: None,
+        drawdown_pct: None,
+        peak_equity_usd: None,
+        risk_veto_count: 0,
+        last_decision_at: None,
+        updated_at: "2026-06-13T00:00:00Z".into(),
+        daily_loss_budget_usd: None,
+        stop_at: None,
+    };
+    lss.upsert(&snap).await.unwrap();
+
+    let got = lss.get(&run.id).await.unwrap().expect("row present");
+    assert!(
+        got.daily_loss_budget_usd.is_none(),
+        "daily_loss_budget_usd must be None when not set"
+    );
+    assert!(got.stop_at.is_none(), "stop_at must be None when not set");
+}
+
+/// (b) run_short_live executor writes daily_loss_budget_usd = kill_pct * initial.
+///
+/// The support strategy uses `RiskPreset::Balanced` which expands to
+/// `daily_loss_kill_pct = 0.05`. With initial = 10_000.0 the budget is
+/// `0.05 * 10_000.0 = 500.0`. This confirms the executor computation is wired
+/// and the value reaches the DB.
+#[tokio::test]
+async fn run_short_live_writes_daily_loss_budget_usd() {
+    use xvision_engine::eval::live_run_state::LiveStateStore;
+
+    // kill_pct = 0.05 (Balanced preset), initial = 10_000.0 → budget = 500.0
+    let h = support::run_short_live(6, 10_000.0).await;
+    let snap = LiveStateStore::new(h.pool.clone())
+        .get(&h.run_id)
+        .await
+        .unwrap()
+        .expect("live_run_state row present");
+
+    let budget = snap
+        .daily_loss_budget_usd
+        .expect("daily_loss_budget_usd must be Some after run_inner_live");
+    assert!(
+        (budget - 500.0).abs() < 1e-9,
+        "budget must be kill_pct(0.05) * initial(10_000) = 500.0, got {budget}"
+    );
+}
+
+/// (b-stop-null) The support harness uses a bar_limit stop policy (no
+/// time_limit_secs), so stop_at must be NULL.
+#[tokio::test]
+async fn run_short_live_stop_at_is_null_for_bar_limit_policy() {
+    use xvision_engine::eval::live_run_state::LiveStateStore;
+
+    let h = support::run_short_live(6, 10_000.0).await;
+    let snap = LiveStateStore::new(h.pool.clone())
+        .get(&h.run_id)
+        .await
+        .unwrap()
+        .expect("live_run_state row present");
+
+    assert!(
+        snap.stop_at.is_none(),
+        "stop_at must be None when stop policy is bar_limit (no time_limit_secs)"
+    );
+}
+
+/// (c) list_live_deployments exposes both new fields.
+#[tokio::test]
+async fn list_live_deployments_exposes_budget_and_stop_at() {
+    use xvision_engine::api::eval::list_live_deployments;
+    use xvision_engine::eval::live_run_state::{LiveRunState, LiveStateStore};
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::safety::venue::VenueLabel;
+
+    let ctx = support::api_context_fresh().await;
+    let store = RunStore::new(ctx.db.clone());
+    let run = support::live_run_with_venue(VenueLabel::Paper);
+    store.create(&run).await.unwrap();
+
+    // Upsert a live_run_state row with known budget and stop_at.
+    let lss = LiveStateStore::new(ctx.db.clone());
+    let snap = LiveRunState {
+        run_id: run.id.clone(),
+        strategy_id: None,
+        strategy_name: None,
+        deployed_capital_usd: 10_000.0,
+        equity_usd: Some(10_000.0),
+        unrealized_pnl_usd: Some(0.0),
+        realized_pnl_usd: Some(0.0),
+        realized_today_usd: Some(0.0),
+        daily_loss_remaining_usd: Some(500.0),
+        drawdown_pct: Some(0.0),
+        peak_equity_usd: Some(10_000.0),
+        risk_veto_count: 0,
+        last_decision_at: None,
+        updated_at: "2026-06-13T00:00:00Z".into(),
+        daily_loss_budget_usd: Some(500.0),
+        stop_at: Some("2026-06-13T01:00:00Z".into()),
+    };
+    lss.upsert(&snap).await.unwrap();
+
+    let deployments = list_live_deployments(&ctx, None).await.unwrap();
+    assert_eq!(deployments.len(), 1);
+    let d = &deployments[0];
+
+    assert_eq!(
+        d.daily_loss_budget_usd,
+        Some(500.0),
+        "list_live_deployments must surface daily_loss_budget_usd"
+    );
+    assert_eq!(
+        d.stop_at.as_deref(),
+        Some("2026-06-13T01:00:00Z"),
+        "list_live_deployments must surface stop_at"
+    );
 }
 
 /// A subscriber on a different run_id receives nothing when `LiveRunState`

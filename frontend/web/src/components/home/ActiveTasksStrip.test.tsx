@@ -138,6 +138,8 @@ function makeLiveDeployment(
     drawdown_pct: 2,
     daily_loss_limit_remaining_usd: 500,
     risk_veto_count: 0,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     ...overrides,
   };
 }
