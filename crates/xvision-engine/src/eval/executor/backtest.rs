@@ -180,7 +180,26 @@ pub struct Executor {
     /// min_order_size_violation` that an operator cannot distinguish from a
     /// real fault. `None` (every real run) keeps the `WARN` intact.
     canary_sabotage: Option<String>,
+    /// LANE byu — optional periodic attest sink for the LIVE loop. When
+    /// `Some`, the executor invokes `maybe_attest` every
+    /// `attest_every_n_trades` executed (filled) trades with a listed-
+    /// performance snapshot. Dependency-inverted: the engine defines the
+    /// trait + a no-op default; the concrete identity-backed impl is injected
+    /// from the dashboard (which depends on both engine and identity), so NO
+    /// hard `xvision-engine -> xvision-identity` Cargo edge is added. `None`
+    /// (every backtest, every test that does not wire it) keeps the seam
+    /// dormant. See `attest_hook.rs`.
+    attest_hook: Option<Arc<dyn super::attest_hook::AttestHook>>,
+    /// Trade interval for the attest hook (default 20). Clamped to at least 1
+    /// at the call site so the boundary modulo never divides by zero. Only
+    /// consulted when `attest_hook` is `Some`.
+    attest_every_n_trades: u32,
 }
+
+/// LANE byu — default cadence (in executed trades) at which the live loop
+/// fires the periodic [`super::attest_hook::AttestHook`]. The dashboard can
+/// override per-run via [`Executor::with_attest_hook`].
+pub const DEFAULT_ATTEST_EVERY_N_TRADES: u32 = 20;
 
 impl Executor {
     /// Backtest constructor — wires `InjectedBars + InstantClock +
@@ -234,6 +253,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         })
     }
 
@@ -266,6 +287,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         }
     }
 
@@ -294,6 +317,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         }
     }
 
@@ -316,6 +341,8 @@ impl Executor {
             agent_runtime: Default::default(),
             cline: None,
             canary_sabotage: None,
+            attest_hook: None,
+            attest_every_n_trades: DEFAULT_ATTEST_EVERY_N_TRADES,
         }
     }
 
@@ -416,6 +443,27 @@ impl Executor {
     #[doc(hidden)]
     pub fn with_fill_sink(mut self, sink: Box<dyn FillSink>) -> Self {
         self.fill_sink_override = Some(tokio::sync::Mutex::new(sink));
+        self
+    }
+
+    /// LANE byu — attach a periodic attest sink to the LIVE loop, firing every
+    /// `every_n` executed (filled) trades with a listed-performance snapshot.
+    /// Builder-style so the dashboard can chain after `Executor::live(...)`:
+    ///   `Executor::live(..)?.with_attest_hook(identity_hook, 20)`.
+    ///
+    /// `every_n` is clamped to at least 1 (a `0` becomes "every trade") so the
+    /// boundary modulo can never divide by zero. The hook is invoked
+    /// fire-and-forget from `run_inner_live` — a slow/failing attestation
+    /// never blocks or aborts the trading loop. The concrete
+    /// `xvision-identity` implementation is injected here from the dashboard,
+    /// which keeps the engine free of a hard identity dependency.
+    pub fn with_attest_hook(
+        mut self,
+        hook: Arc<dyn super::attest_hook::AttestHook>,
+        every_n: u32,
+    ) -> Self {
+        self.attest_hook = Some(hook);
+        self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
     }
 
@@ -3343,6 +3391,35 @@ impl Executor {
             });
 
             decision_idx += 1;
+
+            // LANE byu — periodic auto-attest. Only a FILLED trade advances
+            // `n_trades`, so checking the boundary here fires the injected
+            // attest sink exactly once each time the cumulative trade count
+            // crosses an `attest_every_n_trades` boundary (20, 40, …) and
+            // never between. The hook is fire-and-forget: we `.await` it but a
+            // conforming impl returns promptly (spawning its own background
+            // chain submit) so a slow/failing attestation never stalls or
+            // aborts the loop while we hold the runtime mutex. No hook (every
+            // backtest, every test that does not wire one) is a no-op.
+            if let Some(hook) = self.attest_hook.as_ref() {
+                if super::attest_hook::is_attest_boundary(n_trades, self.attest_every_n_trades) {
+                    let summary = super::attest_hook::AttestSummary {
+                        run_id: run.id.clone(),
+                        agent_id: strategy.manifest.id.clone(),
+                        n_trades,
+                        n_decisions: decision_idx,
+                        realized_count,
+                        wins,
+                        gross_return_pct: if initial != 0.0 {
+                            (equity - initial) / initial * 100.0
+                        } else {
+                            0.0
+                        },
+                        equity,
+                    };
+                    hook.maybe_attest(summary).await;
+                }
+            }
 
             // (b) StopPolicy — evaluate after the decision is fully
             // recorded so a limit of N yields N decisions. Whichever fires
