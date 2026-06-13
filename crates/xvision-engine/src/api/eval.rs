@@ -3610,6 +3610,15 @@ fn resolve_live_venue(broker_creds_ref: &str, orderly_base_url: Option<&str>) ->
             }
             Ok(LiveVenue::OrderlyTestnet)
         }
+        "byreal" => Err(ApiError::Validation(
+            "Byreal live-eval execution is not yet wired into the engine live path: it needs a \
+             ByrealLiveSurface (BrokerSurface) adapter over the perps CLI, tracked as a follow-up. \
+             To trade on Byreal today, use the direct CLI path instead: \
+             `xvn fire-trade --venue byreal ...`, `xvn portfolio --venue byreal`, or \
+             `xvn close-position --venue byreal <asset>` with BYREAL_PRIVATE_KEY / BYREAL_NETWORK / \
+             BYREAL_ACCOUNT set."
+                .into(),
+        )),
         other => Err(ApiError::Validation(format!(
             "live_config.broker_creds_ref '{other}' is not supported in the current live scope. \
              Supported venues: \"alpaca\" (Alpaca paper trading) and \"orderly_testnet\" \

@@ -448,6 +448,19 @@ export ORDERLY_SECRET=...                     # M6
 export ORDERLY_ACCOUNT_ID=...                 # M6
 export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
 
+# Byreal perps venue (executes on Hyperliquid via npx @byreal-io/byreal-perps-cli)
+export BYREAL_PRIVATE_KEY=$(op read 'op://Personal/xvision-byreal/private-key')
+export BYREAL_NETWORK=mainnet                 # or testnet; defaults to mainnet
+export BYREAL_ACCOUNT=...                      # optional account id
+# Then select Byreal as the execution venue from the CLI:
+#   xvn fire-trade --venue byreal --asset BTC --side buy --size-bps 100 ...
+#   xvn portfolio --venue byreal
+#   xvn close-position --venue byreal BTC
+# Or in config: [runtime] executor = "byreal"
+# Note: live-eval engine runs (broker_creds_ref) do NOT yet support byreal —
+# that path needs a ByrealLiveSurface (BrokerSurface) adapter (follow-up).
+# Use the CLI verbs above for Byreal execution today.
+
 # Phase 11.5 Mantle (only if identity.enabled = true)
 export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # M7 (testnet, chain 5003)
 export MANTLE_DEPLOYER_KEY=...                # M7

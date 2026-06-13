@@ -164,6 +164,32 @@ intentionally **Rules-only mechanical**, absence of a model call is expected;
 the bug would be ambiguous labeling or validation that treats it as an
 unconfigured agent.
 
+## Execution venues (Alpaca / Orderly / Byreal)
+
+The direct-execution CLI verbs (`fire-trade`, `portfolio`, `close-position`)
+take a `--venue` flag selecting which live executor to build from env:
+
+```bash
+# Byreal perps (executes on Hyperliquid via npx @byreal-io/byreal-perps-cli).
+# Env: BYREAL_PRIVATE_KEY (required), BYREAL_NETWORK (default mainnet), BYREAL_ACCOUNT (optional).
+xvn fire-trade --venue byreal --asset BTC --side buy --size-bps 100 --sl 2 --tp 4
+xvn portfolio --venue byreal
+xvn close-position --venue byreal BTC
+
+# Other venues:
+xvn fire-trade --venue alpaca ...     # Alpaca paper (APCA_API_KEY_ID/...)
+xvn fire-trade --venue orderly ...    # Orderly (ORDERLY_KEY/SECRET/ACCOUNT_ID/BASE_URL)
+```
+
+`xvn doctor` reports Byreal env readiness under `byreal_venue` (presence only —
+never the key). Config form: `[runtime] executor = "byreal"`.
+
+**Caveat:** the **live-eval engine** path (`eval run --mode live`,
+`broker_creds_ref`) supports `alpaca` and `orderly_testnet` only. Byreal is NOT
+yet a live-eval venue — it needs a `ByrealLiveSurface` (`BrokerSurface`) adapter
+(tracked follow-up). For Byreal execution today, use the `--venue byreal` CLI
+verbs above, not a live-eval run.
+
 ## Strategy inspector and filters
 
 - Canonical dashboard inspector route: `/strategies/:id`.

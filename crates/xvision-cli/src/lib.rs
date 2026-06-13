@@ -137,7 +137,7 @@ pub enum Command {
     /// Builds a synthetic `RiskDecision::Approved` from CLI args and submits
     /// via the venue executor (idempotent on `cycle_id`).
     FireTrade {
-        /// `alpaca` or `orderly`.
+        /// Execution venue: `alpaca`, `orderly`, or `byreal`.
         #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
         venue: Venue,
         /// `buy` (long) or `sell` (short).
@@ -161,11 +161,13 @@ pub enum Command {
     },
     /// Read live portfolio state from a venue.
     Portfolio {
+        /// Execution venue: `alpaca`, `orderly`, or `byreal`.
         #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
         venue: Venue,
     },
     /// Close any open position in `--asset` at the given venue.
     ClosePosition {
+        /// Execution venue: `alpaca`, `orderly`, or `byreal`.
         #[arg(long, default_value = "alpaca", value_parser = clap::value_parser!(Venue))]
         venue: Venue,
         /// BTC | ETH | SOL.

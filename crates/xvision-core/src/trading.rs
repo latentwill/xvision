@@ -664,7 +664,10 @@ mod tests {
     fn risk_decision_round_trips_json_for_each_variant() {
         let d = fixture_decision();
         let cases = vec![
-            RiskDecision::Approved { decision: d.clone(), warnings: vec![] },
+            RiskDecision::Approved {
+                decision: d.clone(),
+                warnings: vec![],
+            },
             RiskDecision::Modified {
                 original: d.clone(),
                 modified: TraderDecision {
@@ -689,9 +692,12 @@ mod tests {
     #[test]
     fn risk_decision_effective_skips_veto() {
         let d = fixture_decision();
-        assert!(RiskDecision::Approved { decision: d.clone(), warnings: vec![] }
-            .effective()
-            .is_some());
+        assert!(RiskDecision::Approved {
+            decision: d.clone(),
+            warnings: vec![]
+        }
+        .effective()
+        .is_some());
         assert!(RiskDecision::Vetoed {
             original: d,
             reason: VetoReason::AssetNotWhitelisted
