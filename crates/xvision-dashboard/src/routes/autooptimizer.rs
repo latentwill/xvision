@@ -65,6 +65,7 @@ pub struct SessionSummary {
     pub kept_count: i64,
     pub suspect_count: i64,
     pub dropped_count: i64,
+    pub errored_count: i64,
     pub cost_usd: Option<f64>,
 }
 
@@ -79,6 +80,7 @@ impl From<OptimizerSession> for SessionSummary {
             kept_count: s.kept_count,
             suspect_count: s.suspect_count,
             dropped_count: s.dropped_count,
+            errored_count: s.errored_count,
             cost_usd: None,
         }
     }
@@ -1909,6 +1911,7 @@ mod tests {
                 kept_count       INTEGER NOT NULL DEFAULT 0,
                 suspect_count    INTEGER NOT NULL DEFAULT 0,
                 dropped_count    INTEGER NOT NULL DEFAULT 0,
+                errored_count    INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             )",
@@ -2116,6 +2119,7 @@ mod tests {
                 kept_count       INTEGER NOT NULL DEFAULT 0,
                 suspect_count    INTEGER NOT NULL DEFAULT 0,
                 dropped_count    INTEGER NOT NULL DEFAULT 0,
+                errored_count    INTEGER NOT NULL DEFAULT 0,
                 created_at   TEXT NOT NULL
             )",
         )

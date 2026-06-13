@@ -1799,6 +1799,18 @@ async fn migrate_autooptimizer_sessions(pool: &SqlitePool) -> ApiResult<()> {
             sqlx::query(&stmt).execute(pool).await?;
         }
     }
+    // Additive column: errored_count — upgrade existing DBs that predate Task 3.1.
+    // SQLite has no ADD COLUMN IF NOT EXISTS; probe with table_has_column first.
+    if table_exists(pool, "autooptimizer_session_state").await?
+        && !table_has_column(pool, "autooptimizer_session_state", "errored_count").await?
+    {
+        sqlx::query(
+            "ALTER TABLE autooptimizer_session_state \
+             ADD COLUMN errored_count INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 
