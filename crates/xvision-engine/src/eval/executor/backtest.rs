@@ -73,6 +73,7 @@ use crate::eval::run::{BaselineMetrics, BaselineRelative, BaselinesReport, Metri
 use crate::eval::scenario::{FeeSource, FillProvenance, Scenario, SlippageModel, VenueOverride};
 use crate::eval::store::{DecisionRow, RunStore};
 use crate::strategies::agent_ref::canonical_role;
+use crate::strategies::risk::RiskConfig;
 use crate::strategies::{ClosePolicy, DecisionMode, MechanisticConfig, Strategy};
 use crate::tools::ToolRegistry;
 
@@ -1194,6 +1195,7 @@ impl Executor {
                         bars_held: seed_bars_held,
                         stop_loss_price: seed_sl_price,
                         take_profit_price: seed_tp_price,
+                        risk_config: &strategy.risk,
                         // Backtest is spot-only: no perps context (deferred).
                         perps: PerpsContext::default(),
                     },
@@ -3566,6 +3568,7 @@ impl Executor {
                 bars_held: 0,
                 stop_loss_price: 0.0,
                 take_profit_price: 0.0,
+                risk_config: &strategy.risk,
                 // LIVE PERPS ATTACH POINT: this is the call-site for the perps
                 // feed. A network fetch in this sync hot loop is the wrong shape
                 // — an out-of-band poller
@@ -5231,6 +5234,11 @@ pub struct DecisionSeedInput<'a> {
     pub stop_loss_price: f64,
     /// Effective take-profit price from the SLTP state; `0.0` when none active.
     pub take_profit_price: f64,
+    /// The strategy's live, typed risk configuration. Injected into the seed so
+    /// the trader/risk agents read the authoritative params from typed config
+    /// rather than hand-written prompt text that drifts when the optimizer
+    /// mutates `risk.*` (xvision-yzk).
+    pub risk_config: &'a RiskConfig,
     /// Perps context (funding/OI/basis/long-short). Default (all `None`) on the
     /// spot/backtest path; populated live from `xvision_data::perp_feed`.
     pub perps: PerpsContext,
@@ -5267,6 +5275,7 @@ pub struct SeedContext<'a> {
     pub bars_held: u32,
     pub stop_loss_price: f64,
     pub take_profit_price: f64,
+    pub risk_config: &'a RiskConfig,
     pub perps: PerpsContext,
 }
 
@@ -5307,6 +5316,7 @@ impl<'a> DecisionSeedInput<'a> {
             bars_held: ctx.bars_held,
             stop_loss_price: ctx.stop_loss_price,
             take_profit_price: ctx.take_profit_price,
+            risk_config: ctx.risk_config,
             perps: ctx.perps,
         }
     }
@@ -5330,6 +5340,7 @@ struct SeedContextParams<'a> {
     bars_held: u32,
     stop_loss_price: f64,
     take_profit_price: f64,
+    risk_config: &'a RiskConfig,
     perps: PerpsContext,
 }
 
@@ -5363,6 +5374,7 @@ fn build_seed_context<'a>(
         bars_held: params.bars_held,
         stop_loss_price: params.stop_loss_price,
         take_profit_price: params.take_profit_price,
+        risk_config: params.risk_config,
         perps: params.perps,
     }
 }
@@ -5411,6 +5423,7 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "stop_loss_price": input.stop_loss_price,
                 "take_profit_price": input.take_profit_price,
             },
+            "risk_config": risk_config_json(input.risk_config),
         }),
         InputsPolicy::Causal => serde_json::json!({
             "asset": input.asset,
@@ -5434,8 +5447,19 @@ pub fn build_decision_seed(input: DecisionSeedInput<'_>) -> serde_json::Value {
                 "stop_loss_price": input.stop_loss_price,
                 "take_profit_price": input.take_profit_price,
             },
+            "risk_config": risk_config_json(input.risk_config),
         }),
     }
+}
+
+/// Render the strategy's live, typed [`RiskConfig`] as the seed's
+/// authoritative `risk_config` block. xvision-yzk: the trader/risk agents
+/// read these values instead of hand-written prompt text that silently
+/// drifts when the optimizer mutates `risk.*`. Serialization is infallible
+/// for this plain-data struct; fall back to an empty object defensively
+/// rather than panic inside the per-cycle hot path.
+fn risk_config_json(risk: &RiskConfig) -> serde_json::Value {
+    serde_json::to_value(risk).unwrap_or_else(|_| serde_json::json!({}))
 }
 
 /// Serialize an Ohlcv bar as the same JSON shape used for

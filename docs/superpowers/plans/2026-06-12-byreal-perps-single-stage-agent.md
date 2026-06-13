@@ -546,7 +546,7 @@ fn open_position_defaults_perps_fields() {
 ## Task 11: DB migration for persisted position perps fields (Section E, if applicable)
 
 - [ ] **Step 1:** Read the `cycle-migration` skill (REQUIRED before any `*.sql` under `crates/`). Grep for a persisted positions table: `rg -l "open_position|positions" crates/*/migrations`.
-- [ ] **Step 2:** If positions are persisted, add an additive migration (new nullable columns `leverage`, `liquidation_price`, `funding_paid_usd`, `notional_usd`, `unrealized_pnl_usd`) in the correct migrations dir per the skill; update the SQLx query structs. If positions are **not** persisted (live-derived only), record that finding in the commit message and skip. 
+- [ ] **Step 2:** If positions are persisted, add an additive migration (new nullable columns `leverage`, `liquidation_price`, `funding_paid_usd`, `notional_usd`, `unrealized_pnl_usd`) in the correct migrations dir per the skill; update the SQLx query structs. If positions are **not** persisted (live-derived only), record that finding in the commit message and skip.
 - [ ] **Step 3:** `scripts/cargo test -p <crate>` → PASS. Commit.
 
 ---
