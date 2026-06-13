@@ -60,5 +60,23 @@ export function ChartsAnnotated() {
 
   if (!q.data) return null;
 
-  return <AIAnnotationDashboard payload={q.data} />;
+  const isDemo = !isLive && runId === "demo";
+
+  return (
+    <div className="flex flex-col gap-0">
+      {isDemo && (
+        <div
+          data-testid="demo-data-banner"
+          className="flex items-center gap-2 px-4 py-2 bg-warn/10 border-b border-warn/30 text-[12px] text-warn"
+          role="note"
+          aria-label="Demo data — illustrative annotations"
+        >
+          <span className="font-semibold">Demo data</span>
+          <span className="text-warn/70">—</span>
+          <span>Illustrative annotations only, not a real run.</span>
+        </div>
+      )}
+      <AIAnnotationDashboard payload={q.data} />
+    </div>
+  );
 }

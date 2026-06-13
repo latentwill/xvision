@@ -136,8 +136,8 @@ describe("OptimizerDigestStrip", () => {
     expect(strip.textContent).toContain("$0.47");
   });
 
-  // Test 4b: Shows "?" when cost_usd is undefined
-  it("shows '?' when cost_usd is undefined", () => {
+  // Test 4b: Shows "—" (em-dash) when cost_usd is undefined
+  it("shows '—' when cost_usd is undefined", () => {
     mockStats();
     const sessionNoCost: SessionListItem = { ...baseSession, cost_usd: undefined };
     vi.spyOn(apiModule, "useSessionList").mockReturnValue({
@@ -150,7 +150,9 @@ describe("OptimizerDigestStrip", () => {
 
     renderStrip();
     const strip = screen.getByTestId("optimizer-digest-strip");
-    expect(strip.textContent).toContain("$?");
+    // cost_usd absent → em-dash numerator, never a fabricated "$?" placeholder
+    expect(strip.textContent).not.toContain("$?");
+    expect(strip.textContent).toContain("— / —");
   });
 
   // Test 5: "Honesty check" text present (exact string, not "canary")
