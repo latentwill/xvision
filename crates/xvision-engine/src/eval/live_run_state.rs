@@ -20,6 +20,8 @@ pub struct LiveRunState {
     pub daily_loss_remaining_usd: Option<f64>,
     pub drawdown_pct: Option<f64>,
     pub peak_equity_usd: Option<f64>,
+    // i64 → JSON integer decodes as a JS `number`, not BigInt; pin the TS type.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
     pub risk_veto_count: i64,
     pub last_decision_at: Option<String>,
     pub updated_at: String,

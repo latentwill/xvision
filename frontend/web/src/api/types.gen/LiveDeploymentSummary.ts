@@ -13,4 +13,4 @@ venue_label: string,
 /**
  * queued | running | completed | failed | cancelled
  */
-status: string, paused: boolean, started_at: string, last_decision_at: string | null, deployed_capital_usd: number | null, equity_usd: number | null, realized_pnl_usd: number | null, unrealized_pnl_usd: number | null, realized_today_usd: number | null, drawdown_pct: number | null, daily_loss_limit_remaining_usd: number | null, risk_veto_count: bigint, };
+status: string, paused: boolean, started_at: string, last_decision_at: string | null, deployed_capital_usd: number | null, equity_usd: number | null, realized_pnl_usd: number | null, unrealized_pnl_usd: number | null, realized_today_usd: number | null, drawdown_pct: number | null, daily_loss_limit_remaining_usd: number | null, risk_veto_count: number, };
