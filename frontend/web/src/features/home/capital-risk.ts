@@ -28,6 +28,15 @@ export interface CapitalRiskAggregate {
   worstDrawdownPct: number | null;
   /** TIGHTEST (min) non-null `daily_loss_limit_remaining_usd`; `null` when none. */
   tightestDailyLossBufferUsd: number | null;
+  /**
+   * bead s78.2: SUM of the non-null `risk_veto_count_since_last_visit` values —
+   * a REAL count of recorded risk-veto supervisor notes since the operator's
+   * last visit. `null` when EVERY per-deployment count is null (no `?since`
+   * boundary was supplied → can't count "since an unknown time"). A summed `0`
+   * is an honest fact ("0 vetoes since you were last here"), kept distinct from
+   * `null`; it is NEVER fabricated from null counts.
+   */
+  riskVetoCount: number | null;
   /** Count of deployments considered (the active live/paper population). */
   liveCount: number;
   /** False below the data floor: no deployments, OR every aggregate is null. */
@@ -82,6 +91,13 @@ export function aggregateCapitalRisk(
     deployments.map((d) => d.daily_loss_limit_remaining_usd),
   );
 
+  // bead s78.2: sum the REAL non-null per-deployment veto counts. `sumNonNull`
+  // already filters nulls (no fabrication) and returns null when none are
+  // non-null — so a summed 0 stays an honest 0, distinct from null.
+  const riskVetoCount = sumNonNull(
+    deployments.map((d) => d.risk_veto_count_since_last_visit),
+  );
+
   const hasData =
     deployedCapitalUsd != null ||
     worstDrawdownPct != null ||
@@ -91,6 +107,7 @@ export function aggregateCapitalRisk(
     deployedCapitalUsd,
     worstDrawdownPct,
     tightestDailyLossBufferUsd,
+    riskVetoCount,
     liveCount: deployments.length,
     hasData,
   };

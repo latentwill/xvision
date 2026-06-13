@@ -136,6 +136,61 @@ describe("aggregateCapitalRisk", () => {
   });
 });
 
+// bead s78.2: the risk-veto count is a REAL count of recorded risk-veto
+// supervisor notes since the operator's last visit. The per-deployment field is
+// null when NO `?since` boundary was supplied (can't count "since an unknown
+// time"); a real count INCLUDING 0 is honest ("0 vetoes since you were last
+// here"). The aggregate SUMS the non-null per-deployment counts; null only when
+// EVERY per-deployment count is null.
+describe("aggregateCapitalRisk — risk-veto count", () => {
+  it("is null when every per-deployment veto count is null (no boundary)", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: null }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: null }),
+    ]);
+    expect(agg.riskVetoCount).toBeNull();
+  });
+
+  it("is null for an empty deployment list", () => {
+    expect(aggregateCapitalRisk([]).riskVetoCount).toBeNull();
+  });
+
+  it("SUMS the non-null per-deployment veto counts", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 3 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: 5 }),
+    ]);
+    expect(agg.riskVetoCount).toBe(8);
+  });
+
+  it("ignores a null per-deployment count in the sum (never coerced to 0)", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 2 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: null }),
+    ]);
+    expect(agg.riskVetoCount).toBe(2);
+  });
+
+  it("keeps an honest summed 0 (a real 'no vetoes since last visit')", () => {
+    // A boundary WAS supplied (counts are non-null), and the real count is 0.
+    // That is an honest fact, distinct from null (unknown boundary).
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 0 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: 0 }),
+    ]);
+    expect(agg.riskVetoCount).toBe(0);
+    expect(agg.riskVetoCount).not.toBeNull();
+  });
+
+  it("sums a mix of a real 0 and a real positive count", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 0 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: 4 }),
+    ]);
+    expect(agg.riskVetoCount).toBe(4);
+  });
+});
+
 describe("bufferTone", () => {
   it("is healthy when the buffer is comfortably large relative to deployed", () => {
     // 50% of deployed remaining → healthy.
