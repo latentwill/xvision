@@ -1,0 +1,26 @@
+// original test fixture (xvision) — EMA cross with RSI confirmation filter and ATR-based stop
+//@version=5
+strategy("EMA Cross + RSI Filter", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=5)
+
+fast_ema = input.int(12, title="Fast EMA", minval=1, maxval=100)
+slow_ema = input.int(26, title="Slow EMA", minval=2, maxval=200)
+rsi_len = input.int(14, title="RSI Length", minval=2, maxval=50)
+rsi_min = input.int(45, title="Min RSI for Long", minval=1, maxval=99)
+stop_pct = input.float(1.5, title="Stop %", minval=0.1, maxval=10.0, step=0.1)
+profit_pct = input.float(3.0, title="Profit %", minval=0.1, maxval=20.0, step=0.1)
+
+fast_val = ta.ema(close, fast_ema)
+slow_val = ta.ema(close, slow_ema)
+rsi_val = ta.rsi(close, rsi_len)
+
+cross_up = ta.crossover(fast_val, slow_val)
+cross_dn = ta.crossunder(fast_val, slow_val)
+
+if cross_up and rsi_val > rsi_min
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct, profit=profit_pct)
+
+if cross_dn
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct, profit=profit_pct)

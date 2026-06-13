@@ -1,0 +1,25 @@
+// original test fixture (xvision) — MACD signal crossover strategy
+//@version=5
+strategy("MACD Signal Cross", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+fast_period = input.int(12, title="Fast EMA Period", minval=2, maxval=50)
+slow_period = input.int(26, title="Slow EMA Period", minval=5, maxval=100)
+rsi_filter_len = input.int(14, title="RSI Filter Length", minval=2, maxval=50)
+stop_pct = input.float(2.0, title="Stop Loss %", minval=0.1, maxval=15.0, step=0.1)
+profit_pct = input.float(4.0, title="Take Profit %", minval=0.1, maxval=30.0, step=0.1)
+
+fast_ema = ta.ema(close, fast_period)
+slow_ema = ta.ema(close, slow_period)
+rsi_val = ta.rsi(close, rsi_filter_len)
+
+macd_up = ta.crossover(fast_ema, slow_ema)
+macd_dn = ta.crossunder(fast_ema, slow_ema)
+
+if macd_up and rsi_val > 40
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct, profit=profit_pct)
+
+if macd_dn and rsi_val < 60
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct, profit=profit_pct)

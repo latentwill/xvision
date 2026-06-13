@@ -57,6 +57,16 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    // CT5 migration 065: `source` + `unrealized_pnl_usd` columns, now projected
+    // by the shared `RunStore` SELECTs (`get`/`list`). Without this the
+    // hand-picked subset schema lacks the columns and `store.get(...)` fails
+    // with "no such column: source".
+    sqlx::query(include_str!(
+        "../migrations/065_eval_run_source_and_unrealized_pnl.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     pool
 }
 

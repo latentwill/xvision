@@ -1,0 +1,22 @@
+// original test fixture (xvision) — RSI mean-reversion: fade extremes with tight stop
+//@version=5
+strategy("RSI Mean Reversion", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=5)
+
+rsi_len = input.int(7, title="RSI Length", minval=2, maxval=30)
+entry_oversold = input.int(25, title="Oversold Entry", minval=5, maxval=45)
+entry_overbought = input.int(75, title="Overbought Entry", minval=55, maxval=95)
+stop_pct = input.float(1.5, title="Stop Loss %", minval=0.1, maxval=8.0, step=0.1)
+profit_pct = input.float(2.5, title="Take Profit %", minval=0.1, maxval=15.0, step=0.1)
+
+rsi_val = ta.rsi(close, rsi_len)
+
+buy_signal = rsi_val < entry_oversold
+sell_signal = rsi_val > entry_overbought
+
+if buy_signal
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct, profit=profit_pct)
+
+if sell_signal
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct, profit=profit_pct)

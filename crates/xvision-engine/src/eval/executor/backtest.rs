@@ -458,11 +458,7 @@ impl Executor {
     /// never blocks or aborts the trading loop. The concrete
     /// `xvision-identity` implementation is injected here from the dashboard,
     /// which keeps the engine free of a hard identity dependency.
-    pub fn with_attest_hook(
-        mut self,
-        hook: Arc<dyn super::attest_hook::AttestHook>,
-        every_n: u32,
-    ) -> Self {
+    pub fn with_attest_hook(mut self, hook: Arc<dyn super::attest_hook::AttestHook>, every_n: u32) -> Self {
         self.attest_hook = Some(hook);
         self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
@@ -1209,6 +1205,20 @@ impl Executor {
                     if let Some(obj) = seed.as_object_mut() {
                         obj.insert("filter_context".to_string(), ctx.clone());
                     }
+                }
+                // WU2 Pine import: inject briefing_indicators latest values.
+                // When a Pine-imported Agentic strategy has briefing_indicators,
+                // compute each indicator over the history slice and inject the
+                // latest value into the seed under "briefing_indicators" so the
+                // trader LLM sees them without computing from raw bars.
+                // Mirrors the filter_context post-build insertion pattern.
+                if !strategy.briefing_indicators.is_empty() {
+                    inject_briefing_indicators_into_seed(
+                        &mut seed,
+                        &strategy.briefing_indicators,
+                        bar,
+                        history_slice,
+                    );
                 }
                 // U6: inject top-5 episodic recall observations when the store
                 // has relevant history. Query vector is derived from the
@@ -2754,6 +2764,13 @@ impl Executor {
                 equity,
                 drawdown_pct,
                 n_trades,
+                // CT5: backtests are NOT deployments — leave the capital fields
+                // None so the backtest path is behaviorally unchanged and no
+                // live-money number is ever emitted from a backtest.
+                deployed_capital_usd: None,
+                unrealized_pnl_usd: None,
+                realized_pnl_usd: None,
+                daily_loss_limit_remaining_usd: None,
             });
 
             timeline_idx += 1;
@@ -3053,13 +3070,21 @@ impl Executor {
         // daily kill check applies to the whole run's realized PnL.
         let mut daily_loss_day: Option<chrono::NaiveDate> = None;
         let mut daily_realized_at_day_start: f64 = 0.0;
+        // CT5 (§6): in-memory per-session execution-layer tracker. The
+        // authoritative source for the deployment's drawdown_pct +
+        // daily_loss_limit_remaining_usd, kept in lock-step with the loop-local
+        // peak / day-start above. NOT a persisted snapshot table.
+        let mut session_tracker = crate::eval::executor::live_session::LiveSessionTracker::new(initial);
+        // CT5 (§6.3 option A): the most recent per-run unrealized PnL, persisted
+        // to `eval_runs.unrealized_pnl_usd` in the buffered equity flush so the
+        // poll path has an honest number between SSE ticks. `None` pre-first-mark.
+        let mut latest_unrealized_pnl: Option<f64> = None;
 
         // CT5: per-bar live_run_state upsert. One SQLite row per live run,
         // written best-effort after each bar so the dashboard can display
         // capital-risk state without waiting for the run to finish.
         let mut risk_veto_count: i64 = 0;
-        let live_state =
-            crate::eval::live_run_state::LiveStateStore::new(store.pool().clone());
+        let live_state = crate::eval::live_run_state::LiveStateStore::new(store.pool().clone());
         let deployed_capital = initial;
         let strategy_id = run.live_config.as_ref().map(|c| c.strategy_id.clone());
         let strategy_name = run.live_config.as_ref().map(|c| c.display_name.clone());
@@ -3200,6 +3225,10 @@ impl Executor {
                 let _ = store
                     .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
                     .await;
+                // CT5 (§6.3 option A): persist the latest per-run unrealized so
+                // the `LiveDeploymentSummary` poll path is fresh between SSE
+                // ticks. `None` (pre-first-mark) writes NULL, never a faked 0.
+                let _ = store.set_unrealized_pnl(&run.id, latest_unrealized_pnl).await;
                 last_partial_persist = Instant::now();
             }
 
@@ -3376,17 +3405,90 @@ impl Executor {
             if equity > peak_equity {
                 peak_equity = equity;
             }
-            let drawdown_pct = if peak_equity > 0.0 {
-                ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-            } else {
-                0.0
+            // CT5 (§6): keep the in-memory session tracker in lock-step with the
+            // loop-local peak / day-start so the drawdown + daily-loss-buffer
+            // formulas come from ONE authority (unit-tested in `live_session`).
+            session_tracker.observe_equity(equity);
+            if let Some(day) = daily_loss_day {
+                // The day baseline was already rolled inside `decide_one_live`;
+                // mirror it into the tracker (idempotent within a day).
+                session_tracker.roll_day(day, daily_realized_at_day_start);
+            }
+            // CT5 honesty (§6.1): source drawdown from the ONE session-tracker
+            // authority instead of re-deriving it with a literal-0 fallback. The
+            // tracker returns `None` only when there is genuinely no positive
+            // peak yet; `observe_equity(equity)` ran just above, so a peak always
+            // exists here and the `unwrap_or(0.0)` is never the fabricated "no
+            // data" path. The `MetricsUpdated.drawdown_pct` field is `f64` (the
+            // backtest path shares it), so per-tick `None` propagation over the
+            // event is a deferred follow-up tied to widening that field.
+            let drawdown_pct = session_tracker.drawdown_pct(equity).unwrap_or(0.0);
+            // CT5 capital fields derived in-loop from the book + tracker. They
+            // are emitted on BOTH buses:
+            //  - the engine `ProgressBus` (`ProgressEvent::MetricsUpdated`), for
+            //    CLI / optimizer / progress-bar subscribers, and
+            //  - the `RunEventBus` as `RunChartEvent::DeploymentMetrics` (CT5
+            //    §4, delivered below), which the dashboard deployment SSE already
+            //    subscribes to. The SSE now streams the full capital block
+            //    per-tick (`event: metrics`); consumers (`n0k`/`awm`/`8s4`) no
+            //    longer have to wait on the 5s poll for live capital values.
+            // HONESTY MANDATE: a realized figure with no fill history surfaces as
+            // None, never a faked 0.
+            let realized_now = book.realized();
+            let realized_pnl_usd = if n_trades > 0 { Some(realized_now) } else { None };
+            // Deployed capital = Σ |position| * mark over open legs.
+            let deployed_capital_usd = {
+                let notional: f64 = book
+                    .open_legs()
+                    .iter()
+                    .map(|(_, position, _entry, mark)| position.abs() * *mark)
+                    .sum();
+                if book.open_position_count() > 0 {
+                    Some(notional)
+                } else {
+                    None
+                }
             };
+            // Unrealized = equity - initial - realized (book mark-to-market).
+            let unrealized_pnl_usd = Some(equity - initial - realized_now);
+            let daily_loss_limit_remaining_usd = session_tracker
+                .daily_loss_limit_remaining_usd(strategy.risk.daily_loss_kill_pct, realized_now);
+            // CT5 §6.3 option A: persist the per-run unrealized so the poll path
+            // (`LiveDeploymentSummary` from `GET /api/live/deployments`) has an
+            // honest number — this is the source for the deployment's unrealized
+            // P&L, since the SSE does not stream the capital block.
+            if let Some(u) = unrealized_pnl_usd {
+                latest_unrealized_pnl = Some(u);
+            }
             self.emit(ProgressEvent::MetricsUpdated {
                 run_id: run.id.clone(),
                 equity,
                 drawdown_pct,
                 n_trades,
+                deployed_capital_usd,
+                unrealized_pnl_usd,
+                realized_pnl_usd,
+                daily_loss_limit_remaining_usd,
             });
+            // CT5 §4: project the SAME capital block onto the RunEventBus the
+            // dashboard deployment SSE reads. `drawdown_pct` carries the honest
+            // `Option` from the session tracker (the `MetricsUpdated.drawdown_pct`
+            // f64 above uses `unwrap_or(0.0)` only because the backtest path
+            // shares that field; here we keep `None` when there is no peak).
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::DeploymentMetrics(crate::api::chart::DeploymentMetricsTick {
+                    time: decision_ts.timestamp(),
+                    equity_usd: equity,
+                    drawdown_pct: session_tracker.drawdown_pct(equity),
+                    deployed_capital_usd,
+                    unrealized_pnl_usd,
+                    realized_pnl_usd,
+                    daily_loss_limit_remaining_usd,
+                    n_trades,
+                }),
+            )
+            .await;
 
             // CT5: per-bar capital-risk snapshot upserted into live_run_state.
             // Best-effort — a snapshot write failure must never abort the live
@@ -3424,17 +3526,15 @@ impl Executor {
                 // the live-deployments stream handler can forward it to clients.
                 self.emit_chart(
                     &run.id,
-                    RunChartEvent::LiveRunState(
-                        crate::api::chart::LiveRunStatePayload {
-                            equity_usd: snap.equity_usd,
-                            unrealized_pnl_usd: snap.unrealized_pnl_usd,
-                            realized_today_usd: snap.realized_today_usd,
-                            daily_loss_remaining_usd: snap.daily_loss_remaining_usd,
-                            drawdown_pct: snap.drawdown_pct,
-                            risk_veto_count: snap.risk_veto_count,
-                            last_decision_at: snap.last_decision_at.clone(),
-                        },
-                    ),
+                    RunChartEvent::LiveRunState(crate::api::chart::LiveRunStatePayload {
+                        equity_usd: snap.equity_usd,
+                        unrealized_pnl_usd: snap.unrealized_pnl_usd,
+                        realized_today_usd: snap.realized_today_usd,
+                        daily_loss_remaining_usd: snap.daily_loss_remaining_usd,
+                        drawdown_pct: snap.drawdown_pct,
+                        risk_veto_count: snap.risk_veto_count,
+                        last_decision_at: snap.last_decision_at.clone(),
+                    }),
                 )
                 .await;
             }
@@ -3494,6 +3594,9 @@ impl Executor {
         store
             .record_equity_upsert_batch(&run.id, &equity_samples_buf)
             .await?;
+        // CT5 (§6.3 option A): final persist of the per-run unrealized PnL so a
+        // run that ends keeps its last honest mark-to-market for the poll path.
+        let _ = store.set_unrealized_pnl(&run.id, latest_unrealized_pnl).await;
 
         if store.is_terminal(&run.id).await? {
             let partial = compute_run_metrics(
@@ -5532,6 +5635,79 @@ fn risk_config_json(risk: &RiskConfig) -> serde_json::Value {
     serde_json::to_value(risk).unwrap_or_else(|_| serde_json::json!({}))
 }
 
+/// WU2 Pine import: inject `briefing_indicators` latest values into the
+/// decision seed under the `"briefing_indicators"` key.
+///
+/// Mirrors the `filter_context` post-build insertion pattern at the call-site
+/// (after `build_decision_seed`). For each `BriefingIndicator` in the strategy,
+/// we spin up an `IndicatorEngine`, push the history bars + current bar, and
+/// read the latest computed value. The result is a flat JSON object keyed by
+/// the `source_token` (Pine variable name).
+///
+/// This is additive — existing seed fields are not modified. Skipped entirely
+/// when `briefing_indicators` is empty (no overhead on non-pine-import strategies).
+pub fn inject_briefing_indicators_into_seed(
+    seed: &mut serde_json::Value,
+    briefing_indicators: &[crate::strategies::BriefingIndicator],
+    current_bar: &Ohlcv,
+    history_slice: &[&Ohlcv],
+) {
+    use xvision_filters::{Bar as FilterBar, IndicatorEngine, IndicatorRef};
+
+    if briefing_indicators.is_empty() {
+        return;
+    }
+
+    // Build IndicatorRefs from the BriefingIndicator list.
+    let refs: Vec<IndicatorRef> = briefing_indicators
+        .iter()
+        .filter_map(|bi| {
+            let period = bi.params.first().map(|p| *p as u32);
+            Some(IndicatorRef {
+                name: bi.name,
+                period,
+                bar_offset: None,
+            })
+        })
+        .collect();
+
+    // Instantiate the engine for just these refs.
+    let mut engine = IndicatorEngine::new(refs.iter());
+
+    // Push history bars (oldest first).
+    for bar in history_slice {
+        let fb = FilterBar::with_volume(bar.open, bar.high, bar.low, bar.close, bar.volume);
+        engine.push(&fb);
+    }
+    // Push current bar.
+    let fb = FilterBar::with_volume(
+        current_bar.open,
+        current_bar.high,
+        current_bar.low,
+        current_bar.close,
+        current_bar.volume,
+    );
+    engine.push(&fb);
+
+    // Collect computed values keyed by source_token.
+    let mut values = serde_json::Map::new();
+    for (bi, ind_ref) in briefing_indicators.iter().zip(refs.iter()) {
+        if let Some(v) = engine.value(ind_ref) {
+            values.insert(bi.source_token.clone(), serde_json::json!(v));
+        }
+        // If not yet warmed up (None), skip — the LLM sees the key absent.
+    }
+
+    if !values.is_empty() {
+        if let Some(obj) = seed.as_object_mut() {
+            obj.insert(
+                "briefing_indicators".to_string(),
+                serde_json::Value::Object(values),
+            );
+        }
+    }
+}
+
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are
 /// homogeneous with the current-bar shape the trader prompt already
@@ -5751,6 +5927,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 

@@ -74,11 +74,34 @@ pub enum ProgressEvent {
     },
     /// Emitted after each post-tick equity sample. `drawdown_pct` is the
     /// running max drawdown from peak observed so far in the run.
+    ///
+    /// CT5 (Epic s78 Wave 3) widens this with the per-run capital fields the
+    /// `LiveDeploymentSummary` SSE `metrics` event carries — all derived in-loop
+    /// from the book + the in-memory `LiveSessionTracker` (§6). The four CT5
+    /// fields are `Option` and default `None`: the BACKTEST path leaves them
+    /// `None` (no behavior change — backtests are NOT deployments), and an
+    /// unsourceable value surfaces as `None` ("—" in the UI), NEVER a faked `0`
+    /// (HONESTY MANDATE §8.1). Only the live loop populates them.
     MetricsUpdated {
         run_id: String,
         equity: f64,
         drawdown_pct: f64,
         n_trades: u32,
+        /// Σ open-position notional (`PortfolioBook::open_legs()`). `None` on
+        /// the backtest path / pre-first-fill.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deployed_capital_usd: Option<f64>,
+        /// `book.equity(marks) - initial - book.realized()`. `None` on the
+        /// backtest path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unrealized_pnl_usd: Option<f64>,
+        /// `book.realized()`. `None` on the backtest path / no realized history.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        realized_pnl_usd: Option<f64>,
+        /// Headroom before the enforced daily-loss kill (§6.2). `None` on the
+        /// backtest path / no kill policy / no day baseline.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        daily_loss_limit_remaining_usd: Option<f64>,
     },
     /// Reserved for the findings extractor (Phase 3.C). Executors do not
     /// emit this — the extractor publishes findings on the same bus so

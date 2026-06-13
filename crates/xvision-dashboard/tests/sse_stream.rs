@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use xvision_dashboard::{server::build_router, AppState};
 use xvision_engine::api::chart::{ChartEquityPoint, RunChartEvent};
-use xvision_engine::eval::run::{Run, RunMode, RunStatus};
+use xvision_engine::eval::run::{DeploymentSource, Run, RunMode, RunStatus};
 use xvision_engine::eval::store::RunStore;
 
 /// Boot a real TCP server on an ephemeral port and return the base URL.
@@ -158,6 +158,8 @@ async fn sse_stream_late_subscriber_gets_immediate_close_for_completed_run() {
         paused: false,
         paused_at: None,
         flatten_requested: false,
+        source: DeploymentSource::Human,
+        unrealized_pnl_usd: None,
     };
     store.create(&run).await.expect("insert test run");
     store

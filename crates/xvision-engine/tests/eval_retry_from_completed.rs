@@ -79,6 +79,12 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/065_eval_run_source_and_unrealized_pnl.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query(include_str!("../migrations/015_eval_decisions_reasoning.sql"))
         .execute(&pool)
         .await
@@ -232,6 +238,7 @@ sqlite_url = "sqlite://x.db"
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     };
 
     FilesystemStore::new(ctx.xvn_home.join("strategies"))

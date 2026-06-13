@@ -31,6 +31,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
 import { DeployReadinessStrip } from "@/components/home/DeployReadinessStrip";
+import { CapitalRiskStrip } from "@/components/home/CapitalRiskStrip";
 import { HomeDeltaSubtitle } from "@/components/home/HomeDeltaSubtitle";
 import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
 import {
@@ -41,10 +42,13 @@ import {
 import { PulseBand } from "@/components/home/PulseBand";
 import { AttentionBand } from "@/components/home/AttentionBand";
 import { OptimizerPanel } from "@/components/home/OptimizerPanel";
+import { CostRollupStrip } from "@/components/home/CostRollupStrip";
 import { StrategyLeaderboard } from "@/components/home/StrategyLeaderboard";
 import type { AttentionItem } from "@/components/home/NagStrip";
 import { chartKeys, getRunChart } from "@/api/chart";
+import { costKeys, getCostBudget, getCostRollup } from "@/api/cost";
 import { evalKeys, listRuns } from "@/api/eval";
+import { deploymentKeys, listDeployments } from "@/api/live-deployments";
 import { strategyKeys, listStrategies } from "@/api/strategies";
 import { getBrokers, listProviders, settingsKeys, testAlpacaConnection } from "@/api/settings";
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
@@ -53,6 +57,7 @@ import { listCriticalFindings } from "@/api/eval-review";
 import { livenessCounts } from "@/features/live/strip-status";
 import { pickHeroRun } from "@/features/home/pulse";
 import { buildDeployReadiness } from "@/features/home/deploy-readiness";
+import { aggregateCapitalRisk } from "@/features/home/capital-risk";
 import { failedRunFindings, failedRunNags } from "@/features/home/failed-runs";
 import {
   computeSinceDelta,
@@ -78,6 +83,11 @@ const LIVENESS_PARAMS = { status: "running,queued", limit: 100 } as const;
 // In-flight eval runs for the deploy-readiness "no blocking eval" check —
 // same shape ActiveTasksStrip uses, so the stuck-run story stays consistent.
 const INFLIGHT_PARAMS = { status: "queued,running" } as const;
+
+// n0k/awm (CT5 §9): active live/paper deployments for the ActiveTasksStrip live
+// rows. Capital / P&L / drawdown come from THIS 5s poll (per-tick capital
+// streaming is deferred; CT5 §4), filtered to the active window.
+const DEPLOYMENTS_PARAMS = { status: "running,paused" } as const;
 
 export function HomeRoute() {
   const runs = useQuery({
@@ -144,6 +154,15 @@ export function HomeRoute() {
     refetchInterval: 10_000,
   });
 
+  // n0k/awm: live/paper deployments for the ActiveTasksStrip live rows. 5s
+  // poll matches the CT5 contract (§3) — list membership AND the honest
+  // capital/P&L/drawdown fields both ride this poll.
+  const deployments = useQuery({
+    queryKey: deploymentKeys.list(DEPLOYMENTS_PARAMS),
+    queryFn: () => listDeployments(DEPLOYMENTS_PARAMS),
+    refetchInterval: 5_000,
+  });
+
   // jlm: findings for the "since you were last here" delta. Shares the exact
   // query CriticalFindingsRow uses (same key) so this is a cache hit, not a
   // second fan-out. Findings counts are eval facts (honest), never money.
@@ -183,6 +202,39 @@ export function HomeRoute() {
     lastVisitIso,
   });
 
+  // 8wn: cost rollup strip — spend SINCE LAST VISIT and THIS WEEK vs the
+  // operator cap. Two read-only windowed rollups + the persisted cap. Both
+  // windows scope on a stable boundary frozen per page-load so they don't
+  // refetch on every render:
+  //   - since-last-visit uses the SAME LAST_VISIT_LS boundary as the home
+  //     delta subtitle (the two surfaces must agree). On a first visit there
+  //     is no boundary → skip the query and show an honest "first visit".
+  //   - this-week = now - 7d, frozen once via useState so the cache key is
+  //     stable across re-renders.
+  const firstVisit = delta.firstVisit;
+  const [weekSince] = useState(
+    () => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+  );
+  const costSinceVisit = useQuery({
+    queryKey: costKeys.rollup(lastVisitIso ?? ""),
+    queryFn: () => getCostRollup({ since: lastVisitIso ?? undefined }),
+    enabled: !firstVisit && lastVisitIso != null,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const costThisWeek = useQuery({
+    queryKey: costKeys.rollup(weekSince),
+    queryFn: () => getCostRollup({ since: weekSince }),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const costBudget = useQuery({
+    queryKey: costKeys.budget(),
+    queryFn: getCostBudget,
+    staleTime: 60_000,
+    retry: false,
+  });
+
   const attentionItems = buildAttention({
     runs: runs.data ?? [],
     providers: providers.data?.providers,
@@ -199,6 +251,14 @@ export function HomeRoute() {
     inflightRuns: inflightRuns.data ?? [],
   });
 
+  // 8s4: capital-risk strip aggregate. REUSES the live-deployments poll above
+  // (no second fetch). With zero live deployments we say nothing — never imply
+  // live capital exists when none does; the strip mounts only when there is at
+  // least one active deployment (its own below-floor "insufficient data" state
+  // covers the deployed-but-no-fills-yet case honestly).
+  const liveDeployments = deployments.data ?? [];
+  const capitalRisk = aggregateCapitalRisk(liveDeployments);
+
   return (
     <>
       <Topbar
@@ -210,6 +270,13 @@ export function HomeRoute() {
         <SafetyPauseBanner />
 
         <DeployReadinessStrip checks={readinessChecks} />
+
+        {/* 8s4: capital-risk safety strip — slim top band in the safety-gate
+            area, under SafetyPauseBanner (which keeps its top precedence) and
+            DeployReadinessStrip. Mounts only when there is at least one active
+            live/paper deployment, so an idle node says nothing rather than
+            implying live capital exists. */}
+        {liveDeployments.length > 0 && <CapitalRiskStrip agg={capitalRisk} />}
 
         {/* bead-008: inline, full-width window selector scoping the outcomes +
             findings surfaces below it. It does NOT scope the pulse hero,
@@ -239,11 +306,24 @@ export function HomeRoute() {
             strategies={strategies.data ?? []}
             nagItems={attentionItems}
             failedRunFindings={failedRunFindings(windowedRuns)}
+            deployments={deployments.data ?? []}
           />
         </div>
 
         <div className="xvn-card-in" style={{ animationDelay: "140ms" }}>
           <OptimizerPanel />
+        </div>
+
+        {/* 8wn: slim cost rollup strip — optimizer-adjacent (spend is dominated
+            by optimizer cycles + eval runs). Full-width inline strip, no side
+            column / popup. Honest empty state when spend is null / cap unset. */}
+        <div className="xvn-card-in" style={{ animationDelay: "175ms" }}>
+          <CostRollupStrip
+            sinceLastVisit={costSinceVisit.data ?? null}
+            thisWeek={costThisWeek.data ?? null}
+            dailyCapUsd={costBudget.data?.daily_cap_usd ?? null}
+            firstVisit={firstVisit}
+          />
         </div>
 
         <div className="xvn-card-in" style={{ animationDelay: "210ms" }}>

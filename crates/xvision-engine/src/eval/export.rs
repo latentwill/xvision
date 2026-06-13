@@ -714,6 +714,9 @@ mod roundtrip {
             include_str!("../../migrations/027_run_bars_manifest.sql"),
             include_str!("../../migrations/037_review_annotations_and_autofire.sql"),
             include_str!("../../migrations/038_eval_runs_live_config.sql"),
+            // 065 added source + unrealized_pnl_usd, projected by the shared
+            // RunStore get/list SELECTs (CT5 Wave 3a). Same precedent as 038.
+            include_str!("../../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }
@@ -816,6 +819,7 @@ mod roundtrip {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 
@@ -1154,6 +1158,9 @@ mod provider_attestation {
             include_str!("../../migrations/027_run_bars_manifest.sql"),
             include_str!("../../migrations/037_review_annotations_and_autofire.sql"),
             include_str!("../../migrations/038_eval_runs_live_config.sql"),
+            // 065 added source + unrealized_pnl_usd, projected by the shared
+            // RunStore get/list SELECTs (CT5 Wave 3a). Same precedent as 038.
+            include_str!("../../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
         ] {
             sqlx::query(migration).execute(&pool).await.unwrap();
         }
@@ -1328,6 +1335,7 @@ mod provider_attestation {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 

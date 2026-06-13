@@ -234,6 +234,99 @@ pub async fn aggregate_eval_run_inference_cost(pool: &SqlitePool, eval_run_id: &
     result.filter(|&v| v > 0.0 && v.is_finite())
 }
 
+/// bead-8wn: windowed sibling of [`aggregate_eval_run_inference_cost`].
+///
+/// Sum `model_calls.cost_usd` over every agent run **started** at or after
+/// `since` (RFC-3339), via the same observability JOIN chain. Because the
+/// window is keyed on `agent_runs.started_at`, this naturally spans BOTH
+/// eval-linked agent runs (`eval_run_id` set) and standalone agent runs
+/// (`eval_run_id` NULL) — "runs started in the window", as the cost-rollup
+/// surface needs.
+///
+/// `None` is the honest "unknown" signal (HONESTY §8.1/§8.9), returned when:
+///   * the observability tables are absent (e.g. a test pool without migration
+///     018) — the query errors and we `.ok().flatten()` to `None`;
+///   * no model call in the window carries a non-NULL `cost_usd` (every call
+///     ran against an unpriced model) — `SUM` over zero priced rows is SQL
+///     `NULL` → `None`;
+///   * the metered sum is `<= 0` or non-finite (DB corruption guard).
+///
+/// It must NEVER fabricate `Some(0.0)`: a precise `$0.00` is a worse signal
+/// than "unknown" when the true price is missing. The `started_at` lower bound
+/// is bound as a SQL parameter (never string-interpolated).
+pub async fn aggregate_inference_cost_since(
+    pool: &SqlitePool,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Option<f64> {
+    let result: Option<f64> = sqlx::query_scalar(
+        "SELECT SUM(mc.cost_usd) \
+         FROM model_calls mc \
+         JOIN spans s ON s.id = mc.span_id \
+         JOIN agent_runs ar ON ar.id = s.run_id \
+         WHERE ar.started_at >= ?",
+    )
+    .bind(since.to_rfc3339())
+    .fetch_one(pool)
+    .await
+    .ok()
+    .flatten();
+    result.filter(|&v| v > 0.0 && v.is_finite())
+}
+
+/// bead-8wn: optimizer (autooptimizer cycle) cost over a window =
+/// `Σ cycle_cost.cost_usd` for every cycle whose `created_at` is at or after
+/// `since`. Mirrors `session_cost_usd` in the dashboard autooptimizer route
+/// (a plain `SUM(cost_usd)` over `cycle_cost`), but bounded by the cost row's
+/// `created_at` rather than by session membership.
+///
+/// Same honest "unknown" contract as [`aggregate_inference_cost_since`]:
+/// `None` when the `cycle_cost` table is absent, when no cycle in the window
+/// has a cost row (SUM over zero rows is SQL `NULL`), or when the sum is
+/// non-positive / non-finite. Never `Some(0.0)`.
+pub async fn aggregate_optimizer_cost_since(
+    pool: &SqlitePool,
+    since: chrono::DateTime<chrono::Utc>,
+) -> Option<f64> {
+    let result: Option<f64> =
+        sqlx::query_scalar("SELECT SUM(cost_usd) FROM cycle_cost WHERE created_at >= ?")
+            .bind(since.to_rfc3339())
+            .fetch_one(pool)
+            .await
+            .ok()
+            .flatten();
+    result.filter(|&v| v > 0.0 && v.is_finite())
+}
+
+/// bead-8wn: read the persisted operator-set daily budget cap from
+/// `cost_budget` (single row, id = 1). `None` when the cap is UNSET — either
+/// the row is absent (fresh DB, DB-wipe posture) or `daily_cap_usd` is NULL.
+/// The dashboard renders no denominator (em-dash) in that case; it must NEVER
+/// fall back to a faked ceiling. A missing table also degrades to `None`.
+pub async fn get_daily_budget_cap(pool: &SqlitePool) -> Option<f64> {
+    let result: Option<f64> = sqlx::query_scalar("SELECT daily_cap_usd FROM cost_budget WHERE id = 1")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten();
+    // A persisted cap is finite + positive by construction (the API rejects
+    // non-positive / NaN before write), but re-guard defensively.
+    result.filter(|&v| v > 0.0 && v.is_finite())
+}
+
+/// bead-8wn: persist the operator-set daily budget cap into `cost_budget`
+/// (single row, id = 1) via `INSERT OR REPLACE`. The caller (API boundary)
+/// MUST have already validated `cap` is finite and `> 0` (400 otherwise);
+/// this function does no validation of its own.
+pub async fn set_daily_budget_cap(pool: &SqlitePool, cap: f64, updated_at: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT OR REPLACE INTO cost_budget (id, daily_cap_usd, updated_at) VALUES (1, ?, ?)")
+        .bind(cap)
+        .bind(updated_at)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 fn positive_price(p: Option<f64>) -> Option<f64> {
     // OpenRouter's free routes (`"prompt": "0"`) are already filtered to
     // `None` at parse time, but we re-check here so a hand-edited cache
@@ -522,5 +615,221 @@ mod tests {
         let model = openrouter_claude_opus_47();
         let cost = compute_token_cost_usd(0, 0, &model).expect("priced model with zero tokens is $0");
         assert!(cost.abs() < 1e-12);
+    }
+
+    // ─── bead-8wn: windowed cross-source cost + budget cap ────────────────────
+
+    use sqlx::SqlitePool;
+
+    /// Minimal observability + cost schema for the windowed aggregators. We
+    /// inline the exact `agent_runs` / `spans` / `model_calls` columns the JOIN
+    /// chain reads (a subset of migration 018), plus the `cycle_cost` table and
+    /// the bead-8wn `cost_budget` table.
+    async fn cost_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.expect("open pool");
+        sqlx::query(
+            "CREATE TABLE agent_runs ( \
+                id TEXT PRIMARY KEY, \
+                eval_run_id TEXT, \
+                status TEXT NOT NULL, \
+                started_at TEXT NOT NULL )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE spans ( \
+                id TEXT PRIMARY KEY, \
+                run_id TEXT NOT NULL, \
+                kind TEXT NOT NULL, \
+                started_at TEXT NOT NULL )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE model_calls ( \
+                span_id TEXT PRIMARY KEY, \
+                provider TEXT NOT NULL, \
+                model TEXT NOT NULL, \
+                cost_usd REAL )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE cycle_cost ( \
+                cycle_id TEXT PRIMARY KEY, \
+                input_tokens INTEGER NOT NULL, \
+                output_tokens INTEGER NOT NULL, \
+                cost_usd REAL NOT NULL, \
+                unpriced_calls INTEGER NOT NULL, \
+                created_at TEXT NOT NULL )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE cost_budget ( \
+                id INTEGER PRIMARY KEY CHECK (id = 1), \
+                daily_cap_usd REAL, \
+                updated_at TEXT NOT NULL )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    /// Insert one agent run with a single priced model call. `cost` is bound
+    /// straight into `model_calls.cost_usd`; pass `None` for an unpriced call.
+    async fn seed_agent_run_cost(pool: &SqlitePool, run_id: &str, started_at: &str, cost: Option<f64>) {
+        sqlx::query(
+            "INSERT INTO agent_runs (id, eval_run_id, status, started_at) VALUES (?, NULL, 'completed', ?)",
+        )
+        .bind(run_id)
+        .bind(started_at)
+        .execute(pool)
+        .await
+        .unwrap();
+        let span_id = format!("span-{run_id}");
+        sqlx::query("INSERT INTO spans (id, run_id, kind, started_at) VALUES (?, ?, 'model.call', ?)")
+            .bind(&span_id)
+            .bind(run_id)
+            .bind(started_at)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO model_calls (span_id, provider, model, cost_usd) VALUES (?, 'openrouter', 'm', ?)",
+        )
+        .bind(&span_id)
+        .bind(cost)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_cycle_cost(pool: &SqlitePool, cycle_id: &str, cost: f64, created_at: &str) {
+        sqlx::query(
+            "INSERT INTO cycle_cost (cycle_id, input_tokens, output_tokens, cost_usd, unpriced_calls, created_at) \
+             VALUES (?, 0, 0, ?, 0, ?)",
+        )
+        .bind(cycle_id)
+        .bind(cost)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn ts(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    #[tokio::test]
+    async fn inference_cost_since_sums_runs_in_window() {
+        let pool = cost_pool().await;
+        // Two runs after the boundary, one before. Only the two after count.
+        seed_agent_run_cost(&pool, "r1", "2026-06-10T12:00:00Z", Some(0.10)).await;
+        seed_agent_run_cost(&pool, "r2", "2026-06-11T12:00:00Z", Some(0.25)).await;
+        seed_agent_run_cost(&pool, "r-old", "2026-06-01T00:00:00Z", Some(99.0)).await;
+
+        let total = aggregate_inference_cost_since(&pool, ts("2026-06-10T00:00:00Z")).await;
+        assert!(
+            matches!(total, Some(v) if (v - 0.35).abs() < 1e-9),
+            "expected 0.35 over the two in-window runs, got {total:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn inference_cost_since_none_when_no_priced_rows() {
+        let pool = cost_pool().await;
+        // Run is in window but its model call is unpriced (cost_usd NULL):
+        // SUM over zero priced rows is NULL → None, NOT Some(0.0).
+        seed_agent_run_cost(&pool, "r1", "2026-06-10T12:00:00Z", None).await;
+        let total = aggregate_inference_cost_since(&pool, ts("2026-06-01T00:00:00Z")).await;
+        assert_eq!(total, None, "unpriced calls must yield None, never Some(0.0)");
+    }
+
+    #[tokio::test]
+    async fn inference_cost_since_none_when_no_runs_in_window() {
+        let pool = cost_pool().await;
+        seed_agent_run_cost(&pool, "r-old", "2026-06-01T00:00:00Z", Some(5.0)).await;
+        // Boundary is AFTER the only run → no rows → None.
+        let total = aggregate_inference_cost_since(&pool, ts("2026-06-05T00:00:00Z")).await;
+        assert_eq!(total, None);
+    }
+
+    #[tokio::test]
+    async fn inference_cost_since_none_when_tables_absent() {
+        // A bare pool without the observability tables must degrade to None
+        // (unknown), not error or fabricate 0.
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let total = aggregate_inference_cost_since(&pool, ts("2026-06-01T00:00:00Z")).await;
+        assert_eq!(total, None);
+    }
+
+    #[tokio::test]
+    async fn optimizer_cost_since_sums_cycles_in_window() {
+        let pool = cost_pool().await;
+        seed_cycle_cost(&pool, "c1", 1.50, "2026-06-10T12:00:00Z").await;
+        seed_cycle_cost(&pool, "c2", 2.50, "2026-06-11T12:00:00Z").await;
+        seed_cycle_cost(&pool, "c-old", 99.0, "2026-06-01T00:00:00Z").await;
+        let total = aggregate_optimizer_cost_since(&pool, ts("2026-06-10T00:00:00Z")).await;
+        assert!(
+            matches!(total, Some(v) if (v - 4.0).abs() < 1e-9),
+            "expected 4.0 over the two in-window cycles, got {total:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn optimizer_cost_since_none_when_no_cycles_in_window() {
+        let pool = cost_pool().await;
+        seed_cycle_cost(&pool, "c-old", 3.0, "2026-06-01T00:00:00Z").await;
+        let total = aggregate_optimizer_cost_since(&pool, ts("2026-06-05T00:00:00Z")).await;
+        assert_eq!(total, None);
+    }
+
+    #[tokio::test]
+    async fn optimizer_cost_since_none_when_table_absent() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let total = aggregate_optimizer_cost_since(&pool, ts("2026-06-01T00:00:00Z")).await;
+        assert_eq!(total, None);
+    }
+
+    #[tokio::test]
+    async fn budget_cap_none_when_unset_then_value_after_set() {
+        let pool = cost_pool().await;
+        // Fresh table, no row → unset → None (em-dash on the UI, no faked cap).
+        assert_eq!(get_daily_budget_cap(&pool).await, None, "unset cap must be None");
+
+        set_daily_budget_cap(&pool, 25.0, "2026-06-13T00:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(
+            get_daily_budget_cap(&pool).await,
+            Some(25.0),
+            "cap must read back the set value",
+        );
+
+        // INSERT OR REPLACE on id=1 overwrites, not duplicates.
+        set_daily_budget_cap(&pool, 40.0, "2026-06-13T01:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(get_daily_budget_cap(&pool).await, Some(40.0));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cost_budget")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "single-row table must hold exactly one row");
+    }
+
+    #[tokio::test]
+    async fn budget_cap_none_when_table_absent() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        assert_eq!(get_daily_budget_cap(&pool).await, None);
     }
 }

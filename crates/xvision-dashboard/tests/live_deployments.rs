@@ -1,13 +1,15 @@
 mod support;
 
 #[tokio::test]
-async fn get_deployments_returns_array() {
+async fn get_deployments_returns_envelope() {
     // test_server() returns (TestServer, TempDir) — bind _tmp so the DB dir
     // is not dropped mid-test.
     let (server, _tmp) = support::test_server().await;
     let res = server.get("/api/live/deployments").await;
     res.assert_status_ok();
-    assert!(res.json::<serde_json::Value>().is_array());
+    let body = res.json::<serde_json::Value>();
+    assert!(body.get("items").and_then(|v| v.as_array()).is_some());
+    assert_eq!(body.get("total").and_then(|v| v.as_u64()), Some(0));
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,26 @@ async fn live_deployments_stream_emits_live_run_state_and_closes() {
     use xvision_engine::api::chart::{LiveRunStatePayload, RunChartEvent};
 
     let (base_url, _tmp, state) = support::live_server().await;
+    let live_config = serde_json::json!({
+        "strategy_id": "s_TEST",
+        "assets": [{ "class": "Crypto", "symbol": "BTC/USD", "venue_symbol": "BTC/USD" }],
+        "capital": { "initial": 10000.0, "currency": "USD" },
+        "broker_creds_ref": "alpaca_paper_default",
+        "stop_policy": { "time_limit_secs": 900 },
+        "venue_label": "paper",
+        "display_name": "Test Deployment"
+    });
+    sqlx::query(
+        "INSERT INTO eval_runs \
+         (id, agent_id, scenario_id, mode, status, started_at, source, live_config_json) \
+         VALUES ('deploy-test-run', 'bundle-hash', NULL, 'live', 'running', \
+                 '2026-06-13T00:00:00Z', 'human', ?)",
+    )
+    .bind(live_config.to_string())
+    .execute(&state.pool)
+    .await
+    .expect("seed live deployment run");
+
     let bus = state.event_bus.clone();
 
     let url = format!("{base_url}/api/live/deployments/deploy-test-run/stream");

@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useSessionList, useOptimizerStats } from "@/features/autooptimizer/api";
+import { costKeys, getCostBudget } from "@/api/cost";
 import {
   bestHoldoutDelta,
   costAnomaly,
@@ -29,10 +31,11 @@ import {
  * machine passing its own honesty check, NOT a regression. The word "canary"
  * is developer-only and never appears in visible copy.
  *
- * Budget denominator (deferred to bead 8wn): the literal "$X / $Y today" cap
- * needs a persisted daily budget cap that does not exist yet. We render the
- * spend numerator honestly and an em-dash placeholder for the denominator —
- * never a faked cap.
+ * Budget denominator (8wn): the literal "$X / $Y today" cap is wired off the
+ * persisted operator cap from GET /api/cost/budget. The numerator is the
+ * honest session spend; the denominator is the real `daily_cap_usd` when the
+ * operator has set one, and an em-dash ONLY when the cap is genuinely UNSET
+ * (null) or the query has not yet resolved — never a faked cap.
  *
  * Terminology (LOCKED — see CLAUDE.md):
  *   - "Honesty check"  (NOT "canary" or "null-result canary")
@@ -49,6 +52,15 @@ const HONESTY_TITLE =
 export function OptimizerDigestStrip() {
   const { data: sessions } = useSessionList();
   const { data: stats } = useOptimizerStats();
+  // 8wn: the persisted operator daily cap drives the "$X / $Y today"
+  // denominator. `undefined` (pending) and `null` (UNSET) both render an
+  // em-dash — only a real number becomes a denominator (never a faked cap).
+  const { data: budget } = useQuery({
+    queryKey: costKeys.budget(),
+    queryFn: getCostBudget,
+    staleTime: 60_000,
+    retry: false,
+  });
 
   // Hidden when loading (undefined) or no runs recorded yet.
   if (!sessions || sessions.length === 0) {
@@ -109,13 +121,19 @@ export function OptimizerDigestStrip() {
   // Cost-anomaly tint: latest cycle cost vs trailing-cycle median.
   const cost = costAnomaly(rows);
   const costTone = cost.anomalous ? "text-warn" : undefined;
+  // 8wn: real operator cap drives the denominator. `undefined` (pending) and
+  // `null` (UNSET) both collapse to an em-dash — never a faked ceiling.
+  const capUsd = budget?.daily_cap_usd ?? null;
+  const capLabel = capUsd != null ? `$${capUsd.toFixed(2)}` : "—";
   const costTitle = cost.anomalous
     ? `Latest cycle cost ($${cost.currentUsd?.toFixed(2) ?? "—"}) is well above the` +
       ` trailing-cycle median ($${cost.medianUsd?.toFixed(2) ?? "—"}).`
-    : "Latest optimizer session spend. Daily budget cap pending.";
-  // Spend numerator is honest; the cap denominator is deferred to bead 8wn —
-  // render an em-dash placeholder, never a faked cap.
-  const spendLabel = `${costLabel} / —`;
+    : capUsd != null
+      ? `Latest optimizer session spend against the operator daily budget cap ($${capUsd.toFixed(2)}).`
+      : "Latest optimizer session spend. Daily budget cap unset.";
+  // Spend numerator is the honest session spend; the cap denominator is the
+  // real persisted cap, or an em-dash when UNSET / still loading.
+  const spendLabel = `${costLabel} / ${capLabel}`;
 
   return (
     <div

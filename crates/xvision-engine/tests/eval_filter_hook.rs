@@ -61,6 +61,7 @@ fn build_strategy(activation_mode: ActivationMode, filter: Option<Filter>) -> St
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     }
 }
 

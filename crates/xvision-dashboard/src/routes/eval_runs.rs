@@ -454,6 +454,11 @@ fn event_name(ev: &RunChartEvent) -> &'static str {
         RunChartEvent::Decision(_) => "decision",
         RunChartEvent::Marker(_) => "marker",
         RunChartEvent::Equity(_) => "equity",
+        // CT5 §4: the live-deployment capital tick. The eval-run chart page does
+        // not consume it (capital fields belong to the deployment surface), but
+        // backtests never emit it and the match must stay exhaustive — give it a
+        // distinct name so it never collides with the chart's `equity` frame.
+        RunChartEvent::DeploymentMetrics(_) => "deployment_metrics",
         RunChartEvent::Status { .. } => "status",
         RunChartEvent::LiveRunState(_) => "live_run_state",
     }

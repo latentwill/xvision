@@ -1,0 +1,21 @@
+// original test fixture (xvision) — Many input types exercising all input.int/float/bool/string variants
+//@version=5
+indicator("Multi Input Knobs", overlay=false)
+
+period_short = input.int(5, title="Short Period", minval=1, maxval=50)
+period_long = input.int(20, title="Long Period", minval=5, maxval=200)
+threshold_high = input.float(0.75, title="High Threshold", minval=0.0, maxval=1.0, step=0.01)
+threshold_low = input.float(0.25, title="Low Threshold", minval=0.0, maxval=1.0, step=0.01)
+show_signals = input.bool(true, title="Show Signals")
+signal_label = input.string("Signal", title="Signal Label")
+base_source = input.string("close", title="Source", options=["close", "open", "high", "low"])
+
+var count_long = 0
+var count_short = 0
+
+fast_val = ta.sma(close, period_short)
+slow_val = ta.sma(close, period_long)
+
+ratio = fast_val / slow_val
+above_threshold = ratio > threshold_high
+below_threshold = ratio < threshold_low

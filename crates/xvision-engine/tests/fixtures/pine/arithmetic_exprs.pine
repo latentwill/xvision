@@ -1,0 +1,22 @@
+// original test fixture (xvision) — complex arithmetic and boolean expressions including ternary chains
+//@version=5
+indicator("Arithmetic Expressions", overlay=false)
+
+p = input.int(10, title="Period")
+mult = input.float(1.5, title="Multiplier", step=0.5)
+
+sma_val = ta.sma(close, p)
+range_bar = high - low
+mid_price = (high + low) / 2
+hlc3 = (high + low + close) / 3
+
+normalized = (close - sma_val) / sma_val * 100
+scaled = normalized * mult + 0.0
+modded = scaled % 10.0
+
+above = close > sma_val
+below = close < sma_val
+equal_ish = close >= sma_val * 0.999 and close <= sma_val * 1.001
+neither = not above and not below
+
+strength = above and normalized > 2.0 ? 2 : above ? 1 : below and normalized < -2.0 ? -2 : below ? -1 : 0

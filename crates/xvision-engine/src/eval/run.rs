@@ -60,6 +60,50 @@ pub enum RunMode {
     Live,
 }
 
+/// Who queued a run — the deployment-source discriminator backing CT5's
+/// `LiveDeploymentSummary.source` and `awm`'s Cancel-gate (only `Human`-sourced
+/// runs may be cancelled from the dashboard strip). Persisted in the
+/// `eval_runs.source` column (migration 065, DB default `'human'`). Set at
+/// queue time: the operator queue path (POST /api/eval/runs) keeps the
+/// `Human` default; the autooptimizer eval adapter sets `Optimizer`. The
+/// strategy `agent_id` is NOT a reliable discriminator (the optimizer reuses
+/// `strategy.manifest.id`), so this explicit column is required. See
+/// docs/superpowers/specs/2026-06-13-ct5-live-deployment-contract.md §9.2.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentSource {
+    /// Operator-queued (the human queue path). The persisted-column default.
+    #[default]
+    Human,
+    /// Queued by the autooptimizer eval adapter.
+    Optimizer,
+}
+
+impl DeploymentSource {
+    /// On-disk string form (matches the `eval_runs.source` column values).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DeploymentSource::Human => "human",
+            DeploymentSource::Optimizer => "optimizer",
+        }
+    }
+
+    /// Parse the on-disk string. Returns `None` for unknown values so callers
+    /// can fall back to the tolerant `'human'` default on a malformed read.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "human" => Some(DeploymentSource::Human),
+            "optimizer" => Some(DeploymentSource::Optimizer),
+            _ => None,
+        }
+    }
+}
+
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[cfg_attr(
     feature = "ts-export",
@@ -209,6 +253,20 @@ pub struct Run {
     /// everywhere else.
     #[serde(default)]
     pub flatten_requested: bool,
+    /// CT5 deployment-source discriminator (`eval_runs.source`, migration 065).
+    /// `Human` for the operator queue path, `Optimizer` for the autooptimizer
+    /// eval adapter. Set at queue time; drives `awm`'s Cancel-gate. Defaults to
+    /// `Human` (the DB column default) so backtests and pre-065 rows are
+    /// behaviorally unchanged.
+    #[serde(default)]
+    pub source: DeploymentSource,
+    /// CT5 per-run mark-to-market unrealized PnL in USD (`eval_runs.unrealized_pnl_usd`,
+    /// migration 065), written by the live loop's buffered equity flush. `None`
+    /// when unavailable / pre-first-fill — HONESTY MANDATE (§8.1): an
+    /// unsourceable value surfaces as NULL ("—" in the UI), NEVER a faked 0.
+    /// Backtests leave this `None` with no behavior change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unrealized_pnl_usd: Option<f64>,
 }
 
 impl Run {
@@ -239,11 +297,21 @@ impl Run {
             paused: false,
             paused_at: None,
             flatten_requested: false,
+            source: DeploymentSource::Human,
+            unrealized_pnl_usd: None,
         }
     }
 
     pub fn with_live_config(mut self, config: LiveConfig) -> Self {
         self.live_config = Some(config);
+        self
+    }
+
+    /// Set the deployment-source discriminator (CT5). The operator queue path
+    /// keeps the `Human` default; the autooptimizer eval adapter calls this
+    /// with `DeploymentSource::Optimizer` at run creation.
+    pub fn with_source(mut self, source: DeploymentSource) -> Self {
+        self.source = source;
         self
     }
 }
@@ -435,6 +503,50 @@ mod tests {
     fn run_mode_parse_unknown_returns_none() {
         assert_eq!(RunMode::parse("???"), None);
         assert_eq!(RunMode::parse(""), None);
+    }
+
+    // ── CT5 Wave 3a: DeploymentSource discriminator on Run ──────────────────
+
+    #[test]
+    fn deployment_source_serializes_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&DeploymentSource::Human).unwrap(),
+            "\"human\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DeploymentSource::Optimizer).unwrap(),
+            "\"optimizer\""
+        );
+    }
+
+    #[test]
+    fn deployment_source_parse_roundtrip_and_default() {
+        assert_eq!(DeploymentSource::parse("human"), Some(DeploymentSource::Human));
+        assert_eq!(
+            DeploymentSource::parse("optimizer"),
+            Some(DeploymentSource::Optimizer)
+        );
+        assert_eq!(DeploymentSource::parse("???"), None);
+        // The persisted-column default is 'human'.
+        assert_eq!(DeploymentSource::default(), DeploymentSource::Human);
+        assert_eq!(DeploymentSource::Human.as_str(), "human");
+        assert_eq!(DeploymentSource::Optimizer.as_str(), "optimizer");
+    }
+
+    #[test]
+    fn new_queued_defaults_to_human_source_and_null_unrealized_pnl() {
+        // The human queue path keeps the default; backtests are unaffected.
+        let run = Run::new_queued("agent".into(), "scenario".into(), RunMode::Backtest);
+        assert_eq!(run.source, DeploymentSource::Human);
+        assert_eq!(run.unrealized_pnl_usd, None);
+    }
+
+    #[test]
+    fn with_source_sets_optimizer_discriminator() {
+        // The optimizer eval adapter sets the discriminator at run creation.
+        let run = Run::new_queued("agent".into(), "scenario".into(), RunMode::Backtest)
+            .with_source(DeploymentSource::Optimizer);
+        assert_eq!(run.source, DeploymentSource::Optimizer);
     }
 
     /// B27 regression: old eval rows whose `metrics_json` was serialized before

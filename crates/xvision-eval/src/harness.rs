@@ -266,7 +266,18 @@ impl BacktestRunner {
                         }))
                         .await;
                     }
-                    let risk_outcome = risk.evaluate(td, &portfolio);
+                    // Thread the cycle's perp funding (if present) into the
+                    // risk gate so `FundingCarryGuard` can fire on the live
+                    // perps path. Spot/backtest snapshots carry no funding
+                    // (`None`) ⇒ the guard no-ops (fail-safe).
+                    let risk_outcome = risk.evaluate_with_market(
+                        td,
+                        &portfolio,
+                        0.0,
+                        xvision_risk::MarketContext {
+                            funding_rate_8h: snapshot.onchain.funding_rate_8h,
+                        },
+                    );
                     if let Some((bus, _)) = &self.obs {
                         let (status, error_json) = match &risk_outcome {
                             RiskDecision::Vetoed { reason, .. } => (
@@ -439,6 +450,14 @@ mod tests {
         }
     }
 
+    /// Like [`snapshot_at`] but carries a perp funding signal in the onchain
+    /// panel, so the live-perps `FundingCarryGuard` path can be exercised.
+    fn snapshot_with_funding(secs: i64, price: f64, funding_8h: f64) -> MarketSnapshot {
+        let mut s = snapshot_at(secs, price);
+        s.onchain.funding_rate_8h = Some(funding_8h);
+        s
+    }
+
     struct AlwaysBuy;
     #[async_trait::async_trait]
     impl Algorithm for AlwaysBuy {
@@ -580,6 +599,54 @@ mod tests {
         assert!(flat_arm.returns.is_empty());
 
         assert_eq!(result.initial_nav_usd, 100_000.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Funding-aware carry guard: a punitive funding signal threaded through
+    // the harness vetoes a long entry (end-to-end through the risk gate).
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn punitive_funding_vetoes_long_entry_no_fills() {
+        // AlwaysBuy normally fills (see smoke_two_arms_five_bars). With a
+        // punitive funding snapshot (0.05 ≫ the 0.01 default threshold), the
+        // FundingCarryGuard must veto the long entry, so the arm records the
+        // decision but never fills.
+        let bars: Vec<MarketBar> = (0..5).map(|i| bar_at(i * 3600, 50_000.0)).collect();
+        let snapshots = vec![snapshot_with_funding(0, 50_000.0, 0.05)];
+
+        let cfg = BacktestRunConfig {
+            initial_nav_usd: 100_000.0,
+            fee_bps: 10,
+            slippage_atr_frac: 0.0,
+            step_hours: 2,
+            horizon_hours: 1,
+            n_bootstrap_resamples: 10,
+            block_size: None,
+        };
+        let arms = vec![ArmConfig {
+            name: "buy_arm".into(),
+            strategy: Box::new(AlwaysBuy),
+        }];
+
+        let risk = default_risk();
+        let mut runner = BacktestRunner::new(cfg, arms).expect("valid config");
+        let result = runner
+            .run(&snapshots, &bars, &risk)
+            .await
+            .expect("run must succeed");
+
+        let buy_arm = &result.arms["buy_arm"];
+        assert_eq!(
+            buy_arm.decisions.len(),
+            1,
+            "arm should still record the (vetoed) decision"
+        );
+        assert!(
+            buy_arm.fills.is_empty(),
+            "punitive funding must veto the entry through the risk gate → no fills, got {:?}",
+            buy_arm.fills
+        );
     }
 
     // -----------------------------------------------------------------------

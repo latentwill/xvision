@@ -7,6 +7,7 @@ import { HomeRoute } from "./home";
 import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as strategyApi from "@/api/strategies";
+import * as deploymentsApi from "@/api/live-deployments";
 import type { RunSummary } from "@/api/types.gen";
 import {
   LAST_VISIT_LS,
@@ -60,6 +61,25 @@ vi.mock("@/api/eval-review", () => ({
   listCriticalFindings: vi.fn().mockResolvedValue([]),
 }));
 
+// 8wn: the cost rollup strip (since-last-visit + this-week) and the digest
+// budget denominator pull from /api/cost. Default to null spend / UNSET cap so
+// the strips render their honest empty states; individual tests override.
+vi.mock("@/api/cost", () => ({
+  costKeys: {
+    all: ["cost"],
+    rollup: (since?: string) => ["cost", "rollup", since || ""],
+    budget: () => ["cost", "budget"],
+  },
+  getCostRollup: vi.fn().mockResolvedValue({
+    since: "2026-06-12T00:00:00Z",
+    spend_usd: null,
+    eval_cost_usd: null,
+    optimizer_cost_usd: null,
+    daily_cap_usd: null,
+  }),
+  getCostBudget: vi.fn().mockResolvedValue({ daily_cap_usd: null }),
+}));
+
 // OptimizerPanel pulls the ladder/stats/status via these hooks; the digest
 // footer pulls the last optimizer session. Default to empty/idle; individual
 // tests override.
@@ -79,6 +99,18 @@ vi.mock("@/api/agent-runs", () => ({
     run: (id: string) => ["agent-runs", "run", id],
   },
   listAgentRuns: vi.fn().mockResolvedValue([]),
+}));
+
+// n0k/awm: the home route owns the 5s live-deployments poll; rows flow down
+// through AttentionBand → ActiveTasksStrip. s78.1: each running row also opens
+// a per-deployment SSE — stub it so the rows mount without a real EventSource.
+vi.mock("@/api/live-deployments", () => ({
+  deploymentKeys: {
+    all: ["live-deployments"],
+    list: (p?: unknown) => ["live-deployments", "list", p ?? {}],
+  },
+  listDeployments: vi.fn().mockResolvedValue([]),
+  openDeploymentStream: vi.fn(() => () => {}),
 }));
 
 vi.mock("@/api/settings", () => ({
@@ -153,6 +185,12 @@ describe("HomeRoute", () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
     vi.mocked(strategyApi.listStrategies).mockResolvedValue([]);
+    // Reset the live-deployments poll to an empty population each test. Without
+    // this, a `mockResolvedValue` set by one test (the live-row / capital-risk
+    // tests) leaks into later tests and the capital-risk strip would mount with
+    // stale rows — surfacing its honest "Deployed capital" label in tests that
+    // assert no live-money labels appear on an idle node.
+    vi.mocked(deploymentsApi.listDeployments).mockResolvedValue([]);
     // Each test starts with a clean last-visit boundary; tests that exercise
     // the populated delta seed localStorage explicitly. Reset the module-scoped
     // page-load-session snapshot too, so each test's first render re-reads the
@@ -355,6 +393,125 @@ describe("HomeRoute", () => {
     });
   });
 
+  // n0k/awm: the home route owns the live-deployments 5s poll and passes the
+  // rows down to ActiveTasksStrip (via AttentionBand). The query must filter to
+  // status=running,paused (the active-deployment window).
+  it("wires the live-deployments poll with status=running,paused", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    await waitFor(() => {
+      expect(vi.mocked(listDeployments)).toHaveBeenCalled();
+    });
+    const called = vi
+      .mocked(listDeployments)
+      .mock.calls.some((c) => {
+        const p = c[0] as { status?: string } | undefined;
+        return p?.status === "running,paused";
+      });
+    expect(called).toBe(true);
+  });
+
+  // 8s4: the home capital-risk strip mounts from the SAME live-deployments
+  // poll (no second fetch) and aggregates the broker-sourced capital fields.
+  it("mounts the capital-risk strip from the live-deployments poll", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    vi.mocked(listDeployments).mockResolvedValue([
+      {
+        deployment_id: "dep-cap-1",
+        strategy_id: "strat-1",
+        strategy_name: "CapStrat",
+        mode: "paper",
+        status: "running",
+        started_at: "2026-06-13T00:00:00Z",
+        last_decision_at: "2026-06-13T01:00:00Z",
+        venue: "alpaca-paper",
+        venue_connected: true,
+        deployed_capital_usd: 2500,
+        realized_pnl_usd: null,
+        unrealized_pnl_usd: null,
+        drawdown_pct: 3.2,
+        daily_loss_limit_remaining_usd: 1800,
+        risk_veto_count_since_last_visit: null,
+        paused: false,
+        flatten_requested: false,
+        global_safety_paused: false,
+        source: "human",
+        unavailable_reason: null,
+      },
+    ]);
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const strip = await screen.findByTestId("capital-risk-strip");
+    expect(strip).toBeInTheDocument();
+    // Aggregated deployed capital from the poll renders (not from a second fetch).
+    await waitFor(() =>
+      expect(strip.querySelector('[data-testid="capital-risk-deployed"]')!.textContent).toMatch(
+        /\$2,500/,
+      ),
+    );
+    // Deferred risk-veto chip is "—", never 0 (HONESTY).
+    expect(strip.querySelector('[data-testid="capital-risk-veto"]')!.textContent).toBe("—");
+  });
+
+  // 8s4: with zero live deployments, say nothing — no empty capital-risk strip
+  // implying live capital exists when none does.
+  it("does NOT render the capital-risk strip when there are no live deployments", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    vi.mocked(listDeployments).mockResolvedValue([]);
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    // Give the deployments poll a chance to resolve, then assert absence.
+    await waitFor(() => expect(vi.mocked(listDeployments)).toHaveBeenCalled());
+    expect(screen.queryByTestId("capital-risk-strip")).toBeNull();
+  });
+
+  // A returned deployment renders as a live row inside the attention band.
+  it("renders a live deployment row from the poll inside the attention band", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    vi.mocked(listDeployments).mockResolvedValue([
+      {
+        deployment_id: "dep-home-1",
+        strategy_id: "strat-1",
+        strategy_name: "HomeMomentum",
+        mode: "paper",
+        status: "running",
+        started_at: "2026-06-13T00:00:00Z",
+        last_decision_at: "2026-06-13T01:00:00Z",
+        venue: "alpaca-paper",
+        venue_connected: true,
+        deployed_capital_usd: 1000,
+        realized_pnl_usd: 0,
+        unrealized_pnl_usd: null,
+        drawdown_pct: null,
+        daily_loss_limit_remaining_usd: null,
+        risk_veto_count_since_last_visit: null,
+        paused: false,
+        flatten_requested: false,
+        global_safety_paused: false,
+        source: "human",
+        unavailable_reason: null,
+      },
+    ]);
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const row = await screen.findByTestId("deployment-row-dep-home-1");
+    expect(row).toBeInTheDocument();
+    expect(screen.getByText("HomeMomentum")).toBeInTheDocument();
+    // HONESTY: a null unrealized P&L renders "—", never $0, on the wired row.
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    expect(pnl.textContent).toBe("—");
+    // The live row lives inside the attention band, not as a floating surface.
+    expect(row.closest('[data-testid="attention-band"]')).not.toBeNull();
+  });
+
   // Redesign composition: pulse → attention → optimizer → leaderboard.
   it("renders the four bento sections in order", async () => {
     renderRoute();
@@ -438,6 +595,35 @@ describe("HomeRoute", () => {
     expect(
       digest.closest('[data-testid="optimizer-panel"]'),
     ).not.toBeNull();
+  });
+
+  // 8wn: the cost rollup strip must be MOUNTED on the home route (it pulls the
+  // since-last-visit + this-week rollups). With null spend / UNSET cap (default
+  // mock) it still renders its honest empty state rather than a faked $0.
+  it("mounts the cost rollup strip on the home route", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(await screen.findByTestId("cost-rollup-strip")).toBeInTheDocument();
+  });
+
+  it("renders real spend in the cost rollup strip and the cap denominator when set (8wn)", async () => {
+    const costApi = await import("@/api/cost");
+    vi.mocked(costApi.getCostBudget).mockResolvedValue({ daily_cap_usd: 50 });
+    // since-last-visit window resolves first; this-week second.
+    vi.mocked(costApi.getCostRollup).mockResolvedValue({
+      since: "2026-06-12T00:00:00Z",
+      spend_usd: 7.5,
+      eval_cost_usd: 5.0,
+      optimizer_cost_usd: 2.5,
+      daily_cap_usd: 50,
+    });
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    const strip = await screen.findByTestId("cost-rollup-strip");
+    await waitFor(() => expect(strip.textContent).toContain("$7.50"));
+    // The this-week window scales the $50 daily cap to its 7-day budget ($350)
+    // so cumulative spend compares like-for-like (bead s78.3).
+    await waitFor(() => expect(strip.textContent).toContain("$350.00"));
   });
 
   // Honesty: the Optimizer panel never renders a "Waiting for connection…"

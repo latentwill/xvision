@@ -1,11 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import * as evalApi from "@/api/eval";
-import type { RunSummary } from "@/api/types.gen";
+import type {
+  DeploymentMetricsPatch,
+  DeploymentStreamEvent,
+} from "@/api/live-deployments";
+import type { LiveDeploymentSummary, RunSummary } from "@/api/types.gen";
 import { ActiveTasksStrip } from "./ActiveTasksStrip";
 
 vi.mock("@/api/eval", async () => {
@@ -18,6 +22,46 @@ vi.mock("@/api/eval", async () => {
     cancelRun: vi.fn(),
   };
 });
+
+// s78.1: control the per-deployment SSE. Each `openDeploymentStream(id, cb)`
+// call records the id, exposes `emit(patch)` to drive a live `metrics` frame,
+// and tracks whether `close()` ran (leak detection on unmount / id change).
+const streamRegistry = vi.hoisted(() => {
+  type Sub = {
+    id: string;
+    cb: (ev: DeploymentStreamEvent) => void;
+    closed: boolean;
+  };
+  const subs: Sub[] = [];
+  function open(id: string, cb: (ev: DeploymentStreamEvent) => void) {
+    const sub: Sub = { id, cb, closed: false };
+    subs.push(sub);
+    return () => {
+      sub.closed = true;
+    };
+  }
+  return {
+    subs,
+    open: vi.fn(open),
+    emit(id: string, patch: DeploymentMetricsPatch) {
+      for (const s of subs) {
+        if (s.id === id && !s.closed) s.cb({ event: "metrics", data: patch });
+      }
+    },
+    last(id: string) {
+      return [...subs].reverse().find((s) => s.id === id);
+    },
+    reset() {
+      subs.length = 0;
+      streamRegistry.open.mockClear();
+    },
+  };
+});
+
+vi.mock("@/api/live-deployments", () => ({
+  openDeploymentStream: (id: string, cb: (ev: DeploymentStreamEvent) => void) =>
+    streamRegistry.open(id, cb),
+}));
 
 // S0 / O2+O3: control the optimizer-status hook + pause/resume mutations.
 const { pauseMutate, resumeMutate, statusRef } = vi.hoisted(() => ({
@@ -92,17 +136,45 @@ function makeRun(overrides: Partial<{
   };
 }
 
-function renderStrip() {
+function renderStrip(deployments?: LiveDeploymentSummary[]) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <ActiveTasksStrip />
+        <ActiveTasksStrip deployments={deployments} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
+}
+
+function makeDeployment(
+  over: Partial<LiveDeploymentSummary> = {},
+): LiveDeploymentSummary {
+  return {
+    deployment_id: "dep-1",
+    strategy_id: "strat-1",
+    strategy_name: "Momentum",
+    mode: "paper",
+    status: "running",
+    started_at: new Date(Date.now() - 60_000).toISOString(),
+    last_decision_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    venue: "alpaca-paper",
+    venue_connected: true,
+    deployed_capital_usd: 1000,
+    realized_pnl_usd: 0,
+    unrealized_pnl_usd: 42.5,
+    drawdown_pct: 1.0,
+    daily_loss_limit_remaining_usd: 500,
+    risk_veto_count_since_last_visit: null,
+    paused: false,
+    flatten_requested: false,
+    global_safety_paused: false,
+    source: "human",
+    unavailable_reason: null,
+    ...over,
+  };
 }
 
 afterEach(() => {
@@ -111,6 +183,7 @@ afterEach(() => {
   statusRef.current = undefined;
   pauseMutate.mockReset();
   resumeMutate.mockReset();
+  streamRegistry.reset();
 });
 
 describe("ActiveTasksStrip", () => {
@@ -251,5 +324,392 @@ describe("ActiveTasksStrip", () => {
 
     await screen.findByTestId("active-tasks-strip");
     expect(screen.queryByTestId("active-optimizer-cycle")).toBeNull();
+  });
+
+  // ─── n0k / awm: live & paper deployment rows (CT5 contract) ──────────────
+
+  it("renders a labeled live-deployments group with one row per deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", strategy_name: "Momentum", mode: "paper" }),
+      makeDeployment({ deployment_id: "d2", strategy_name: "MeanRev", mode: "live" }),
+    ]);
+
+    const group = await screen.findByTestId("live-deployments-group");
+    // The group is a distinct, labeled section — not folded into the eval queue.
+    expect(group.textContent).toMatch(/live\s*&\s*paper/i);
+    expect(screen.getByTestId("deployment-row-d1")).toBeInTheDocument();
+    expect(screen.getByTestId("deployment-row-d2")).toBeInTheDocument();
+    expect(screen.getByText("Momentum")).toBeInTheDocument();
+    expect(screen.getByText("MeanRev")).toBeInTheDocument();
+  });
+
+  it("renders the mode badge from the deployment's mode field, not inferred", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "p", strategy_name: "PaperOne", mode: "paper" }),
+      makeDeployment({ deployment_id: "l", strategy_name: "LiveOne", mode: "live" }),
+    ]);
+
+    await screen.findByTestId("deployment-row-p");
+    const paperRow = screen.getByTestId("deployment-row-p");
+    const liveRow = screen.getByTestId("deployment-row-l");
+    expect(paperRow.textContent).toMatch(/paper/i);
+    expect(liveRow.textContent).toMatch(/live/i);
+  });
+
+  it("shows last_decision_at as a relative time", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        strategy_name: "Momentum",
+        last_decision_at: new Date(Date.now() - 15 * 60_000).toISOString(),
+      }),
+    ]);
+
+    await screen.findByTestId("deployment-row-d1");
+    expect(screen.getByText("15m ago")).toBeInTheDocument();
+  });
+
+  it("renders unrealized P&L as a signed dollar amount", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", unrealized_pnl_usd: 42.5 }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    expect(pnl.textContent).toBe("+$42.50");
+  });
+
+  // HONESTY: null unrealized P&L renders "—", never a fabricated 0 / $0.
+  it("renders '—' (not 0 / $0) when unrealized P&L is null", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", unrealized_pnl_usd: null }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    expect(pnl.textContent).toBe("—");
+    expect(pnl.textContent).not.toContain("0");
+    expect(pnl.textContent).not.toContain("$");
+  });
+
+  it("renders no live group when the deployment set is empty (say-nothing-when-empty)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeRun({ id: "run-1", status: "running", strategy: { id: "s", display_name: "Alpha" } }),
+    ]);
+    setStatus(null);
+
+    renderStrip([]);
+
+    // The eval queue still renders, but there is no live group.
+    await screen.findByText("Alpha");
+    expect(screen.queryByTestId("live-deployments-group")).toBeNull();
+  });
+
+  // awm (a): Cancel shown for human-sourced and for absent/undefined source
+  // (legacy runs); HIDDEN only on explicit source==='optimizer'.
+  it("shows Cancel for a human-sourced deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", strategy_name: "HumanRun", source: "human" }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(
+      row.querySelector('[aria-label="Cancel HumanRun"]'),
+    ).not.toBeNull();
+  });
+
+  it("shows Cancel when source is absent/undefined (legacy run)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    const dep = makeDeployment({ deployment_id: "d1", strategy_name: "LegacyRun" });
+    // Simulate a legacy row with no source field at all.
+    delete (dep as Partial<LiveDeploymentSummary>).source;
+
+    renderStrip([dep]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(
+      row.querySelector('[aria-label="Cancel LegacyRun"]'),
+    ).not.toBeNull();
+  });
+
+  it("hides Cancel for an optimizer-sourced deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", strategy_name: "OptRun", source: "optimizer" }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(row.querySelector('[aria-label="Cancel OptRun"]')).toBeNull();
+  });
+
+  // awm (b): runaway warning chip on a LIVE deployment started > 24h ago.
+  it("shows a runaway warning for a LIVE deployment started > 24h ago", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    const longAgo = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        strategy_name: "RunawayLive",
+        mode: "live",
+        started_at: longAgo,
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(
+      row.querySelector('[data-testid="deployment-runaway-chip"]'),
+    ).not.toBeNull();
+  });
+
+  it("does NOT show a runaway warning for a fresh LIVE deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        mode: "live",
+        started_at: new Date(Date.now() - 60_000).toISOString(),
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(
+      row.querySelector('[data-testid="deployment-runaway-chip"]'),
+    ).toBeNull();
+  });
+
+  it("does NOT show a runaway warning for a PAPER deployment older than 24h", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    const longAgo = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        mode: "paper",
+        started_at: longAgo,
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(
+      row.querySelector('[data-testid="deployment-runaway-chip"]'),
+    ).toBeNull();
+  });
+
+  it("falls back to an honest placeholder name when strategy_name is null", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", strategy_name: null }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    expect(row.textContent).toMatch(/unknown strategy/i);
+  });
+
+  it("deployment row links to the live run inspector", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "dep-9", strategy_name: "LinkMe" }),
+    ]);
+
+    await screen.findByTestId("deployment-row-dep-9");
+    const link = screen.getByRole("link", { name: /linkme/i });
+    expect(link).toHaveAttribute("href", "/live/runs/dep-9");
+  });
+
+  it("keeps the eval queue rows alongside the live group", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([
+      makeRun({ id: "run-1", status: "running", strategy: { id: "s", display_name: "EvalAlpha" } }),
+    ]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", strategy_name: "LiveBeta" }),
+    ]);
+
+    await screen.findByText("EvalAlpha");
+    expect(screen.getByText("LiveBeta")).toBeInTheDocument();
+    expect(screen.getByTestId("live-deployments-group")).toBeInTheDocument();
+  });
+
+  // ─── s78.1: live-ticking unrealized P&L via the per-deployment SSE ─────────
+
+  it("subscribes to the SSE for a running deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([makeDeployment({ deployment_id: "d1", status: "running" })]);
+
+    await screen.findByTestId("deployment-row-d1");
+    await waitFor(() =>
+      expect(streamRegistry.open).toHaveBeenCalledWith("d1", expect.any(Function)),
+    );
+  });
+
+  it("overlays the streamed unrealized P&L on top of the poll value", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        status: "running",
+        unrealized_pnl_usd: 10, // poll value
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    // Before any tick: the poll value shows.
+    expect(pnl.textContent).toBe("+$10.00");
+
+    // A live metrics tick arrives — the row ticks to the streamed value.
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    act(() => {
+      streamRegistry.emit("d1", { equity_usd: 1000, unrealized_pnl_usd: 88.5 });
+    });
+    await waitFor(() => expect(pnl.textContent).toBe("+$88.50"));
+  });
+
+  // DEGRADE: a heartbeat / tick that carries NO unrealized P&L must not blank
+  // the row — it falls back to the poll value (no 0 / blank flash).
+  it("falls back to the poll value when the tick omits unrealized P&L", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        status: "running",
+        unrealized_pnl_usd: 25, // poll value
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    // Equity-only heartbeat: no capital fields.
+    act(() => {
+      streamRegistry.emit("d1", { equity_usd: 999 });
+    });
+    // Still shows the honest poll value, never blanked / zeroed.
+    await waitFor(() => expect(pnl.textContent).toBe("+$25.00"));
+  });
+
+  // HONESTY: streamed null + poll null => "—", never a fabricated $0.
+  it("renders '—' when both the stream and poll have no unrealized P&L", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        status: "running",
+        unrealized_pnl_usd: null,
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    act(() => {
+      streamRegistry.emit("d1", { equity_usd: 100 }); // no pnl
+    });
+    await waitFor(() => expect(pnl.textContent).toBe("—"));
+    expect(pnl.textContent).not.toContain("0");
+    expect(pnl.textContent).not.toContain("$");
+  });
+
+  it("closes the EventSource on unmount (no leak)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    const { unmount } = renderStrip([
+      makeDeployment({ deployment_id: "d1", status: "running" }),
+    ]);
+
+    await screen.findByTestId("deployment-row-d1");
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    const sub = streamRegistry.last("d1")!;
+    expect(sub.closed).toBe(false);
+
+    unmount();
+    expect(sub.closed).toBe(true);
+  });
+
+  it("closes the old stream and opens a new one when the row id changes", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    const { rerender } = renderStrip([
+      makeDeployment({ deployment_id: "d1", status: "running" }),
+    ]);
+    await screen.findByTestId("deployment-row-d1");
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    const first = streamRegistry.last("d1")!;
+
+    // Replace the row with a different deployment id.
+    rerender(
+      <MemoryRouter>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <ActiveTasksStrip
+            deployments={[makeDeployment({ deployment_id: "d2", status: "running" })]}
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId("deployment-row-d2");
+    await waitFor(() => expect(streamRegistry.last("d2")).toBeTruthy());
+    expect(first.closed).toBe(true);
+    expect(streamRegistry.last("d2")!.closed).toBe(false);
+  });
+
+  // A non-running (paused) deployment must NOT open a socket — nothing to tick.
+  it("does not open a stream for a paused deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", status: "paused" }),
+    ]);
+
+    await screen.findByTestId("deployment-row-d1");
+    // Flush effects.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(streamRegistry.last("d1")).toBeUndefined();
   });
 });

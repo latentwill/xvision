@@ -58,6 +58,7 @@ fn fixture_diff() -> MutationDiff {
             removed: vec!["atr".into()],
         },
         filter: Vec::new(),
+        create_filter: None,
         rationale: "increase aggression".into(),
     }
 }

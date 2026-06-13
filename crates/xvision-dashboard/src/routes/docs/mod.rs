@@ -102,6 +102,7 @@ mod tests {
                 "filter-dsl-catalog",
                 "cli-non-surfaced",
                 "runbook",
+                "autooptimizer-config",
                 "research-index",
                 "xvision",
                 "growth-marketing",

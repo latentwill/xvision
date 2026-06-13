@@ -83,9 +83,7 @@ async fn realized_today_is_populated_and_finite() {
         .await
         .unwrap()
         .expect("row present");
-    let rt = snap
-        .realized_today_usd
-        .expect("realized_today_usd must be Some");
+    let rt = snap.realized_today_usd.expect("realized_today_usd must be Some");
     assert!(rt.is_finite(), "realized_today_usd must be finite, got {rt}");
     // On a hold-only, no-fill run the realized PnL is 0 and so is realized_today.
     assert_eq!(
@@ -101,12 +99,11 @@ async fn realized_today_is_populated_and_finite() {
 #[tokio::test]
 async fn migration_creates_live_run_state_table() {
     let ctx = support::api_context_fresh().await; // production migration path → includes 065
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='live_run_state'",
-    )
-    .fetch_one(&ctx.db)
-    .await
-    .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='live_run_state'")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap();
     assert_eq!(count, 1);
 }
 
@@ -117,7 +114,10 @@ async fn create_persists_venue_label_from_live_config() {
     let run = support::live_run_with_venue(xvision_engine::safety::venue::VenueLabel::Testnet);
     store.create(&run).await.unwrap();
     let venue: String = sqlx::query_scalar("SELECT venue_label FROM eval_runs WHERE id = ?")
-        .bind(&run.id).fetch_one(&ctx.db).await.unwrap();
+        .bind(&run.id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
     assert_eq!(venue, "testnet");
 }
 
@@ -156,22 +156,34 @@ async fn live_state_upsert_inserts_then_updates_in_place() {
 
     let lss = LiveStateStore::new(ctx.db.clone());
     let mut snap = LiveRunState {
-        run_id: run.id.clone(), strategy_id: Some("strat-1".into()),
-        strategy_name: Some("Trend v2".into()), deployed_capital_usd: 10_000.0,
-        equity_usd: Some(10_050.0), unrealized_pnl_usd: Some(50.0), realized_pnl_usd: Some(0.0),
-        realized_today_usd: Some(0.0), daily_loss_remaining_usd: Some(500.0), drawdown_pct: Some(0.0),
-        peak_equity_usd: Some(10_050.0), risk_veto_count: 0,
-        last_decision_at: Some("2026-06-13T12:00:00Z".into()), updated_at: "2026-06-13T12:00:00Z".into(),
+        run_id: run.id.clone(),
+        strategy_id: Some("strat-1".into()),
+        strategy_name: Some("Trend v2".into()),
+        deployed_capital_usd: 10_000.0,
+        equity_usd: Some(10_050.0),
+        unrealized_pnl_usd: Some(50.0),
+        realized_pnl_usd: Some(0.0),
+        realized_today_usd: Some(0.0),
+        daily_loss_remaining_usd: Some(500.0),
+        drawdown_pct: Some(0.0),
+        peak_equity_usd: Some(10_050.0),
+        risk_veto_count: 0,
+        last_decision_at: Some("2026-06-13T12:00:00Z".into()),
+        updated_at: "2026-06-13T12:00:00Z".into(),
     };
     lss.upsert(&snap).await.unwrap();
-    snap.equity_usd = Some(9_800.0); snap.risk_veto_count = 2;
+    snap.equity_usd = Some(9_800.0);
+    snap.risk_veto_count = 2;
     lss.upsert(&snap).await.unwrap();
 
     let got = lss.get(&run.id).await.unwrap().expect("row present");
     assert_eq!(got.equity_usd, Some(9_800.0));
     assert_eq!(got.risk_veto_count, 2);
     let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM live_run_state WHERE run_id = ?")
-        .bind(&run.id).fetch_one(&ctx.db).await.unwrap();
+        .bind(&run.id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
     assert_eq!(n, 1);
 }
 
@@ -187,7 +199,10 @@ async fn list_live_deployments_excludes_backtests_and_live_venue() {
     let ctx = support::api_context_fresh().await;
     let store = RunStore::new(ctx.db.clone());
     store.create(&support::backtest_run()).await.unwrap();
-    store.create(&support::live_run_with_venue(VenueLabel::Paper)).await.unwrap();
+    store
+        .create(&support::live_run_with_venue(VenueLabel::Paper))
+        .await
+        .unwrap();
 
     let out: Vec<LiveDeploymentSummary> = list_live_deployments(&ctx, None).await.unwrap();
     assert_eq!(out.len(), 1);
@@ -230,10 +245,16 @@ async fn list_live_deployments_surfaces_testnet_label() {
     use xvision_engine::safety::venue::VenueLabel;
     let ctx = support::api_context_fresh().await;
     let store = RunStore::new(ctx.db.clone());
-    store.create(&support::live_run_with_venue(VenueLabel::Testnet)).await.unwrap();
+    store
+        .create(&support::live_run_with_venue(VenueLabel::Testnet))
+        .await
+        .unwrap();
     let out = list_live_deployments(&ctx, None).await.unwrap();
     assert_eq!(out.len(), 1);
-    assert_eq!(out[0].venue_label, "testnet", "API response must carry the persisted venue_label");
+    assert_eq!(
+        out[0].venue_label, "testnet",
+        "API response must carry the persisted venue_label"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +283,8 @@ async fn bus_delivers_live_run_state_event_to_subscriber() {
         last_decision_at: Some("2026-06-13T12:00:00Z".into()),
     };
 
-    bus.emit(run_id, RunChartEvent::LiveRunState(payload.clone())).await;
+    bus.emit(run_id, RunChartEvent::LiveRunState(payload.clone()))
+        .await;
 
     let ev = timeout(Duration::from_secs(1), rx.recv())
         .await

@@ -648,6 +648,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 
@@ -682,6 +683,8 @@ mod tests {
             paused: false,
             paused_at: None,
             flatten_requested: false,
+            source: Default::default(),
+            unrealized_pnl_usd: None,
         }
     }
 

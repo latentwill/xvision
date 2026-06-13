@@ -10,26 +10,26 @@ use chrono::{TimeZone, Utc};
 use futures::stream;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
-use xvision_core::Capital;
 use xvision_core::trading::AssetSymbol;
+use xvision_core::Capital;
 use xvision_data::alpaca::{BarGranularity, MarketBar};
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials, LiveBarItem};
 use xvision_data::alpaca_live_poll::{AlpacaLivePoll, AlpacaPollError, LivePollFetcher};
 use xvision_execution::broker_surface::{BrokerSurface, OrderConfirmation, OrderRequest};
 
+use xvision_engine::agent::llm::MockDispatch;
 use xvision_engine::api::{Actor, ApiContext};
-use xvision_engine::eval::{canonical_scenarios, scenario_store};
 use xvision_engine::eval::executor::{Executor, LiveStream, MultiLiveStream, RunExecutor, WallClock};
 use xvision_engine::eval::live_config::{LiveConfig, StopPolicy};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::{AssetClass, AssetRef, Scenario};
 use xvision_engine::eval::store::RunStore;
+use xvision_engine::eval::{canonical_scenarios, scenario_store};
 use xvision_engine::safety::VenueLabel;
 use xvision_engine::strategies::manifest::PublicManifest;
 use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::strategies::Strategy;
-use xvision_engine::agent::llm::{MockDispatch};
 use xvision_engine::tools::ToolRegistry;
 
 // ---------------------------------------------------------------------------
@@ -120,8 +120,7 @@ pub async fn safety_pool_with_migrations() -> SqlitePool {
 /// (Context, TempDir) tuple. Test processes are short-lived; the leak is
 /// bounded.
 pub async fn api_context_fresh() -> ApiContext {
-    let dir: &'static tempfile::TempDir =
-        Box::leak(Box::new(tempfile::tempdir().unwrap()));
+    let dir: &'static tempfile::TempDir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
     std::fs::create_dir_all(dir.path().join("strategies")).unwrap();
     ApiContext::open(
         dir.path(),
@@ -164,8 +163,7 @@ pub fn live_run_with_venue(label: VenueLabel) -> Run {
         tags: vec![],
         notes: None,
     };
-    Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Live)
-        .with_live_config(cfg)
+    Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Live).with_live_config(cfg)
 }
 
 /// Build a `Queued` backtest `Run` (mode=Backtest, a scenario_id, no
@@ -235,11 +233,13 @@ fn _support_stream(n: usize, initial: f64) -> MultiLiveStream {
         })
         .collect();
     let ws_items: Vec<LiveBarItem> = bars.iter().cloned().map(LiveBarItem::Bar).collect();
-    let ws = _support_live_client()
-        .subscription_from_stream(BarGranularity::Minute1, stream::iter(ws_items));
-    let poll =
-        AlpacaLivePoll::new(Arc::new(_SupportEmptyFetcher), "BTC/USD".into(), BarGranularity::Minute1)
-            .with_poll_interval(Duration::ZERO);
+    let ws = _support_live_client().subscription_from_stream(BarGranularity::Minute1, stream::iter(ws_items));
+    let poll = AlpacaLivePoll::new(
+        Arc::new(_SupportEmptyFetcher),
+        "BTC/USD".into(),
+        BarGranularity::Minute1,
+    )
+    .with_poll_interval(Duration::ZERO);
     let live_stream = LiveStream::new_for_test(Vec::new(), ws, poll);
     MultiLiveStream::new(vec![(AssetSymbol::Btc, live_stream)])
 }
@@ -306,6 +306,7 @@ fn _support_strategy() -> Strategy {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     }
 }
 
@@ -364,9 +365,8 @@ pub async fn run_short_live(bars: usize, initial: f64) -> LiveTestHandle {
     let store = RunStore::new(pool.clone());
 
     let live_cfg = _support_live_config(initial, bars);
-    let mut run =
-        Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Live)
-            .with_live_config(live_cfg.clone());
+    let mut run = Run::new_queued("01TESTSUPPORT_LIVE".into(), String::new(), RunMode::Live)
+        .with_live_config(live_cfg.clone());
     store.create(&run).await.unwrap();
     store
         .ensure_agent_run_baseline(&run.id, "hash_only")
@@ -379,9 +379,14 @@ pub async fn run_short_live(bars: usize, initial: f64) -> LiveTestHandle {
     let stream = _support_stream(bars, initial);
     let now_ts = Utc.timestamp_opt(60, 0).single().unwrap();
 
-    let executor =
-        Executor::live(&live_cfg, broker, stream, WallClock::with_now_fn(move || now_ts), None)
-            .expect("live executor builds in support helper");
+    let executor = Executor::live(
+        &live_cfg,
+        broker,
+        stream,
+        WallClock::with_now_fn(move || now_ts),
+        None,
+    )
+    .expect("live executor builds in support helper");
 
     let dispatch = Arc::new(MockDispatch::echo(
         r#"{"action":"hold","conviction":0.0,"justification":"support"}"#,

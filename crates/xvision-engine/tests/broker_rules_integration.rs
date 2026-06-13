@@ -118,6 +118,12 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/065_eval_run_source_and_unrealized_pnl.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     RunStore::new(pool)
 }
 
@@ -228,6 +234,7 @@ fn strategy_with_risk_pct(agent_id: &str, risk_pct: f64) -> Strategy {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     }
 }
 

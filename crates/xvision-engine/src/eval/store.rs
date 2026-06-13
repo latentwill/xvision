@@ -174,8 +174,8 @@ impl RunStore {
               estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
               bars_content_hash, manifest_canonical, bars_manifest, \
               auto_fire_review, review_model_json, max_annotations_per_review, live_config_json, \
-              venue_label) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              venue_label, source, unrealized_pnl_usd) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&run.id)
         .bind(&run.agent_id)
@@ -199,6 +199,12 @@ impl RunStore {
         .bind(run.max_annotations_per_review.map(|n| n as i64))
         .bind(live_config_json)
         .bind(venue_label.as_str())
+        // CT5 migration 065: deployment-source discriminator + per-run
+        // unrealized PnL. `source` is set at queue time (Human/Optimizer);
+        // `unrealized_pnl_usd` is None at create (written later by the live
+        // loop's equity flush) — persisted as SQL NULL, never a faked 0.
+        .bind(run.source.as_str())
+        .bind(run.unrealized_pnl_usd)
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert eval_runs id={}", run.id))?;
@@ -436,6 +442,32 @@ impl RunStore {
         Ok(())
     }
 
+    /// CT5 (§6.3 option A): persist the per-run mark-to-market unrealized PnL
+    /// (`eval_runs.unrealized_pnl_usd`, migration 065). Written by the live
+    /// loop's buffered equity flush / partial-persist so the
+    /// `LiveDeploymentSummary` poll path has an honest number between SSE ticks.
+    ///
+    /// `None` writes SQL NULL — the HONESTY MANDATE (§8.1) "no data" case
+    /// (rendered "—" in the UI), NEVER a fabricated 0. Tolerates a pre-065
+    /// schema / test store that skipped the migration (the column is simply
+    /// absent) by treating a missing-column error as inert (`Ok(())`); any
+    /// OTHER sqlx error propagates. Idempotent; a no-op (`Ok(())`) for an
+    /// unknown run id (the live loop owns the row's lifetime).
+    pub async fn set_unrealized_pnl(&self, id: &str, unrealized_pnl_usd: Option<f64>) -> Result<()> {
+        match sqlx::query("UPDATE eval_runs SET unrealized_pnl_usd = ? WHERE id = ?")
+            .bind(unrealized_pnl_usd)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+        {
+            Ok(_) => Ok(()),
+            // Pre-065 schema / test store without migration 065: the column is
+            // absent, so the feature is inert rather than fatal.
+            Err(e) if is_missing_column_error(&e) => Ok(()),
+            Err(e) => Err(e).with_context(|| format!("set_unrealized_pnl: run '{id}'")),
+        }
+    }
+
     /// A3 one-shot flatten: read the current `flatten_requested` flag for a run.
     ///
     /// Called per-cycle by the live executor loop (a cheap single-column read,
@@ -596,7 +628,8 @@ impl RunStore {
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
                     bars_content_hash, manifest_canonical, bars_manifest, \
-                    auto_fire_review, review_model_json, max_annotations_per_review, live_config_json \
+                    auto_fire_review, review_model_json, max_annotations_per_review, live_config_json, \
+                    source, unrealized_pnl_usd \
              FROM eval_runs WHERE id = ?",
         )
         .bind(id)
@@ -817,7 +850,8 @@ impl RunStore {
                     mode, status, started_at, completed_at, metrics_json, error, \
                     estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
                     bars_content_hash, manifest_canonical, bars_manifest, \
-                    auto_fire_review, review_model_json, max_annotations_per_review, live_config_json \
+                    auto_fire_review, review_model_json, max_annotations_per_review, live_config_json, \
+                    source, unrealized_pnl_usd \
              FROM eval_runs",
         );
         let mut conditions: Vec<&'static str> = Vec::new();
@@ -1282,6 +1316,51 @@ impl RunStore {
                 Ok((parsed, equity))
             })
             .collect()
+    }
+
+    /// CT5 live-deployment poll path: the timestamp of the most recent
+    /// recorded decision for this run (`MAX(eval_decisions.timestamp)`), or
+    /// `None` when the run has recorded no decisions yet. This is the honesty
+    /// source for `LiveDeploymentSummary.last_decision_at` — a *real* recorded
+    /// broker-fed decision, NEVER `started_at` as a stand-in. The stored
+    /// timestamp is `to_rfc3339()` text; the raw string is returned so the
+    /// projection can re-emit it verbatim. A malformed/absent row yields
+    /// `None` rather than an error (status surface, never a 500).
+    pub async fn max_decision_timestamp(&self, run_id: &str) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT MAX(timestamp) AS max_ts FROM eval_decisions WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("max eval_decisions.timestamp")?;
+        Ok(row.and_then(|r| r.try_get::<Option<String>, _>("max_ts").ok().flatten()))
+    }
+
+    /// CT5 live-deployment poll path: the per-run realized PnL derived from the
+    /// persisted decision history (`SUM(eval_decisions.pnl_realized)`). Returns
+    /// `None` when the run has recorded no decision with a non-null
+    /// `pnl_realized` — the HONESTY MANDATE (§8.1) case: an unsourceable
+    /// realized figure surfaces as NULL, NEVER a fabricated `0`. (Orderly's
+    /// hardcoded `0.0` portfolio realized must likewise surface as `None`.)
+    pub async fn sum_realized_pnl(&self, run_id: &str) -> Result<Option<f64>> {
+        let row = sqlx::query(
+            "SELECT SUM(pnl_realized) AS realized, COUNT(pnl_realized) AS n \
+             FROM eval_decisions WHERE run_id = ?",
+        )
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("sum eval_decisions.pnl_realized")?;
+        // SUM over zero non-null rows is NULL in SQLite; COUNT(pnl_realized)
+        // counts only non-null values, so `n == 0` ⇒ no realized history ⇒
+        // None (not a faked 0.0).
+        Ok(row.and_then(|r| {
+            let n: i64 = r.try_get("n").unwrap_or(0);
+            if n == 0 {
+                None
+            } else {
+                r.try_get::<Option<f64>, _>("realized").ok().flatten()
+            }
+        }))
     }
 
     /// Persist a signed attestation against the given run. The store
@@ -2023,6 +2102,20 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         // Live runs store NULL for scenario_id; map to empty string.
         .unwrap_or_else(String::new);
 
+    // CT5 migration-065 columns. Tolerant of absence so `row_to_run` stays
+    // usable against pre-065 schemas: a missing/NULL/unknown `source` collapses
+    // to the `'human'` default (forward-binary safety per contract §9.2), and a
+    // missing `unrealized_pnl_usd` reads back as None (HONESTY MANDATE: NULL,
+    // never a faked 0).
+    let source = row
+        .try_get::<Option<String>, _>("source")
+        .unwrap_or(None)
+        .and_then(|s| crate::eval::run::DeploymentSource::parse(&s))
+        .unwrap_or_default();
+    let unrealized_pnl_usd: Option<f64> = row
+        .try_get::<Option<f64>, _>("unrealized_pnl_usd")
+        .unwrap_or(None);
+
     Ok(Run {
         id: row.try_get("id").context("read id")?,
         agent_id: row.try_get("agent_id").context("read agent_id")?,
@@ -2065,6 +2158,8 @@ fn row_to_run(row: &sqlx::sqlite::SqliteRow) -> Result<Run> {
         paused: false,
         paused_at: None,
         flatten_requested: false,
+        source,
+        unrealized_pnl_usd,
     })
 }
 
@@ -2361,5 +2456,70 @@ mod since_filter_tests {
         let filter = ListFilter::default();
         assert_eq!(store.list(filter.clone()).await.unwrap().len(), 2);
         assert_eq!(store.count(&filter).await.unwrap(), 2);
+    }
+
+    // ── CT5 Wave 3a: eval_runs.source + eval_runs.unrealized_pnl_usd ────────
+    // (docs/superpowers/specs/2026-06-13-ct5-live-deployment-contract.md §6.4)
+
+    /// A freshly-created run defaults to `source = Human` and
+    /// `unrealized_pnl_usd = None` (HONESTY MANDATE §8.1: NULL, never a faked
+    /// 0). The values must survive a `create` → `get` round-trip via the new
+    /// migration-065 columns.
+    #[tokio::test]
+    async fn create_get_roundtrips_default_source_human_and_null_unrealized_pnl() {
+        use crate::eval::run::{DeploymentSource, Run, RunMode};
+        let pool = fresh_pool().await;
+        seed_scenario(&pool, "fixture-scenario").await;
+        let store = RunStore::new(pool);
+
+        let run = Run::new_queued("agent-x".into(), "fixture-scenario".into(), RunMode::Backtest);
+        // Default discriminator is Human; backtests stay this way.
+        assert_eq!(run.source, DeploymentSource::Human);
+        assert_eq!(run.unrealized_pnl_usd, None);
+        store.create(&run).await.unwrap();
+
+        let got = store.get(&run.id).await.unwrap();
+        assert_eq!(
+            got.source,
+            DeploymentSource::Human,
+            "default source must round-trip as Human"
+        );
+        assert_eq!(
+            got.unrealized_pnl_usd, None,
+            "unsourced unrealized PnL must round-trip as NULL, never a faked 0"
+        );
+    }
+
+    /// An optimizer-sourced run round-trips `source = Optimizer`, and a
+    /// persisted unrealized-PnL value round-trips as `Some(v)`. Asserts the
+    /// new columns are written by INSERT and projected by both the `get` and
+    /// `list` SELECTs.
+    #[tokio::test]
+    async fn create_get_list_roundtrips_optimizer_source_and_some_unrealized_pnl() {
+        use crate::eval::run::{DeploymentSource, Run, RunMode};
+        let pool = fresh_pool().await;
+        seed_scenario(&pool, "fixture-scenario").await;
+        let store = RunStore::new(pool);
+
+        let mut run = Run::new_queued("agent-opt".into(), "fixture-scenario".into(), RunMode::Backtest);
+        run.source = DeploymentSource::Optimizer;
+        run.unrealized_pnl_usd = Some(-12.5);
+        store.create(&run).await.unwrap();
+
+        let got = store.get(&run.id).await.unwrap();
+        assert_eq!(got.source, DeploymentSource::Optimizer);
+        assert_eq!(got.unrealized_pnl_usd, Some(-12.5));
+
+        // The list SELECT must project the same columns.
+        let listed = store
+            .list(ListFilter {
+                agent_id: Some("agent-opt".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].source, DeploymentSource::Optimizer);
+        assert_eq!(listed[0].unrealized_pnl_usd, Some(-12.5));
     }
 }

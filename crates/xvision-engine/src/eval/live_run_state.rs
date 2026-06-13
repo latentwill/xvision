@@ -6,7 +6,10 @@ use anyhow::{Context, Result};
 use sqlx::{FromRow, SqlitePool};
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-export", ts(export, export_to = "../../../frontend/web/src/api/types.gen/"))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
 #[derive(Debug, Clone, FromRow, serde::Serialize, serde::Deserialize)]
 pub struct LiveRunState {
     pub run_id: String,

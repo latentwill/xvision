@@ -169,6 +169,7 @@ async fn strategies_list_returns_seeded_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            briefing_indicators: Vec::new(),
         })
         .await
         .unwrap();
@@ -403,6 +404,52 @@ async fn settings_brokers_replaces_stored_alpaca_credentials() {
         &body,
         &["first-secret", "second-secret", "api_secret_key", "\"value\""],
     );
+}
+
+#[tokio::test]
+async fn settings_brokers_stores_and_clears_byreal_credentials() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _bk = scoped_unset("BYREAL_PRIVATE_KEY");
+
+    let (server, _tmp) = boot().await;
+
+    // POST stores the trading-only agent key; the secret never comes back.
+    let set = server
+        .post("/api/settings/brokers/byreal")
+        .json(&serde_json::json!({
+            "private_key": "0xAGENTKEYsecret0000000000000000cafe",
+            "network": "testnet",
+            "account": null
+        }))
+        .await;
+    set.assert_status(axum::http::StatusCode::CREATED);
+    let body: serde_json::Value = set.json();
+    assert_eq!(body["stored"], true);
+    assert_eq!(body["stored_key_id_suffix"], "cafe");
+    assert_eq!(body["network"], "testnet");
+    assert_body_omits_secrets(
+        "byreal create response",
+        &body,
+        &["0xAGENTKEYsecret0000000000000000cafe", "private_key"],
+    );
+
+    // GET reflects stored byreal, still without the secret.
+    let report: serde_json::Value = server.get("/api/settings/brokers").await.json();
+    assert_eq!(report["byreal"]["stored"], true);
+    assert_eq!(report["byreal"]["configured"], true);
+    assert_body_omits_secrets(
+        "byreal list response",
+        &report,
+        &["0xAGENTKEYsecret0000000000000000cafe"],
+    );
+
+    // DELETE clears it.
+    server
+        .delete("/api/settings/brokers/byreal")
+        .await
+        .assert_status(axum::http::StatusCode::NO_CONTENT);
+    let after: serde_json::Value = server.get("/api/settings/brokers").await.json();
+    assert_eq!(after["byreal"]["stored"], false);
 }
 
 #[tokio::test]
@@ -1275,6 +1322,7 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            briefing_indicators: Vec::new(),
         })
         .await
         .unwrap();

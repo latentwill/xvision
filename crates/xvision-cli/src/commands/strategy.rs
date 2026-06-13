@@ -493,6 +493,29 @@ enum StrategyAction {
         #[arg(long)]
         json: bool,
     },
+    /// Import a Pine Script v5 file and create an xvision Strategy from it.
+    ///
+    /// Reads the file, calls the native Pine→Strategy importer, persists the
+    /// resulting strategy to the workspace, and prints a human-readable fidelity
+    /// summary (captured / approximated / dropped counts + items + the cost model
+    /// reference).
+    ///
+    /// Anything outside the supported Pine v5 subset is recorded in the fidelity
+    /// report as "approximated" or "dropped" — the strategy is always a valid
+    /// starting point for the autooptimizer even when some constructs are lost.
+    ///
+    /// Exits non-zero with a structured error when the file cannot be parsed at
+    /// all (structural syntax error). Unsupported constructs are recorded in the
+    /// fidelity report, not rejected.
+    #[command(name = "import-pine")]
+    ImportPine {
+        /// Path to a Pine Script v5 file (`.pine`).
+        file: PathBuf,
+        /// Override the display name of the created strategy.
+        /// If omitted, the name is taken from the `strategy("...")` header.
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Scan the on-disk strategy directory for bundles missing from the search
     /// index and backfill them. One-shot fix for existing index divergence.
     Reindex,
@@ -637,6 +660,7 @@ pub async fn run(cmd: StrategyCmd) -> CliResult<()> {
         StrategyAction::Apply { file, dry_run, json } => apply_strategy(&file, dry_run, json).await,
         StrategyAction::Diff { file, json } => diff_strategy(&file, json).await,
         StrategyAction::Reindex => reindex().await,
+        StrategyAction::ImportPine { file, name } => import_pine_cmd(&file, name.as_deref()).await,
     }
 }
 
@@ -691,6 +715,86 @@ async fn reindex() -> CliResult<()> {
         attempted,
         on_disk_ids.len() - orphaned.len()
     );
+    Ok(())
+}
+
+// ── WU6: import-pine command ──────────────────────────────────────────────────
+
+/// Handler for `xvn strategy import-pine <file> [--name <name>]`.
+///
+/// 1. Reads the Pine Script source from `file`.
+/// 2. Calls `import_pine` (the WU1–WU4 engine entry-point).
+/// 3. On `Ok`: applies optional `name` override, persists the strategy via the
+///    same `FilesystemStore` as the other strategy commands, then prints a
+///    human-readable fidelity summary to stdout.
+/// 4. On `Err(PineImportError)`: prints the structured error to stderr and
+///    returns a non-zero exit code (`Usage` for parse errors).
+async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResult<()> {
+    use xvision_engine::strategies::pine_import::{import_pine, PineImportError};
+
+    // 1. Read source file.
+    let src = std::fs::read_to_string(file)
+        .map_err(|e| CliError::usage(anyhow::anyhow!("read {}: {e}", file.display())))?;
+
+    // 2. Import: parse → map → fidelity.
+    let mut outcome = match import_pine(&src) {
+        Ok(outcome) => outcome,
+        Err(PineImportError::ParseError(e)) => {
+            eprintln!("error: Pine parse error: {e}");
+            return Err(CliError::usage(anyhow::anyhow!("Pine parse error: {e}")));
+        }
+        Err(PineImportError::NothingMappable(msg)) => {
+            eprintln!("error: Nothing mappable in Pine script: {msg}");
+            return Err(CliError::usage(anyhow::anyhow!("Nothing mappable: {msg}")));
+        }
+    };
+
+    // 3. Apply optional name override.
+    if let Some(name) = name_override {
+        outcome.strategy.manifest.display_name = name.to_string();
+    }
+
+    // 4. Persist the strategy.
+    store()
+        .save(&outcome.strategy)
+        .await
+        .exit_with(XvnExit::Upstream)?;
+
+    let strategy_id = &outcome.strategy.manifest.id;
+
+    // 5. Print fidelity summary.
+    let report = &outcome.fidelity;
+    println!("strategy: {strategy_id}");
+    println!("name:     {}", outcome.strategy.manifest.display_name);
+    println!();
+    println!("Fidelity summary:");
+    println!("  captured:     {} item(s)", report.captured.len());
+    for item in &report.captured {
+        println!("    + {} — {}", item.item, item.reason);
+    }
+    println!("  approximated: {} item(s)", report.approximated.len());
+    for item in &report.approximated {
+        println!("    ~ {} — {}", item.item, item.reason);
+    }
+    println!("  dropped:      {} item(s)", report.dropped.len());
+    for item in &report.dropped {
+        println!("    - {} — {}", item.item, item.reason);
+    }
+    println!();
+    println!("Cost model (backtest defaults):");
+    let cm = &report.cost_model;
+    println!(
+        "  commission: {} bps ({}) — {}",
+        cm.commission_value_bps, cm.commission_type, "taker"
+    );
+    println!(
+        "  slippage:   {} bps ({})",
+        cm.slippage_value_bps, cm.slippage_model
+    );
+    println!("  fill:       {}", cm.fill_timing);
+    println!();
+    println!("{}", cm.note);
+
     Ok(())
 }
 
@@ -1243,6 +1347,7 @@ async fn new_atomic(
         acknowledge_no_filter: no_filter_warning,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     };
 
     // 3. Validate shape.
@@ -3640,6 +3745,7 @@ pub mod atomic_create {
             acknowledge_no_filter: true,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         };
 
         let diag = diagnose(&strategy, &[agent]);
@@ -3714,6 +3820,7 @@ pub mod atomic_create {
             acknowledge_no_filter: true,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         };
 
         let diag = diagnose(&strategy, &[agent]);
