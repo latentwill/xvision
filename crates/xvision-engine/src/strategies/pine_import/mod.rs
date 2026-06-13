@@ -25,6 +25,7 @@
 mod ast;
 pub mod fidelity;
 pub mod inputs;
+pub mod library;
 mod lexer;
 mod parser;
 pub mod map;

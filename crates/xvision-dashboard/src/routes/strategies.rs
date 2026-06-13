@@ -789,6 +789,84 @@ pub async fn validate_get_hint() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+// ── WU9: GET /api/strategy/pine-library + POST .../import ───────────────────
+
+use xvision_engine::strategies::pine_import::library::{pine_library, import_library_entry, LibraryEntrySummary};
+
+/// Response body for `GET /api/strategy/pine-library`.
+///
+/// Returns a list of summary objects (no raw source text) so the frontend can
+/// display the library browser without downloading large script blobs.
+#[derive(Serialize)]
+pub struct PineLibraryListResponse {
+    pub items: Vec<LibraryEntrySummary>,
+}
+
+/// `GET /api/strategy/pine-library` — list all curated Pine Script starter
+/// strategies as browsable summaries.
+///
+/// # Response
+/// ```json
+/// { "items": [{ "id": "rsi-threshold", "name": "RSI Threshold", "description": "…" }, …] }
+/// ```
+///
+/// Returns a stable ordered list of ≥10 entries. Source text is NOT included
+/// in the response — use `POST /api/strategy/pine-library/{id}/import` to
+/// import a specific entry.
+pub async fn get_pine_library() -> Json<PineLibraryListResponse> {
+    let items = pine_library()
+        .iter()
+        .map(LibraryEntrySummary::from)
+        .collect();
+    Json(PineLibraryListResponse { items })
+}
+
+/// `POST /api/strategy/pine-library/{id}/import` — import a curated library
+/// entry by its stable `id`.
+///
+/// Looks up the entry in the embedded library, runs `import_pine` on the
+/// source, persists the resulting strategy, and returns the same
+/// `{ strategy, fidelity_report }` envelope as WU7's import route.
+///
+/// # Responses
+/// - `200 OK` — `{ "strategy": Strategy, "fidelity_report": FidelityReport }`
+/// - `404 Not Found` — when `id` doesn't match any library entry.
+pub async fn post_import_library_entry(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<ImportPineResponse>, DashboardError> {
+    use xvision_engine::strategies::pine_import::PineImportError;
+    use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+
+    // 1. Look up and import the library entry.
+    let outcome = match import_library_entry(&id) {
+        Ok(outcome) => outcome,
+        Err(PineImportError::NothingMappable(_)) => {
+            return Err(DashboardError::NotFound(format!(
+                "pine library entry '{id}' not found"
+            )));
+        }
+        Err(PineImportError::ParseError(e)) => {
+            return Err(DashboardError::Validation {
+                field: "id".into(),
+                msg: format!("library entry '{id}' failed to parse: {e}"),
+            });
+        }
+    };
+
+    // 2. Persist the strategy (same store as WU7).
+    let fs_store = FilesystemStore::new(strategy_store_dir(&state.xvn_home));
+    fs_store
+        .save(&outcome.strategy)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("save strategy: {e}")))?;
+
+    Ok(Json(ImportPineResponse {
+        strategy: outcome.strategy,
+        fidelity_report: outcome.fidelity,
+    }))
+}
+
 // ── WU7: POST /api/strategy/import/pine ─────────────────────────────────────
 
 /// Request body for `POST /api/strategy/import/pine`.
