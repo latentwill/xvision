@@ -25,10 +25,10 @@
 mod ast;
 pub mod fidelity;
 pub mod inputs;
-pub mod library;
 mod lexer;
-mod parser;
+pub mod library;
 pub mod map;
+mod parser;
 
 pub use ast::{Expr, PineHeader, PineParseError, PineScript, Statement};
 pub use fidelity::{build_fidelity_report, CostModelReference, FidelityItem, FidelityReport};
@@ -37,8 +37,8 @@ pub use map::{map_script, MapOutcome, UnmappedNode};
 // Re-export BriefingIndicator from its canonical home in strategies::mod
 pub use crate::strategies::BriefingIndicator;
 
-use std::fmt;
 use crate::strategies::Strategy;
+use std::fmt;
 
 // ── WU4 types ─────────────────────────────────────────────────────────────────
 

@@ -150,10 +150,7 @@ mod tests {
         let store = NonceStore::new();
         let (nonce, expiry) = store.issue(1, T0);
         // Consume strictly after expiry → Expired.
-        assert_eq!(
-            store.consume(&nonce, 1, expiry + 1),
-            Err(NonceError::Expired)
-        );
+        assert_eq!(store.consume(&nonce, 1, expiry + 1), Err(NonceError::Expired));
         // A fresh issue at a much later time prunes nothing of ours (already
         // consumed) and the original cannot be reused.
         assert_eq!(
@@ -181,10 +178,7 @@ mod tests {
         let store = NonceStore::new();
         let (nonce, _) = store.issue(1, T0);
         // Consuming under the wrong listing id → ListingMismatch (and burns it).
-        assert_eq!(
-            store.consume(&nonce, 2, T0 + 1),
-            Err(NonceError::ListingMismatch)
-        );
+        assert_eq!(store.consume(&nonce, 2, T0 + 1), Err(NonceError::ListingMismatch));
     }
 
     #[test]

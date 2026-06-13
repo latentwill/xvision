@@ -24,13 +24,21 @@ pub struct PineParseError {
 
 impl PineParseError {
     pub(crate) fn new(line: usize, col: usize, message: impl Into<String>) -> Self {
-        PineParseError { line, col, message: message.into() }
+        PineParseError {
+            line,
+            col,
+            message: message.into(),
+        }
     }
 }
 
 impl fmt::Display for PineParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Pine parse error at {}:{}: {}", self.line, self.col, self.message)
+        write!(
+            f,
+            "Pine parse error at {}:{}: {}",
+            self.line, self.col, self.message
+        )
     }
 }
 
@@ -69,15 +77,29 @@ pub enum Expr {
     /// `ta.<name>(args)` call.
     TaCall { name: String, args: Vec<Expr> },
     /// `strategy.entry(...)` / `strategy.close(...)` / `strategy.exit(...)` as expression.
-    StrategyCall { method: String, args: Vec<(Option<String>, Expr)> },
+    StrategyCall {
+        method: String,
+        args: Vec<(Option<String>, Expr)>,
+    },
     /// `input.int(...)` / `input.float(...)` / `input.bool(...)` / `input.string(...)`.
-    InputCall { input_type: String, args: Vec<(Option<String>, Expr)> },
+    InputCall {
+        input_type: String,
+        args: Vec<(Option<String>, Expr)>,
+    },
     /// Binary operation: `left op right`.
-    BinOp { op: String, left: Box<Expr>, right: Box<Expr> },
+    BinOp {
+        op: String,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     /// Unary `not expr`.
     Not { expr: Box<Expr> },
     /// Ternary `cond ? then_ : else_`.
-    Ternary { cond: Box<Expr>, then_: Box<Expr>, else_: Box<Expr> },
+    Ternary {
+        cond: Box<Expr>,
+        then_: Box<Expr>,
+        else_: Box<Expr>,
+    },
     /// Parenthesised expression.
     Paren { inner: Box<Expr> },
     /// Anything outside the subset — preserved verbatim.
@@ -110,17 +132,11 @@ pub enum Statement {
         args: Vec<Expr>,
     },
     /// `strategy.entry("id", direction, ...)`.
-    StrategyEntry {
-        args: Vec<(Option<String>, Expr)>,
-    },
+    StrategyEntry { args: Vec<(Option<String>, Expr)> },
     /// `strategy.close("id", ...)`.
-    StrategyClose {
-        args: Vec<(Option<String>, Expr)>,
-    },
+    StrategyClose { args: Vec<(Option<String>, Expr)> },
     /// `strategy.exit("id", ...)`.
-    StrategyExit {
-        args: Vec<(Option<String>, Expr)>,
-    },
+    StrategyExit { args: Vec<(Option<String>, Expr)> },
     /// A construct outside the supported subset.
     ///
     /// `source_span` is a `(start_byte, end_byte)` range in the original

@@ -1821,9 +1821,9 @@ fn typical_price(high: f64, low: f64, close: f64) -> f64 {
 
 #[derive(Debug)]
 struct HmaState {
-    half_wma: WindowState,   // WMA(floor(period/2))
-    full_wma: WindowState,   // WMA(period)
-    sqrt_wma: WindowState,   // WMA(floor(sqrt(period))) of raw series
+    half_wma: WindowState, // WMA(floor(period/2))
+    full_wma: WindowState, // WMA(period)
+    sqrt_wma: WindowState, // WMA(floor(sqrt(period))) of raw series
 }
 
 impl HmaState {
@@ -2697,17 +2697,14 @@ mod tests {
         let mut e = IndicatorEngine::new([&r]);
         // Bars: close=10, high=10, low=8. First bar has no prev_close so
         // ATR needs period+1=4 bars.
-        let bars = (0..5).map(|_| Bar::new(10.0, 10.0, 8.0, 10.0)).collect::<Vec<_>>();
+        let bars = (0..5)
+            .map(|_| Bar::new(10.0, 10.0, 8.0, 10.0))
+            .collect::<Vec<_>>();
         for (i, b) in bars.iter().enumerate() {
             e.push(b);
             if i < 3 {
                 // ATR not seeded yet
-                assert_eq!(
-                    e.value(&r),
-                    None,
-                    "SuperTrend not ready at bar {}",
-                    i + 1
-                );
+                assert_eq!(e.value(&r), None, "SuperTrend not ready at bar {}", i + 1);
             }
         }
         let v = e.value(&r).expect("SuperTrend should be ready after 4+ bars");
@@ -2837,8 +2834,7 @@ mod tests {
             serde_json::from_str(json).expect("pre-WU5 filter JSON must deserialize");
         // Round-trip back to JSON and re-parse.
         let serialized = serde_json::to_string(&filter).expect("serialize");
-        let _: crate::types::Filter =
-            serde_json::from_str(&serialized).expect("round-trip must deserialize");
+        let _: crate::types::Filter = serde_json::from_str(&serialized).expect("round-trip must deserialize");
     }
 
     // -------------------------------------------------------------------------
@@ -2872,11 +2868,7 @@ mod tests {
         }
         // After 200 bars all indicators must have a value.
         for r in &all_refs {
-            assert!(
-                e.value(r).is_some(),
-                "{} should have a value after 200 bars",
-                r
-            );
+            assert!(e.value(r).is_some(), "{} should have a value after 200 bars", r);
         }
     }
 }

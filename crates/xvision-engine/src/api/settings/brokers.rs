@@ -601,9 +601,7 @@ pub struct ResolvedByrealCredentials {
 
 /// Resolve Byreal credentials: stored (Settings → Brokers) win over env,
 /// matching the Alpaca convention. `None` when neither is configured.
-pub async fn resolve_byreal_credentials(
-    xvn_home: &Path,
-) -> ApiResult<Option<ResolvedByrealCredentials>> {
+pub async fn resolve_byreal_credentials(xvn_home: &Path) -> ApiResult<Option<ResolvedByrealCredentials>> {
     // 1. Stored creds win.
     if let Some(c) = load_byreal_credentials(xvn_home).await? {
         if !c.private_key.trim().is_empty() {
@@ -616,7 +614,10 @@ pub async fn resolve_byreal_credentials(
         }
     }
     // 2. Env fallback.
-    if let Some(private_key) = env::var("BYREAL_PRIVATE_KEY").ok().filter(|s| !s.trim().is_empty()) {
+    if let Some(private_key) = env::var("BYREAL_PRIVATE_KEY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
         return Ok(Some(ResolvedByrealCredentials {
             private_key,
             network: env::var("BYREAL_NETWORK").ok().filter(|s| !s.trim().is_empty()),
@@ -911,9 +912,12 @@ mod tests {
     #[tokio::test]
     async fn set_and_load_byreal_round_trips() {
         let (ctx, _dir) = fresh_ctx().await;
-        let out = set_byreal(&ctx, byreal_req("0xAGENTKEY00000000000000000000beef", Some("testnet")))
-            .await
-            .unwrap();
+        let out = set_byreal(
+            &ctx,
+            byreal_req("0xAGENTKEY00000000000000000000beef", Some("testnet")),
+        )
+        .await
+        .unwrap();
         assert!(out.stored);
         assert_eq!(out.stored_key_id_suffix.as_deref(), Some("beef"));
         assert_eq!(out.network.as_deref(), Some("testnet"));

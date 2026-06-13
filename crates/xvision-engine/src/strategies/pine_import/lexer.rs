@@ -87,7 +87,12 @@ pub struct Lexer<'src> {
 
 impl<'src> Lexer<'src> {
     pub fn new(src: &'src str) -> Self {
-        Lexer { src, pos: 0, line: 1, col: 1 }
+        Lexer {
+            src,
+            pos: 0,
+            line: 1,
+            col: 1,
+        }
     }
 
     fn remaining(&self) -> &str {
@@ -117,7 +122,12 @@ impl<'src> Lexer<'src> {
     }
 
     fn make_span(&self, start: usize, start_line: usize, start_col: usize) -> Span {
-        Span { start, end: self.pos, line: start_line, col: start_col }
+        Span {
+            start,
+            end: self.pos,
+            line: start_line,
+            col: start_col,
+        }
     }
 
     fn skip_spaces(&mut self) {
@@ -144,14 +154,21 @@ impl<'src> Lexer<'src> {
             let version: u32 = num_str.parse().unwrap_or(0);
             // consume rest of line
             while let Some(c) = self.peek() {
-                if c == '\n' { break; }
+                if c == '\n' {
+                    break;
+                }
                 self.advance();
             }
-            return Some(Token { kind: TokenKind::VersionDirective(version), span: self.make_span(start, sl, sc) });
+            return Some(Token {
+                kind: TokenKind::VersionDirective(version),
+                span: self.make_span(start, sl, sc),
+            });
         }
         // Regular comment — consume to end of line, emit nothing
         while let Some(c) = self.peek() {
-            if c == '\n' { break; }
+            if c == '\n' {
+                break;
+            }
             self.advance();
         }
         None
@@ -162,7 +179,10 @@ impl<'src> Lexer<'src> {
         loop {
             match self.peek() {
                 None => break,
-                Some(c) if c == quote => { self.advance(); break; }
+                Some(c) if c == quote => {
+                    self.advance();
+                    break;
+                }
                 Some('\\') => {
                     self.advance();
                     match self.advance() {
@@ -172,10 +192,16 @@ impl<'src> Lexer<'src> {
                         None => break,
                     }
                 }
-                Some(c) => { self.advance(); s.push(c); }
+                Some(c) => {
+                    self.advance();
+                    s.push(c);
+                }
             }
         }
-        Token { kind: TokenKind::Str(s), span: self.make_span(start, sl, sc) }
+        Token {
+            kind: TokenKind::Str(s),
+            span: self.make_span(start, sl, sc),
+        }
     }
 
     fn lex_number(&mut self, start: usize, sl: usize, sc: usize) -> Token {
@@ -202,7 +228,10 @@ impl<'src> Lexer<'src> {
                 TokenKind::Float(text.parse().unwrap_or(0.0))
             }
         };
-        Token { kind, span: self.make_span(start, sl, sc) }
+        Token {
+            kind,
+            span: self.make_span(start, sl, sc),
+        }
     }
 
     fn lex_ident_or_keyword(&mut self, start: usize, sl: usize, sc: usize) -> Token {
@@ -224,9 +253,24 @@ impl<'src> Lexer<'src> {
             let method = &self.src[ns_start..self.pos];
             if !method.is_empty() {
                 match word {
-                    "ta" => return Token { kind: TokenKind::TaDot(method.to_string()), span: self.make_span(start, sl, sc) },
-                    "input" => return Token { kind: TokenKind::InputDot(method.to_string()), span: self.make_span(start, sl, sc) },
-                    "strategy" => return Token { kind: TokenKind::StrategyDot(method.to_string()), span: self.make_span(start, sl, sc) },
+                    "ta" => {
+                        return Token {
+                            kind: TokenKind::TaDot(method.to_string()),
+                            span: self.make_span(start, sl, sc),
+                        }
+                    }
+                    "input" => {
+                        return Token {
+                            kind: TokenKind::InputDot(method.to_string()),
+                            span: self.make_span(start, sl, sc),
+                        }
+                    }
+                    "strategy" => {
+                        return Token {
+                            kind: TokenKind::StrategyDot(method.to_string()),
+                            span: self.make_span(start, sl, sc),
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -242,7 +286,10 @@ impl<'src> Lexer<'src> {
             "false" => TokenKind::Bool(false),
             _ => TokenKind::Ident(word.to_string()),
         };
-        Token { kind, span: self.make_span(start, sl, sc) }
+        Token {
+            kind,
+            span: self.make_span(start, sl, sc),
+        }
     }
 
     /// Lex one token (or None at EOF). Skips `None`-producing comment lines
@@ -258,12 +305,16 @@ impl<'src> Lexer<'src> {
             // Newline
             if c == '\n' {
                 self.advance();
-                return Some(Token { kind: TokenKind::Newline, span: self.make_span(start, sl, sc) });
+                return Some(Token {
+                    kind: TokenKind::Newline,
+                    span: self.make_span(start, sl, sc),
+                });
             }
 
             // Comments / directives
             if c == '/' && self.remaining().starts_with("//") {
-                self.advance(); self.advance(); // consume '//'
+                self.advance();
+                self.advance(); // consume '//'
                 if let Some(tok) = self.lex_comment_or_directive(start, sl, sc) {
                     return Some(tok);
                 }
@@ -350,7 +401,10 @@ impl<'src> Lexer<'src> {
                 '%' => TokenKind::Percent,
                 other => TokenKind::Unknown(other),
             };
-            return Some(Token { kind, span: self.make_span(start, sl, sc) });
+            return Some(Token {
+                kind,
+                span: self.make_span(start, sl, sc),
+            });
         }
     }
 
@@ -373,7 +427,8 @@ mod tests {
         let src = "//@version=5\n";
         let toks = Lexer::new(src).tokenize();
         assert!(
-            toks.iter().any(|t| matches!(t.kind, TokenKind::VersionDirective(5))),
+            toks.iter()
+                .any(|t| matches!(t.kind, TokenKind::VersionDirective(5))),
             "expected VersionDirective(5), got: {toks:?}"
         );
     }
@@ -383,7 +438,8 @@ mod tests {
         let src = "ta.sma(close, 14)";
         let toks = Lexer::new(src).tokenize();
         assert!(
-            toks.iter().any(|t| matches!(&t.kind, TokenKind::TaDot(n) if n == "sma")),
+            toks.iter()
+                .any(|t| matches!(&t.kind, TokenKind::TaDot(n) if n == "sma")),
             "expected TaDot(\"sma\"), got: {toks:?}"
         );
     }
@@ -393,7 +449,8 @@ mod tests {
         let src = "x = input.int(14, title=\"Length\")";
         let toks = Lexer::new(src).tokenize();
         assert!(
-            toks.iter().any(|t| matches!(&t.kind, TokenKind::InputDot(n) if n == "int")),
+            toks.iter()
+                .any(|t| matches!(&t.kind, TokenKind::InputDot(n) if n == "int")),
             "expected InputDot(\"int\"), got: {toks:?}"
         );
     }
@@ -403,7 +460,8 @@ mod tests {
         let src = "strategy.entry(\"Long\", strategy.long)";
         let toks = Lexer::new(src).tokenize();
         assert!(
-            toks.iter().any(|t| matches!(&t.kind, TokenKind::StrategyDot(n) if n == "entry")),
+            toks.iter()
+                .any(|t| matches!(&t.kind, TokenKind::StrategyDot(n) if n == "entry")),
             "expected StrategyDot(\"entry\")"
         );
     }
@@ -419,18 +477,18 @@ mod tests {
     fn string_literal_unquoted() {
         let src = r#"x = "hello world""#;
         let toks = Lexer::new(src).tokenize();
-        assert!(
-            toks.iter().any(|t| matches!(&t.kind, TokenKind::Str(s) if s == "hello world")),
-        );
+        assert!(toks
+            .iter()
+            .any(|t| matches!(&t.kind, TokenKind::Str(s) if s == "hello world")),);
     }
 
     #[test]
     fn float_literal() {
         let src = "x = 3.14";
         let toks = Lexer::new(src).tokenize();
-        assert!(
-            toks.iter().any(|t| matches!(&t.kind, TokenKind::Float(v) if (*v - 3.14).abs() < 1e-6)),
-        );
+        assert!(toks
+            .iter()
+            .any(|t| matches!(&t.kind, TokenKind::Float(v) if (*v - 3.14).abs() < 1e-6)),);
     }
 
     #[test]

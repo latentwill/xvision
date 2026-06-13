@@ -122,7 +122,7 @@ fn seed_unfiltered_trader_strategy(home: &Path, display_name: &str, acknowledge_
             acknowledge_no_filter,
             decision_mode: Default::default(),
             mechanistic_config: None,
-        briefing_indicators: Vec::new(),
+            briefing_indicators: Vec::new(),
         };
         let store = FilesystemStore::new(strategy_store_dir(&home));
         store.save(&strategy).await.unwrap();

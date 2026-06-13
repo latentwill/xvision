@@ -66,9 +66,7 @@ pub async fn rollup(
 }
 
 /// `GET /api/cost/budget` — the persisted operator-set daily budget cap.
-pub async fn get_budget(
-    State(state): State<AppState>,
-) -> Result<Json<CostBudgetResponse>, DashboardError> {
+pub async fn get_budget(State(state): State<AppState>) -> Result<Json<CostBudgetResponse>, DashboardError> {
     let daily_cap_usd = get_daily_budget_cap(&state.pool).await;
     Ok(Json(CostBudgetResponse { daily_cap_usd }))
 }
@@ -128,7 +126,10 @@ mod tests {
         let after = Utc::now() - chrono::Duration::hours(23);
         for raw in [None, Some(""), Some("   ")] {
             let ts = parse_since(raw).expect("default window");
-            assert!(ts > before && ts < after, "default since must be ~now-24h, got {ts}");
+            assert!(
+                ts > before && ts < after,
+                "default since must be ~now-24h, got {ts}"
+            );
         }
     }
 }

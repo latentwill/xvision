@@ -220,6 +220,20 @@ pub async fn list_deployments(
     Ok(Json(ListDeploymentsResponse { items, total }))
 }
 
+/// `GET /api/live/deployments/:id` — single deployment snapshot.
+pub async fn get_one(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<LiveDeploymentSummary>, DashboardError> {
+    let store = RunStore::new(state.pool.clone());
+    let paused = global_safety_paused(&state).await;
+    let snapshot = get_live_deployment(&store, &id, paused)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("get_live_deployment: {e}")))?
+        .ok_or_else(|| DashboardError::NotFound(format!("live deployment '{id}' not found")))?;
+    Ok(Json(snapshot))
+}
+
 /// Recover the underlying `RunStatus` from a projected deployment so the
 /// store-level status set can be matched against the summary (the projection
 /// collapses Completed+Cancelled into `Stopped` and overlays pause onto
@@ -264,8 +278,7 @@ fn serde_mode(mode: &xvision_engine::api::live_deployments::DeploymentMode) -> S
 pub async fn stream(
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError>
-{
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>>, DashboardError> {
     let store = RunStore::new(state.pool.clone());
     let paused = global_safety_paused(&state).await;
 
@@ -307,8 +320,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let xvn_home = tmp.path().to_path_buf();
         std::fs::create_dir_all(xvn_home.join("config")).unwrap();
-        let cfg = std::fs::read_to_string("../../config/default.toml")
-            .expect("read workspace config/default.toml");
+        let cfg =
+            std::fs::read_to_string("../../config/default.toml").expect("read workspace config/default.toml");
         std::fs::write(xvn_home.join("config/default.toml"), cfg).unwrap();
         let state = AppState::new(xvn_home).await.expect("AppState::new");
         (state, tmp)
@@ -386,7 +399,10 @@ mod tests {
             .expect("list ok");
         assert_eq!(resp.0.items.len(), 1);
         let d = &resp.0.items[0];
-        assert_eq!(d.last_decision_at, None, "no decision ⇒ last_decision_at null (not started_at)");
+        assert_eq!(
+            d.last_decision_at, None,
+            "no decision ⇒ last_decision_at null (not started_at)"
+        );
         assert_eq!(d.realized_pnl_usd, None, "no realized history ⇒ None, not 0");
         assert_eq!(d.deployed_capital_usd, None);
         assert_eq!(d.unrealized_pnl_usd, None);

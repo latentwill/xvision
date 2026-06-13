@@ -699,7 +699,10 @@ pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Val
 #[derive(Debug, Clone, PartialEq)]
 pub enum MutatePathError {
     UnknownPath(String),
-    VariantMismatch { path: String, expected_leaf: &'static str },
+    VariantMismatch {
+        path: String,
+        expected_leaf: &'static str,
+    },
     InvalidValue(String),
 }
 
@@ -708,7 +711,10 @@ impl std::fmt::Display for MutatePathError {
         match self {
             MutatePathError::UnknownPath(p) => write!(f, "unknown mechanistic path: {p}"),
             MutatePathError::VariantMismatch { path, expected_leaf } => {
-                write!(f, "variant mismatch at {path}: variant only supports .{expected_leaf}")
+                write!(
+                    f,
+                    "variant mismatch at {path}: variant only supports .{expected_leaf}"
+                )
             }
             MutatePathError::InvalidValue(msg) => write!(f, "invalid value: {msg}"),
         }
@@ -777,10 +783,7 @@ pub fn set_mechanistic_value(
     // Parse: "mechanistic.close_policies.<i>.<leaf>"
     let parts: Vec<&str> = path.splitn(5, '.').collect();
     // Expected: ["mechanistic", "close_policies", "<i>", "<leaf>"]
-    if parts.len() != 4
-        || parts[0] != "mechanistic"
-        || parts[1] != "close_policies"
-    {
+    if parts.len() != 4 || parts[0] != "mechanistic" || parts[1] != "close_policies" {
         return Err(MutatePathError::UnknownPath(path.to_string()));
     }
     let idx: usize = parts[2]
@@ -795,9 +798,9 @@ pub fn set_mechanistic_value(
 
     // Variant-aware: check that the leaf matches the variant BEFORE mutating.
     let variant_leaf: &'static str = match policy {
-        ClosePolicy::StopLoss { .. }
-        | ClosePolicy::TakeProfit { .. }
-        | ClosePolicy::TrailingStop { .. } => "pct",
+        ClosePolicy::StopLoss { .. } | ClosePolicy::TakeProfit { .. } | ClosePolicy::TrailingStop { .. } => {
+            "pct"
+        }
         ClosePolicy::TimeExit { .. } => "bars",
         ClosePolicy::TargetPnl { .. } => "usd",
     };
@@ -814,20 +817,21 @@ pub fn set_mechanistic_value(
         ClosePolicy::StopLoss { pct }
         | ClosePolicy::TakeProfit { pct }
         | ClosePolicy::TrailingStop { pct } => {
-            let v = value
-                .as_f64()
-                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected f64 for .pct, got {value}")))?;
+            let v = value.as_f64().ok_or_else(|| {
+                MutatePathError::InvalidValue(format!("expected f64 for .pct, got {value}"))
+            })?;
             *pct = v;
         }
         ClosePolicy::TimeExit { bars } => {
-            let v = value_as_u32(value)
-                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected u32 for .bars, got {value}")))?;
+            let v = value_as_u32(value).ok_or_else(|| {
+                MutatePathError::InvalidValue(format!("expected u32 for .bars, got {value}"))
+            })?;
             *bars = v;
         }
         ClosePolicy::TargetPnl { usd } => {
-            let v = value
-                .as_f64()
-                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected f64 for .usd, got {value}")))?;
+            let v = value.as_f64().ok_or_else(|| {
+                MutatePathError::InvalidValue(format!("expected f64 for .usd, got {value}"))
+            })?;
             *usd = v;
         }
     }
@@ -1753,7 +1757,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
@@ -1767,7 +1771,20 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
+        let without = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1789,7 +1806,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
@@ -1805,7 +1822,20 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            5,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
         assert!(
             payload.contains("Tunable filter paths"),
             "filter section header must be present: {payload}"
@@ -1833,7 +1863,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             !no_filter_payload.contains("Tunable filter paths"),
@@ -1856,7 +1886,20 @@ mod tests {
             ("conditions.1.op.within_pct".to_string(), serde_json::json!(1.5)),
             ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            5,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
 
         // The window-op path must be listed AND annotated as a positive integer.
         assert!(
@@ -1912,7 +1955,20 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
 
         // Param key list and risk.* references must be absent.
         assert!(
@@ -1964,7 +2020,7 @@ mod tests {
                 0,
                 &prose_roles,
                 0,
-            true,
+                true,
             );
             // Exactly one lever is focused per cycle (the three directive
             // signatures are mutually exclusive).
@@ -2006,7 +2062,7 @@ mod tests {
                 0,
                 &[],
                 0,
-            true,
+                true,
             );
             assert!(
                 !p.contains("agent's system prompt"),
@@ -2304,7 +2360,18 @@ mod tests {
         let keys = vec!["risk.risk_pct_per_trade".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![]; // no filter
         let out = build_user_payload(
-            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, false,
+            "PROGRAM",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            3,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            false,
         );
         assert!(
             out.contains("create_filter"),
@@ -2318,7 +2385,18 @@ mod tests {
         let keys: Vec<String> = vec![];
         let filter_paths = vec![("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0))];
         let out = build_user_payload(
-            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, true,
+            "PROGRAM",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            3,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
         );
         assert!(
             !out.contains("create_filter"),
@@ -2478,7 +2556,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         let p1 = build_user_payload(
             "prog",
@@ -2492,7 +2570,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         // The focus directive must name a different key for attempt 0 vs attempt 1.
         // Since `build_user_payload` embeds the focus in the exploration_section,
@@ -2550,7 +2628,7 @@ mod tests {
                 0,
                 &prose_roles,
                 attempt,
-            true,
+                true,
             );
             // Detect kind via the existing directive substrings the tests already use.
             if p.contains("agent system prompt") || p.contains("agent's system prompt") {
@@ -2584,8 +2662,7 @@ mod tests {
     fn mechanistic_tunable_paths_enumerates_correct_leaf_paths() {
         let cfg = fixture_mechanistic_config();
         let paths = mechanistic_tunable_paths(&cfg);
-        let path_map: std::collections::HashMap<String, serde_json::Value> =
-            paths.into_iter().collect();
+        let path_map: std::collections::HashMap<String, serde_json::Value> = paths.into_iter().collect();
 
         // StopLoss at index 0 → .pct
         assert!(
@@ -2631,17 +2708,21 @@ mod tests {
         let mut cfg = fixture_mechanistic_config();
 
         // Set index 0 (.pct on StopLoss) to 3.5
-        let result = set_mechanistic_value(&mut cfg, "mechanistic.close_policies.0.pct", &serde_json::json!(3.5));
-        assert!(result.is_ok(), "setting .pct on StopLoss must succeed: {result:?}");
+        let result = set_mechanistic_value(
+            &mut cfg,
+            "mechanistic.close_policies.0.pct",
+            &serde_json::json!(3.5),
+        );
+        assert!(
+            result.is_ok(),
+            "setting .pct on StopLoss must succeed: {result:?}"
+        );
 
         // Get-back via tunable paths
         let paths: std::collections::HashMap<String, serde_json::Value> =
             mechanistic_tunable_paths(&cfg).into_iter().collect();
         let val = paths["mechanistic.close_policies.0.pct"].as_f64().unwrap();
-        assert!(
-            (val - 3.5).abs() < 1e-9,
-            "round-trip: expected 3.5, got {val}"
-        );
+        assert!((val - 3.5).abs() < 1e-9, "round-trip: expected 3.5, got {val}");
 
         // Also verify the underlying variant is still StopLoss
         assert!(
@@ -2657,7 +2738,11 @@ mod tests {
         let cfg_before = cfg.clone();
 
         // index 1 is TimeExit{bars:10}; trying to set .pct on it is a cross-variant mismatch
-        let result = set_mechanistic_value(&mut cfg, "mechanistic.close_policies.1.pct", &serde_json::json!(5.0));
+        let result = set_mechanistic_value(
+            &mut cfg,
+            "mechanistic.close_policies.1.pct",
+            &serde_json::json!(5.0),
+        );
         assert!(
             result.is_err(),
             "cross-variant mismatch (.pct on TimeExit) must return an error"
@@ -2673,11 +2758,13 @@ mod tests {
         // Regression: a strategy with a filter and no mechanistic_config must
         // still expose the same filter paths it did before WU3a.
         let base = fixture_filter_strategy();
-        assert!(base.mechanistic_config.is_none(), "fixture has no mechanistic config");
+        assert!(
+            base.mechanistic_config.is_none(),
+            "fixture has no mechanistic config"
+        );
         let filter = base.filter.as_ref().expect("fixture has a filter");
         let paths = filter_tunable_paths(filter);
-        let path_map: std::collections::HashMap<String, serde_json::Value> =
-            paths.into_iter().collect();
+        let path_map: std::collections::HashMap<String, serde_json::Value> = paths.into_iter().collect();
 
         // Must still include conditions.0.rhs.numeric and cooldown_bars
         assert!(

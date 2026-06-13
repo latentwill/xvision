@@ -279,7 +279,7 @@ async fn list_returns_summaries_for_existing_strategys() {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
     };
     store.save(&strategy).await.unwrap();
 
