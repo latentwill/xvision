@@ -479,6 +479,8 @@ export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
 export BYREAL_PRIVATE_KEY=$(op read 'op://Personal/xvision-byreal/private-key')
 export BYREAL_NETWORK=mainnet                 # or testnet; defaults to mainnet
 export BYREAL_ACCOUNT=...                      # optional account id
+export BYREAL_LEVERAGE=5                       # optional; set per-coin leverage before each
+                                               # live-eval entry. Unset ⇒ account default.
 # Then select Byreal as the execution venue from the CLI:
 #   xvn fire-trade --venue byreal --asset BTC --side buy --size-bps 100 ...
 #   xvn portfolio --venue byreal

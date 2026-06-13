@@ -580,24 +580,44 @@ fn byreal_symbol_for_str(asset: &str) -> anyhow::Result<String> {
     Ok(byreal_symbol_for(sym))
 }
 
+/// Parse the optional `BYREAL_LEVERAGE` env var into a positive leverage.
+/// Absent / unparseable / non-positive ⇒ `None` (leave account leverage as-is).
+fn parse_env_leverage() -> Option<f64> {
+    std::env::var("BYREAL_LEVERAGE")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|l| *l > 0.0)
+}
+
 /// `BrokerSurface` over the Byreal perps CLI for live-eval runs.
 pub struct ByrealLiveSurface<A = SubprocessByrealApi> {
     api: A,
+    /// Leverage applied (via `position leverage <coin> <lev>`) before each
+    /// entry. Sourced from `BYREAL_LEVERAGE`. `None` leaves the account's
+    /// existing leverage untouched (the perps CLI's default).
+    leverage: Option<f64>,
 }
 
 impl ByrealLiveSurface<SubprocessByrealApi> {
-    /// Build from environment (`BYREAL_NETWORK`, `BYREAL_ACCOUNT`; the CLI reads
-    /// `BYREAL_PRIVATE_KEY` itself).
+    /// Build from environment (`BYREAL_NETWORK`, `BYREAL_ACCOUNT`,
+    /// `BYREAL_LEVERAGE`; the CLI reads `BYREAL_PRIVATE_KEY` itself).
     pub fn from_env() -> Result<Self, ExecutorError> {
         Ok(Self {
             api: SubprocessByrealApi::from_env()?,
+            leverage: parse_env_leverage(),
         })
     }
 }
 
 impl<A: ByrealPerpsApi> ByrealLiveSurface<A> {
     pub fn new(api: A) -> Self {
-        Self { api }
+        Self { api, leverage: None }
+    }
+
+    /// Set the leverage applied before each entry (`position leverage`).
+    pub fn with_leverage(mut self, leverage: Option<f64>) -> Self {
+        self.leverage = leverage;
+        self
     }
 }
 
@@ -616,6 +636,14 @@ impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A> {
             Side::Buy => ByrealSide::Buy,
             Side::Sell => ByrealSide::Sell,
         };
+        // Apply configured leverage (BYREAL_LEVERAGE) before the entry so the
+        // position opens at the intended leverage. `None` ⇒ leave as-is.
+        if let Some(lev) = self.leverage {
+            self.api
+                .set_leverage(&symbol, lev)
+                .await
+                .map_err(|e| anyhow::anyhow!("byreal set_leverage: {e}"))?;
+        }
         // Native TP/SL brackets: the perps CLI's `order market --tp/--sl` attach
         // reduce-only bracket legs to the entry. Derive trigger prices from the
         // caller's stop/target percentages against the reference price (mirrors
@@ -1028,5 +1056,44 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert!((recorded[0].tp_price.unwrap() - 62_400.0).abs() < 1e-6);
         assert!((recorded[0].sl_price.unwrap() - 58_800.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn live_surface_sets_leverage_before_entry_when_configured() {
+        let api = MockByrealApi {
+            equity_usd: 10_000.0,
+            mark: 60_000.0,
+            ..Default::default()
+        };
+        let lev_calls = api.leverage_calls.clone();
+        let surface = ByrealLiveSurface::new(api).with_leverage(Some(5.0));
+        surface
+            .submit_order(order_req("BTC", Side::Buy, 0.01))
+            .await
+            .unwrap();
+        let calls = lev_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "leverage should be set once before the entry");
+        assert_eq!(calls[0].0, "BTC");
+        assert_eq!(calls[0].1, 5.0);
+    }
+
+    #[tokio::test]
+    async fn live_surface_leaves_leverage_untouched_when_unset() {
+        let api = MockByrealApi {
+            equity_usd: 10_000.0,
+            mark: 60_000.0,
+            ..Default::default()
+        };
+        let lev_calls = api.leverage_calls.clone();
+        // No `with_leverage` ⇒ leverage stays None ⇒ no set_leverage call.
+        let surface = ByrealLiveSurface::new(api);
+        surface
+            .submit_order(order_req("BTC", Side::Buy, 0.01))
+            .await
+            .unwrap();
+        assert!(
+            lev_calls.lock().unwrap().is_empty(),
+            "no configured leverage ⇒ account leverage left untouched"
+        );
     }
 }
