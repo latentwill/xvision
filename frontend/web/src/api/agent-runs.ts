@@ -7,13 +7,10 @@
 //     served by the `agent-run-observability-export-cli` track.
 //
 // Selection rule:
-//   - `VITE_USE_MOCK_AGENT_RUNS=1`         -> mock
-//   - else if MODE is `test` or `development` -> mock (so the UI works
-//     before the backend lands; flip the flag to `0` to test against real)
-//   - else                                  -> real HTTP
-//
-// When the backend is shipped and stable, drop the dev-default and require
-// the flag explicitly.
+//   - `VITE_USE_MOCK_AGENT_RUNS=1`  -> mock
+//   - `VITE_USE_MOCK_AGENT_RUNS=0`  -> real HTTP (overrides MODE)
+//   - else if MODE is `test`        -> mock (Vitest baseline)
+//   - else                          -> real HTTP
 
 import { ApiError, apiFetch } from "./client";
 import { decisionIdxFromAttributes } from "@/features/agent-runs/decision-idx";
@@ -70,9 +67,10 @@ export function shouldUseMockAgentRuns(): boolean {
   const explicit = import.meta.env.VITE_USE_MOCK_AGENT_RUNS;
   if (explicit === "1" || explicit === "true") return true;
   if (explicit === "0" || explicit === "false") return false;
-  if (import.meta.env.MODE === "test" || import.meta.env.MODE === "development")
-    return true;
-  return import.meta.env.DEV === true;
+  // No explicit override: only the Vitest test runner gets mock by default.
+  // Development (`vite dev`) hits the real HTTP backend now that the agent-run
+  // observability endpoints are shipped and stable.
+  return import.meta.env.MODE === "test";
 }
 
 // ---------------------------------------------------------------------------
@@ -580,7 +578,7 @@ function openMockStream(
  * is the first frame on every (re)connect, so a dropped connection
  * recovers the full run state on its own.
  */
-const REAL_SSE_EVENTS = [
+export const REAL_SSE_EVENTS = [
   "snapshot",
   "run_started",
   "run_finished",
@@ -592,6 +590,8 @@ const REAL_SSE_EVENTS = [
   "tool_call_finished",
   "tool_call_failed",
   "tool_call_cancelled",
+  "broker_call_started",
+  "broker_call_finished",
   "assistant_text_delta",
   "sidecar_error",
   "checkpoint_written",
@@ -600,6 +600,7 @@ const REAL_SSE_EVENTS = [
   "backpressure_dropped",
   "memory_recall",
   "memory_write",
+  "engine_event",
   "lagged",
 ] as const;
 type RealSseEventName = (typeof REAL_SSE_EVENTS)[number];

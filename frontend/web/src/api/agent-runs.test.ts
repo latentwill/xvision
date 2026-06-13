@@ -1,6 +1,7 @@
 // frontend/web/src/api/agent-runs.test.ts
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  REAL_SSE_EVENTS,
   agentRunKeys,
   fetchAgentRunBlob,
   getAgentRun,
@@ -461,7 +462,7 @@ describe("agent-runs real-mode branch", () => {
       MockES as unknown as typeof EventSource;
 
     // Make sure prior test state doesn't bleed in.
-    useTraceDock.getState().setActiveRun(null, "post-hoc");
+    useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
 
     const received: AgentRunStreamEvent[] = [];
     const close = openAgentRunStream("run_stream_1", (ev) => received.push(ev));
@@ -547,7 +548,7 @@ describe("agent-runs real-mode branch", () => {
     } finally {
       close();
       (globalThis as { EventSource: unknown }).EventSource = original;
-      useTraceDock.getState().setActiveRun(null, "post-hoc");
+      useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     }
   });
 
@@ -566,7 +567,7 @@ describe("agent-runs real-mode branch", () => {
     (globalThis as { EventSource: unknown }).EventSource =
       MockES as unknown as typeof EventSource;
 
-    useTraceDock.getState().setActiveRun(null, "post-hoc");
+    useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     const received: AgentRunStreamEvent[] = [];
     const close = openAgentRunStream("run_stream_bad", (ev) => received.push(ev));
 
@@ -584,7 +585,7 @@ describe("agent-runs real-mode branch", () => {
     } finally {
       close();
       (globalThis as { EventSource: unknown }).EventSource = original;
-      useTraceDock.getState().setActiveRun(null, "post-hoc");
+      useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     }
   });
 });
@@ -806,5 +807,76 @@ describe("listAgentRuns — since (real-mode)", () => {
     const a = agentRunKeys.list({ status: "running" });
     const b = agentRunKeys.list({ status: "running", since: "2026-06-06T00:00:00Z" });
     expect(b).not.toEqual(a);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DoD: shouldUseMockAgentRuns() gate-flip contract
+// ---------------------------------------------------------------------------
+// TDD: these tests are written against the NEW contract.  The existing
+// "is true under vitest" test above exercises the MODE=test path and
+// remains valid.  The tests below cover the development-mode flip and
+// the explicit-override paths.
+// ---------------------------------------------------------------------------
+describe("shouldUseMockAgentRuns() — gate-flip contract", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("returns false when MODE=development and no explicit override", () => {
+    // The dev-auto-true branch was removed: development should hit real HTTP.
+    vi.stubEnv("MODE", "development");
+    // Ensure no explicit override is set (stub to empty string = unset).
+    vi.stubEnv("VITE_USE_MOCK_AGENT_RUNS", "");
+    expect(shouldUseMockAgentRuns()).toBe(false);
+  });
+
+  test("returns true when MODE=test (vitest baseline)", () => {
+    // No stubbing needed — vitest runs with MODE=test by default.
+    // But make it explicit so the assertion is unambiguous.
+    vi.stubEnv("MODE", "test");
+    vi.stubEnv("VITE_USE_MOCK_AGENT_RUNS", "");
+    expect(shouldUseMockAgentRuns()).toBe(true);
+  });
+
+  test("returns true when VITE_USE_MOCK_AGENT_RUNS=1 regardless of MODE", () => {
+    vi.stubEnv("MODE", "development");
+    vi.stubEnv("VITE_USE_MOCK_AGENT_RUNS", "1");
+    expect(shouldUseMockAgentRuns()).toBe(true);
+  });
+
+  test("returns true when VITE_USE_MOCK_AGENT_RUNS=true regardless of MODE", () => {
+    vi.stubEnv("MODE", "production");
+    vi.stubEnv("VITE_USE_MOCK_AGENT_RUNS", "true");
+    expect(shouldUseMockAgentRuns()).toBe(true);
+  });
+
+  test("returns false when VITE_USE_MOCK_AGENT_RUNS=0 even in MODE=test", () => {
+    vi.stubEnv("MODE", "test");
+    vi.stubEnv("VITE_USE_MOCK_AGENT_RUNS", "0");
+    expect(shouldUseMockAgentRuns()).toBe(false);
+  });
+
+  test("returns false when VITE_USE_MOCK_AGENT_RUNS=false even in MODE=test", () => {
+    vi.stubEnv("MODE", "test");
+    vi.stubEnv("VITE_USE_MOCK_AGENT_RUNS", "false");
+    expect(shouldUseMockAgentRuns()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DoD: REAL_SSE_EVENTS wire vocabulary completeness
+// ---------------------------------------------------------------------------
+describe("REAL_SSE_EVENTS wire vocabulary", () => {
+  test("includes broker_call_started", () => {
+    expect(REAL_SSE_EVENTS).toContain("broker_call_started");
+  });
+
+  test("includes broker_call_finished", () => {
+    expect(REAL_SSE_EVENTS).toContain("broker_call_finished");
+  });
+
+  test("includes engine_event", () => {
+    expect(REAL_SSE_EVENTS).toContain("engine_event");
   });
 });

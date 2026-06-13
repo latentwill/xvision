@@ -7,6 +7,7 @@ import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs"
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
+import { useCurrentTraceScope } from "./use-trace-scope";
 import {
   type SpanProjection,
   useSessionSpans,
@@ -104,18 +105,22 @@ function projectionToRunSpan(p: SpanProjection): RunSpan {
 }
 
 export function TraceDock() {
+  const scope = useCurrentTraceScope();
   const {
     height,
     heightPx,
-    activeRunId,
     activeSessionId,
-    selectedSpanId,
     minimize,
-    setSelectedSpan,
     advanced_view,
     setAdvancedView,
-    costOverrideUsd,
   } = useTraceDock();
+  // Per-scope slice for the current route. `setSelectedSpan` is now
+  // scope-aware, so we curry the scope in at the call site.
+  const activeRunId = useTraceDock((s) => s.byScope[scope].activeRunId);
+  const selectedSpanId = useTraceDock((s) => s.byScope[scope].selectedSpanId);
+  const costOverrideUsd = useTraceDock((s) => s.byScope[scope].costOverrideUsd);
+  const setSelectedSpan = (id: string | null) =>
+    useTraceDock.getState().setSelectedSpan(scope, id);
   const navigate = useNavigate();
 
   // Unified-session span projection — the chat-session path. When a chat
@@ -149,12 +154,10 @@ export function TraceDock() {
       !(error instanceof ApiError && error.code === "not_found") && failureCount < 2,
   });
 
-  useEffect(() => {
-    if (!activeRunId) return;
-    if (q.error instanceof ApiError && q.error.code === "not_found") {
-      useTraceDock.getState().setActiveRun(null, "post-hoc");
-    }
-  }, [activeRunId, q.error]);
+  // NOTE: no 404 self-clear here (WS-2). A not_found agent-run renders
+  // the dock's empty branch (`!activeRunId && !hasSessionTrace` guard
+  // below); it must NOT null the active run. Ownership/cleanup belongs
+  // to the route owner's unconditional unmount effect, not the dock.
 
   // The dock has one span source at a time: the agent-run query when a run is
   // active, else the unified session projection when a chat session is bound.
