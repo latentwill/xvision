@@ -2597,11 +2597,23 @@ impl WizardLoop {
                     .collect::<String>();
                 format!("{} {role} agent {suffix}", strategy.manifest.display_name)
             });
-        let system_prompt = req
+        // Detect whether the caller supplied an explicit system_prompt.
+        // When no explicit prompt is given the default is stamped from the
+        // strategy's current asset_universe — if that universe is still the
+        // blank-draft default (["BTC/USD"]), the agent will say "Evaluate
+        // BTC/USD" even if the operator intended a different asset.  We do
+        // NOT block creation; we surface a non-fatal warning so the model can
+        // self-correct (Finding #14).
+        let explicit_system_prompt = req
             .system_prompt
             .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
+            .filter(|s| !s.is_empty());
+        let using_default_prompt = explicit_system_prompt.is_none();
+        let system_prompt =
+            explicit_system_prompt.unwrap_or_else(|| default_strategy_agent_prompt(&strategy, &role));
+        // Determine whether the strategy's asset_universe is still the
+        // blank-draft default so we can emit the stale-default warning.
+        let asset_universe_is_default = strategy.manifest.asset_universe == vec!["BTC/USD"];
         let skill_ids = tools_for_strategy_role(&strategy, &role);
         let description = req
             .description
@@ -2648,7 +2660,7 @@ impl WizardLoop {
             },
         )
         .await?;
-        Ok(serde_json::json!({
+        let mut result = serde_json::json!({
             "strategy_id": strategy_id,
             "agent_id": agent.agent_id,
             "role": role,
@@ -2656,7 +2668,19 @@ impl WizardLoop {
             "model": model,
             "agents": attached.agents,
             "pipeline": attached.pipeline
-        }))
+        });
+        // Non-fatal warning: if the prompt was auto-generated from an
+        // asset_universe that is still the blank-draft default, surface it
+        // so the model can self-correct by calling update_manifest and then
+        // re-creating or patching the agent.
+        if using_default_prompt && asset_universe_is_default {
+            result["warning"] = serde_json::json!(
+                "agent prompt generated from default asset_universe BTC/USD — \
+                 call update_manifest first if you intended a different asset. \
+                 Verify the stamped prompt with get_strategy."
+            );
+        }
+        Ok(result)
     }
 
     async fn attach_existing_agent(
@@ -3566,7 +3590,7 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "create_strategy_agent".into(),
-            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders.".into(),
+            description: "Create a reusable Agent with an explicit provider/model and attach it to a strategy. Use role `trader` for eval-ready single-agent strategies. If provider/model are omitted, the currently selected chat provider/model is used. ALWAYS supply a one-line `description` summarizing what the agent does (e.g. \"4H ETH range-fader using RSI + EMA20\"), so the operator-facing Agents list isn't littered with auto-generated placeholders. ORDERING: call update_manifest first (to set asset_universe and cadence) before calling this tool — the agent's default prompt is generated from the strategy's current asset_universe + cadence at the moment this tool runs. If you skip update_manifest, the prompt will reflect the blank-draft default (BTC/USD, 60 min). Pass an explicit `system_prompt` argument to override the default entirely.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -6648,6 +6672,181 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         assert!(
             names.contains(&"validate_draft"),
             "validate_draft must still be in tool defs after Read reclassification: {names:?}"
+        );
+    }
+
+    // -- W7: agent-creation context bleed prevention -----------------------
+
+    /// The `create_strategy_agent` tool description must mention `update_manifest`
+    /// so the model understands the ordering dependency (Finding #14).
+    #[test]
+    fn create_strategy_agent_tool_description_mentions_update_manifest() {
+        let defs = wizard_tool_defs();
+        let def = defs
+            .iter()
+            .find(|d| d.name == "create_strategy_agent")
+            .expect("create_strategy_agent must be in tool defs");
+        assert!(
+            def.description.contains("update_manifest"),
+            "create_strategy_agent description must mention update_manifest (ordering dependency): {}",
+            def.description
+        );
+    }
+
+    /// The wizard system prompt must contain ordering guidance — specifically
+    /// that update_manifest must be called BEFORE create_strategy_agent when
+    /// a specific asset universe was discussed (Finding #14 fix).
+    #[test]
+    fn wizard_system_prompt_contains_update_manifest_ordering_guidance() {
+        // The guidance must mention the "before" ordering constraint.
+        // We check for "before" adjacent to one of the two tool names so the
+        // test catches the actual ordering rule, not just incidental mentions.
+        // The content uses backtick-quoted tool names in markdown, so we match
+        // against the raw text (not lowercased to avoid backtick confusion).
+        let has_ordering_rule = WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest")
+            && (
+                // "Call `update_manifest` before `create_strategy_agent`" (markdown backticks)
+                WIZARD_SYSTEM_PROMPT_BASE.contains("before `create_strategy_agent`")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest` first")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest` before")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest first")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("update_manifest before")
+                    || WIZARD_SYSTEM_PROMPT_BASE.contains("before calling create_strategy_agent")
+            );
+        assert!(
+            has_ordering_rule,
+            "wizard.md must contain an explicit ordering rule that update_manifest \
+             precedes create_strategy_agent. Current content:\n{}",
+            WIZARD_SYSTEM_PROMPT_BASE
+        );
+    }
+
+    /// When create_strategy_agent is called WITHOUT an explicit system_prompt
+    /// and the strategy's asset_universe is still the blank-draft default
+    /// (["BTC/USD"]), the tool result must include a "warning" field so
+    /// the model can self-correct before the agent prompt is wrong.
+    #[tokio::test]
+    async fn create_strategy_agent_warns_when_asset_universe_is_default_and_no_prompt_given() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me an ETH strategy agent", ContextScope::Workspace).await;
+
+        // Create a blank strategy — asset_universe defaults to ["BTC/USD"].
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "ETH Strategy" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        // Call create_strategy_agent WITHOUT system_prompt and without
+        // calling update_manifest first — simulates the context-bleed scenario.
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini"
+                }),
+            )
+            .await
+            .expect("create_strategy_agent should succeed (non-fatal warning)");
+
+        // Agent must still be created.
+        assert_eq!(out["strategy_id"], id);
+        assert_eq!(out["role"], "trader");
+
+        // Must include a warning about the default asset_universe.
+        let warning = out.get("warning").and_then(|w| w.as_str()).unwrap_or("");
+        assert!(
+            !warning.is_empty(),
+            "expected a warning when asset_universe is default BTC/USD and no prompt given, got: {out}"
+        );
+        assert!(
+            warning.contains("BTC/USD") || warning.contains("update_manifest"),
+            "warning must mention BTC/USD or update_manifest: {warning}"
+        );
+    }
+
+    /// When create_strategy_agent IS given an explicit system_prompt, no
+    /// warning should appear — the caller took responsibility for the prompt.
+    #[tokio::test]
+    async fn create_strategy_agent_no_warning_when_explicit_system_prompt_given() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me a BTC strategy agent", ContextScope::Workspace).await;
+
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "BTC Strat" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini",
+                    "system_prompt": "You are the ETH/USD trader. Return structured JSON."
+                }),
+            )
+            .await
+            .expect("create_strategy_agent with explicit prompt");
+
+        assert_eq!(out["role"], "trader");
+        assert!(
+            out.get("warning").is_none(),
+            "no warning when explicit system_prompt is supplied: {out}"
+        );
+    }
+
+    /// When update_manifest was called first to set a non-default asset_universe,
+    /// create_strategy_agent should not warn even without an explicit system_prompt.
+    #[tokio::test]
+    async fn create_strategy_agent_no_warning_after_update_manifest() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "build me an ETH strat", ContextScope::Workspace).await;
+
+        let created = wl
+            .run_tool("create_strategy", serde_json::json!({ "name": "ETH Strat" }))
+            .await
+            .expect("create_strategy");
+        let id = created["id"].as_str().expect("created.id");
+
+        // Update manifest first — asset_universe is no longer the default.
+        wl.run_tool(
+            "update_manifest",
+            serde_json::json!({
+                "id": id,
+                "asset_universe": ["ETH/USD"]
+            }),
+        )
+        .await
+        .expect("update_manifest");
+
+        // Now create the agent without an explicit system_prompt.
+        let out = wl
+            .run_tool(
+                "create_strategy_agent",
+                serde_json::json!({
+                    "strategy_id": id,
+                    "role": "trader",
+                    "provider": "openai",
+                    "model": "gpt-4.1-mini"
+                }),
+            )
+            .await
+            .expect("create_strategy_agent after update_manifest");
+
+        assert_eq!(out["role"], "trader");
+        assert!(
+            out.get("warning").is_none(),
+            "no warning expected when asset_universe was updated before agent creation: {out}"
         );
     }
 }
