@@ -1999,9 +1999,23 @@ impl WizardLoop {
                 Ok(serde_json::to_value(out)?)
             }
             "get_eval_run" => {
+                // Return the slim `RunSummary` shape (same as the REST
+                // `GET /api/eval/runs/:id` response) rather than the raw
+                // `Run` struct.  The raw struct serialises
+                // `metrics: Option<MetricsSummary>` as `"metrics": null`
+                // for failed / in-flight runs, which leaves the model with
+                // an opaque nested null it cannot reason over and trips the
+                // tool-failure circuit-breaker (Finding #4).
+                //
+                // `summarise_run` maps `metrics: None` → flat top-level
+                // `sharpe/max_drawdown_pct/total_return_pct` fields each
+                // serialised as `null`, and brings `status` and `error` to
+                // the top level as plain strings — a stable, agent-readable
+                // shape regardless of run status.
                 let req: GetEvalRunReq = serde_json::from_value(input)?;
-                let out = api_eval::get(&self.api_context, &req.id).await?;
-                Ok(serde_json::to_value(out)?)
+                let run = api_eval::get(&self.api_context, &req.id).await?;
+                let summary = api_eval::summarise_run(run);
+                Ok(serde_json::to_value(summary)?)
             }
             "list_eval_reviews" => {
                 let req: ListEvalReviewsReq = serde_json::from_value(input)?;
