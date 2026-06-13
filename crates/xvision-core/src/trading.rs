@@ -413,6 +413,18 @@ pub struct OpenPosition {
     pub take_profit_pct: f32,
     #[garde(skip)]
     pub opened_at: DateTime<Utc>,
+    /// Account leverage on this position, for perps venues. `None` for spot
+    /// (and any venue that does not report it). Populated by the perps executor
+    /// from the venue; consumed by the `LiquidationDistanceGuard` risk rule.
+    #[serde(default)]
+    #[garde(skip)]
+    pub leverage: Option<f64>,
+    /// Venue-reported liquidation price for this perps position. `None` for spot
+    /// (no liquidation). When set, `LiquidationDistanceGuard` vetoes new entries
+    /// while this position sits within the configured distance of liquidation.
+    #[serde(default)]
+    #[garde(skip)]
+    pub liq_price: Option<f64>,
 }
 
 /// Snapshot of the trading account at decision time. The Trader uses this to
@@ -486,6 +498,12 @@ pub enum VetoReason {
     /// broker never sees a known-bad order. Operator-visible as a
     /// clean risk veto instead of an opaque broker rejection.
     BelowVenueMinNotional,
+    /// An open perps position sits within the configured distance
+    /// (`[perps].min_liq_distance_pct`) of its liquidation price. Fired by the
+    /// `LiquidationDistanceGuard` rule to block *new* entries while existing
+    /// risk is near liquidation. Exits are never blocked; spot positions (no
+    /// liquidation price) never trigger it. Operator-visible as a clean veto.
+    NearLiquidation,
     Custom(String),
 }
 
@@ -557,6 +575,8 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             opened_at: Utc.timestamp_opt(1_699_900_000, 0).single().unwrap(),
+            leverage: None,
+            liq_price: None,
         }
     }
 

@@ -50,6 +50,32 @@ pub struct VenueLimits {
     pub min_notional_usd: f64,
 }
 
+/// Perps-specific risk guards. Every field has a safe default so an existing
+/// `config/risk.toml` with no `[perps]` section keeps working. Guards only bite
+/// on perps venues that report the relevant signal (e.g. byreal positions carry
+/// leverage/liq price); spot venues leave it `None`, so the guards no-op.
+///
+/// NOTE: PR #985 (funding carry guard) introduces this same `PerpsGuards`
+/// struct with a `max_funding_pay_8h` field. When both land, combine the two
+/// field sets into one `PerpsGuards` — a trivial merge.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PerpsGuards {
+    /// Minimum distance (percent of mark) an open perps position's liquidation
+    /// price must keep from its mark before `LiquidationDistanceGuard` vetoes
+    /// *new* entries — don't pile on risk while a position is near liquidation.
+    /// Default `5.0`. Only bites when a position reports a `liq_price` (perps).
+    pub min_liq_distance_pct: f64,
+}
+
+impl Default for PerpsGuards {
+    fn default() -> Self {
+        Self {
+            min_liq_distance_pct: 5.0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct RiskConfig {
     pub limits: Limits,
@@ -60,6 +86,9 @@ pub struct RiskConfig {
     /// constraints applied, matching pre-rule behavior.
     #[serde(default)]
     pub venues: BTreeMap<String, VenueLimits>,
+    /// Perps-specific guards. Absent `[perps]` section ⇒ `PerpsGuards::default()`.
+    #[serde(default)]
+    pub perps: PerpsGuards,
 }
 
 impl RiskConfig {
@@ -117,6 +146,11 @@ impl RiskConfig {
                     "venues.{venue}.min_notional_usd must be a finite non-negative number"
                 )));
             }
+        }
+        if !self.perps.min_liq_distance_pct.is_finite() || self.perps.min_liq_distance_pct < 0.0 {
+            return Err(RiskError::Config(
+                "perps.min_liq_distance_pct must be a finite non-negative number".into(),
+            ));
         }
         Ok(())
     }

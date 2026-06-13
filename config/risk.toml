@@ -32,3 +32,13 @@ min_notional_usd = 10.0
 
 [venues.live]
 min_notional_usd = 1.0
+
+# Perps-specific guards (optional — defaults if the section is omitted).
+#
+# `LiquidationDistanceGuard` vetoes NEW entries while any open perps position
+# sits within `min_liq_distance_pct` (percent of mark) of its liquidation price
+# — don't pile on risk when a position is near forced liquidation. Only perps
+# positions report a liquidation price; spot positions never trip it, so this
+# costs nothing for spot-only agents. Exits are never blocked.
+[perps]
+min_liq_distance_pct = 5.0

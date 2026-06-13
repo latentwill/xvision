@@ -1020,6 +1020,10 @@ impl<A: OrderlyApi + 'static> Executor for OrderlyExecutor<A> {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 5.0,
                     opened_at: Utc::now(),
+                    // Orderly leverage/liq-price readback is a follow-up; the
+                    // LiquidationDistanceGuard's grounded source is byreal.
+                    leverage: None,
+                    liq_price: None,
                 },
             );
         }

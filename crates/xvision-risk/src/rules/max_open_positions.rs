@@ -123,6 +123,8 @@ mod tests {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 5.0,
                 opened_at: Utc::now(),
+                leverage: None,
+                liq_price: None,
             });
         }
         // Pad with BTC if we still need more entries
@@ -138,6 +140,8 @@ mod tests {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 5.0,
                     opened_at: Utc::now(),
+                    leverage: None,
+                    liq_price: None,
                 },
             );
         }

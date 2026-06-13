@@ -2,6 +2,7 @@
 
 pub mod asset_whitelist;
 pub mod daily_loss_circuit;
+pub mod liquidation_distance_guard;
 pub mod max_open_positions;
 pub mod max_position_size;
 pub mod max_total_exposure;
@@ -11,6 +12,7 @@ pub mod take_profit_rr;
 
 pub use asset_whitelist::AssetWhitelist;
 pub use daily_loss_circuit::DailyLossCircuit;
+pub use liquidation_distance_guard::LiquidationDistanceGuard;
 pub use max_open_positions::MaxOpenPositions;
 pub use max_position_size::MaxPositionSize;
 pub use max_total_exposure::MaxTotalExposure;

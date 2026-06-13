@@ -51,6 +51,7 @@ fn default_config() -> RiskConfig {
             take_profit_min_rr: 1.5,
         },
         venues: BTreeMap::new(),
+        perps: xvision_risk::config::PerpsGuards::default(),
     }
 }
 
@@ -222,6 +223,7 @@ fn layer_with_conviction_scale() -> RiskLayer {
             take_profit_min_rr: 1.5,
         },
         venues: BTreeMap::new(),
+        perps: xvision_risk::config::PerpsGuards::default(),
     };
 
     // Construct the standard ruleset, then prepend the user rule.
