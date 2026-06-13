@@ -15,7 +15,7 @@ use crate::api::ApiContext;
 use crate::eval::bars::{self, BarCacheArgs};
 use crate::eval::executor::asset_set::active_assets;
 use crate::eval::executor::{Executor, RunExecutor};
-use crate::eval::run::{MetricsSummary, Run, RunMode};
+use crate::eval::run::{DeploymentSource, MetricsSummary, Run, RunMode};
 use crate::eval::scenario::Scenario;
 use crate::eval::scenario_store;
 use crate::eval::store::RunStore;
@@ -118,11 +118,16 @@ impl BacktestPaperTester {
         if let Some(variant) = canary {
             executor = executor.with_canary_sabotage(variant);
         }
+        // CT5 §9.2: the optimizer path stamps source=Optimizer at run creation
+        // so the dashboard Cancel-gate can distinguish optimizer runs from the
+        // human queue (agent_id is NOT a reliable discriminator here — the
+        // optimizer reuses strategy.manifest.id).
         let mut run = Run::new_queued(
             strategy.manifest.id.clone(),
             scenario.id.clone(),
             RunMode::Backtest,
-        );
+        )
+        .with_source(DeploymentSource::Optimizer);
         self.store.create(&run).await?;
         // Resolve the candidate strategy's agent slots so the trader has a
         // real model/prompt binding. Passing `&[]` here (the prior bug) left
@@ -271,11 +276,13 @@ impl CachedBacktestPaperTester {
         )
         .await?;
         let store = RunStore::new(self.ctx.db.clone());
+        // CT5 §9.2: optimizer-sourced run (see the BacktestPaperTester path above).
         let mut run = Run::new_queued(
             strategy.manifest.id.clone(),
             scenario.id.clone(),
             RunMode::Backtest,
-        );
+        )
+        .with_source(DeploymentSource::Optimizer);
         store.create(&run).await?;
         store
             .ensure_agent_run_baseline(&run.id, self.ctx.obs_config.retention.mode.as_db_str())

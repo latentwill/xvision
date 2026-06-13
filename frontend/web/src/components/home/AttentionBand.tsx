@@ -9,7 +9,7 @@
 
 import { Link } from "react-router-dom";
 
-import type { RunSummary } from "@/api/types.gen";
+import type { LiveDeploymentSummary, RunSummary } from "@/api/types.gen";
 import type { StrategyListItem } from "@/api/strategies";
 import { Card } from "@/components/primitives/Card";
 import {
@@ -35,6 +35,9 @@ export interface AttentionBandProps {
    * Coverage / awaiting-eval counts keep using the unscoped `runs`; only the
    * CriticalFindingsRow rescopes. Defaults to `runs` when unset. */
   findingsRuns?: RunSummary[];
+  /** n0k/awm: live/paper deployment rows from the home route's 5s poll,
+   * forwarded straight to ActiveTasksStrip. Empty/undefined => no live group. */
+  deployments?: LiveDeploymentSummary[];
 }
 
 export function AttentionBand({
@@ -43,6 +46,7 @@ export function AttentionBand({
   nagItems,
   failedRunFindings = [],
   findingsRuns,
+  deployments,
 }: AttentionBandProps) {
   const counts = coverageCounts(strategyEvalCoverage(strategies, runs));
   const findingsScope = findingsRuns ?? runs;
@@ -52,7 +56,7 @@ export function AttentionBand({
       <Card className="p-0 overflow-hidden xvn-card-hover">
         <div className="divide-y divide-border-soft">
           <LiveSummaryStrip />
-          <ActiveTasksStrip />
+          <ActiveTasksStrip deployments={deployments} />
           <CriticalFindingsRow
             runs={findingsScope}
             failedRunFindings={failedRunFindings}

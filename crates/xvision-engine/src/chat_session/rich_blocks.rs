@@ -915,6 +915,8 @@ mod tests {
             paused_at: None,
             flatten_requested: false,
             live_config: None,
+            source: Default::default(),
+            unrealized_pnl_usd: None,
         }
     }
 

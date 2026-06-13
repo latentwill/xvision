@@ -57,6 +57,12 @@ async fn ctx_with_eval_tables() -> (ApiContext, tempfile::TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/065_eval_run_source_and_unrealized_pnl.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     let ctx = ApiContext::new(
         pool,
         Actor::Cli {

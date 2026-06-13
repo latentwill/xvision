@@ -32,6 +32,7 @@ async fn pool_with_migrations() -> SqlitePool {
         include_str!("../migrations/026_trace_surface_foundation.sql"),
         include_str!("../migrations/037_review_annotations_and_autofire.sql"),
         include_str!("../migrations/038_eval_runs_live_config.sql"),
+        include_str!("../migrations/065_eval_run_source_and_unrealized_pnl.sql"),
     ] {
         sqlx::query(sql).execute(&pool).await.unwrap();
     }

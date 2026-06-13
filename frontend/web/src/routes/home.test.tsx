@@ -81,6 +81,16 @@ vi.mock("@/api/agent-runs", () => ({
   listAgentRuns: vi.fn().mockResolvedValue([]),
 }));
 
+// n0k/awm: the home route owns the 5s live-deployments poll; rows flow down
+// through AttentionBand → ActiveTasksStrip.
+vi.mock("@/api/live-deployments", () => ({
+  deploymentKeys: {
+    all: ["live-deployments"],
+    list: (p?: unknown) => ["live-deployments", "list", p ?? {}],
+  },
+  listDeployments: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock("@/api/settings", () => ({
   settingsKeys: {
     providers: () => ["settings", "providers"],
@@ -353,6 +363,67 @@ describe("HomeRoute", () => {
       // Brokers configured, no missing provider keys → NagStrip returns null
       expect(document.querySelector('[data-testid="nag-strip"]')).toBeNull();
     });
+  });
+
+  // n0k/awm: the home route owns the live-deployments 5s poll and passes the
+  // rows down to ActiveTasksStrip (via AttentionBand). The query must filter to
+  // status=running,paused (the active-deployment window).
+  it("wires the live-deployments poll with status=running,paused", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    await waitFor(() => {
+      expect(vi.mocked(listDeployments)).toHaveBeenCalled();
+    });
+    const called = vi
+      .mocked(listDeployments)
+      .mock.calls.some((c) => {
+        const p = c[0] as { status?: string } | undefined;
+        return p?.status === "running,paused";
+      });
+    expect(called).toBe(true);
+  });
+
+  // A returned deployment renders as a live row inside the attention band.
+  it("renders a live deployment row from the poll inside the attention band", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    vi.mocked(listDeployments).mockResolvedValue([
+      {
+        deployment_id: "dep-home-1",
+        strategy_id: "strat-1",
+        strategy_name: "HomeMomentum",
+        mode: "paper",
+        status: "running",
+        started_at: "2026-06-13T00:00:00Z",
+        last_decision_at: "2026-06-13T01:00:00Z",
+        venue: "alpaca-paper",
+        venue_connected: true,
+        deployed_capital_usd: 1000,
+        realized_pnl_usd: 0,
+        unrealized_pnl_usd: null,
+        drawdown_pct: null,
+        daily_loss_limit_remaining_usd: null,
+        risk_veto_count_since_last_visit: null,
+        paused: false,
+        flatten_requested: false,
+        global_safety_paused: false,
+        source: "human",
+        unavailable_reason: null,
+      },
+    ]);
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const row = await screen.findByTestId("deployment-row-dep-home-1");
+    expect(row).toBeInTheDocument();
+    expect(screen.getByText("HomeMomentum")).toBeInTheDocument();
+    // HONESTY: a null unrealized P&L renders "—", never $0, on the wired row.
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    expect(pnl.textContent).toBe("—");
+    // The live row lives inside the attention band, not as a floating surface.
+    expect(row.closest('[data-testid="attention-band"]')).not.toBeNull();
   });
 
   // Redesign composition: pulse → attention → optimizer → leaderboard.
