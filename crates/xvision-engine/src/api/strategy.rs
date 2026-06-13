@@ -1393,6 +1393,11 @@ fn map_authoring_error(err: anyhow::Error, agent_id: Option<&str>) -> ApiError {
         "no manifest fields to update",
         "asset_universe",
         "decision_cadence_minutes",
+        // W6: new update_manifest fields — map invalid values to 400
+        // (Validation), consistent with the inspector PATCH path.
+        "display_name cannot be empty",
+        "plain_summary cannot be empty",
+        "is not a valid hex color",
         "unknown preset",
         "filter parse error",
         "filter validation error",
@@ -2475,6 +2480,9 @@ mod tests {
             &ctx,
             UpdateManifestReq {
                 id: created.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: None,
                 asset_universe: Some(vec!["BTC/USD".into()]),
                 decision_cadence_minutes: Some(360),
             },
@@ -2487,6 +2495,96 @@ mod tests {
         let strategy = get(&ctx, &created.id).await.unwrap();
         assert_eq!(strategy.manifest.asset_universe, vec!["BTC/USD"]);
         assert_eq!(strategy.manifest.decision_cadence_minutes, 360);
+
+        // W6: also verify display_name and plain_summary round-trip through
+        // the full api_strategy::update_manifest path with an audit record.
+        let out2 = update_manifest(
+            &ctx,
+            UpdateManifestReq {
+                id: created.id.clone(),
+                display_name: Some("Renamed via Chat".into()),
+                plain_summary: Some("A momentum strategy".into()),
+                color: Some("#A1B2C3".into()),
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out2.updated, vec!["display_name", "plain_summary", "color"]);
+        assert!(audit_row_exists(&ctx, "update_manifest", &created.id).await);
+        let strategy2 = get(&ctx, &created.id).await.unwrap();
+        assert_eq!(strategy2.manifest.display_name, "Renamed via Chat");
+        assert_eq!(strategy2.manifest.plain_summary, "A momentum strategy");
+        assert_eq!(strategy2.manifest.color, Some("#A1B2C3".into()));
+        // Previously-set fields must be untouched.
+        assert_eq!(strategy2.manifest.asset_universe, vec!["BTC/USD"]);
+        assert_eq!(strategy2.manifest.decision_cadence_minutes, 360);
+    }
+
+    #[tokio::test]
+    async fn update_manifest_only_display_name_succeeds_guard() {
+        // Guard test (W6 Finding #15): a call supplying ONLY display_name
+        // (no asset_universe, no decision_cadence_minutes) must succeed,
+        // not return the old "no manifest fields to update" 400 error.
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "Guard Test".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let out = update_manifest(
+            &ctx,
+            UpdateManifestReq {
+                id: created.id.clone(),
+                display_name: Some("Renamed Only".into()),
+                plain_summary: None,
+                color: None,
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out.updated, vec!["display_name"]);
+        let strategy = get(&ctx, &created.id).await.unwrap();
+        assert_eq!(strategy.manifest.display_name, "Renamed Only");
+    }
+
+    #[tokio::test]
+    async fn update_manifest_empty_display_name_is_validation_error() {
+        // W6: invalid new-field values must surface as 400 Validation
+        // (consistent with the inspector PATCH path), not 500 Internal.
+        let (ctx, _d) = ctx_with_audit().await;
+        let created = create_strategy(
+            &ctx,
+            CreateStrategyReq {
+                name: "x".into(),
+                creator: None,
+            },
+        )
+        .await
+        .unwrap();
+        let r = update_manifest(
+            &ctx,
+            UpdateManifestReq {
+                id: created.id,
+                display_name: Some("   ".into()),
+                plain_summary: None,
+                color: None,
+                asset_universe: None,
+                decision_cadence_minutes: None,
+            },
+        )
+        .await;
+        assert!(matches!(r, Err(ApiError::Validation(_))));
     }
 
     #[tokio::test]
@@ -2591,6 +2689,9 @@ mod tests {
             &ctx,
             crate::authoring::UpdateManifestReq {
                 id: created.id.clone(),
+                display_name: None,
+                plain_summary: None,
+                color: None,
                 asset_universe: Some(vec!["BTC/USD".into(), "ETH/USD".into()]),
                 decision_cadence_minutes: None,
             },

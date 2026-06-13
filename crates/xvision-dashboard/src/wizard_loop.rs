@@ -3408,18 +3408,37 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "update_manifest".into(),
-            description: "Persist manifest fields shown in the Strategy Inspector, including asset universe and decision cadence."
+            description: "Persist manifest fields shown in the Strategy Inspector, including \
+                display name, description, asset universe, decision cadence, and display color. \
+                All fields except `id` are optional — supply only the ones you want to change."
                 .into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
+                    "display_name": {
+                        "type": "string",
+                        "description": "Human-readable strategy name shown in the UI."
+                    },
+                    "plain_summary": {
+                        "type": "string",
+                        "description": "One-line plain-English description of what the strategy does."
+                    },
+                    "color": {
+                        "type": "string",
+                        "description": "Optional display color as a 7-character CSS hex string (e.g. '#D4A547'). Pass an empty string to clear a previously set color."
+                    },
                     "asset_universe": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "minItems": 1
+                        "minItems": 1,
+                        "description": "List of SYMBOL/QUOTE pairs this strategy trades (e.g. ['BTC/USD'])."
                     },
-                    "decision_cadence_minutes": {"type": "integer", "minimum": 1}
+                    "decision_cadence_minutes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "How often (in minutes) the strategy evaluates whether to act."
+                    }
                 },
                 "required": ["id"]
             }),
