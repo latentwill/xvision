@@ -11,8 +11,10 @@ import { Card } from "@/components/primitives/Card";
 import { ApiError } from "@/api/client";
 import {
   clearStrategyFilter,
+  setMechanisticConfig,
   setStrategyFilter,
   strategyKeys,
+  type DecisionMode,
   type Strategy,
 } from "@/api/strategies";
 
@@ -47,7 +49,10 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
     () => initialSourceFor(strategy.filter ?? null),
     [strategy.filter],
   );
+  const currentDecisionMode = strategy.decision_mode ?? "agentic";
   const [source, setSource] = useState<string>(initial);
+  const [decisionMode, setDecisionMode] =
+    useState<DecisionMode>(currentDecisionMode);
   const [savedFlash, setSavedFlash] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -59,7 +64,12 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
     setLocalError(null);
   }, [initial]);
 
+  useEffect(() => {
+    setDecisionMode(currentDecisionMode);
+  }, [currentDecisionMode]);
+
   const hasFilter = strategy.filter != null;
+  const decisionModeDirty = decisionMode !== currentDecisionMode;
 
   const saveMut = useMutation({
     mutationFn: () =>
@@ -94,11 +104,27 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
     },
   });
 
+  const modeMut = useMutation({
+    mutationFn: () =>
+      setMechanisticConfig(strategyId, {
+        decision_mode: decisionMode,
+        mechanistic_config:
+          decisionMode === "mechanistic"
+            ? (strategy.mechanistic_config ?? { entry_rules: [], close_policies: [] })
+            : null,
+      }),
+    onSuccess: (updated) => {
+      qc.setQueryData<Strategy>(strategyKeys.detail(strategyId), updated);
+      qc.invalidateQueries({ queryKey: strategyKeys.validate(strategyId) });
+    },
+  });
+
   const busy = saveMut.isPending || clearMut.isPending;
+  const modeBusy = modeMut.isPending;
   const canSave = source.trim().length > 0 && !busy;
 
   return (
-    <Card>
+    <Card data-testid="strategy-filter-card">
       <header className="px-5 pt-4 pb-3 border-b border-border-soft">
         <div className="flex flex-wrap items-center gap-2">
           <div className="text-[12px] uppercase tracking-wide text-text-3">
@@ -122,6 +148,55 @@ export function FilterCard({ strategy }: { strategy: Strategy }) {
       </header>
 
       <div className="px-5 pt-4 pb-5 space-y-4">
+        <div className="rounded border border-border-soft bg-surface-elev px-3 py-3 space-y-3">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="text-[12px] font-medium text-text">
+                Decision mode
+              </div>
+              <div className="text-[12px] text-text-2">
+                Agentic uses the saved filter to gate agent calls; mechanistic uses deterministic entry/exit rules.
+              </div>
+            </div>
+            <div
+              className="flex items-center gap-2"
+              role="group"
+              aria-label="Decision mode"
+            >
+              {(["agentic", "mechanistic"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={decisionMode === mode}
+                  onClick={() => setDecisionMode(mode)}
+                  className={`px-3 py-1.5 rounded text-[13px] border capitalize ${
+                    decisionMode === mode
+                      ? "border-gold text-gold bg-gold/10"
+                      : "border-border text-text-2 hover:border-text-3"
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => modeMut.mutate()}
+              disabled={!decisionModeDirty || modeBusy}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft disabled:opacity-40 transition-colors motion-safe:active:scale-[0.96]"
+            >
+              {modeBusy ? "Saving..." : "Save mode"}
+            </button>
+            {modeMut.isError ? (
+              <span className="text-[12px] text-danger">
+                {filterErrorMessage(modeMut.error)}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
         <textarea
           spellCheck={false}
           value={source}

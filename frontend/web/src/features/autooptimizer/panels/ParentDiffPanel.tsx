@@ -45,19 +45,19 @@ export function ParentDiffPanel({
   const loading = child.isLoading || (!!parentHash && parent.isLoading);
 
   return (
-    <section className="rounded-md border border-border bg-surface-card p-5">
+    <section className="rounded-md border border-border bg-surface-card p-5 text-left">
       <h2 className="m-0 text-[15px] font-semibold tracking-tight">What this experiment changed</h2>
-      <p className="mt-0.5 text-[12px] text-text-3">
+      <p className="m-0 mt-0.5 text-[12px] text-text-3">
         parent → experiment · {changed.length} field{changed.length === 1 ? "" : "s"} changed
       </p>
       {loading ? (
-        <p className="mt-3 text-[12px] text-text-3">Loading diff…</p>
+        <p className="m-0 mt-3 text-[12px] text-text-3">Loading diff…</p>
       ) : !parentHash ? (
-        <p className="mt-3 text-[12px] text-text-3">Root experiment — no parent to diff against.</p>
+        <p className="m-0 mt-3 text-[12px] text-text-3">Root experiment — no parent to diff against.</p>
       ) : changed.length === 0 ? (
-        <p className="mt-3 text-[12px] text-text-3">No field-level differences from the parent.</p>
+        <p className="m-0 mt-3 text-[12px] text-text-3">No field-level differences from the parent.</p>
       ) : (
-        <table className="mt-3 w-full border-collapse font-mono text-[11.5px]">
+        <table className="mt-3 w-full border-collapse text-left font-mono text-[11.5px]">
           <thead>
             <tr className="text-left text-text-3">
               <th className="py-1.5 pr-3 font-medium">Field</th>

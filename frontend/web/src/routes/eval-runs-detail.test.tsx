@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 
@@ -1364,6 +1364,70 @@ describe("EvalRunDetailRoute — Signal decisions table", () => {
     renderDetail();
     expect(await screen.findByText("TOTAL PNL")).toBeInTheDocument();
     expect(screen.getByText("+$642.00")).toBeInTheDocument();
+    expect(screen.getByText(/Realized unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/Unrealized unavailable/i)).toBeInTheDocument();
+  });
+
+  it("splits summary PnL into realized and unrealized components", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        equity_curve: [
+          { timestamp: "2026-05-13T14:00:00Z", equity_usd: 10000 },
+          { timestamp: "2026-05-13T14:30:00Z", equity_usd: 10642 },
+        ],
+        decisions: [
+          decision({ decision_index: 0, action: "long_open", pnl_realized: null }),
+          decision({ decision_index: 1, action: "flat", pnl_realized: 250 }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByText("TOTAL PNL")).toBeInTheDocument();
+    expect(screen.getByText("+$642.00")).toBeInTheDocument();
+    expect(screen.getByText(/Realized \+\$250\.00/i)).toBeInTheDocument();
+    expect(screen.getByText(/Unrealized \+\$392\.00/i)).toBeInTheDocument();
+  });
+
+  it("surfaces buy/sell decision context with the chart before the full decisions table", async () => {
+    vi.mocked(evalApi.getRun).mockResolvedValue(
+      detail({
+        summary: { ...detail().summary, status: "completed" },
+        equity_curve: [
+          { timestamp: "2026-05-13T14:00:00Z", equity_usd: 10000 },
+          { timestamp: "2026-05-13T14:30:00Z", equity_usd: 10642 },
+        ],
+        decisions: [
+          decision({ decision_index: 0, action: "long_open", fill_size: 1, fill_price: 50_000 }),
+          decision({
+            decision_index: 1,
+            action: "flat",
+            fill_size: 1,
+            fill_price: 51_000,
+            pnl_realized: 250,
+          }),
+        ],
+      }),
+    );
+
+    renderDetail();
+
+    const tape = await screen.findByTestId("eval-decision-tape");
+    expect(within(tape).getByText("BUY")).toBeInTheDocument();
+    expect(within(tape).getByText("SELL")).toBeInTheDocument();
+
+    const chartState = screen.getByText("No chart data.");
+    const fullDecisionsHeading = screen.getByRole("heading", {
+      name: "Decisions",
+    });
+    expect(
+      tape.compareDocumentPosition(chartState) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      chartState.compareDocumentPosition(fullDecisionsHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("maps engine actions to the Signal action vocabulary (BUY/SELL/SHORT/CLOSE/HOLD)", async () => {

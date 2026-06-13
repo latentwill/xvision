@@ -395,6 +395,99 @@ describe("ApiMarketplaceData.getSlices", () => {
 describe("ApiMarketplaceData delegation", () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it("lists marketplace-publishable strategies from the real strategies API", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (input === "/api/strategies?limit=200") {
+        return mockOkJson({
+          items: [
+            {
+              agent_id: "strat-actual-1",
+              display_name: "Actual Momentum",
+              asset_universe: ["BTC/USD", "ETH/USD"],
+              last_eval_completed_at: "2026-06-12T10:00:00Z",
+            },
+          ],
+          total: 1,
+        });
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+
+    const fallback = makeFallback();
+    const fallbackSpy = vi.spyOn(fallback, "listListableStrategies");
+    const api = new ApiMarketplaceData(fallback);
+
+    await expect(api.listListableStrategies()).resolves.toEqual([
+      {
+        id: "strat-actual-1",
+        name: "Actual Momentum",
+        version: "evaluated 2026-06-12",
+        assets: ["BTC", "ETH"],
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/strategies?limit=200",
+      expect.anything(),
+    );
+    expect(fallbackSpy).not.toHaveBeenCalled();
+  });
+
+  it("creates a publish draft for an actual strategy instead of the fixture seller list", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (input === "/api/strategies?limit=200") {
+        return mockOkJson({
+          items: [
+            {
+              agent_id: "strat-actual-1",
+              display_name: "Actual Momentum",
+              asset_universe: ["BTC/USD"],
+              last_eval_completed_at: "2026-06-12T10:00:00Z",
+            },
+          ],
+          total: 1,
+        });
+      }
+      if (input === "/api/strategy/strat-actual-1") {
+        return mockOkJson({
+          manifest: {
+            id: "strat-actual-1",
+            display_name: "Actual Momentum",
+            plain_summary: "Trades actual momentum.",
+            creator: "0xabc",
+            asset_universe: ["BTC/USD"],
+            attested_with: ["OpenAI gpt-4.1"],
+            required_tools: ["Birdeye MCP"],
+          },
+        });
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+    const fallback = makeFallback();
+    const fallbackSpy = vi.spyOn(fallback, "createPublishDraft");
+    const api = new ApiMarketplaceData(fallback);
+
+    const draft = await api.createPublishDraft("strat-actual-1");
+
+    expect(draft.strategyId).toBe("strat-actual-1");
+    expect(draft.listable).toEqual([
+      { ok: true, label: "Strategy exists in your XVN" },
+      { ok: true, label: "Declares an asset universe" },
+      { ok: true, label: "Has a backtest on record" },
+    ]);
+    expect(draft.preview).toMatchObject({
+      id: "Actual Momentum",
+      lineageId: "strat-actual-1",
+      assets: ["BTC"],
+      creator: { address: "0xabc" },
+      genArtSeed: "strat-actual-1",
+    });
+    expect(draft.ingredients).toEqual([
+      { name: "OpenAI gpt-4.1", kind: "model", installed: true },
+      { name: "Birdeye MCP", kind: "mcp", installed: true },
+    ]);
+    expect(fallbackSpy).not.toHaveBeenCalled();
+  });
+
   it("delegates getSlices to compute live counts (not fallback)", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       mockOkJson({ items: [indexedListing], total: 1 }),

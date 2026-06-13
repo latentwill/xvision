@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/primitives/Card";
@@ -14,33 +13,23 @@ import type { UpdateMemoryRequest } from "@/api/types.gen";
 // Built-in embedder sources. Provider rows are appended after these.
 const BUILTIN_EMBEDDER_OPTIONS: { value: string; label: string }[] = [
   { value: "off", label: "Off" },
-  { value: "local", label: "Local (offline, lexical)" },
-  { value: "auto", label: "Auto (best available)" },
-  { value: "custom", label: "Custom endpoint (OpenAI-compatible)" },
+  { value: "auto", label: "Auto (OpenAI embeddings)" },
 ];
 
-// Sentinel option that reveals the free-text custom-model input.
-const CUSTOM_MODEL_SENTINEL = "__custom__";
-
-// Curated embedding-model names. These are model ids your provider serves
-// (e.g. `ollama pull nomic-embed-text`); Local/Off ignore the model. The
-// empty value means "provider default" (clears back to the resolver
-// default).
+// Curated OpenAI embedding-model names. The empty value means "provider
+// default" (clears back to the resolver default).
 const CURATED_EMBEDDING_MODELS: { value: string; label: string }[] = [
-  { value: "", label: "Provider default" },
-  { value: "nomic-embed-text", label: "nomic-embed-text (Ollama)" },
-  { value: "mxbai-embed-large", label: "mxbai-embed-large (Ollama)" },
-  { value: "bge-m3", label: "bge-m3 (Ollama)" },
-  { value: "snowflake-arctic-embed2", label: "snowflake-arctic-embed2 (Ollama)" },
-  { value: "qwen3-embedding", label: "qwen3-embedding (Ollama)" },
-  { value: "all-minilm", label: "all-minilm (Ollama)" },
+  { value: "", label: "Provider default (OpenAI)" },
+  { value: "text-embedding-3-small", label: "text-embedding-3-small" },
+  { value: "text-embedding-3-large", label: "text-embedding-3-large" },
+  { value: "text-embedding-ada-002", label: "text-embedding-ada-002" },
 ];
 
 /**
  * Settings → General → Memory card.
  *
  * Operator surface for the Cortex memory layer: the embedder source
- * (off/local/auto/<provider>) plus the two workspace memory toggles
+ * (off/auto/<OpenAI provider>) plus the two workspace memory toggles
  * (chat + optimizer), with a read-only resolved-status line beneath.
  *
  * Backend reads its memory config as a startup snapshot, so changes here
@@ -80,9 +69,9 @@ export function MemorySettingsCard() {
 
   const embedderOptions = [
     ...BUILTIN_EMBEDDER_OPTIONS,
-    ...providers.map((p) => ({
+    ...providers.filter(isOpenAiMemoryProvider).map((p) => ({
       value: p.name,
-      label: `${p.name} (provider)`,
+      label: `${p.name} (OpenAI)`,
     })),
   ];
 
@@ -97,59 +86,17 @@ export function MemorySettingsCard() {
 
   // The persisted model id (or empty string for "provider default").
   const persistedModel = settings?.embedder_model ?? "";
-  // Whether the persisted model is a curated value; if not (and non-empty),
-  // the picker starts in Custom mode showing the value in the text input.
+  // Whether the persisted model is a curated OpenAI value; unknown values fall
+  // back to provider default in the select.
   const isCuratedModel = CURATED_EMBEDDING_MODELS.some(
     (m) => m.value === persistedModel,
   );
-  // Custom-input mode: revealed by selecting "Custom…", or implied when the
-  // persisted model is a non-curated value.
-  const [customMode, setCustomMode] = useState(false);
-  const [customDraft, setCustomDraft] = useState("");
-
-  // Sync local custom state when the persisted settings load/change.
-  useEffect(() => {
-    if (persistedModel && !isCuratedModel) {
-      setCustomMode(true);
-      setCustomDraft(persistedModel);
-    }
-  }, [persistedModel, isCuratedModel]);
 
   // The model picker is hidden for the "off" source (no embeddings at all).
   const showModelPicker = (settings?.embedder ?? "off") !== "off";
 
-  // Custom-endpoint base URL: shown only when the source is "custom". Bound to
-  // a local draft so the operator can type without a request per keystroke;
-  // persisted on blur / Enter.
-  const isCustomSource = (settings?.embedder ?? "off") === "custom";
-  const persistedBaseUrl = settings?.embedder_base_url ?? "";
-  const [baseUrlDraft, setBaseUrlDraft] = useState("");
-  // Sync the draft from the persisted value when settings load/change.
-  useEffect(() => {
-    setBaseUrlDraft(persistedBaseUrl);
-  }, [persistedBaseUrl]);
-  // Soft, non-blocking hint when the URL doesn't include the `/v1` suffix.
-  const trimmedBaseUrl = baseUrlDraft.trim();
-  const missingV1 =
-    trimmedBaseUrl.length > 0 &&
-    !trimmedBaseUrl.replace(/\/+$/, "").endsWith("/v1");
-
-  function submitBaseUrl(value: string) {
-    mutation.mutate({
-      embedder: "custom",
-      embedder_base_url: value.trim(),
-      chat_enabled: null,
-      optimizer_enabled: null,
-      embedder_model: null,
-    });
-  }
-
-  // The <select> value: the curated value, the custom sentinel, or empty.
-  const modelSelectValue = customMode
-    ? CUSTOM_MODEL_SENTINEL
-    : isCuratedModel
-      ? persistedModel
-      : "";
+  // The <select> value: the curated value or provider default.
+  const modelSelectValue = isCuratedModel ? persistedModel : "";
 
   function onEmbedderChange(value: string) {
     mutation.mutate({
@@ -172,13 +119,7 @@ export function MemorySettingsCard() {
   }
 
   function onModelSelectChange(value: string) {
-    if (value === CUSTOM_MODEL_SENTINEL) {
-      setCustomMode(true);
-      setCustomDraft(persistedModel && !isCuratedModel ? persistedModel : "");
-      return;
-    }
-    setCustomMode(false);
-    // Curated value (or "" for provider default) → persist immediately.
+    // Curated OpenAI value (or "" for provider default) persists immediately.
     submitModel(value);
   }
 
@@ -211,8 +152,8 @@ export function MemorySettingsCard() {
           </h3>
           <p className="m-0 mt-1 max-w-2xl text-[12px] leading-snug text-text-3">
             Cortex memory lets the chat rail and optimizer recall prior
-            observations. Pick where embeddings come from and which surfaces
-            use memory.
+            observations. Memory currently uses OpenAI embedding providers only;
+            pick the OpenAI source and which surfaces use memory.
           </p>
         </div>
         {settings ? (
@@ -251,49 +192,12 @@ export function MemorySettingsCard() {
             </option>
           ))}
         </select>
+        <small className="block max-w-2xl text-[11px] leading-snug text-text-3">
+          Add or edit the OpenAI provider in Settings {">"} Providers.
+          Non-OpenAI providers are not shown here because memory embeddings are
+          not supported for them.
+        </small>
       </div>
-
-      {/* Custom endpoint base URL — only for the "custom" source. */}
-      {isCustomSource ? (
-        <div className="mt-4 space-y-1.5">
-          <label
-            htmlFor="memory-embedder-base-url"
-            className="block text-[13px] font-medium text-text-2"
-          >
-            Custom endpoint base URL
-          </label>
-          <input
-            id="memory-embedder-base-url"
-            aria-label="Custom endpoint base URL"
-            type="text"
-            inputMode="url"
-            placeholder="http://localhost:11434/v1"
-            className="w-full max-w-sm rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text disabled:opacity-60"
-            value={baseUrlDraft}
-            disabled={busy}
-            onChange={(e) => setBaseUrlDraft(e.target.value)}
-            onBlur={() => submitBaseUrl(baseUrlDraft)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                submitBaseUrl(baseUrlDraft);
-              }
-            }}
-          />
-          {missingV1 ? (
-            <small className="block text-[11px] leading-snug text-amber-600 dark:text-amber-400">
-              Most OpenAI-compatible servers expect the path to end in{" "}
-              <code>/v1</code> (e.g. <code>http://localhost:11434/v1</code>).
-            </small>
-          ) : null}
-          <small className="block text-[11px] leading-snug text-text-3">
-            Point at any OpenAI-compatible /v1 endpoint — Ollama, llama.cpp, LM
-            Studio, vLLM. Include <code>/v1</code> (e.g.{" "}
-            <code>http://localhost:11434/v1</code>). No-auth only; for
-            authenticated endpoints add a provider in the Providers tab.
-          </small>
-        </div>
-      ) : null}
 
       {/* Embedding model — only relevant when a real embedder is in use. */}
       {showModelPicker ? (
@@ -317,32 +221,11 @@ export function MemorySettingsCard() {
                 {opt.label}
               </option>
             ))}
-            <option value={CUSTOM_MODEL_SENTINEL}>Custom…</option>
           </select>
-          {customMode ? (
-            <input
-              id="memory-embedder-model-custom"
-              aria-label="Custom embedding model"
-              type="text"
-              placeholder="e.g. nomic-embed-text"
-              className="mt-1.5 w-full max-w-sm rounded border border-border bg-surface-elev px-2 py-1.5 text-[13px] text-text disabled:opacity-60"
-              value={customDraft}
-              disabled={busy}
-              onChange={(e) => setCustomDraft(e.target.value)}
-              onBlur={() => submitModel(customDraft)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  submitModel(customDraft);
-                }
-              }}
-            />
-          ) : null}
           <small className="block text-[11px] leading-snug text-text-3">
-            The model name your provider serves (e.g.{" "}
-            <code>ollama pull nomic-embed-text</code>). Local and Off ignore
-            this. Don&apos;t switch models mid-corpus — the embeddings live in
-            separate spaces.
+            Use the OpenAI embedding model configured for your provider. Off
+            ignores this. Don&apos;t switch models mid-corpus — the embeddings
+            live in separate spaces.
           </small>
         </div>
       ) : null}
@@ -418,13 +301,22 @@ export function MemorySettingsCard() {
       ) : null}
 
       <small className="mt-3 block text-[11px] leading-snug text-text-3">
-        Memory is best-effort. Off uses no memory; Local is offline/lexical;
-        Auto prefers a configured provider and falls back to local.
-        Strategy-agent (per-slot) memory is set on each agent.{" "}
+        Memory is best-effort. Off uses no memory; Auto uses the configured
+        OpenAI embedding provider when available. Strategy-agent (per-slot)
+        memory is set on each agent.{" "}
         <span className="text-text-2">
           Settings apply after the next dashboard restart.
         </span>
       </small>
     </Card>
   );
+}
+
+function isOpenAiMemoryProvider(provider: {
+  name: string;
+  base_url?: string | null;
+}) {
+  const name = provider.name.toLowerCase();
+  const baseUrl = (provider.base_url ?? "").toLowerCase();
+  return name === "openai" || baseUrl.includes("api.openai.com");
 }

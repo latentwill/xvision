@@ -78,6 +78,27 @@ export function pickHeroRun(runs: RunSummary[]): RunSummary | null {
   return withMetrics ?? completed[0] ?? null;
 }
 
+export function latestEvaluatedStrategyRuns(
+  runs: RunSummary[],
+  limit = 5,
+): RunSummary[] {
+  const out: RunSummary[] = [];
+  const seen = new Set<string>();
+  const completed = runs
+    .filter((r) => r.status === "completed" && isChartableRun(r))
+    .sort((a, b) => (b.completed_at ?? "").localeCompare(a.completed_at ?? ""));
+
+  for (const run of completed) {
+    const strategyId = run.agent_id?.trim() || run.id;
+    if (seen.has(strategyId)) continue;
+    seen.add(strategyId);
+    out.push(run);
+    if (out.length >= limit) break;
+  }
+
+  return out;
+}
+
 export interface EvalThroughput {
   completed: number;
   inflight: number;

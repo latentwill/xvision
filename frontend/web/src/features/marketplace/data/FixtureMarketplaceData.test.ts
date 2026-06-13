@@ -62,6 +62,14 @@ describe("FixtureMarketplaceData", () => {
     const { txHash } = await mp.submitListing(draft);
     expect(txHash).toMatch(/^0x/);
   });
+  it("publish draft does not fabricate placeholder bundle ingredients", async () => {
+    const draft = await mp.createPublishDraft("local-btc-momentum");
+    expect(draft.ingredients).toEqual([]);
+  });
+  it("publish draft uses the selected strategy as the listing preview identity art seed", async () => {
+    const draft = await mp.createPublishDraft("local-btc-momentum");
+    expect(draft.preview.genArtSeed).toBe("local-btc-momentum");
+  });
   it("purchaseIntent returns a TxRef with network (testnet label source)", async () => {
     const ref = await mp.purchaseIntent("btc-momentum-v3");
     expect(ref.txHash).toMatch(/^0x/);

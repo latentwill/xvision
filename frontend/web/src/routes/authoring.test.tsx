@@ -13,6 +13,7 @@ import { AttachedAgentRow, AuthoringRoute } from "./authoring";
 import * as strategyApi from "@/api/strategies";
 import * as agentApi from "@/api/agents";
 import * as settingsApi from "@/api/settings";
+import * as chartApi from "@/api/chart";
 
 vi.mock("@/api/strategies", async () => {
   const actual = await vi.importActual<typeof import("@/api/strategies")>(
@@ -138,12 +139,18 @@ beforeEach(() => {
   vi.mocked(strategyApi.validateDraft).mockReset();
   vi.mocked(strategyApi.removeStrategyAgent).mockReset();
   vi.mocked(strategyApi.renameStrategyAgentRole).mockReset();
+  vi.mocked(chartApi.getStrategyChart).mockReset();
   vi.mocked(settingsApi.listProviders).mockResolvedValue({ providers: [] ,
       default_model: null,
   });
 
   vi.mocked(agentApi.listAgents).mockResolvedValue([baseAgent]);
   vi.mocked(strategyApi.getStrategy).mockResolvedValue(baseStrategy);
+  vi.mocked(chartApi.getStrategyChart).mockResolvedValue({
+    strategy_id: "01TEST",
+    run_series: [],
+    scenarios: [],
+  });
   vi.mocked(strategyApi.validateDraft).mockResolvedValue({
     id: "01TEST",
     ok: true,
@@ -156,6 +163,70 @@ afterEach(() => {
 });
 
 describe("AuthoringRoute attached-agent row collapse + inline detail", () => {
+  it("shows quick performance before setup fields using strategy eval chart data", async () => {
+    vi.mocked(chartApi.getStrategyChart).mockResolvedValue({
+      strategy_id: "01TEST",
+      scenarios: [["btc-4h", "BTC 4H"]],
+      run_series: [
+        {
+          run_id: "run-a",
+          label: "Run A",
+          scenario_id: "btc-4h",
+          final_pnl_usd: 1250,
+          max_drawdown_pct: -4.2,
+          sharpe: 1.84,
+          equity_normalised: [
+            { time: 1, equity_usd: 100 },
+            { time: 2, equity_usd: 112.5 },
+          ],
+        },
+        {
+          run_id: "run-b",
+          label: "Run B",
+          scenario_id: "btc-4h",
+          final_pnl_usd: -120,
+          max_drawdown_pct: -8.1,
+          sharpe: 0.44,
+          equity_normalised: [
+            { time: 1, equity_usd: 100 },
+            { time: 2, equity_usd: 98.8 },
+          ],
+        },
+      ],
+    });
+
+    renderRoute();
+
+    const quick = await screen.findByText("Quick performance");
+    const manifest = screen.getByText("Manifest");
+    expect(
+      quick.compareDocumentPosition(manifest) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(await screen.findByText("2 evals")).toBeInTheDocument();
+    expect(screen.getByText("+$1,250.00")).toBeInTheDocument();
+    expect(screen.getByText("1.84")).toBeInTheDocument();
+    expect(screen.getByText("−8.10%")).toBeInTheDocument();
+    expect(screen.getByTestId("strategy-chart")).toBeInTheDocument();
+  });
+
+  it("places eval readiness after the primary setup sections", async () => {
+    renderRoute();
+
+    const agents = await screen.findByText("Strategy agents");
+    const risk = screen.getByText("Risk");
+    const readiness = screen.getByText("Eval readiness");
+
+    expect(
+      agents.compareDocumentPosition(readiness) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      risk.compareDocumentPosition(readiness) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("renders the model in the bar even when the row is collapsed", async () => {
     // Pre-set storage so the row mounts in collapsed state.
     localStorage.setItem("xvn:authoring:agent-collapsed:01TEST:trader", "1");

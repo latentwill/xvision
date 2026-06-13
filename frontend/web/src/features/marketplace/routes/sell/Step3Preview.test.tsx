@@ -73,11 +73,31 @@ describe("Step3Preview", () => {
     expect(container.querySelector('[data-genart="bitfields-v3"]')).not.toBeNull();
   });
 
+  it("keeps identity art inside the listing preview instead of a separate duplicate preview", () => {
+    const { container } = render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
+    const canvases = container.querySelectorAll('[data-genart="bitfields-v3"]');
+    expect(canvases).toHaveLength(1);
+    expect(screen.queryByText(/^Identity art preview$/)).not.toBeInTheDocument();
+  });
+
   it("lists all ingredients with their kind label", () => {
     render(<Step3Preview draft={happyDraft} onMint={vi.fn()} minting={false} />);
     expect(screen.getByText("Claude Haiku 4.5")).toBeInTheDocument();
     expect(screen.getByText("Birdeye MCP")).toBeInTheDocument();
     expect(screen.getAllByText(/model|mcp/i).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("renders an honest empty state when no bundle ingredients are known", () => {
+    render(
+      <Step3Preview
+        draft={{ ...happyDraft, ingredients: [] }}
+        onMint={vi.fn()}
+        minting={false}
+      />,
+    );
+    expect(screen.getByText(/No bundle ingredients detected/i)).toBeInTheDocument();
+    expect(screen.queryByText("Claude Haiku 4.5")).not.toBeInTheDocument();
+    expect(screen.queryByText("Birdeye MCP")).not.toBeInTheDocument();
   });
 
   it("Mint button is enabled for happy draft", () => {

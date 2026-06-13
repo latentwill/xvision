@@ -36,8 +36,13 @@ import type {
 } from "@/api/types.gen";
 import { EvalTopBar } from "@/components/eval-detail/EvalTopBar";
 import { MetaChip } from "@/components/eval-detail/MetaChip";
+import { ActionPill } from "@/components/eval-detail/ActionPill";
 import { DecisionsTable } from "@/components/eval-detail/DecisionsTable";
-import { toTimelineDecisions } from "@/components/eval-detail/decision-view";
+import {
+  shortAsset,
+  toTimelineDecisions,
+  type TimelineDecision,
+} from "@/components/eval-detail/decision-view";
 import { FilterSummaryPanel } from "@/features/eval-runs/FilterSummaryPanel";
 import { FilterEventTimeline } from "@/features/eval-runs/FilterEventTimeline";
 import {
@@ -361,6 +366,7 @@ export function EvalRunDetailRoute() {
             <SummaryCard
               summary={detail.summary}
               equityCurve={detail.equity_curve}
+              decisions={detail.decisions}
               totalCostUsd={linkedAgentRun.data?.summary.total_cost_usd || null}
               chartPending={chart.isPending}
               chartError={chart.isError ? String(chart.error) : null}
@@ -553,6 +559,7 @@ const ACTION_BTN =
 function SummaryCard({
   summary,
   equityCurve,
+  decisions,
   totalCostUsd,
   chartPending,
   chartError,
@@ -567,6 +574,7 @@ function SummaryCard({
 }: {
   summary: RunSummary;
   equityCurve: ReadonlyArray<{ equity_usd: number }>;
+  decisions: DecisionRowDto[];
   totalCostUsd: number | null;
   chartPending: boolean;
   chartError: string | null;
@@ -596,6 +604,21 @@ function SummaryCard({
   const agentRunId = traceRunId(summary);
   const displayedCostUsd = displayCost(summary, totalCostUsd);
   const verdict = summary.status === "completed" ? "PASS" : summary.status.toUpperCase();
+  const totalPnl = totalPnlUsd(equityCurve);
+  const realizedPnl = realizedPnlUsd(decisions);
+  const unrealizedPnl = unrealizedPnlUsd(totalPnl, realizedPnl);
+  const decisionTape = useMemo(
+    () =>
+      toTimelineDecisions(decisions)
+        .filter(
+          (decision) =>
+            decision.phase !== "filtered" &&
+            decision.action &&
+            decision.action !== "HOLD",
+        )
+        .slice(0, 6),
+    [decisions],
+  );
 
   async function handleDownload() {
     setDownloadError(null);
@@ -699,6 +722,8 @@ function SummaryCard({
         </div>
       ) : null}
 
+      <DecisionTape decisions={decisionTape} />
+
       {/* Equity / run chart */}
       <div className="px-5 pt-4">
         {chartPending ? (
@@ -721,9 +746,9 @@ function SummaryCard({
       >
         <Stat
           label="TOTAL PNL"
-          value={fmtPnlUsd(totalPnlUsd(equityCurve))}
-          sub={`${fmtPct(summary.total_return_pct)} · incl. unrealized`}
-          tone={pnlTone(totalPnlUsd(equityCurve))}
+          value={fmtPnlUsd(totalPnl)}
+          sub={`${fmtPct(summary.total_return_pct)} · ${pnlSplitSub(realizedPnl, unrealizedPnl)}`}
+          tone={pnlTone(totalPnl)}
         />
         <Stat
           label="MAX DRAWDOWN"
@@ -755,6 +780,38 @@ function SummaryCard({
 
       <div className="px-5 pb-5 pt-3">
         <RunSummaryPanel error={summary.error} />
+      </div>
+    </div>
+  );
+}
+
+function DecisionTape({ decisions }: { decisions: TimelineDecision[] }) {
+  if (decisions.length === 0) return null;
+  return (
+    <div
+      data-testid="eval-decision-tape"
+      className="mx-5 mt-4 rounded-sm border border-border-soft bg-surface-elev px-3 py-2"
+    >
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div className="text-[10px] font-mono tracking-[0.18em] text-text-3 uppercase">
+          Decision tape
+        </div>
+        <div className="text-[11px] text-text-3">
+          first engaged decisions
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {decisions.map((decision) => (
+          <div
+            key={`${decision.i}:${decision.action}:${decision.asset}`}
+            className="inline-flex items-center gap-2 rounded-sm border border-border-soft bg-surface-card px-2 py-1"
+          >
+            {decision.action ? <ActionPill action={decision.action} /> : null}
+            <span className="font-mono text-[11px] text-text-2">
+              {shortAsset(decision.asset)}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1008,6 +1065,37 @@ function totalPnlUsd(
   const end = equityCurve[equityCurve.length - 1]?.equity_usd;
   if (start == null || end == null) return null;
   return end - start;
+}
+
+function realizedPnlUsd(decisions: ReadonlyArray<DecisionRowDto>): number | null {
+  let total = 0;
+  let count = 0;
+  for (const row of decisions) {
+    if (row.action === "flat" && row.pnl_realized != null) {
+      total += row.pnl_realized;
+      count += 1;
+    }
+  }
+  return count > 0 ? total : null;
+}
+
+function unrealizedPnlUsd(
+  totalPnl: number | null,
+  realizedPnl: number | null,
+): number | null {
+  if (totalPnl == null || realizedPnl == null) return null;
+  return totalPnl - realizedPnl;
+}
+
+function pnlSplitSub(
+  realizedPnl: number | null,
+  unrealizedPnl: number | null,
+): string {
+  return `${pnlComponent("Realized", realizedPnl)} · ${pnlComponent("Unrealized", unrealizedPnl)}`;
+}
+
+function pnlComponent(label: string, pnl: number | null): string {
+  return `${label} ${pnl == null ? "unavailable" : fmtPnlUsd(pnl)}`;
 }
 
 function fmtPnlUsd(pnl: number | null): string {

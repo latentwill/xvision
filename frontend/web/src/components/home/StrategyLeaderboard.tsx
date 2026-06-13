@@ -168,7 +168,7 @@ export function StrategyLeaderboard({
             </span>
           </div>
           <Link
-            to="/strategies"
+            to="/strategies?sort=leaderboard"
             className="text-[12px] text-text-3 hover:text-text"
           >
             View all →

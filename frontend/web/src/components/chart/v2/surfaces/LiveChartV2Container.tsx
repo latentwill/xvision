@@ -4,6 +4,7 @@ import { useRunStream, type LiveStatus } from "@/components/chart/use-run-stream
 import type { RunChartPayload } from "@/api/types.gen";
 
 import { runChartPayloadToV2 } from "../adapters/run-chart-payload";
+import { EmptyState } from "../primitives";
 import type { LiveChartV2Payload } from "../types";
 import { LiveChartV2 } from "./LiveChartV2";
 
@@ -69,13 +70,33 @@ export function LiveChartV2Container({ runId, stream }: LiveChartV2ContainerProp
         )}
       </label>
       {data ? (
-        <LiveChartV2 payload={toLivePayload(data, status)} follow={effectiveFollow} />
+        isEmptyLiveSnapshot(data) ? (
+          <EmptyState
+            title="No live chart data yet"
+            message="This run is wired to the live chart feed, but no bars, equity points, or trade markers have arrived yet."
+          />
+        ) : (
+          <LiveChartV2
+            payload={toLivePayload(data, status)}
+            follow={effectiveFollow}
+          />
+        )
       ) : (
         <div className="text-text-3 py-12 text-center">
           Waiting for first event…
         </div>
       )}
     </div>
+  );
+}
+
+function isEmptyLiveSnapshot(data: RunChartPayload): boolean {
+  return (
+    data.bars.length === 0 &&
+    data.equity.length === 0 &&
+    data.markers.trades.length === 0 &&
+    data.markers.vetoes.length === 0 &&
+    data.markers.holds.length === 0
   );
 }
 

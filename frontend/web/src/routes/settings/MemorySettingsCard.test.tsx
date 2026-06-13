@@ -102,7 +102,7 @@ afterEach(() => {
 });
 
 describe("MemorySettingsCard", () => {
-  it("renders the embedder select with Off/Local/Auto + mocked provider option", async () => {
+  it("renders the embedder select with Off/Auto + mocked OpenAI provider option", async () => {
     const { findByLabelText } = renderCard();
     const select = (await findByLabelText("Embedder source")) as HTMLSelectElement;
     // The provider option is appended once listProviders resolves.
@@ -112,19 +112,36 @@ describe("MemorySettingsCard", () => {
     });
     const optionValues = Array.from(select.options).map((o) => o.value);
     expect(optionValues).toContain("off");
-    expect(optionValues).toContain("local");
     expect(optionValues).toContain("auto");
     // Pre-selected from the mocked report.
     expect(select.value).toBe("auto");
   });
 
+  it("limits memory embedding controls to OpenAI-backed choices", async () => {
+    const { findByLabelText, findByText, queryByText } = renderCard();
+    const select = (await findByLabelText("Embedder source")) as HTMLSelectElement;
+    await findByText(/Memory currently uses OpenAI embedding providers only/i);
+
+    const labels = Array.from(select.options).map((o) => o.textContent ?? "");
+    expect(labels).toContain("Off");
+    expect(labels).toContain("Auto (OpenAI embeddings)");
+    expect(labels).toContain("openai (OpenAI)");
+    expect(labels).not.toContain("Local (offline, lexical)");
+    expect(labels).not.toContain("Custom endpoint (OpenAI-compatible)");
+    expect(queryByText(/Ollama/i)).not.toBeInTheDocument();
+  });
+
   it("calls updateMemorySettings with the chosen embedder on change", async () => {
     const { findByLabelText } = renderCard();
-    const select = await findByLabelText("Embedder source");
-    fireEvent.change(select, { target: { value: "local" } });
+    const select = (await findByLabelText("Embedder source")) as HTMLSelectElement;
+    await waitFor(() => {
+      const values = Array.from(select.options).map((o) => o.value);
+      expect(values).toContain("openai");
+    });
+    fireEvent.change(select, { target: { value: "openai" } });
     await waitFor(() => {
       expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
-        embedder: "local",
+        embedder: "openai",
         chat_enabled: null,
         optimizer_enabled: null,
         embedder_model: null,
@@ -180,11 +197,11 @@ describe("MemorySettingsCard", () => {
       "Embedding model",
     )) as HTMLSelectElement;
     const values = Array.from(modelSelect.options).map((o) => o.value);
-    expect(values).toContain("nomic-embed-text");
-    expect(values).toContain("qwen3-embedding");
-    // "Provider default" (empty) and a Custom escape hatch are offered.
+    expect(values).toContain("text-embedding-3-small");
+    expect(values).toContain("text-embedding-3-large");
+    // "Provider default" (empty) is offered.
     expect(values).toContain("");
-    expect(values).toContain("__custom__");
+    expect(values).not.toContain("__custom__");
   });
 
   it("does not render the model picker when embedder source is off", async () => {
@@ -200,102 +217,27 @@ describe("MemorySettingsCard", () => {
   it("calls updateMemorySettings with the chosen model on change", async () => {
     const { findByLabelText } = renderCard();
     const modelSelect = await findByLabelText("Embedding model");
-    fireEvent.change(modelSelect, { target: { value: "nomic-embed-text" } });
+    fireEvent.change(modelSelect, { target: { value: "text-embedding-3-large" } });
     await waitFor(() => {
       expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
         embedder: null,
         chat_enabled: null,
         optimizer_enabled: null,
-        embedder_model: "nomic-embed-text",
+        embedder_model: "text-embedding-3-large",
         embedder_base_url: null,
       });
     });
   });
 
-  it("offers a Custom endpoint option in the embedder source select", async () => {
-    const { findByLabelText } = renderCard();
+  it("does not offer custom endpoints or non-OpenAI model controls", async () => {
+    const { findByLabelText, queryByLabelText } = renderCard();
     const select = (await findByLabelText(
       "Embedder source",
     )) as HTMLSelectElement;
     const values = Array.from(select.options).map((o) => o.value);
-    expect(values).toContain("custom");
-  });
-
-  it("hides the custom base-URL input for non-custom sources", async () => {
-    const { findByLabelText, queryByLabelText } = renderCard();
-    await findByLabelText("Embedder source");
-    // Source is "auto" in the mocked report → no custom base-URL input.
+    expect(values).not.toContain("custom");
+    expect(values).not.toContain("local");
     expect(queryByLabelText("Custom endpoint base URL")).toBeNull();
-  });
-
-  it("reveals the custom base-URL input when the source is custom", async () => {
-    vi.mocked(settingsApi.getMemorySettings).mockResolvedValue(
-      memoryReport({ embedder: "custom", embedder_base_url: null }),
-    );
-    const { findByLabelText } = renderCard();
-    const input = (await findByLabelText(
-      "Custom endpoint base URL",
-    )) as HTMLInputElement;
-    expect(input).toBeInTheDocument();
-  });
-
-  it("selecting Custom endpoint sends embedder=custom", async () => {
-    const { findByLabelText } = renderCard();
-    const select = await findByLabelText("Embedder source");
-    fireEvent.change(select, { target: { value: "custom" } });
-    await waitFor(() => {
-      expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
-        embedder: "custom",
-        chat_enabled: null,
-        optimizer_enabled: null,
-        embedder_model: null,
-        embedder_base_url: null,
-      });
-    });
-  });
-
-  it("typing a base URL sends embedder + embedder_base_url", async () => {
-    vi.mocked(settingsApi.getMemorySettings).mockResolvedValue(
-      memoryReport({ embedder: "custom", embedder_base_url: null }),
-    );
-    const { findByLabelText } = renderCard();
-    const input = (await findByLabelText(
-      "Custom endpoint base URL",
-    )) as HTMLInputElement;
-    fireEvent.change(input, {
-      target: { value: "http://localhost:11434/v1" },
-    });
-    fireEvent.blur(input);
-    await waitFor(() => {
-      expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
-        embedder: "custom",
-        embedder_base_url: "http://localhost:11434/v1",
-        chat_enabled: null,
-        optimizer_enabled: null,
-        embedder_model: null,
-      });
-    });
-  });
-
-  it("reveals a custom model input that also sends embedder_model", async () => {
-    const { findByLabelText, queryByLabelText } = renderCard();
-    const modelSelect = await findByLabelText("Embedding model");
-    // No custom input until "Custom…" is selected.
     expect(queryByLabelText("Custom embedding model")).toBeNull();
-    fireEvent.change(modelSelect, { target: { value: "__custom__" } });
-    const customInput = (await findByLabelText(
-      "Custom embedding model",
-    )) as HTMLInputElement;
-    fireEvent.change(customInput, { target: { value: "my-local-embed" } });
-    fireEvent.blur(customInput);
-    await waitFor(() => {
-      expect(settingsApi.updateMemorySettings).toHaveBeenCalledWith({
-        embedder: null,
-        chat_enabled: null,
-        optimizer_enabled: null,
-        embedder_model: "my-local-embed",
-        embedder_base_url: null,
-      });
-    });
   });
 });

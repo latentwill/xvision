@@ -5,20 +5,21 @@
 // view: every agent in the workspace, regardless of how it was created.
 // Standalone-create lives at /agents/new (Task 5).
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 
 import { Topbar } from "@/components/shell/Topbar";
 import { Icon } from "@/components/primitives/Icon";
 import { Pill } from "@/components/primitives/Pill";
-import { ToolBadges } from "@/components/agent/ToolBadges";
 import {
   agentKeys,
   listAgentsPaged,
+  updateAgent,
   type Agent,
   type AgentStatus,
 } from "@/api/agents";
+import { listTools, toolKeys } from "@/api/tools";
 import { ApiError } from "@/api/client";
 import {
   ServerPagerStrip,
@@ -157,6 +158,20 @@ export function AgentsRoute() {
     { key: "updated", label: "Updated", priority: 0,     estWidth: 100 },
   ];
   const columnState = useListColumns("agents", desktopColumns);
+  const queryClient = useQueryClient();
+  const toolsQ = useQuery({ queryKey: toolKeys.all, queryFn: listTools });
+  const updateTools = useMutation({
+    mutationFn: ({ row, tools }: { row: Agent; tools: string[] }) =>
+      updateAgent(row.agent_id, {
+        slots: row.slots.map((slot) => ({
+          ...slot,
+          allowed_tools: tools,
+        })),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: agentKeys.all });
+    },
+  });
 
   return (
     <>
@@ -221,7 +236,17 @@ export function AgentsRoute() {
           ) : null
         }
         renderRow={(row) => (
-          <DesktopRow key={row.agent_id} row={row} onGo={go} />
+          <DesktopRow
+            key={row.agent_id}
+            row={row}
+            onGo={go}
+            tools={toolsQ.data?.items ?? []}
+            toolsLoading={toolsQ.isPending}
+            updatingTools={updateTools.isPending}
+            onToolsChange={(nextTools) =>
+              updateTools.mutate({ row, tools: nextTools })
+            }
+          />
         )}
         renderMobileRow={(row) => (
           <MListRow
@@ -265,9 +290,17 @@ function subtitleFor(
 function DesktopRow({
   row,
   onGo,
+  tools,
+  toolsLoading,
+  updatingTools,
+  onToolsChange,
 }: {
   row: Agent;
   onGo: (id: string) => void;
+  tools: { name: string; description: string }[];
+  toolsLoading: boolean;
+  updatingTools: boolean;
+  onToolsChange: (tools: string[]) => void;
 }) {
   const status = defaultStatus(row);
   const skillsCount = row.slots.reduce(
@@ -297,7 +330,13 @@ function DesktopRow({
         <StatusPill status={status} />
       </td>
       <td className="px-5 py-3">
-        <ToolBadges tools={agentTools(row)} />
+        <AgentToolsSelect
+          row={row}
+          tools={tools}
+          loading={toolsLoading}
+          disabled={updatingTools}
+          onChange={onToolsChange}
+        />
       </td>
       <td className="px-5 py-3 text-text-2 font-mono text-[12px]">
         {row.slots.length === 1
@@ -317,6 +356,54 @@ function DesktopRow({
         {formatRelative(row.updated_at)}
       </td>
     </tr>
+  );
+}
+
+function AgentToolsSelect({
+  row,
+  tools,
+  loading,
+  disabled,
+  onChange,
+}: {
+  row: Agent;
+  tools: { name: string; description: string }[];
+  loading: boolean;
+  disabled: boolean;
+  onChange: (tools: string[]) => void;
+}) {
+  const selectedTools = agentTools(row);
+  const value =
+    selectedTools.length === 0
+      ? "__none__"
+      : selectedTools.length === 1
+        ? selectedTools[0]
+        : "__custom__";
+
+  return (
+    <select
+      aria-label={`Tools for ${row.name}`}
+      value={value}
+      disabled={loading || disabled}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        e.stopPropagation();
+        const next = e.target.value;
+        if (next === "__custom__") return;
+        onChange(next === "__none__" ? [] : [next]);
+      }}
+      className="h-7 w-[150px] rounded-sm border border-border bg-surface-elev px-2 font-mono text-[11px] text-text-2 outline-none transition-colors hover:border-text-3 focus:border-gold/50 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      <option value="__none__">No tools</option>
+      {selectedTools.length > 1 ? (
+        <option value="__custom__">{selectedTools.length} tools</option>
+      ) : null}
+      {tools.map((tool) => (
+        <option key={tool.name} value={tool.name} title={tool.description}>
+          {tool.name}
+        </option>
+      ))}
+    </select>
   );
 }
 

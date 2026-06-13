@@ -267,7 +267,13 @@ describe("EvalRunDetailRoute (mobile layout)", () => {
     expect(screen.getByText("SHARPE")).toBeInTheDocument();
     expect(screen.getByText("WIN RATE")).toBeInTheDocument();
     expect(screen.getByText("META")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "Equity curve" })).toBeInTheDocument();
+    const tape = screen.getByTestId("mobile-eval-decision-tape");
+    expect(within(tape).getByText("BUY")).toBeInTheDocument();
+    const equity = screen.getByRole("img", { name: "Equity curve" });
+    expect(equity).toBeInTheDocument();
+    expect(
+      tape.compareDocumentPosition(equity) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("renders mobile context links and total inference cost", async () => {

@@ -20,6 +20,7 @@ import {
 } from "@/components/lists";
 import { MListRow } from "@/components/lists/MListRow";
 import { ApiError } from "@/api/client";
+import { evalKeys, listRuns } from "@/api/eval";
 import {
   createStrategy,
   cloneStrategy,
@@ -30,12 +31,17 @@ import {
   type Strategy,
   type StrategyListItem,
 } from "@/api/strategies";
+import { strategyEvalCoverage } from "@/features/strategies/coverage";
+import { strategyLeaderboard } from "@/features/home/leaderboard";
 import { formatCadence } from "@/lib/format";
 
 const SORT_OPTIONS: SortOption[] = [
   { value: "added", label: "Recently added" },
+  { value: "leaderboard", label: "Leaderboard" },
   { value: "name", label: "Name A → Z" },
 ];
+
+const LEADERBOARD_RUNS_PAGE = { limit: 100 } as const;
 
 const SHAPE_FILTER: FilterDef = {
   id: "shape",
@@ -182,6 +188,7 @@ function ViewToggle({
 /** List view body — the original StrategiesRoute content. */
 function StrategiesListView() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const create = useMutation<CreateStrategyOut, unknown, void>({
     mutationFn: () =>
       createStrategy({
@@ -224,6 +231,11 @@ function StrategiesListView() {
     (row) => !isLegacyAgentlessExample(row),
   );
   const total = q.data?.total ?? 0;
+  const leaderboardRuns = useQuery({
+    queryKey: evalKeys.runs(LEADERBOARD_RUNS_PAGE),
+    queryFn: () => listRuns(LEADERBOARD_RUNS_PAGE),
+    enabled: searchParams.get("sort") === "leaderboard",
+  });
 
   const list = useListState<StrategyListItem>({
     rows: items,
@@ -234,17 +246,14 @@ function StrategiesListView() {
       if (shape !== "all" && shapeOf(row) !== shape) return false;
       const needle = query.trim().toLowerCase();
       if (needle.length === 0) return true;
-      const name = (row.display_name || "").toLowerCase();
-      const idPrefix = row.agent_id.slice(0, 12).toLowerCase();
-      const fullId = row.agent_id.toLowerCase();
-      return (
-        name.includes(needle) ||
-        idPrefix.includes(needle) ||
-        fullId.includes(needle)
+      return strategySearchTerms(row).some((term) =>
+        term.toLowerCase().includes(needle),
       );
     },
     sortFn: (rows, key) => {
       switch (key) {
+        case "leaderboard":
+          return sortByLeaderboard(rows, leaderboardRuns.data ?? []);
         case "name":
           return rows.sort((a, b) =>
             (a.display_name || "").localeCompare(b.display_name || ""),
@@ -307,7 +316,7 @@ function StrategiesListView() {
         title="Strategies"
         count={list.totalRows}
         toolbar={{
-          search: { ...list.search, placeholder: "Search name or id…" },
+          search: { ...list.search, placeholder: "Search name, model, capability, author…" },
           filters: list.filters,
           sort: list.sort,
           clearAll: list.clearAll,
@@ -371,6 +380,50 @@ function StrategiesListView() {
       />
     </>
   );
+}
+
+function sortByLeaderboard(
+  rows: StrategyListItem[],
+  runs: Awaited<ReturnType<typeof listRuns>>,
+): StrategyListItem[] {
+  const ranked = strategyLeaderboard(strategyEvalCoverage(rows, runs), rows.length);
+  const rankById = new Map(
+    ranked.map((entry, index) => [entry.strategy.agent_id, index]),
+  );
+  return rows.sort((a, b) => {
+    const aRank = rankById.get(a.agent_id);
+    const bRank = rankById.get(b.agent_id);
+    if (aRank !== undefined && bRank !== undefined) return aRank - bRank;
+    if (aRank !== undefined) return -1;
+    if (bRank !== undefined) return 1;
+    return 0;
+  });
+}
+
+function strategySearchTerms(row: StrategyListItem): string[] {
+  const terms = [
+    row.display_name,
+    row.agent_id,
+    row.agent_id.slice(0, 12),
+    row.template,
+    row.creator ?? "",
+    row.model ?? "",
+    row.activation_mode ?? "",
+    row.execution_mode ?? "",
+    row.origin ?? "",
+    decisionMode(row).label,
+    shapeOf(row),
+    modelSummary(row),
+  ];
+  terms.push(...(row.tags ?? []));
+  terms.push(...(row.providers ?? []));
+  terms.push(...(row.models ?? []));
+  terms.push(...(row.capabilities ?? []));
+  terms.push(...(row.asset_universe ?? []));
+  for (const pair of row.provider_models ?? []) {
+    terms.push(pair.provider, pair.model, `${pair.provider}/${pair.model}`);
+  }
+  return terms.filter((term) => term.trim().length > 0);
 }
 
 function NewStrategyButton({

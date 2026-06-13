@@ -15,6 +15,7 @@ export type StrategyListItem = {
   agent_id: string;
   display_name: string;
   template: string;
+  creator?: string | null;
   decision_cadence_minutes: number;
   tags?: string[];
   color?: string | null;
@@ -22,6 +23,7 @@ export type StrategyListItem = {
   providers?: string[];
   models?: string[];
   provider_models?: ProviderModelPair[];
+  capabilities?: string[];
   agent_count?: number;
   filter_count?: number;
   activation_mode?: ActivationMode;

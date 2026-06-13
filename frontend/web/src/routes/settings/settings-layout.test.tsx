@@ -26,6 +26,41 @@ describe("SettingsLayout", () => {
     expect(screen.getByRole("link", { name: "Providers" })).toBeInTheDocument();
   });
 
+  it("does not expose Tool policy as a settings tab", () => {
+    render(
+      <MemoryRouter initialEntries={["/settings/providers"]}>
+        <QueryClientProvider client={new QueryClient()}>
+          <Routes>
+            <Route path="/settings" element={<SettingsLayout />}>
+              <Route path="providers" element={<div />} />
+            </Route>
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("link", { name: "Tool policy" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "General" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Providers" })).toBeInTheDocument();
+  });
+
+  it("does not expose Identity as a settings tab", () => {
+    render(
+      <MemoryRouter initialEntries={["/settings/providers"]}>
+        <QueryClientProvider client={new QueryClient()}>
+          <Routes>
+            <Route path="/settings" element={<SettingsLayout />}>
+              <Route path="providers" element={<div />} />
+            </Route>
+          </Routes>
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole("link", { name: "Identity" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Marketplace" })).toBeInTheDocument();
+  });
+
   it("exposes the Marketplace opt-in tab (C8)", () => {
     render(
       <MemoryRouter initialEntries={["/settings/providers"]}>

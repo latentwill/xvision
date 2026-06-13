@@ -21,4 +21,23 @@ describe("ParentDiffPanel", () => {
     expect(screen.getByText("0.5")).toBeInTheDocument();
     expect(screen.getByText("0.7")).toBeInTheDocument();
   });
+
+  it("left-aligns the heading, summary, and diff content", async () => {
+    vi.spyOn(client, "apiFetch").mockImplementation(async (url: string) => {
+      if (url.includes("/blob/child")) return { entry_threshold: 0.7, name: "child" };
+      if (url.includes("/blob/parent")) return { entry_threshold: 0.5, name: "parent" };
+      return {};
+    });
+    renderWithProviders(
+      <ParentDiffPanel childHash="child" parentHash="parent" />,
+    );
+
+    const heading = await screen.findByRole("heading", {
+      name: "What this experiment changed",
+    });
+    const panel = heading.closest("section");
+    expect(panel?.className).toContain("text-left");
+    expect(screen.getByText(/parent.*experiment/).className).toContain("m-0");
+    expect((await screen.findByRole("table")).className).toContain("text-left");
+  });
 });

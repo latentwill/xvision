@@ -297,6 +297,22 @@ function SummaryTab({
   deleting: boolean;
 }) {
   const { summary, decisions, equity_curve } = detail;
+  const totalPnl = totalPnlUsd(equity_curve);
+  const realizedPnl = realizedPnlUsd(decisions);
+  const unrealizedPnl = unrealizedPnlUsd(totalPnl, realizedPnl);
+  const decisionTape = useMemo(() => {
+    const priorSideByDecision = derivePriorSideByDecision(decisions);
+    return decisions
+      .map((row) => ({
+        row,
+        action: actionLabel(
+          row.action,
+          priorSideByDecision.get(row.decision_index) ?? "flat",
+        ),
+      }))
+      .filter((decision) => decision.action !== "HOLD")
+      .slice(0, 6);
+  }, [decisions]);
   return (
     <div className="flex flex-col gap-3 py-3 pb-24">
       {/* Hero */}
@@ -348,8 +364,8 @@ function SummaryTab({
       <div className="grid grid-cols-2 gap-2">
         <Stat
           label="PNL"
-          value={fmtPnlUsd(totalPnlUsd(equity_curve))}
-          sub={`${fmtPct(summary.total_return_pct)}${summary.completed_at ? ` · as of ${fmtDate(summary.completed_at)}` : " · in progress"}`}
+          value={fmtPnlUsd(totalPnl)}
+          sub={`${fmtPct(summary.total_return_pct)} · ${pnlSplitSub(realizedPnl, unrealizedPnl)}`}
           tone={pctTone(summary.total_return_pct)}
         />
         <Stat
@@ -375,6 +391,8 @@ function SummaryTab({
         />
       </div>
 
+      <MobileDecisionTape decisions={decisionTape} />
+
       <EquityCard equity={equity_curve} pct={summary.total_return_pct} />
 
       <MetaCard summary={summary} labels={labels} />
@@ -386,6 +404,37 @@ function SummaryTab({
         onDelete={onDelete}
         deleting={deleting}
       />
+    </div>
+  );
+}
+
+function MobileDecisionTape({
+  decisions,
+}: {
+  decisions: Array<{ row: DecisionRowDto; action: MobileActionLabel }>;
+}) {
+  if (decisions.length === 0) return null;
+  return (
+    <div
+      data-testid="mobile-eval-decision-tape"
+      className="rounded-card border border-border-soft bg-surface px-3 py-2"
+    >
+      <div className={`${MONO_TINY} mb-2 text-text-3`}>
+        DECISION TAPE
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {decisions.map(({ row, action }) => (
+          <div
+            key={`${row.decision_index}:${action}:${row.asset}`}
+            className="inline-flex items-center gap-2 rounded-sm border border-border-soft px-2 py-1"
+          >
+            <ActionPill action={action} />
+            <span className="font-mono text-[10px] text-text-3">
+              {shortAsset(row.asset)}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1090,6 +1139,10 @@ function actionLabel(action: string, priorSide: PositionSide): MobileActionLabel
   return "HOLD";
 }
 
+function shortAsset(asset: string): string {
+  return asset.split("/")[0] ?? asset;
+}
+
 function pnlClass(n: number | null | undefined): string {
   if (n == null || n === 0) return "text-text-4";
   if (n > 0) return "text-gold";
@@ -1144,6 +1197,37 @@ function totalPnlUsd(
   return end - start;
 }
 
+function realizedPnlUsd(decisions: ReadonlyArray<DecisionRowDto>): number | null {
+  let total = 0;
+  let count = 0;
+  for (const row of decisions) {
+    if (row.action === "flat" && row.pnl_realized != null) {
+      total += row.pnl_realized;
+      count += 1;
+    }
+  }
+  return count > 0 ? total : null;
+}
+
+function unrealizedPnlUsd(
+  totalPnl: number | null,
+  realizedPnl: number | null,
+): number | null {
+  if (totalPnl == null || realizedPnl == null) return null;
+  return totalPnl - realizedPnl;
+}
+
+function pnlSplitSub(
+  realizedPnl: number | null,
+  unrealizedPnl: number | null,
+): string {
+  return `${pnlComponent("Realized", realizedPnl)} · ${pnlComponent("Unrealized", unrealizedPnl)}`;
+}
+
+function pnlComponent(label: string, pnl: number | null): string {
+  return `${label} ${pnl == null ? "unavailable" : fmtPnlUsd(pnl)}`;
+}
+
 function fmtPnlUsd(pnl: number | null): string {
   if (pnl == null) return "—";
   const abs = Math.abs(pnl);
@@ -1176,12 +1260,6 @@ function fmtTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function traceRunId(summary: RunSummary): string {

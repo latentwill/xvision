@@ -12,6 +12,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AgentsRoute } from "./agents";
 import * as agentsApi from "@/api/agents";
 import type { Agent, AgentSlot } from "@/api/agents";
+import * as toolsApi from "@/api/tools";
 
 vi.mock("@/api/agents", async () => {
   const actual = await vi.importActual<typeof import("@/api/agents")>(
@@ -20,6 +21,17 @@ vi.mock("@/api/agents", async () => {
   return {
     ...actual,
     listAgentsPaged: vi.fn(),
+    updateAgent: vi.fn(),
+  };
+});
+
+vi.mock("@/api/tools", async () => {
+  const actual = await vi.importActual<typeof import("@/api/tools")>(
+    "@/api/tools",
+  );
+  return {
+    ...actual,
+    listTools: vi.fn(),
   };
 });
 
@@ -90,6 +102,31 @@ describe("AgentsRoute", () => {
     vi.mocked(agentsApi.listAgentsPaged).mockResolvedValue({
       items: [],
       total: 0,
+    });
+    vi.mocked(agentsApi.updateAgent).mockImplementation(async (agentId, body) =>
+      agent({
+        agent_id: agentId,
+        name: body.name,
+        description: body.description,
+        tags: body.tags,
+        slots: body.slots,
+      }),
+    );
+    vi.mocked(toolsApi.listTools).mockResolvedValue({
+      items: [
+        {
+          name: "indicator_panel",
+          description: "Read indicator panel data",
+          input_schema: {},
+          built_in: true,
+        },
+        {
+          name: "web_search",
+          description: "Search the web",
+          input_schema: {},
+          built_in: true,
+        },
+      ],
     });
   });
 
@@ -283,5 +320,45 @@ describe("AgentsRoute", () => {
       expect(screen.queryByText("Two Slot")).not.toBeInTheDocument(),
     );
     expect(screen.getAllByText("Single Slot").length).toBeGreaterThan(0);
+  });
+
+  it("lets operators change an agent's tools from the list row", async () => {
+    vi.mocked(agentsApi.listAgentsPaged).mockResolvedValue({
+      items: [
+        agent({
+          agent_id: "ag-1",
+          name: "Trend Trader",
+          slots: [
+            {
+              name: "trader",
+              provider: "openai",
+              model: "gpt-4.1-mini",
+              system_prompt: "you are a trader",
+              skill_ids: [],
+              allowed_tools: [],
+              max_tokens: null,
+            },
+          ],
+        }),
+      ],
+      total: 1,
+    });
+    renderRoute();
+
+    const select = (await screen.findByRole("combobox", {
+      name: "Tools for Trend Trader",
+    })) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "indicator_panel" } });
+
+    await waitFor(() =>
+      expect(agentsApi.updateAgent).toHaveBeenCalledWith("ag-1", {
+        slots: [
+          expect.objectContaining({
+            name: "trader",
+            allowed_tools: ["indicator_panel"],
+          }),
+        ],
+      }),
+    );
   });
 });

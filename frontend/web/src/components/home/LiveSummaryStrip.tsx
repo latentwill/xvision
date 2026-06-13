@@ -17,7 +17,7 @@
 //   - count of ACTIVE live-money strategies (parent eval run mode=live,
 //     non-terminal; the backend `is_live_money` discriminator)
 //   - count of PAUSED live-money strategies (shown only when > 0)
-//   - count of paper/sim runs (running, but not live money; only when > 0)
+//   - count of non-live running rows (paper/sim/backtest; only when > 0)
 //   - count of stale orphans (agent runs stuck in `running` whose parent
 //     eval run is terminal; only when > 0 — rendered muted, never as live)
 //   - a "Go to Live Trading →" CTA to /live
@@ -46,7 +46,7 @@ import {
  * newly-deployed strategies appear without a manual refresh.
  */
 export function LiveSummaryStrip() {
-  // Scope the query to the non-terminal population: live/paper/stale are
+  // Scope the query to the non-terminal population: live/non-live/stale are
   // all derived from `queued`/`running` agent runs, and the default
   // newest-20-of-any-status window would undercount once terminal runs
   // crowd the head of the ledger. Params live in the query key so this
@@ -64,10 +64,10 @@ export function LiveSummaryStrip() {
   const activeCount = live.filter((r) => deriveStripStatus(r) === "ACTIVE").length;
   const pausedCount = live.filter((r) => deriveStripStatus(r) === "PAUSED").length;
   // Honest companions: running-but-not-live-money, and stale orphans.
-  const paperCount = runs.filter((r) => classifyRunLiveness(r) === "paper").length;
+  const nonLiveCount = runs.filter((r) => classifyRunLiveness(r) === "paper").length;
   const staleCount = runs.filter((r) => classifyRunLiveness(r) === "stale").length;
   const hasLive = live.length > 0;
-  const hasAny = hasLive || paperCount > 0 || staleCount > 0;
+  const hasAny = hasLive || nonLiveCount > 0 || staleCount > 0;
 
   return (
     <section
@@ -107,10 +107,10 @@ export function LiveSummaryStrip() {
               paused
             </span>
           )}
-          {paperCount > 0 && (
-            <span data-testid="paper-count" className="text-text-2">
-              <span className="font-mono font-semibold tabular-nums">{paperCount}</span>{" "}
-              paper
+          {nonLiveCount > 0 && (
+            <span data-testid="non-live-count" className="text-text-2">
+              <span className="font-mono font-semibold tabular-nums">{nonLiveCount}</span>{" "}
+              non-live
             </span>
           )}
           {staleCount > 0 && (
@@ -125,7 +125,7 @@ export function LiveSummaryStrip() {
       )}
 
       {/* CTA — always present. Routes to the live page when there's activity
-          to monitor (live, paper, or stale rows to clean up), or to the
+          to monitor (live, non-live, or stale rows to clean up), or to the
           strategies list to deploy one when there's nothing running yet. */}
       <Link
         to={hasAny ? "/live" : "/strategies"}
