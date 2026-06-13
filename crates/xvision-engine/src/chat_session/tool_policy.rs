@@ -117,7 +117,10 @@ pub fn classify(tool_name: &str) -> ToolClass {
         // filter_catalog: returns the filter-DSL token catalog for authoring.
         | "list_providers"
         | "get_agent"
-        | "filter_catalog" => ToolClass::Read,
+        | "filter_catalog"
+        // W10 Finding #9: read-class scenario tools.
+        // select_scenarios: stateless filter over existing scenarios, no mutation.
+        | "select_scenarios" => ToolClass::Read,
 
         // ── Write: authoring mutations + work launchers. ─────────────────
         "create_strategy"
@@ -131,7 +134,16 @@ pub fn classify(tool_name: &str) -> ToolClass {
         | "clear_filter"
         | "attach_agent"
         | "run_eval"
-        | "fetch_bars" => ToolClass::Write,
+        | "fetch_bars"
+        // W10 Finding #9: write-class scenario tools.
+        // clone_scenario: creates a new scenario row derived from a parent.
+        // archive_scenario: soft-deletes a scenario (sets archived_at).
+        // set_scenario_regime: writes regime_label/volatility_label/trend_direction.
+        // classify_scenario: derives and persists regime labels from bar data.
+        | "clone_scenario"
+        | "archive_scenario"
+        | "set_scenario_regime"
+        | "classify_scenario" => ToolClass::Write,
 
         // Unknown → fail safe as Write so it can't bypass the Act gate.
         _ => ToolClass::Write,
@@ -307,6 +319,11 @@ mod tests {
             "attach_agent",
             "run_eval",
             "fetch_bars",
+            // W10 scenario write tools:
+            "clone_scenario",
+            "archive_scenario",
+            "set_scenario_regime",
+            "classify_scenario",
         ] {
             assert_eq!(classify(t), ToolClass::Write, "{t} should be Write");
         }
@@ -335,8 +352,37 @@ mod tests {
             "list_providers",
             "get_agent",
             "filter_catalog",
+            // W10 scenario read tool:
+            "select_scenarios",
         ] {
             assert_eq!(classify(t), ToolClass::Read, "{t} should be Read");
+        }
+    }
+
+    /// Guard: `classify()` and `KNOWN_TOOLS` must agree on the class for
+    /// the W10 scenario tools. The `_ => Write` fallback in `classify()`
+    /// and KNOWN_TOOLS can drift independently; this test catches that drift.
+    #[test]
+    fn classify_and_known_tools_agree_on_w10_scenario_tools() {
+        use crate::api::tool_policy::KNOWN_TOOLS;
+        for tool in [
+            "clone_scenario",
+            "archive_scenario",
+            "set_scenario_regime",
+            "classify_scenario",
+            "select_scenarios",
+        ] {
+            let classify_class = classify(tool);
+            let known_class = KNOWN_TOOLS
+                .iter()
+                .find(|(name, _)| *name == tool)
+                .map(|(_, class)| *class)
+                .unwrap_or_else(|| panic!("tool `{tool}` missing from KNOWN_TOOLS"));
+            assert_eq!(
+                classify_class, known_class,
+                "classify() and KNOWN_TOOLS disagree on class for `{tool}`: \
+                 classify={classify_class:?}, KNOWN_TOOLS={known_class:?}"
+            );
         }
     }
 

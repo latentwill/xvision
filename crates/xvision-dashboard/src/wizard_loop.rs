@@ -38,7 +38,7 @@ use xvision_engine::agents::AgentSlot;
 use xvision_engine::api::agents as api_agents;
 use xvision_engine::api::eval::{self as api_eval, EvalRunRequest};
 use xvision_engine::api::scenario as api_scenario;
-use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter};
+use xvision_engine::api::scenario::{CreateScenarioRequest, ListScenariosFilter, ScenarioMutations};
 use xvision_engine::api::settings::providers as api_providers;
 use xvision_engine::api::strategy as api_strategy;
 use xvision_engine::api::{Actor, ApiContext};
@@ -2444,6 +2444,93 @@ impl WizardLoop {
                 // agent can reason over them without parsing markdown.
                 Ok(filter_catalog_json())
             }
+            // ── W10 Finding #9: scenario management tools ─────────────────
+            "clone_scenario" => {
+                let parent_id = input
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("clone_scenario: missing `parent_id`"))?;
+                let mutations = ScenarioMutations {
+                    display_name: input
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    description: input
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    time_window: None,
+                    granularity: None,
+                    venue: None,
+                    tags: input
+                        .get("tags")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    notes: input.get("notes").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    warmup_bars: input
+                        .get("warmup_bars")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| n as u32),
+                };
+                let out = api_scenario::clone(&self.api_context, parent_id, mutations).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "archive_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("archive_scenario: missing `id`"))?;
+                api_scenario::archive(&self.api_context, id).await?;
+                Ok(serde_json::json!({ "archived": true, "id": id }))
+            }
+            "set_scenario_regime" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("set_scenario_regime: missing `id`"))?;
+                let regime = input.get("regime").and_then(|v| v.as_str());
+                let volatility = input.get("volatility").and_then(|v| v.as_str());
+                let direction = input.get("direction").and_then(|v| v.as_str());
+                let out =
+                    api_scenario::set_regime(&self.api_context, id, regime, volatility, direction).await?;
+                Ok(serde_json::to_value(out)?)
+            }
+            "classify_scenario" => {
+                let id = input
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("classify_scenario: missing `id`"))?;
+                let force = input.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                let result = api_scenario::classify(&self.api_context, id, force).await?;
+                Ok(serde_json::to_value(result)?)
+            }
+            "select_scenarios" => {
+                let target_decisions = input.get("target_decisions").and_then(|v| v.as_u64());
+                let same_decisions = input
+                    .get("same_decisions")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let max_decisions = input.get("max_decisions").and_then(|v| v.as_u64());
+                let count = input.get("count").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+                let timeframe_minutes = input
+                    .get("timeframe_minutes")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u32);
+                let regimes: Vec<String> = input
+                    .get("regimes")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                let rows = api_scenario::select(
+                    &self.api_context,
+                    timeframe_minutes,
+                    &regimes,
+                    target_decisions,
+                    same_decisions,
+                    max_decisions,
+                    count,
+                )
+                .await?;
+                Ok(serde_json::to_value(rows)?)
+            }
             other => anyhow::bail!("unknown authoring verb: {other}"),
         }
     }
@@ -3730,6 +3817,161 @@ fn strategy_tool_defs() -> Vec<ToolDefinition> {
                 "type": "object",
                 "properties": {"id": {"type": "string"}},
                 "required": ["id"]
+            }),
+        },
+        // ── W10 Finding #9: scenario management tools ─────────────────────
+        ToolDefinition {
+            name: "clone_scenario".into(),
+            description: "Derive a new scenario from an existing one. Inherits every \
+                          unset field from the parent and stamps parent_scenario_id. \
+                          Refuses to clone an archived parent. Returns the new Scenario.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Id of the scenario to clone."
+                    },
+                    "display_name": {
+                        "type": "string",
+                        "description": "Optional override for the clone's display name."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Optional override for the description."
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tag override."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional notes for the clone."
+                    },
+                    "warmup_bars": {
+                        "type": "integer",
+                        "description": "Optional override for pre-window warmup bars."
+                    }
+                },
+                "required": ["parent_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "archive_scenario".into(),
+            description: "Soft-delete a scenario (sets archived_at). \
+                          Archived scenarios are excluded from list_scenarios by default. \
+                          Returns {archived: true, id}.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id to archive."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "set_scenario_regime".into(),
+            description: "Set operator-authored regime labels on a scenario \
+                          (regime_derived = false). All three label fields are optional; \
+                          omitting one leaves the existing value unchanged. \
+                          Returns the updated Scenario. \
+                          Valid regime values: trend | chop | crash | expansion | recovery. \
+                          Valid volatility values: low | normal | high | extreme. \
+                          Valid direction values: up | down | sideways.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id."
+                    },
+                    "regime": {
+                        "type": "string",
+                        "enum": ["trend", "chop", "crash", "expansion", "recovery"],
+                        "description": "Broad regime label."
+                    },
+                    "volatility": {
+                        "type": "string",
+                        "enum": ["low", "normal", "high", "extreme"],
+                        "description": "Volatility label."
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["up", "down", "sideways"],
+                        "description": "Trend direction."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "classify_scenario".into(),
+            description: "Auto-derive regime labels for a scenario from its bar window \
+                          (regime_derived = true). Requires bars to have been warmed via \
+                          `xvn bars fetch`. Returns `{ classified: bool, skipped_reason: \
+                          string|null, scenario }`: classified=true when labels were \
+                          derived and written; classified=false with a skipped_reason when \
+                          skipped (bars unavailable, or the scenario already has \
+                          operator-set labels and force=false). Pass force=true to \
+                          re-derive over operator-set labels.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Scenario id to classify."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "If true, overwrite even operator-set labels."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "select_scenarios".into(),
+            description: "Stateless read-only selector: filter the scenario library \
+                          by timeframe, regime, and decision-count proximity. \
+                          Use this to find a comparable set of scenarios for A/B evaluation \
+                          without needing to hand-pick ids. Returns [{id, name, timeframe, decision_count}]. \
+                          Mode A: set target_decisions=N to find scenarios within ±10% of N. \
+                          Mode B: set same_decisions=true and max_decisions=N to find \
+                          the largest common decision count ≤ N in the candidate set.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "target_decisions": {
+                        "type": "integer",
+                        "description": "[Mode A] Select scenarios within ±10% of this decision count."
+                    },
+                    "same_decisions": {
+                        "type": "boolean",
+                        "description": "[Mode B] Return scenarios sharing the largest common decision count ≤ max_decisions."
+                    },
+                    "max_decisions": {
+                        "type": "integer",
+                        "description": "[Mode B] Maximum decision count for the common-count search."
+                    },
+                    "timeframe_minutes": {
+                        "type": "integer",
+                        "description": "Optional granularity filter in minutes (e.g. 240 for 4h, 60 for 1h)."
+                    },
+                    "regimes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional regime label filter (OR semantics per scenario)."
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return. Default 4."
+                    }
+                },
+                "required": []
             }),
         },
         ToolDefinition {
@@ -6847,6 +7089,225 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         assert!(
             out.get("warning").is_none(),
             "no warning expected when asset_universe was updated before agent creation: {out}"
+        );
+    }
+
+    // ── W10 scenario management tools ────────────────────────────────────────
+
+    /// Helper: create a scenario through the wizard and return its id.
+    async fn create_test_scenario(wl: &WizardLoop) -> String {
+        let out = wl
+            .run_tool(
+                "create_scenario",
+                serde_json::json!({
+                    "display_name": "W10 Test Scenario",
+                    "granularity": "4h"
+                }),
+            )
+            .await
+            .expect("create_scenario for W10 tests");
+        out["id"].as_str().expect("id field").to_string()
+    }
+
+    /// W10: clone_scenario creates a derived scenario from a parent.
+    #[tokio::test]
+    async fn w10_clone_scenario_creates_child() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "clone scenario", ContextScope::Workspace).await;
+
+        let parent_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool(
+                "clone_scenario",
+                serde_json::json!({
+                    "parent_id": parent_id,
+                    "display_name": "W10 Clone"
+                }),
+            )
+            .await
+            .expect("clone_scenario should succeed");
+
+        assert!(out["id"].as_str().is_some(), "cloned scenario must have an id");
+        assert_ne!(out["id"], parent_id, "clone id must differ from parent id");
+        assert_eq!(
+            out["parent_scenario_id"].as_str(),
+            Some(parent_id.as_str()),
+            "cloned scenario must reference parent"
+        );
+    }
+
+    /// W10: archive_scenario soft-deletes a scenario (sets archived_at).
+    #[tokio::test]
+    async fn w10_archive_scenario_sets_archived_at() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "archive scenario", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool("archive_scenario", serde_json::json!({ "id": sc_id }))
+            .await
+            .expect("archive_scenario should succeed");
+
+        assert_eq!(
+            out["archived"].as_bool(),
+            Some(true),
+            "archived field must be true: {out}"
+        );
+    }
+
+    /// W10: set_scenario_regime writes operator-set regime labels.
+    #[tokio::test]
+    async fn w10_set_scenario_regime_persists_labels() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) = loop_with_session(mock, "set regime", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        let out = wl
+            .run_tool(
+                "set_scenario_regime",
+                serde_json::json!({
+                    "id": sc_id,
+                    "regime": "trend",
+                    "volatility": "high",
+                    "direction": "up"
+                }),
+            )
+            .await
+            .expect("set_scenario_regime should succeed");
+
+        assert_eq!(
+            out["regime_label"].as_str(),
+            Some("trend"),
+            "regime_label must be persisted"
+        );
+        assert_eq!(
+            out["volatility_label"].as_str(),
+            Some("high"),
+            "volatility_label must be persisted"
+        );
+        assert_eq!(
+            out["trend_direction"].as_str(),
+            Some("up"),
+            "trend_direction must be persisted"
+        );
+        assert_eq!(
+            out["regime_derived"].as_bool(),
+            Some(false),
+            "regime_derived must be false for operator-set labels"
+        );
+    }
+
+    /// W10: select_scenarios returns a filtered list of scenarios by decision count.
+    #[tokio::test]
+    async fn w10_select_scenarios_returns_matching_rows() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "select scenarios", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        // 1. No-mode select returns all candidates (up to `count`). Our scenario
+        //    must be present with a well-formed row shape.
+        let all = wl
+            .run_tool("select_scenarios", serde_json::json!({ "count": 10 }))
+            .await
+            .expect("select_scenarios (no mode) should succeed");
+        let arr = all.as_array().expect("select_scenarios must return an array");
+        let row = arr
+            .iter()
+            .find(|r| r["id"].as_str() == Some(sc_id.as_str()))
+            .unwrap_or_else(|| panic!("no-mode select must include the created scenario; got: {all}"));
+        assert!(row["name"].as_str().is_some(), "row must have name: {row}");
+        assert!(
+            row["timeframe"].as_str().is_some(),
+            "row must have timeframe: {row}"
+        );
+        let dc = row["decision_count"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("row must have decision_count: {row}"));
+        assert!(dc > 0, "decision_count must be positive: {row}");
+
+        // 2. target_decisions == the scenario's own count is inside the ±10%
+        //    window → the scenario IS selected (positive filter path).
+        let matched = wl
+            .run_tool(
+                "select_scenarios",
+                serde_json::json!({ "target_decisions": dc, "count": 10 }),
+            )
+            .await
+            .expect("select_scenarios (target) should succeed");
+        assert!(
+            matched
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"].as_str() == Some(sc_id.as_str())),
+            "target_decisions == own count must select the scenario; got: {matched}"
+        );
+
+        // 3. A target_decisions far outside ±10% → the scenario is excluded
+        //    (negative filter path — proves the filter actually filters).
+        let excluded = wl
+            .run_tool(
+                "select_scenarios",
+                serde_json::json!({ "target_decisions": dc * 10 + 1000, "count": 10 }),
+            )
+            .await
+            .expect("select_scenarios (far target) should succeed");
+        assert!(
+            !excluded
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"].as_str() == Some(sc_id.as_str())),
+            "far-off target_decisions must exclude the scenario; got: {excluded}"
+        );
+    }
+
+    /// W10: classify_scenario skips gracefully when bars are not cached.
+    /// classify_scenario must SKIP (no re-derivation) when the scenario already
+    /// carries an operator-set regime label and `force=false`. This skip path is
+    /// deterministic and independent of whether bar data is cached, so it is the
+    /// reliable way to exercise the graceful `ClassifyResult { classified:false,
+    /// skipped_reason:Some(..) }` branch.
+    #[tokio::test]
+    async fn w10_classify_scenario_skips_when_operator_labeled() {
+        let mock = Arc::new(MockDispatch::echo("ok"));
+        let (wl, _pool, _td, _sid) =
+            loop_with_session(mock, "classify scenario", ContextScope::Workspace).await;
+
+        let sc_id = create_test_scenario(&wl).await;
+
+        // Stamp an operator-authored regime label (regime_derived = false).
+        wl.run_tool(
+            "set_scenario_regime",
+            serde_json::json!({ "id": sc_id, "regime": "trend" }),
+        )
+        .await
+        .expect("set_scenario_regime should succeed");
+
+        let out = wl
+            .run_tool(
+                "classify_scenario",
+                serde_json::json!({ "id": sc_id, "force": false }),
+            )
+            .await
+            .expect("classify_scenario returns Ok");
+
+        // Skip path: classified=false plus a human-readable skipped_reason.
+        // (`ClassifyResult` has no `skipped` field — assert on the real fields.)
+        assert_eq!(
+            out["classified"].as_bool(),
+            Some(false),
+            "classify(force=false) on an operator-labeled scenario must skip: {out}"
+        );
+        assert!(
+            out["skipped_reason"].as_str().is_some(),
+            "a skipped classification must carry a skipped_reason: {out}"
         );
     }
 }

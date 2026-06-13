@@ -40,6 +40,8 @@ pub const KNOWN_TOOLS: &[(&str, ToolClass)] = &[
     ("list_providers", ToolClass::Read),
     ("get_agent", ToolClass::Read),
     ("filter_catalog", ToolClass::Read),
+    // W10 Finding #9: select_scenarios is Read (stateless filter, no mutation).
+    ("select_scenarios", ToolClass::Read),
     // Write — authoring / mutation verbs, auto-approved by default in Act mode
     ("create_strategy", ToolClass::Write),
     ("create_scenario", ToolClass::Write),
@@ -53,6 +55,11 @@ pub const KNOWN_TOOLS: &[(&str, ToolClass)] = &[
     ("attach_agent", ToolClass::Write),
     ("run_eval", ToolClass::Write),
     ("fetch_bars", ToolClass::Write),
+    // W10 Finding #9: write-class scenario management tools.
+    ("clone_scenario", ToolClass::Write),
+    ("archive_scenario", ToolClass::Write),
+    ("set_scenario_regime", ToolClass::Write),
+    ("classify_scenario", ToolClass::Write),
 ];
 
 /// Effective policy row with class attached — for display purposes.
