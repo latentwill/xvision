@@ -66,6 +66,11 @@ export function useFirstRunTour() {
 
 export function restartFirstRunTour() {
   safeStorageRemove(TOUR_COMPLETED_KEY);
+  // An explicit restart must always win. A prior tour run can leave the
+  // module-level `tourLaunching` guard set (e.g. it was completed/closed and
+  // the driver torn down outside our onDestroyed path), which would make
+  // runTour bail early and strand the restart on step 1. Clear it first.
+  tourLaunching = false;
   void runTour({ force: true });
 }
 
