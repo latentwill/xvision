@@ -460,11 +460,11 @@ pub struct RiskConfig {
 /// xvision-core's loader; the risk crate owns the authoritative schema/defaults.
 #[derive(Debug, Clone, Default, PartialEq, Validate, Serialize, Deserialize)]
 pub struct RiskPerpsGuards {
-    /// Funding-carry guard threshold. Mirrored for deserialization.
+    /// Funding-carry guard threshold (PR #985). Mirrored for deserialization.
     #[garde(skip)]
     #[serde(default)]
     pub max_funding_pay_8h: Option<f64>,
-    /// Liquidation-distance guard threshold (PR #992). Mirrored for deserialization.
+    /// Liquidation-distance guard threshold. Mirrored for deserialization.
     #[garde(skip)]
     #[serde(default)]
     pub min_liq_distance_pct: Option<f64>,

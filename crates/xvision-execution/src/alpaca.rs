@@ -603,6 +603,9 @@ impl<A: AlpacaApi + 'static> Executor for AlpacaExecutor<A> {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 5.0,
                     opened_at: Utc::now(),
+                    // Alpaca is spot — no leverage or liquidation price.
+                    leverage: None,
+                    liq_price: None,
                 },
             );
         }
