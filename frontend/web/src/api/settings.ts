@@ -223,6 +223,54 @@ export function clearAlpacaCredentials(): Promise<void> {
   });
 }
 
+// Byreal stored creds. The `private_key` MUST be a Hyperliquid trading-only
+// agent key (cannot withdraw) — see the non-custodial design. Mirrors the
+// engine `SetByrealReq` / `ByrealStored` (no `derive(TS)` so the secret never
+// leaks into the generated surface).
+export type SetByrealRequest = {
+  private_key: string;
+  network: string | null;
+  account: string | null;
+};
+
+export type ByrealStored = {
+  stored: boolean;
+  stored_key_id_suffix: string | null;
+  network: string | null;
+};
+
+export function setByrealCredentials(
+  body: SetByrealRequest,
+): Promise<ByrealStored> {
+  const trace = createTrace("settings", { broker: "byreal", network: body.network });
+  const started = performance.now();
+  trace.info("settings.broker.save");
+  return apiFetch<ByrealStored>("/api/settings/brokers/byreal", {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+    .then((stored) => {
+      trace.info("settings.broker.save.ok", {
+        stored: stored.stored,
+        duration_ms: durationSince(started),
+      });
+      return stored;
+    })
+    .catch((err) => {
+      trace.error("settings.broker.save.error", {
+        duration_ms: durationSince(started),
+        error: errorSummary(err),
+      });
+      throw err;
+    });
+}
+
+export function clearByrealCredentials(): Promise<void> {
+  return apiFetch<void>("/api/settings/brokers/byreal", {
+    method: "DELETE",
+  });
+}
+
 /// Connectivity probe for Alpaca — calls `/v2/account` with the stored
 /// (or env-var fallback) credentials. Network/auth failures surface in
 /// `error` rather than as HTTP errors so the UI renders an inline pill.

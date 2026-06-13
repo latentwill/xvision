@@ -53,6 +53,12 @@ async fn pool_with_migration() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/065_eval_run_source_and_unrealized_pnl.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     // V2E trace-surface: adds evidence_cycle_ids_json + produced_by_check
     // columns that record_finding now writes.
     sqlx::query(include_str!("../migrations/026_trace_surface_foundation.sql"))

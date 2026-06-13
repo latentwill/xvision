@@ -45,7 +45,7 @@ use crate::eval::live_config::LiveConfig;
 use crate::eval::metrics::{
     compute_net_return_pct, inference_cost_dominates, INFERENCE_COST_DOMINANCE_THRESHOLD,
 };
-use crate::eval::run::{ReviewModel, Run, RunMode, RunStatus};
+use crate::eval::run::{DeploymentSource, ReviewModel, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 use crate::eval::scenario::canonical_scenarios;
 use crate::eval::scenario::{
@@ -300,6 +300,16 @@ pub struct RunSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-export", ts(optional))]
     pub live_config: Option<LiveConfig>,
+    /// CT5 deployment-source discriminator (`eval_runs.source`, migration 065):
+    /// `Human` for operator-queued runs, `Optimizer` for autooptimizer runs.
+    /// Drives `awm`'s Cancel-gate. Defaults to `Human` for pre-065 runs.
+    #[serde(default)]
+    pub source: DeploymentSource,
+    /// CT5 per-run mark-to-market unrealized PnL in USD
+    /// (`eval_runs.unrealized_pnl_usd`, migration 065). `None` when unavailable
+    /// / pre-first-fill — surfaced as "—" in the UI, NEVER a faked 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unrealized_pnl_usd: Option<f64>,
 }
 
 /// Full run detail — `RunSummary` plus the decision rows and equity samples.
@@ -4575,6 +4585,8 @@ fn summarise(run: Run) -> RunSummary {
         paused_at: run.paused_at,
         flatten_requested: run.flatten_requested,
         live_config: run.live_config,
+        source: run.source,
+        unrealized_pnl_usd: run.unrealized_pnl_usd,
     }
 }
 

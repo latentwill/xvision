@@ -28,15 +28,15 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.inputs.check == 'machete' || github.event.inputs.check == 'both'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: 1.95.0
 
       - name: Cache cargo state
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: rust-unused-deps-machete
 
@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload cargo machete report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cargo-machete-report
           path: |
@@ -72,10 +72,10 @@ jobs:
     if: github.event.inputs.check == 'udeps' || github.event.inputs.check == 'both'
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
 
       - name: Install Rust native build deps
         run: |
@@ -90,7 +90,7 @@ jobs:
             libsqlite3-dev
 
       - name: Cache cargo state
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           shared-key: rust-unused-deps-udeps
 
@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload cargo udeps report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cargo-udeps-report
           path: |

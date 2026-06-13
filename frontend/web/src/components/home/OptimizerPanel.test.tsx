@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type {
   MutatorScore,
@@ -20,6 +21,15 @@ vi.mock("@/features/autooptimizer/api", () => ({
   useOptimizerStats: vi.fn(),
   useOptimizerStatus: vi.fn(),
   useSessionList: vi.fn(),
+}));
+
+// 8wn: the nested OptimizerDigestStrip now pulls the operator budget cap via a
+// real useQuery(getCostBudget). Stub the fetcher (UNSET cap) so the panel's
+// pure-render tests stay network-free; the digest itself returns null here
+// (empty session list) but the hook still runs.
+vi.mock("@/api/cost", () => ({
+  costKeys: { all: ["cost"], budget: () => ["cost", "budget"] },
+  getCostBudget: vi.fn().mockResolvedValue({ daily_cap_usd: null }),
 }));
 
 const LADDER: MutatorScore[] = [
@@ -96,10 +106,15 @@ function setHooks({
 }
 
 function renderPanel() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return render(
-    <MemoryRouter>
-      <OptimizerPanel />
-    </MemoryRouter>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <OptimizerPanel />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

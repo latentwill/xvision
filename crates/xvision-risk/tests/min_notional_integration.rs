@@ -75,6 +75,7 @@ fn risk_config(paper_min: f64, live_min: f64) -> RiskConfig {
             take_profit_min_rr: 1.5,
         },
         venues,
+        perps: xvision_risk::config::PerpsGuards::default(),
     }
 }
 

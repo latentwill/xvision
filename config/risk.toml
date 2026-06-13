@@ -32,3 +32,17 @@ min_notional_usd = 10.0
 
 [venues.live]
 min_notional_usd = 1.0
+
+# Perps-specific guards (optional — this whole section defaults if omitted).
+#
+# `FundingCarryGuard` vetoes an entry that would *pay* perp funding above
+# `max_funding_pay_8h` (same units as the onchain panel's `funding_rate_8h`,
+# a per-8h fraction; positive ⇒ longs pay shorts). A long pays `+funding`,
+# a short pays `-funding`; favorable (carry-positive) funding always passes,
+# and exits are never blocked. The guard only bites on the live perps path
+# (which threads funding into the risk gate) — spot/backtest carries no
+# funding signal, so it no-ops. Default 0.01 (1% per 8h ≈ extreme
+# triple-digit annualized) only bites on genuinely punitive funding;
+# tighten per strategy.
+[perps]
+max_funding_pay_8h = 0.01

@@ -107,10 +107,15 @@ pub async fn sweep_once(
     config: &WatchdogConfig,
     now: DateTime<Utc>,
 ) -> Result<u64> {
+    // CT5 live-exemption (contract §9.2): live deployments are intentionally
+    // long-running, so the 30-min default must NEVER finalize them. Exempt
+    // `mode = 'live'` rows in the SELECT itself — only stale *backtests* are in
+    // scope for the timeout sweep. (The legacy `'paper'` alias maps to Backtest
+    // on read, so it is correctly NOT exempt here.)
     let rows = sqlx::query(
         "SELECT id, started_at, params_override_json \
          FROM eval_runs \
-         WHERE status = 'running'",
+         WHERE status = 'running' AND mode != 'live'",
     )
     .fetch_all(pool)
     .await
@@ -303,5 +308,112 @@ mod tests {
             per_run_budget(Some(raw), Duration::from_secs(1800)),
             Duration::from_secs(600),
         );
+    }
+
+    // ── CT5 Wave 3a: live-run exemption ─────────────────────────────────────
+    // (docs/superpowers/specs/2026-06-13-ct5-live-deployment-contract.md §9.2)
+    // Live deployments are intentionally long-running; the 30-min default must
+    // NOT kill them. The sweep must still fail a stale *backtest*.
+    mod live_exemption {
+        use super::*;
+        use crate::eval::run::RunStatus;
+        use chrono::Utc;
+        use sqlx::sqlite::SqlitePoolOptions;
+        use sqlx::SqlitePool;
+
+        async fn migrated_pool() -> SqlitePool {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .expect("open sqlite mem pool");
+            sqlx::migrate!("./migrations")
+                .run(&pool)
+                .await
+                .expect("apply migrations");
+            pool
+        }
+
+        /// Insert a `running` row with a synthetic `started_at` and the given
+        /// mode, bypassing `RunStore::create` (which stamps `started_at = now`
+        /// and enforces live_config invariants). Under the SQL-only
+        /// `sqlx::migrate!` schema `scenario_id` is still NOT NULL (only the
+        /// runtime migrator — not applied here — relaxes it for live runs), so
+        /// every row references the seeded fixture scenario. The watchdog never
+        /// reads `scenario_id`; only `mode`/`started_at` drive its decision.
+        async fn insert_running(pool: &SqlitePool, id: &str, mode: &str, started_at: DateTime<Utc>) {
+            sqlx::query(
+                "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
+                 VALUES (?, ?, 'fixture-scenario', ?, 'running', ?)",
+            )
+            .bind(id)
+            .bind("agent-x")
+            .bind(mode)
+            .bind(started_at.to_rfc3339())
+            .execute(pool)
+            .await
+            .expect("insert running run");
+        }
+
+        async fn seed_scenario(pool: &SqlitePool) {
+            sqlx::query(
+                "INSERT INTO scenarios (id, source, display_name, body_json, created_at, created_by) \
+                 VALUES ('fixture-scenario', 'built', 'fixture', '{}', '2026-01-01T00:00:00Z', 'test')",
+            )
+            .execute(pool)
+            .await
+            .expect("seed scenarios row");
+        }
+
+        #[tokio::test]
+        async fn sweep_does_not_fail_stale_live_run() {
+            let pool = migrated_pool().await;
+            seed_scenario(&pool).await;
+            let store = RunStore::new(pool.clone());
+            let config = WatchdogConfig::new(Duration::from_secs(60), Duration::from_millis(10));
+
+            // 10 minutes old — far beyond the 60s budget — but mode=live.
+            let live_id = "01LIVE000000000000000000000A";
+            let started = Utc::now() - chrono::Duration::seconds(600);
+            insert_running(&pool, live_id, "live", started).await;
+
+            let n = sweep_once(&pool, &store, &config, Utc::now()).await.unwrap();
+            assert_eq!(n, 0, "a stale live deployment must be exempt from the watchdog");
+
+            let row = store.get(live_id).await.unwrap();
+            assert_eq!(
+                row.status,
+                RunStatus::Running,
+                "live run must stay running past the 30-min threshold"
+            );
+            assert!(row.completed_at.is_none());
+            assert!(row.error.is_none());
+        }
+
+        #[tokio::test]
+        async fn sweep_still_fails_stale_backtest_alongside_exempt_live() {
+            let pool = migrated_pool().await;
+            seed_scenario(&pool).await;
+            let store = RunStore::new(pool.clone());
+            let config = WatchdogConfig::new(Duration::from_secs(60), Duration::from_millis(10));
+
+            let live_id = "01LIVE000000000000000000000B";
+            let bt_id = "01BACKTEST00000000000000000B";
+            let started = Utc::now() - chrono::Duration::seconds(600);
+            insert_running(&pool, live_id, "live", started).await;
+            insert_running(&pool, bt_id, "backtest", started).await;
+
+            let n = sweep_once(&pool, &store, &config, Utc::now()).await.unwrap();
+            assert_eq!(n, 1, "only the stale backtest should be finalized");
+
+            assert_eq!(
+                store.get(live_id).await.unwrap().status,
+                RunStatus::Running,
+                "live run stays running"
+            );
+            let bt = store.get(bt_id).await.unwrap();
+            assert_eq!(bt.status, RunStatus::Failed, "stale backtest still fails");
+            assert_eq!(bt.error.as_deref(), Some(TIMEOUT_REASON));
+        }
     }
 }

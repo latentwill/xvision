@@ -168,6 +168,8 @@
 //  R70. GET  /api/marketplace/listings/:id/attestations
 //  R70b. GET /api/marketplace/listings/:id/import-challenge (sealed proof nonce)
 //  R71. GET  /api/live/venue-account     (live venue status snapshot)
+//  R72. GET  /api/live/deployments       (CT5 live/paper deployment list, ~5s poll)
+//  R73. GET  /api/live/deployments/:id/stream (CT5 per-deployment SSE)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -195,11 +197,12 @@ use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
     autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
     charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
-    diagnostics as diagnostics_route, docs,
+    cost as cost_route, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    live_broker as live_broker_route, marketplace as marketplace_route,
+    live_broker as live_broker_route, live_deployments as live_deployments_route,
+    marketplace as marketplace_route,
     marketplace_read as marketplace_read_route, memory as memory_route, optimizations as optimizations_route,
     safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
     strategies_folder as strategies_folder_route, tools as tools_route,
@@ -234,6 +237,15 @@ fn readonly_router(state: AppState) -> Router {
         )
         .route("/api/assets", get(assets_route::list))
         .route("/api/live/venue-account", get(live_broker_route::venue_account))
+        // CT5 (Epic s78 Wave 3): live/paper deployment list + per-deployment
+        // SSE. Static `/deployments` is registered before the `:id/stream`
+        // dynamic route (static-before-`:id` ordering). A deployment is an
+        // `eval_runs` row with mode='live'; honesty-constrained projection.
+        .route("/api/live/deployments", get(live_deployments_route::list_deployments))
+        .route(
+            "/api/live/deployments/:id/stream",
+            get(live_deployments_route::stream),
+        )
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))
@@ -427,6 +439,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/events",
             get(crate::sse::autooptimizer_sse::autooptimizer_events_handler),
         )
+        // bead-8wn: cross-source cost surface (read-only). Windowed spend
+        // rollup + the persisted operator-set daily budget cap (null when
+        // UNSET — the FE renders an em-dash, never a faked ceiling).
+        .route("/api/cost/rollup", get(cost_route::rollup))
+        .route("/api/cost/budget", get(cost_route::get_budget))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -739,6 +756,10 @@ fn mutating_router(state: AppState) -> Router {
             "/api/optimize/memory-demos/:id/gate",
             post(flywheel::optimize_memory_demos_gate),
         )
+        // ── Cost budget (bead-8wn) ────────────────────────────────────────
+        // PUT sets the operator-set daily budget cap (mutation). A
+        // non-positive / NaN cap → 400 (autooptimizer_cycle budget validation).
+        .route("/api/cost/budget", put(cost_route::put_budget))
         // ── CLI jobs ──────────────────────────────────────────────────────
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", delete(cli::delete))
@@ -751,6 +772,10 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/settings/brokers/alpaca/test-connection",
             post(settings::brokers::test_alpaca),
+        )
+        .route(
+            "/api/settings/brokers/byreal",
+            post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
         )
         // ── Settings: observability ───────────────────────────────────────
         .route("/api/settings/observability", put(settings::observability::put))

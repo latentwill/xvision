@@ -683,6 +683,8 @@ mod tests {
             paused: false,
             paused_at: None,
             flatten_requested: false,
+            source: Default::default(),
+            unrealized_pnl_usd: None,
         }
     }
 

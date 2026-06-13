@@ -109,6 +109,18 @@ target/
 
 # Local tool workspaces
 .clawpatch/
+.goodtogo/
+.metaswarm/
+.xvn-dev/
+
+# Generated graph output (graphify tool) — rebuildable, large
+/graphify-out/
+
+# 1Password env wrapper — secrets indirection, never commit
+.op_env
+
+# Design source archives — store in Figma/Drive, not as git blobs
+/docs/design/*.zip
 
 # Frontend bundle (Vite emits into the dashboard crate; baked at compile time)
 crates/xvision-dashboard/static/*

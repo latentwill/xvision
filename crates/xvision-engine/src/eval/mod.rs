@@ -63,8 +63,9 @@ pub use compare::{
     ComparisonReport, ComparisonRunSummary, ManifestMismatch,
 };
 pub use cost::{
-    aggregate_eval_run_inference_cost, compute_token_cost_usd, compute_token_cost_usd_from_catalog,
-    provider_reports_zero_cost,
+    aggregate_eval_run_inference_cost, aggregate_inference_cost_since, aggregate_optimizer_cost_since,
+    compute_token_cost_usd, compute_token_cost_usd_from_catalog, get_daily_budget_cap,
+    provider_reports_zero_cost, set_daily_budget_cap,
 };
 pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};
@@ -73,7 +74,7 @@ pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressT
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 
 pub use batch_store::{Batch, BatchStore};
-pub use run::{MetricsSummary, Run, RunMode, RunStatus};
+pub use run::{DeploymentSource, MetricsSummary, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;
 pub use scenario::{

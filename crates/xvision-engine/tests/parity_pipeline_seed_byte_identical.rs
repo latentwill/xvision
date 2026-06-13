@@ -35,6 +35,17 @@ fn ohlcv(idx: i64, open: f64, high: f64, low: f64, close: f64, volume: f64) -> O
     }
 }
 
+fn distinctive_risk() -> RiskConfig {
+    RiskConfig {
+        risk_pct_per_trade: 0.0137,
+        max_concurrent_positions: 4,
+        max_leverage: 3.5,
+        stop_loss_atr_multiple: 7.5,
+        daily_loss_kill_pct: 0.066,
+        max_position_pct_nav: 17.0,
+    }
+}
+
 /// Build a fully-populated seed using the given `policy` and a fixed set of
 /// deterministic scalars. All non-policy fields are identical across calls so
 /// any divergence in the returned `serde_json::Value` is caused solely by the
@@ -48,17 +59,7 @@ fn make_seed(policy: InputsPolicy) -> serde_json::Value {
     let history_refs: Vec<&Ohlcv> = history.iter().collect();
     let current = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
     let active_assets = vec!["BTC/USD".to_string()];
-    // Fixed risk config (identical across policies — #971 added the live
-    // `risk_config` field to DecisionSeedInput after this test landed; same
-    // value for Raw and Oracle keeps the byte-identity invariant intact).
-    let risk = RiskConfig {
-        risk_pct_per_trade: 0.015,
-        max_concurrent_positions: 3,
-        max_leverage: 2.0,
-        stop_loss_atr_multiple: 2.5,
-        daily_loss_kill_pct: 0.05,
-        max_position_pct_nav: 20.0,
-    };
+    let risk = distinctive_risk();
 
     build_decision_seed(DecisionSeedInput {
         decision_idx: 7,
