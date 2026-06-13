@@ -68,7 +68,61 @@ fn is_terminal(state: &str) -> bool {
 // Public API
 // ---------------------------------------------------------------------------
 
-/// Create a new session row in state `running`.
+/// Ensure the `autooptimizer_session_state` and `autooptimizer_events` tables
+/// exist (GH #968). The CLI optimize path opens the shared `xvn.db` via
+/// `ensure_lineage_schema` and does NOT run `sqlx::migrate!`, so on a
+/// CLI-only / fresh workspace these tables (created by migration 057 for the
+/// dashboard) would be absent and `create_session` / event persistence would
+/// fail. Idempotent `CREATE TABLE IF NOT EXISTS`; a no-op on already-migrated
+/// DBs. The `mode` CHECK matches migration 057 — unlimited "fire-and-forget"
+/// runs are stored as `n_experiments` with `cycles_planned = NULL`, so no new
+/// mode value is needed here.
+pub async fn ensure_session_schema(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS autooptimizer_session_state (
+          session_id        TEXT PRIMARY KEY,
+          strategy_id       TEXT NOT NULL,
+          config_json       TEXT NOT NULL,
+          state             TEXT NOT NULL CHECK(state IN ('queued','running','paused','cancelling','cancelled','finished','failed')),
+          mode              TEXT NOT NULL CHECK(mode IN ('once','n_experiments','until_budget')),
+          cycles_planned    INTEGER,
+          cycles_completed  INTEGER NOT NULL DEFAULT 0,
+          kept_count        INTEGER NOT NULL DEFAULT 0,
+          suspect_count     INTEGER NOT NULL DEFAULT 0,
+          dropped_count     INTEGER NOT NULL DEFAULT 0,
+          error             TEXT,
+          created_at        TEXT NOT NULL,
+          started_at        TEXT,
+          finished_at       TEXT
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_aoss_state ON autooptimizer_session_state(state)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_aoss_created ON autooptimizer_session_state(created_at)")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS autooptimizer_events (
+          seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id  TEXT NOT NULL,
+          cycle_id    TEXT,
+          kind        TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          ts          TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_aoe_session ON autooptimizer_events(session_id)")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Create a new session row in state `running`, generating a fresh id.
 pub async fn create_session(
     pool: &SqlitePool,
     strategy_id: &str,
@@ -77,13 +131,29 @@ pub async fn create_session(
     cycles_planned: Option<i64>,
 ) -> Result<String> {
     let session_id = ulid::Ulid::new().to_string();
+    create_session_with_id(pool, &session_id, strategy_id, config_json, mode, cycles_planned).await?;
+    Ok(session_id)
+}
+
+/// Create a new session row in state `running` with a caller-chosen id. The CLI
+/// uses this so the session-state id is the SAME as the workspace cycle-lock id
+/// (GH #968): one id ties the lock, the live session row, and the persisted
+/// events together.
+pub async fn create_session_with_id(
+    pool: &SqlitePool,
+    session_id: &str,
+    strategy_id: &str,
+    config_json: &str,
+    mode: &str,
+    cycles_planned: Option<i64>,
+) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO autooptimizer_session_state \
          (session_id, strategy_id, config_json, state, mode, cycles_planned, created_at) \
          VALUES (?,?,?,?,?,?,?)",
     )
-    .bind(&session_id)
+    .bind(session_id)
     .bind(strategy_id)
     .bind(config_json)
     .bind("running")
@@ -92,7 +162,7 @@ pub async fn create_session(
     .bind(&now)
     .execute(pool)
     .await?;
-    Ok(session_id)
+    Ok(())
 }
 
 /// Attempt a state transition. Returns `Err` on illegal transitions.
@@ -232,8 +302,12 @@ pub fn loosening_floor_reached(thresholds: &[f64], sustained_no_pass_cycles: u32
 ///
 /// # Mode-specific exit conditions
 /// - `once` — stop after 1 cycle.
-/// - `n_experiments` — stop when `cycles_completed >= cycles_planned`.
+/// - `n_experiments` — stop when `cycles_completed >= cycles_planned`. Passing
+///   `cycles_planned = None` makes the count test `>= i64::MAX`, i.e. unlimited
+///   "fire-and-forget" mode that runs until cancel / budget / floor (GH #965).
 /// - `until_budget` — stop when `cum_cost_usd >= budget_cap`.
+/// - (All modes) `budget_cap` is a hard ceiling: whenever it is finite, the
+///   loop stops as soon as `cum_cost_usd >= budget_cap`, independent of mode.
 /// - (All modes) sustained-no-pass floor — stop when the loosening
 ///   schedule has been fully exhausted.
 pub async fn run_session<F, Fut>(
@@ -289,21 +363,27 @@ where
         .fetch_one(pool)
         .await?;
 
-        // 6. Check mode-specific exit conditions.
+        // 6. Budget is a hard ceiling in EVERY mode (GH #965). When no cap is
+        //    set, `budget` is `f64::INFINITY` so this is never true.
+        let budget_exceeded = outcome.cum_cost_usd >= budget;
+
+        // 7. Check mode-specific exit conditions.
         let mode_done = match mode {
             "once" => true,
             "n_experiments" => {
                 let planned = cycles_planned.unwrap_or(i64::MAX);
                 cycles_completed >= planned
             }
-            "until_budget" => outcome.cum_cost_usd >= budget,
+            "until_budget" => budget_exceeded,
+            // `continuous` (and any unknown mode) has no count limit — it stops
+            // only via cancel, the universal budget ceiling, or the floor.
             _ => false,
         };
 
-        // 7. Check sustained-no-pass floor.
+        // 8. Check sustained-no-pass floor.
         let floor_hit = loosening_floor_reached(&loosening_thresholds, outcome.sustained_no_pass_cycles);
 
-        if mode_done || floor_hit {
+        if mode_done || budget_exceeded || floor_hit {
             break;
         }
     }
@@ -959,5 +1039,125 @@ mod tests {
         // Exhausted at 3 (> 2).
         assert!(loosening_floor_reached(&thresholds, 3));
         assert!(loosening_floor_reached(&thresholds, 10));
+    }
+
+    // -----------------------------------------------------------------------
+    // test_unlimited_runs_until_cancel (GH #965)
+    // -----------------------------------------------------------------------
+    /// Fire-and-forget mode is `n_experiments` with `cycles_planned = None`:
+    /// the count test (`cycles_completed >= i64::MAX`) is never true, so the
+    /// loop runs until cancel. No new stored `mode` value or migration is
+    /// needed. The injected cycle fn flips cancel after 3 cycles; the loop must
+    /// run exactly 3 and end "cancelled".
+    #[tokio::test]
+    async fn test_unlimited_runs_until_cancel() {
+        let pool = test_pool().await;
+        let sid = create_session(&pool, "strat-cont", "{}", "n_experiments", None)
+            .await
+            .unwrap();
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&call_count);
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
+        let cancel_in_fn = Arc::clone(&cancel);
+
+        run_session(
+            &pool,
+            &sid,
+            "n_experiments",
+            None, // unlimited
+            None,
+            vec![],
+            Arc::clone(&cancel),
+            Arc::clone(&pause),
+            move || {
+                let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                if n >= 3 {
+                    // Request shutdown; the loop checks cancel at the top of
+                    // the next iteration and seals cleanly.
+                    cancel_in_fn.store(true, Ordering::Relaxed);
+                }
+                let outcome = make_outcome("kept");
+                async move { Ok(outcome) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            3,
+            "unlimited mode must run cycles until cancel is observed"
+        );
+
+        let row: OptimizerSession =
+            sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                .bind(&sid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(row.state, "cancelled");
+    }
+
+    // -----------------------------------------------------------------------
+    // test_budget_is_a_universal_ceiling (GH #965)
+    // -----------------------------------------------------------------------
+    /// A `budget_cap` is a hard ceiling in EVERY mode: with a high
+    /// `n_experiments` count AND with unlimited (`cycles_planned = None`), the
+    /// loop stops as soon as `cum_cost_usd >= budget`, even though the count
+    /// would otherwise keep going.
+    #[tokio::test]
+    async fn test_budget_is_a_universal_ceiling() {
+        for planned in [Some(1000_i64), None] {
+            let pool = test_pool().await;
+            let sid = create_session(&pool, "strat-cap", "{}", "n_experiments", planned)
+                .await
+                .unwrap();
+
+            let call_count = Arc::new(AtomicU32::new(0));
+            let counter = Arc::clone(&call_count);
+
+            let cancel = Arc::new(AtomicBool::new(false));
+            let pause = Arc::new(AtomicBool::new(false));
+
+            // Each cycle adds $0.05; cap is $0.12 → stop after cycle 3 (cum 0.15).
+            run_session(
+                &pool,
+                &sid,
+                "n_experiments",
+                planned,
+                Some(0.12),
+                vec![],
+                Arc::clone(&cancel),
+                Arc::clone(&pause),
+                move || {
+                    let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                    let cum = n as f64 * 0.05;
+                    let outcome = make_outcome_with_cost("dropped", cum);
+                    async move { Ok(outcome) }
+                },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                call_count.load(Ordering::Relaxed),
+                3,
+                "planned={planned:?}: budget cap must stop the loop at cycle 3 regardless of count"
+            );
+
+            let row: OptimizerSession =
+                sqlx::query_as("SELECT * FROM autooptimizer_session_state WHERE session_id = ?")
+                    .bind(&sid)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                row.state, "finished",
+                "planned={planned:?}: budget stop is a normal finish"
+            );
+        }
     }
 }

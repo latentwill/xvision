@@ -86,6 +86,7 @@ export function SettingsBrokersRoute() {
         <div className="space-y-5">
           <AlpacaBrokerCard entry={data.alpaca} />
           <BrokerCard entry={data.orderly} />
+          <BrokerCard entry={data.byreal} />
           <MarketsRefreshCard />
         </div>
       )}

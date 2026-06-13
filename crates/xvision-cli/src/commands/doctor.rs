@@ -59,6 +59,30 @@ struct DoctorReport {
     /// renders.
     #[serde(default)]
     memory: MemoryStatus,
+    /// Byreal perps venue readiness, env-based. NEVER exposes the private key —
+    /// only presence booleans. `network` (mainnet/testnet) is not a secret.
+    #[serde(default)]
+    byreal: ByrealEnv,
+}
+
+/// Env-derived Byreal venue readiness for the doctor report. Presence-only:
+/// the private key value is never read into the report.
+#[derive(Debug, Default, Serialize)]
+struct ByrealEnv {
+    private_key_present: bool,
+    network: Option<String>,
+    account_present: bool,
+}
+
+fn byreal_env_status() -> ByrealEnv {
+    let present = |k: &str| std::env::var(k).map(|v| !v.trim().is_empty()).unwrap_or(false);
+    ByrealEnv {
+        private_key_present: present("BYREAL_PRIVATE_KEY"),
+        network: std::env::var("BYREAL_NETWORK")
+            .ok()
+            .filter(|v| !v.trim().is_empty()),
+        account_present: present("BYREAL_ACCOUNT"),
+    }
 }
 
 pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
@@ -108,6 +132,7 @@ pub async fn run(cmd: DoctorCmd) -> anyhow::Result<()> {
         strategies_orphaned,
         docker_home_warning,
         memory,
+        byreal: byreal_env_status(),
     };
 
     if cmd.json {
@@ -129,6 +154,20 @@ fn print_report(report: &DoctorReport) {
     println!("config_exists         {}", report.config_exists);
     println!("provider_secrets      {}", report.provider_secrets_exists);
     println!("broker_secrets        {}", report.broker_secrets_exists);
+    println!(
+        "byreal_venue          private_key={} network={} account={}",
+        if report.byreal.private_key_present {
+            "set"
+        } else {
+            "unset"
+        },
+        report.byreal.network.as_deref().unwrap_or("(default mainnet)"),
+        if report.byreal.account_present {
+            "set"
+        } else {
+            "unset"
+        },
+    );
     println!("strategies_on_disk    {}", report.strategies_on_disk);
     println!(
         "strategies_on_disk_and_indexed    {}",

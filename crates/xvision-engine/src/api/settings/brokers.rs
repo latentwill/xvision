@@ -36,6 +36,7 @@ use crate::api::{
 pub struct BrokersReport {
     pub alpaca: BrokerEntry,
     pub orderly: BrokerEntry,
+    pub byreal: BrokerEntry,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -45,9 +46,9 @@ pub struct BrokersReport {
 )]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrokerEntry {
-    /// Display name ("Alpaca", "Orderly Network").
+    /// Display name ("Alpaca", "Orderly Network", "Byreal").
     pub name: String,
-    /// Stable kind tag for the frontend ("alpaca" | "orderly").
+    /// Stable kind tag for the frontend ("alpaca" | "orderly" | "byreal").
     pub kind: String,
     /// Per-required-env-var presence; values are never returned.
     pub credentials: Vec<CredentialRef>,
@@ -169,6 +170,7 @@ async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
     Ok(BrokersReport {
         alpaca: alpaca_entry(stored.alpaca.as_ref()),
         orderly: orderly_entry(),
+        byreal: byreal_entry(),
     })
 }
 
@@ -207,6 +209,33 @@ fn orderly_entry() -> BrokerEntry {
         stored: false,
         stored_key_id_suffix: None,
         base_url: env::var("ORDERLY_BASE_URL").ok().filter(|s| !s.is_empty()),
+        note: Some("live only — disabled in v1 paper mode".into()),
+    }
+}
+
+fn byreal_entry() -> BrokerEntry {
+    // Surface all three BYREAL_* vars for debuggability. The signing key
+    // (`BYREAL_PRIVATE_KEY`) is the credential that actually gates a
+    // connection; `BYREAL_NETWORK` defaults to mainnet and `BYREAL_ACCOUNT`
+    // is forwarded to the CLI only when set, so neither is required.
+    let credentials = vec![
+        cred("BYREAL_PRIVATE_KEY"),
+        cred("BYREAL_NETWORK"),
+        cred("BYREAL_ACCOUNT"),
+    ];
+    let configured = credentials
+        .iter()
+        .find(|c| c.env_var == "BYREAL_PRIVATE_KEY")
+        .map(|c| c.is_set)
+        .unwrap_or(false);
+    BrokerEntry {
+        name: "Byreal".into(),
+        kind: "byreal".into(),
+        credentials,
+        configured,
+        stored: false,
+        stored_key_id_suffix: None,
+        base_url: env::var("BYREAL_NETWORK").ok().filter(|s| !s.is_empty()),
         note: Some("live only — disabled in v1 paper mode".into()),
     }
 }

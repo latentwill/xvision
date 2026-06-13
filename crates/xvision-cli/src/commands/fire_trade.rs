@@ -15,7 +15,9 @@ use anyhow::Result;
 use uuid::Uuid;
 
 use xvision_core::{Action, AssetSymbol, Direction, RiskDecision, TraderDecision};
-use xvision_execution::{AlpacaExecutor, Executor, OrderlyExecutor};
+use xvision_execution::{
+    AlpacaExecutor, ByrealPerpsExecutor, Executor, OrderlyExecutor, SubprocessByrealApi,
+};
 
 use crate::commands::venue::Venue;
 
@@ -107,6 +109,14 @@ pub async fn run(
                     "OrderlyExecutor::from_env() failed: {e} — check ORDERLY_KEY, ORDERLY_SECRET, ORDERLY_ACCOUNT_ID, ORDERLY_BASE_URL"
                 )
             })?;
+            exec.submit(&risk).await?
+        }
+        Venue::Byreal => {
+            let exec = ByrealPerpsExecutor::new(SubprocessByrealApi::from_env().map_err(|e| {
+                anyhow::anyhow!(
+                    "SubprocessByrealApi::from_env() failed: {e} — check BYREAL_PRIVATE_KEY, BYREAL_NETWORK, BYREAL_ACCOUNT"
+                )
+            })?);
             exec.submit(&risk).await?
         }
     };

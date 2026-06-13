@@ -29,9 +29,15 @@
 //! and messages as the old per-request env reads (xvision-df3). All pure
 //! logic (tier mapping, USDC scaling) is unit-testable without a chain.
 //!
-//! Idempotency: deliberately none in v1 (testnet). Re-publishing the same
-//! strategy mints a new NFT and listing; double-click protection is the
-//! frontend's job. Revisit with a publish-receipt store before mainnet.
+//! Idempotency: enforced via the `publish_receipts` store (bead xvision-4dn).
+//! The first successful publish records a receipt keyed by `agent_id` (the
+//! strategy ULID / NFT token id); a re-publish of an already-published
+//! agent_id short-circuits with 409 Conflict BEFORE any chain or IPFS work,
+//! so a re-click / retry / refresh cannot mint a duplicate NFT + listing.
+//! Residual: the receipt is inserted AFTER the on-chain mint, so two
+//! genuinely-concurrent first-publishes can still both mint before either
+//! receipt lands — the store collapses the dominant sequential case, not a
+//! hard mutex (see `publish_receipts`).
 
 use axum::{
     extract::{Path, State},
@@ -56,7 +62,19 @@ use xvision_marketplace::IpfsStore;
 
 use crate::chain_config::{chain_call_timeout, with_chain_timeout};
 use crate::error::DashboardError;
+use crate::routes::marketplace_auth::{build_challenge_message, verify_address_proof};
+use crate::routes::publish_receipts::{find_receipt, insert_receipt};
 use crate::state::AppState;
+
+/// Current wall-clock time as unix seconds. Single source of "now" for the
+/// sealed-import challenge issue/expiry checks; the pure verifier takes the
+/// clock as a parameter so tests inject a fixed/advanced time.
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 /// Request body for `POST /api/marketplace/publish`.
 #[derive(Debug, Deserialize)]
@@ -166,6 +184,21 @@ pub async fn post_publish(
 
     // c. The strategy ULID IS the pre-mint agent id.
     let agent_id = body.strategy_id.clone();
+
+    // c.1. Idempotency gate (bead xvision-4dn). If this agent_id was already
+    //      published, short-circuit with 409 Conflict BEFORE any tokenURI gen,
+    //      chain gate, IPFS pin, or mint — so a re-click / retry / refresh
+    //      cannot mint a duplicate NFT + listing. This lookup is cheap and
+    //      precedes ALL chain/IPFS side effects (it must stay above the chain
+    //      gate at step `e`). See `publish_receipts` for the residual
+    //      concurrent-first-publish race.
+    if let Some(r) = find_receipt(&state.pool, &agent_id).await? {
+        return Err(DashboardError::Conflict(format!(
+            "agent_id {agent_id} already published (token_id {}, listing_id {}); \
+             re-publishing would mint a duplicate NFT",
+            r.token_id, r.listing_id
+        )));
+    }
 
     // d. Genart tokenURI (data:application/json;base64,…).
     let token_uri =
@@ -302,7 +335,35 @@ pub async fn post_publish(
         ))
     })?;
 
-    // i. 201 + receipt.
+    // i. Persist the publish receipt (bead xvision-4dn) so a re-publish 409s
+    //    at step `c.1` above. This runs AFTER the on-chain mint+list, so a DB
+    //    failure here must NOT 500 the response — the NFT already exists on
+    //    chain, and surfacing an error would make the operator retry, which is
+    //    the exact duplicate-mint bug being fixed. Log-only is therefore the
+    //    safer no-duplicate posture: a missed receipt leaves the next publish
+    //    able to duplicate (rare), but a hard-fail GUARANTEES the operator
+    //    retries into a duplicate.
+    if let Err(e) = insert_receipt(
+        &state.pool,
+        &agent_id,
+        &token_id.to_string(),
+        &listing.listing_id.to_string(),
+        &manifest_hash,
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .await
+    {
+        tracing::error!(
+            error = %e,
+            agent_id = %agent_id,
+            token_id = %token_id,
+            listing_id = %listing.listing_id,
+            "publish succeeded on chain but the receipt insert failed; a future \
+             re-publish will not be short-circuited by the idempotency gate"
+        );
+    }
+
+    // j. 201 + receipt.
     Ok((
         StatusCode::CREATED,
         Json(PublishOut {
@@ -661,16 +722,74 @@ async fn license_gate(state: &AppState, address: Address, id: u64) -> Result<(),
 // POST /api/marketplace/listings/:id/import-sealed — sealed bundle import
 // ---------------------------------------------------------------------------
 
+/// Response for `GET /api/marketplace/listings/:id/import-challenge`: a fresh,
+/// single-use, time-bounded nonce plus the exact message the client must
+/// `personal_sign` (byte-compatible with the Lit gate action's grammar).
+#[derive(Debug, Serialize)]
+pub struct ImportChallengeOut {
+    /// Server-issued single-use nonce (consumed on a successful import).
+    pub nonce: String,
+    /// Unix-seconds expiry of both the nonce and the message the client signs.
+    pub expiry_unix: u64,
+    /// The exact byte string to sign — embeds the listing id, nonce, and
+    /// expiry. The frontend may rebuild this itself, but signing the
+    /// server-issued string guarantees the nonce binding.
+    pub message: String,
+}
+
+/// `GET /api/marketplace/listings/:id/import-challenge` — issue a fresh,
+/// single-use, time-bounded proof-of-address challenge for the sealed import
+/// route (lane cgz). 404 if the listing is not in the indexed snapshot.
+///
+/// The buyer `personal_sign`s the returned `message` and POSTs the signature to
+/// `import-sealed`; the server recovers the signer, requires it to equal the
+/// claimed address, validates the message binding/freshness, and consumes the
+/// nonce single-use (a replay or expiry → 401).
+pub async fn get_import_challenge(
+    Path(id): Path<u64>,
+    State(state): State<AppState>,
+) -> Result<Json<ImportChallengeOut>, DashboardError> {
+    // Listing must exist in the indexed snapshot (404 unknown) so a challenge
+    // is only ever issued for a real listing.
+    {
+        let snap = state.marketplace_snapshot.read().await;
+        snap.listings
+            .iter()
+            .find(|l| l.listing_id == id)
+            .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?;
+    }
+    let (nonce, expiry_unix) = state.marketplace_nonces().issue(id, now_unix());
+    let message = build_challenge_message(id, &nonce, expiry_unix);
+    Ok(Json(ImportChallengeOut {
+        nonce,
+        expiry_unix,
+        message,
+    }))
+}
+
 /// Request body for `POST /api/marketplace/listings/:id/import-sealed`. Unlike
 /// open-tier import, the manifest is supplied by the caller: the browser
 /// decrypted it client-side via Lit, so the server never sees the ciphertext
-/// key. `address` is still required for the server-side license re-check.
+/// key. `address` is still required for the server-side license re-check, and
+/// (lane cgz) the caller must prove control of it: `message` is the
+/// server-issued challenge string and `signature` its EIP-191 `personal_sign`.
 #[derive(Debug, Deserialize)]
 pub struct ImportSealedBody {
-    /// The buyer's wallet — must hold an ERC-1155 license for the listing.
+    /// The buyer's wallet — must hold an ERC-1155 license for the listing AND
+    /// be proven via the signature below.
     pub address: String,
     /// The decrypted strategy manifest (browser-side Lit decrypt output).
     pub manifest: serde_json::Value,
+    /// The signed challenge message (from `import-challenge`; embeds the
+    /// listing id, the server-issued nonce, and an expiry). Optional in the
+    /// wire type so a missing proof yields a clean 400 (rather than a serde
+    /// 422) AFTER the address/listing checks.
+    #[serde(default)]
+    pub message: Option<String>,
+    /// EIP-191 `personal_sign` of `message` by `address` (0x-prefixed 65-byte
+    /// hex). The server recovers the signer and requires it to equal `address`.
+    #[serde(default)]
+    pub signature: Option<String>,
 }
 
 /// Re-verifies a client-supplied manifest against a listing's on-chain
@@ -696,15 +815,24 @@ fn verify_manifest_matches_onchain(
 /// `POST /api/marketplace/listings/:id/import-sealed` — install a sealed
 /// strategy that the buyer's browser decrypted via the Lit gate action.
 ///
-/// Order: validate address (400) → listing from snapshot (404) → license gate
-/// (503 dormant / 403 no license, shared with open import) → RE-VERIFY
+/// Order: validate address (400) → listing from snapshot (404) → PROOF OF
+/// ADDRESS (lane cgz): recover the EIP-191 signer of `message` and require it to
+/// equal `address` (403 on mismatch / 400 on malformed signature), validate the
+/// message binding+freshness (401), then consume the server-issued nonce
+/// single-use (401 on replay/expired/unknown) → license gate (503 dormant / 403
+/// no license, shared with open import) → RE-VERIFY
 /// `keccak256(canonical_json(manifest)) == listing.content_hash` (409 on
 /// mismatch — this is the defense against a malicious browser POSTing arbitrary
 /// JSON; the on-chain `content_hash` commits to the canonical plaintext for
 /// both tiers) → `import_strategy` mints a NEW local ULID → 201 `{agent_id}`.
 ///
-/// The server never decrypts (keys live in Lit's TEE); it trusts the
-/// client-supplied manifest ONLY after the on-chain hash re-check passes.
+/// The proof check runs BEFORE the license gate so a caller who cannot prove
+/// control of `address` is rejected (403/401) regardless of chain config — the
+/// v1 address-assertion caveat is closed. The nonce is server-issued via
+/// `GET …/import-challenge`; one challenge == one import (a fresh challenge is
+/// required per attempt). The server never decrypts (keys live in Lit's TEE);
+/// it trusts the client-supplied manifest ONLY after the on-chain hash re-check
+/// passes.
 pub async fn post_import_sealed(
     Path(id): Path<u64>,
     State(state): State<AppState>,
@@ -723,15 +851,53 @@ pub async fn post_import_sealed(
             .ok_or_else(|| DashboardError::NotFound(format!("listing {id} not in indexed snapshot")))?
     };
 
-    // c. License gate (503 dormant / 403 no license).
+    // c. PROOF OF ADDRESS (lane cgz). The signed challenge + signature are
+    //    required; a missing one is a clean 400 (after address/listing checks).
+    let message = body.message.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
+        DashboardError::Validation {
+            field: "message".into(),
+            msg: "sealed import requires the signed challenge message (GET …/import-challenge)".into(),
+        }
+    })?;
+    let signature = body.signature.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
+        DashboardError::Validation {
+            field: "signature".into(),
+            msg: "sealed import requires the personal_sign signature of the challenge message".into(),
+        }
+    })?;
+    //    Recover the signer from the EIP-191 signature and require it to equal
+    //    the claimed address, then validate the message's listing binding +
+    //    freshness. Runs BEFORE the license gate so a forged/mismatched proof
+    //    is rejected (403/401) even when the chain env is dormant — closing the
+    //    v1 address-assertion caveat.
+    let now = now_unix();
+    let proof = verify_address_proof(address, message, signature, id, now)?;
+    // Consume the server-issued nonce single-use: a replayed, expired, or
+    // never-issued nonce → 401. This is the actual replay defense (the Lit gate
+    // action is deliberately stateless).
+    state
+        .marketplace_nonces()
+        .consume(&proof.nonce, id, now)
+        .map_err(|e| {
+            use crate::marketplace_nonce::NonceError;
+            DashboardError::Unauthorized(match e {
+                NonceError::UnknownOrConsumed => {
+                    "import challenge nonce was never issued or already used".into()
+                }
+                NonceError::ListingMismatch => "import challenge nonce is for a different listing".into(),
+                NonceError::Expired => "import challenge nonce expired".into(),
+            })
+        })?;
+
+    // d. License gate (503 dormant / 403 no license).
     license_gate(&state, address, id).await?;
 
-    // d. Re-verify the client-supplied manifest against the on-chain hash. The
+    // e. Re-verify the client-supplied manifest against the on-chain hash. The
     //    content_hash commits to the canonical plaintext (identical for both
     //    tiers), so a browser that swaps in arbitrary JSON is rejected here.
     verify_manifest_matches_onchain(&body.manifest, &listing.content_hash)?;
 
-    // e. Install as a NEW local strategy (fresh ULID).
+    // f. Install as a NEW local strategy (fresh ULID).
     let imported = strategy::import_strategy(&state.api_context(), body.manifest).await?;
 
     Ok((

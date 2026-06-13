@@ -195,6 +195,15 @@ function mockReady({
       base_url: null,
       note: "post-v1",
     }),
+    byreal: broker({
+      name: "Byreal",
+      kind: "byreal",
+      configured: false,
+      stored: false,
+      stored_key_id_suffix: null,
+      base_url: null,
+      note: null,
+    }),
   });
   vi.mocked(strategyApi.listStrategies).mockResolvedValue([
     {
