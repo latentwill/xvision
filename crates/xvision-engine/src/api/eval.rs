@@ -61,6 +61,7 @@ use xvision_core::market::Ohlcv;
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
 use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface, OrderlyLiveSurface};
+use xvision_execution::ByrealLiveSurface;
 use xvision_filters::{FilterEventV1, FilterSummary};
 
 // ---------------------------------------------------------------------------
@@ -3582,6 +3583,9 @@ async fn build_backtest_executor(
 enum LiveVenue {
     AlpacaPaper,
     OrderlyTestnet,
+    /// Byreal perps (executes on Hyperliquid via the perps CLI) while Alpaca
+    /// supplies the live market-data stream. Testnet-only in the current scope.
+    ByrealLive,
 }
 
 /// Gate `broker_creds_ref` to the supported live venues. For
@@ -3610,15 +3614,21 @@ fn resolve_live_venue(broker_creds_ref: &str, orderly_base_url: Option<&str>) ->
             }
             Ok(LiveVenue::OrderlyTestnet)
         }
-        "byreal" => Err(ApiError::Validation(
-            "Byreal live-eval execution is not yet wired into the engine live path: it needs a \
-             ByrealLiveSurface (BrokerSurface) adapter over the perps CLI, tracked as a follow-up. \
-             To trade on Byreal today, use the direct CLI path instead: \
-             `xvn fire-trade --venue byreal ...`, `xvn portfolio --venue byreal`, or \
-             `xvn close-position --venue byreal <asset>` with BYREAL_PRIVATE_KEY / BYREAL_NETWORK / \
-             BYREAL_ACCOUNT set."
-                .into(),
-        )),
+        "byreal" => {
+            // Testnet-only guard, mirroring the Orderly testnet gate: refuse to
+            // run live-eval against real-money Byreal/Hyperliquid mainnet by
+            // omission. Mainnet execution is available via the direct CLI.
+            let network = std::env::var("BYREAL_NETWORK").unwrap_or_default();
+            if !network.to_ascii_lowercase().contains("testnet") {
+                return Err(ApiError::Validation(format!(
+                    "live-eval Byreal is testnet-only in the current live scope: set \
+                     BYREAL_NETWORK=testnet (got '{network}'). Real-money Byreal/Hyperliquid mainnet \
+                     is out of scope for live runs. For mainnet execution use the direct CLI: \
+                     `xvn fire-trade --venue byreal`."
+                )));
+            }
+            Ok(LiveVenue::ByrealLive)
+        }
         other => Err(ApiError::Validation(format!(
             "live_config.broker_creds_ref '{other}' is not supported in the current live scope. \
              Supported venues: \"alpaca\" (Alpaca paper trading) and \"orderly_testnet\" \
@@ -3657,6 +3667,12 @@ async fn build_live_executor(
             "no Alpaca credentials configured for Live run: Orderly testnet runs still need Alpaca \
              credentials because Alpaca supplies the live market-data stream while Orderly executes \
              the orders. Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
+                .to_string()
+        }
+        LiveVenue::ByrealLive => {
+            "no Alpaca credentials configured for Live run: Byreal runs still need Alpaca \
+             credentials because Alpaca supplies the live market-data stream while Byreal executes \
+             the orders (on Hyperliquid). Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
                 .to_string()
         }
     }
@@ -3701,6 +3717,10 @@ async fn build_live_executor(
             LiveVenue::OrderlyTestnet => Arc::new(
                 OrderlyLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Orderly testnet broker: {e}")))?,
+            ),
+            LiveVenue::ByrealLive => Arc::new(
+                ByrealLiveSurface::from_env()
+                    .map_err(|e| ApiError::Validation(format!("build Byreal live broker: {e}")))?,
             ),
         },
     };

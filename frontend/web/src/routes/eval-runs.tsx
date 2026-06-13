@@ -699,6 +699,10 @@ function StartEvalPanel({
   const [liveCapital, setLiveCapital] = useState("10000");
   const [liveBarLimit, setLiveBarLimit] = useState("5");
   const [liveWarmupBars, setLiveWarmupBars] = useState("200");
+  // Live execution venue. Values are the backend `broker_creds_ref` contract
+  // (resolve_live_venue): "alpaca" (paper), "orderly_testnet", "byreal".
+  // Orderly + Byreal are testnet-only in the current live scope.
+  const [brokerCredsRef, setBrokerCredsRef] = useState<"alpaca" | "orderly_testnet" | "byreal">("alpaca");
   const [autoFireReview, setAutoFireReview] = useState<boolean>(false);
   const [reviewProvider, setReviewProvider] = useState<string>("");
   const [reviewModel, setReviewModel] = useState<string>("");
@@ -808,18 +812,26 @@ function StartEvalPanel({
               },
             ],
             capital: { initial: capitalNum, currency: "USD" },
-            broker_creds_ref: "alpaca",
+            broker_creds_ref: brokerCredsRef,
             stop_policy: {
               time_limit_secs: null,
               bar_limit: barLimitNum,
               decision_limit: null,
             },
+            // Coarse safety label; v1 only accepts "paper". The actual venue is
+            // carried by broker_creds_ref / display_name / tags.
             venue_label: "paper",
             warmup_bars: warmupBarsNum,
             safety_limits: null,
-            display_name: `Live Alpaca ${effectiveLiveAsset}`,
+            display_name: `Live ${
+              brokerCredsRef === "alpaca"
+                ? "Alpaca paper"
+                : brokerCredsRef === "orderly_testnet"
+                  ? "Orderly testnet"
+                  : "Byreal"
+            } ${effectiveLiveAsset}`,
             description: null,
-            tags: ["live", "alpaca"],
+            tags: ["live", brokerCredsRef],
             notes: null,
           }
         : null;
@@ -959,8 +971,35 @@ function StartEvalPanel({
           {mode === "live" ? (
             <fieldset className="grid grid-cols-2 gap-3">
               <legend className="col-span-2 block text-[12px] text-text-2 mb-1 px-0">
-                Live Alpaca paper
+                Live execution venue
               </legend>
+              <div
+                role="group"
+                aria-label="Live execution venue"
+                className="col-span-2 flex gap-1 rounded-md border border-border bg-surface-elev p-1"
+              >
+                {(
+                  [
+                    ["alpaca", "Alpaca paper"],
+                    ["orderly_testnet", "Orderly testnet"],
+                    ["byreal", "Byreal"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setBrokerCredsRef(value)}
+                    aria-pressed={brokerCredsRef === value}
+                    className={`flex-1 rounded px-2 py-1 text-[12px] transition-colors ${
+                      brokerCredsRef === value
+                        ? "bg-gold/10 text-text-1"
+                        : "text-text-2 hover:bg-surface-hover"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <LabeledInput
                 label="Asset"
                 help="From strategy assets"
