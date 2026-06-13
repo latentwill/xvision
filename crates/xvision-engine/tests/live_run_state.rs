@@ -235,3 +235,92 @@ async fn list_live_deployments_surfaces_testnet_label() {
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].venue_label, "testnet", "API response must carry the persisted venue_label");
 }
+
+// ---------------------------------------------------------------------------
+// Task 8: LiveRunState SSE event via RunEventBus
+// ---------------------------------------------------------------------------
+
+/// The bus delivers a `LiveRunState` event to a subscriber on the correct run.
+#[tokio::test]
+async fn bus_delivers_live_run_state_event_to_subscriber() {
+    use std::sync::Arc;
+    use tokio::time::{timeout, Duration};
+    use xvision_engine::api::chart::{LiveRunStatePayload, RunChartEvent, RunEventBus};
+
+    let bus = Arc::new(RunEventBus::new());
+    let run_id = "live-test-run-001";
+
+    let mut rx = bus.subscribe(run_id).await;
+
+    let payload = LiveRunStatePayload {
+        equity_usd: Some(10_500.0),
+        unrealized_pnl_usd: Some(200.0),
+        realized_today_usd: Some(50.0),
+        daily_loss_remaining_usd: Some(450.0),
+        drawdown_pct: Some(0.5),
+        risk_veto_count: 3,
+        last_decision_at: Some("2026-06-13T12:00:00Z".into()),
+    };
+
+    bus.emit(run_id, RunChartEvent::LiveRunState(payload.clone())).await;
+
+    let ev = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("timed out waiting for LiveRunState event")
+        .expect("channel closed unexpectedly");
+
+    match ev {
+        RunChartEvent::LiveRunState(p) => {
+            assert_eq!(p.equity_usd, Some(10_500.0));
+            assert_eq!(p.unrealized_pnl_usd, Some(200.0));
+            assert_eq!(p.realized_today_usd, Some(50.0));
+            assert_eq!(p.daily_loss_remaining_usd, Some(450.0));
+            assert_eq!(p.drawdown_pct, Some(0.5));
+            assert_eq!(p.risk_veto_count, 3);
+            assert_eq!(p.last_decision_at.as_deref(), Some("2026-06-13T12:00:00Z"));
+        }
+        other => panic!("expected LiveRunState event, got {other:?}"),
+    }
+}
+
+/// A subscriber on a different run_id receives nothing when `LiveRunState`
+/// is emitted on a different run.
+#[tokio::test]
+async fn bus_isolates_live_run_state_events_per_run_id() {
+    use std::sync::Arc;
+    use xvision_engine::api::chart::{LiveRunStatePayload, RunChartEvent, RunEventBus};
+
+    let bus = Arc::new(RunEventBus::new());
+
+    let mut rx_a = bus.subscribe("run-A").await;
+    let mut rx_b = bus.subscribe("run-B").await;
+
+    let payload = LiveRunStatePayload {
+        equity_usd: Some(9_999.0),
+        unrealized_pnl_usd: None,
+        realized_today_usd: None,
+        daily_loss_remaining_usd: None,
+        drawdown_pct: None,
+        risk_veto_count: 0,
+        last_decision_at: None,
+    };
+
+    // Emit only on run-A.
+    bus.emit("run-A", RunChartEvent::LiveRunState(payload)).await;
+
+    // run-A subscriber receives the event.
+    let ev = rx_a.try_recv().expect("run-A should have received an event");
+    assert!(
+        matches!(ev, RunChartEvent::LiveRunState(_)),
+        "expected LiveRunState on run-A"
+    );
+
+    // run-B subscriber receives nothing.
+    assert!(
+        matches!(
+            rx_b.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ),
+        "run-B must not receive events emitted on run-A"
+    );
+}

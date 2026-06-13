@@ -455,6 +455,7 @@ fn event_name(ev: &RunChartEvent) -> &'static str {
         RunChartEvent::Marker(_) => "marker",
         RunChartEvent::Equity(_) => "equity",
         RunChartEvent::Status { .. } => "status",
+        RunChartEvent::LiveRunState(_) => "live_run_state",
     }
 }
 

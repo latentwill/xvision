@@ -233,6 +233,7 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/live/venue-account", get(live_broker_route::venue_account))
         .route("/api/live/deployments", get(live_deployments::list))
         .route("/api/live/deployments/:id", get(live_deployments::get_one))
+        .route("/api/live/deployments/:id/stream", get(live_deployments::stream))
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))

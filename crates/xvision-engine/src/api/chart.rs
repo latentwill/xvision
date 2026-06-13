@@ -1247,6 +1247,21 @@ fn compute_max_drawdown_pct(equity: &[ChartEquityPoint]) -> f64 {
 
 use tokio::sync::broadcast;
 
+/// Snapshot of a live run's capital-risk state, emitted per bar over SSE.
+/// Fields are nullable because the live loop only populates them once the
+/// first decision fires; subscribers connected before any decision has run
+/// receive the zero-state row with all `Option` fields as `None`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveRunStatePayload {
+    pub equity_usd: Option<f64>,
+    pub unrealized_pnl_usd: Option<f64>,
+    pub realized_today_usd: Option<f64>,
+    pub daily_loss_remaining_usd: Option<f64>,
+    pub drawdown_pct: Option<f64>,
+    pub risk_veto_count: i64,
+    pub last_decision_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum RunChartEvent {
@@ -1256,6 +1271,7 @@ pub enum RunChartEvent {
     Marker(MarkerEvent),
     Equity(ChartEquityPoint),
     Status { phase: String, message: Option<String> },
+    LiveRunState(LiveRunStatePayload),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

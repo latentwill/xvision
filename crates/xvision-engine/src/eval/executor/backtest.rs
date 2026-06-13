@@ -3420,6 +3420,23 @@ impl Executor {
                     updated_at: chrono::Utc::now().to_rfc3339(),
                 };
                 let _ = live_state.upsert(&snap).await;
+                // CT5 Task 8: broadcast the per-bar state snapshot over SSE so
+                // the live-deployments stream handler can forward it to clients.
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::LiveRunState(
+                        crate::api::chart::LiveRunStatePayload {
+                            equity_usd: snap.equity_usd,
+                            unrealized_pnl_usd: snap.unrealized_pnl_usd,
+                            realized_today_usd: snap.realized_today_usd,
+                            daily_loss_remaining_usd: snap.daily_loss_remaining_usd,
+                            drawdown_pct: snap.drawdown_pct,
+                            risk_veto_count: snap.risk_veto_count,
+                            last_decision_at: snap.last_decision_at.clone(),
+                        },
+                    ),
+                )
+                .await;
             }
 
             decision_idx += 1;
