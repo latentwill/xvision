@@ -236,7 +236,11 @@ fn byreal_entry() -> BrokerEntry {
         stored: false,
         stored_key_id_suffix: None,
         base_url: env::var("BYREAL_NETWORK").ok().filter(|s| !s.is_empty()),
-        note: Some("live only — disabled in v1 paper mode".into()),
+        note: Some(
+            "Live execution venue (Hyperliquid perps) — not available for paper/backtest. \
+             Testnet supported for live-eval (set BYREAL_NETWORK=testnet)."
+                .into(),
+        ),
     }
 }
 
