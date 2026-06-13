@@ -30,7 +30,7 @@ use chrono::{TimeZone, Utc};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agents::{AgentSlot, AgentStore, InputsPolicy, NewAgent};
-use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput};
+use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput, PerpsContext};
 
 const MIGRATION_005: &str = include_str!("../migrations/005_agents.sql");
 const MIGRATION_019: &str = include_str!("../migrations/019_agent_slot_prompt_version.sql");
@@ -201,6 +201,7 @@ fn production_seed_shape(policy: InputsPolicy) -> serde_json::Value {
         bars_held: 0,
         stop_loss_price: 0.0,
         take_profit_price: 0.0,
+        perps: PerpsContext::default(),
     })
 }
 
@@ -221,6 +222,50 @@ fn raw_per_bar_shape_is_byte_identical_to_pre_f6() {
         );
     }
     assert_eq!(obj.len(), 6, "Raw must not gain or drop fields");
+}
+
+#[test]
+fn perps_context_emitted_in_market_data_when_present() {
+    let current = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
+    let active_assets = vec!["BTC/USD".to_string()];
+    let history_refs: Vec<&xvision_core::market::Ohlcv> = vec![];
+    let seed = build_decision_seed(DecisionSeedInput {
+        decision_idx: 0,
+        asset: "BTC/USD",
+        active_assets: &active_assets,
+        bar: &current,
+        next_bar_open: 109.0,
+        reference_price_source: "eval_bar.close",
+        position_size: 0.0,
+        equity: 10_000.0,
+        mark_price: current.close,
+        history_slice: &history_refs,
+        inputs_policy: InputsPolicy::Causal,
+        entry_price: 0.0,
+        unrealized_pnl_pct: 0.0,
+        bars_held: 0,
+        stop_loss_price: 0.0,
+        take_profit_price: 0.0,
+        perps: PerpsContext {
+            funding_rate: Some(0.0002),
+            open_interest: Some(9_000_000.0),
+            ..Default::default()
+        },
+    });
+    let perps = &seed["market_data"]["perps"];
+    assert_eq!(perps["funding_rate"].as_f64(), Some(0.0002));
+    assert_eq!(perps["open_interest"].as_f64(), Some(9_000_000.0));
+    // Unset fields are omitted, not null-filled.
+    assert!(perps.get("long_short_ratio").is_none());
+}
+
+#[test]
+fn perps_absent_emits_null() {
+    let seed = production_seed_shape(InputsPolicy::Causal);
+    assert!(
+        seed["market_data"]["perps"].is_null(),
+        "default (empty) PerpsContext must serialize as null so the prompt skips it",
+    );
 }
 
 #[test]

@@ -246,6 +246,13 @@ pub enum IndicatorName {
     KeltnerMiddle,
     KeltnerLower,
     WilliamsR,
+    // Perpetual-futures scalars (periodless; latest reading only). Backed by
+    // the optional perps fields on `Bar`; `None` on spot bars.
+    FundingRate,
+    OpenInterest,
+    MarkPrice,
+    MarkIndexBasis,
+    LongShortRatio,
 }
 
 impl IndicatorName {
@@ -288,6 +295,11 @@ impl IndicatorName {
                 | IndicatorName::GapPct
                 | IndicatorName::GapUp
                 | IndicatorName::GapDown
+                | IndicatorName::FundingRate
+                | IndicatorName::OpenInterest
+                | IndicatorName::MarkPrice
+                | IndicatorName::MarkIndexBasis
+                | IndicatorName::LongShortRatio
         )
     }
 
@@ -365,6 +377,11 @@ impl IndicatorName {
             IndicatorName::KeltnerMiddle => "keltner_middle",
             IndicatorName::KeltnerLower => "keltner_lower",
             IndicatorName::WilliamsR => "williams_r",
+            IndicatorName::FundingRate => "funding_rate",
+            IndicatorName::OpenInterest => "open_interest",
+            IndicatorName::MarkPrice => "mark_price",
+            IndicatorName::MarkIndexBasis => "mark_index_basis",
+            IndicatorName::LongShortRatio => "long_short_ratio",
         }
     }
 
@@ -404,7 +421,12 @@ impl IndicatorName {
             | IndicatorName::PremarketLow
             | IndicatorName::GapPct
             | IndicatorName::GapUp
-            | IndicatorName::GapDown => None,
+            | IndicatorName::GapDown
+            | IndicatorName::FundingRate
+            | IndicatorName::OpenInterest
+            | IndicatorName::MarkPrice
+            | IndicatorName::MarkIndexBasis
+            | IndicatorName::LongShortRatio => None,
             IndicatorName::Ema | IndicatorName::Sma | IndicatorName::Wma => Some((2, 500)),
             IndicatorName::Rsi
             | IndicatorName::Atr
@@ -527,6 +549,11 @@ impl IndicatorRef {
             "gap_pct" => Some(IndicatorName::GapPct),
             "gap_up" => Some(IndicatorName::GapUp),
             "gap_down" => Some(IndicatorName::GapDown),
+            "funding_rate" => Some(IndicatorName::FundingRate),
+            "open_interest" => Some(IndicatorName::OpenInterest),
+            "mark_price" => Some(IndicatorName::MarkPrice),
+            "mark_index_basis" => Some(IndicatorName::MarkIndexBasis),
+            "long_short_ratio" => Some(IndicatorName::LongShortRatio),
             "macd" | "macd_line" | "macd_12_26_9" | "macd_line_12_26_9" => Some(IndicatorName::MacdLine),
             "macd_signal" | "macd_signal_12_26_9" => Some(IndicatorName::MacdSignal),
             "macd_hist" | "macd_hist_12_26_9" | "macd_histogram" | "macd_histogram_12_26_9" => {
