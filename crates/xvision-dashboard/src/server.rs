@@ -733,6 +733,10 @@ fn mutating_router(state: AppState) -> Router {
             "/api/settings/brokers/alpaca/test-connection",
             post(settings::brokers::test_alpaca),
         )
+        .route(
+            "/api/settings/brokers/byreal",
+            post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
+        )
         // ── Settings: observability ───────────────────────────────────────
         .route("/api/settings/observability", put(settings::observability::put))
         .route("/api/settings/memory", put(settings::memory::put))
