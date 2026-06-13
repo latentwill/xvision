@@ -1117,9 +1117,6 @@ impl Executor {
                     .map(|b| b.timestamp)
                     .unwrap_or(bar.timestamp);
                 let source_window_end = bar.timestamp;
-                let seed_pos_size = book.position(asset_sym);
-                let seed_entry = book.entry_price(asset_sym);
-                let seed_mark = bar.close;
                 let (seed_sl_price, seed_tp_price, seed_bars_held) =
                     if let Some(sltp) = sltp_state.get(&asset_sym) {
                         (
@@ -1130,27 +1127,29 @@ impl Executor {
                     } else {
                         (0.0, 0.0, 0)
                     };
-                // Shared seed constructor: upnl/entry derivations live in
-                // `from_context`, so this path can't drift from the live one.
-                let seed = build_decision_seed(DecisionSeedInput::from_context(SeedContext {
-                    decision_idx,
-                    asset: &asset,
-                    active_assets: &active_venue_symbols,
+                // Shared seed-context prologue: position/entry/mark are derived
+                // inside `build_seed_context` (single source of truth), so this
+                // path can't drift from the live one.
+                let seed = build_decision_seed(DecisionSeedInput::from_context(build_seed_context(
+                    &book,
+                    asset_sym,
                     bar,
-                    history_slice,
-                    inputs_policy,
-                    equity,
-                    position_size: seed_pos_size,
-                    entry_price: seed_entry,
-                    mark_price: seed_mark,
-                    next_bar_open,
-                    reference_price_source: "eval_bar.close",
-                    bars_held: seed_bars_held,
-                    stop_loss_price: seed_sl_price,
-                    take_profit_price: seed_tp_price,
-                    // Backtest is spot-only: no perps context (deferred).
-                    perps: PerpsContext::default(),
-                }));
+                    SeedContextParams {
+                        decision_idx,
+                        asset: &asset,
+                        active_assets: &active_venue_symbols,
+                        history_slice,
+                        inputs_policy,
+                        equity,
+                        next_bar_open,
+                        reference_price_source: "eval_bar.close",
+                        bars_held: seed_bars_held,
+                        stop_loss_price: seed_sl_price,
+                        take_profit_price: seed_tp_price,
+                        // Backtest is spot-only: no perps context (deferred).
+                        perps: PerpsContext::default(),
+                    },
+                )));
                 // When the DSL filter fired this bar, inject its trigger context
                 // (indicator snapshot + fire.reason/priority/tags) into the seed
                 // so the trader's briefing includes the values that caused the
@@ -3467,38 +3466,39 @@ impl Executor {
         // don't have a T+1 bar yet (the broker fills at the live market
         // price; `next_open` is only the reference price for sizing).
         let next_open = bar.close;
-        let live_pos_size = book.position(asset_sym);
-        let live_entry = book.entry_price(asset_sym);
-        let live_mark = bar.close;
-        // Shared seed constructor: upnl/entry derivations live in
-        // `from_context`, so this path can't drift from the backtest one.
-        let seed = build_decision_seed(DecisionSeedInput::from_context(SeedContext {
-            decision_idx,
-            asset,
-            active_assets: active_venue_symbols,
+        // Shared seed-context prologue: position/entry/mark are derived inside
+        // `build_seed_context` (single source of truth), so this path can't
+        // drift from the backtest one.
+        let seed = build_decision_seed(DecisionSeedInput::from_context(build_seed_context(
+            book,
+            asset_sym,
             bar,
-            history_slice: &history_slice,
-            inputs_policy,
-            equity,
-            position_size: live_pos_size,
-            entry_price: live_entry,
-            mark_price: live_mark,
-            next_bar_open: next_open,
-            reference_price_source: "live_bar.close",
-            // PARITY GAP (explicit): the live path does not yet thread SLTP
-            // state / position age. Backtest fills these from `sltp_state`; the
-            // live book exposes the same, so wiring them here closes the gap.
-            bars_held: 0,
-            stop_loss_price: 0.0,
-            take_profit_price: 0.0,
-            // LIVE PERPS ATTACH POINT: this is the call-site for the perps feed.
-            // A network fetch in this sync hot loop is the wrong shape — an
-            // out-of-band poller (xvision_data::perp_feed::fetch_perp_snapshot)
-            // should cache the latest reading per asset; read that cache here and
-            // build PerpsContext { funding_rate, open_interest, .. }. Until that
-            // poller exists the agent simply sees no perps block (None).
-            perps: PerpsContext::default(),
-        }));
+            SeedContextParams {
+                decision_idx,
+                asset,
+                active_assets: active_venue_symbols,
+                history_slice: &history_slice,
+                inputs_policy,
+                equity,
+                next_bar_open: next_open,
+                reference_price_source: "live_bar.close",
+                // PARITY GAP (explicit): the live path does not yet thread SLTP
+                // state / position age. Backtest fills these from `sltp_state`;
+                // the live book exposes the same, so wiring them here closes the
+                // gap.
+                bars_held: 0,
+                stop_loss_price: 0.0,
+                take_profit_price: 0.0,
+                // LIVE PERPS ATTACH POINT: this is the call-site for the perps
+                // feed. A network fetch in this sync hot loop is the wrong shape
+                // — an out-of-band poller
+                // (xvision_data::perp_feed::fetch_perp_snapshot) should cache the
+                // latest reading per asset; read that cache here and build
+                // PerpsContext { funding_rate, open_interest, .. }. Until that
+                // poller exists the agent simply sees no perps block (None).
+                perps: PerpsContext::default(),
+            },
+        )));
 
         let outs = run_pipeline(PipelineInputs {
             strategy,
@@ -5232,6 +5232,61 @@ impl<'a> DecisionSeedInput<'a> {
             take_profit_price: ctx.take_profit_price,
             perps: ctx.perps,
         }
+    }
+}
+
+/// Path-specific inputs to [`build_seed_context`] — the fields the shared
+/// prologue cannot derive from the book + current bar. The backtest and live
+/// loops legitimately differ on these (history-slice source, next-open
+/// reference, the reference-price label, and — until the live SLTP gap is
+/// closed — the stop/target/age triple); everything else is derived once, in
+/// one place, so the two `SeedContext`s cannot silently drift.
+struct SeedContextParams<'a> {
+    decision_idx: u32,
+    asset: &'a str,
+    active_assets: &'a [String],
+    history_slice: &'a [&'a Ohlcv],
+    inputs_policy: InputsPolicy,
+    equity: f64,
+    next_bar_open: f64,
+    reference_price_source: &'a str,
+    bars_held: u32,
+    stop_loss_price: f64,
+    take_profit_price: f64,
+    perps: PerpsContext,
+}
+
+/// Shared seed-context prologue for both decision loops. Derives the
+/// position/entry/mark snapshot from the book + current bar — `position_size`,
+/// `entry_price`, and `mark_price` now have a single source of truth and can no
+/// longer differ between the backtest and live paths — then assembles the
+/// [`SeedContext`]. Path-specific values arrive via [`SeedContextParams`]. The
+/// resulting context still routes through [`DecisionSeedInput::from_context`]
+/// (upnl/flat-entry derivation) and [`build_decision_seed`] (JSON), so all
+/// three shared seed stages are now reached by exactly one construction site.
+fn build_seed_context<'a>(
+    book: &crate::eval::executor::book::PortfolioBook,
+    asset_sym: xvision_core::trading::AssetSymbol,
+    bar: &'a Ohlcv,
+    params: SeedContextParams<'a>,
+) -> SeedContext<'a> {
+    SeedContext {
+        decision_idx: params.decision_idx,
+        asset: params.asset,
+        active_assets: params.active_assets,
+        bar,
+        history_slice: params.history_slice,
+        inputs_policy: params.inputs_policy,
+        equity: params.equity,
+        position_size: book.position(asset_sym),
+        entry_price: book.entry_price(asset_sym),
+        mark_price: bar.close,
+        next_bar_open: params.next_bar_open,
+        reference_price_source: params.reference_price_source,
+        bars_held: params.bars_held,
+        stop_loss_price: params.stop_loss_price,
+        take_profit_price: params.take_profit_price,
+        perps: params.perps,
     }
 }
 
