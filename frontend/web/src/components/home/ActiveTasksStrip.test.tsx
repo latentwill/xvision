@@ -551,3 +551,43 @@ describe("ActiveTasksStrip — Stop control + runaway warning (awm / S3)", () =>
     expect(screen.queryByTestId("live-runaway-dep-fresh")).toBeNull();
   });
 });
+
+// ─── awm ETA: stop_at field on LiveDeploymentRow ─────────────────────────────
+
+describe("ActiveTasksStrip — ETA display (awm / stop_at)", () => {
+  it("renders live-eta-* with '~...left' text when stop_at is a future timestamp", async () => {
+    const futureStopAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2h from now
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({
+        deployment_id: "dep-eta",
+        status: "running",
+        stop_at: futureStopAt,
+      }),
+    ]);
+
+    renderStrip();
+
+    const etaEl = await screen.findByTestId("live-eta-dep-eta");
+    expect(etaEl).toBeInTheDocument();
+    expect(etaEl.textContent).toMatch(/~.+left/);
+  });
+
+  it("does NOT render live-eta-* when stop_at is null (no real limit)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({
+        deployment_id: "dep-noeta",
+        status: "running",
+        stop_at: null,
+      }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-deployment-row-dep-noeta");
+    expect(screen.queryByTestId("live-eta-dep-noeta")).toBeNull();
+  });
+});

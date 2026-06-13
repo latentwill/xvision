@@ -92,7 +92,7 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
     : "—";
 
   // Daily-loss buffer
-  const bufTone = dailyLossBufferTone(dep.daily_loss_limit_remaining_usd);
+  const bufTone = dailyLossBufferTone(dep.daily_loss_limit_remaining_usd, dep.daily_loss_budget_usd);
   const bufGlyph = toneGlyph(bufTone);
   const bufValue = dep.daily_loss_limit_remaining_usd !== null
     ? `${bufGlyph} ${formatUsd(dep.daily_loss_limit_remaining_usd)}`

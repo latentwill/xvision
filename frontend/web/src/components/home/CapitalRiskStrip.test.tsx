@@ -165,20 +165,35 @@ describe("CapitalRiskStrip", () => {
     expect(pnlCell.textContent).toContain("▲");
   });
 
-  it("marks buffer cell danger when daily_loss_limit_remaining_usd is 0 (breach)", () => {
-    renderStrip([dep({ daily_loss_limit_remaining_usd: 0 })]);
+  it("marks buffer cell danger when remaining≤0 (breach) — budget set", () => {
+    renderStrip([dep({ daily_loss_limit_remaining_usd: 0, daily_loss_budget_usd: 500 })]);
     const row = screen.getByTestId("capital-risk-row-dep-001");
     const bufferCell = within(row).getByTestId("buffer-cell-dep-001");
     expect(bufferCell.getAttribute("data-tone")).toBe("danger");
     expect(bufferCell.textContent).toContain("✗");
   });
 
-  it("marks buffer cell gold when daily_loss_limit_remaining_usd > 0", () => {
-    renderStrip([dep({ daily_loss_limit_remaining_usd: 500 })]);
+  it("marks buffer cell gold when remaining=300/budget=500 (r=0.6 > 50%)", () => {
+    renderStrip([dep({ daily_loss_limit_remaining_usd: 300, daily_loss_budget_usd: 500 })]);
     const row = screen.getByTestId("capital-risk-row-dep-001");
     const bufferCell = within(row).getByTestId("buffer-cell-dep-001");
     expect(bufferCell.getAttribute("data-tone")).toBe("gold");
     expect(bufferCell.textContent).toContain("✓");
+  });
+
+  it("marks buffer cell warn when remaining=100/budget=500 (r=0.2 ≤ 25%)", () => {
+    renderStrip([dep({ daily_loss_limit_remaining_usd: 100, daily_loss_budget_usd: 500 })]);
+    const row = screen.getByTestId("capital-risk-row-dep-001");
+    const bufferCell = within(row).getByTestId("buffer-cell-dep-001");
+    expect(bufferCell.getAttribute("data-tone")).toBe("warn");
+    expect(bufferCell.textContent).toContain("⚠");
+  });
+
+  it("marks buffer cell neutral when budget is null (no daily-loss limit configured)", () => {
+    renderStrip([dep({ daily_loss_limit_remaining_usd: 500, daily_loss_budget_usd: null })]);
+    const row = screen.getByTestId("capital-risk-row-dep-001");
+    const bufferCell = within(row).getByTestId("buffer-cell-dep-001");
+    expect(bufferCell.getAttribute("data-tone")).toBe("neutral");
   });
 
   it("renders multiple deployments each with their own row", () => {

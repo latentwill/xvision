@@ -69,20 +69,52 @@ export function runningPnl(d: LiveDeploymentSummary): {
 // ─── dailyLossBufferTone ─────────────────────────────────────────────────────
 
 /**
- * Daily-loss buffer tone. The contract exposes remaining $ but NOT the budget
- * denominator, so the >50%/≤25% gradient is not computable yet.
+ * Daily-loss buffer tone. Full §5.2 %-gradient using the budget denominator
+ * now available on the contract as `daily_loss_budget_usd`.
  *
- * Breach case only (spec §5.2 minimum):
- *   remaining > 0  → gold (healthy)
- *   remaining ≤ 0  → danger (breach)
- *   null           → neutral (no budget configured)
- *
- * TODO: full %-gradient needs a daily_loss_budget_usd field on the contract (follow-up).
+ * Gradient (r = remainingUsd / budgetUsd):
+ *   budgetUsd null or ≤ 0  → "neutral" (no daily-loss limit configured)
+ *   remainingUsd null      → "neutral" (data absent)
+ *   r > 0.5                → "gold"    (healthy, >50% remaining)
+ *   r > 0.25 && r ≤ 0.5   → "neutral" (healthy but decaying)
+ *   r > 0 && r ≤ 0.25     → "warn"    (≤25% remaining)
+ *   r ≤ 0                  → "danger"  (breached)
  */
-export function dailyLossBufferTone(remainingUsd: number | null): RiskTone {
+export function dailyLossBufferTone(remainingUsd: number | null, budgetUsd: number | null): RiskTone {
+  if (budgetUsd === null || budgetUsd <= 0) return "neutral";
   if (remainingUsd === null) return "neutral";
-  if (remainingUsd > 0) return "gold";
+  const r = remainingUsd / budgetUsd;
+  if (r > 0.5) return "gold";
+  if (r > 0.25) return "neutral";
+  if (r > 0) return "warn";
   return "danger";
+}
+
+// ─── formatEta ───────────────────────────────────────────────────────────────
+
+/**
+ * Humanize a wall-clock deadline (RFC-3339 `stop_at`) into a coarse ETA string.
+ *
+ * Returns null when `stopAt` is null (no real time limit → caller renders nothing).
+ * Returns `"overdue"` when the deadline has passed (ms ≤ 0).
+ * Otherwise returns a coarse "~Xh Ym left" / "~Xm left" / "~Xs left" string:
+ *   ≥ 1 hour → "~Xh Ym left"
+ *   ≥ 1 min  → "~Xm left"
+ *   else     → "~Xs left"
+ *
+ * `nowMs` is injectable for deterministic tests (defaults to `Date.now()`).
+ */
+export function formatEta(stopAt: string | null, nowMs?: number): string | null {
+  if (stopAt === null) return null;
+  const ms = Date.parse(stopAt) - (nowMs ?? Date.now());
+  if (ms <= 0) return "overdue";
+  const totalSecs = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSecs / 3600);
+  const mins = Math.floor((totalSecs % 3600) / 60);
+  const secs = totalSecs % 60;
+  if (hours >= 1) return `~${hours}h ${mins}m left`;
+  if (mins >= 1) return `~${mins}m left`;
+  return `~${secs}s left`;
 }
 
 // ─── toneGlyph ───────────────────────────────────────────────────────────────

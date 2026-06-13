@@ -23,6 +23,7 @@ import { VenueBadge } from "@/components/primitives/VenueBadge";
 import {
   runningPnl,
   formatUsd,
+  formatEta,
   type RiskTone,
 } from "@/features/live/deployment-risk";
 import {
@@ -96,10 +97,10 @@ function statusPillClass(status: string): string {
 /**
  * awm (S3): one live (paper/testnet) deployment row in the Active tasks strip.
  * Shows: strategy name link → VenueBadge → last-decision relative time → running P&L
- *        → runaway >24h warning (if applicable) → Stop button (if non-terminal).
+ *        → ETA (when stop_at is set) → runaway >24h warning (if applicable)
+ *        → Stop button (if non-terminal).
  * HONESTY: VenueBadge always present (paper/testnet — never live money).
  *          P&L is simulated; null P&L → "—".
- * // ETA deferred: needs a deadline/stop_at field on LiveDeploymentSummary (contract follow-up).
  */
 function LiveDeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
   const queryClient = useQueryClient();
@@ -116,6 +117,7 @@ function LiveDeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
   const decisionText = formatDecisionAgo(dep.last_decision_at);
   const p = runningPnl(dep);
   const pnlText = p.value !== null ? `${p.glyph} ${formatUsd(p.value)}` : "—";
+  const eta = formatEta(dep.stop_at);
 
   // Terminal statuses: Stop not applicable.
   const isTerminal =
@@ -156,6 +158,16 @@ function LiveDeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
       >
         {pnlText}
       </span>
+
+      {/* awm ETA — only rendered when stop_at is a real wall-clock deadline */}
+      {eta !== null && (
+        <span
+          data-testid={`live-eta-${dep.deployment_id}`}
+          className="shrink-0 text-[12px] text-text-3"
+        >
+          {eta}
+        </span>
+      )}
 
       {/* awm: runaway >24h warning pill — mirrors RunRow's ">2h stuck" idiom */}
       {isRunaway && (

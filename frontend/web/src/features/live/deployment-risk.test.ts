@@ -11,6 +11,7 @@ import type { LiveDeploymentSummary } from "@/api/types.gen/LiveDeploymentSummar
 import {
   dailyLossBufferTone,
   drawdownTone,
+  formatEta,
   formatPct,
   formatUsd,
   runningPnl,
@@ -125,20 +126,77 @@ describe("runningPnl", () => {
 // ─── dailyLossBufferTone ─────────────────────────────────────────────────────
 
 describe("dailyLossBufferTone", () => {
-  it("null → neutral (no budget configured)", () => {
-    expect(dailyLossBufferTone(null)).toBe<RiskTone>("neutral");
+  it("budget null → neutral (no daily-loss limit configured)", () => {
+    expect(dailyLossBufferTone(500, null)).toBe<RiskTone>("neutral");
   });
 
-  it("positive remaining → gold (healthy)", () => {
-    expect(dailyLossBufferTone(500)).toBe<RiskTone>("gold");
+  it("budget 0 → neutral (degenerate zero budget, no gradient)", () => {
+    expect(dailyLossBufferTone(500, 0)).toBe<RiskTone>("neutral");
   });
 
-  it("0 remaining → danger (breach)", () => {
-    expect(dailyLossBufferTone(0)).toBe<RiskTone>("danger");
+  it("r=0.6 (remaining=300, budget=500) → gold (>50%)", () => {
+    expect(dailyLossBufferTone(300, 500)).toBe<RiskTone>("gold");
   });
 
-  it("negative remaining → danger (breach past zero)", () => {
-    expect(dailyLossBufferTone(-100)).toBe<RiskTone>("danger");
+  it("r=0.4 (remaining=200, budget=500) → neutral (healthy decay, 25–50%)", () => {
+    expect(dailyLossBufferTone(200, 500)).toBe<RiskTone>("neutral");
+  });
+
+  it("r=0.2 (remaining=100, budget=500) → warn (≤25%)", () => {
+    expect(dailyLossBufferTone(100, 500)).toBe<RiskTone>("warn");
+  });
+
+  it("r=0 (remaining=0, budget=500) → danger (breached)", () => {
+    expect(dailyLossBufferTone(0, 500)).toBe<RiskTone>("danger");
+  });
+
+  it("negative remaining (breach past zero) → danger", () => {
+    expect(dailyLossBufferTone(-100, 500)).toBe<RiskTone>("danger");
+  });
+
+  it("remaining null → neutral (data absent)", () => {
+    expect(dailyLossBufferTone(null, 500)).toBe<RiskTone>("neutral");
+  });
+});
+
+// ─── formatEta ───────────────────────────────────────────────────────────────
+
+describe("formatEta", () => {
+  const NOW = 1_000_000_000_000; // fixed epoch ms for determinism
+
+  it("null stopAt → null (no real limit)", () => {
+    expect(formatEta(null, NOW)).toBeNull();
+  });
+
+  it("past stopAt → 'overdue'", () => {
+    const past = new Date(NOW - 60_000).toISOString();
+    expect(formatEta(past, NOW)).toBe("overdue");
+  });
+
+  it("exactly at now → 'overdue' (ms <= 0)", () => {
+    const at = new Date(NOW).toISOString();
+    expect(formatEta(at, NOW)).toBe("overdue");
+  });
+
+  it("~2h 15m in future → '~2h 15m left'", () => {
+    const ms = (2 * 60 + 15) * 60 * 1000;
+    const future = new Date(NOW + ms).toISOString();
+    expect(formatEta(future, NOW)).toBe("~2h 15m left");
+  });
+
+  it("exactly 1h in future → '~1h 0m left'", () => {
+    const future = new Date(NOW + 60 * 60 * 1000).toISOString();
+    expect(formatEta(future, NOW)).toBe("~1h 0m left");
+  });
+
+  it("~45m in future → '~45m left'", () => {
+    const future = new Date(NOW + 45 * 60 * 1000).toISOString();
+    expect(formatEta(future, NOW)).toBe("~45m left");
+  });
+
+  it("~30s in future → '~30s left'", () => {
+    const future = new Date(NOW + 30_000).toISOString();
+    expect(formatEta(future, NOW)).toBe("~30s left");
   });
 });
 
