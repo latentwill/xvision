@@ -43,7 +43,7 @@ const MOCK_BY_ID: Record<string, AgentRunDetail> = {
 
 export const agentRunKeys = {
   all: ["agent-runs"] as const,
-  list: (params?: { status?: string; limit?: number }) =>
+  list: (params?: { status?: string; limit?: number; since?: string }) =>
     [...agentRunKeys.all, "list", params] as const,
   run: (id: string) => [...agentRunKeys.all, "run", id] as const,
 };
@@ -455,6 +455,9 @@ export const useMockAgentRuns = shouldUseMockAgentRuns;
 export async function listAgentRuns(params?: {
   status?: string;
   limit?: number;
+  /// Inclusive lower bound on `started_at`, RFC-3339; absent/empty => no
+  /// filter. Mirrors the eval-runs `since` contract (bead-008).
+  since?: string;
 }): Promise<AgentRunSummary[]> {
   if (shouldUseMockAgentRuns()) {
     return Promise.resolve([MOCK_RUN_LIVE.summary]);
@@ -462,6 +465,7 @@ export async function listAgentRuns(params?: {
   const qs = new URLSearchParams();
   if (params?.status) qs.set("status", params.status);
   if (params?.limit) qs.set("limit", String(params.limit));
+  if (params?.since) qs.set("since", params.since);
   const url = `/api/agent-runs${qs.toString() ? `?${qs}` : ""}`;
   const resp = await apiFetch<{ runs: AgentRunSummary[]; total: number }>(url);
   return resp.runs;

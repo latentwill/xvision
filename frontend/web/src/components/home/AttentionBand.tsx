@@ -31,6 +31,10 @@ export interface AttentionBandProps {
   /** Suspicious failed-run findings (bead xvision-1zs) — merged into the
    * Recent Findings surface after human-reviewed criticals. */
   failedRunFindings?: FailedRunFinding[];
+  /** Runs that scope the Recent Findings surface only (bead-008 time window).
+   * Coverage / awaiting-eval counts keep using the unscoped `runs`; only the
+   * CriticalFindingsRow rescopes. Defaults to `runs` when unset. */
+  findingsRuns?: RunSummary[];
 }
 
 export function AttentionBand({
@@ -38,8 +42,10 @@ export function AttentionBand({
   strategies,
   nagItems,
   failedRunFindings = [],
+  findingsRuns,
 }: AttentionBandProps) {
   const counts = coverageCounts(strategyEvalCoverage(strategies, runs));
+  const findingsScope = findingsRuns ?? runs;
 
   return (
     <section data-testid="attention-band" aria-label="Live and attention">
@@ -48,7 +54,7 @@ export function AttentionBand({
           <LiveSummaryStrip />
           <ActiveTasksStrip />
           <CriticalFindingsRow
-            runs={runs}
+            runs={findingsScope}
             failedRunFindings={failedRunFindings}
           />
           {counts.userAwaitingFirstEval > 0 ? (

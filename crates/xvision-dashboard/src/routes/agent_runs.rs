@@ -114,6 +114,11 @@ pub struct ListAgentRunsParams {
     pub status: Option<String>,
     /// Maximum number of runs to return. Defaults to 20, capped at 100.
     pub limit: Option<usize>,
+    /// bead-008: optional INCLUSIVE lower bound on `started_at`, RFC-3339
+    /// (e.g. `2026-06-06T00:00:00Z`). Parsed + validated in the handler;
+    /// invalid values surface as `DashboardError::Validation`. Absent/empty
+    /// applies no time filter (first-paint behavior unchanged).
+    pub since: Option<String>,
 }
 
 /// Response envelope for `GET /api/agent-runs`.
@@ -138,35 +143,70 @@ pub async fn list_agent_runs(
     State(state): State<AppState>,
     Query(params): Query<ListAgentRunsParams>,
 ) -> Result<Json<ListAgentRunsResponse>, DashboardError> {
+    // bead-008: parse the optional `since` lower bound. Empty string is
+    // treated as absent (no filter). Invalid values surface as a 400 via the
+    // proven validation ladder (autooptimizer.rs get_ladder). The parsed
+    // `DateTime<Utc>` is bound as a SQL parameter — never string-interpolated.
+    let since: Option<DateTime<Utc>> = match params.since.as_deref() {
+        Some(s) if !s.trim().is_empty() => Some(
+            DateTime::parse_from_rfc3339(s.trim())
+                .map_err(|e| DashboardError::Validation {
+                    field: "since".into(),
+                    msg: format!("invalid RFC-3339 timestamp: {e}"),
+                })?
+                .with_timezone(&Utc),
+        ),
+        _ => None,
+    };
+
     // Query only the columns needed for the summary; avoid loading heavy
     // JSON blobs (skills_json, mcp_servers_json) on the list surface. The
     // LEFT JOIN onto `eval_runs` is index-covered (PK lookup per row) and
     // supplies the live-money discriminator + parent status.
-    let rows: Vec<(
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<bool>,
-    )> = sqlx::query_as(
+    //
+    // bead-008: when `since` is set, append an inclusive `started_at >= ?`
+    // clause. Normalized through SQLite's `datetime()` on both sides so the
+    // comparison is robust across the two on-disk timestamp shapes
+    // (`...+00:00` from `to_rfc3339()` and bare `YYYY-MM-DD HH:MM:SS`) rather
+    // than a brittle lexicographic string compare — mirrors the engine
+    // `RunStore::list` clause.
+    let mut sql = String::from(
         "SELECT ar.id, ar.objective, ar.strategy_id, ar.eval_run_id, ar.status, \
              ar.retention_mode, ar.started_at, ar.finished_at, ar.sidecar_version, \
              ar.error, er.mode, er.status, er.paused \
              FROM agent_runs ar \
-             LEFT JOIN eval_runs er ON er.id = ar.eval_run_id \
-             ORDER BY ar.started_at DESC",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_agent_runs: {e}")))?;
+             LEFT JOIN eval_runs er ON er.id = ar.eval_run_id",
+    );
+    if since.is_some() {
+        sql.push_str(" WHERE datetime(ar.started_at) >= datetime(?)");
+    }
+    sql.push_str(" ORDER BY ar.started_at DESC");
+
+    let mut query = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<bool>,
+        ),
+    >(&sql);
+    if let Some(since) = since {
+        query = query.bind(since.to_rfc3339());
+    }
+    let rows = query
+        .fetch_all(&state.pool)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("list_agent_runs: {e}")))?;
 
     // Parse rows into summary structs. Skip rows with unparseable timestamps
     // (shouldn't happen — recorder always writes valid RFC 3339) with a warning.
@@ -965,5 +1005,55 @@ mod tests {
         // Idempotent — second call sweeps nothing.
         let swept_again = interrupt_orphan_agent_runs(&state.pool).await.expect("sweep");
         assert_eq!(swept_again, 0);
+    }
+
+    // ── bead-008: ?since= inclusive lower bound on started_at ─────────────────
+
+    #[tokio::test]
+    async fn list_since_filters_out_older_rows_inclusive_boundary() {
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "old", "completed", "2026-06-01T00:00:00Z").await;
+        seed_run(&state.pool, "boundary", "completed", "2026-06-06T00:00:00Z").await;
+        seed_run(&state.pool, "newer", "completed", "2026-06-10T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server
+            .get("/api/agent-runs?since=2026-06-06T00:00:00Z")
+            .await;
+        resp.assert_status_ok();
+        let v: serde_json::Value = resp.json();
+        let runs = v["runs"].as_array().unwrap();
+        // Inclusive boundary: exact-match row kept, older dropped. Newest-first.
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0]["run_id"].as_str().unwrap(), "newer");
+        assert_eq!(runs[1]["run_id"].as_str().unwrap(), "boundary");
+        assert_eq!(v["total"].as_u64().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_absent_since_returns_all() {
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "a", "completed", "2026-06-01T00:00:00Z").await;
+        seed_run(&state.pool, "b", "completed", "2026-06-10T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server.get("/api/agent-runs").await;
+        resp.assert_status_ok();
+        let v: serde_json::Value = resp.json();
+        assert_eq!(v["runs"].as_array().unwrap().len(), 2);
+        assert_eq!(v["total"].as_u64().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn list_invalid_since_returns_400_validation() {
+        let (state, _tmp) = fresh_state().await;
+        seed_run(&state.pool, "a", "completed", "2026-06-01T00:00:00Z").await;
+
+        let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
+        let resp = server.get("/api/agent-runs?since=not-a-timestamp").await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+        let v: serde_json::Value = resp.json();
+        // DashboardError::Validation { field: "since", .. } shape.
+        assert_eq!(v["field"].as_str(), Some("since"));
     }
 }

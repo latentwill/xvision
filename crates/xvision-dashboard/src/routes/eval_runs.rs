@@ -17,6 +17,7 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     Json,
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use xvision_engine::api::chart::{self as chart_api, CompareChartPayload, RunChartEvent, RunChartPayload};
@@ -52,6 +53,11 @@ pub struct ListParams {
     pub limit: Option<i64>,
     /// Row offset. Defaults to 0.
     pub offset: Option<i64>,
+    /// bead-008: optional INCLUSIVE lower bound on `started_at`, RFC-3339
+    /// (e.g. `2026-06-06T00:00:00Z`). Parsed + validated in the handler;
+    /// invalid values surface as `DashboardError::Validation`. Absent/empty
+    /// applies no time filter (first-paint behavior unchanged).
+    pub since: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -85,6 +91,27 @@ fn normalize_pagination(limit: Option<i64>, offset: Option<i64>) -> Result<(i64,
     Ok((limit, offset))
 }
 
+/// bead-008: parse the optional `?since=` query value into an inclusive
+/// `started_at` lower bound. Mirrors the proven RFC-3339 validation ladder in
+/// `autooptimizer.rs::get_ladder` (parse → 400 on error → `.with_timezone`).
+///
+/// - `None` / `Some("")` => `Ok(None)` (no filter; first-paint unchanged).
+/// - Invalid RFC-3339 => `DashboardError::Validation { field: "since", .. }`.
+fn parse_since(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, DashboardError> {
+    match raw {
+        Some(s) if !s.trim().is_empty() => {
+            let ts = DateTime::parse_from_rfc3339(s.trim())
+                .map_err(|e| DashboardError::Validation {
+                    field: "since".into(),
+                    msg: format!("invalid RFC-3339 timestamp: {e}"),
+                })?
+                .with_timezone(&Utc);
+            Ok(Some(ts))
+        }
+        _ => Ok(None),
+    }
+}
+
 pub async fn list(
     State(state): State<AppState>,
     Query(params): Query<ListParams>,
@@ -102,12 +129,20 @@ pub async fn list(
 
     let (limit, offset) = normalize_pagination(params.limit, params.offset)?;
 
+    // bead-008: parse the optional `since` lower bound. Empty string is
+    // treated as absent (no filter). Invalid values surface as a 400 via the
+    // proven validation ladder (autooptimizer.rs get_ladder). The parsed
+    // `DateTime<Utc>` is threaded onward and bound as a SQL parameter — never
+    // string-interpolated.
+    let since = parse_since(params.since.as_deref())?;
+
     let req = ListRunsRequest {
         agent_id: params.agent_id,
         scenario_id: params.scenario_id,
         status,
         limit: Some(limit),
         offset: Some(offset),
+        since,
     };
     let page = eval::list_summaries_paged(&state.api_context(), req).await?;
     Ok(Json(RunsListResponse {

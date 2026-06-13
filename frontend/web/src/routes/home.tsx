@@ -25,7 +25,7 @@
 // All ranking/aggregation logic lives in tested selectors under
 // `features/home/`; this route only wires queries to components.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Topbar } from "@/components/shell/Topbar";
@@ -33,6 +33,11 @@ import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
 import { DeployReadinessStrip } from "@/components/home/DeployReadinessStrip";
 import { HomeDeltaSubtitle } from "@/components/home/HomeDeltaSubtitle";
 import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
+import {
+  TimeWindowPills,
+  sinceForWindow,
+  type TimeWindow,
+} from "@/components/home/TimeWindowPills";
 import { PulseBand } from "@/components/home/PulseBand";
 import { AttentionBand } from "@/components/home/AttentionBand";
 import { OptimizerPanel } from "@/components/home/OptimizerPanel";
@@ -79,6 +84,23 @@ export function HomeRoute() {
     queryKey: evalKeys.runs(RUNS_PAGE),
     queryFn: () => listRuns(RUNS_PAGE),
   });
+
+  // bead-008: the time-window pills scope ONLY the outcomes + findings
+  // surfaces. The pulse hero, leaderboard, and last-visit delta stay on the
+  // unscoped `runs` query above. Default 'all' => sinceForWindow returns
+  // undefined => the windowed params equal RUNS_PAGE and collapse onto the
+  // same cache key, so first paint issues NO extra fetch.
+  const [window, setWindow] = useState<TimeWindow>("all");
+  const since = sinceForWindow(window);
+  const scopedParams = since ? { ...RUNS_PAGE, since } : RUNS_PAGE;
+  const scopedRuns = useQuery({
+    queryKey: evalKeys.runs(scopedParams),
+    queryFn: () => listRuns(scopedParams),
+  });
+  // When 'all', reuse the unscoped page so the outcomes/findings surfaces stay
+  // pixel-identical to today's first paint while the windowed fetch (if any)
+  // resolves.
+  const windowedRuns = since ? (scopedRuns.data ?? []) : (runs.data ?? []);
   const strategies = useQuery({
     queryKey: strategyKeys.list(),
     queryFn: listStrategies,
@@ -189,7 +211,17 @@ export function HomeRoute() {
 
         <DeployReadinessStrip checks={readinessChecks} />
 
-        <HomeOutcomeStrip runs={runs.data ?? []} strategies={strategies.data ?? []} />
+        {/* bead-008: inline, full-width window selector scoping the outcomes +
+            findings surfaces below it. It does NOT scope the pulse hero,
+            leaderboard, or the last-visit delta. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[10px] uppercase tracking-wide text-text-3">
+            Window
+          </span>
+          <TimeWindowPills value={window} onChange={setWindow} />
+        </div>
+
+        <HomeOutcomeStrip runs={windowedRuns} strategies={strategies.data ?? []} />
 
         <div className="xvn-card-in" style={{ animationDelay: "0ms" }}>
           <PulseBand
@@ -203,9 +235,10 @@ export function HomeRoute() {
         <div className="xvn-card-in" style={{ animationDelay: "70ms" }}>
           <AttentionBand
             runs={runs.data ?? []}
+            findingsRuns={windowedRuns}
             strategies={strategies.data ?? []}
             nagItems={attentionItems}
-            failedRunFindings={failedRunFindings(runs.data ?? [])}
+            failedRunFindings={failedRunFindings(windowedRuns)}
           />
         </div>
 

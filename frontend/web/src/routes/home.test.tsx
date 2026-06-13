@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -467,5 +467,97 @@ describe("HomeRoute", () => {
     expect(screen.queryByText(/PnL/i)).toBeNull();
     expect(screen.queryByText(/deployed capital/i)).toBeNull();
     expect(screen.queryByText(/real money/i)).toBeNull();
+  });
+
+  // ── bead-008: time-window pills scope outcomes + findings ──────────────────
+
+  // The pills render as an inline group and default to All. Default All must
+  // reproduce today's first paint, so on mount listRuns is called WITHOUT a
+  // `since` param (no extra windowed fetch — the All key collapses onto the
+  // base runs key).
+  it("renders the time-window pills, defaulting to All with no since on first paint", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const pills = await screen.findByTestId("time-window-pills");
+    expect(pills).toBeInTheDocument();
+    expect(pills).toHaveAttribute("role", "group");
+
+    // Default selection is All.
+    expect(
+      screen.getByRole("button", { name: "All" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    // First paint: every listRuns call so far is unscoped (no since).
+    await waitFor(() => {
+      expect(vi.mocked(evalApi.listRuns)).toHaveBeenCalled();
+    });
+    for (const call of vi.mocked(evalApi.listRuns).mock.calls) {
+      const params = call[0] as { since?: string } | undefined;
+      expect(params?.since ?? "").toBe("");
+    }
+  });
+
+  // Selecting a window rescopes the outcomes + findings surfaces: a windowed
+  // listRuns call carrying a `since` param is issued. The pulse/leaderboard
+  // query (the unscoped 100-row page) must remain since-free.
+  it("rescopes outcomes/findings with a since param when a window is selected", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    await waitFor(() => expect(vi.mocked(evalApi.listRuns)).toHaveBeenCalled());
+
+    vi.mocked(evalApi.listRuns).mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
+
+    // A windowed fetch carrying `since` is issued for the scoped surfaces.
+    await waitFor(() => {
+      const withSince = vi
+        .mocked(evalApi.listRuns)
+        .mock.calls.filter((c) => {
+          const p = c[0] as { since?: string } | undefined;
+          return !!p?.since;
+        });
+      expect(withSince.length).toBeGreaterThan(0);
+    });
+
+    // The since value the scoped query carries is RFC-3339 / ISO-8601.
+    const sinceVal = vi
+      .mocked(evalApi.listRuns)
+      .mock.calls
+      .map((c) => (c[0] as { since?: string } | undefined)?.since)
+      .find((s): s is string => !!s)!;
+    expect(sinceVal).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  });
+
+  // The pulse/leaderboard surfaces stay on the unscoped runs query: selecting
+  // a window must keep the original since-free 100-row hero page in flight
+  // (the windowed fetch is an ADDITIONAL scoped query, not a replacement —
+  // the unscoped page that feeds pulse/leaderboard is never re-issued WITH a
+  // since). The scoped outcomes/findings query shares the page size, so the
+  // invariant is "a since-free hero page still exists", not "no limit:100 has
+  // a since".
+  it("keeps the pulse/leaderboard query unscoped when a window is selected", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    await waitFor(() => expect(vi.mocked(evalApi.listRuns)).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "30d" }));
+
+    // The scoped surfaces issue a windowed fetch …
+    await waitFor(() => {
+      const withSince = vi
+        .mocked(evalApi.listRuns)
+        .mock.calls.filter((c) => !!(c[0] as { since?: string } | undefined)?.since);
+      expect(withSince.length).toBeGreaterThan(0);
+    });
+
+    // … but the unscoped hero page (the pulse/leaderboard source) is still
+    // present and since-free.
+    const heroSinceFree = vi.mocked(evalApi.listRuns).mock.calls.filter((c) => {
+      const p = c[0] as { limit?: number; since?: string } | undefined;
+      return p?.limit === 100 && !p?.since;
+    });
+    expect(heroSinceFree.length).toBeGreaterThan(0);
   });
 });

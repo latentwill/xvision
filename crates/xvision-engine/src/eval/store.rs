@@ -48,6 +48,12 @@ pub struct ListFilter {
     pub limit: Option<i64>,
     /// Optional row offset. `None` is treated as 0.
     pub offset: Option<i64>,
+    /// bead-008: optional INCLUSIVE lower bound on `started_at`. When set,
+    /// only rows WHERE `started_at >= since` are returned. `None` applies no
+    /// time filter (first-paint behavior unchanged). Compared via SQLite's
+    /// `datetime()` so it is robust to the two on-disk timestamp shapes
+    /// (`...+00:00` from `to_rfc3339()` and bare `YYYY-MM-DD HH:MM:SS`).
+    pub since: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -810,6 +816,13 @@ impl RunStore {
         if filter.status.is_some() {
             conditions.push("status = ?");
         }
+        // bead-008: inclusive `started_at >= since`. Normalize both sides
+        // through SQLite's `datetime()` so the comparison is correct across
+        // the mixed on-disk shapes (`...+00:00` vs bare `YYYY-MM-DD HH:MM:SS`)
+        // rather than a brittle lexicographic string compare.
+        if filter.since.is_some() {
+            conditions.push("datetime(started_at) >= datetime(?)");
+        }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
@@ -843,6 +856,9 @@ impl RunStore {
         if let Some(s) = filter.status {
             q = q.bind(s.as_str());
         }
+        if let Some(since) = filter.since {
+            q = q.bind(since.to_rfc3339());
+        }
         if let Some(limit) = filter.limit {
             q = q.bind(limit);
             if let Some(offset) = filter.offset {
@@ -870,6 +886,11 @@ impl RunStore {
         if filter.status.is_some() {
             conditions.push("status = ?");
         }
+        // bead-008: mirror `list`'s inclusive `started_at >= since` clause so
+        // the count is honest about what `list` would return.
+        if filter.since.is_some() {
+            conditions.push("datetime(started_at) >= datetime(?)");
+        }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
@@ -883,6 +904,9 @@ impl RunStore {
         }
         if let Some(s) = filter.status {
             q = q.bind(s.as_str().to_string());
+        }
+        if let Some(since) = filter.since {
+            q = q.bind(since.to_rfc3339());
         }
         let n: i64 = q.fetch_one(&self.pool).await.context("count eval_runs")?;
         Ok(n as u64)
@@ -2212,5 +2236,100 @@ mod equity_batch_tests {
                 "equity mismatch at index {i}: old={oe} new={ne}"
             );
         }
+    }
+}
+
+/// bead-008: `ListFilter::since` — inclusive lower bound on `started_at`.
+#[cfg(test)]
+mod since_filter_tests {
+    use chrono::{DateTime, Utc};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
+
+    use crate::eval::store::{ListFilter, RunStore};
+
+    /// Fully-migrated in-memory pool so `RunStore::list` (which selects the
+    /// full eval_runs column set added across later migrations) works.
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open sqlite mem pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("apply migrations");
+        pool
+    }
+
+    /// Seed one `scenarios` row so the FK trigger added in migration 012
+    /// (which RAISEs when `eval_runs.scenario_id` references a missing row)
+    /// is satisfied. Under the SQL-only `sqlx::migrate!` schema `scenario_id`
+    /// is still NOT NULL — only the runtime migrator (not applied here)
+    /// rebuilds the table to allow NULL. Mirrors `test_pool_with_run`'s
+    /// non-null `scenario_id` approach.
+    async fn seed_scenario(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO scenarios (id, source, display_name, body_json, created_at, created_by) \
+             VALUES (?, 'built', 'fixture', '{}', '2026-01-01T00:00:00Z', 'test')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("seed scenarios row");
+    }
+
+    /// Raw INSERT covering only the NOT NULL columns — avoids the full
+    /// `RunStore::create` invariants. `scenario_id` references the seeded
+    /// fixture scenario to satisfy the FK trigger.
+    async fn seed(pool: &SqlitePool, id: &str, started_at: &str) {
+        sqlx::query(
+            "INSERT INTO eval_runs (id, agent_id, scenario_id, mode, status, started_at) \
+             VALUES (?, 'agent-x', 'fixture-scenario', 'backtest', 'completed', ?)",
+        )
+        .bind(id)
+        .bind(started_at)
+        .execute(pool)
+        .await
+        .expect("seed eval_runs row");
+    }
+
+    fn rfc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[tokio::test]
+    async fn since_filters_out_older_rows_inclusive_boundary() {
+        let pool = fresh_pool().await;
+        seed_scenario(&pool, "fixture-scenario").await;
+        seed(&pool, "old", "2026-06-01T00:00:00Z").await;
+        seed(&pool, "boundary", "2026-06-06T00:00:00Z").await;
+        seed(&pool, "newer", "2026-06-10T00:00:00Z").await;
+        let store = RunStore::new(pool);
+
+        let filter = ListFilter {
+            since: Some(rfc("2026-06-06T00:00:00Z")),
+            ..Default::default()
+        };
+        let runs = store.list(filter.clone()).await.unwrap();
+        let ids: Vec<&str> = runs.iter().map(|r| r.id.as_str()).collect();
+        // Inclusive: the exact-match row stays; older row is dropped.
+        // Newest-first ordering preserved.
+        assert_eq!(ids, vec!["newer", "boundary"]);
+        assert_eq!(store.count(&filter).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn absent_since_returns_all() {
+        let pool = fresh_pool().await;
+        seed_scenario(&pool, "fixture-scenario").await;
+        seed(&pool, "a", "2026-06-01T00:00:00Z").await;
+        seed(&pool, "b", "2026-06-10T00:00:00Z").await;
+        let store = RunStore::new(pool);
+
+        let filter = ListFilter::default();
+        assert_eq!(store.list(filter.clone()).await.unwrap().len(), 2);
+        assert_eq!(store.count(&filter).await.unwrap(), 2);
     }
 }
