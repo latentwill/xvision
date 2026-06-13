@@ -31,6 +31,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
 import { DeployReadinessStrip } from "@/components/home/DeployReadinessStrip";
+import { CapitalRiskStrip } from "@/components/home/CapitalRiskStrip";
 import { HomeDeltaSubtitle } from "@/components/home/HomeDeltaSubtitle";
 import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
 import {
@@ -54,6 +55,7 @@ import { listCriticalFindings } from "@/api/eval-review";
 import { livenessCounts } from "@/features/live/strip-status";
 import { pickHeroRun } from "@/features/home/pulse";
 import { buildDeployReadiness } from "@/features/home/deploy-readiness";
+import { aggregateCapitalRisk } from "@/features/home/capital-risk";
 import { failedRunFindings, failedRunNags } from "@/features/home/failed-runs";
 import {
   computeSinceDelta,
@@ -214,6 +216,14 @@ export function HomeRoute() {
     inflightRuns: inflightRuns.data ?? [],
   });
 
+  // 8s4: capital-risk strip aggregate. REUSES the live-deployments poll above
+  // (no second fetch). With zero live deployments we say nothing — never imply
+  // live capital exists when none does; the strip mounts only when there is at
+  // least one active deployment (its own below-floor "insufficient data" state
+  // covers the deployed-but-no-fills-yet case honestly).
+  const liveDeployments = deployments.data ?? [];
+  const capitalRisk = aggregateCapitalRisk(liveDeployments);
+
   return (
     <>
       <Topbar
@@ -225,6 +235,13 @@ export function HomeRoute() {
         <SafetyPauseBanner />
 
         <DeployReadinessStrip checks={readinessChecks} />
+
+        {/* 8s4: capital-risk safety strip — slim top band in the safety-gate
+            area, under SafetyPauseBanner (which keeps its top precedence) and
+            DeployReadinessStrip. Mounts only when there is at least one active
+            live/paper deployment, so an idle node says nothing rather than
+            implying live capital exists. */}
+        {liveDeployments.length > 0 && <CapitalRiskStrip agg={capitalRisk} />}
 
         {/* bead-008: inline, full-width window selector scoping the outcomes +
             findings surfaces below it. It does NOT scope the pulse hero,
