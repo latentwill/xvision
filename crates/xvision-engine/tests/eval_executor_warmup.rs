@@ -45,6 +45,14 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
         .execute(&pool)
         .await
@@ -226,6 +234,14 @@ async fn bar_one_seed_carries_warmup_history_when_warmup_provided() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    // Seed the agent_runs parent row so executor-level supervisor_notes
+    // inserts (FK to agent_runs.id) don't fail. The API layer calls
+    // ensure_agent_run_baseline at kickoff; direct executor tests must
+    // mirror that step.
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
 
     // 13 warmup bars on the dates immediately before window_start.
     let warmup_start = window_start - Duration::days(13);
@@ -333,6 +349,14 @@ async fn bar_one_seed_has_empty_history_when_warmup_zero() {
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    // Seed the agent_runs parent row so executor-level supervisor_notes
+    // inserts (FK to agent_runs.id) don't fail. The API layer calls
+    // ensure_agent_run_baseline at kickoff; direct executor tests must
+    // mirror that step.
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
 
     let decision_bars = daily_bars(window_start, 30);
 

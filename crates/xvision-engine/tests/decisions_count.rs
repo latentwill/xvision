@@ -43,6 +43,14 @@ async fn fresh_store() -> RunStore {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!("../migrations/013_cli_jobs.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(include_str!("../migrations/018_agent_run_observability.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(include_str!("../migrations/014_eval_agent_id.sql"))
         .execute(&pool)
         .await
@@ -219,6 +227,13 @@ async fn run_backtest_with_bars(
         RunMode::Backtest,
     );
     store.create(&run).await.unwrap();
+    // Seed the agent_runs parent row so executor-level supervisor_notes
+    // inserts (FK to agent_runs.id) don't fail. Mirrors the API layer's
+    // ensure_agent_run_baseline call at eval kickoff.
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
 
     let bars = daily_bars(bar_count);
     let first_ts = bars.first().unwrap().timestamp;
