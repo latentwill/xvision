@@ -14,7 +14,7 @@
 
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { cancelRun, evalKeys, listRuns } from "@/api/eval";
+import { cancelRun, evalKeys, flattenRun, listRuns } from "@/api/eval";
 import { liveDeploymentKeys, listLiveDeployments } from "@/api/live-deployments";
 import type { RunSummary } from "@/api/types.gen";
 import type { LiveDeploymentSummary } from "@/api/types.gen/LiveDeploymentSummary";
@@ -33,6 +33,7 @@ import {
 } from "@/features/autooptimizer/api";
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+const RUNAWAY_MS = 24 * 60 * 60 * 1000;
 
 function toneClass(tone: RiskTone): string {
   switch (tone) {
@@ -93,16 +94,39 @@ function statusPillClass(status: string): string {
 }
 
 /**
- * n0k: one live (paper/testnet) deployment row in the Active tasks strip.
- * Shows: strategy name link → VenueBadge → last-decision relative time → running P&L.
+ * awm (S3): one live (paper/testnet) deployment row in the Active tasks strip.
+ * Shows: strategy name link → VenueBadge → last-decision relative time → running P&L
+ *        → runaway >24h warning (if applicable) → Stop button (if non-terminal).
  * HONESTY: VenueBadge always present (paper/testnet — never live money).
  *          P&L is simulated; null P&L → "—".
+ * // ETA deferred: needs a deadline/stop_at field on LiveDeploymentSummary (contract follow-up).
  */
 function LiveDeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
+  const queryClient = useQueryClient();
+
+  // awm: Stop = flatten the underlying eval run. deployment_id IS the eval run id.
+  const flatten = useMutation({
+    mutationFn: () => flattenRun(dep.deployment_id),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: liveDeploymentKeys.all });
+    },
+  });
+
   const name = dep.strategy_name ?? "—";
   const decisionText = formatDecisionAgo(dep.last_decision_at);
   const p = runningPnl(dep);
   const pnlText = p.value !== null ? `${p.glyph} ${formatUsd(p.value)}` : "—";
+
+  // Terminal statuses: Stop not applicable.
+  const isTerminal =
+    dep.status === "completed" ||
+    dep.status === "failed" ||
+    dep.status === "cancelled";
+
+  // awm: runaway if running for more than 24h.
+  const isRunaway =
+    dep.status === "running" &&
+    Date.now() - new Date(dep.started_at).getTime() > RUNAWAY_MS;
 
   return (
     <div
@@ -132,6 +156,31 @@ function LiveDeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
       >
         {pnlText}
       </span>
+
+      {/* awm: runaway >24h warning pill — mirrors RunRow's ">2h stuck" idiom */}
+      {isRunaway && (
+        <span
+          data-testid={`live-runaway-${dep.deployment_id}`}
+          className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300"
+        >
+          ⚠ running &gt;24h
+        </span>
+      )}
+
+      {/* awm: Stop (flatten) — direct action, no confirm dialog (no-popups rule).
+          Hidden on terminal statuses. Mirrors RunRow's Cancel button exactly. */}
+      {!isTerminal && (
+        <button
+          type="button"
+          data-testid={`live-stop-${dep.deployment_id}`}
+          disabled={flatten.isPending}
+          onClick={() => flatten.mutate()}
+          className="shrink-0 text-[12px] text-text-3 hover:text-text disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-border-strong transition-colors"
+          aria-label={`Stop ${name}`}
+        >
+          {flatten.isPending ? "Stopping…" : "Stop"}
+        </button>
+      )}
     </div>
   );
 }

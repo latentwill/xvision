@@ -18,6 +18,7 @@ vi.mock("@/api/eval", async () => {
     ...actual,
     listRuns: vi.fn(),
     cancelRun: vi.fn(),
+    flattenRun: vi.fn(),
   };
 });
 
@@ -432,5 +433,119 @@ describe("ActiveTasksStrip — live deployment rows (n0k)", () => {
     const allText = strip.textContent ?? "";
     // EvalRun should appear before LiveRow in the rendered output
     expect(allText.indexOf("EvalRun")).toBeLessThan(allText.indexOf("LiveRow"));
+  });
+});
+
+// ─── awm (S3): Stop control + runaway >24h warning on LiveDeploymentRow ───────
+
+describe("ActiveTasksStrip — Stop control + runaway warning (awm / S3)", () => {
+  it("shows Stop button for a running live deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-stop", status: "running" }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-stop-dep-stop");
+    expect(screen.getByTestId("live-stop-dep-stop")).toBeInTheDocument();
+  });
+
+  it("calls flattenRun with deployment_id when Stop is clicked", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-flatten", status: "running" }),
+    ]);
+    vi.mocked(evalApi.flattenRun).mockResolvedValue(
+      makeRun({ id: "dep-flatten", status: "completed" }) as never,
+    );
+
+    renderStrip();
+
+    const stopBtn = await screen.findByTestId("live-stop-dep-flatten");
+    await userEvent.click(stopBtn);
+
+    expect(evalApi.flattenRun).toHaveBeenCalledWith("dep-flatten");
+  });
+
+  it("hides Stop button when status is completed", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-done", status: "completed" }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-deployment-row-dep-done");
+    expect(screen.queryByTestId("live-stop-dep-done")).toBeNull();
+  });
+
+  it("hides Stop button when status is failed", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-fail", status: "failed" }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-deployment-row-dep-fail");
+    expect(screen.queryByTestId("live-stop-dep-fail")).toBeNull();
+  });
+
+  it("hides Stop button when status is cancelled", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({ deployment_id: "dep-cancelled", status: "cancelled" }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-deployment-row-dep-cancelled");
+    expect(screen.queryByTestId("live-stop-dep-cancelled")).toBeNull();
+  });
+
+  // ─── Runaway >24h warning ─────────────────────────────────────────────────
+
+  it("shows runaway pill when a running deployment has been running >24h", async () => {
+    const twentyFiveHoursAgo = new Date(
+      Date.now() - 25 * 60 * 60 * 1000,
+    ).toISOString();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({
+        deployment_id: "dep-runaway",
+        status: "running",
+        started_at: twentyFiveHoursAgo,
+      }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-runaway-dep-runaway");
+    expect(screen.getByTestId("live-runaway-dep-runaway")).toBeInTheDocument();
+  });
+
+  it("does NOT show runaway pill when a running deployment started only 1h ago", async () => {
+    const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+    vi.mocked(liveDeploymentsApi.listLiveDeployments).mockResolvedValue([
+      makeLiveDeployment({
+        deployment_id: "dep-fresh",
+        status: "running",
+        started_at: oneHourAgo,
+      }),
+    ]);
+
+    renderStrip();
+
+    await screen.findByTestId("live-deployment-row-dep-fresh");
+    expect(screen.queryByTestId("live-runaway-dep-fresh")).toBeNull();
   });
 });
