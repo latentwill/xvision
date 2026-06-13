@@ -1,4 +1,4 @@
--- Migration 065: per-run live-deployment capital-risk snapshot.
+-- Migration 067: per-run live-deployment capital-risk snapshot.
 --
 -- One upserted row per live (mode='live') run, written by run_inner_live each
 -- bar. Per-run PortfolioBook-computed capital-risk + denormalized strategy name

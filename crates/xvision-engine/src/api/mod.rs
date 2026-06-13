@@ -157,13 +157,13 @@ const MIGRATION_062_EVAL_RUN_PAUSED: &str = include_str!("../../migrations/062_e
 /// via `migrate_eval_run_flatten_requested`, mirroring `migrate_eval_run_paused`.
 const MIGRATION_063_EVAL_RUN_FLATTEN_REQUESTED: &str =
     include_str!("../../migrations/063_eval_run_flatten_requested.sql");
-/// Migration 065: per-run live-deployment capital-risk snapshot.
+/// Migration 067: per-run live-deployment capital-risk snapshot.
 /// Creates `live_run_state` (run_id PK → eval_runs(id) ON DELETE CASCADE),
 /// which the executor upserts each bar so `GET /api/live/deployments` can
 /// join eval_runs ⨝ live_run_state in a single query. Applied via
 /// `migrate_live_run_state`, gated on the table's absence for idempotence.
-const MIGRATION_065_LIVE_RUN_STATE: &str =
-    include_str!("../../migrations/065_live_run_state.sql");
+const MIGRATION_067_LIVE_RUN_STATE: &str =
+    include_str!("../../migrations/067_live_run_state.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -1301,16 +1301,16 @@ async fn migrate_eval_run_flatten_requested(pool: &SqlitePool) -> ApiResult<()> 
     Ok(())
 }
 
-/// Apply migration 065 (CT5 live-deployments capital-risk snapshot):
+/// Apply migration 067 (CT5 live-deployments capital-risk snapshot):
 /// creates the `live_run_state` table. Gated on table absence so the
 /// migration is idempotent on already-upgraded databases. Mirrors
 /// `migrate_eval_run_flatten_requested` (table-existence guard,
 /// single `sqlx::query` apply). The DDL in
-/// `065_live_run_state.sql` (compiled in as `MIGRATION_065_LIVE_RUN_STATE`)
+/// `067_live_run_state.sql` (compiled in as `MIGRATION_067_LIVE_RUN_STATE`)
 /// is a `CREATE TABLE` — no multi-statement split needed.
 async fn migrate_live_run_state(pool: &SqlitePool) -> ApiResult<()> {
     if !table_exists(pool, "live_run_state").await? {
-        sqlx::query(MIGRATION_065_LIVE_RUN_STATE).execute(pool).await?;
+        sqlx::query(MIGRATION_067_LIVE_RUN_STATE).execute(pool).await?;
     }
     Ok(())
 }
