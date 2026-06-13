@@ -150,6 +150,14 @@ impl RunStore {
             RunMode::Backtest => Some(run.scenario_id.as_str()),
         };
 
+        // Derive venue_label from live_config; default to Paper for backtests
+        // (migration 031 added `venue_label TEXT NOT NULL DEFAULT 'paper'`).
+        let venue_label = run
+            .live_config
+            .as_ref()
+            .map(|c| c.venue_label)
+            .unwrap_or(crate::safety::venue::VenueLabel::Paper);
+
         // NOTE: `paused` (migration 061) is intentionally NOT written here.
         // A run is never *created* paused — pausing is a later UPDATE via
         // `set_paused`. Omitting the column lets `create` work against an
@@ -161,8 +169,9 @@ impl RunStore {
               started_at, completed_at, metrics_json, error, \
               estimated_total_tokens, actual_input_tokens, actual_output_tokens, \
               bars_content_hash, manifest_canonical, bars_manifest, \
-              auto_fire_review, review_model_json, max_annotations_per_review, live_config_json) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              auto_fire_review, review_model_json, max_annotations_per_review, live_config_json, \
+              venue_label) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&run.id)
         .bind(&run.agent_id)
@@ -185,6 +194,7 @@ impl RunStore {
         .bind(review_model_json)
         .bind(run.max_annotations_per_review.map(|n| n as i64))
         .bind(live_config_json)
+        .bind(venue_label.as_str())
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert eval_runs id={}", run.id))?;
