@@ -265,6 +265,10 @@ impl<A: ByrealPerpsApi + 'static> Executor for ByrealPerpsExecutor<A> {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 5.0,
                     opened_at: Utc::now(),
+                    // Perps risk data straight from the venue — feeds the
+                    // LiquidationDistanceGuard risk rule.
+                    leverage: pos.leverage,
+                    liq_price: pos.liq_price,
                 },
             );
         }

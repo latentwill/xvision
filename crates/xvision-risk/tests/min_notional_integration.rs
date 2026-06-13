@@ -389,6 +389,8 @@ fn vetoes_with_existing_positions() {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             opened_at: Utc::now(),
+            leverage: None,
+            liq_price: None,
         },
     );
     // 30 bps × $1000 = $3 notional, below paper $10 min.

@@ -50,13 +50,12 @@ pub struct VenueLimits {
     pub min_notional_usd: f64,
 }
 
-/// Perps-specific risk guards (funding, …).
+/// Perps-specific risk guards.
 ///
 /// Every field has a safe default so an existing `config/risk.toml` with no
 /// `[perps]` section keeps working unchanged. The guards only bite on paths
-/// that populate the relevant live signal (the live perps path threads funding
-/// via [`crate::MarketContext`]); spot/backtest leaves the signal `None`, so
-/// the guards no-op (fail-safe).
+/// that populate the relevant live signal; spot/backtest leaves those signals
+/// absent, so the guards no-op (fail-safe).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PerpsGuards {
@@ -68,12 +67,18 @@ pub struct PerpsGuards {
     /// default `0.01` (1% per 8h, ≈ extreme triple-digit annualized) only
     /// bites on genuinely punitive funding — tighten per strategy.
     pub max_funding_pay_8h: f64,
+    /// Minimum distance (percent of mark) an open perps position's liquidation
+    /// price must keep from its mark before `LiquidationDistanceGuard` vetoes
+    /// *new* entries — don't pile on risk while a position is near liquidation.
+    /// Default `5.0`. Only bites when a position reports a `liq_price` (perps).
+    pub min_liq_distance_pct: f64,
 }
 
 impl Default for PerpsGuards {
     fn default() -> Self {
         Self {
             max_funding_pay_8h: 0.01,
+            min_liq_distance_pct: 5.0,
         }
     }
 }
@@ -152,6 +157,11 @@ impl RiskConfig {
         if !self.perps.max_funding_pay_8h.is_finite() || self.perps.max_funding_pay_8h < 0.0 {
             return Err(RiskError::Config(
                 "perps.max_funding_pay_8h must be a finite non-negative number".into(),
+            ));
+        }
+        if !self.perps.min_liq_distance_pct.is_finite() || self.perps.min_liq_distance_pct < 0.0 {
+            return Err(RiskError::Config(
+                "perps.min_liq_distance_pct must be a finite non-negative number".into(),
             ));
         }
         Ok(())
