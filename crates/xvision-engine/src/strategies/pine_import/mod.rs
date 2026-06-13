@@ -30,7 +30,7 @@ mod parser;
 pub mod map;
 
 pub use ast::{Expr, PineHeader, PineParseError, PineScript, Statement};
-pub use fidelity::{build_fidelity_report, FidelityItem, FidelityReport};
+pub use fidelity::{build_fidelity_report, CostModelReference, FidelityItem, FidelityReport};
 pub use inputs::{input_mutation_targets, InputKind, InputTarget};
 pub use map::{map_script, MapOutcome, UnmappedNode};
 // Re-export BriefingIndicator from its canonical home in strategies::mod

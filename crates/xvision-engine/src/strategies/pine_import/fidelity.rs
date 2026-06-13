@@ -38,10 +38,96 @@ impl FidelityItem {
     }
 }
 
+/// WU10 — xvision backtest cost assumptions surfaced in TradingView
+/// Strategy-Tester-aligned vocabulary.
+///
+/// This is a **labelled reference**, not byte-exact reconciliation with
+/// TradingView's numbers. Its purpose is to help users anticipate why their
+/// backtest P&L will differ from the TradingView Strategy Tester output.
+///
+/// The values are sourced from xvision's DEFAULT `VenueSettings` (defined in
+/// `crates/xvision-engine/src/eval/scenario.rs`, `VenueSettings::default()`).
+/// When an import has no associated `Scenario` yet, these defaults are what
+/// the engine will apply.
+///
+/// # TradingView ↔ xvision vocabulary mapping
+///
+/// | TradingView Strategy Tester field | xvision internal name           | Default value         |
+/// |-----------------------------------|---------------------------------|-----------------------|
+/// | Commission (%)                    | `fees.taker_bps`                | 10 bps (0.10%)        |
+/// | Commission type: "Percent of order value" | `commission_type`      | "Percent of order value" |
+/// | Slippage (ticks)                  | `SlippageModel::Linear { bps }` | 2 bps linear          |
+/// | Fill orders on bar: "Open"        | `MarketOrderFill::NextBarOpen`  | "Next bar open"       |
+/// | Initial capital                   | `Capital.initial`               | per scenario          |
+/// | Order size                        | `RiskConfig`                    | per strategy          |
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CostModelReference {
+    /// TradingView calls this "Commission type".
+    /// xvision applies fees as basis points of order notional value.
+    /// TV equivalent: "Percent of order value".
+    pub commission_type: String,
+
+    /// Commission rate in basis points (1 bps = 0.01%).
+    /// Sourced from `VenueSettings::default().fees.taker_bps`.
+    /// TV equivalent: the "Commission (%)" field — divide by 100 to get percent.
+    pub commission_value_bps: f64,
+
+    /// xvision slippage model name.
+    /// Sourced from `VenueSettings::default().slippage`.
+    /// TV equivalent: "Slippage (ticks)".
+    pub slippage_model: String,
+
+    /// Slippage magnitude in basis points.
+    /// For `SlippageModel::Linear { bps }` this is the flat bps value.
+    /// Sourced from `VenueSettings::default().slippage` (Linear { bps: 2 }).
+    pub slippage_value_bps: f64,
+
+    /// When orders are filled relative to the decision bar.
+    /// Sourced from `VenueSettings::default().fill_model.market_order_fill`
+    /// (`MarketOrderFill::NextBarOpen`).
+    /// TV equivalent: "Fill orders on bar: Open" (next bar's open price).
+    pub fill_timing: String,
+
+    /// Plain-language note explaining why xvision's P&L will differ from
+    /// TradingView's Strategy Tester output, and how to configure the scenario
+    /// to narrow the gap.
+    pub note: String,
+}
+
+impl Default for CostModelReference {
+    /// Construct a `CostModelReference` from xvision's DEFAULT `VenueSettings`.
+    ///
+    /// Default values sourced from
+    /// `crates/xvision-engine/src/eval/scenario.rs` — `VenueSettings::default()`:
+    ///   - `fees.maker_bps = 0`, `fees.taker_bps = 10`  (line ~515)
+    ///   - `slippage = SlippageModel::Linear { bps: 2 }` (line ~519)
+    ///   - `fill_model.market_order_fill = NextBarOpen`   (line ~522)
+    ///   - `latency.decision_to_fill_ms = 500`            (line ~521)
+    fn default() -> Self {
+        CostModelReference {
+            commission_type: "Percent of order value".to_string(),
+            commission_value_bps: 10.0,  // VenueSettings::default().fees.taker_bps = 10
+            slippage_model: "Linear (flat basis points)".to_string(),
+            slippage_value_bps: 2.0,     // VenueSettings::default().slippage = Linear { bps: 2 }
+            fill_timing: "Next bar open".to_string(), // MarketOrderFill::NextBarOpen
+            note: "These are xvision's DEFAULT backtest cost assumptions (configurable per \
+                   scenario). Commission = 10 bps taker (0.10%), slippage = 2 bps flat, \
+                   fills at next-bar open. TradingView Strategy Tester defaults differ \
+                   (commission 0%, slippage 1–2 ticks, intrabar fills) — expect P&L \
+                   divergence. Configure the scenario's VenueSettings to align with \
+                   the source's TradingView settings.".to_string(),
+        }
+    }
+}
+
 /// The complete fidelity diff report for a single Pine Script import.
 ///
 /// Produced by [`build_fidelity_report`] after the mapper has run.
 /// Each field is a `Vec` so consumers can iterate or present them in any order.
+///
+/// The `cost_model` field (WU10) is `#[serde(default)]` so pre-existing
+/// `FidelityReport` JSON blobs (without the `cost_model` key) continue to
+/// deserialize correctly via `CostModelReference::default()`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FidelityReport {
     /// Elements that converted with no semantic change.
@@ -50,6 +136,13 @@ pub struct FidelityReport {
     pub approximated: Vec<FidelityItem>,
     /// Elements that could not be converted at all.
     pub dropped: Vec<FidelityItem>,
+    /// WU10 — xvision's backtest cost assumptions in TradingView-aligned
+    /// vocabulary. Surfaces the DEFAULT model + values; labeled as
+    /// "default (configured per scenario)" since import has no scenario yet.
+    /// `#[serde(default)]` ensures pre-WU10 JSON (no `cost_model` key) still
+    /// deserializes successfully.
+    #[serde(default)]
+    pub cost_model: CostModelReference,
 }
 
 impl FidelityReport {
@@ -288,7 +381,15 @@ pub fn build_fidelity_report(script: &PineScript, outcome: &MapOutcome) -> Fidel
         ));
     }
 
-    FidelityReport { captured, approximated, dropped }
+    // ── WU10: cost model reference ────────────────────────────────────────────
+    //
+    // Surface xvision's DEFAULT backtest cost assumptions in TV-aligned
+    // vocabulary. Since import has no Scenario yet, we always use the default
+    // model values sourced from `VenueSettings::default()` in
+    // `crates/xvision-engine/src/eval/scenario.rs`.
+    let cost_model = CostModelReference::default();
+
+    FidelityReport { captured, approximated, dropped, cost_model }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -388,6 +489,7 @@ if close > 100.0
             captured: vec![FidelityItem::new("entry_rule:Long", "captured: entry rule")],
             approximated: vec![FidelityItem::new("indicator:ema_val", "agentic-fallback: ema_val passed as briefing feature")],
             dropped: vec![FidelityItem::new("pyramiding", "dropped: pyramiding")],
+            cost_model: CostModelReference::default(),
         };
         let json = serde_json::to_string_pretty(&report).expect("must serialize");
         let report2: FidelityReport = serde_json::from_str(&json).expect("must deserialize");
@@ -433,6 +535,7 @@ result = my_rsi < 30
             captured: vec![FidelityItem::new("entry_rule:Long", "captured")],
             approximated: vec![],
             dropped: vec![],
+            cost_model: CostModelReference::default(),
         };
         assert!(report.is_lossless());
     }
@@ -443,6 +546,7 @@ result = my_rsi < 30
             captured: vec![],
             approximated: vec![],
             dropped: vec![FidelityItem::new("pyramiding", "dropped")],
+            cost_model: CostModelReference::default(),
         };
         assert!(!report.is_lossless());
     }

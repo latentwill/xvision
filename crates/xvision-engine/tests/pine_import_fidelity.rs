@@ -327,3 +327,148 @@ fn pine_import_error_displays() {
     let display = format!("{err}");
     assert!(!display.is_empty(), "PineImportError Display must not be empty");
 }
+
+// ── WU10 — cost_model: CostModelReference ─────────────────────────────────────
+//
+// TDD tests authored BEFORE implementation. These tests will FAIL until the
+// CostModelReference struct and cost_model field are added to FidelityReport.
+
+use xvision_engine::strategies::pine_import::CostModelReference;
+
+// ── WU10-1. import_pine returns a FidelityReport with a cost_model block ────
+
+#[test]
+fn import_pine_fidelity_report_has_cost_model() {
+    let src = load_fixture("rsi_threshold.pine");
+    let outcome = import_pine(&src).expect("rsi_threshold must import Ok");
+    let cost_model = &outcome.fidelity.cost_model;
+
+    // Must name a commission model (not empty)
+    assert!(
+        !cost_model.commission_type.is_empty(),
+        "cost_model.commission_type must not be empty; got: {:?}",
+        cost_model
+    );
+
+    // Must name a slippage model (not empty)
+    assert!(
+        !cost_model.slippage_model.is_empty(),
+        "cost_model.slippage_model must not be empty; got: {:?}",
+        cost_model
+    );
+
+    // fill_timing must be a non-empty string
+    assert!(
+        !cost_model.fill_timing.is_empty(),
+        "cost_model.fill_timing must not be empty; got: {:?}",
+        cost_model
+    );
+}
+
+// ── WU10-2. cost_model carries concrete default values ──────────────────────
+
+#[test]
+fn cost_model_has_concrete_default_values() {
+    let src = load_fixture("ma_cross_stop_target.pine");
+    let outcome = import_pine(&src).expect("must import");
+    let cm = &outcome.fidelity.cost_model;
+
+    // commission_value_bps must be > 0.0 (the default taker fee is 10 bps)
+    assert!(
+        cm.commission_value_bps > 0.0,
+        "commission_value_bps must be positive (default taker = 10 bps); got: {}",
+        cm.commission_value_bps
+    );
+
+    // slippage_value_bps must be > 0.0 (the default linear slip is 2 bps)
+    assert!(
+        cm.slippage_value_bps > 0.0,
+        "slippage_value_bps must be positive (default linear = 2 bps); got: {}",
+        cm.slippage_value_bps
+    );
+}
+
+// ── WU10-3. vocabulary matches TV-aligned names ──────────────────────────────
+
+#[test]
+fn cost_model_vocabulary_uses_tv_aligned_names() {
+    let src = load_fixture("rsi_threshold.pine");
+    let outcome = import_pine(&src).unwrap();
+    let cm = &outcome.fidelity.cost_model;
+
+    // commission_type must contain "Per Order" or "Percent" — TV vocabulary
+    let tv_commission = cm.commission_type.to_lowercase();
+    assert!(
+        tv_commission.contains("percent")
+            || tv_commission.contains("per order")
+            || tv_commission.contains("bps")
+            || tv_commission.contains("basis"),
+        "commission_type should use TV-aligned vocabulary (percent/per order/bps/basis); got: '{}'",
+        cm.commission_type
+    );
+
+    // fill_timing should say "next bar open" — the TV equivalent phrasing
+    let ft = cm.fill_timing.to_lowercase();
+    assert!(
+        ft.contains("next") || ft.contains("open") || ft.contains("bar"),
+        "fill_timing should describe next-bar-open fills; got: '{}'",
+        cm.fill_timing
+    );
+
+    // note must exist and mention the divergence/anticipation context
+    assert!(
+        !cm.note.is_empty(),
+        "cost_model.note must not be empty — it should explain the TV divergence context"
+    );
+}
+
+// ── WU10-4. a pre-existing FidelityReport JSON (no cost_model) still
+//            deserializes (serde default) ────────────────────────────────────
+
+#[test]
+fn legacy_fidelity_report_json_without_cost_model_deserializes() {
+    // A JSON blob that does NOT have a "cost_model" key — mimics pre-WU10 JSON
+    // stored in a DB or snapshot. Must deserialize successfully via #[serde(default)].
+    let legacy_json = r#"{
+        "captured": [{"item": "entry_rule:Long", "reason": "captured: entry rule"}],
+        "approximated": [],
+        "dropped": [{"item": "pyramiding", "reason": "dropped: pyramiding"}]
+    }"#;
+
+    let report: FidelityReport = serde_json::from_str(legacy_json)
+        .expect("legacy FidelityReport JSON (no cost_model key) must deserialize");
+
+    // cost_model must have been filled with Default values — not panic, not missing
+    let cm = &report.cost_model;
+    assert!(
+        !cm.commission_type.is_empty(),
+        "default cost_model.commission_type must not be empty after legacy deserialization"
+    );
+}
+
+// ── WU10-5. CostModelReference round-trips through serde ────────────────────
+
+#[test]
+fn cost_model_reference_serde_round_trip() {
+    let src = load_fixture("full_strategy.pine");
+    let outcome = import_pine(&src).expect("full_strategy must import");
+    let fidelity = &outcome.fidelity;
+
+    let json = serde_json::to_string_pretty(fidelity)
+        .expect("FidelityReport (with cost_model) must serialize");
+
+    let restored: FidelityReport = serde_json::from_str(&json)
+        .expect("FidelityReport (with cost_model) must deserialize");
+
+    // The cost_model block must survive a round-trip intact
+    assert_eq!(
+        fidelity.cost_model.commission_type,
+        restored.cost_model.commission_type,
+        "commission_type must survive serde round-trip"
+    );
+    assert_eq!(
+        fidelity.cost_model.fill_timing,
+        restored.cost_model.fill_timing,
+        "fill_timing must survive serde round-trip"
+    );
+}
