@@ -227,12 +227,11 @@ and maintain the migrated trajectory SQLite tables plus the frame blob store.
 
 ### `xvn optimize …`
 
-**The Optimizer cycle now has ONE CLI home: `xvn optimize`.** This is the
+**The Optimizer cycle has ONE CLI home: `xvn optimize run`.** This is the
 operator-surface verb for the AutoOptimizer subsystem (developer-surface
-codename `autooptimizer`). It runs the evening optimizer cycle: propose
-candidate experiments against a parent strategy, backtest them on the day +
-untouched windows, apply the decision gate, and (optionally) compile the DSPy
-flywheel.
+codename `autooptimizer`). It runs the optimizer cycle: propose candidate
+experiments against a parent strategy, backtest them on the day + untouched
+windows, apply the decision gate, and (optionally) compile the DSPy flywheel.
 
 > **Consolidation (2026-06-11).** Two changes landed together:
 > 1. The old top-level **`xvn optimizer`** verb **no longer exists** — its
@@ -247,34 +246,57 @@ flywheel.
 >    engine `optimization/` module and the `Optimizer*` types are **unchanged**
 >    — only the CLI verbs went away.
 
-**Running `xvn optimize` with no subcommand runs the full cycle.** The aliases
-`xvn optimize run` and `xvn optimize run-cycle` do the same thing.
+**`xvn optimize run` is the one verb for running the cycle.** By default it
+runs one cycle and exits. Use `--max-cycles` to change the run count.
 
 | Verb | Effect |
 |---|---|
-| `xvn optimize` (default) / `run` / `run-cycle` | Run the full optimizer cycle: propose → backtest (day + untouched windows) → gate → optional DSPy flywheel. Reads `$XVN_HOME/autooptimizer.toml` (or `--config <path>`, which **replaces** that file). See [Optimizer config](/docs?slug=autooptimizer-config). |
-| `ls [--json]` | List cycle history (most recent first). |
+| `run` | Run the optimizer cycle: propose → backtest (day + untouched windows) → gate → optional DSPy flywheel. Reads `$XVN_HOME/autooptimizer.toml` (or `--config <path>`, which **replaces** that file). See [Optimizer config](/docs?slug=autooptimizer-config). |
+| `ls [--json]` | List cycle history (most recent first). Shows live runs while they are in progress. |
 | `show <cycle_id> [--json]` | Show one cycle's detail: experiments, gate verdicts, scores. |
 | `lineage ls [--json]` | List the strategy lineage (parent → child edges, statuses). |
 | `lineage show <id> [--json]` | Show one lineage node / subtree. |
-| `unlock` | Clear a wedged cycle lock (e.g. after a crashed/OOM'd cycle stranded the lock). |
-| `mutate-once` | Run a single experiment proposal (no full cycle) — handy for smoke-testing the writer. |
-| `demo` | Run a self-contained demo cycle. |
+| `unlock` | Clear a wedged cycle lock on a **foreign host** (e.g. a run that died on a different machine). Not needed for normal kill→restart on the same host — stale locks are cleared automatically on the next `run`. |
 
-Common flags on the cycle (`run` / default): `--config <path>` (replace the
-default config file), `--experiments-per-cycle <n>`, `--objective
-<sharpe\|total_return\|max_drawdown\|win_rate>`, `--min-improvement <f>`,
-`--day-start`/`--day-end`, `--baseline-start`/`--baseline-end`, `--budget <n>`.
+**Flags on `run`:**
+
+| Flag | Effect |
+|---|---|
+| `--config <path>` | Replace the default config file (`$XVN_HOME/autooptimizer.toml`) with the supplied path. |
+| `--max-cycles <N>` | Unset (default): run one cycle and exit. `0`: run continuously until SIGINT/SIGTERM, the `--budget` ceiling, or convergence (fire-and-forget). `N`: run exactly N cycles. |
+| `--ipc-socket <PATH>` | Stream live progress to the dashboard /optimizer page via a Unix socket. Auto-connects to `/tmp/xvn-optimizer.sock` when a dashboard is listening there (start the dashboard server with `dashboard serve --autooptimizer-ipc-socket /tmp/xvn-optimizer.sock`). Pass `--ipc-socket ''` to disable. |
+| `--experiments-per-cycle <n>` | Number of experiment proposals per cycle. |
+| `--objective <sharpe\|total_return\|max_drawdown\|win_rate>` | Optimization objective. |
+| `--min-improvement <f>` | Minimum improvement threshold for the gate. |
+| `--day-start` / `--day-end` | Day-window boundaries for the primary backtest. |
+| `--baseline-start` / `--baseline-end` | Untouched-window boundaries for the gate holdout. |
+| `--budget <n>` | Maximum number of eval decisions across the run (ceiling for continuous mode). |
+
 See [Optimizer config](/docs?slug=autooptimizer-config) for which knobs are
 config fields vs CLI-only flags. A bad config surfaces a **field-level** parse
 error naming the offending TOML key.
 
-```
-# run the full cycle (default action) with the default config
-xvn optimize
+`xvn optimize run` writes live session state on start, so `xvn optimize ls`
+shows the run while it is in progress, and the dashboard /optimizer page
+reflects it (and, via the IPC socket, streams live progress events).
 
-# same, explicit; with an alternate config file (REPLACES the default)
+**Auto-unlock:** if a previous run was killed (SIGKILL, OOM, container restart),
+the stale lock is cleared automatically on the next `xvn optimize run` via
+heartbeat detection. Manual `xvn optimize unlock` is only needed when the
+lock was left by a run on a **different host**.
+
+```
+# run one cycle (default) with the default config
+xvn optimize run
+
+# run one cycle with an alternate config file (REPLACES the default)
 xvn optimize run --config ./my-autooptimizer.toml
+
+# fire-and-forget: run continuously until SIGINT/SIGTERM, budget, or convergence
+xvn optimize run --strategy <id> --provider ollama --model qwen3:4b --objective sharpe --max-cycles 0
+
+# run exactly 5 cycles, streaming live progress to the dashboard
+xvn optimize run --max-cycles 5 --ipc-socket /tmp/xvn-optimizer.sock
 
 # cycle history + detail
 xvn optimize ls --json
@@ -284,7 +306,7 @@ xvn optimize show <cycle_id> --json
 xvn optimize lineage ls
 xvn optimize lineage show <id>
 
-# clear a stranded lock from a crashed cycle
+# clear a stranded lock from a crashed run on a foreign host
 xvn optimize unlock
 ```
 

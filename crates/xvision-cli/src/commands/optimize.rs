@@ -13,14 +13,18 @@
 //!
 //! ## Subcommands
 //!
-//! * **run** / **run-cycle** — run the full optimizer cycle (default action when
-//!   no subcommand is given).
-//! * **mutate-once** — propose one experiment, gate it, and commit to lineage.
-//! * **demo** — replay a saved optimizer cycle from a fixture (no API keys).
+//! * **run** — run the optimizer. By default this runs ONE cycle and exits;
+//!   `--max-cycles N` runs N cycles and `--max-cycles 0` runs continuously
+//!   until SIGINT/SIGTERM, a budget ceiling, or convergence (GH #965). This is
+//!   the SAME engine path the dashboard "Run" button drives, and (via the IPC
+//!   socket) CLI runs stream live into the dashboard (GH #968). It is the one
+//!   and only way to drive the optimizer — there are deliberately no manual
+//!   step verbs (a single operator surface; GH #966).
 //! * **ls** — list recent optimizer cycles from the lineage store (D3).
 //! * **show** — inspect a single cycle's gated candidates + counts.
 //! * **lineage** — lineage graph inspection (ls / show).
-//! * **unlock** — force-clear a wedged cycle lock.
+//! * **unlock** — force-clear a wedged cycle lock (explicit escape hatch; the
+//!   normal kill→restart path now auto-clears a stale lock — GH #967).
 //!
 //! ## Exit codes (distinct per failure class)
 //!
@@ -63,7 +67,7 @@ use xvision_engine::autooptimizer::lineage::{
 };
 use xvision_engine::autooptimizer::local_dispatch::AutoOptimizerLocalDispatch;
 use xvision_engine::autooptimizer::metering_dispatch::{CostMeteringDispatch, CycleMeter};
-use xvision_engine::autooptimizer::mutator::{MutationDiff, Mutator};
+use xvision_engine::autooptimizer::mutator::Mutator;
 use xvision_engine::autooptimizer::parent_policy::ParentPolicy;
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
 use xvision_engine::autooptimizer::scenario_synthesis::{
@@ -104,13 +108,9 @@ pub struct OptimizeCmd {
 
 #[derive(Subcommand, Debug)]
 enum OptimizeAction {
-    /// Run the full optimizer cycle (default action; --strategy is optional).
-    #[command(visible_alias = "run-cycle")]
+    /// Run the optimizer (default action; --strategy is optional). One cycle by
+    /// default; --max-cycles N for N, --max-cycles 0 to run until stopped.
     Run(RunCycleArgs),
-    /// Propose one experiment, gate it, and commit to lineage.
-    MutateOnce(MutateOnceArgs),
-    /// Replay a saved optimizer cycle from a fixture (no API keys required).
-    Demo(DemoArgs),
     /// List recent optimizer cycles from the lineage store.
     Ls(LsArgs),
     /// Show a single optimizer cycle's gated candidates and counts.
@@ -209,42 +209,6 @@ struct LineageRow {
 
 // ── Cycle args (pub so autooptimizer.rs can delegate) ────────────────────────
 
-#[derive(Args, Debug)]
-pub struct MutateOnceArgs {
-    /// Content hash (hex) of the parent strategy in the blob store.
-    pub parent_bundle_hash: String,
-    /// AutoOptimizerConfig TOML path.
-    #[arg(long)]
-    pub config: Option<PathBuf>,
-    /// Cycle ID to tag the lineage node (generated if absent).
-    #[arg(long)]
-    pub cycle_id: Option<String>,
-    /// Validate and propose without persisting to lineage.
-    #[arg(long)]
-    pub dry_run: bool,
-    /// SQLite lineage database path.
-    #[arg(long)]
-    pub db: Option<PathBuf>,
-    /// Blob storage directory.
-    #[arg(long)]
-    pub blob_dir: Option<PathBuf>,
-    /// Use mock LLM dispatch for ALL AI calls (paper-test, experiment writer,
-    /// judge). No API keys required. All AI responses are canned/deterministic.
-    /// For smoke-testing cycle wiring only — results have no signal value.
-    #[arg(long)]
-    pub mock: bool,
-    /// Unix socket path of the dashboard IPC bridge (AR-3).
-    ///
-    /// When set, each `CycleProgressEvent` is serialized as newline-delimited
-    /// JSON and sent to the dashboard listener so it appears in real time on
-    /// `GET /api/autooptimizer/events`. Requires the dashboard to be started
-    /// with `--autooptimizer-ipc-socket <same path>`.
-    ///
-    /// Example: --ipc-socket /tmp/xvn-events.sock
-    #[arg(long)]
-    pub ipc_socket: Option<PathBuf>,
-}
-
 #[derive(Args, Debug, Default)]
 pub struct RunCycleArgs {
     /// Path to autooptimizer.toml. When set, REPLACES the default
@@ -255,12 +219,32 @@ pub struct RunCycleArgs {
     /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
     #[arg(long)]
     pub db: Option<PathBuf>,
-    /// Use mock LLM dispatch for ALL AI calls (paper-test, experiment writer,
-    /// judge). No API keys required. All AI responses are canned/deterministic.
-    /// For smoke-testing cycle wiring only — results have no signal value.
-    #[arg(long)]
+    /// Smoke-test the cycle wiring with a canned, deterministic LLM stub — no
+    /// API keys, no signal value. Internal/CI use only (GH #966): hidden from
+    /// the operator help surface so the one operator-facing way to run is a
+    /// real cycle.
+    #[arg(long, hide = true)]
     pub mock: bool,
-    /// Cycle/session id to use for this optimizer cycle. Generated when omitted.
+    /// How many cycles to run before exiting (GH #965):
+    ///   • unset  → ONE cycle, then exit (default — back-compat).
+    ///   • N (>0)  → exactly N cycles.
+    ///   • 0       → run continuously until SIGINT/SIGTERM, the --budget
+    ///               ceiling, or convergence ("fire and forget").
+    /// SIGINT/SIGTERM always seals the in-flight cycle, writes terminal state,
+    /// releases the lock, and exits 0.
+    #[arg(long, value_name = "N")]
+    pub max_cycles: Option<u64>,
+    /// Unix socket of the dashboard IPC bridge so this run streams LIVE into the
+    /// dashboard `/optimizer` page (GH #968). When omitted, the default
+    /// `/tmp/xvn-optimizer.sock` is used automatically IF a dashboard is
+    /// listening there (start it with `xvn dashboard serve
+    /// --autooptimizer-ipc-socket /tmp/xvn-optimizer.sock`); otherwise the run
+    /// proceeds with no live stream (events are still persisted to the DB and
+    /// appear in the dashboard on refresh). Pass an explicit path to override,
+    /// or `--ipc-socket ''` to disable auto-connect.
+    #[arg(long, value_name = "PATH")]
+    pub ipc_socket: Option<PathBuf>,
+    /// Cycle/session id to use for this optimizer run. Generated when omitted.
     #[arg(long)]
     pub session_id: Option<String>,
     /// Strategy ID to use as the root parent for this cycle.
@@ -329,26 +313,13 @@ pub struct RunCycleArgs {
     pub max_output_tokens: Option<u32>,
 }
 
-#[derive(Args, Debug)]
-pub struct DemoArgs {
-    /// Path to the replay fixture JSON file.
-    /// Defaults to $XVN_HOME/probes/autooptimizer/replay-fixture.json.
-    #[arg(long)]
-    pub fixture: Option<PathBuf>,
-    /// Print full event JSON; else print one line per event.
-    #[arg(long, short)]
-    pub verbose: bool,
-}
-
 // ── Top-level dispatch ────────────────────────────────────────────────────────
 
 pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
     match cmd.action {
-        // `xvn optimize` with NO subcommand runs the full cycle (default action).
+        // `xvn optimize` with NO subcommand runs the optimizer (default action).
         None => run_cycle_cmd(RunCycleArgs::default()).await,
         Some(OptimizeAction::Run(args)) => run_cycle_cmd(args).await,
-        Some(OptimizeAction::MutateOnce(args)) => run_mutate_once(args).await,
-        Some(OptimizeAction::Demo(args)) => run_demo_cmd(args).await,
         Some(OptimizeAction::Ls(args)) => run_ls(args).await,
         Some(OptimizeAction::Show(args)) => run_show(args).await,
         Some(OptimizeAction::Lineage(cmd)) => match cmd.op {
@@ -357,154 +328,6 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         },
         Some(OptimizeAction::Unlock(args)) => run_unlock(args).await,
     }
-}
-
-// ── mutate-once ───────────────────────────────────────────────────────────────
-
-pub async fn run_mutate_once(args: MutateOnceArgs) -> CliResult<()> {
-    let cfg = load_ar_config(args.config.as_deref())?;
-    let blob_dir = args.blob_dir.unwrap_or_else(default_blob_dir);
-    let blobs = BlobStore::new(blob_dir);
-    let parent_hash = ContentHash::from_hex(&args.parent_bundle_hash)
-        .map_err(|e| CliError::usage(anyhow::anyhow!("invalid parent_bundle_hash: {e}")))?;
-    let parent = load_strategy_blob(&blobs, &parent_hash).await?;
-    let binding = build_dispatch(args.mock, None, &cfg.mutator.provider, &cfg.mutator.model).await?;
-    let dispatch = Arc::clone(&binding.dispatch);
-
-    // AR-3: connect to the dashboard IPC socket if requested.
-    let mut ipc_stream: Option<tokio::net::UnixStream> = None;
-    if let Some(ref socket_path) = args.ipc_socket {
-        match tokio::net::UnixStream::connect(socket_path).await {
-            Ok(s) => {
-                ipc_stream = Some(s);
-            }
-            Err(e) => {
-                eprintln!(
-                    "warning: could not connect to IPC socket {}: {e}",
-                    socket_path.display()
-                );
-            }
-        }
-    }
-
-    let cycle_id = args.cycle_id.clone().unwrap_or_else(|| Ulid::new().to_string());
-
-    ipc_send_event(
-        &mut ipc_stream,
-        CycleProgressEvent::CycleStarted {
-            session_id: String::new(),
-            cycle_id: cycle_id.clone(),
-            parent_count: 1,
-        },
-    )
-    .await;
-    ipc_send_event(
-        &mut ipc_stream,
-        CycleProgressEvent::ParentSelected {
-            session_id: String::new(),
-            cycle_id: cycle_id.clone(),
-            parent_hash: parent_hash.to_hex(),
-        },
-    )
-    .await;
-
-    eprintln!("Proposing experiment...");
-    ipc_send_event(
-        &mut ipc_stream,
-        CycleProgressEvent::MutationProposed {
-            session_id: String::new(),
-            cycle_id: cycle_id.clone(),
-            parent_hash: parent_hash.to_hex(),
-            child_hash: String::new(),
-            mutator_model: String::new(),
-        },
-    )
-    .await;
-
-    // F32: derive the exploration seed from this mutate-once cycle id so the
-    // experiment writer samples diversely (shared helper with the cycle path).
-    let exploration_seed = xvision_engine::autooptimizer::cycle::exploration_seed_for(&cycle_id, 0);
-    let diff = propose(
-        &parent,
-        &cfg,
-        &binding.provider,
-        &binding.model,
-        &dispatch,
-        exploration_seed,
-    )
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("experiment writer: {e}")))?;
-    let child = diff.apply_to(&parent);
-    let child_json = serde_json::to_value(&child)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize child: {e}")))?;
-    let child_hash = ContentHash::of_json(&child_json);
-    let (pd, ph, cd, ch) = paper_test_sharpes(args.mock);
-    let passed = gate_passes(pd, cd, ph, ch, cfg.min_improvement);
-    let verdict = if passed {
-        GateVerdict::Pass
-    } else {
-        GateVerdict::Fail {
-            reason: "minimum-improvement threshold not met".into(),
-        }
-    };
-    let status = if passed {
-        LineageStatus::Active
-    } else {
-        LineageStatus::Rejected
-    };
-
-    let outcome_str = if passed { "kept" } else { "dropped" };
-    ipc_send_event(
-        &mut ipc_stream,
-        CycleProgressEvent::MutationGated {
-            session_id: String::new(),
-            cycle_id: cycle_id.clone(),
-            child_hash: child_hash.to_hex(),
-            passed,
-            outcome: outcome_str.to_string(),
-            delta_day: None,
-        },
-    )
-    .await;
-
-    eprintln!(
-        "Gate: {} (day Δ={:.3}, untouched Δ={:.3})",
-        verdict.as_str(),
-        cd - pd,
-        ch - ph
-    );
-    if args.dry_run {
-        println!("verdict: {}", verdict.as_str());
-        return Ok(());
-    }
-    let db_path = resolve_lineage_db(args.db)?;
-    let pool = open_and_migrate_db(&db_path).await?;
-    blobs
-        .put_json(&child_json)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("write child blob: {e}")))?;
-    let lineage = LineageStore::new(pool);
-    insert_lineage_node(
-        &lineage,
-        child_hash,
-        parent_hash,
-        verdict.clone(),
-        status,
-        &cycle_id,
-    )
-    .await?;
-
-    // Flush and close the IPC stream.
-    if let Some(mut s) = ipc_stream {
-        let _ = s.shutdown().await;
-    }
-
-    println!(
-        "Experiment complete: verdict={} cycle={}",
-        verdict.as_str(),
-        cycle_id
-    );
-    Ok(())
 }
 
 // ── run-cycle ─────────────────────────────────────────────────────────────────
@@ -589,23 +412,48 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let db_path = args.db.unwrap_or_else(|| xvn_home.join("xvn.db"));
     let pool = open_and_migrate_db(&db_path).await?;
 
-    // F34: serialize cycles per workspace.
-    let cycle_lock_id = args.session_id.clone().unwrap_or_else(|| Ulid::new().to_string());
+    // F34/GH#968: one id ties the workspace lock, the live session-state row,
+    // and the persisted events together.
+    let session_id = args.session_id.clone().unwrap_or_else(|| Ulid::new().to_string());
+
+    // GH #965: --max-cycles controls how many cycles this run executes.
+    //   unset → one cycle (back-compat); 0 → unlimited (until signal/budget/
+    //   convergence); N → exactly N. Unlimited is modelled as `n_experiments`
+    //   with no plan, so the engine loop never stops on count.
+    let (session_mode, cycles_planned): (&str, Option<i64>) = match args.max_cycles {
+        None => ("once", None),
+        Some(0) => ("n_experiments", None),
+        Some(n) => ("n_experiments", Some(n as i64)),
+    };
+
     let lock_holder = format!(
         "cli:{}",
         std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
             .unwrap_or_else(|_| "operator".into())
     );
-    match xvision_engine::autooptimizer::run_lock::try_acquire(
-        &pool,
-        &cycle_lock_id,
-        &lock_holder,
-        Utc::now(),
-    )
-    .await
-    .map_err(|e| CliError::upstream(anyhow::anyhow!("acquire cycle lock: {e}")))?
-    {
+    let lock_outcome =
+        xvision_engine::autooptimizer::run_lock::try_acquire(&pool, &session_id, &lock_holder, Utc::now())
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("acquire cycle lock: {e}")))?;
+    if let Some(reclaimed) = &lock_outcome.reclaimed {
+        // GH #967: the prior holder was killed and left a stale lock; we cleared
+        // it automatically instead of forcing a manual `xvn optimize unlock`.
+        eprintln!(
+            "note: cleared a stale optimizer lock (prior cycle {}, silent {}s, {}) — \
+             a previous run appears to have been killed.",
+            reclaimed.prior_cycle, reclaimed.age_s, reclaimed.reason
+        );
+        if let Ok(line) = serde_json::to_string(&serde_json::json!({
+            "type": "stale_lock_cleared",
+            "prior_cycle": reclaimed.prior_cycle,
+            "age_s": reclaimed.age_s,
+            "reason": reclaimed.reason,
+        })) {
+            println!("{line}");
+        }
+    }
+    match lock_outcome.acquire {
         xvision_engine::autooptimizer::run_lock::Acquire::Acquired => {}
         xvision_engine::autooptimizer::run_lock::Acquire::Busy {
             cycle_id,
@@ -620,6 +468,61 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                  `xvn optimize unlock` to clear the stuck lock."
             )));
         }
+    }
+
+    // GH #968: write a live `state='running'` session row up-front (before any
+    // AI calls) so `xvn optimize ls` and the dashboard /optimizer page show the
+    // run immediately. The engine's run_session loop drives subsequent state.
+    xvision_engine::autooptimizer::ensure_session_schema(&pool)
+        .await
+        .map_err(|e| CliError::upstream(anyhow::anyhow!("ensure session schema: {e}")))?;
+    let session_strategy_id = args.strategy.clone().unwrap_or_default();
+    let session_config_json = serde_json::to_string(&serde_json::json!({
+        "provider": cfg.mutator.provider,
+        "model": cfg.mutator.model,
+        "objective": cfg.objective.label(),
+        "experiments_per_cycle": cfg.experiments_per_cycle,
+        "max_cycles": args.max_cycles,
+        "budget_usd": args.budget,
+    }))
+    .unwrap_or_else(|_| "{}".to_string());
+    if let Err(e) = xvision_engine::autooptimizer::create_session_with_id(
+        &pool,
+        &session_id,
+        &session_strategy_id,
+        &session_config_json,
+        session_mode,
+        cycles_planned,
+    )
+    .await
+    {
+        // Non-fatal: a missing session row only costs live visibility, not the run.
+        eprintln!("note: could not write session state: {e}");
+    }
+
+    // GH #965: SIGINT/SIGTERM requests a clean shutdown — the loop seals the
+    // in-flight cycle, run_session writes terminal state, and we release the
+    // lock and exit 0.
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let cancel_sig = Arc::clone(&cancel);
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            tokio::select! {
+                _ = sigint.recv() => {}
+                _ = sigterm.recv() => {}
+            }
+            eprintln!("\nreceived shutdown signal — sealing the current cycle and exiting…");
+            cancel_sig.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
     }
 
     let lineage_store = LineageStore::new(pool.clone());
@@ -825,22 +728,27 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
 
     let parent_policy = ParentPolicy::RoundRobin;
 
-    eprintln!("Starting optimizer cycle...");
+    let max_cycles_label = match args.max_cycles {
+        None => "1 cycle".to_string(),
+        Some(0) => "until stopped (Ctrl-C / SIGTERM)".to_string(),
+        Some(n) => format!("{n} cycles"),
+    };
+    eprintln!("Starting optimizer — running {max_cycles_label}.");
+    eprintln!("session: {session_id}");
     eprintln!("objective: {}", cfg.objective.label());
     if let Some(ref s) = args.strategy {
         eprintln!("strategy: {s}");
     }
     if let Some(b) = args.budget {
         eprintln!(
-            "budget cap: ${b} USD — once reported paper-test inference cost reaches \
-             this ceiling, the cycle stops before launching another backtest"
+            "budget cap: ${b} USD — once cumulative paper-test inference cost reaches \
+             this ceiling, the run stops before launching another cycle"
         );
     }
     if args.mock {
         eprintln!(
-            "mock mode: ALL AI calls (paper-test, experiment writer, judge) use a canned \
-             deterministic stub — no API keys required. This is a smoke test of cycle wiring \
-             only; results have no signal value and may not appear in `xvn optimize ls`."
+            "mock mode: ALL AI calls use a canned deterministic stub — no API keys, \
+             no signal value (smoke test only)."
         );
     }
     let dspy_ctx = if cfg.dspy_enabled {
@@ -864,217 +772,208 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     } else {
         None
     };
-    // U5/UI4: persist every CycleProgressEvent to `autooptimizer_events` so a
-    // CLI-launched cycle appears in the dashboard (which reads the same table)
-    // even without a live socket. The progress closure is sync but
-    // `persist_cycle_event` is async, so the closure pushes each event into an
-    // unbounded mpsc channel and a spawned task drains it and persists under the
-    // `cycle:<cycle_id>` fallback session key (matching the dashboard's
-    // `prune_old_events` retention branch).
+    // GH #968: connect to the dashboard IPC bridge so this run streams LIVE into
+    // the /optimizer page. Explicit --ipc-socket wins; otherwise auto-connect to
+    // the conventional /tmp/xvn-optimizer.sock IF a dashboard is listening there;
+    // `--ipc-socket ''` disables. A failed/absent connection is non-fatal —
+    // events are still persisted to the DB and appear in the dashboard on refresh.
+    let ipc_path: Option<PathBuf> = match &args.ipc_socket {
+        Some(p) if p.as_os_str().is_empty() => None,
+        Some(p) => Some(p.clone()),
+        None => {
+            let default = PathBuf::from("/tmp/xvn-optimizer.sock");
+            if default.exists() {
+                Some(default)
+            } else {
+                None
+            }
+        }
+    };
+    let mut ipc_stream: Option<tokio::net::UnixStream> = None;
+    if let Some(p) = &ipc_path {
+        match tokio::net::UnixStream::connect(p).await {
+            Ok(s) => {
+                eprintln!("streaming live events to the dashboard via {}", p.display());
+                ipc_stream = Some(s);
+            }
+            Err(e) => {
+                // Only warn when the operator asked for a specific socket; the
+                // default auto-connect is silent when no dashboard is present.
+                if args.ipc_socket.is_some() {
+                    eprintln!("warning: could not connect IPC socket {}: {e}", p.display());
+                }
+            }
+        }
+    }
+
+    // ONE drain task for the whole session: persist each event to
+    // `autooptimizer_events` (under the real session id, so the dashboard's
+    // session views find it — GH #968), forward it to the IPC socket for the
+    // live stream, and refresh the lock heartbeat so a competing acquire can
+    // tell this run is alive (GH #967).
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<CycleProgressEvent>();
     let persist_pool = pool.clone();
-    let persist_session = format!("cycle:{cycle_lock_id}");
+    let persist_session = session_id.clone();
+    let mut ipc_for_task = ipc_stream;
     let persist_task = tokio::spawn(async move {
         while let Some(ev) = event_rx.recv().await {
             if let Err(e) = persist_cycle_event(&persist_pool, &ev, &persist_session).await {
-                // Non-fatal: the live stdout stream already showed the event.
                 eprintln!("note: could not persist cycle event: {e}");
             }
+            ipc_send_event(&mut ipc_for_task, ev).await;
+            let _ = xvision_engine::autooptimizer::run_lock::heartbeat(
+                &persist_pool,
+                &persist_session,
+                Utc::now(),
+            )
+            .await;
         }
     });
 
-    // The progress closure owns its own sender clone; the channel closes (and
-    // the drain task finishes) once `run_cycle` returns and the closure drops.
-    let closure_tx = event_tx.clone();
-    drop(event_tx);
+    // Drive the engine's session loop — the SAME path the dashboard uses. Each
+    // iteration runs one full cycle with a fresh cycle id; the loop stops per
+    // `session_mode` / `--budget` / a shutdown signal (GH #965). All the
+    // expensive setup above is built once and shared across cycles.
+    let sustained = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let pause = Arc::new(std::sync::atomic::AtomicBool::new(false)); // no CLI pause surface
+    let provider_label = cfg.mutator.provider.clone();
+    let pool_ref = &pool;
+    let sbs_ref = &strategy_blob_store;
+    let cfg_ref = &cfg;
+    let base_cc = &cycle_config;
+    let pp_ref = &parent_policy;
+    let mutator_ref = &mutator;
+    let judge_ref = &judge;
+    let paper_ref = paper_tester.as_ref();
+    let dspy_ref = dspy_ctx.as_ref();
+    let opt_mem_ref = opt_mem.as_deref();
+    let meter_ref = &meter;
+    let event_tx_ref = &event_tx;
+    let cancel_ref = &cancel;
+    let sustained_ref = &sustained;
 
-    let result = run_cycle(
+    let session_result = xvision_engine::autooptimizer::run_session(
         &pool,
-        &strategy_blob_store,
-        &cfg,
-        &cycle_config,
-        &parent_policy,
-        &mutator,
-        &judge,
-        paper_tester.as_ref(),
-        move |event| {
-            if let Ok(line) = serde_json::to_string(&event) {
-                println!("{}", line);
+        &session_id,
+        session_mode,
+        cycles_planned,
+        args.budget,
+        Vec::new(),
+        Arc::clone(&cancel),
+        Arc::clone(&pause),
+        move || {
+            let cycle_id = Ulid::new().to_string();
+            async move {
+                let sustained_now = sustained_ref.load(std::sync::atomic::Ordering::Relaxed);
+                // Vary only the no-pass streak per cycle so the in-cycle gate
+                // loosening schedule advances across a long run.
+                let mut cc = base_cc.clone();
+                cc.sustained_no_pass_cycles = sustained_now;
+
+                let tx = event_tx_ref.clone();
+                let progress = move |event: CycleProgressEvent| {
+                    if let Ok(line) = serde_json::to_string(&event) {
+                        println!("{line}");
+                    }
+                    let _ = tx.send(event);
+                };
+
+                let result = run_cycle(
+                    pool_ref,
+                    sbs_ref,
+                    cfg_ref,
+                    &cc,
+                    pp_ref,
+                    mutator_ref,
+                    judge_ref,
+                    paper_ref,
+                    progress,
+                    dspy_ref,
+                    opt_mem_ref,
+                    Some(cycle_id.clone()),
+                    Some(Arc::clone(cancel_ref)),
+                    None,
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("run_cycle: {e}"))?;
+
+                let bucket = if !result.active_nodes.is_empty() {
+                    "kept"
+                } else if !result.suspect_nodes.is_empty() {
+                    "suspect"
+                } else {
+                    "dropped"
+                };
+                let new_sustained = if result.active_nodes.is_empty() {
+                    sustained_now + 1
+                } else {
+                    0
+                };
+                sustained_ref.store(new_sustained, std::sync::atomic::Ordering::Relaxed);
+
+                let totals = *meter_ref.lock().expect("meter mutex poisoned");
+                if let Err(e) = xvision_engine::autooptimizer::cycle_runs::persist_cycle_cost(
+                    pool_ref,
+                    &result.cycle_id,
+                    &totals,
+                    &Utc::now().to_rfc3339(),
+                )
+                .await
+                {
+                    eprintln!("note: could not persist cycle cost: {e}");
+                }
+
+                eprintln!(
+                    "cycle {} → {bucket} ({} kept, {} suspect, {} dropped); honesty: {}; \
+                     cumulative cost ${:.4}",
+                    result.cycle_id,
+                    result.active_nodes.len(),
+                    result.suspect_nodes.len(),
+                    result.rejected_nodes.len(),
+                    result.honesty_check.message,
+                    totals.spent_usd,
+                );
+
+                Ok(xvision_engine::autooptimizer::CycleRunOutcome {
+                    outcome: bucket.to_string(),
+                    cum_cost_usd: totals.spent_usd,
+                    sustained_no_pass_cycles: new_sustained,
+                })
             }
-            // Best-effort: ignore send errors (drain task gone ⇒ shutting down).
-            let _ = closure_tx.send(event);
         },
-        dspy_ctx.as_ref(),
-        opt_mem.as_deref(),
-        Some(cycle_lock_id.clone()),
-        None,
-        None,
     )
     .await;
-    // The closure (and its sender) drops here at the end of `run_cycle`'s
-    // borrow; await the drain task so all events are flushed before we return.
+
+    // Close the event channel and flush the drain task, then release the lock
+    // (run_session has already written the terminal session state).
+    drop(event_tx);
     let _ = persist_task.await;
-    let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &cycle_lock_id).await;
-    let result = result.map_err(|e| CliError::upstream(anyhow::anyhow!("run_cycle: {e}")))?;
+    let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &session_id).await;
 
-    eprintln!("honesty check: {}", result.honesty_check.message);
+    session_result.map_err(|e| CliError::upstream(anyhow::anyhow!("run session: {e}")))?;
 
-    let candidates = result.active_nodes.len() + result.suspect_nodes.len() + result.rejected_nodes.len();
-    if candidates == 0 {
-        eprintln!(
-            "no candidate produced: the experiment writer did not yield a usable experiment this \
-             cycle ({} attempt(s) were a no-op or failed). Nothing was gated — see the \
-             `no_candidate` event(s) above.",
-            result.no_candidate_count
-        );
-    } else {
-        eprintln!(
-            "candidates: {candidates} gated ({} kept, {} suspect, {} dropped); {} attempt(s) \
-             produced no usable experiment",
-            result.active_nodes.len(),
-            result.suspect_nodes.len(),
-            result.rejected_nodes.len(),
-            result.no_candidate_count
-        );
-    }
-
+    // Final session summary.
     let totals = *meter.lock().expect("meter mutex poisoned");
+    let completed: i64 =
+        sqlx::query_scalar("SELECT cycles_completed FROM autooptimizer_session_state WHERE session_id = ?")
+            .bind(&session_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
     eprintln!(
-        "tokens: {} in / {} out ({} total)",
+        "session {session_id} finished: {completed} cycle(s) via {provider_label}; \
+         tokens {} in / {} out; total cost ${:.4}{}",
         totals.input_tokens,
         totals.output_tokens,
-        totals.input_tokens + totals.output_tokens,
-    );
-    if totals.unpriced_calls > 0 {
-        eprintln!(
-            "cycle cost: ${:.4} metered + {} call(s) with UNKNOWN price — realized spend is higher. \
-             The model's price is missing from the cached catalog; run \
-             `xvn provider refresh-models --name {}` to enable full cost metering (and the \
-             `--budget` ceiling) for it.",
-            totals.spent_usd, totals.unpriced_calls, cfg.mutator.provider,
-        );
-    } else {
-        eprintln!(
-            "cycle cost: ${:.4} (metered across backtest + experiment-writer + judge)",
-            totals.spent_usd
-        );
-    }
-
-    if let Err(e) = xvision_engine::autooptimizer::cycle_runs::persist_cycle_cost(
-        &pool,
-        &result.cycle_id,
-        &totals,
-        &Utc::now().to_rfc3339(),
-    )
-    .await
-    {
-        eprintln!("note: could not persist cycle cost: {e}");
-    }
-
-    println!("cycle_id={}", result.cycle_id);
-
-    Ok(())
-}
-
-// ── demo ─────────────────────────────────────────────────────────────────────
-
-/// Top-level replay fixture schema.
-#[derive(Debug, serde::Deserialize)]
-struct ReplayFixture {
-    fixture_version: String,
-    cycle_id: String,
-    events: Vec<serde_json::Value>,
-    lineage_nodes: Vec<serde_json::Value>,
-}
-
-fn event_operator_label(event: &CycleProgressEvent) -> &'static str {
-    match event {
-        CycleProgressEvent::CycleStarted { .. } => "Cycle started",
-        CycleProgressEvent::ParentSelected { .. } => "Parent selected",
-        CycleProgressEvent::MutationProposed { .. } => "Experiment proposed",
-        CycleProgressEvent::NoCandidate { .. } => "No experiment produced",
-        CycleProgressEvent::MutationGated { .. } => "Experiment gated",
-        CycleProgressEvent::HonestyCheckRun { .. } => "Honesty check run",
-        CycleProgressEvent::JudgeFinding { .. } => "Judge finding",
-        CycleProgressEvent::CycleFinished { .. } => "Optimizer run finished",
-        CycleProgressEvent::PhaseStarted { .. } => "Phase started",
-        CycleProgressEvent::PhaseFinished { .. } => "Phase finished",
-        CycleProgressEvent::SessionStateChanged { .. } => "Run state changed",
-        CycleProgressEvent::FlywheelCompiled { .. } => "Findings compiled into prompt pattern",
-        CycleProgressEvent::EvalProgress { .. } => "Eval progress",
-        CycleProgressEvent::Heartbeat { .. } => "Working",
-    }
-}
-
-fn event_type_tag(event: &CycleProgressEvent) -> &'static str {
-    match event {
-        CycleProgressEvent::CycleStarted { .. } => "cycle_started",
-        CycleProgressEvent::ParentSelected { .. } => "parent_selected",
-        CycleProgressEvent::MutationProposed { .. } => "mutation_proposed",
-        CycleProgressEvent::NoCandidate { .. } => "no_candidate",
-        CycleProgressEvent::MutationGated { .. } => "mutation_gated",
-        CycleProgressEvent::HonestyCheckRun { .. } => "honesty_check_run",
-        CycleProgressEvent::JudgeFinding { .. } => "judge_finding",
-        CycleProgressEvent::CycleFinished { .. } => "cycle_finished",
-        CycleProgressEvent::PhaseStarted { .. } => "phase_started",
-        CycleProgressEvent::PhaseFinished { .. } => "phase_finished",
-        CycleProgressEvent::SessionStateChanged { .. } => "session_state_changed",
-        CycleProgressEvent::FlywheelCompiled { .. } => "flywheel_compiled",
-        CycleProgressEvent::EvalProgress { .. } => "eval_progress",
-        CycleProgressEvent::Heartbeat { .. } => "heartbeat",
-    }
-}
-
-pub async fn run_demo_cmd(args: DemoArgs) -> CliResult<()> {
-    let fixture_path = resolve_demo_fixture(args.fixture)?;
-
-    let raw = std::fs::read_to_string(&fixture_path).map_err(|e| {
-        CliError::not_found(anyhow::anyhow!(
-            "cannot read fixture {}: {e}",
-            fixture_path.display()
-        ))
-    })?;
-
-    let fixture: ReplayFixture = serde_json::from_str(&raw).map_err(|e| {
-        CliError::usage(anyhow::anyhow!(
-            "malformed fixture {}: {e}",
-            fixture_path.display()
-        ))
-    })?;
-
-    println!(
-        "demo: replaying cycle {} (fixture v{})",
-        fixture.cycle_id, fixture.fixture_version
-    );
-
-    for raw_event in &fixture.events {
-        // F18 (QA 2026-06-04): be resilient to event variants the current build
-        // no longer knows about.
-        let event: CycleProgressEvent = match serde_json::from_value(raw_event.clone()) {
-            Ok(ev) => ev,
-            Err(e) => {
-                let kind = raw_event
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("<unknown>");
-                eprintln!("demo: skipping unrecognized event '{kind}' ({e})");
-                continue;
-            }
-        };
-        if args.verbose {
-            let json_line = serde_json::to_string(&event)
-                .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize event: {e}")))?;
-            println!("{}", json_line);
+        totals.spent_usd,
+        if totals.unpriced_calls > 0 {
+            format!(" (+{} call(s) with unknown price)", totals.unpriced_calls)
         } else {
-            println!("{}: {}", event_type_tag(&event), event_operator_label(&event));
-        }
-    }
-
-    println!(
-        "demo complete: cycle_id={} nodes={}",
-        fixture.cycle_id,
-        fixture.lineage_nodes.len(),
+            String::new()
+        },
     );
+    println!("session_id={session_id}");
+
     Ok(())
 }
 
@@ -1595,18 +1494,6 @@ fn resolve_lineage_db(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
     Ok(xvn_home.join("xvn.db"))
 }
 
-fn resolve_demo_fixture(override_path: Option<PathBuf>) -> CliResult<PathBuf> {
-    if let Some(p) = override_path {
-        return Ok(p);
-    }
-    let xvn_home = crate::commands::home::resolve_xvn_home(None)
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("resolve XVN_HOME: {e}")))?;
-    Ok(xvn_home
-        .join("probes")
-        .join("autooptimizer")
-        .join("replay-fixture.json"))
-}
-
 /// Load the optimizer config.
 ///
 /// U2: an explicit `--config <path>` REPLACES the default
@@ -1630,17 +1517,6 @@ fn load_ar_config(path: Option<&Path>) -> CliResult<AutoOptimizerConfig> {
             .map_err(|e| CliError::usage(anyhow::anyhow!("load config: {e}")));
     }
     Ok(AutoOptimizerConfig::default())
-}
-
-async fn load_strategy_blob(blobs: &BlobStore, hash: &ContentHash) -> CliResult<Strategy> {
-    let v = blobs.get_json(hash).await.map_err(|e| {
-        if e.to_string().contains("not found") {
-            CliError::not_found(anyhow::anyhow!("parent bundle {} not found", hash.to_hex()))
-        } else {
-            CliError::upstream(anyhow::anyhow!("read blob: {e}"))
-        }
-    })?;
-    serde_json::from_value(v).map_err(|e| CliError::upstream(anyhow::anyhow!("deserialize strategy: {e}")))
 }
 
 async fn load_strategy_parent(
@@ -1974,58 +1850,6 @@ async fn dispatch_from_provider_entry(
     Ok(dispatch)
 }
 
-async fn propose(
-    base: &Strategy,
-    cfg: &AutoOptimizerConfig,
-    provider: &str,
-    model: &str,
-    dispatch: &Arc<dyn LlmDispatch + Send + Sync>,
-    exploration_seed: u64,
-) -> anyhow::Result<MutationDiff> {
-    // B5: honour the configured mutator provider/model (mirrors run_cycle_cmd's
-    // Mutator construction) instead of hardcoding the Anthropic haiku model —
-    // the hardcode made mutate-once unusable with Ollama / other providers.
-    let mutator = Mutator {
-        provider: provider.to_string(),
-        model: model.to_string(),
-        dispatch: Arc::clone(dispatch),
-        max_retries: cfg.mutator.max_retries,
-    };
-    mutator
-        .propose(
-            base,
-            cfg,
-            None,
-            exploration_seed,
-            0, // mutation_idx: single-mutation call site, no kind rotation needed
-            None,
-            &std::collections::HashSet::new(),
-            None,
-        )
-        .await
-}
-
-fn gate_passes(pd: f64, cd: f64, ph: f64, ch: f64, min_improvement: f64) -> bool {
-    assert!(min_improvement > 0.0, "min_improvement must be positive");
-    (cd - pd) >= min_improvement && (ch - ph) >= min_improvement
-}
-
-fn paper_test_sharpes(mock: bool) -> (f64, f64, f64, f64) {
-    if mock {
-        (1.0, 1.0, 1.2, 1.2)
-    } else {
-        eprintln!("Paper-testing parent on day window...");
-        let pd = 1.0_f64;
-        eprintln!("Paper-testing parent on untouched window...");
-        let ph = 1.0_f64;
-        eprintln!("Paper-testing experiment on day window...");
-        let cd = 1.0_f64;
-        eprintln!("Paper-testing experiment on untouched window...");
-        let ch = 1.0_f64;
-        (pd, ph, cd, ch)
-    }
-}
-
 pub(crate) async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)
@@ -2049,134 +1873,9 @@ pub(crate) async fn open_and_migrate_db(db_path: &Path) -> CliResult<SqlitePool>
     Ok(pool)
 }
 
-async fn insert_lineage_node(
-    lineage: &LineageStore,
-    child_hash: ContentHash,
-    parent_hash: ContentHash,
-    verdict: GateVerdict,
-    status: LineageStatus,
-    cycle_id: &str,
-) -> CliResult<()> {
-    let node = LineageNode {
-        bundle_hash: child_hash,
-        parent_hash: Some(parent_hash),
-        gate_verdict: verdict,
-        status,
-        cycle_id: Some(cycle_id.to_owned()),
-        created_at: Utc::now(),
-        diversity_score: None,
-    };
-    lineage
-        .insert(&node)
-        .await
-        .map_err(|e| CliError::upstream(anyhow::anyhow!("insert lineage node: {e}")))
-}
-
-fn default_blob_dir() -> PathBuf {
-    match crate::commands::home::resolve_xvn_home(None) {
-        Ok(home) => home.join("lineage").join("blobs"),
-        Err(_) => BlobStore::default_root().unwrap_or_else(|_| PathBuf::from(".xvn/lineage/blobs")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
-    use xvision_engine::agent::llm::{ContentBlock, LlmRequest, LlmResponse, StopReason};
-    use xvision_engine::strategies::Strategy;
-
-    /// Test double that records the `model` of every `LlmRequest` it sees and
-    /// replies with a valid `param`-kind mutation diff so `propose()` succeeds.
-    struct RecordingDispatch {
-        models: StdMutex<Vec<String>>,
-    }
-
-    impl RecordingDispatch {
-        fn new() -> Self {
-            Self {
-                models: StdMutex::new(Vec::new()),
-            }
-        }
-
-        fn last_model(&self) -> Option<String> {
-            self.models.lock().expect("models lock").last().cloned()
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl LlmDispatch for RecordingDispatch {
-        async fn complete(&self, req: LlmRequest) -> anyhow::Result<LlmResponse> {
-            self.models.lock().expect("models lock").push(req.model.clone());
-            let canned = r#"{"kind":"param","prose":[],"params":[{"key":"ema_fast","before":12,"after":20}],"tools":{"added":[],"removed":[]},"rationale":"increase ema_fast lookback"}"#;
-            Ok(LlmResponse {
-                content: vec![ContentBlock::Text { text: canned.into() }],
-                stop_reason: StopReason::EndTurn,
-                input_tokens: 0,
-                output_tokens: 0,
-            })
-        }
-    }
-
-    fn fixture_strategy() -> Strategy {
-        let v = serde_json::json!({
-            "manifest": {
-                "id": "01HZTEST00000000000000000A",
-                "display_name": "Mutate Once Test Strategy",
-                "plain_summary": "Minimal strategy for mutate-once provider/model wiring.",
-                "creator": "@test",
-                "template": "custom",
-                "regime_fit": [],
-                "asset_universe": ["BTC/USD"],
-                "decision_cadence_minutes": 60,
-                "required_tools": ["rsi"],
-                "risk_preset_or_config": "balanced"
-            },
-            "agents": [{"agent_id": "01HZAGENT0000000000000000A", "role": "trader"}],
-            "risk": {
-                "risk_pct_per_trade": 0.01,
-                "max_concurrent_positions": 1,
-                "max_leverage": 1.0,
-                "stop_loss_atr_multiple": 2.0,
-                "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": { "ema_fast": 12, "ema_slow": 26 }
-        });
-        serde_json::from_value(v).expect("fixture strategy must deserialise")
-    }
-
-    fn cfg_with_mutator_model(model: &str) -> AutoOptimizerConfig {
-        let mut cfg = AutoOptimizerConfig::default();
-        cfg.mutator.provider = "ollama-local".into();
-        cfg.mutator.model = model.into();
-        cfg
-    }
-
-    /// B5: `propose` must honour the configured mutator provider/model rather
-    /// than hardcoding the Anthropic haiku model. With Ollama configured, the
-    /// `LlmRequest.model` reaching the dispatch must be the Ollama model.
-    #[tokio::test]
-    async fn propose_uses_configured_mutator_model_not_hardcoded_anthropic() {
-        let parent = fixture_strategy();
-        let cfg = cfg_with_mutator_model("qwen2.5:7b");
-        // Keep a concrete handle to read captures, plus a trait-object handle
-        // (same allocation) to pass into propose.
-        let concrete = Arc::new(RecordingDispatch::new());
-        let recording: Arc<dyn LlmDispatch + Send + Sync> = concrete.clone();
-
-        let diff = propose(&parent, &cfg, "ollama-local", "qwen2.5:7b", &recording, 0)
-            .await
-            .expect("propose should succeed with recording dispatch");
-        // Sanity: the canned diff applied to a real param.
-        assert_eq!(diff.params.len(), 1);
-
-        let captured = concrete.last_model();
-        assert_eq!(
-            captured.as_deref(),
-            Some("qwen2.5:7b"),
-            "propose must send the configured mutator model, not the hardcoded anthropic model"
-        );
-    }
 
     // ── moved from the former autooptimizer.rs (folded into `xvn optimize`) ──
 
@@ -2264,8 +1963,8 @@ sqlite_url = "sqlite://x.db"
         );
     }
 
-    /// Regression for T1: the demo fixture and lineage `--db` defaults must
-    /// resolve under the configured `$XVN_HOME`, NOT under `~/.xvn` or the CWD.
+    /// Regression for T1: the lineage `--db` default must resolve under the
+    /// configured `$XVN_HOME`, NOT under `~/.xvn` or the CWD.
     #[test]
     fn path_defaults_resolve_under_xvn_home() {
         const KEY: &str = "XVN_HOME";
@@ -2278,12 +1977,8 @@ sqlite_url = "sqlite://x.db"
 
         let override_db = home.join("custom").join("explicit.db");
         let resolved_override = resolve_lineage_db(Some(override_db.clone())).expect("override db resolves");
-        let override_fix = home.join("custom").join("explicit-fixture.json");
-        let resolved_override_fix =
-            resolve_demo_fixture(Some(override_fix.clone())).expect("override fixture resolves");
 
         let default_db = resolve_lineage_db(None).expect("default db resolves");
-        let default_fixture = resolve_demo_fixture(None).expect("default fixture resolves");
 
         match prior {
             Some(v) => std::env::set_var(KEY, v),
@@ -2295,22 +1990,10 @@ sqlite_url = "sqlite://x.db"
             "explicit --db must be honored verbatim"
         );
         assert_eq!(
-            resolved_override_fix, override_fix,
-            "explicit --fixture must be honored verbatim"
-        );
-        assert_eq!(
             default_db,
             home.join("xvn.db"),
             "default lineage db must be the shared $XVN_HOME/xvn.db (F8 convergence)"
         );
         assert!(default_db.starts_with(&home));
-        assert_eq!(
-            default_fixture,
-            home.join("probes")
-                .join("autooptimizer")
-                .join("replay-fixture.json"),
-            "default demo fixture must be $XVN_HOME/probes/autooptimizer/replay-fixture.json"
-        );
-        assert!(default_fixture.starts_with(&home));
     }
 }
