@@ -17,6 +17,7 @@
 //  6. PUT    /api/skills/:id                          skills::update
 //  7. DELETE /api/skills/:id                          skills::archive
 //  8. POST   /api/strategies                          strategies::post_create
+//  8b. POST  /api/strategy/import/pine               strategies::post_import_pine
 //  9. DELETE /api/strategy/:id                        strategies::delete
 // 10. PATCH  /api/strategy/:id                        strategies::patch_metadata
 // 10b. PUT   /api/strategy/:id                        strategies::put_method_hint  (F4 hint → 405)
@@ -536,6 +537,8 @@ fn mutating_router(state: AppState) -> Router {
         )
         // ── Strategies ────────────────────────────────────────────────────
         .route("/api/strategies", post(strategies::post_create))
+        // WU7: Pine Script import — creates a new Strategy from uploaded Pine source.
+        .route("/api/strategy/import/pine", post(strategies::post_import_pine))
         .route(
             "/api/strategy/:id",
             delete(strategies::delete)

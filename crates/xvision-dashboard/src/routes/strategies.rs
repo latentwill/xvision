@@ -789,6 +789,89 @@ pub async fn validate_get_hint() -> (StatusCode, Json<serde_json::Value>) {
     )
 }
 
+// ── WU7: POST /api/strategy/import/pine ─────────────────────────────────────
+
+/// Request body for `POST /api/strategy/import/pine`.
+///
+/// Accepts a Pine Script v5 source string and an optional display name override.
+/// The `source` field holds the raw Pine Script text; `name` overrides the
+/// strategy display name extracted from the `strategy(...)` header.
+#[derive(Deserialize)]
+pub struct ImportPineBody {
+    /// Raw Pine Script v5 source text.
+    pub source: String,
+    /// Optional display name override for the created strategy.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Response body for a successful `POST /api/strategy/import/pine`.
+#[derive(Serialize)]
+pub struct ImportPineResponse {
+    /// The mapped, validated xvision strategy.
+    pub strategy: Strategy,
+    /// Per-element fidelity classification (captured / approximated / dropped).
+    pub fidelity_report: xvision_engine::strategies::pine_import::FidelityReport,
+}
+
+/// `POST /api/strategy/import/pine` — import a Pine Script v5 source and
+/// return the mapped xvision `Strategy` + `FidelityReport`.
+///
+/// # Request body
+/// ```json
+/// { "source": "<pine script text>", "name": "<optional display name>" }
+/// ```
+///
+/// # Responses
+/// - `200 OK` — `{ "strategy": Strategy, "fidelity_report": FidelityReport }`
+/// - `400 Bad Request` — `{ "code": "validation", "message": "<error details>" }`
+///   when the Pine source cannot be parsed at all (structural syntax error).
+///
+/// Unsupported Pine constructs are **not** rejected — they are recorded in the
+/// `fidelity_report.dropped` array. The returned strategy is always a valid,
+/// persisted starting point for the autooptimizer.
+pub async fn post_import_pine(
+    State(state): State<AppState>,
+    Json(body): Json<ImportPineBody>,
+) -> Result<Json<ImportPineResponse>, DashboardError> {
+    use xvision_engine::strategies::pine_import::{import_pine, PineImportError};
+    use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
+
+    // 1. Run the engine import entry-point (parse → map → fidelity).
+    let mut outcome = match import_pine(&body.source) {
+        Ok(outcome) => outcome,
+        Err(PineImportError::ParseError(e)) => {
+            return Err(DashboardError::Validation {
+                field: "source".into(),
+                msg: format!("Pine parse error: {e}"),
+            });
+        }
+        Err(PineImportError::NothingMappable(msg)) => {
+            return Err(DashboardError::Validation {
+                field: "source".into(),
+                msg: format!("Nothing mappable in Pine script: {msg}"),
+            });
+        }
+    };
+
+    // 2. Apply optional name override.
+    if let Some(name) = body.name {
+        outcome.strategy.manifest.display_name = name;
+    }
+
+    // 3. Persist the strategy (same store as WU6 / other dashboard routes).
+    let fs_store = FilesystemStore::new(strategy_store_dir(&state.xvn_home));
+    fs_store
+        .save(&outcome.strategy)
+        .await
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("save strategy: {e}")))?;
+
+    Ok(Json(ImportPineResponse {
+        strategy: outcome.strategy,
+        fidelity_report: outcome.fidelity,
+    }))
+}
+
 #[cfg(test)]
 pub mod get {
     //! Shape: `cargo test -p xvision-dashboard strategies::get` (per the

@@ -169,6 +169,7 @@ async fn strategies_list_returns_seeded_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            briefing_indicators: Vec::new(),
         })
         .await
         .unwrap();
@@ -1275,6 +1276,7 @@ async fn strategy_chart_returns_empty_run_series_for_unused_strategy() {
             activation_mode: xvision_filters::ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            briefing_indicators: Vec::new(),
         })
         .await
         .unwrap();

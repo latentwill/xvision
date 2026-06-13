@@ -179,6 +179,7 @@ fn seed(home: &std::path::Path) -> (String, String) {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         };
         let store = FilesystemStore::new(strategy_store_dir(home));
         store.save(&strategy).await.unwrap();
