@@ -815,6 +815,7 @@ mod roundtrip {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 
@@ -1330,6 +1331,7 @@ mod provider_attestation {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 

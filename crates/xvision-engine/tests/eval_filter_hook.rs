@@ -61,6 +61,7 @@ fn build_strategy(activation_mode: ActivationMode, filter: Option<Filter>) -> St
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

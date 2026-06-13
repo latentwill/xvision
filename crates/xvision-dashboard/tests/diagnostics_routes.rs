@@ -101,6 +101,7 @@ async fn seed_strategy(tmp: &TempDir, strategy_id: &str, agent_id: &str, require
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         })
         .await
         .unwrap();

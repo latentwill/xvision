@@ -116,6 +116,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, kind: PipelineKind, edges: Vec<Pipeli
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

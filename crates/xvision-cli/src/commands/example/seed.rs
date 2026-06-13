@@ -265,6 +265,7 @@ async fn seed_strategies(
         // filter once they understand the cost model.
         acknowledge_no_filter: true,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
 
     store
@@ -501,6 +502,7 @@ mod tests {
             filter: None,
             acknowledge_no_filter: false,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 

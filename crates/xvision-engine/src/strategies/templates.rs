@@ -258,6 +258,7 @@ mod tests {
             decision_mode: DecisionMode::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
 
         let mut s = make_example();

@@ -36,6 +36,28 @@ pub struct BriefingIndicator {
     pub source_token: String,
 }
 
+/// A single optimizer search-space bound derived from a Pine Script `input.*`
+/// declaration. Persisted on `Strategy` so the optimizer and settings UI can
+/// enforce/display the author-declared parameter ranges.
+///
+/// Populated by `pine_import::import_pine`; empty for non-Pine strategies.
+/// Uses `InputKind` from `pine_import::inputs` (re-imported here to avoid
+/// dep inversion — `TunableBound` lives in `strategies`, not in `pine_import`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TunableBound {
+    /// Stable optimizer mutation path (same address space as
+    /// `mechanistic_tunable_paths` / `filter_tunable_paths`).
+    pub path: String,
+    /// Minimum allowed value. `None` when not declared in the Pine `input.*` call.
+    pub min: Option<f64>,
+    /// Maximum allowed value. `None` when not declared.
+    pub max: Option<f64>,
+    /// Step size. `None` for `Bool` and when no explicit step was declared.
+    pub step: Option<f64>,
+    /// The Pine type this input was declared as.
+    pub kind: crate::strategies::pine_import::inputs::InputKind,
+}
+
 use serde::{Deserialize, Serialize};
 pub use xvision_filters::{ActivationMode, Filter};
 
@@ -213,6 +235,17 @@ pub struct Strategy {
     /// remain byte-stable.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub briefing_indicators: Vec<BriefingIndicator>,
+
+    // ── WU-A: Pine Script import — tunable bounds ─────────────────────────
+    /// Per-input optimizer search-space bounds derived from a Pine Script
+    /// `input.*` declaration. Populated by `pine_import::import_pine`;
+    /// empty for non-Pine strategies. The optimizer enforces these bounds
+    /// on proposed mutations (WU-B); the settings UI renders them (WU-C).
+    ///
+    /// Skipped on serialization when empty so pre-WU-A strategy JSON files
+    /// remain byte-stable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tunable_bounds: Vec<TunableBound>,
 }
 
 fn default_activation_mode() -> ActivationMode {
@@ -302,6 +335,8 @@ struct StrategyRaw {
     mechanistic_config: Option<MechanisticConfig>,
     #[serde(default)]
     briefing_indicators: Vec<BriefingIndicator>,
+    #[serde(default)]
+    tunable_bounds: Vec<TunableBound>,
 }
 
 impl<'de> Deserialize<'de> for Strategy {
@@ -325,6 +360,7 @@ impl<'de> Deserialize<'de> for Strategy {
             decision_mode: raw.decision_mode,
             mechanistic_config: raw.mechanistic_config,
             briefing_indicators: raw.briefing_indicators,
+            tunable_bounds: raw.tunable_bounds,
         })
     }
 }
@@ -358,6 +394,7 @@ mod tests {
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 
@@ -523,6 +560,7 @@ mod tests {
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(!s.contains("\"agents\""), "empty agents omitted: {s}");
@@ -564,6 +602,7 @@ mod tests {
             decision_mode: DecisionMode::Agentic,
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
         let s = serde_json::to_string(&strategy).unwrap();
         assert!(

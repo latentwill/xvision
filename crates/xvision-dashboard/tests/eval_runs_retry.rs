@@ -151,6 +151,7 @@ sqlite_url = "sqlite://x.db"
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     FilesystemStore::new(tmp.path().join("strategies"))
         .save(&strategy)

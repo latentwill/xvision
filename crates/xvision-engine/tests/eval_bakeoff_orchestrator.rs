@@ -126,6 +126,7 @@ async fn save_test_strategy(ctx: &ApiContext, agent_id: &str) {
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     let store = FilesystemStore::new(ctx.xvn_home.join("strategies"));
     store.save(&strategy).await.unwrap();

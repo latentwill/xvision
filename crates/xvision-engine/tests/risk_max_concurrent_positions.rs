@@ -108,6 +108,7 @@ fn three_asset_strategy(max_concurrent: u32) -> Strategy {
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

@@ -99,6 +99,7 @@ pub fn from_markdown(md: &str, base: &Strategy) -> Result<Strategy> {
         decision_mode: base.decision_mode.clone(),
         mechanistic_config: base.mechanistic_config.clone(),
         briefing_indicators: base.briefing_indicators.clone(),
+        tunable_bounds: base.tunable_bounds.clone(),
     })
 }
 

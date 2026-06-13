@@ -293,6 +293,7 @@ pub async fn create_blank_strategy(
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     let mut warnings = every_bar_warning(&draft).map(|w| vec![w]).unwrap_or_default();
     if let Some(w) = high_position_size_warning(&draft) {
