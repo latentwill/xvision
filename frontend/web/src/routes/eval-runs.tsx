@@ -326,7 +326,7 @@ export function EvalRunsRoute() {
     navigate(`/eval-runs/${id}`);
   }
 
-  const subtitle = subtitleFor(q, list.totalRows, list.rows.length);
+  const subtitle = subtitleFor(q, q.data?.total ?? 0, list.rows.length);
 
   const desktopColumns = [
     { key: "select",   label: "",          width: 32,    essential: true,  estWidth: 42 },
@@ -380,7 +380,7 @@ export function EvalRunsRoute() {
       <ResponsiveListCard<RunSummary>
         listId="eval-runs"
         title="Runs"
-        count={list.totalRows}
+        count={q.data?.total ?? 0}
         toolbar={{
           search: { ...list.search, placeholder: "Search runs…" },
           filters: list.filters,
@@ -409,11 +409,12 @@ export function EvalRunsRoute() {
             <Icon name="plus" size={11} /> Start eval
           </button>
         }
-        renderRow={(row) => (
+        renderRow={(row, _i, visibleKeys) => (
           <DesktopRow
             key={row.id}
             row={row}
             allRows={runs}
+            visibleKeys={visibleKeys}
             isChecked={selected.has(row.id)}
             onToggle={toggleSelected}
             onGo={go}
@@ -443,7 +444,7 @@ export function EvalRunsRoute() {
       />
 
       <ServerPagerStrip
-        total={list.totalRows}
+        total={q.data?.total ?? 0}
         page={pager.page}
         pageSize={pager.pageSize}
         onPageChange={pager.setPage}
@@ -537,6 +538,7 @@ function CompareToolbar({
 function DesktopRow({
   row,
   allRows,
+  visibleKeys,
   isChecked,
   onToggle,
   onGo,
@@ -550,6 +552,7 @@ function DesktopRow({
 }: {
   row: RunSummary;
   allRows: RunSummary[];
+  visibleKeys: Set<string>;
   isChecked: boolean;
   onToggle: (id: string) => void;
   onGo: (id: string) => void;
@@ -623,19 +626,29 @@ function DesktopRow({
       >
         {fmtNumber(row.sharpe)}
       </td>
-      <td
-        className={`px-3 py-3 text-right font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}
-      >
-        {fmtPct(row.max_drawdown_pct)}
-      </td>
-      <td className="px-3 py-3 text-text-2">{row.mode}</td>
-      <td className="px-3 py-3 text-right font-mono">{fmtTokens(row)}</td>
-      <td className="px-3 py-3 text-right font-mono">
-        {fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
-      </td>
-      <td className="px-5 py-3 text-[12px] text-text-3">
-        {fmtTime(row.started_at)}
-      </td>
+      {visibleKeys.has("drawdown") ? (
+        <td
+          className={`px-3 py-3 text-right font-mono ${drawdownToneClass(row.max_drawdown_pct)}`}
+        >
+          {fmtPct(row.max_drawdown_pct)}
+        </td>
+      ) : null}
+      {visibleKeys.has("mode") ? (
+        <td className="px-3 py-3 text-text-2">{row.mode}</td>
+      ) : null}
+      {visibleKeys.has("tokens") ? (
+        <td className="px-3 py-3 text-right font-mono">{fmtTokens(row)}</td>
+      ) : null}
+      {visibleKeys.has("duration") ? (
+        <td className="px-3 py-3 text-right font-mono">
+          {fmtDuration(row.started_at, row.completed_at, nowMs, row.status)}
+        </td>
+      ) : null}
+      {visibleKeys.has("started") ? (
+        <td className="px-5 py-3 text-[12px] text-text-3">
+          {fmtTime(row.started_at)}
+        </td>
+      ) : null}
       <td
         className="px-5 py-3 text-right"
         onClick={(e) => e.stopPropagation()}
