@@ -368,9 +368,10 @@ pub fn risk_field_for_key(base: &Strategy, key: &str) -> Option<String> {
 }
 
 /// The param keys an experiment may target on `base`: every `mechanical_params`
-/// top-level key plus `risk.<field>` for each tunable risk knob. Used to tell
-/// the experiment writer which keys exist (F21) and to render a helpful
-/// `unknown_param` error.
+/// top-level key plus `risk.<field>` for each tunable risk knob, plus
+/// `mechanistic.close_policies.<i>.<leaf>` for each tunable scalar in
+/// `mechanistic_config` (WU3a). Used to tell the experiment writer which keys
+/// exist (F21) and to render a helpful `unknown_param` error.
 pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
     let mut keys = Vec::new();
     if let Some(mp) = base.mechanical_params.as_object() {
@@ -383,6 +384,12 @@ pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
     }
     for f in RISK_PARAM_FIELDS {
         keys.push(format!("risk.{f}"));
+    }
+    // WU3a: mechanistic close-policy scalars.
+    if let Some(mc) = &base.mechanistic_config {
+        for (path, _) in mechanistic_tunable_paths(mc) {
+            keys.push(path);
+        }
     }
     keys
 }
@@ -676,6 +683,158 @@ pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Val
     false
 }
 
+// ── WU3a: mechanistic.* tunable paths ─────────────────────────────────────────
+
+/// Structured error returned by `set_mechanistic_value` when a mutation is
+/// rejected. The caller (apply path and tests) must inspect this rather than
+/// silently ignoring the failure.
+///
+/// Variants:
+/// - `UnknownPath` — the dotted path does not match any tunable mechanistic node.
+/// - `VariantMismatch` — the leaf token (`.pct`/`.bars`/`.usd`) does not match
+///   the `ClosePolicy` variant at that index (e.g. setting `.pct` on a
+///   `TimeExit` entry).
+/// - `InvalidValue` — the JSON value cannot be coerced to the expected Rust
+///   type (e.g. a non-numeric JSON value where f64/u32 is required).
+#[derive(Debug, Clone, PartialEq)]
+pub enum MutatePathError {
+    UnknownPath(String),
+    VariantMismatch { path: String, expected_leaf: &'static str },
+    InvalidValue(String),
+}
+
+impl std::fmt::Display for MutatePathError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MutatePathError::UnknownPath(p) => write!(f, "unknown mechanistic path: {p}"),
+            MutatePathError::VariantMismatch { path, expected_leaf } => {
+                write!(f, "variant mismatch at {path}: variant only supports .{expected_leaf}")
+            }
+            MutatePathError::InvalidValue(msg) => write!(f, "invalid value: {msg}"),
+        }
+    }
+}
+
+/// Walk `MechanisticConfig.close_policies` and return a stable dotted path +
+/// current JSON value for every tunable numeric scalar:
+///   - `StopLoss{pct}`     → `mechanistic.close_policies.<i>.pct`
+///   - `TakeProfit{pct}`   → `mechanistic.close_policies.<i>.pct`
+///   - `TrailingStop{pct}` → `mechanistic.close_policies.<i>.pct`
+///   - `TimeExit{bars}`    → `mechanistic.close_policies.<i>.bars`
+///   - `TargetPnl{usd}`    → `mechanistic.close_policies.<i>.usd`
+///
+/// Path scheme is symmetric with `set_mechanistic_value`: every path emitted
+/// here must resolve in the setter, and the leaf token encodes the variant so
+/// cross-variant writes are caught at the setter level.
+pub fn mechanistic_tunable_paths(
+    cfg: &crate::strategies::MechanisticConfig,
+) -> Vec<(String, serde_json::Value)> {
+    use crate::strategies::ClosePolicy;
+    let mut paths = Vec::new();
+    for (i, policy) in cfg.close_policies.iter().enumerate() {
+        match policy {
+            ClosePolicy::StopLoss { pct }
+            | ClosePolicy::TakeProfit { pct }
+            | ClosePolicy::TrailingStop { pct } => {
+                paths.push((
+                    format!("mechanistic.close_policies.{i}.pct"),
+                    serde_json::json!(pct),
+                ));
+            }
+            ClosePolicy::TimeExit { bars } => {
+                paths.push((
+                    format!("mechanistic.close_policies.{i}.bars"),
+                    serde_json::json!(bars),
+                ));
+            }
+            ClosePolicy::TargetPnl { usd } => {
+                paths.push((
+                    format!("mechanistic.close_policies.{i}.usd"),
+                    serde_json::json!(usd),
+                ));
+            }
+        }
+    }
+    paths
+}
+
+/// Set the value at `path` (a dotted path produced by `mechanistic_tunable_paths`)
+/// in `cfg`. Returns `Ok(())` on success. Returns a [`MutatePathError`] when:
+///   - the path is unknown / out of bounds → `UnknownPath`
+///   - the leaf token does not match the `ClosePolicy` variant at that index →
+///     `VariantMismatch` (config is NOT mutated)
+///   - the JSON value cannot be coerced to the required type → `InvalidValue`
+///
+/// Path scheme: `mechanistic.close_policies.<i>.<leaf>` where `<leaf>` is one of
+/// `pct`, `bars`, or `usd`. The variant at index `<i>` must support that leaf.
+pub fn set_mechanistic_value(
+    cfg: &mut crate::strategies::MechanisticConfig,
+    path: &str,
+    value: &serde_json::Value,
+) -> Result<(), MutatePathError> {
+    use crate::strategies::ClosePolicy;
+
+    // Parse: "mechanistic.close_policies.<i>.<leaf>"
+    let parts: Vec<&str> = path.splitn(5, '.').collect();
+    // Expected: ["mechanistic", "close_policies", "<i>", "<leaf>"]
+    if parts.len() != 4
+        || parts[0] != "mechanistic"
+        || parts[1] != "close_policies"
+    {
+        return Err(MutatePathError::UnknownPath(path.to_string()));
+    }
+    let idx: usize = parts[2]
+        .parse()
+        .map_err(|_| MutatePathError::UnknownPath(path.to_string()))?;
+    let leaf = parts[3];
+
+    let policy = cfg
+        .close_policies
+        .get_mut(idx)
+        .ok_or_else(|| MutatePathError::UnknownPath(path.to_string()))?;
+
+    // Variant-aware: check that the leaf matches the variant BEFORE mutating.
+    let variant_leaf: &'static str = match policy {
+        ClosePolicy::StopLoss { .. }
+        | ClosePolicy::TakeProfit { .. }
+        | ClosePolicy::TrailingStop { .. } => "pct",
+        ClosePolicy::TimeExit { .. } => "bars",
+        ClosePolicy::TargetPnl { .. } => "usd",
+    };
+
+    if leaf != variant_leaf {
+        return Err(MutatePathError::VariantMismatch {
+            path: path.to_string(),
+            expected_leaf: variant_leaf,
+        });
+    }
+
+    // Now apply the value — variant and leaf agree.
+    match policy {
+        ClosePolicy::StopLoss { pct }
+        | ClosePolicy::TakeProfit { pct }
+        | ClosePolicy::TrailingStop { pct } => {
+            let v = value
+                .as_f64()
+                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected f64 for .pct, got {value}")))?;
+            *pct = v;
+        }
+        ClosePolicy::TimeExit { bars } => {
+            let v = value_as_u32(value)
+                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected u32 for .bars, got {value}")))?;
+            *bars = v;
+        }
+        ClosePolicy::TargetPnl { usd } => {
+            let v = value
+                .as_f64()
+                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected f64 for .usd, got {value}")))?;
+            *usd = v;
+        }
+    }
+
+    Ok(())
+}
+
 /// The mutation kinds that are *structurally applicable* to `base`, intersected
 /// with the operator-allowed kinds (F21). `param` is applicable whenever the
 /// strategy exposes a tunable key (always, since every strategy has a `risk`
@@ -746,7 +905,14 @@ impl MutationDiff {
         let mut risk_json = serde_json::to_value(&s.risk).unwrap_or(serde_json::Value::Null);
         let mut risk_touched = false;
         for change in &self.params {
-            if let Some(field) = risk_field_for_key(base, &change.key) {
+            if change.key.starts_with("mechanistic.") {
+                // WU3a: route mechanistic.* keys through the variant-aware setter.
+                // A mismatch or invalid value is a silent no-op here (the validator
+                // rejects those upstream; apply stays total).
+                if let Some(ref mut mc) = s.mechanistic_config {
+                    let _ = set_mechanistic_value(mc, &change.key, &change.after);
+                }
+            } else if let Some(field) = risk_field_for_key(base, &change.key) {
                 if let Some(obj) = risk_json.as_object_mut() {
                     obj.insert(field, change.after.clone());
                     risk_touched = true;
@@ -2398,6 +2564,134 @@ mod tests {
         assert!(
             focused_kinds.len() >= 2,
             "across attempts 0,1,2 (mutation_idx fixed) at least 2 distinct kinds must be focused, saw: {focused_kinds:?}"
+        );
+    }
+
+    // ── WU3a: mechanistic.* tunable paths ─────────────────────────────────────
+
+    fn fixture_mechanistic_config() -> crate::strategies::MechanisticConfig {
+        use crate::strategies::{ClosePolicy, MechanisticConfig};
+        MechanisticConfig {
+            entry_rules: vec![],
+            close_policies: vec![
+                ClosePolicy::StopLoss { pct: 2.0 },
+                ClosePolicy::TimeExit { bars: 10 },
+            ],
+        }
+    }
+
+    #[test]
+    fn mechanistic_tunable_paths_enumerates_correct_leaf_paths() {
+        let cfg = fixture_mechanistic_config();
+        let paths = mechanistic_tunable_paths(&cfg);
+        let path_map: std::collections::HashMap<String, serde_json::Value> =
+            paths.into_iter().collect();
+
+        // StopLoss at index 0 → .pct
+        assert!(
+            path_map.contains_key("mechanistic.close_policies.0.pct"),
+            "expected mechanistic.close_policies.0.pct; got {:?}",
+            path_map.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            path_map["mechanistic.close_policies.0.pct"],
+            serde_json::json!(2.0),
+            "StopLoss pct must be 2.0"
+        );
+
+        // TimeExit at index 1 → .bars
+        assert!(
+            path_map.contains_key("mechanistic.close_policies.1.bars"),
+            "expected mechanistic.close_policies.1.bars; got {:?}",
+            path_map.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            path_map["mechanistic.close_policies.1.bars"],
+            serde_json::json!(10u32),
+            "TimeExit bars must be 10"
+        );
+
+        // Must NOT emit .bars for index 0 (StopLoss) or .pct for index 1 (TimeExit)
+        assert!(
+            !path_map.contains_key("mechanistic.close_policies.0.bars"),
+            "StopLoss must not emit .bars path"
+        );
+        assert!(
+            !path_map.contains_key("mechanistic.close_policies.1.pct"),
+            "TimeExit must not emit .pct path"
+        );
+
+        // Exactly 2 paths total
+        assert_eq!(path_map.len(), 2, "exactly 2 tunable paths expected");
+    }
+
+    #[test]
+    fn set_mechanistic_value_round_trip_pct() {
+        use crate::strategies::{ClosePolicy, MechanisticConfig};
+        let mut cfg = fixture_mechanistic_config();
+
+        // Set index 0 (.pct on StopLoss) to 3.5
+        let result = set_mechanistic_value(&mut cfg, "mechanistic.close_policies.0.pct", &serde_json::json!(3.5));
+        assert!(result.is_ok(), "setting .pct on StopLoss must succeed: {result:?}");
+
+        // Get-back via tunable paths
+        let paths: std::collections::HashMap<String, serde_json::Value> =
+            mechanistic_tunable_paths(&cfg).into_iter().collect();
+        let val = paths["mechanistic.close_policies.0.pct"].as_f64().unwrap();
+        assert!(
+            (val - 3.5).abs() < 1e-9,
+            "round-trip: expected 3.5, got {val}"
+        );
+
+        // Also verify the underlying variant is still StopLoss
+        assert!(
+            matches!(cfg.close_policies[0], ClosePolicy::StopLoss { pct } if (pct - 3.5).abs() < 1e-9),
+            "underlying variant must remain StopLoss with pct=3.5"
+        );
+    }
+
+    #[test]
+    fn set_mechanistic_value_cross_variant_mismatch_returns_error_and_does_not_mutate() {
+        use crate::strategies::MechanisticConfig;
+        let mut cfg = fixture_mechanistic_config();
+        let cfg_before = cfg.clone();
+
+        // index 1 is TimeExit{bars:10}; trying to set .pct on it is a cross-variant mismatch
+        let result = set_mechanistic_value(&mut cfg, "mechanistic.close_policies.1.pct", &serde_json::json!(5.0));
+        assert!(
+            result.is_err(),
+            "cross-variant mismatch (.pct on TimeExit) must return an error"
+        );
+        assert_eq!(
+            cfg, cfg_before,
+            "config must not be mutated on cross-variant mismatch"
+        );
+    }
+
+    #[test]
+    fn filter_only_strategy_tunable_path_set_unchanged_regression() {
+        // Regression: a strategy with a filter and no mechanistic_config must
+        // still expose the same filter paths it did before WU3a.
+        let base = fixture_filter_strategy();
+        assert!(base.mechanistic_config.is_none(), "fixture has no mechanistic config");
+        let filter = base.filter.as_ref().expect("fixture has a filter");
+        let paths = filter_tunable_paths(filter);
+        let path_map: std::collections::HashMap<String, serde_json::Value> =
+            paths.into_iter().collect();
+
+        // Must still include conditions.0.rhs.numeric and cooldown_bars
+        assert!(
+            path_map.contains_key("conditions.0.rhs.numeric"),
+            "filter-only strategy must still expose conditions.0.rhs.numeric"
+        );
+        assert!(
+            path_map.contains_key("cooldown_bars"),
+            "filter-only strategy must still expose cooldown_bars"
+        );
+        // Must NOT include any mechanistic.* paths from filter_tunable_paths
+        assert!(
+            !path_map.keys().any(|k| k.starts_with("mechanistic.")),
+            "filter_tunable_paths must not emit mechanistic.* keys"
         );
     }
 }

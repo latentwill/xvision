@@ -1,0 +1,25 @@
+// original test fixture (xvision) — Triple MA trend: enter when three MAs align in the same direction
+//@version=5
+strategy("Triple MA Trend", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=8)
+
+short_len = input.int(10, title="Short MA", minval=1, maxval=50)
+mid_len = input.int(20, title="Mid MA", minval=5, maxval=100)
+long_len = input.int(50, title="Long MA", minval=10, maxval=200)
+stop_pct = input.float(2.5, title="Stop Loss %", minval=0.5, maxval=15.0, step=0.5)
+profit_pct = input.float(5.0, title="Take Profit %", minval=0.5, maxval=30.0, step=0.5)
+
+short_ma = ta.sma(close, short_len)
+mid_ma = ta.sma(close, mid_len)
+long_ma = ta.sma(close, long_len)
+
+bull_aligned = ta.crossover(short_ma, mid_ma) and close > long_ma
+bear_aligned = ta.crossunder(short_ma, mid_ma) and close < long_ma
+
+if bull_aligned
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct, profit=profit_pct)
+
+if bear_aligned
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct, profit=profit_pct)

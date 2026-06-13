@@ -12,6 +12,8 @@ const ScenariosRoute = lazy(() => import("./routes/scenarios").then((m) => ({ de
 const ScenariosNewRoute = lazy(() => import("./routes/scenarios-new").then((m) => ({ default: m.ScenariosNewRoute })));
 const ScenariosDetailRoute = lazy(() => import("./routes/scenarios-detail").then((m) => ({ default: m.ScenariosDetailRoute })));
 const StrategiesNewRoute = lazy(() => import("./routes/strategies-new").then((m) => ({ default: m.StrategiesNewRoute })));
+const StrategiesImportPineRoute = lazy(() => import("./routes/strategies-import-pine").then((m) => ({ default: m.StrategiesImportPineRoute })));
+const StrategiesPineLibraryRoute = lazy(() => import("./routes/strategies-pine-library").then((m) => ({ default: m.StrategiesPineLibraryRoute })));
 // StrategiesFolderRoute: the standalone `/strategies-folder` route
 // is kept for backward compatibility but resolves as a redirect to
 // `/strategies?view=folder`. Lazy import kept so existing deep-links
@@ -138,6 +140,8 @@ export const router = createBrowserRouter([
       { path: "strategies", element: page(<StrategiesRoute />) },
       { path: "strategies-folder", element: page(<StrategiesFolderRoute />) },
       { path: "strategies/new", element: page(<StrategiesNewRoute />) },
+      { path: "strategies/import-pine", element: page(<StrategiesImportPineRoute />) },
+      { path: "strategies/pine-library", element: page(<StrategiesPineLibraryRoute />) },
       { path: "strategies/:id", element: page(<AuthoringRoute />) },
       {
         path: "strategies/:id/diagnostics",

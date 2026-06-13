@@ -1,0 +1,22 @@
+// original test fixture (xvision) — MA crossover with stop-loss and take-profit targets
+//@version=5
+strategy("MA Cross with Stop/Target", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1)
+
+fast_len = input.int(10, title="Fast MA Length", minval=1, maxval=200)
+slow_len = input.int(50, title="Slow MA Length", minval=2, maxval=500)
+stop_pct = input.float(2.0, title="Stop Loss %", minval=0.1, maxval=20.0, step=0.1)
+target_pct = input.float(4.0, title="Take Profit %", minval=0.1, maxval=50.0, step=0.1)
+
+fast_ma = ta.sma(close, fast_len)
+slow_ma = ta.sma(close, slow_len)
+
+crossed_up = ta.crossover(fast_ma, slow_ma)
+crossed_dn = ta.crossunder(fast_ma, slow_ma)
+
+if crossed_up
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct, profit=target_pct)
+
+if crossed_dn
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct, profit=target_pct)

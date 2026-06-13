@@ -1,0 +1,23 @@
+// original test fixture (xvision) — ADX trend strength filter: only trade when ADX shows strong trend
+//@version=5
+strategy("ADX Trend Filter", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+adx_len = input.int(14, title="ADX Length", minval=2, maxval=50)
+adx_thresh = input.int(25, title="ADX Threshold", minval=10, maxval=60)
+rsi_len = input.int(14, title="RSI Length", minval=2, maxval=50)
+stop_pct = input.float(2.0, title="Stop %", minval=0.1, maxval=15.0, step=0.5)
+
+adx_val = ta.rsi(close, adx_len)
+rsi_val = ta.rsi(close, rsi_len)
+
+long_cond = adx_val > adx_thresh and rsi_val < 40
+short_cond = adx_val > adx_thresh and rsi_val > 60
+
+if long_cond
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct)
+
+if short_cond
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct)

@@ -1,0 +1,8 @@
+// original test fixture (xvision) — malformed script: missing closing paren causes parse error
+//@version=5
+indicator("Malformed Script"
+// intentionally missing closing paren above
+
+len = input.int(14, title="Length"
+// also missing closing paren
+rsi_val = ta.rsi(close, len

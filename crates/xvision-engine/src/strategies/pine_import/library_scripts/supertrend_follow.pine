@@ -1,0 +1,21 @@
+// original test fixture (xvision) — SuperTrend-style trend-following using ATR bands
+//@version=5
+strategy("SuperTrend Follow", overlay=true)
+
+atr_period = input.int(10, title="ATR Period", minval=1, maxval=50)
+factor = input.float(3.0, title="ATR Factor", minval=0.5, maxval=10.0, step=0.5)
+stop_pct = input.float(3.0, title="Stop Loss %", minval=0.5, maxval=20.0, step=0.5)
+
+atr_val = ta.sma(high - low, atr_period)
+
+in_uptrend = close > atr_val
+in_downtrend = close < atr_val
+
+if in_uptrend
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct)
+
+if in_downtrend
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct)

@@ -180,6 +180,11 @@ enum Instance {
     OpeningRange(OpeningRangeState),
     Keltner(KeltnerState),
     WilliamsR(DonchianState),
+    // WU5: Pine Script catalog parity
+    Hma(HmaState),
+    Vwma(VwmaState),
+    SuperTrend(SuperTrendState),
+    Pivot(PivotState),
 }
 
 impl IndicatorEngine {
@@ -255,6 +260,24 @@ impl IndicatorEngine {
                     Instance::Keltner(KeltnerState::new(key.period as usize))
                 }
                 IndicatorName::WilliamsR => Instance::WilliamsR(DonchianState::new(key.period as usize)),
+                // WU5: Pine Script catalog parity
+                IndicatorName::Hma => Instance::Hma(HmaState::new(key.period as usize)),
+                IndicatorName::Vwma => Instance::Vwma(VwmaState::new(key.period as usize)),
+                IndicatorName::SuperTrend => {
+                    let atr_period = (key.period / 1000) as usize;
+                    let mult10 = key.period % 1000;
+                    Instance::SuperTrend(SuperTrendState::new(atr_period, mult10))
+                }
+                IndicatorName::PivotHigh => {
+                    let left = (key.period / 1000) as usize;
+                    let right = (key.period % 1000) as usize;
+                    Instance::Pivot(PivotState::new(left, right, PivotKind::High))
+                }
+                IndicatorName::PivotLow => {
+                    let left = (key.period / 1000) as usize;
+                    let right = (key.period % 1000) as usize;
+                    Instance::Pivot(PivotState::new(left, right, PivotKind::Low))
+                }
                 IndicatorName::Open
                 | IndicatorName::High
                 | IndicatorName::Low
@@ -331,6 +354,11 @@ impl IndicatorEngine {
                 Instance::OpeningRange(s) => s.push(bar),
                 Instance::Keltner(s) => s.push(bar.high, bar.low, bar.close, prev_close),
                 Instance::WilliamsR(s) => s.push(bar.high, bar.low),
+                // WU5
+                Instance::Hma(s) => s.push(bar.close),
+                Instance::Vwma(s) => s.push(bar.close, bar.volume),
+                Instance::SuperTrend(s) => s.push(bar.high, bar.low, bar.close, prev_close),
+                Instance::Pivot(s) => s.push(bar.high, bar.low),
             }
         }
         if let Some(prev) = prev_close {
@@ -486,6 +514,11 @@ impl IndicatorEngine {
                 }
                 _ => None,
             },
+            // WU5
+            Instance::Hma(s) => s.value(),
+            Instance::Vwma(s) => s.value(),
+            Instance::SuperTrend(s) => s.value(),
+            Instance::Pivot(s) => s.value(),
         }
     }
 
@@ -521,6 +554,21 @@ impl IndicatorEngine {
                 Instance::Mfi(_) => key.period + 1,
                 Instance::Ichimoku(_) => 52,
                 Instance::Keltner(_) => key.period + 1,
+                // WU5
+                // HMA warmup: internally uses WMA(period/2) + WMA(period) +
+                // WMA(sqrt(period)). The slowest sub-WMA is the full-period one
+                // plus the sqrt-period EMA chain that follows. We conservatively
+                // report key.period as the warmup (the full-period WMA); in
+                // practice a few extra bars are needed for the sqrt-WMA to fill,
+                // but this matches the existing WMA convention.
+                Instance::Hma(_) => key.period,
+                // VWMA: same window-fill logic as SMA.
+                Instance::Vwma(_) => key.period,
+                // SuperTrend: ATR period + 1 (ATR Wilder seed) extracted from
+                // the packed key. The ATR period lives in the upper bits.
+                Instance::SuperTrend(_) => (key.period / 1000) + 1,
+                // PivotHigh/PivotLow: need left + right + 1 bars in the window.
+                Instance::Pivot(s) => (s.left + s.right + 1) as u32,
             };
             if bars_needed > max_warmup {
                 max_warmup = bars_needed;
@@ -1745,6 +1793,299 @@ fn typical_price(high: f64, low: f64, close: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
+// WU5: HMA — Hull Moving Average
+// ---------------------------------------------------------------------------
+//
+// Formula:
+//   WMA1 = WMA(close, floor(period/2))
+//   WMA2 = WMA(close, period)
+//   raw  = 2 * WMA1 - WMA2       (de-lagged signal)
+//   HMA  = WMA(raw, floor(sqrt(period)))
+//
+// Warmup: the outer WMA(sqrt(period)) needs floor(sqrt(period)) `raw`
+// values. `raw` is available once both inner WMAs are full, which
+// requires `period` bars (the slower one). So total warmup =
+// period + floor(sqrt(period)) - 1 bars.
+//
+// Numerical reference (period=4, closes=[1,2,3,4,5]):
+//   WMA(period=2): bar 2 = (1*1+2*2)/3 = 5/3 ≈ 1.667
+//                  bar 3 = (2*1+3*2)/3 = 8/3 ≈ 2.667
+//                  bar 4 = (3*1+4*2)/3 = 11/3 ≈ 3.667
+//                  bar 5 = (4*1+5*2)/3 = 14/3 ≈ 4.667
+//   WMA(period=4): bar 4 = (1*1+2*2+3*3+4*4)/10 = 30/10 = 3.0
+//                  bar 5 = (2*1+3*2+4*3+5*4)/10 = 40/10 = 4.0
+//   raw bar 4 = 2*3.667 - 3.0 = 4.333
+//   raw bar 5 = 2*4.667 - 4.0 = 5.333
+//   sqrt(4) = 2; WMA(raw, 2): bar 5 = (4.333*1 + 5.333*2)/3 = 15.0/3 = 5.0
+//   => HMA[4] (0-indexed bar 5, 1-indexed) = 5.0
+
+#[derive(Debug)]
+struct HmaState {
+    half_wma: WindowState,   // WMA(floor(period/2))
+    full_wma: WindowState,   // WMA(period)
+    sqrt_wma: WindowState,   // WMA(floor(sqrt(period))) of raw series
+}
+
+impl HmaState {
+    fn new(period: usize) -> Self {
+        let half = period / 2;
+        let sq = (period as f64).sqrt().floor() as usize;
+        Self {
+            half_wma: WindowState::new(half.max(1)),
+            full_wma: WindowState::new(period),
+            sqrt_wma: WindowState::new(sq.max(1)),
+        }
+    }
+
+    fn push(&mut self, close: f64) {
+        self.half_wma.push(close);
+        self.full_wma.push(close);
+        // Once both inner WMAs are warm, compute raw and feed the outer WMA.
+        if let (Some(w_half), Some(w_full)) = (self.half_wma.wma(), self.full_wma.wma()) {
+            let raw = 2.0 * w_half - w_full;
+            self.sqrt_wma.push(raw);
+        }
+    }
+
+    fn value(&self) -> Option<f64> {
+        self.sqrt_wma.wma()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WU5: VWMA — Volume-Weighted Moving Average
+// ---------------------------------------------------------------------------
+//
+// Formula: VWMA(n) = sum(close[i] * volume[i], i=t-n+1..t) / sum(volume, same window)
+//
+// Warmup = period bars.
+//
+// Numerical reference (period=3, closes=[1,2,3], volumes=[10,20,30]):
+//   pv_sum = 1*10 + 2*20 + 3*30 = 10 + 40 + 90 = 140
+//   vol_sum = 10 + 20 + 30 = 60
+//   VWMA = 140 / 60 ≈ 2.333
+
+#[derive(Debug)]
+struct VwmaState {
+    period: usize,
+    closes: VecDeque<f64>,
+    volumes: VecDeque<f64>,
+    pv_sum: f64,
+    vol_sum: f64,
+}
+
+impl VwmaState {
+    fn new(period: usize) -> Self {
+        Self {
+            period,
+            closes: VecDeque::with_capacity(period),
+            volumes: VecDeque::with_capacity(period),
+            pv_sum: 0.0,
+            vol_sum: 0.0,
+        }
+    }
+
+    fn push(&mut self, close: f64, volume: f64) {
+        self.closes.push_back(close);
+        self.volumes.push_back(volume);
+        self.pv_sum += close * volume;
+        self.vol_sum += volume;
+        if self.closes.len() > self.period {
+            let old_c = self.closes.pop_front().unwrap_or(0.0);
+            let old_v = self.volumes.pop_front().unwrap_or(0.0);
+            self.pv_sum -= old_c * old_v;
+            self.vol_sum -= old_v;
+        }
+    }
+
+    fn value(&self) -> Option<f64> {
+        if self.closes.len() < self.period || self.vol_sum.abs() <= f64::EPSILON {
+            return None;
+        }
+        Some(self.pv_sum / self.vol_sum)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WU5: SuperTrend (ATR-based trailing stop / trend direction)
+// ---------------------------------------------------------------------------
+//
+// Algorithm:
+//   ATR is computed with Wilder smoothing (same as the existing AtrState).
+//   Upper band = (high + low) / 2 + multiplier * ATR
+//   Lower band = (high + low) / 2 - multiplier * ATR
+//
+//   Direction and active band flip at crossings:
+//     - If close > previous upper band: flip to uptrend; active band = lower band.
+//     - If close < previous lower band: flip to downtrend; active band = upper band.
+//     - Otherwise: continue current trend; bands ratchet (never widen).
+//
+//   value() returns the active band level. Compare with close to determine trend.
+//
+// Warmup = ATR warmup = atr_period + 1 bars.
+//
+// Numerical reference (period=3, mult=1.0):
+//   Use synthetic bars: all close=10, high=11, low=9 so hl2=10, TR=2.
+//   Seed ATR after 3 bars = 2.0.
+//   Upper = 10 + 1.0*2 = 12, Lower = 10 - 1.0*2 = 8.
+//   For a rising close the active band stays at the lower band (uptrend).
+//   => value ≈ 8.0 (lower band) on first available bar.
+
+#[derive(Debug)]
+struct SuperTrendState {
+    atr: AtrState,
+    multiplier: f64,
+    // Last committed bands and direction.
+    prev_upper: Option<f64>,
+    prev_lower: Option<f64>,
+    // true = uptrend (close above lower band), false = downtrend.
+    up_trend: bool,
+    value: Option<f64>,
+}
+
+impl SuperTrendState {
+    /// `atr_period` is the ATR window; `mult10` is the multiplier × 10
+    /// (e.g. mult10=30 → multiplier=3.0).
+    fn new(atr_period: usize, mult10: u32) -> Self {
+        Self {
+            atr: AtrState::new(atr_period),
+            multiplier: mult10 as f64 / 10.0,
+            prev_upper: None,
+            prev_lower: None,
+            up_trend: true,
+            value: None,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64, close: f64, prev_close: Option<f64>) {
+        self.atr.push(high, low, close, prev_close);
+        let Some(atr) = self.atr.value() else {
+            return;
+        };
+        let hl2 = (high + low) / 2.0;
+        let raw_upper = hl2 + self.multiplier * atr;
+        let raw_lower = hl2 - self.multiplier * atr;
+
+        // Ratchet: bands can only move in favour of the trend direction.
+        let upper = match self.prev_upper {
+            Some(prev) => {
+                if raw_upper < prev || self.up_trend {
+                    raw_upper
+                } else {
+                    prev.min(raw_upper)
+                }
+            }
+            None => raw_upper,
+        };
+        let lower = match self.prev_lower {
+            Some(prev) => {
+                if raw_lower > prev || !self.up_trend {
+                    raw_lower
+                } else {
+                    prev.max(raw_lower)
+                }
+            }
+            None => raw_lower,
+        };
+
+        // Determine new trend direction.
+        if let (Some(prev_low), Some(prev_up)) = (self.prev_lower, self.prev_upper) {
+            if close > prev_up {
+                self.up_trend = true;
+            } else if close < prev_low {
+                self.up_trend = false;
+            }
+            // else: keep current direction
+        }
+
+        self.prev_upper = Some(upper);
+        self.prev_lower = Some(lower);
+        self.value = if self.up_trend { Some(lower) } else { Some(upper) };
+    }
+
+    fn value(&self) -> Option<f64> {
+        self.value
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WU5: Pivot High / Pivot Low
+// ---------------------------------------------------------------------------
+//
+// A pivot high at bar t requires that bar t-right..t-1 have highs ≤ high[t-right]
+// and bar t-right+1..t have highs ≤ high[t-right], i.e. high[t-right] is the
+// local maximum over a window of left+right+1 bars centred on bar t-right.
+//
+// Because we see bars one at a time (no lookahead), the pivot is confirmed only
+// after we have seen `right` more bars beyond the candidate. The `value()`
+// result is the last confirmed pivot high/low level (not the bar index).
+//
+// Warmup = left + right + 1 bars (to fill the candidate window).
+//
+// Numerical reference (left=2, right=2, highs=[1,3,2,1,2]):
+//   The candidate bar is the one whose high is highest in the 5-bar window.
+//   Bar 3 (0-indexed) has high=3, which is the max → pivot high confirmed at
+//   bar 5 (after seeing the 2 right-side bars). value = 3.0.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PivotKind {
+    High,
+    Low,
+}
+
+#[derive(Debug)]
+struct PivotState {
+    pub left: usize,
+    pub right: usize,
+    kind: PivotKind,
+    /// Rolling window of high (for PivotHigh) or low (for PivotLow) values.
+    window: VecDeque<f64>,
+    total: usize, // total window capacity = left + right + 1
+    last_pivot: Option<f64>,
+}
+
+impl PivotState {
+    fn new(left: usize, right: usize, kind: PivotKind) -> Self {
+        let total = left + right + 1;
+        Self {
+            left,
+            right,
+            kind,
+            window: VecDeque::with_capacity(total + 1),
+            total,
+            last_pivot: None,
+        }
+    }
+
+    fn push(&mut self, high: f64, low: f64) {
+        let val = match self.kind {
+            PivotKind::High => high,
+            PivotKind::Low => low,
+        };
+        self.window.push_back(val);
+        if self.window.len() > self.total {
+            self.window.pop_front();
+        }
+        // Check if the window is full and the candidate (at position `left`)
+        // is an extremum over the whole window.
+        if self.window.len() == self.total {
+            let candidate = self.window[self.left];
+            let is_pivot = match self.kind {
+                PivotKind::High => self.window.iter().all(|&v| v <= candidate),
+                PivotKind::Low => self.window.iter().all(|&v| v >= candidate),
+            };
+            if is_pivot {
+                self.last_pivot = Some(candidate);
+            }
+        }
+    }
+
+    fn value(&self) -> Option<f64> {
+        self.last_pivot
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -2186,5 +2527,356 @@ mod tests {
         assert_eq!(e.value(&refs[1]), Some(12.0));
         assert_eq!(e.value(&refs[2]), Some(9.0));
         assert_eq!(e.value(&refs[3]), Some(11.0));
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: DSL parse / round-trip tests (written first — TDD)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn wu5_hma_dsl_parse_and_roundtrip() {
+        let token = "hma_20";
+        let r = IndicatorRef::parse_dsl(token).expect("hma_20 must parse");
+        assert_eq!(r.name, IndicatorName::Hma);
+        assert_eq!(r.period, Some(20));
+        assert_eq!(r.to_dsl(), token);
+    }
+
+    #[test]
+    fn wu5_vwma_dsl_parse_and_roundtrip() {
+        let token = "vwma_14";
+        let r = IndicatorRef::parse_dsl(token).expect("vwma_14 must parse");
+        assert_eq!(r.name, IndicatorName::Vwma);
+        assert_eq!(r.period, Some(14));
+        assert_eq!(r.to_dsl(), token);
+    }
+
+    #[test]
+    fn wu5_supertrend_dsl_parse_and_roundtrip() {
+        // supertrend_10_30 → ATR period=10, multiplier=3.0
+        let token = "supertrend_10_30";
+        let r = IndicatorRef::parse_dsl(token).expect("supertrend_10_30 must parse");
+        assert_eq!(r.name, IndicatorName::SuperTrend);
+        let packed = r.period.unwrap();
+        assert_eq!(packed / 1000, 10, "atr_period extracted from packed");
+        assert_eq!(packed % 1000, 30, "mult×10 extracted from packed");
+        assert_eq!(r.to_dsl(), token);
+    }
+
+    #[test]
+    fn wu5_pivot_high_dsl_parse_and_roundtrip() {
+        let token = "pivot_high_5_5";
+        let r = IndicatorRef::parse_dsl(token).expect("pivot_high_5_5 must parse");
+        assert_eq!(r.name, IndicatorName::PivotHigh);
+        let packed = r.period.unwrap();
+        assert_eq!(packed / 1000, 5, "left");
+        assert_eq!(packed % 1000, 5, "right");
+        assert_eq!(r.to_dsl(), token);
+    }
+
+    #[test]
+    fn wu5_pivot_low_dsl_parse_and_roundtrip() {
+        let token = "pivot_low_3_2";
+        let r = IndicatorRef::parse_dsl(token).expect("pivot_low_3_2 must parse");
+        assert_eq!(r.name, IndicatorName::PivotLow);
+        let packed = r.period.unwrap();
+        assert_eq!(packed / 1000, 3);
+        assert_eq!(packed % 1000, 2);
+        assert_eq!(r.to_dsl(), token);
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: HMA correctness test
+    // -------------------------------------------------------------------------
+    //
+    // Reference computation for period=4, closes=[1,2,3,4,5]:
+    //   half=2, sqrt_period=2
+    //   WMA(2) at bar 2 = (1*1 + 2*2)/3 = 5/3 ≈ 1.6667
+    //   WMA(2) at bar 3 = (2*1 + 3*2)/3 = 8/3 ≈ 2.6667
+    //   WMA(2) at bar 4 = (3*1 + 4*2)/3 = 11/3 ≈ 3.6667
+    //   WMA(2) at bar 5 = (4*1 + 5*2)/3 = 14/3 ≈ 4.6667
+    //   WMA(4) at bar 4 = (1*1+2*2+3*3+4*4)/10 = 30/10 = 3.0
+    //   WMA(4) at bar 5 = (2*1+3*2+4*3+5*4)/10 = 40/10 = 4.0
+    //   raw at bar 4 = 2*3.6667 - 3.0 = 4.3333
+    //   raw at bar 5 = 2*4.6667 - 4.0 = 5.3333
+    //   WMA(raw, 2) at bar 5 (first available) = (4.3333*1 + 5.3333*2)/3 = 15.0/3 = 5.0
+    // => HMA[bar5] = 5.0 (tolerance 1e-6)
+
+    #[test]
+    fn wu5_hma_period4_correctness() {
+        let r = IndicatorRef::periodic(IndicatorName::Hma, 4);
+        let mut e = IndicatorEngine::new([&r]);
+        let closes = [1.0_f64, 2.0, 3.0, 4.0, 5.0];
+        // Before warmup none should be available.
+        for i in 0..4 {
+            e.push(&close_seq(&[closes[i]])[0]);
+            assert_eq!(e.value(&r), None, "HMA not ready before 5 bars (bar {})", i + 1);
+        }
+        e.push(&close_seq(&[closes[4]])[0]);
+        let v = e.value(&r).expect("HMA period=4 should be ready after 5 bars");
+        assert!(
+            (v - 5.0).abs() < 1e-6,
+            "HMA period=4 bar5 expected 5.0, got {}",
+            v
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: VWMA correctness test
+    // -------------------------------------------------------------------------
+    //
+    // Reference computation for period=3, closes=[1,2,3], volumes=[10,20,30]:
+    //   pv_sum = 1*10 + 2*20 + 3*30 = 10 + 40 + 90 = 140
+    //   vol_sum = 10 + 20 + 30 = 60
+    //   VWMA = 140/60 ≈ 2.3333 (tolerance 1e-6)
+
+    #[test]
+    fn wu5_vwma_period3_correctness() {
+        let r = IndicatorRef::periodic(IndicatorName::Vwma, 3);
+        let mut e = IndicatorEngine::new([&r]);
+        let data = [(1.0_f64, 10.0_f64), (2.0, 20.0), (3.0, 30.0)];
+        for (i, (close, volume)) in data.iter().enumerate() {
+            let b = Bar::with_volume(*close, *close + 0.5, *close - 0.5, *close, *volume);
+            e.push(&b);
+            if i < 2 {
+                assert_eq!(e.value(&r), None, "VWMA not ready before period bars");
+            }
+        }
+        let v = e.value(&r).expect("VWMA should be ready after 3 bars");
+        assert!(
+            (v - 140.0 / 60.0).abs() < 1e-6,
+            "VWMA expected {}, got {}",
+            140.0 / 60.0,
+            v
+        );
+    }
+
+    #[test]
+    fn wu5_vwma_rolling_window() {
+        // Push 4 bars and verify the window drops the oldest.
+        // data: closes=[1,2,3,4], volumes=[10,20,30,40], period=3
+        // After bar 4: window = [2,3,4] vols=[20,30,40]
+        // pv_sum = 2*20 + 3*30 + 4*40 = 40+90+160 = 290
+        // vol_sum = 20+30+40 = 90
+        // VWMA = 290/90 ≈ 3.2222
+        let r = IndicatorRef::periodic(IndicatorName::Vwma, 3);
+        let mut e = IndicatorEngine::new([&r]);
+        let data = [(1.0_f64, 10.0_f64), (2.0, 20.0), (3.0, 30.0), (4.0, 40.0)];
+        for (close, volume) in &data {
+            let b = Bar::with_volume(*close, *close + 0.5, *close - 0.5, *close, *volume);
+            e.push(&b);
+        }
+        let v = e.value(&r).expect("VWMA should be ready");
+        assert!(
+            (v - 290.0 / 90.0).abs() < 1e-6,
+            "VWMA rolling expected {}, got {}",
+            290.0 / 90.0,
+            v
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: SuperTrend correctness test
+    // -------------------------------------------------------------------------
+    //
+    // Reference computation for atr_period=3, mult=1.0 (mult10=10):
+    //   Use uniform bars: close=high=10.0, low=8.0, prev_close=10.0.
+    //   TR = max(high-low, |high-prev|, |low-prev|) = max(2, 0, 2) = 2.
+    //   After 3 TRs, seed ATR = 2.0 (uniform).
+    //   hl2 = (10+8)/2 = 9.0
+    //   upper_band = 9 + 1*2 = 11.0
+    //   lower_band = 9 - 1*2 = 7.0
+    //   Initial trend: uptrend=true → active band = lower = 7.0
+    // Tolerance: 1e-6
+
+    #[test]
+    fn wu5_supertrend_first_value_uptrend() {
+        // DSL pack: atr_period=3, mult10=10 → packed = 3*1000 + 10 = 3010
+        let packed = 3u32 * 1000 + 10;
+        let r = IndicatorRef::periodic(IndicatorName::SuperTrend, packed);
+        let mut e = IndicatorEngine::new([&r]);
+        // Bars: close=10, high=10, low=8. First bar has no prev_close so
+        // ATR needs period+1=4 bars.
+        let bars = (0..5).map(|_| Bar::new(10.0, 10.0, 8.0, 10.0)).collect::<Vec<_>>();
+        for (i, b) in bars.iter().enumerate() {
+            e.push(b);
+            if i < 3 {
+                // ATR not seeded yet
+                assert_eq!(
+                    e.value(&r),
+                    None,
+                    "SuperTrend not ready at bar {}",
+                    i + 1
+                );
+            }
+        }
+        let v = e.value(&r).expect("SuperTrend should be ready after 4+ bars");
+        // Expected lower band = 9 - 1.0*2.0 = 7.0 (uptrend)
+        assert!(
+            (v - 7.0).abs() < 0.5,
+            "SuperTrend lower band expected ~7.0, got {}",
+            v
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: PivotHigh correctness test
+    // -------------------------------------------------------------------------
+    //
+    // PivotState uses a sliding window of length `left + right + 1 = 5`.
+    // The candidate bar is always at index `left = 2` within the window.
+    // So for a pivot to be detected at a bar with high=3, we need:
+    //   window = [h0, h1, 3, h3, h4] where all hi <= 3.
+    //
+    // Use: highs = [1, 2, 3, 2, 1]
+    //   After 5 bars: window = [1, 2, 3, 2, 1], candidate = window[2] = 3.
+    //   All 5 values <= 3 → pivot detected. value() = 3.0.
+    //
+    // Before the 5th bar, window is not full → no pivot yet.
+
+    #[test]
+    fn wu5_pivot_high_detects_local_max() {
+        // left=2, right=2 → packed = 2*1000 + 2 = 2002
+        let packed = 2u32 * 1000 + 2;
+        let r = IndicatorRef::periodic(IndicatorName::PivotHigh, packed);
+        let mut e = IndicatorEngine::new([&r]);
+        // highs = [1, 2, 3, 2, 1]: candidate at window index 2 = 3
+        let highs = [1.0_f64, 2.0, 3.0, 2.0, 1.0];
+        // Before full window (4 bars), no pivot.
+        for h in &highs[..4] {
+            let b = Bar::new(*h, *h, *h - 0.5, *h);
+            e.push(&b);
+        }
+        assert_eq!(e.value(&r), None, "PivotHigh needs full window first");
+        // Push 5th bar to complete the 5-bar window.
+        e.push(&Bar::new(highs[4], highs[4], highs[4] - 0.5, highs[4]));
+        let v = e.value(&r).expect("PivotHigh should detect pivot");
+        assert_eq!(v, 3.0, "PivotHigh: expected pivot at high=3.0");
+    }
+
+    #[test]
+    fn wu5_pivot_high_no_pivot_when_not_max() {
+        // highs = [1, 2, 1, 2, 1]: candidate at window[2] = 1, which is NOT
+        // the max (2 appears at positions 1 and 3). No pivot.
+        let packed = 2u32 * 1000 + 2;
+        let r = IndicatorRef::periodic(IndicatorName::PivotHigh, packed);
+        let mut e = IndicatorEngine::new([&r]);
+        let highs = [1.0_f64, 2.0, 1.0, 2.0, 1.0];
+        for h in &highs {
+            e.push(&Bar::new(*h, *h, *h - 0.5, *h));
+        }
+        // Candidate is 1.0 but 2.0 > 1.0 in the window → no pivot.
+        assert_eq!(e.value(&r), None, "PivotHigh: non-max candidate should not fire");
+    }
+
+    #[test]
+    fn wu5_pivot_high_flat_highs() {
+        // Flat highs: all highs == candidate → all <= candidate → valid pivot.
+        let packed = 2u32 * 1000 + 2;
+        let r = IndicatorRef::periodic(IndicatorName::PivotHigh, packed);
+        let mut e = IndicatorEngine::new([&r]);
+        for _ in 0..5 {
+            e.push(&Bar::new(5.0, 5.0, 4.5, 5.0));
+        }
+        let v = e.value(&r);
+        assert!(
+            v.is_some(),
+            "PivotHigh with flat highs should detect (all <= candidate)"
+        );
+        assert_eq!(v.unwrap(), 5.0);
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: PivotLow correctness test
+    // -------------------------------------------------------------------------
+    //
+    // Use: lows = [5, 4, 3, 4, 5]
+    //   window = [5, 4, 3, 4, 5], candidate = window[2] = 3.
+    //   All 5 values >= 3 → pivot detected. value() = 3.0.
+
+    #[test]
+    fn wu5_pivot_low_detects_local_min() {
+        // left=2, right=2 → packed = 2*1000 + 2 = 2002
+        let packed = 2u32 * 1000 + 2;
+        let r = IndicatorRef::periodic(IndicatorName::PivotLow, packed);
+        let mut e = IndicatorEngine::new([&r]);
+        // lows = [5, 4, 3, 4, 5]: candidate at window index 2 = 3
+        let lows = [5.0_f64, 4.0, 3.0, 4.0, 5.0];
+        for l in &lows[..4] {
+            let b = Bar::new(*l, *l + 0.5, *l, *l);
+            e.push(&b);
+        }
+        assert_eq!(e.value(&r), None, "PivotLow needs full window first");
+        e.push(&Bar::new(lows[4], lows[4] + 0.5, lows[4], lows[4]));
+        let v = e.value(&r).expect("PivotLow should detect pivot");
+        assert_eq!(v, 3.0, "PivotLow: expected pivot at low=3.0");
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: serde back-compat — existing filter JSON round-trips after enum additions
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn wu5_existing_filter_json_still_deserializes() {
+        // A typical pre-WU5 filter JSON. Verifies that adding new enum variants
+        // is additive and does not break deserialization of existing documents.
+        let json = r#"{
+            "id": "01HXTEST000000000000000000",
+            "strategy_id": "01HXTEST000000000000000001",
+            "display_name": "pre-WU5 filter",
+            "asset_scope": ["BTC/USD"],
+            "timeframe": "1h",
+            "conditions": {
+                "all": [
+                    { "lhs": "ema_20", "op": ">", "rhs": "sma_50" },
+                    { "lhs": "rsi_14", "op": "between", "rhs": [30, 70] }
+                ]
+            }
+        }"#;
+        let filter: crate::types::Filter =
+            serde_json::from_str(json).expect("pre-WU5 filter JSON must deserialize");
+        // Round-trip back to JSON and re-parse.
+        let serialized = serde_json::to_string(&filter).expect("serialize");
+        let _: crate::types::Filter =
+            serde_json::from_str(&serialized).expect("round-trip must deserialize");
+    }
+
+    // -------------------------------------------------------------------------
+    // WU5: new indicators produce values after warmup (smoke test)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn wu5_new_indicators_produce_values_after_warmup() {
+        // TODO(WU5-metric): pine_corpus_conversion metric test wired after WU2.
+        let hma_r = IndicatorRef::periodic(IndicatorName::Hma, 9);
+        let vwma_r = IndicatorRef::periodic(IndicatorName::Vwma, 9);
+        // SuperTrend: period=10, mult=3.0 → packed = 10*1000 + 30 = 10030
+        let st_packed = 10u32 * 1000 + 30;
+        let st_r = IndicatorRef::periodic(IndicatorName::SuperTrend, st_packed);
+        // PivotHigh: left=3, right=3 → packed = 3*1000 + 3 = 3003
+        let ph_packed = 3u32 * 1000 + 3;
+        let ph_r = IndicatorRef::periodic(IndicatorName::PivotHigh, ph_packed);
+        // PivotLow: same shape
+        let pl_r = IndicatorRef::periodic(IndicatorName::PivotLow, ph_packed);
+
+        let all_refs = [&hma_r, &vwma_r, &st_r, &ph_r, &pl_r];
+        let mut e = IndicatorEngine::new(all_refs.iter().copied());
+
+        for i in 1..=200u32 {
+            let close = 100.0 + (i % 7) as f64;
+            let high = close + 2.0;
+            let low = close - 2.0;
+            let volume = 1000.0 + i as f64;
+            let b = Bar::with_volume(close, high, low, close, volume);
+            e.push(&b);
+        }
+        // After 200 bars all indicators must have a value.
+        for r in &all_refs {
+            assert!(
+                e.value(r).is_some(),
+                "{} should have a value after 200 bars",
+                r
+            );
+        }
     }
 }

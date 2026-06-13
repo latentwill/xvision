@@ -104,6 +104,7 @@ fn fixture_strategy(agents: Vec<AgentRef>, cadence: u32) -> Strategy {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+            briefing_indicators: Vec::new(),
     }
 }
 

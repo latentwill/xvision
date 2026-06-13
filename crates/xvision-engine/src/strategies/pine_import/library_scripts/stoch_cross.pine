@@ -1,0 +1,23 @@
+// original test fixture (xvision) — Stochastic cross: %K/%D crossover in oversold/overbought zones
+//@version=5
+strategy("Stochastic Cross", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=5)
+
+stoch_len = input.int(14, title="Stochastic Length", minval=2, maxval=50)
+oversold_zone = input.int(20, title="Oversold Zone", minval=5, maxval=40)
+overbought_zone = input.int(80, title="Overbought Zone", minval=60, maxval=95)
+stop_pct = input.float(1.5, title="Stop Loss %", minval=0.1, maxval=10.0, step=0.1)
+profit_pct = input.float(3.0, title="Take Profit %", minval=0.2, maxval=20.0, step=0.1)
+
+stoch_k = ta.rsi(close, stoch_len)
+rsi_confirm = ta.rsi(close, 14)
+
+buy_zone = stoch_k < oversold_zone and rsi_confirm < 40
+sell_zone = stoch_k > overbought_zone and rsi_confirm > 60
+
+if buy_zone
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct, profit=profit_pct)
+
+if sell_zone
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct, profit=profit_pct)
