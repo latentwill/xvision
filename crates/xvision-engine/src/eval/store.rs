@@ -1410,6 +1410,42 @@ impl RunStore {
         }))
     }
 
+    /// CT5 live-deployment poll path (bead s78.2): count REAL recorded
+    /// risk-veto supervisor notes for `run_id` at or after the `since`
+    /// boundary. A risk veto is persisted per run as a `supervisor_notes` row
+    /// with `role = 'risk'` (see `eval::executor::backtest`'s
+    /// `record_supervisor_note(&run.id, "risk", ...)`), each carrying a
+    /// `created_at` RFC-3339 timestamp.
+    ///
+    /// HONESTY MANDATE (§8.1 / §8.9): this is a true `COUNT(*)`, INCLUDING a
+    /// real `0` — "0 vetoes since you were last here" is a true fact, so the
+    /// caller surfaces it as `Some(0)`, never `None`. `None` is reserved for
+    /// the *no-boundary* case (the caller does not call this at all when there
+    /// is no last-visit timestamp, because counting "since an unknown time" is
+    /// not a knowable fact).
+    ///
+    /// The boundary is INCLUSIVE (`created_at >= since`), matching the
+    /// `ListFilter::since` convention. Both sides are normalized through
+    /// SQLite's `datetime()` so the compare is correct across the mixed
+    /// on-disk timestamp shapes (`...+00:00` vs bare `YYYY-MM-DD HH:MM:SS`)
+    /// rather than a brittle lexicographic string compare. The `since` value
+    /// is bound as a SQL parameter — never string-interpolated.
+    pub async fn count_risk_vetoes_since(&self, run_id: &str, since: DateTime<Utc>) -> Result<u32> {
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS n FROM supervisor_notes \
+             WHERE run_id = ? AND role = 'risk' \
+               AND datetime(created_at) >= datetime(?)",
+        )
+        .bind(run_id)
+        .bind(since.to_rfc3339())
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("count risk-veto supervisor_notes for run {run_id}"))?;
+        let n: i64 = row.try_get("n").context("read COUNT(*) for risk vetoes")?;
+        // COUNT(*) is non-negative; clamp defensively into the u32 wire type.
+        Ok(n.max(0) as u32)
+    }
+
     /// Persist a signed attestation against the given run. The store
     /// serializes the metrics + tokens block to the `signed_metrics_json`
     /// column; pubkey + signature go to their dedicated columns.
@@ -2568,5 +2604,185 @@ mod since_filter_tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].source, DeploymentSource::Optimizer);
         assert_eq!(listed[0].unrealized_pnl_usd, Some(-12.5));
+    }
+}
+
+/// bead s78.2: `RunStore::count_risk_vetoes_since` — a REAL count of recorded
+/// `role='risk'` supervisor notes at/after a last-visit boundary.
+#[cfg(test)]
+mod risk_veto_count_tests {
+    use chrono::{DateTime, Utc};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
+
+    use crate::eval::store::RunStore;
+
+    /// Fully-migrated in-memory pool. Migration 018 creates `agent_runs` +
+    /// `supervisor_notes` (the latter FKs `run_id` → `agent_runs(id)`).
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open sqlite mem pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("apply migrations");
+        pool
+    }
+
+    /// Seed the parent `agent_runs` row so `supervisor_notes.run_id` satisfies
+    /// its FK (the store's `record_supervisor_note` invariant requires the
+    /// parent to exist). Only the NOT NULL columns are supplied.
+    async fn seed_agent_run(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO agent_runs (id, objective, status, started_at, retention_mode) \
+             VALUES (?, 'obj', 'running', '2026-06-13T00:00:00Z', 'full_debug')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("seed agent_runs row");
+    }
+
+    fn rfc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[tokio::test]
+    async fn counts_only_risk_notes_at_or_after_boundary() {
+        let pool = fresh_pool().await;
+        seed_agent_run(&pool, "run-a").await;
+        let store = RunStore::new(pool);
+
+        // Two risk vetoes BEFORE the boundary (excluded), one risk veto ON the
+        // boundary (inclusive → counted), one AFTER (counted). Plus a non-risk
+        // note after the boundary (role filter excludes it).
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto pre 1")
+            .await
+            .unwrap();
+        // Overwrite the auto `created_at` (record_supervisor_note stamps `now`)
+        // so the boundary assertions are deterministic.
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto pre 1",
+            "2026-06-10T00:00:00+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto pre 2")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto pre 2",
+            "2026-06-11T23:59:59+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto on boundary")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto on boundary",
+            "2026-06-12T00:00:00+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "risk", "warn", "veto after")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "risk",
+            "veto after",
+            "2026-06-12T06:00:00+00:00",
+        )
+        .await;
+        store
+            .record_supervisor_note("run-a", "guard", "warn", "guard after (excluded)")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-a",
+            "guard",
+            "guard after (excluded)",
+            "2026-06-12T07:00:00+00:00",
+        )
+        .await;
+
+        let n = store
+            .count_risk_vetoes_since("run-a", rfc("2026-06-12T00:00:00+00:00"))
+            .await
+            .unwrap();
+        // Boundary inclusive: the on-boundary + after notes count (2); the two
+        // earlier ones and the non-risk note are excluded.
+        assert_eq!(n, 2, "only role='risk' notes at/after the boundary count");
+    }
+
+    #[tokio::test]
+    async fn zero_matching_notes_is_an_honest_real_zero() {
+        // HONESTY: with a boundary provided but no risk veto after it, the
+        // count is a true 0 — not absence-of-data. The caller surfaces Some(0).
+        let pool = fresh_pool().await;
+        seed_agent_run(&pool, "run-b").await;
+        let store = RunStore::new(pool);
+
+        store
+            .record_supervisor_note("run-b", "risk", "warn", "old veto")
+            .await
+            .unwrap();
+        set_created_at(
+            store.pool(),
+            "run-b",
+            "risk",
+            "old veto",
+            "2026-06-01T00:00:00+00:00",
+        )
+        .await;
+
+        let n = store
+            .count_risk_vetoes_since("run-b", rfc("2026-06-12T00:00:00+00:00"))
+            .await
+            .unwrap();
+        assert_eq!(n, 0, "no risk veto after the boundary ⇒ a real, honest 0");
+    }
+
+    #[tokio::test]
+    async fn unknown_run_counts_zero() {
+        let pool = fresh_pool().await;
+        let store = RunStore::new(pool);
+        let n = store
+            .count_risk_vetoes_since("does-not-exist", rfc("2026-06-12T00:00:00+00:00"))
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    /// Pin a seeded note's `created_at` to a deterministic timestamp so the
+    /// inclusive-boundary assertions don't depend on wall-clock `now`.
+    async fn set_created_at(pool: &SqlitePool, run_id: &str, role: &str, content: &str, ts: &str) {
+        sqlx::query(
+            "UPDATE supervisor_notes SET created_at = ? \
+             WHERE run_id = ? AND role = ? AND content = ?",
+        )
+        .bind(ts)
+        .bind(run_id)
+        .bind(role)
+        .bind(content)
+        .execute(pool)
+        .await
+        .expect("pin supervisor_notes.created_at");
     }
 }
