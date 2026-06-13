@@ -4,6 +4,7 @@ pub mod id;
 pub mod manifest;
 pub mod mechanical;
 pub mod mechanistic;
+pub mod pine_import;
 pub mod risk;
 pub mod slot;
 pub mod store;

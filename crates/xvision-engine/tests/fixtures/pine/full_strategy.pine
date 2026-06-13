@@ -1,0 +1,34 @@
+// original test fixture (xvision) — full strategy with entry, exit, and multiple ta calls
+//@version=5
+strategy("Full Strategy Example", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=5)
+
+fast_period = input.int(12, title="Fast EMA", minval=1, maxval=100)
+slow_period = input.int(26, title="Slow EMA", minval=5, maxval=200)
+signal_period = input.int(9, title="Signal Period", minval=1, maxval=50)
+rsi_len = input.int(14, title="RSI Length", minval=2, maxval=50)
+rsi_filter = input.bool(true, title="Use RSI Filter")
+min_rsi = input.int(40, title="Min RSI for Long", minval=1, maxval=100)
+max_rsi = input.int(60, title="Max RSI for Short", minval=1, maxval=100)
+
+fast_ma = ta.sma(close, fast_period)
+slow_ma = ta.sma(close, slow_period)
+rsi_val = ta.rsi(close, rsi_len)
+
+macd_line = fast_ma - slow_ma
+cross_up = ta.crossover(fast_ma, slow_ma)
+cross_dn = ta.crossunder(fast_ma, slow_ma)
+
+long_ok = rsi_filter ? rsi_val > min_rsi : true
+short_ok = rsi_filter ? rsi_val < max_rsi : true
+
+if cross_up and long_ok
+    strategy.entry("Long", strategy.long)
+
+if cross_dn and short_ok
+    strategy.entry("Short", strategy.short)
+
+if cross_dn
+    strategy.close("Long")
+
+if cross_up
+    strategy.close("Short")

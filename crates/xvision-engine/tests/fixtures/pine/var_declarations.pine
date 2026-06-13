@@ -1,0 +1,21 @@
+// original test fixture (xvision) — var declarations (persistent across bars) and multiple assignment forms
+//@version=5
+indicator("Var Declarations", overlay=false)
+
+len = input.int(20, title="Length")
+
+var highest_high = 0.0
+var lowest_low = 999999.0
+var bar_count = 0
+
+bar_count := bar_count + 1
+highest_high := high > highest_high ? high : highest_high
+lowest_low := low < lowest_low ? low : lowest_low
+
+range_val = highest_high - lowest_low
+mid = (highest_high + lowest_low) / 2.0
+
+above_mid = close > mid
+below_mid = close < mid
+near_top = close > highest_high * 0.98
+near_bottom = close < lowest_low * 1.02
