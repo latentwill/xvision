@@ -28,6 +28,8 @@ export interface CapitalRiskAggregate {
   worstDrawdownPct: number | null;
   /** TIGHTEST (min) non-null `daily_loss_limit_remaining_usd`; `null` when none. */
   tightestDailyLossBufferUsd: number | null;
+  /** Budget paired with the tightest daily-loss buffer; `null` when unsourced. */
+  tightestDailyLossBudgetUsd: number | null;
   /** Count of deployments considered (the active live/paper population). */
   liveCount: number;
   /** False below the data floor: no deployments, OR every aggregate is null. */
@@ -37,11 +39,11 @@ export interface CapitalRiskAggregate {
 /** Color tone for the daily-loss buffer as it shrinks toward the kill line. */
 export type BufferTone = "healthy" | "warn" | "danger";
 
-/** Buffer/deployed ratio bands. The buffer is the headroom before the enforced
- * daily-loss kill fires; as it shrinks relative to deployed capital the tone
- * escalates. Thresholds are deliberately conservative for live money. */
-const BUFFER_WARN_RATIO = 0.1; // ≤10% of deployed remaining → warn
-const BUFFER_DANGER_RATIO = 0.03; // ≤3% remaining → danger
+/** Buffer/budget ratio bands. The buffer is the headroom before the enforced
+ * daily-loss kill fires; as it shrinks relative to the configured daily-loss
+ * budget the tone escalates. */
+const BUFFER_WARN_RATIO = 0.25; // ≤25% of budget remaining → warn
+const BUFFER_HEALTHY_RATIO = 0.5; // >50% remaining → healthy
 
 /** Sum of the non-null members of `xs`; `null` when `xs` has no non-null member. */
 function sumNonNull(xs: (number | null)[]): number | null {
@@ -81,6 +83,12 @@ export function aggregateCapitalRisk(
   const tightestDailyLossBufferUsd = minNonNull(
     deployments.map((d) => d.daily_loss_limit_remaining_usd),
   );
+  const tightestDailyLossBudgetUsd =
+    tightestDailyLossBufferUsd == null
+      ? null
+      : (deployments.find(
+          (d) => d.daily_loss_limit_remaining_usd === tightestDailyLossBufferUsd,
+        )?.daily_loss_budget_usd ?? null);
 
   const hasData =
     deployedCapitalUsd != null ||
@@ -91,6 +99,7 @@ export function aggregateCapitalRisk(
     deployedCapitalUsd,
     worstDrawdownPct,
     tightestDailyLossBufferUsd,
+    tightestDailyLossBudgetUsd,
     liveCount: deployments.length,
     hasData,
   };
@@ -98,23 +107,23 @@ export function aggregateCapitalRisk(
 
 /**
  * Classify the daily-loss buffer's tone as it approaches 0. Returns `null` when
- * there is no honest ratio to compute (buffer null, or deployed null/zero) — the
+ * there is no honest ratio to compute (buffer null, or budget null/zero) — the
  * caller renders a neutral tone in that case, never a fabricated "healthy".
  *
  * A non-positive buffer (the kill line is at/over the edge) is always `danger`.
  */
 export function bufferTone(
   bufferUsd: number | null,
-  deployedUsd: number | null,
+  budgetUsd: number | null,
 ): BufferTone | null {
   if (bufferUsd == null) return null;
-  if (deployedUsd == null || deployedUsd <= 0) return null;
+  if (budgetUsd == null || budgetUsd <= 0) return null;
 
   // At or past the kill line — no ratio needed, this is the worst case.
   if (bufferUsd <= 0) return "danger";
 
-  const ratio = bufferUsd / deployedUsd;
-  if (ratio <= BUFFER_DANGER_RATIO) return "danger";
+  const ratio = bufferUsd / budgetUsd;
   if (ratio <= BUFFER_WARN_RATIO) return "warn";
+  if (ratio <= BUFFER_HEALTHY_RATIO) return null;
   return "healthy";
 }

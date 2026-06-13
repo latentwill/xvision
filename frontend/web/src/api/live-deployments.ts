@@ -60,6 +60,7 @@ export const deploymentKeys = {
       params?.mode ?? "",
       params?.limit ?? null,
     ] as const,
+  one: (id: string) => [...deploymentKeys.all, "one", id] as const,
 };
 
 export function buildDeploymentsListUrl(params?: ListDeploymentsParams): string {
@@ -88,6 +89,12 @@ export function listDeployments(
 ): Promise<LiveDeploymentSummary[]> {
   return apiFetch<DeploymentsListResponse>(buildDeploymentsListUrl(params)).then(
     (r) => r.items ?? [],
+  );
+}
+
+export function getDeployment(id: string): Promise<LiveDeploymentSummary> {
+  return apiFetch<LiveDeploymentSummary>(
+    `/api/live/deployments/${encodeURIComponent(id)}`,
   );
 }
 

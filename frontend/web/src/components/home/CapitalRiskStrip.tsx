@@ -117,7 +117,10 @@ function Metric({
 }
 
 export function CapitalRiskStrip({ agg }: CapitalRiskStripProps) {
-  const tone = bufferTone(agg.tightestDailyLossBufferUsd, agg.deployedCapitalUsd);
+  const tone = bufferTone(
+    agg.tightestDailyLossBufferUsd,
+    agg.tightestDailyLossBudgetUsd,
+  );
 
   return (
     <section data-testid="capital-risk-strip" aria-label="Capital risk">

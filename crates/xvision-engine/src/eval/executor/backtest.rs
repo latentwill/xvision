@@ -3520,6 +3520,12 @@ impl Executor {
                     risk_veto_count,
                     last_decision_at: Some(decision_ts.to_rfc3339()),
                     updated_at: chrono::Utc::now().to_rfc3339(),
+                    daily_loss_budget_usd: Some(kill_pct * initial),
+                    stop_at: run
+                        .live_config
+                        .as_ref()
+                        .and_then(|c| c.stop_policy.time_limit_secs)
+                        .map(|secs| (run.started_at + chrono::Duration::seconds(secs as i64)).to_rfc3339()),
                 };
                 let _ = live_state.upsert(&snap).await;
                 // CT5 Task 8: broadcast the per-bar state snapshot over SSE so
