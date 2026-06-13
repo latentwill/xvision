@@ -387,8 +387,10 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
       // `events` table. These are surfaced through the post-hoc
       // `/api/agent-runs/<id>` projection, not the live SSE stream —
       // the dock's live streaming slice doesn't need a switch arm for
-      // them. When the SSE wire is later extended to forward
-      // `engine_event` frames (separate contract), add the arm here.
+      // them. Full rendering of live `engine_event` SSE frames is owned
+      // by WS-8; for now the arm is a no-op so the exhaustive switch
+      // compiles cleanly.
+      case "engine_event":
       case "run_started":
       case "tool_call_started":
       case "broker_call_started":
