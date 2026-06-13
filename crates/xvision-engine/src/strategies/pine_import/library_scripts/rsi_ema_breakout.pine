@@ -1,0 +1,25 @@
+// original test fixture (xvision) — RSI + EMA breakout: momentum entry above rising EMA
+//@version=5
+strategy("RSI EMA Breakout", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+ema_len = input.int(20, title="EMA Length", minval=2, maxval=200)
+rsi_len = input.int(14, title="RSI Length", minval=2, maxval=50)
+rsi_break = input.int(55, title="RSI Breakout Level", minval=50, maxval=80)
+rsi_weak = input.int(45, title="RSI Weakness Level", minval=20, maxval=50)
+stop_pct = input.float(2.0, title="Stop Loss %", minval=0.1, maxval=10.0, step=0.1)
+profit_pct = input.float(4.0, title="Take Profit %", minval=0.2, maxval=20.0, step=0.1)
+
+ema_val = ta.ema(close, ema_len)
+rsi_val = ta.rsi(close, rsi_len)
+
+long_entry = rsi_val > rsi_break and close > ema_val
+short_entry = rsi_val < rsi_weak and close < ema_val
+
+if long_entry
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct, profit=profit_pct)
+
+if short_entry
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct, profit=profit_pct)

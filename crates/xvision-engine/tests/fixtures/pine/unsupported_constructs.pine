@@ -1,0 +1,24 @@
+// original test fixture (xvision) — script with constructs outside our subset (arrays, maps, for loops)
+//@version=5
+indicator("Unsupported Constructs", overlay=false)
+
+len = input.int(10, title="Length")
+src = close
+
+// supported basics
+sma_val = ta.sma(src, len)
+
+// unsupported: for loop
+total = 0.0
+for i = 0 to len - 1
+    total := total + close[i]
+
+// unsupported: array creation and indexing
+my_arr = array.new_float(len, 0.0)
+array.set(my_arr, 0, close)
+
+// unsupported: map type
+my_map = map.new<string, float>()
+
+// supported: simple assignment still parses
+result = sma_val > close

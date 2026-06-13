@@ -62,6 +62,7 @@ fn seed_strategy_with_missing_agent(home: &Path) -> String {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     };
 
     let rt = tokio::runtime::Builder::new_current_thread()

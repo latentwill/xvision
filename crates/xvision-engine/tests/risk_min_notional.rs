@@ -136,6 +136,7 @@ fn tiny_risk_strategy() -> Strategy {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     }
 }
 
@@ -211,6 +212,7 @@ fn exact_min_notional_boundary_passes_risk_rule() {
         portfolio: &portfolio,
         asset: AssetSymbol::Eth,
         conviction: 1.0,
+        funding_rate_8h: None,
     });
     assert!(
         matches!(verdict, RuleVerdict::Pass),

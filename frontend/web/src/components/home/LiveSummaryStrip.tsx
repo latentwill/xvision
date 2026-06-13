@@ -97,6 +97,7 @@ export function LiveSummaryStrip() {
                 {activeCount}
               </span>{" "}
               live
+              <span className="text-text-4 font-normal"> · simulated</span>
             </span>
           )}
           {pausedCount > 0 && (

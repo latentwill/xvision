@@ -275,6 +275,24 @@ pub enum IndicatorName {
     MarkPrice,
     MarkIndexBasis,
     LongShortRatio,
+    // WU5: Pine Script catalog parity indicators (native, no external crate)
+    /// Hull Moving Average — period-parameterized. DSL: `hma_<period>`.
+    Hma,
+    /// Volume-Weighted Moving Average — period-parameterized. DSL: `vwma_<period>`.
+    Vwma,
+    /// SuperTrend (ATR-based trailing stop). The single `period` field packs
+    /// both the ATR period and the band multiplier×10 as `atr_period * 1000 +
+    /// mult_times_10`. DSL token: `supertrend_<atr_period>_<mult×10>`, e.g.
+    /// `supertrend_10_30` (ATR period=10, multiplier=3.0). Emits the active
+    /// SuperTrend band level; compare with `close` to derive trend direction.
+    SuperTrend,
+    /// Pivot high — highest high over a lookback window. The `period` field
+    /// packs `left * 1000 + right` (left and right bar counts around the pivot).
+    /// DSL token: `pivot_high_<left>_<right>`.
+    PivotHigh,
+    /// Pivot low — lowest low over the same packed lookback.
+    /// DSL token: `pivot_low_<left>_<right>`.
+    PivotLow,
 }
 
 impl IndicatorName {
@@ -321,7 +339,8 @@ impl IndicatorName {
                 | IndicatorName::OpenInterest
                 | IndicatorName::MarkPrice
                 | IndicatorName::MarkIndexBasis
-                | IndicatorName::LongShortRatio
+                | IndicatorName::LongShortRatio // WU5 new indicators all carry a period (or packed period+param)
+                                                // and are intentionally NOT listed here, so has_period() → true.
         )
     }
 
@@ -404,6 +423,15 @@ impl IndicatorName {
             IndicatorName::MarkPrice => "mark_price",
             IndicatorName::MarkIndexBasis => "mark_index_basis",
             IndicatorName::LongShortRatio => "long_short_ratio",
+            // WU5 Pine catalog parity
+            IndicatorName::Hma => "hma",
+            IndicatorName::Vwma => "vwma",
+            // SuperTrend/PivotHigh/PivotLow use multi-part DSL tokens with
+            // their own custom parse_dsl / to_dsl logic; dsl_prefix() returns
+            // the bare prefix used as the token stem.
+            IndicatorName::SuperTrend => "supertrend",
+            IndicatorName::PivotHigh => "pivot_high",
+            IndicatorName::PivotLow => "pivot_low",
         }
     }
 
@@ -485,6 +513,16 @@ impl IndicatorName {
             | IndicatorName::KeltnerMiddle
             | IndicatorName::KeltnerLower
             | IndicatorName::WilliamsR => Some((2, 200)),
+            // WU5: HMA and VWMA use plain period (same range as EMA/SMA).
+            IndicatorName::Hma | IndicatorName::Vwma => Some((2, 500)),
+            // SuperTrend packs atr_period * 1000 + mult×10.
+            // Effective range: atr_period ∈ [2, 200], mult×10 ∈ [1, 200].
+            // Packed min = 2001, max = 200200.
+            IndicatorName::SuperTrend => Some((2001, 200_200)),
+            // PivotHigh/PivotLow pack left * 1000 + right.
+            // Effective range: left ∈ [1, 100], right ∈ [1, 100].
+            // Packed min = 1001, max = 100100.
+            IndicatorName::PivotHigh | IndicatorName::PivotLow => Some((1001, 100_100)),
         }
     }
 }
@@ -589,6 +627,74 @@ impl IndicatorRef {
                 bar_offset: None,
             });
         }
+        // WU5: three-part token parsers — `supertrend_<period>_<mult×10>`,
+        // `pivot_high_<left>_<right>`, `pivot_low_<left>_<right>`.
+        // Placed before the generic two-part prefix loop so longer matches win.
+        if let Some(rest) = token.strip_prefix("supertrend_") {
+            // rest = "<atr_period>_<mult_times_10>"
+            let mut parts = rest.splitn(2, '_');
+            let atr_period: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let mult10: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let packed = atr_period * 1000 + mult10;
+            return Ok(Self::periodic(IndicatorName::SuperTrend, packed));
+        }
+        if let Some(rest) = token.strip_prefix("pivot_high_") {
+            // rest = "<left>_<right>"
+            let mut parts = rest.splitn(2, '_');
+            let left: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let right: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let packed = left * 1000 + right;
+            return Ok(Self::periodic(IndicatorName::PivotHigh, packed));
+        }
+        if let Some(rest) = token.strip_prefix("pivot_low_") {
+            let mut parts = rest.splitn(2, '_');
+            let left: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let right: u32 =
+                parts
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| ParseError::IndicatorDsl {
+                        path: path.clone(),
+                        token: token.to_string(),
+                    })?;
+            let packed = left * 1000 + right;
+            return Ok(Self::periodic(IndicatorName::PivotLow, packed));
+        }
         // Try multi-part prefixes first (longest first) so `atr_pct_14`
         // is matched before `atr_pct` would be misread as `atr` + `pct_14`.
         let candidates: &[(&str, IndicatorName)] = &[
@@ -632,6 +738,9 @@ impl IndicatorRef {
             ("roc", IndicatorName::Roc),
             ("cci", IndicatorName::Cci),
             ("mfi", IndicatorName::Mfi),
+            // WU5 plain-period indicators
+            ("vwma", IndicatorName::Vwma),
+            ("hma", IndicatorName::Hma),
         ];
         for (prefix, name) in candidates {
             let needle = format!("{}_", prefix);
@@ -654,6 +763,22 @@ impl IndicatorRef {
     pub fn to_dsl(&self) -> String {
         match (self.name, self.period) {
             (IndicatorName::Close, _) => "close".to_string(),
+            // WU5: three-part packed tokens — unpack and re-emit.
+            (IndicatorName::SuperTrend, Some(packed)) => {
+                let atr_period = packed / 1000;
+                let mult10 = packed % 1000;
+                format!("supertrend_{}_{}", atr_period, mult10)
+            }
+            (IndicatorName::PivotHigh, Some(packed)) => {
+                let left = packed / 1000;
+                let right = packed % 1000;
+                format!("pivot_high_{}_{}", left, right)
+            }
+            (IndicatorName::PivotLow, Some(packed)) => {
+                let left = packed / 1000;
+                let right = packed % 1000;
+                format!("pivot_low_{}_{}", left, right)
+            }
             (name, Some(p)) => format!("{}_{}", name.dsl_prefix(), p),
             (name, None) => name.dsl_prefix().to_string(),
         }

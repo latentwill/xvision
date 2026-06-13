@@ -194,6 +194,8 @@ mod tests {
             stop_loss_pct: 2.0,
             take_profit_pct: 5.0,
             opened_at: chrono::Utc.timestamp_opt(1_699_900_000, 0).single().unwrap(),
+            leverage: None,
+            liq_price: None,
         };
         PortfolioState {
             equity_usd: 100_000.0,

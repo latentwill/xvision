@@ -1,0 +1,24 @@
+// original test fixture (xvision) — deliberately fuzzy script with mixed valid and unsupported constructs
+//@version=5
+indicator("Fuzzy Mixed", overlay=true)
+
+len = input.int(14, title="Length")
+src = close
+
+// supported: ta calls and arithmetic
+ema_val = ta.sma(src, len)
+diff = close - ema_val
+pct_diff = diff / ema_val * 100
+
+// unsupported: array and matrix operations — should produce Unsupported nodes
+arr = array.new_float(10)
+// unsupported: user-defined function call
+myFunc(x) => x * 2
+
+// supported: ternary and comparison
+signal = pct_diff > 5.0 ? 1 : pct_diff < -5.0 ? -1 : 0
+
+// unsupported: switch statement
+switch signal
+    1 => label.new(bar_index, high, "UP")
+    -1 => label.new(bar_index, low, "DN")

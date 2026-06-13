@@ -1,0 +1,21 @@
+// original test fixture (xvision) — strategy with pyramiding and HTF request.security (unsupported constructs)
+//@version=5
+strategy("Pyramiding HTF Test", overlay=true, pyramiding=5)
+
+rsi_len = input.int(14, title="RSI Length", minval=2, maxval=100)
+ema_len = input.int(20, title="EMA Length", minval=2, maxval=200)
+stop_pct = input.float(2.0, title="Stop %", minval=0.1, maxval=20.0, step=0.1)
+
+// HTF confirmation via request.security — unsupported
+htf_close = request.security(syminfo.tickerid, "D", close)
+
+rsi_val = ta.rsi(close, rsi_len)
+ema_val = ta.ema(close, ema_len)
+
+// supported conditions
+long_cond = rsi_val < 30 and close > ema_val
+
+if long_cond
+    strategy.entry("Long", strategy.long)
+
+strategy.exit("Long Exit", "Long", loss=stop_pct)

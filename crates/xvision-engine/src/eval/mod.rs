@@ -33,6 +33,7 @@ pub mod guardrail_summary;
 pub mod guardrails;
 pub mod limits;
 pub mod live_config;
+pub mod live_run_state;
 pub mod metrics;
 pub mod orders;
 pub mod postprocess;
@@ -63,8 +64,9 @@ pub use compare::{
     ComparisonReport, ComparisonRunSummary, ManifestMismatch,
 };
 pub use cost::{
-    aggregate_eval_run_inference_cost, compute_token_cost_usd, compute_token_cost_usd_from_catalog,
-    provider_reports_zero_cost,
+    aggregate_eval_run_inference_cost, aggregate_inference_cost_since, aggregate_optimizer_cost_since,
+    compute_token_cost_usd, compute_token_cost_usd_from_catalog, get_daily_budget_cap,
+    provider_reports_zero_cost, set_daily_budget_cap,
 };
 pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};

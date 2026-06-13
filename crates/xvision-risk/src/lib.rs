@@ -133,6 +133,11 @@ impl RiskLayer {
             Box::new(FundingCarryGuard {
                 max_funding_pay_8h: config.perps.max_funding_pay_8h,
             }),
+            // Liquidation-distance guard: blocks new entries while an open perps
+            // position is near liquidation. No-ops for spot (no liq price).
+            Box::new(LiquidationDistanceGuard {
+                min_liq_distance_pct: config.perps.min_liq_distance_pct,
+            }),
             Box::new(MaxPositionSize { max_bps: max_pos_bps }),
             Box::new(MaxTotalExposure { max_bps: max_exp_bps }),
             Box::new(MaxOpenPositions {
@@ -289,7 +294,10 @@ impl RiskLayer {
                 reason,
                 warnings,
             },
-            None => RiskDecision::Approved { decision: current, warnings },
+            None => RiskDecision::Approved {
+                decision: current,
+                warnings,
+            },
         }
     }
 
@@ -440,6 +448,8 @@ pub(crate) mod tests_common {
                 stop_loss_pct: 2.0,
                 take_profit_pct: 5.0,
                 opened_at: Utc::now(),
+                leverage: None,
+                liq_price: None,
             },
         );
         p
@@ -466,6 +476,8 @@ pub(crate) mod tests_common {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 5.0,
                     opened_at: Utc::now(),
+                    leverage: None,
+                    liq_price: None,
                 },
             );
         }
@@ -615,6 +627,65 @@ mod integration {
         assert!(
             matches!(without, RiskDecision::Approved { .. }),
             "absent funding signal ⇒ guard no-ops (fail-safe); got {without:?}"
+        );
+    }
+
+    /// LiquidationDistanceGuard is wired into the default ruleset: a new entry
+    /// is vetoed while an open perps position sits within the configured
+    /// distance of its liquidation price; a spot position (no liq price) does
+    /// not trip it.
+    #[test]
+    fn liquidation_distance_guard_vetoes_through_default_layer() {
+        use std::collections::BTreeMap;
+        use tests_common::make_decision;
+        use xvision_core::OpenPosition;
+
+        let layer = layer_from_files();
+        let near_liq = |liq_price: Option<f64>| {
+            let mut open = BTreeMap::new();
+            open.insert(
+                AssetSymbol::Btc,
+                OpenPosition {
+                    asset: AssetSymbol::Btc,
+                    direction: Direction::Long,
+                    size_bps: 500,
+                    entry_price: 100.0,
+                    mark_price: 100.0,
+                    stop_loss_pct: 2.0,
+                    take_profit_pct: 5.0,
+                    opened_at: chrono::Utc::now(),
+                    leverage: Some(20.0),
+                    liq_price,
+                },
+            );
+            PortfolioState {
+                equity_usd: 100_000.0,
+                realized_pnl_today_usd: 0.0,
+                day_index: 0,
+                open_positions: open,
+                as_of: chrono::Utc::now(),
+            }
+        };
+        let entry = || make_decision(Action::Buy, Direction::Long, 500, 2.0, 5.0);
+
+        // Existing position 3% from liquidation (< 5% default) ⇒ vetoed.
+        let vetoed = layer.evaluate(entry(), &near_liq(Some(97.0)));
+        assert!(
+            matches!(
+                vetoed,
+                RiskDecision::Vetoed {
+                    reason: VetoReason::NearLiquidation,
+                    ..
+                }
+            ),
+            "near-liquidation must veto new entries; got {vetoed:?}"
+        );
+
+        // Spot position (no liq price) ⇒ guard no-ops, entry approved.
+        let approved = layer.evaluate(entry(), &near_liq(None));
+        assert!(
+            matches!(approved, RiskDecision::Approved { .. }),
+            "spot position (no liq price) must not trip the guard; got {approved:?}"
         );
     }
 

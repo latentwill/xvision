@@ -458,11 +458,7 @@ impl Executor {
     /// never blocks or aborts the trading loop. The concrete
     /// `xvision-identity` implementation is injected here from the dashboard,
     /// which keeps the engine free of a hard identity dependency.
-    pub fn with_attest_hook(
-        mut self,
-        hook: Arc<dyn super::attest_hook::AttestHook>,
-        every_n: u32,
-    ) -> Self {
+    pub fn with_attest_hook(mut self, hook: Arc<dyn super::attest_hook::AttestHook>, every_n: u32) -> Self {
         self.attest_hook = Some(hook);
         self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
         self
@@ -1209,6 +1205,20 @@ impl Executor {
                     if let Some(obj) = seed.as_object_mut() {
                         obj.insert("filter_context".to_string(), ctx.clone());
                     }
+                }
+                // WU2 Pine import: inject briefing_indicators latest values.
+                // When a Pine-imported Agentic strategy has briefing_indicators,
+                // compute each indicator over the history slice and inject the
+                // latest value into the seed under "briefing_indicators" so the
+                // trader LLM sees them without computing from raw bars.
+                // Mirrors the filter_context post-build insertion pattern.
+                if !strategy.briefing_indicators.is_empty() {
+                    inject_briefing_indicators_into_seed(
+                        &mut seed,
+                        &strategy.briefing_indicators,
+                        bar,
+                        history_slice,
+                    );
                 }
                 // U6: inject top-5 episodic recall observations when the store
                 // has relevant history. Query vector is derived from the
@@ -3064,12 +3074,20 @@ impl Executor {
         // authoritative source for the deployment's drawdown_pct +
         // daily_loss_limit_remaining_usd, kept in lock-step with the loop-local
         // peak / day-start above. NOT a persisted snapshot table.
-        let mut session_tracker =
-            crate::eval::executor::live_session::LiveSessionTracker::new(initial);
+        let mut session_tracker = crate::eval::executor::live_session::LiveSessionTracker::new(initial);
         // CT5 (§6.3 option A): the most recent per-run unrealized PnL, persisted
         // to `eval_runs.unrealized_pnl_usd` in the buffered equity flush so the
         // poll path has an honest number between SSE ticks. `None` pre-first-mark.
         let mut latest_unrealized_pnl: Option<f64> = None;
+
+        // CT5: per-bar live_run_state upsert. One SQLite row per live run,
+        // written best-effort after each bar so the dashboard can display
+        // capital-risk state without waiting for the run to finish.
+        let mut risk_veto_count: i64 = 0;
+        let live_state = crate::eval::live_run_state::LiveStateStore::new(store.pool().clone());
+        let deployed_capital = initial;
+        let strategy_id = run.live_config.as_ref().map(|c| c.strategy_id.clone());
+        let strategy_name = run.live_config.as_ref().map(|c| c.display_name.clone());
 
         // Pull the runtime out of the executor for the duration of the
         // loop. The `Mutex` is held across `.await`s on the stream + fills;
@@ -3405,15 +3423,17 @@ impl Executor {
             // backtest path shares it), so per-tick `None` propagation over the
             // event is a deferred follow-up tied to widening that field.
             let drawdown_pct = session_tracker.drawdown_pct(equity).unwrap_or(0.0);
-            // CT5 capital fields derived in-loop from the book + tracker and
-            // emitted on the engine `ProgressBus` (`ProgressEvent::MetricsUpdated`).
-            // NOTE: these are NOT carried over the dashboard deployment SSE — that
-            // stream reads `RunChartEvent` (equity-only `metrics` + lifecycle
-            // `status`), not `ProgressEvent::MetricsUpdated`. `LiveDeploymentSummary`
-            // consumers read the full capital block via the 5s poll endpoint;
-            // per-tick capital streaming is a DEFERRED follow-up (would require
-            // widening `RunChartEvent`). HONESTY MANDATE: a realized figure with no
-            // fill history surfaces as None, never a faked 0.
+            // CT5 capital fields derived in-loop from the book + tracker. They
+            // are emitted on BOTH buses:
+            //  - the engine `ProgressBus` (`ProgressEvent::MetricsUpdated`), for
+            //    CLI / optimizer / progress-bar subscribers, and
+            //  - the `RunEventBus` as `RunChartEvent::DeploymentMetrics` (CT5
+            //    §4, delivered below), which the dashboard deployment SSE already
+            //    subscribes to. The SSE now streams the full capital block
+            //    per-tick (`event: metrics`); consumers (`n0k`/`awm`/`8s4`) no
+            //    longer have to wait on the 5s poll for live capital values.
+            // HONESTY MANDATE: a realized figure with no fill history surfaces as
+            // None, never a faked 0.
             let realized_now = book.realized();
             let realized_pnl_usd = if n_trades > 0 { Some(realized_now) } else { None };
             // Deployed capital = Σ |position| * mark over open legs.
@@ -3450,6 +3470,80 @@ impl Executor {
                 realized_pnl_usd,
                 daily_loss_limit_remaining_usd,
             });
+            // CT5 §4: project the SAME capital block onto the RunEventBus the
+            // dashboard deployment SSE reads. `drawdown_pct` carries the honest
+            // `Option` from the session tracker (the `MetricsUpdated.drawdown_pct`
+            // f64 above uses `unwrap_or(0.0)` only because the backtest path
+            // shares that field; here we keep `None` when there is no peak).
+            self.emit_chart(
+                &run.id,
+                RunChartEvent::DeploymentMetrics(crate::api::chart::DeploymentMetricsTick {
+                    time: decision_ts.timestamp(),
+                    equity_usd: equity,
+                    drawdown_pct: session_tracker.drawdown_pct(equity),
+                    deployed_capital_usd,
+                    unrealized_pnl_usd,
+                    realized_pnl_usd,
+                    daily_loss_limit_remaining_usd,
+                    n_trades,
+                }),
+            )
+            .await;
+
+            // CT5: per-bar capital-risk snapshot upserted into live_run_state.
+            // Best-effort — a snapshot write failure must never abort the live
+            // loop (real money may be riding on it).
+            if outcome.risk_vetoed {
+                risk_veto_count += 1;
+            }
+            {
+                let realized_today = book.realized() - daily_realized_at_day_start;
+                let kill_pct = strategy.risk.daily_loss_kill_pct;
+                let daily_loss_remaining = (kill_pct * initial + realized_today).max(0.0);
+                let unrealized: f64 = book
+                    .open_legs()
+                    .iter()
+                    .map(|(_, pos, entry, last_mark)| pos * (last_mark - entry))
+                    .sum();
+                let snap = crate::eval::live_run_state::LiveRunState {
+                    run_id: run.id.clone(),
+                    strategy_id: strategy_id.clone(),
+                    strategy_name: strategy_name.clone(),
+                    deployed_capital_usd: deployed_capital,
+                    equity_usd: Some(equity),
+                    unrealized_pnl_usd: Some(unrealized),
+                    realized_pnl_usd: Some(book.realized()),
+                    realized_today_usd: Some(realized_today),
+                    daily_loss_remaining_usd: Some(daily_loss_remaining),
+                    drawdown_pct: Some(drawdown_pct),
+                    peak_equity_usd: Some(peak_equity),
+                    risk_veto_count,
+                    last_decision_at: Some(decision_ts.to_rfc3339()),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    daily_loss_budget_usd: Some(kill_pct * initial),
+                    stop_at: run
+                        .live_config
+                        .as_ref()
+                        .and_then(|c| c.stop_policy.time_limit_secs)
+                        .map(|secs| (run.started_at + chrono::Duration::seconds(secs as i64)).to_rfc3339()),
+                };
+                let _ = live_state.upsert(&snap).await;
+                // CT5 Task 8: broadcast the per-bar state snapshot over SSE so
+                // the live-deployments stream handler can forward it to clients.
+                self.emit_chart(
+                    &run.id,
+                    RunChartEvent::LiveRunState(crate::api::chart::LiveRunStatePayload {
+                        equity_usd: snap.equity_usd,
+                        unrealized_pnl_usd: snap.unrealized_pnl_usd,
+                        realized_today_usd: snap.realized_today_usd,
+                        daily_loss_remaining_usd: snap.daily_loss_remaining_usd,
+                        drawdown_pct: snap.drawdown_pct,
+                        risk_veto_count: snap.risk_veto_count,
+                        last_decision_at: snap.last_decision_at.clone(),
+                    }),
+                )
+                .await;
+            }
 
             decision_idx += 1;
 
@@ -3736,6 +3830,9 @@ impl Executor {
         //     holding an open position; a new open that would exceed the cap
         //     is vetoed. Re-opening / adjusting an asset that is already
         //     in-position is not blocked.
+        // CT5: track whether this cycle fired a risk veto so the loop driver
+        // can increment the monotonic `risk_veto_count` in `live_run_state`.
+        let mut risk_vetoed = false;
         let applied_action: String = {
             let is_new_open = applied_action == "long_open" || applied_action == "short_open";
             if !is_new_open {
@@ -3783,6 +3880,7 @@ impl Executor {
                         obs.emit_engine_event("risk_veto", None, Some(payload.to_string()))
                             .await;
                     }
+                    risk_vetoed = true;
                     "hold".to_string()
                 } else {
                     applied_action
@@ -3962,6 +4060,7 @@ impl Executor {
             broker_error,
             daily_loss_day,
             daily_realized_at_day_start,
+            risk_vetoed, // CT5: propagate to loop driver for live_run_state counter
         })
     }
 
@@ -4405,6 +4504,10 @@ struct LiveDecisionOutcome {
     /// calls on the same run.
     daily_loss_day: Option<chrono::NaiveDate>,
     daily_realized_at_day_start: f64,
+    /// CT5: true when the risk gate vetoed an open this decision cycle.
+    /// The loop driver increments `risk_veto_count` and persists it to
+    /// `live_run_state` each bar.
+    pub(crate) risk_vetoed: bool,
 }
 
 // executor-trait-extraction: `SimulateFillArgs`, `SimulateFillResult`,
@@ -5538,6 +5641,79 @@ fn risk_config_json(risk: &RiskConfig) -> serde_json::Value {
     serde_json::to_value(risk).unwrap_or_else(|_| serde_json::json!({}))
 }
 
+/// WU2 Pine import: inject `briefing_indicators` latest values into the
+/// decision seed under the `"briefing_indicators"` key.
+///
+/// Mirrors the `filter_context` post-build insertion pattern at the call-site
+/// (after `build_decision_seed`). For each `BriefingIndicator` in the strategy,
+/// we spin up an `IndicatorEngine`, push the history bars + current bar, and
+/// read the latest computed value. The result is a flat JSON object keyed by
+/// the `source_token` (Pine variable name).
+///
+/// This is additive — existing seed fields are not modified. Skipped entirely
+/// when `briefing_indicators` is empty (no overhead on non-pine-import strategies).
+pub fn inject_briefing_indicators_into_seed(
+    seed: &mut serde_json::Value,
+    briefing_indicators: &[crate::strategies::BriefingIndicator],
+    current_bar: &Ohlcv,
+    history_slice: &[&Ohlcv],
+) {
+    use xvision_filters::{Bar as FilterBar, IndicatorEngine, IndicatorRef};
+
+    if briefing_indicators.is_empty() {
+        return;
+    }
+
+    // Build IndicatorRefs from the BriefingIndicator list.
+    let refs: Vec<IndicatorRef> = briefing_indicators
+        .iter()
+        .filter_map(|bi| {
+            let period = bi.params.first().map(|p| *p as u32);
+            Some(IndicatorRef {
+                name: bi.name,
+                period,
+                bar_offset: None,
+            })
+        })
+        .collect();
+
+    // Instantiate the engine for just these refs.
+    let mut engine = IndicatorEngine::new(refs.iter());
+
+    // Push history bars (oldest first).
+    for bar in history_slice {
+        let fb = FilterBar::with_volume(bar.open, bar.high, bar.low, bar.close, bar.volume);
+        engine.push(&fb);
+    }
+    // Push current bar.
+    let fb = FilterBar::with_volume(
+        current_bar.open,
+        current_bar.high,
+        current_bar.low,
+        current_bar.close,
+        current_bar.volume,
+    );
+    engine.push(&fb);
+
+    // Collect computed values keyed by source_token.
+    let mut values = serde_json::Map::new();
+    for (bi, ind_ref) in briefing_indicators.iter().zip(refs.iter()) {
+        if let Some(v) = engine.value(ind_ref) {
+            values.insert(bi.source_token.clone(), serde_json::json!(v));
+        }
+        // If not yet warmed up (None), skip — the LLM sees the key absent.
+    }
+
+    if !values.is_empty() {
+        if let Some(obj) = seed.as_object_mut() {
+            obj.insert(
+                "briefing_indicators".to_string(),
+                serde_json::Value::Object(values),
+            );
+        }
+    }
+}
+
 /// Serialize an Ohlcv bar as the same JSON shape used for
 /// `market_data.current_bar` so `bar_history` entries are
 /// homogeneous with the current-bar shape the trader prompt already
@@ -5757,6 +5933,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: Default::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         }
     }
 

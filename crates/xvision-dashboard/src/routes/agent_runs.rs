@@ -1017,9 +1017,7 @@ mod tests {
         seed_run(&state.pool, "newer", "completed", "2026-06-10T00:00:00Z").await;
 
         let server = TestServer::new(crate::server::build_router(state.clone())).expect("TestServer");
-        let resp = server
-            .get("/api/agent-runs?since=2026-06-06T00:00:00Z")
-            .await;
+        let resp = server.get("/api/agent-runs?since=2026-06-06T00:00:00Z").await;
         resp.assert_status_ok();
         let v: serde_json::Value = resp.json();
         let runs = v["runs"].as_array().unwrap();

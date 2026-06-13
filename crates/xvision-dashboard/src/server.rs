@@ -17,6 +17,8 @@
 //  6. PUT    /api/skills/:id                          skills::update
 //  7. DELETE /api/skills/:id                          skills::archive
 //  8. POST   /api/strategies                          strategies::post_create
+//  8b. POST  /api/strategy/import/pine               strategies::post_import_pine
+//  8c. POST  /api/strategy/pine-library/:id/import  strategies::post_import_library_entry
 //  9. DELETE /api/strategy/:id                        strategies::delete
 // 10. PATCH  /api/strategy/:id                        strategies::patch_metadata
 // 10b. PUT   /api/strategy/:id                        strategies::put_method_hint  (F4 hint → 405)
@@ -104,6 +106,7 @@
 //  R10. GET  /api/skills/:id
 //  R11. GET  /api/strategies
 //  R12. GET  /api/templates
+//  R12b. GET /api/strategy/pine-library          strategies::get_pine_library   (WU9)
 //  R13. GET  /api/strategy/:id
 //  R14. GET  /api/strategies/:id/chart
 //  R15. GET  /api/strategies-folder/list
@@ -193,16 +196,16 @@ use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
     autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
-    charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
+    charts_market_context, chat_rail, checkpoints as checkpoints_route, cli, cost as cost_route,
     diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
     live_broker as live_broker_route, live_deployments as live_deployments_route,
-    marketplace as marketplace_route,
-    marketplace_read as marketplace_read_route, memory as memory_route, optimizations as optimizations_route,
-    safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, tools as tools_route,
+    marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
+    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    tools as tools_route,
     version::version,
     wizard,
 };
@@ -239,6 +242,7 @@ fn readonly_router(state: AppState) -> Router {
         // dynamic route (static-before-`:id` ordering). A deployment is an
         // `eval_runs` row with mode='live'; honesty-constrained projection.
         .route("/api/live/deployments", get(live_deployments_route::list_deployments))
+        .route("/api/live/deployments/:id", get(live_deployments_route::get_one))
         .route(
             "/api/live/deployments/:id/stream",
             get(live_deployments_route::stream),
@@ -248,6 +252,13 @@ fn readonly_router(state: AppState) -> Router {
         .route("/api/tools", get(tools_route::list))
         .route("/api/strategies", get(strategies::list))
         .route("/api/templates", get(strategies::list_templates))
+        // WU9: Pine Script seed library — read-only catalogue.
+        // IMPORTANT: registered BEFORE /api/strategy/:id so the static
+        // segment "pine-library" takes priority over the `:id` parameter.
+        .route(
+            "/api/strategy/pine-library",
+            get(strategies::get_pine_library),
+        )
         .route("/api/strategy/:id", get(strategies::get))
         // Phase 4.5: strategy capability-readiness diagnostics. Surfaces WHY
         // a strategy can't launch (typed per-agent blockers) BEFORE launch.
@@ -429,6 +440,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/events",
             get(crate::sse::autooptimizer_sse::autooptimizer_events_handler),
         )
+        // bead-8wn: cross-source cost surface (read-only). Windowed spend
+        // rollup + the persisted operator-set daily budget cap (null when
+        // UNSET — the FE renders an em-dash, never a faked ceiling).
+        .route("/api/cost/rollup", get(cost_route::rollup))
+        .route("/api/cost/budget", get(cost_route::get_budget))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -548,6 +564,15 @@ fn mutating_router(state: AppState) -> Router {
         )
         // ── Strategies ────────────────────────────────────────────────────
         .route("/api/strategies", post(strategies::post_create))
+        // WU7: Pine Script import — creates a new Strategy from uploaded Pine source.
+        .route("/api/strategy/import/pine", post(strategies::post_import_pine))
+        // WU9: Pine library entry import — looks up entry by id and persists.
+        // IMPORTANT: registered BEFORE /api/strategy/:id to avoid the :id catch-all
+        // stealing "pine-library" as a strategy id.
+        .route(
+            "/api/strategy/pine-library/:id/import",
+            post(strategies::post_import_library_entry),
+        )
         .route(
             "/api/strategy/:id",
             delete(strategies::delete)
@@ -732,6 +757,10 @@ fn mutating_router(state: AppState) -> Router {
             "/api/optimize/memory-demos/:id/gate",
             post(flywheel::optimize_memory_demos_gate),
         )
+        // ── Cost budget (bead-8wn) ────────────────────────────────────────
+        // PUT sets the operator-set daily budget cap (mutation). A
+        // non-positive / NaN cap → 400 (autooptimizer_cycle budget validation).
+        .route("/api/cost/budget", put(cost_route::put_budget))
         // ── CLI jobs ──────────────────────────────────────────────────────
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", delete(cli::delete))
@@ -744,6 +773,10 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/settings/brokers/alpaca/test-connection",
             post(settings::brokers::test_alpaca),
+        )
+        .route(
+            "/api/settings/brokers/byreal",
+            post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
         )
         // ── Settings: observability ───────────────────────────────────────
         .route("/api/settings/observability", put(settings::observability::put))

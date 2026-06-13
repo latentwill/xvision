@@ -265,6 +265,10 @@ impl<A: ByrealPerpsApi + 'static> Executor for ByrealPerpsExecutor<A> {
                     stop_loss_pct: 2.0,
                     take_profit_pct: 5.0,
                     opened_at: Utc::now(),
+                    // Perps risk data straight from the venue — feeds the
+                    // LiquidationDistanceGuard risk rule.
+                    leverage: pos.leverage,
+                    liq_price: pos.liq_price,
                 },
             );
         }
@@ -576,24 +580,44 @@ fn byreal_symbol_for_str(asset: &str) -> anyhow::Result<String> {
     Ok(byreal_symbol_for(sym))
 }
 
+/// Parse the optional `BYREAL_LEVERAGE` env var into a positive leverage.
+/// Absent / unparseable / non-positive ⇒ `None` (leave account leverage as-is).
+fn parse_env_leverage() -> Option<f64> {
+    std::env::var("BYREAL_LEVERAGE")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|l| *l > 0.0)
+}
+
 /// `BrokerSurface` over the Byreal perps CLI for live-eval runs.
 pub struct ByrealLiveSurface<A = SubprocessByrealApi> {
     api: A,
+    /// Leverage applied (via `position leverage <coin> <lev>`) before each
+    /// entry. Sourced from `BYREAL_LEVERAGE`. `None` leaves the account's
+    /// existing leverage untouched (the perps CLI's default).
+    leverage: Option<f64>,
 }
 
 impl ByrealLiveSurface<SubprocessByrealApi> {
-    /// Build from environment (`BYREAL_NETWORK`, `BYREAL_ACCOUNT`; the CLI reads
-    /// `BYREAL_PRIVATE_KEY` itself).
+    /// Build from environment (`BYREAL_NETWORK`, `BYREAL_ACCOUNT`,
+    /// `BYREAL_LEVERAGE`; the CLI reads `BYREAL_PRIVATE_KEY` itself).
     pub fn from_env() -> Result<Self, ExecutorError> {
         Ok(Self {
             api: SubprocessByrealApi::from_env()?,
+            leverage: parse_env_leverage(),
         })
     }
 }
 
 impl<A: ByrealPerpsApi> ByrealLiveSurface<A> {
     pub fn new(api: A) -> Self {
-        Self { api }
+        Self { api, leverage: None }
+    }
+
+    /// Set the leverage applied before each entry (`position leverage`).
+    pub fn with_leverage(mut self, leverage: Option<f64>) -> Self {
+        self.leverage = leverage;
+        self
     }
 }
 
@@ -612,6 +636,14 @@ impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A> {
             Side::Buy => ByrealSide::Buy,
             Side::Sell => ByrealSide::Sell,
         };
+        // Apply configured leverage (BYREAL_LEVERAGE) before the entry so the
+        // position opens at the intended leverage. `None` ⇒ leave as-is.
+        if let Some(lev) = self.leverage {
+            self.api
+                .set_leverage(&symbol, lev)
+                .await
+                .map_err(|e| anyhow::anyhow!("byreal set_leverage: {e}"))?;
+        }
         // Native TP/SL brackets: the perps CLI's `order market --tp/--sl` attach
         // reduce-only bracket legs to the entry. Derive trigger prices from the
         // caller's stop/target percentages against the reference price (mirrors
@@ -939,7 +971,9 @@ mod tests {
         // Real CLI: `order market <side> <size> <coin>` — NOT --symbol/--side/--qty/--client-id.
         let a = order_market_args(ByrealSide::Buy, 0.01, "BTC", false, None, None);
         assert_eq!(argv(&a), vec!["order", "market", "buy", "0.01", "BTC"]);
-        assert!(!a.iter().any(|x| x == "--symbol" || x == "--side" || x == "--qty" || x == "--client-id"));
+        assert!(!a
+            .iter()
+            .any(|x| x == "--symbol" || x == "--side" || x == "--qty" || x == "--client-id"));
     }
 
     #[test]
@@ -947,7 +981,18 @@ mod tests {
         let a = order_market_args(ByrealSide::Sell, 2.5, "ETH", true, Some(1800.0), Some(2200.0));
         assert_eq!(
             argv(&a),
-            vec!["order", "market", "sell", "2.5", "ETH", "--reduce-only", "--tp", "1800", "--sl", "2200"]
+            vec![
+                "order",
+                "market",
+                "sell",
+                "2.5",
+                "ETH",
+                "--reduce-only",
+                "--tp",
+                "1800",
+                "--sl",
+                "2200"
+            ]
         );
     }
 
@@ -958,12 +1003,18 @@ mod tests {
 
     #[test]
     fn close_market_uses_position_subcommand() {
-        assert_eq!(argv(&close_market_args("BTC")), vec!["position", "close-market", "BTC"]);
+        assert_eq!(
+            argv(&close_market_args("BTC")),
+            vec!["position", "close-market", "BTC"]
+        );
     }
 
     #[test]
     fn set_leverage_args_shape() {
-        assert_eq!(argv(&set_leverage_args("BTC", 5.0)), vec!["position", "leverage", "BTC", "5"]);
+        assert_eq!(
+            argv(&set_leverage_args("BTC", 5.0)),
+            vec!["position", "leverage", "BTC", "5"]
+        );
     }
 
     #[test]
@@ -982,7 +1033,10 @@ mod tests {
         approx(sl, 105.0);
         // Missing pct or non-positive reference ⇒ no leg.
         assert_eq!(bracket_prices(ByrealSide::Buy, 100.0, None, None), (None, None));
-        assert_eq!(bracket_prices(ByrealSide::Buy, 0.0, Some(10.0), Some(5.0)), (None, None));
+        assert_eq!(
+            bracket_prices(ByrealSide::Buy, 0.0, Some(10.0), Some(5.0)),
+            (None, None)
+        );
     }
 
     #[tokio::test]
@@ -1002,8 +1056,16 @@ mod tests {
         let recorded = orders.lock().unwrap();
         assert_eq!(recorded.len(), 1, "exactly one entry order");
         let o = &recorded[0];
-        assert!((o.tp_price.unwrap() - 62_400.0).abs() < 1e-6, "tp {:?}", o.tp_price);
-        assert!((o.sl_price.unwrap() - 58_800.0).abs() < 1e-6, "sl {:?}", o.sl_price);
+        assert!(
+            (o.tp_price.unwrap() - 62_400.0).abs() < 1e-6,
+            "tp {:?}",
+            o.tp_price
+        );
+        assert!(
+            (o.sl_price.unwrap() - 58_800.0).abs() < 1e-6,
+            "sl {:?}",
+            o.sl_price
+        );
         assert!(!o.reduce_only, "the entry leg is not reduce-only");
     }
 
@@ -1024,5 +1086,44 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert!((recorded[0].tp_price.unwrap() - 62_400.0).abs() < 1e-6);
         assert!((recorded[0].sl_price.unwrap() - 58_800.0).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn live_surface_sets_leverage_before_entry_when_configured() {
+        let api = MockByrealApi {
+            equity_usd: 10_000.0,
+            mark: 60_000.0,
+            ..Default::default()
+        };
+        let lev_calls = api.leverage_calls.clone();
+        let surface = ByrealLiveSurface::new(api).with_leverage(Some(5.0));
+        surface
+            .submit_order(order_req("BTC", Side::Buy, 0.01))
+            .await
+            .unwrap();
+        let calls = lev_calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "leverage should be set once before the entry");
+        assert_eq!(calls[0].0, "BTC");
+        assert_eq!(calls[0].1, 5.0);
+    }
+
+    #[tokio::test]
+    async fn live_surface_leaves_leverage_untouched_when_unset() {
+        let api = MockByrealApi {
+            equity_usd: 10_000.0,
+            mark: 60_000.0,
+            ..Default::default()
+        };
+        let lev_calls = api.leverage_calls.clone();
+        // No `with_leverage` ⇒ leverage stays None ⇒ no set_leverage call.
+        let surface = ByrealLiveSurface::new(api);
+        surface
+            .submit_order(order_req("BTC", Side::Buy, 0.01))
+            .await
+            .unwrap();
+        assert!(
+            lev_calls.lock().unwrap().is_empty(),
+            "no configured leverage ⇒ account leverage left untouched"
+        );
     }
 }

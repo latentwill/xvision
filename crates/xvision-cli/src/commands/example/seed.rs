@@ -265,6 +265,7 @@ async fn seed_strategies(
         // first. Operators who clone this strategy should unset this and add a
         // filter once they understand the cost model.
         acknowledge_no_filter: true,
+        briefing_indicators: Vec::new(),
     };
 
     store
@@ -501,6 +502,7 @@ mod tests {
             activation_mode: ActivationMode::EveryBar,
             filter: None,
             acknowledge_no_filter: false,
+            briefing_indicators: Vec::new(),
         }
     }
 

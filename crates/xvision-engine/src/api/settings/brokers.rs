@@ -94,11 +94,30 @@ pub struct AlpacaCredentials {
     pub base_url: Option<String>,
 }
 
-/// On-disk file containing optional `[alpaca]` section.
+/// Persisted Byreal credentials. Lives in `$XVN_HOME/secrets/brokers.toml`
+/// under the `[byreal]` table. The `private_key` MUST be a Hyperliquid
+/// trading-only **agent/API wallet** key (cannot withdraw) — never the master
+/// account key — to honor the non-custodial promise. Never returned through the
+/// read API; only a `last4` suffix surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ByrealCredentials {
+    /// Hyperliquid agent (trading-only) private key. Trade scope, no withdraw.
+    pub private_key: String,
+    /// `mainnet` / `testnet`. `None` ⇒ the CLI default (mainnet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// Optional account id forwarded to the CLI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+}
+
+/// On-disk file containing optional `[alpaca]` / `[byreal]` sections.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BrokersSecretsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     alpaca: Option<AlpacaCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    byreal: Option<ByrealCredentials>,
 }
 
 /// Request body for `set_alpaca`. Mirrors `AlpacaCredentials` but is
@@ -117,6 +136,25 @@ pub struct AlpacaStored {
     pub stored: bool,
     pub stored_key_id_suffix: Option<String>,
     pub base_url: Option<String>,
+}
+
+/// Request body for `set_byreal`. The `private_key` must be a Hyperliquid
+/// trading-only agent key (cannot withdraw).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SetByrealReq {
+    pub private_key: String,
+    #[serde(default)]
+    pub network: Option<String>,
+    #[serde(default)]
+    pub account: Option<String>,
+}
+
+/// Successful set/clear response for byreal — redacted summary only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ByrealStored {
+    pub stored: bool,
+    pub stored_key_id_suffix: Option<String>,
+    pub network: Option<String>,
 }
 
 /// Result of a `POST /brokers/alpaca/test-connection` call. Reports
@@ -170,7 +208,7 @@ async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
     Ok(BrokersReport {
         alpaca: alpaca_entry(stored.alpaca.as_ref()),
         orderly: orderly_entry(),
-        byreal: byreal_entry(),
+        byreal: byreal_entry(stored.byreal.as_ref()),
     })
 }
 
@@ -213,30 +251,41 @@ fn orderly_entry() -> BrokerEntry {
     }
 }
 
-fn byreal_entry() -> BrokerEntry {
+fn byreal_entry(stored: Option<&ByrealCredentials>) -> BrokerEntry {
     // Surface all three BYREAL_* vars for debuggability. The signing key
     // (`BYREAL_PRIVATE_KEY`) is the credential that actually gates a
     // connection; `BYREAL_NETWORK` defaults to mainnet and `BYREAL_ACCOUNT`
     // is forwarded to the CLI only when set, so neither is required.
+    // Stored creds (Settings → Brokers) win at runtime over env.
     let credentials = vec![
         cred("BYREAL_PRIVATE_KEY"),
         cred("BYREAL_NETWORK"),
         cred("BYREAL_ACCOUNT"),
     ];
-    let configured = credentials
+    let env_configured = credentials
         .iter()
         .find(|c| c.env_var == "BYREAL_PRIVATE_KEY")
         .map(|c| c.is_set)
         .unwrap_or(false);
+    let stored_present = stored.is_some();
+    let stored_key_id_suffix = stored.map(|c| last4(&c.private_key));
+    let base_url = stored
+        .and_then(|c| c.network.clone())
+        .or_else(|| env::var("BYREAL_NETWORK").ok().filter(|s| !s.is_empty()));
     BrokerEntry {
         name: "Byreal".into(),
         kind: "byreal".into(),
         credentials,
-        configured,
-        stored: false,
-        stored_key_id_suffix: None,
-        base_url: env::var("BYREAL_NETWORK").ok().filter(|s| !s.is_empty()),
-        note: Some("live only — disabled in v1 paper mode".into()),
+        configured: env_configured || stored_present,
+        stored: stored_present,
+        stored_key_id_suffix,
+        base_url,
+        note: Some(
+            "Live execution venue (Hyperliquid perps) — not available for paper/backtest. \
+             Testnet supported for live-eval (set network=testnet). Use a trading-only \
+             agent key (cannot withdraw)."
+                .into(),
+        ),
     }
 }
 
@@ -532,6 +581,142 @@ async fn clear_alpaca_inner(xvn_home: &Path) -> ApiResult<AlpacaStored> {
     })
 }
 
+// ── Byreal credential store (mirror of the Alpaca store) ────────────────────
+
+/// Read the persisted Byreal credentials, if any.
+pub async fn load_byreal_credentials(xvn_home: &Path) -> ApiResult<Option<ByrealCredentials>> {
+    let file = load_brokers_secrets(xvn_home).await?;
+    Ok(file.byreal)
+}
+
+/// Fully-resolved Byreal credentials plus where they came from (for logging).
+#[derive(Debug, Clone)]
+pub struct ResolvedByrealCredentials {
+    pub private_key: String,
+    pub network: Option<String>,
+    pub account: Option<String>,
+    /// `"store"` when resolved from `brokers.toml`, `"env"` from `BYREAL_*`.
+    pub source: &'static str,
+}
+
+/// Resolve Byreal credentials: stored (Settings → Brokers) win over env,
+/// matching the Alpaca convention. `None` when neither is configured.
+pub async fn resolve_byreal_credentials(xvn_home: &Path) -> ApiResult<Option<ResolvedByrealCredentials>> {
+    // 1. Stored creds win.
+    if let Some(c) = load_byreal_credentials(xvn_home).await? {
+        if !c.private_key.trim().is_empty() {
+            return Ok(Some(ResolvedByrealCredentials {
+                private_key: c.private_key,
+                network: c.network.filter(|s| !s.trim().is_empty()),
+                account: c.account.filter(|s| !s.trim().is_empty()),
+                source: "store",
+            }));
+        }
+    }
+    // 2. Env fallback.
+    if let Some(private_key) = env::var("BYREAL_PRIVATE_KEY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Ok(Some(ResolvedByrealCredentials {
+            private_key,
+            network: env::var("BYREAL_NETWORK").ok().filter(|s| !s.trim().is_empty()),
+            account: env::var("BYREAL_ACCOUNT").ok().filter(|s| !s.trim().is_empty()),
+            source: "env",
+        }));
+    }
+    Ok(None)
+}
+
+/// Persist Byreal credentials, overwriting any existing entry. The key MUST be
+/// a Hyperliquid trading-only agent key (cannot withdraw).
+pub async fn set_byreal(ctx: &ApiContext, req: SetByrealReq) -> ApiResult<ByrealStored> {
+    let started = Instant::now();
+    let result = set_byreal_inner(&ctx.xvn_home, req.clone()).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    // Audit-log WITHOUT the key — only the redacted suffix + network land.
+    let args_json = serde_json::json!({
+        "private_key_suffix": last4(&req.private_key),
+        "network": req.network,
+    })
+    .to_string();
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.set_byreal",
+        Some("byreal"),
+        Some(&args_json),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn set_byreal_inner(xvn_home: &Path, req: SetByrealReq) -> ApiResult<ByrealStored> {
+    if req.private_key.trim().is_empty() {
+        return Err(ApiError::Validation("private_key is empty".into()));
+    }
+    let network = req
+        .network
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let account = req
+        .account
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    let creds = ByrealCredentials {
+        private_key: req.private_key.trim().to_string(),
+        network: network.clone(),
+        account,
+    };
+    file.byreal = Some(creds.clone());
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(ByrealStored {
+        stored: true,
+        stored_key_id_suffix: Some(last4(&creds.private_key)),
+        network,
+    })
+}
+
+/// Remove the stored Byreal credentials. No-op if none were stored.
+pub async fn clear_byreal(ctx: &ApiContext) -> ApiResult<ByrealStored> {
+    let started = Instant::now();
+    let result = clear_byreal_inner(&ctx.xvn_home).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.clear_byreal",
+        Some("byreal"),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn clear_byreal_inner(xvn_home: &Path) -> ApiResult<ByrealStored> {
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    file.byreal = None;
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(ByrealStored {
+        stored: false,
+        stored_key_id_suffix: None,
+        network: None,
+    })
+}
+
 /// Connectivity probe — calls Alpaca `/v2/account` with the stored (or
 /// env-var fallback) credentials and reports whether it responded. The
 /// outer function always returns `Ok(report)`; network/auth failures
@@ -712,6 +897,81 @@ mod tests {
         let (ctx, _dir) = fresh_ctx().await;
         let cleared = clear_alpaca(&ctx).await.unwrap();
         assert!(!cleared.stored);
+    }
+
+    // ── Byreal credential store ─────────────────────────────────────────────
+
+    fn byreal_req(key: &str, network: Option<&str>) -> SetByrealReq {
+        SetByrealReq {
+            private_key: key.into(),
+            network: network.map(String::from),
+            account: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn set_and_load_byreal_round_trips() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let out = set_byreal(
+            &ctx,
+            byreal_req("0xAGENTKEY00000000000000000000beef", Some("testnet")),
+        )
+        .await
+        .unwrap();
+        assert!(out.stored);
+        assert_eq!(out.stored_key_id_suffix.as_deref(), Some("beef"));
+        assert_eq!(out.network.as_deref(), Some("testnet"));
+
+        let creds = load_byreal_credentials(&ctx.xvn_home)
+            .await
+            .unwrap()
+            .expect("credentials must load");
+        assert_eq!(creds.private_key, "0xAGENTKEY00000000000000000000beef");
+        assert_eq!(creds.network.as_deref(), Some("testnet"));
+    }
+
+    #[tokio::test]
+    async fn set_byreal_rejects_empty_key() {
+        let (ctx, _dir) = fresh_ctx().await;
+        let bad = set_byreal(&ctx, byreal_req("", Some("testnet"))).await;
+        assert!(matches!(bad, Err(ApiError::Validation(_))));
+    }
+
+    #[tokio::test]
+    async fn resolve_byreal_prefers_stored() {
+        // Stored creds win over env regardless of ambient BYREAL_* vars.
+        let (ctx, _dir) = fresh_ctx().await;
+        set_byreal(&ctx, byreal_req("0xSTOREDKEYbeef", Some("testnet")))
+            .await
+            .unwrap();
+        let resolved = resolve_byreal_credentials(&ctx.xvn_home)
+            .await
+            .unwrap()
+            .expect("resolves from store");
+        assert_eq!(resolved.source, "store");
+        assert_eq!(resolved.private_key, "0xSTOREDKEYbeef");
+        assert_eq!(resolved.network.as_deref(), Some("testnet"));
+    }
+
+    #[tokio::test]
+    async fn clear_byreal_removes_stored_creds() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_byreal(&ctx, byreal_req("0xANYKEY0000", None)).await.unwrap();
+        let cleared = clear_byreal(&ctx).await.unwrap();
+        assert!(!cleared.stored);
+        assert!(load_byreal_credentials(&ctx.xvn_home).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn get_reports_stored_byreal() {
+        let (ctx, _dir) = fresh_ctx().await;
+        set_byreal(&ctx, byreal_req("0xKEYWITHSUFFIXcafe", Some("testnet")))
+            .await
+            .unwrap();
+        let report = get(&ctx).await.unwrap();
+        assert!(report.byreal.stored, "stored creds ⇒ stored=true");
+        assert!(report.byreal.configured, "stored creds ⇒ configured=true");
+        assert_eq!(report.byreal.stored_key_id_suffix.as_deref(), Some("cafe"));
     }
 
     #[tokio::test]

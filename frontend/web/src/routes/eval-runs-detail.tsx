@@ -153,19 +153,20 @@ export function EvalRunDetailRoute() {
     const status = q.data?.summary.status;
     useTraceDock
       .getState()
-      .setActiveRun(traceRun, status && isInflightRunStatus(status) ? "live" : "post-hoc");
+      .setActiveRun("eval", traceRun, status && isInflightRunStatus(status) ? "live" : "post-hoc");
   }, [traceRun, q.data?.summary.status]);
 
-  // Drop the active run from the trace-dock store on unmount so the floating
-  // capsule doesn't bleed onto other routes after navigation.
+  // Drop the eval scope's active run on unmount so the floating capsule
+  // doesn't bleed onto other routes after navigation. Unconditional
+  // (WS-2): this route is the sole owner of the eval scope, so it always
+  // nulls eval on the way out — no guard on the current run id, which
+  // previously left the capsule stuck when a fast nav swapped runs.
+  // Only the eval scope is touched; the live scope is independent.
   useEffect(() => {
     return () => {
-      const dock = useTraceDock.getState();
-      if (dock.activeRunId === traceRun) {
-        dock.setActiveRun(null, "post-hoc");
-      }
+      useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     };
-  }, [traceRun]);
+  }, []);
 
   // Push the eval-side cost into the trace-dock so the floating capsule
   // renders the same number as the meta strip / SummaryCard. Without this
@@ -179,7 +180,7 @@ export function EvalRunDetailRoute() {
       q.data.summary,
       linkedAgentRun.data?.summary.total_cost_usd ?? null,
     );
-    useTraceDock.getState().setCostOverrideUsd(cost);
+    useTraceDock.getState().setCostOverrideUsd("eval", cost);
   }, [q.data, linkedAgentRun.data?.summary.total_cost_usd]);
 
   if (q.isPending) {

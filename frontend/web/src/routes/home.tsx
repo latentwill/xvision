@@ -42,9 +42,11 @@ import {
 import { PulseBand } from "@/components/home/PulseBand";
 import { AttentionBand } from "@/components/home/AttentionBand";
 import { OptimizerPanel } from "@/components/home/OptimizerPanel";
+import { CostRollupStrip } from "@/components/home/CostRollupStrip";
 import { StrategyLeaderboard } from "@/components/home/StrategyLeaderboard";
 import type { AttentionItem } from "@/components/home/NagStrip";
 import { chartKeys, getRunChart } from "@/api/chart";
+import { costKeys, getCostBudget, getCostRollup } from "@/api/cost";
 import { evalKeys, listRuns } from "@/api/eval";
 import { deploymentKeys, listDeployments } from "@/api/live-deployments";
 import { strategyKeys, listStrategies } from "@/api/strategies";
@@ -215,6 +217,39 @@ export function HomeRoute() {
     lastVisitIso,
   });
 
+  // 8wn: cost rollup strip — spend SINCE LAST VISIT and THIS WEEK vs the
+  // operator cap. Two read-only windowed rollups + the persisted cap. Both
+  // windows scope on a stable boundary frozen per page-load so they don't
+  // refetch on every render:
+  //   - since-last-visit uses the SAME LAST_VISIT_LS boundary as the home
+  //     delta subtitle (the two surfaces must agree). On a first visit there
+  //     is no boundary → skip the query and show an honest "first visit".
+  //   - this-week = now - 7d, frozen once via useState so the cache key is
+  //     stable across re-renders.
+  const firstVisit = delta.firstVisit;
+  const [weekSince] = useState(
+    () => new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+  );
+  const costSinceVisit = useQuery({
+    queryKey: costKeys.rollup(lastVisitIso ?? ""),
+    queryFn: () => getCostRollup({ since: lastVisitIso ?? undefined }),
+    enabled: !firstVisit && lastVisitIso != null,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const costThisWeek = useQuery({
+    queryKey: costKeys.rollup(weekSince),
+    queryFn: () => getCostRollup({ since: weekSince }),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const costBudget = useQuery({
+    queryKey: costKeys.budget(),
+    queryFn: getCostBudget,
+    staleTime: 60_000,
+    retry: false,
+  });
+
   const attentionItems = buildAttention({
     runs: runs.data ?? [],
     providers: providers.data?.providers,
@@ -292,6 +327,18 @@ export function HomeRoute() {
 
         <div className="xvn-card-in" style={{ animationDelay: "140ms" }}>
           <OptimizerPanel />
+        </div>
+
+        {/* 8wn: slim cost rollup strip — optimizer-adjacent (spend is dominated
+            by optimizer cycles + eval runs). Full-width inline strip, no side
+            column / popup. Honest empty state when spend is null / cap unset. */}
+        <div className="xvn-card-in" style={{ animationDelay: "175ms" }}>
+          <CostRollupStrip
+            sinceLastVisit={costSinceVisit.data ?? null}
+            thisWeek={costThisWeek.data ?? null}
+            dailyCapUsd={costBudget.data?.daily_cap_usd ?? null}
+            firstVisit={firstVisit}
+          />
         </div>
 
         <div className="xvn-card-in" style={{ animationDelay: "210ms" }}>

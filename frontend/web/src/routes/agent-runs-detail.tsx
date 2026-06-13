@@ -77,11 +77,22 @@ export function AgentRunDetailRoute() {
   useEffect(() => {
     if (q.data) {
       useTraceDock.getState().setActiveRun(
+        "eval",
         q.data.summary.run_id,
         q.data.summary.status === "running" ? "live" : "post-hoc",
       );
     }
   }, [q.data?.summary.run_id, q.data?.summary.status]);
+
+  // Unconditional unmount cleanup (WS-2): the standalone agent-run route
+  // is an eval-scope surface, so it nulls eval on the way out and keeps
+  // the capsule from bleeding onto the next page. The live scope is left
+  // untouched.
+  useEffect(() => {
+    return () => {
+      useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
+    };
+  }, []);
 
   if (q.isPending) {
     return (

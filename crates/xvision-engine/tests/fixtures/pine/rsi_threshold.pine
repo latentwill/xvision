@@ -1,0 +1,19 @@
+// original test fixture (xvision) — RSI threshold strategy with entry/exit on oversold/overbought levels
+//@version=5
+strategy("RSI Threshold Strategy", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+rsi_length = input.int(14, title="RSI Length", minval=2, maxval=100)
+oversold = input.int(30, title="Oversold Level", minval=1, maxval=49)
+overbought = input.int(70, title="Overbought Level", minval=51, maxval=99)
+
+rsi_val = ta.rsi(close, rsi_length)
+
+long_signal = rsi_val < oversold
+short_signal = rsi_val > overbought
+
+if long_signal
+    strategy.entry("Long", strategy.long)
+
+if short_signal
+    strategy.close("Long")
+    strategy.entry("Short", strategy.short)

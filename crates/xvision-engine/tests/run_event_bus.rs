@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use tokio::time::{timeout, Duration};
 
-use xvision_engine::api::chart::{ChartEquityPoint, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus};
+use xvision_engine::api::chart::{
+    ChartEquityPoint, DeploymentMetricsTick, HoldMarker, MarkerEvent, RunChartEvent, RunEventBus,
+};
 
 #[tokio::test]
 async fn bus_delivers_equity_and_marker_events_to_subscriber() {
@@ -75,6 +77,86 @@ async fn bus_delivers_equity_and_marker_events_to_subscriber() {
         }
         other => panic!("expected Marker(Hold) event, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn bus_delivers_deployment_metrics_capital_block() {
+    // CT5 §4: the per-tick capital block rides the SAME RunEventBus the
+    // dashboard deployment SSE subscribes to.
+    let bus = Arc::new(RunEventBus::new());
+    let run_id = "deploy-001";
+    let mut rx = bus.subscribe(run_id).await;
+
+    bus.emit(
+        run_id,
+        RunChartEvent::DeploymentMetrics(DeploymentMetricsTick {
+            time: 1_700_000_000,
+            equity_usd: 10_500.0,
+            drawdown_pct: Some(2.5),
+            deployed_capital_usd: Some(3_000.0),
+            unrealized_pnl_usd: Some(120.0),
+            realized_pnl_usd: Some(380.0),
+            daily_loss_limit_remaining_usd: Some(450.0),
+            n_trades: 4,
+        }),
+    )
+    .await;
+
+    let ev = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("timed out")
+        .expect("closed");
+    match ev {
+        RunChartEvent::DeploymentMetrics(t) => {
+            assert_eq!(t.time, 1_700_000_000);
+            assert!((t.equity_usd - 10_500.0).abs() < 1e-9);
+            assert_eq!(t.deployed_capital_usd, Some(3_000.0));
+            assert_eq!(t.realized_pnl_usd, Some(380.0));
+            assert_eq!(t.daily_loss_limit_remaining_usd, Some(450.0));
+            assert_eq!(t.n_trades, 4);
+        }
+        other => panic!("expected DeploymentMetrics, got {other:?}"),
+    }
+}
+
+#[test]
+fn deployment_metrics_omits_null_capital_fields_no_faked_zero() {
+    // HONESTY MANDATE (§8.1): a field with no real data is OMITTED from the
+    // wire, NEVER coerced to `0`. The pre-first-fill tick has only equity +
+    // drawdown; the capital fields are `None` and must NOT appear in the JSON.
+    let tick = DeploymentMetricsTick {
+        time: 1_700_000_000,
+        equity_usd: 10_000.0,
+        drawdown_pct: Some(0.0),
+        deployed_capital_usd: None,
+        unrealized_pnl_usd: None,
+        realized_pnl_usd: None,
+        daily_loss_limit_remaining_usd: None,
+        n_trades: 0,
+    };
+    let json = serde_json::to_value(&tick).unwrap();
+    let obj = json.as_object().unwrap();
+    // Present fields.
+    assert!(obj.contains_key("equity_usd"));
+    assert!(obj.contains_key("n_trades"));
+    assert!(obj.contains_key("drawdown_pct"));
+    // Null capital fields are OMITTED — never serialized as 0.
+    assert!(
+        !obj.contains_key("deployed_capital_usd"),
+        "null field must be omitted, got {json}"
+    );
+    assert!(
+        !obj.contains_key("realized_pnl_usd"),
+        "null field must be omitted, got {json}"
+    );
+    assert!(
+        !obj.contains_key("unrealized_pnl_usd"),
+        "null field must be omitted, got {json}"
+    );
+    assert!(
+        !obj.contains_key("daily_loss_limit_remaining_usd"),
+        "null field must be omitted, got {json}"
+    );
 }
 
 #[tokio::test]

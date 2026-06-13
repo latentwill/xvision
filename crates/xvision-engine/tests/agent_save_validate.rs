@@ -69,6 +69,12 @@ async fn fresh_agent_store() -> (AgentStore, TempDir) {
         .execute(&pool)
         .await
         .unwrap();
+    // allowed_tools_json column on agent_slots (migration 056).
+    // AgentStore::insert_slot binds this on every save.
+    sqlx::query(include_str!("../migrations/056_agent_slot_allowed_tools.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
     let dir = TempDir::new().unwrap();
     (AgentStore::new(pool), dir)
 }

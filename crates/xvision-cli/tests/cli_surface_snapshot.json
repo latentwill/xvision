@@ -3110,6 +3110,17 @@
       "path": [
         "help",
         "strategy",
+        "import-pine"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "strategy",
         "leaderboard"
       ]
     },
@@ -6198,6 +6209,17 @@
       "path": [
         "strategy",
         "help",
+        "import-pine"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "help",
         "leaderboard"
       ]
     },
@@ -6331,6 +6353,19 @@
         "strategy",
         "help",
         "validate"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--help",
+        "--name"
+      ],
+      "mutates": false,
+      "path": [
+        "strategy",
+        "import-pine"
       ]
     },
     {

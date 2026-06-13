@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import type { ReactElement } from "react";
 import { SpanInspector, promptPlaceholderReason } from "./SpanInspector";
 import { useTraceDock } from "@/stores/trace-dock";
@@ -25,13 +26,21 @@ function render(
 ) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   if (options.activeRunId) {
-    useTraceDock.getState().setActiveRun(options.activeRunId, "post-hoc");
+    // SpanInspector now derives its scope from the route; the default
+    // MemoryRouter path "/" maps to the eval scope, so seed eval.
+    useTraceDock.getState().setActiveRun("eval", options.activeRunId, "post-hoc");
     if (options.retentionMode) {
       const detail = mockRunDetail(options.activeRunId, options.retentionMode);
       qc.setQueryData(agentRunKeys.run(options.activeRunId), detail);
     }
   }
-  return rtlRender(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  // SpanInspector reads `useCurrentTraceScope()` (→ `useLocation`), so a
+  // Router is mandatory. Default path "/" → eval scope.
+  return rtlRender(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 function mockRunDetail(runId: string, retention: RetentionMode): AgentRunDetail {
@@ -60,7 +69,7 @@ function mockRunDetail(runId: string, retention: RetentionMode): AgentRunDetail 
 afterEach(() => {
   // Reset streaming slice + dock shell between tests so one test's
   // active-span set doesn't leak into the next.
-  useTraceDock.getState().setActiveRun(null, "post-hoc");
+  useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
   vi.restoreAllMocks();
 });
 
@@ -559,7 +568,7 @@ describe("SpanInspector (with pull-quotes)", () => {
 
   test("expanding a payload-ref details block fetches the blob and shows the body", async () => {
     // Seed the dock so the inspector knows which run to query.
-    useTraceDock.getState().setActiveRun("run_blob_ui", "post-hoc");
+    useTraceDock.getState().setActiveRun("eval", "run_blob_ui", "post-hoc");
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("PROMPT BODY TEXT", {
@@ -617,7 +626,7 @@ describe("SpanInspector (with pull-quotes)", () => {
   });
 
   test("expanding a payload-ref details block surfaces 403 inline", async () => {
-    useTraceDock.getState().setActiveRun("run_blob_403", "post-hoc");
+    useTraceDock.getState().setActiveRun("eval", "run_blob_403", "post-hoc");
 
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(

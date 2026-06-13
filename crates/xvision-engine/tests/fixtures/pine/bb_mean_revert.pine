@@ -1,0 +1,16 @@
+// original test fixture (xvision) — Bollinger Band mean-reversion: enter when price pierces band, exit at midline
+//@version=5
+indicator("BB Mean Reversion", overlay=true)
+
+bb_length = input.int(20, title="BB Length", minval=5, maxval=200)
+bb_mult = input.float(2.0, title="BB Multiplier", minval=0.5, maxval=5.0, step=0.25)
+use_ema = input.bool(false, title="Use EMA basis")
+
+basis = use_ema ? ta.sma(close, bb_length) : ta.sma(close, bb_length)
+dev = bb_mult * ta.sma(close, bb_length)
+upper = basis + dev
+lower = basis - dev
+
+price_above_upper = close > upper
+price_below_lower = close < lower
+price_at_basis = close > basis * 0.995 and close < basis * 1.005

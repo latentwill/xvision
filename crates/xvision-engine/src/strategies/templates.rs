@@ -258,6 +258,7 @@ mod tests {
             acknowledge_no_filter: false,
             decision_mode: DecisionMode::default(),
             mechanistic_config: None,
+            briefing_indicators: Vec::new(),
         };
 
         let mut s = make_example();

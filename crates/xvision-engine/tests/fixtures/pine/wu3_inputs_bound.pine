@@ -1,0 +1,18 @@
+// original test fixture (xvision) — WU3 input provenance binding: one int input bound to RSI
+// filter numeric condition, one float input bound to stop-loss %, one bool input (discrete).
+//@version=5
+strategy("WU3 Bound Inputs", overlay=false)
+
+rsi_len = input.int(14, title="RSI Length", minval=2, maxval=50)
+stop_pct = input.float(2.0, title="Stop Loss %", minval=0.5, maxval=10.0, step=0.1)
+use_filter = input.bool(true, title="Use RSI Filter")
+
+rsi_val = ta.rsi(close, 14)
+
+if rsi_val > 30
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", loss=stop_pct)
+
+if rsi_val < 70
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", loss=stop_pct)

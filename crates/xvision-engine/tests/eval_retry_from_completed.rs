@@ -238,6 +238,7 @@ sqlite_url = "sqlite://x.db"
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
+        briefing_indicators: Vec::new(),
     };
 
     FilesystemStore::new(ctx.xvn_home.join("strategies"))

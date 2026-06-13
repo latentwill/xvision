@@ -1247,6 +1247,21 @@ fn compute_max_drawdown_pct(equity: &[ChartEquityPoint]) -> f64 {
 
 use tokio::sync::broadcast;
 
+/// Snapshot of a live run's capital-risk state, emitted per bar over SSE.
+/// Fields are nullable because the live loop only populates them once the
+/// first decision fires; subscribers connected before any decision has run
+/// receive the zero-state row with all `Option` fields as `None`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveRunStatePayload {
+    pub equity_usd: Option<f64>,
+    pub unrealized_pnl_usd: Option<f64>,
+    pub realized_today_usd: Option<f64>,
+    pub daily_loss_remaining_usd: Option<f64>,
+    pub drawdown_pct: Option<f64>,
+    pub risk_veto_count: i64,
+    pub last_decision_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub enum RunChartEvent {
@@ -1255,7 +1270,63 @@ pub enum RunChartEvent {
     Decision(LiveDecisionRow),
     Marker(MarkerEvent),
     Equity(ChartEquityPoint),
-    Status { phase: String, message: Option<String> },
+    /// CT5 (Epic s78 Wave 3, §4): the per-tick capital block for a live
+    /// deployment, emitted on the SAME `RunEventBus` the dashboard SSE already
+    /// subscribes to (next to `Equity`). The deployment SSE maps this to
+    /// `event: metrics` so consumers (`n0k` / `awm` / `8s4`) stream the honest
+    /// capital/P&L/drawdown fields per-tick instead of waiting on the 5s poll.
+    /// Only the LIVE loop emits this — backtests never do.
+    DeploymentMetrics(DeploymentMetricsTick),
+    Status {
+        phase: String,
+        message: Option<String>,
+    },
+    LiveRunState(LiveRunStatePayload),
+}
+
+/// CT5 per-tick capital block (Epic s78 Wave 3, §4). Carried on
+/// [`RunChartEvent::DeploymentMetrics`] over the `RunEventBus` and surfaced as
+/// the deployment SSE `event: metrics` frame.
+///
+/// HONESTY MANDATE (§8.1 / §8.9): every capital/P&L field is `Option` — an
+/// unsourceable value serializes as `null` (rendered "—" / "no data" in the UI),
+/// **NEVER** a fabricated `0`. These are the SAME honest book/execution-sourced
+/// numbers the 5s poll surfaces — no value is ever sourced from `agent_runs` or
+/// eval summaries. `null`-skipping is intentional: a field with no real data is
+/// OMITTED from the frame, not coerced to zero.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DeploymentMetricsTick {
+    /// Bar/decision timestamp (unix seconds) this tick is keyed at. Shared time
+    /// axis with the `Equity` ticks.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
+    pub time: i64,
+    /// Pooled NAV at this tick (`book.equity(marks)`). Always present on a live
+    /// tick — the equity sample is what triggers the emission.
+    pub equity_usd: f64,
+    /// `(peak_equity - equity) / peak_equity * 100` from the in-memory per-session
+    /// peak. `None` when no positive peak exists yet (NOT a faked `0`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drawdown_pct: Option<f64>,
+    /// Σ open-position notional (`PortfolioBook::open_legs()`). `None` pre-first-fill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployed_capital_usd: Option<f64>,
+    /// `book.equity(marks) - initial - book.realized()`. `None` when unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unrealized_pnl_usd: Option<f64>,
+    /// `book.realized()`. `None` when there is no fill history yet (NOT `0`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realized_pnl_usd: Option<f64>,
+    /// Headroom before the enforced daily-loss kill (§6.2). `None` when no kill
+    /// policy / no day baseline yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_loss_limit_remaining_usd: Option<f64>,
+    /// Cumulative filled-trade count for the run.
+    pub n_trades: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

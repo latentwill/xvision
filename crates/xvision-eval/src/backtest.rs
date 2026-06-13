@@ -482,6 +482,8 @@ impl Executor for BacktestExecutor {
                 stop_loss_pct: td.stop_loss_pct,
                 take_profit_pct: td.take_profit_pct,
                 opened_at: now,
+                leverage: None,
+                liq_price: None,
             });
 
         if open_pos.direction == direction {
@@ -511,6 +513,8 @@ impl Executor for BacktestExecutor {
                 stop_loss_pct: td.stop_loss_pct,
                 take_profit_pct: td.take_profit_pct,
                 opened_at: now,
+                leverage: None,
+                liq_price: None,
             };
         }
         open_pos.mark_price = fill_px;

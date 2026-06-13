@@ -187,6 +187,14 @@ Volume-aware:
 - `volume_zscore_<period>` - current volume normalized by trailing rolling volume mean/stddev
 - `obv` - cumulative On-Balance Volume
 
+Pine Script catalog parity (WU5 — native, no external crate):
+
+- `hma_<period>` - 2 to 500, Hull Moving Average (`WMA(2*WMA(n/2) - WMA(n), sqrt(n))`); lower lag than SMA/EMA
+- `vwma_<period>` - 2 to 500, Volume-Weighted Moving Average (`sum(close*volume, n) / sum(volume, n)`)
+- `supertrend_<atr_period>_<mult×10>` - ATR-based trailing stop/trend indicator; the token encodes ATR period and multiplier scaled by 10. Example: `supertrend_10_30` = ATR period 10, multiplier 3.0. Valid ranges: atr_period 2–200, mult×10 1–200. Emits the active band level; compare with `close` to determine trend direction.
+- `pivot_high_<left>_<right>` - highest high over a lookback window of `left + right + 1` bars centred on the candidate bar. Emits the last confirmed pivot-high level. Valid: left 1–100, right 1–100.
+- `pivot_low_<left>_<right>` - lowest low over the same window. Emits the last confirmed pivot-low level.
+
 Session and reference levels:
 
 - `prev_day_open`

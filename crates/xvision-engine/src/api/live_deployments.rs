@@ -137,6 +137,14 @@ pub struct LiveDeploymentSummary {
     /// kill policy or no day baseline yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_loss_limit_remaining_usd: Option<f64>,
+    /// Daily-loss budget denominator for buffer percentage. `None` when no
+    /// daily-loss kill policy exists or the budget is not yet sourced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock stop deadline (RFC3339). `None` when the stop policy is not
+    /// time-bounded or the deadline is not yet sourced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_at: Option<String>,
     /// Count of risk vetoes since the operator's last visit. `None` until
     /// last-visit tracking lands (Wave 5) — render `None`, not `0`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -178,6 +186,10 @@ pub struct ExecutionTruth {
     /// Headroom before the daily-loss kill. `None` ⇒ no kill policy / day
     /// baseline.
     pub daily_loss_limit_remaining_usd: Option<f64>,
+    /// Daily-loss budget denominator for the strip's buffer percentage.
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock deadline for time-bounded stop policies.
+    pub stop_at: Option<String>,
     /// Live reachability probe. `false` ⇒ capital fields are forced `null`.
     pub venue_connected: bool,
     /// Why the venue is unavailable / no snapshot (connection-as-data).
@@ -261,16 +273,15 @@ pub fn project_deployment(run: Run, truth: ExecutionTruth) -> LiveDeploymentSumm
     // is not trustworthy, so the deployed/drawdown/daily-loss fields go `null`.
     // Realized PnL is book-derived (persisted decisions) and is NOT gated on
     // venue reachability — it is the run's own recorded history.
-    let (deployed_capital_usd, drawdown_pct, daily_loss_limit_remaining_usd) =
-        if truth.venue_connected {
-            (
-                truth.deployed_capital_usd,
-                truth.drawdown_pct,
-                truth.daily_loss_limit_remaining_usd,
-            )
-        } else {
-            (None, None, None)
-        };
+    let (deployed_capital_usd, drawdown_pct, daily_loss_limit_remaining_usd) = if truth.venue_connected {
+        (
+            truth.deployed_capital_usd,
+            truth.drawdown_pct,
+            truth.daily_loss_limit_remaining_usd,
+        )
+    } else {
+        (None, None, None)
+    };
 
     LiveDeploymentSummary {
         deployment_id: run.id,
@@ -287,6 +298,8 @@ pub fn project_deployment(run: Run, truth: ExecutionTruth) -> LiveDeploymentSumm
         unrealized_pnl_usd: run.unrealized_pnl_usd,
         drawdown_pct,
         daily_loss_limit_remaining_usd,
+        daily_loss_budget_usd: truth.daily_loss_budget_usd,
+        stop_at: truth.stop_at,
         // bead s78.2: a REAL count of recorded risk-veto supervisor notes since
         // the last-visit boundary. `None` when no `?since` was supplied (can't
         // count "since an unknown time"); `Some(0)` is an honest real zero when
@@ -363,6 +376,8 @@ pub async fn list_live_deployments(
             deployed_capital_usd: None,
             drawdown_pct: None,
             daily_loss_limit_remaining_usd: None,
+            daily_loss_budget_usd: None,
+            stop_at: None,
             venue_connected: false,
             unavailable_reason: Some("no live snapshot (poll path)".to_string()),
             global_safety_paused,
@@ -410,6 +425,8 @@ pub async fn get_live_deployment(
         deployed_capital_usd: None,
         drawdown_pct: None,
         daily_loss_limit_remaining_usd: None,
+        daily_loss_budget_usd: None,
+        stop_at: None,
         venue_connected: false,
         unavailable_reason: Some("no live snapshot (poll path)".to_string()),
         global_safety_paused,
@@ -459,7 +476,11 @@ mod tests {
         let mut run = Run::new_queued("agent-bundle-hash".into(), "scn".into(), RunMode::Live);
         run.id = id.into();
         run.status = RunStatus::Running;
-        run.live_config = Some(live_config("My Deployment", "alpaca_paper_default", VenueLabel::Paper));
+        run.live_config = Some(live_config(
+            "My Deployment",
+            "alpaca_paper_default",
+            VenueLabel::Paper,
+        ));
         run
     }
 
@@ -523,22 +544,34 @@ mod tests {
     fn mode_comes_from_venue_label_not_inferred() {
         let mut run = live_run("dep5");
         run.live_config = Some(live_config("D", "alpaca", VenueLabel::Paper));
-        assert_eq!(project_deployment(run, ExecutionTruth::default()).mode, DeploymentMode::Paper);
+        assert_eq!(
+            project_deployment(run, ExecutionTruth::default()).mode,
+            DeploymentMode::Paper
+        );
 
         let mut run2 = live_run("dep5b");
         run2.live_config = Some(live_config("D", "orderly", VenueLabel::Live));
-        assert_eq!(project_deployment(run2, ExecutionTruth::default()).mode, DeploymentMode::Live);
+        assert_eq!(
+            project_deployment(run2, ExecutionTruth::default()).mode,
+            DeploymentMode::Live
+        );
     }
 
     #[test]
     fn venue_resolves_from_broker_creds_ref() {
         let mut run = live_run("dep6");
         run.live_config = Some(live_config("D", "orderly", VenueLabel::Paper));
-        assert_eq!(project_deployment(run, ExecutionTruth::default()).venue, "orderly");
+        assert_eq!(
+            project_deployment(run, ExecutionTruth::default()).venue,
+            "orderly"
+        );
 
         let mut run2 = live_run("dep6b");
         run2.live_config = Some(live_config("D", "alpaca_paper_default", VenueLabel::Paper));
-        assert_eq!(project_deployment(run2, ExecutionTruth::default()).venue, "alpaca-paper");
+        assert_eq!(
+            project_deployment(run2, ExecutionTruth::default()).venue,
+            "alpaca-paper"
+        );
     }
 
     #[test]
@@ -574,12 +607,30 @@ mod tests {
 
     #[test]
     fn status_derivation_covers_all_lifecycle_states() {
-        assert_eq!(derive_status(RunStatus::Queued, false, false), DeploymentStatus::Starting);
-        assert_eq!(derive_status(RunStatus::Running, false, false), DeploymentStatus::Running);
-        assert_eq!(derive_status(RunStatus::Running, true, false), DeploymentStatus::Paused);
-        assert_eq!(derive_status(RunStatus::Completed, false, false), DeploymentStatus::Stopped);
-        assert_eq!(derive_status(RunStatus::Cancelled, false, false), DeploymentStatus::Stopped);
-        assert_eq!(derive_status(RunStatus::Failed, false, false), DeploymentStatus::Failed);
+        assert_eq!(
+            derive_status(RunStatus::Queued, false, false),
+            DeploymentStatus::Starting
+        );
+        assert_eq!(
+            derive_status(RunStatus::Running, false, false),
+            DeploymentStatus::Running
+        );
+        assert_eq!(
+            derive_status(RunStatus::Running, true, false),
+            DeploymentStatus::Paused
+        );
+        assert_eq!(
+            derive_status(RunStatus::Completed, false, false),
+            DeploymentStatus::Stopped
+        );
+        assert_eq!(
+            derive_status(RunStatus::Cancelled, false, false),
+            DeploymentStatus::Stopped
+        );
+        assert_eq!(
+            derive_status(RunStatus::Failed, false, false),
+            DeploymentStatus::Failed
+        );
     }
 
     // ── async list projection: only mode='live' runs ───────────────────────
@@ -647,8 +698,7 @@ mod tests {
         let store = RunStore::new(pool);
 
         let deps = list_live_deployments(&store, None, false, None).await.unwrap();
-        let ids: std::collections::BTreeSet<&str> =
-            deps.iter().map(|d| d.deployment_id.as_str()).collect();
+        let ids: std::collections::BTreeSet<&str> = deps.iter().map(|d| d.deployment_id.as_str()).collect();
         assert_eq!(ids, ["live1", "live2"].into_iter().collect());
         // The backtest run is NEVER projected as a deployment.
         assert!(!ids.contains("back1"));

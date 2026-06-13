@@ -1,0 +1,5 @@
+// original test fixture (xvision) — minimal valid indicator with just version directive and header
+//@version=5
+indicator("Minimal", overlay=true)
+
+x = close

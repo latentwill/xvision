@@ -89,6 +89,13 @@ impl LivePollFetcher for ScriptedFetcher {
 
 #[tokio::test]
 async fn warmup_buffer_drains_before_live_bars() {
+    // Since commit b697d79c, warmup bars are NOT yielded by `next_bar()`.
+    // Callers must drain warmup explicitly via `take_warmup()` before the
+    // live loop. `next_bar()` skips (clears) the warmup buffer entirely and
+    // enters `WebsocketLive` on the first call when warmup is non-empty.
+    // This test verifies the intended post-b697d79c contract:
+    //   - `take_warmup()` returns the full warmup buffer in order
+    //   - `next_bar()` then yields only the first live (websocket) bar
     let warmup = vec![ohlcv_at(60), ohlcv_at(120), ohlcv_at(180)];
     let ws_items = vec![LiveBarItem::Bar(market_bar_at(240))];
     let ws_sub = client().subscription_from_stream(BarGranularity::Minute1, stream::iter(ws_items));
@@ -101,12 +108,15 @@ async fn warmup_buffer_drains_before_live_bars() {
 
     let mut live = LiveStream::new_for_test(warmup, ws_sub, poll);
 
-    let b1 = live.next_bar().await.expect("first warmup bar");
-    assert_eq!(b1.timestamp, ts(60));
-    let b2 = live.next_bar().await.expect("second warmup bar");
-    assert_eq!(b2.timestamp, ts(120));
-    let b3 = live.next_bar().await.expect("third warmup bar");
-    assert_eq!(b3.timestamp, ts(180));
+    // Drain warmup history via take_warmup() — these bars are context for
+    // the first decision but are NOT emitted as tradable live bars.
+    let warmup_bars = live.take_warmup();
+    assert_eq!(warmup_bars.len(), 3, "expected 3 warmup bars");
+    assert_eq!(warmup_bars[0].timestamp, ts(60));
+    assert_eq!(warmup_bars[1].timestamp, ts(120));
+    assert_eq!(warmup_bars[2].timestamp, ts(180));
+
+    // After draining warmup, next_bar() yields the first live (websocket) bar.
     let b4 = live.next_bar().await.expect("first live bar after warmup drain");
     assert_eq!(b4.timestamp, ts(240));
 }
