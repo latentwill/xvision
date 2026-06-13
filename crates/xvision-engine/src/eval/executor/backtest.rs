@@ -1125,13 +1125,6 @@ impl Executor {
                 let seed_pos_size = book.position(asset_sym);
                 let seed_entry = book.entry_price(asset_sym);
                 let seed_mark = bar.close;
-                let seed_upnl_pct = if seed_pos_size.abs() < f64::EPSILON || seed_entry <= 0.0 {
-                    0.0
-                } else if seed_pos_size > f64::EPSILON {
-                    (seed_mark - seed_entry) / seed_entry * 100.0
-                } else {
-                    (seed_entry - seed_mark) / seed_entry * 100.0
-                };
                 let (seed_sl_price, seed_tp_price, seed_bars_held) =
                     if let Some(sltp) = sltp_state.get(&asset_sym) {
                         (
@@ -1142,30 +1135,27 @@ impl Executor {
                     } else {
                         (0.0, 0.0, 0)
                     };
-                let seed = build_decision_seed(DecisionSeedInput {
+                // Shared seed constructor: upnl/entry derivations live in
+                // `from_context`, so this path can't drift from the live one.
+                let seed = build_decision_seed(DecisionSeedInput::from_context(SeedContext {
                     decision_idx,
                     asset: &asset,
                     active_assets: &active_venue_symbols,
                     bar,
-                    next_bar_open,
-                    reference_price_source: "eval_bar.close",
-                    position_size: seed_pos_size,
-                    equity,
-                    mark_price: seed_mark,
                     history_slice,
                     inputs_policy,
-                    entry_price: if seed_pos_size.abs() > f64::EPSILON {
-                        seed_entry
-                    } else {
-                        0.0
-                    },
-                    unrealized_pnl_pct: seed_upnl_pct,
+                    equity,
+                    position_size: seed_pos_size,
+                    entry_price: seed_entry,
+                    mark_price: seed_mark,
+                    next_bar_open,
+                    reference_price_source: "eval_bar.close",
                     bars_held: seed_bars_held,
                     stop_loss_price: seed_sl_price,
                     take_profit_price: seed_tp_price,
                     // Backtest is spot-only: no perps context (deferred).
                     perps: PerpsContext::default(),
-                });
+                }));
                 // When the DSL filter fired this bar, inject its trigger context
                 // (indicator snapshot + fire.reason/priority/tags) into the seed
                 // so the trader's briefing includes the values that caused the
@@ -3488,32 +3478,24 @@ impl Executor {
         let live_pos_size = book.position(asset_sym);
         let live_entry = book.entry_price(asset_sym);
         let live_mark = bar.close;
-        let live_upnl_pct = if live_pos_size.abs() < f64::EPSILON || live_entry <= 0.0 {
-            0.0
-        } else if live_pos_size > f64::EPSILON {
-            (live_mark - live_entry) / live_entry * 100.0
-        } else {
-            (live_entry - live_mark) / live_entry * 100.0
-        };
-        let seed = build_decision_seed(DecisionSeedInput {
+        // Shared seed constructor: upnl/entry derivations live in
+        // `from_context`, so this path can't drift from the backtest one.
+        let seed = build_decision_seed(DecisionSeedInput::from_context(SeedContext {
             decision_idx,
             asset,
             active_assets: active_venue_symbols,
             bar,
-            next_bar_open: next_open,
-            reference_price_source: "live_bar.close",
-            position_size: live_pos_size,
-            equity,
-            mark_price: live_mark,
             history_slice: &history_slice,
             inputs_policy,
-            entry_price: if live_pos_size.abs() > f64::EPSILON {
-                live_entry
-            } else {
-                0.0
-            },
-            unrealized_pnl_pct: live_upnl_pct,
-            // SLTP state and bars_held not threaded into the live context.
+            equity,
+            position_size: live_pos_size,
+            entry_price: live_entry,
+            mark_price: live_mark,
+            next_bar_open: next_open,
+            reference_price_source: "live_bar.close",
+            // PARITY GAP (explicit): the live path does not yet thread SLTP
+            // state / position age. Backtest fills these from `sltp_state`; the
+            // live book exposes the same, so wiring them here closes the gap.
             bars_held: 0,
             stop_loss_price: 0.0,
             take_profit_price: 0.0,
@@ -3524,7 +3506,7 @@ impl Executor {
             // build PerpsContext { funding_rate, open_interest, .. }. Until that
             // poller exists the agent simply sees no perps block (None).
             perps: PerpsContext::default(),
-        });
+        }));
 
         let outs = run_pipeline(PipelineInputs {
             strategy,
@@ -5183,6 +5165,82 @@ pub struct DecisionSeedInput<'a> {
     /// Perps context (funding/OI/basis/long-short). Default (all `None`) on the
     /// spot/backtest path; populated live from `xvision_data::perp_feed`.
     pub perps: PerpsContext,
+}
+
+/// Raw per-decision executor state, *before* seed derivations. Both the
+/// backtest and live decision loops build this and route through
+/// [`DecisionSeedInput::from_context`], so the unrealized-PnL and
+/// entry-price-when-flat derivations live in exactly one place — the live and
+/// backtest paths cannot silently drift on them.
+///
+/// Fields here are the raw values the executor knows (signed book position,
+/// raw book entry price, mark, equity, …). The derived `unrealized_pnl_pct`
+/// and the flat-zeroed `entry_price` that the trader actually sees are computed
+/// in `from_context`, never at the call-site.
+pub struct SeedContext<'a> {
+    pub decision_idx: u32,
+    pub asset: &'a str,
+    pub active_assets: &'a [String],
+    pub bar: &'a Ohlcv,
+    pub history_slice: &'a [&'a Ohlcv],
+    pub inputs_policy: InputsPolicy,
+    pub equity: f64,
+    /// Signed position size from the book (`>0` long, `<0` short, `~0` flat).
+    pub position_size: f64,
+    /// Raw entry price from the book; may be stale when flat (the derivation
+    /// zeroes it for the trader's view).
+    pub entry_price: f64,
+    pub mark_price: f64,
+    pub next_bar_open: f64,
+    /// Label distinguishing the reference-price origin (`"eval_bar.close"` vs
+    /// `"live_bar.close"`). One of the two intentionally-divergent seed fields.
+    pub reference_price_source: &'a str,
+    pub bars_held: u32,
+    pub stop_loss_price: f64,
+    pub take_profit_price: f64,
+    pub perps: PerpsContext,
+}
+
+impl<'a> DecisionSeedInput<'a> {
+    /// Build the seed input from raw executor state, deriving
+    /// `unrealized_pnl_pct` and the flat-zeroed `entry_price` once. This is the
+    /// single shared constructor both decision paths route through.
+    pub fn from_context(ctx: SeedContext<'a>) -> Self {
+        // Unrealized PnL %: flat (or no valid entry) → 0; long → (mark-entry);
+        // short → (entry-mark). Single source of truth for both paths.
+        let unrealized_pnl_pct = if ctx.position_size.abs() < f64::EPSILON || ctx.entry_price <= 0.0 {
+            0.0
+        } else if ctx.position_size > f64::EPSILON {
+            (ctx.mark_price - ctx.entry_price) / ctx.entry_price * 100.0
+        } else {
+            (ctx.entry_price - ctx.mark_price) / ctx.entry_price * 100.0
+        };
+        // The trader sees entry_price 0 when flat (no open position).
+        let entry_price = if ctx.position_size.abs() > f64::EPSILON {
+            ctx.entry_price
+        } else {
+            0.0
+        };
+        DecisionSeedInput {
+            decision_idx: ctx.decision_idx,
+            asset: ctx.asset,
+            active_assets: ctx.active_assets,
+            bar: ctx.bar,
+            next_bar_open: ctx.next_bar_open,
+            reference_price_source: ctx.reference_price_source,
+            position_size: ctx.position_size,
+            equity: ctx.equity,
+            mark_price: ctx.mark_price,
+            history_slice: ctx.history_slice,
+            inputs_policy: ctx.inputs_policy,
+            entry_price,
+            unrealized_pnl_pct,
+            bars_held: ctx.bars_held,
+            stop_loss_price: ctx.stop_loss_price,
+            take_profit_price: ctx.take_profit_price,
+            perps: ctx.perps,
+        }
+    }
 }
 
 /// Build the trader seed JSON for one decision cycle. F-6: `Causal`
