@@ -313,6 +313,12 @@ pub struct ClineSlotInput<'a> {
     /// obs emitter wired). The successful path does NOT call this — the
     /// sidecar's `completed` status is correct and should be preserved.
     pub obs: Option<crate::agent::observability::ObsEmitter>,
+    /// Reasoning effort hint forwarded to the sidecar for CoT reasoning
+    /// models (deepseek-r1, qwq, etc.) via `StartRunParams::reasoning_effort`.
+    /// Derived at the Cline dispatch site via
+    /// `crate::agents::model::default_reasoning_effort(&slot.effective_model())`.
+    /// `None` for non-CoT models (field omitted on the wire).
+    pub reasoning_effort: Option<String>,
 }
 
 impl ClineSlotInput<'_> {
@@ -389,6 +395,7 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         // pre-§2-B path: `record = false`, `slot_role = None`.
         record: input.record_slot_role.is_some(),
         slot_role: input.record_slot_role.clone(),
+        reasoning_effort: input.reasoning_effort.clone(),
     };
 
     // Footgun c coupling guard: when recording, the role we stamp on frames
@@ -883,6 +890,7 @@ mod tests {
             trajectory_mode: TrajectoryMode::default(),
             record_slot_role: None,
             obs: None,
+            reasoning_effort: None,
         }
     }
 

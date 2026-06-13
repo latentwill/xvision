@@ -503,6 +503,11 @@ async fn execute_slot_for_runtime(
             // correct the child `agent_runs` row status (see
             // `ClineSlotInput::obs` field docs).
             obs: input.obs.clone(),
+            // Derive reasoning_effort from model metadata so CoT models
+            // (deepseek-r1, qwq, etc.) get an explicit effort hint forwarded
+            // to the provider gateway. Non-CoT models produce None (field
+            // omitted on the wire).
+            reasoning_effort: crate::agents::model::default_reasoning_effort(&input.slot.effective_model()),
         })
         .await;
     }

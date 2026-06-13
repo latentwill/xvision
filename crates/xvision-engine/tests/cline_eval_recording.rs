@@ -175,6 +175,7 @@ fn record_input<'a>(
         // §2-B: record on, coupled to the slot role / TrajectoryKey.slot_role.
         record_slot_role: Some(SLOT_ROLE.into()),
         obs: None,
+        reasoning_effort: None,
     }
 }
 
@@ -201,6 +202,7 @@ fn replay_input<'a>(
         trajectory_mode: TrajectoryMode::Replay { recording_id, store },
         record_slot_role: None,
         obs: None,
+        reasoning_effort: None,
     }
 }
 
