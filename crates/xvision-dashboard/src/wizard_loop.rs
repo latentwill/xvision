@@ -1894,8 +1894,60 @@ impl WizardLoop {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("get_strategy: missing `id`"))?;
-                let out = api_strategy::get(&self.api_context, id).await?;
-                Ok(serde_json::to_value(out)?)
+                let strategy = api_strategy::get(&self.api_context, id).await?;
+                // W11 (Finding #13): resolve each AgentRef to its full Agent so
+                // the authoring agent can read back the system_prompt it wrote.
+                // Failures to resolve individual refs degrade gracefully (omit
+                // that entry) rather than failing the whole call.
+                let mut resolved_agents: Vec<serde_json::Value> = Vec::new();
+                for aref in &strategy.agents {
+                    match api_agents::get(&self.api_context, &aref.agent_id).await {
+                        Ok(agent) => {
+                            // Collect all slot system_prompts. Most strategies
+                            // have a single slot; expose them all so multi-slot
+                            // agents are fully visible.
+                            let slot_prompts: Vec<&str> =
+                                agent.slots.iter().map(|s| s.system_prompt.as_str()).collect();
+                            // Use the first slot's prompt as the primary
+                            // system_prompt for the role entry (the canonical
+                            // "what does this role's LLM see?" answer). If an
+                            // agent has multiple slots, all prompts are also
+                            // available under slot_system_prompts.
+                            let primary_prompt = slot_prompts.first().copied().unwrap_or("");
+                            resolved_agents.push(serde_json::json!({
+                                "role": aref.role,
+                                "agent_id": aref.agent_id,
+                                "system_prompt": primary_prompt,
+                                "slot_system_prompts": slot_prompts,
+                            }));
+                        }
+                        Err(err) => {
+                            tracing::warn!(
+                                strategy_id = id,
+                                agent_id = aref.agent_id.as_str(),
+                                error = %err,
+                                "get_strategy: could not resolve AgentRef — omitting from resolved_agents"
+                            );
+                            // Degrade gracefully: include a note so the
+                            // authoring agent knows one ref couldn't be resolved
+                            // rather than silently seeing a short list.
+                            resolved_agents.push(serde_json::json!({
+                                "role": aref.role,
+                                "agent_id": aref.agent_id,
+                                "system_prompt": null,
+                                "error": "agent not found — the referenced agent may have been deleted",
+                            }));
+                        }
+                    }
+                }
+                let mut out = serde_json::to_value(&strategy)?;
+                if let Some(obj) = out.as_object_mut() {
+                    obj.insert(
+                        "resolved_agents".into(),
+                        serde_json::Value::Array(resolved_agents),
+                    );
+                }
+                Ok(out)
             }
             "list_strategies" => {
                 let out = api_strategy::list(&self.api_context).await?;
