@@ -30,7 +30,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { cancelRun, evalKeys, listRuns } from "@/api/eval";
+import { cancelRun, evalKeys, flattenRun, listRuns } from "@/api/eval";
 import {
   openDeploymentStream,
   type DeploymentMetricsPatch,
@@ -82,10 +82,10 @@ function isRunaway(dep: LiveDeploymentSummary): boolean {
   return Date.now() - t > RUNAWAY_THRESHOLD_MS;
 }
 
-/// awm (a): the Cancel control is shown for human-queued AND legacy runs
+/// awm (a): the Stop control is shown for human-queued AND legacy runs
 /// (source absent/undefined), and HIDDEN only on an explicit optimizer source.
-/// Optimizer-driven deployments are managed by the cycle, not cancelled here.
-function canCancelDeployment(dep: LiveDeploymentSummary): boolean {
+/// Optimizer-driven deployments are managed by the cycle, not flattened here.
+function canStopDeployment(dep: LiveDeploymentSummary): boolean {
   return dep.source !== "optimizer";
 }
 
@@ -232,10 +232,11 @@ function liveOrPoll(
 function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
   const queryClient = useQueryClient();
 
-  const cancel = useMutation({
-    mutationFn: () => cancelRun(dep.deployment_id),
+  const flatten = useMutation({
+    mutationFn: () => flattenRun(dep.deployment_id),
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["live-deployments"] });
+      queryClient.invalidateQueries({ queryKey: evalKeys.runs({ status: "queued,running" }) });
     },
   });
 
@@ -250,7 +251,8 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
   const strategyName = dep.strategy_name?.trim() || "Unknown strategy";
   const decisionAgo = formatRelativeTime(dep.last_decision_at);
   const runaway = isRunaway(dep);
-  const showCancel = canCancelDeployment(dep);
+  const showStop =
+    canStopDeployment(dep) && dep.status !== "stopped" && dep.status !== "failed";
 
   return (
     <div
@@ -309,16 +311,17 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
         </span>
       )}
 
-      {/* awm (a): Cancel hidden only for optimizer-sourced deployments. */}
-      {showCancel && (
+      {/* awm (a): Stop hidden for optimizer-sourced or terminal deployments. */}
+      {showStop && (
         <button
           type="button"
-          disabled={cancel.isPending}
-          onClick={() => cancel.mutate()}
+          data-testid={`deployment-stop-${dep.deployment_id}`}
+          disabled={flatten.isPending}
+          onClick={() => flatten.mutate()}
           className="shrink-0 text-[12px] text-text-3 hover:text-text disabled:opacity-50 px-2 py-0.5 rounded border border-border hover:border-border-strong transition-colors"
-          aria-label={`Cancel ${strategyName}`}
+          aria-label={`Stop ${strategyName}`}
         >
-          {cancel.isPending ? "Cancelling…" : "Cancel"}
+          {flatten.isPending ? "Stopping…" : "Stop"}
         </button>
       )}
     </div>
