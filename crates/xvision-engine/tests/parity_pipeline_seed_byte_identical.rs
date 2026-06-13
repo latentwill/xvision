@@ -15,6 +15,7 @@ use chrono::{TimeZone, Utc};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agents::InputsPolicy;
 use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput, PerpsContext};
+use xvision_engine::strategies::risk::RiskConfig;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,6 +35,17 @@ fn ohlcv(idx: i64, open: f64, high: f64, low: f64, close: f64, volume: f64) -> O
     }
 }
 
+fn distinctive_risk() -> RiskConfig {
+    RiskConfig {
+        risk_pct_per_trade: 0.0137,
+        max_concurrent_positions: 4,
+        max_leverage: 3.5,
+        stop_loss_atr_multiple: 7.5,
+        daily_loss_kill_pct: 0.066,
+        max_position_pct_nav: 17.0,
+    }
+}
+
 /// Build a fully-populated seed using the given `policy` and a fixed set of
 /// deterministic scalars. All non-policy fields are identical across calls so
 /// any divergence in the returned `serde_json::Value` is caused solely by the
@@ -47,6 +59,7 @@ fn make_seed(policy: InputsPolicy) -> serde_json::Value {
     let history_refs: Vec<&Ohlcv> = history.iter().collect();
     let current = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
     let active_assets = vec!["BTC/USD".to_string()];
+    let risk = distinctive_risk();
 
     build_decision_seed(DecisionSeedInput {
         decision_idx: 7,
@@ -65,6 +78,7 @@ fn make_seed(policy: InputsPolicy) -> serde_json::Value {
         bars_held: 4,
         stop_loss_price: 95.0,
         take_profit_price: 120.0,
+        risk_config: &risk,
         // Spot/backtest path: empty perps context (all `None`). Identical for
         // both policies, so the Raw-vs-Oracle byte-identity invariant holds.
         perps: PerpsContext::default(),

@@ -1,12 +1,23 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { OptimizerDigestStrip } from "./OptimizerDigestStrip";
 import * as apiModule from "@/features/autooptimizer/api";
 import type { SessionListItem, StatsRow } from "@/features/autooptimizer/api";
+import * as costApi from "@/api/cost";
 
 afterEach(() => vi.restoreAllMocks());
+
+// Default the budget query to UNSET so the pre-existing tests keep rendering
+// the em-dash denominator. Individual tests override via `mockBudget`.
+beforeEach(() => {
+  vi.spyOn(costApi, "getCostBudget").mockResolvedValue({ daily_cap_usd: null });
+});
+
+function mockBudget(cap: number | null) {
+  vi.spyOn(costApi, "getCostBudget").mockResolvedValue({ daily_cap_usd: cap });
+}
 
 /** Mock the stats query (zn2 FE-derivable segments). Defaults to no rows so the
  *  pre-existing session-only tests keep rendering em-dash placeholders. */
@@ -305,9 +316,30 @@ describe("OptimizerDigestStrip", () => {
     expect(seg.className).not.toMatch(/text-warn/);
   });
 
-  it("renders the spend with an em-dash budget denominator placeholder (cap deferred to 8wn)", () => {
+  it("renders the spend with an em-dash budget denominator when the cap is UNSET (honesty: never a faked cap)", async () => {
     // baseSession.cost_usd === 0.47 (the honest session spend numerator);
-    // the cap denominator is deferred to 8wn → em-dash, never a faked cap.
+    // the budget query resolves to null (UNSET) → em-dash, never a faked cap.
+    mockBudget(null);
+    mockSession(baseSession, [statRow({ cost_usd: 0.33 })]);
+    renderStrip();
+    const seg = await screen.findByTestId("optimizer-digest-cost");
+    expect(seg.textContent).toContain("$0.47 / —");
+  });
+
+  it("wires the real daily_cap_usd into the denominator when the cap is SET (8wn)", async () => {
+    // Now that GET /api/cost/budget exists, the deferred em-dash denominator is
+    // replaced by the persisted cap: "$0.47 / $50.00".
+    mockBudget(50);
+    mockSession(baseSession, [statRow({ cost_usd: 0.33 })]);
+    renderStrip();
+    const seg = await screen.findByTestId("optimizer-digest-cost");
+    await vi.waitFor(() => expect(seg.textContent).toContain("$0.47 / $50.00"));
+  });
+
+  it("keeps the em-dash denominator on first paint before the budget query resolves", () => {
+    // Synchronous first render (query still pending) must NOT fabricate a cap;
+    // it shows the honest em-dash until the real value lands.
+    mockBudget(50);
     mockSession(baseSession, [statRow({ cost_usd: 0.33 })]);
     renderStrip();
     const seg = screen.getByTestId("optimizer-digest-cost");

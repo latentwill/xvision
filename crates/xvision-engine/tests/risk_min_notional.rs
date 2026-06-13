@@ -211,6 +211,7 @@ fn exact_min_notional_boundary_passes_risk_rule() {
         portfolio: &portfolio,
         asset: AssetSymbol::Eth,
         conviction: 1.0,
+        funding_rate_8h: None,
     });
     assert!(
         matches!(verdict, RuleVerdict::Pass),

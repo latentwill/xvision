@@ -11,6 +11,7 @@ pub mod charts_market_context;
 pub mod chat_rail;
 pub mod checkpoints;
 pub mod cli;
+pub mod cost;
 pub mod diagnostics;
 pub mod docs;
 pub mod eval;

@@ -61,6 +61,25 @@ vi.mock("@/api/eval-review", () => ({
   listCriticalFindings: vi.fn().mockResolvedValue([]),
 }));
 
+// 8wn: the cost rollup strip (since-last-visit + this-week) and the digest
+// budget denominator pull from /api/cost. Default to null spend / UNSET cap so
+// the strips render their honest empty states; individual tests override.
+vi.mock("@/api/cost", () => ({
+  costKeys: {
+    all: ["cost"],
+    rollup: (since?: string) => ["cost", "rollup", since || ""],
+    budget: () => ["cost", "budget"],
+  },
+  getCostRollup: vi.fn().mockResolvedValue({
+    since: "2026-06-12T00:00:00Z",
+    spend_usd: null,
+    eval_cost_usd: null,
+    optimizer_cost_usd: null,
+    daily_cap_usd: null,
+  }),
+  getCostBudget: vi.fn().mockResolvedValue({ daily_cap_usd: null }),
+}));
+
 // OptimizerPanel pulls the ladder/stats/status via these hooks; the digest
 // footer pulls the last optimizer session. Default to empty/idle; individual
 // tests override.
@@ -574,6 +593,35 @@ describe("HomeRoute", () => {
     expect(
       digest.closest('[data-testid="optimizer-panel"]'),
     ).not.toBeNull();
+  });
+
+  // 8wn: the cost rollup strip must be MOUNTED on the home route (it pulls the
+  // since-last-visit + this-week rollups). With null spend / UNSET cap (default
+  // mock) it still renders its honest empty state rather than a faked $0.
+  it("mounts the cost rollup strip on the home route", async () => {
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    expect(await screen.findByTestId("cost-rollup-strip")).toBeInTheDocument();
+  });
+
+  it("renders real spend in the cost rollup strip and the cap denominator when set (8wn)", async () => {
+    const costApi = await import("@/api/cost");
+    vi.mocked(costApi.getCostBudget).mockResolvedValue({ daily_cap_usd: 50 });
+    // since-last-visit window resolves first; this-week second.
+    vi.mocked(costApi.getCostRollup).mockResolvedValue({
+      since: "2026-06-12T00:00:00Z",
+      spend_usd: 7.5,
+      eval_cost_usd: 5.0,
+      optimizer_cost_usd: 2.5,
+      daily_cap_usd: 50,
+    });
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+    const strip = await screen.findByTestId("cost-rollup-strip");
+    await waitFor(() => expect(strip.textContent).toContain("$7.50"));
+    // The this-week window scales the $50 daily cap to its 7-day budget ($350)
+    // so cumulative spend compares like-for-like (bead s78.3).
+    await waitFor(() => expect(strip.textContent).toContain("$350.00"));
   });
 
   // Honesty: the Optimizer panel never renders a "Waiting for connection…"

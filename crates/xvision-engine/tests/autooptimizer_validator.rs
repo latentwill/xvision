@@ -56,6 +56,7 @@ fn make_filter_diff(edits: Vec<FilterEdit>) -> MutationDiff {
             removed: vec![],
         },
         filter: edits,
+        create_filter: None,
         rationale: "test filter edit".into(),
     }
 }
@@ -103,6 +104,7 @@ fn make_diff(
         params,
         tools: ToolDiff { added, removed },
         filter: Vec::new(),
+        create_filter: None,
         rationale: "test".into(),
     }
 }

@@ -35,6 +35,8 @@ export type { ChatRunListPayload } from "./types.gen/ChatRunListPayload";
 export type { ChatStrategyPayload } from "./types.gen/ChatStrategyPayload";
 export type { CloneStrategyReq } from "./types.gen/CloneStrategyReq";
 export type { CompareChartPayload } from "./types.gen/CompareChartPayload";
+export type { CostBudgetResponse } from "./types.gen/CostBudgetResponse";
+export type { CostRollupResponse } from "./types.gen/CostRollupResponse";
 export type { CompareRunSeries } from "./types.gen/CompareRunSeries";
 export type { ComparisonEquityCurve } from "./types.gen/ComparisonEquityCurve";
 export type { ComparisonEquitySample } from "./types.gen/ComparisonEquitySample";
