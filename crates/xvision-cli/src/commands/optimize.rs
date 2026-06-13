@@ -733,6 +733,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         regime_set: cfg.regime_set.clone(),
         scenario_pool,
         max_output_tokens: args.max_output_tokens,
+        max_consecutive_errors: 3, // WU-13 wires --max-consecutive-errors
     };
 
     let parent_policy = ParentPolicy::RoundRobin;

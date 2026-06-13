@@ -353,6 +353,7 @@ async fn run_cycle_smoke() {
         regime_set: vec![],
         scenario_pool: vec![],
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -519,6 +520,7 @@ async fn run_cycle_keeps_improving_risk_param_candidate() {
         regime_set: vec![],
         scenario_pool: vec![],
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let result = run_cycle(
@@ -673,6 +675,7 @@ async fn run_cycle_scenario_pool_round_robin_keeps_parent_child_comparable() {
         regime_set: vec![],
         scenario_pool: pool_pairs,
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let recorder = RecordingPaperTester::default();
@@ -826,6 +829,7 @@ async fn run_cycle_scenario_pool_cache_distinguishes_same_day_different_baseline
         regime_set: vec![],
         scenario_pool: pool_pairs,
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     };
 
     let recorder = RecordingPaperTester::default();

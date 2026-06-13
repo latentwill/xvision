@@ -117,6 +117,9 @@ fn event_ids(ev: &CycleProgressEvent) -> (String, Option<String>) {
         NoCandidate {
             session_id, cycle_id, ..
         } => (session_id.clone(), Some(cycle_id.clone())),
+        CandidateError {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
         MutationGated {
             session_id, cycle_id, ..
         } => (session_id.clone(), Some(cycle_id.clone())),
@@ -778,6 +781,7 @@ pub(super) fn build_cycle_config(
         // The dashboard cycle launcher does not (yet) surface a per-cycle
         // output-token cap; preserve prior behaviour (no cycle-level cap).
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     }
 }
 
