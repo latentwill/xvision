@@ -31,6 +31,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
 import { DeployReadinessStrip } from "@/components/home/DeployReadinessStrip";
+import { CapitalRiskStrip } from "@/components/home/CapitalRiskStrip";
 import { HomeDeltaSubtitle } from "@/components/home/HomeDeltaSubtitle";
 import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
 import {
@@ -48,6 +49,7 @@ import { evalKeys, listRuns } from "@/api/eval";
 import { strategyKeys, listStrategies } from "@/api/strategies";
 import { getBrokers, listProviders, settingsKeys, testAlpacaConnection } from "@/api/settings";
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
+import { liveDeploymentKeys, listLiveDeployments } from "@/api/live-deployments";
 import { getSafetyState, safetyKeys } from "@/api/safety";
 import { listCriticalFindings } from "@/api/eval-review";
 import { livenessCounts } from "@/features/live/strip-status";
@@ -116,6 +118,15 @@ export function HomeRoute() {
   const agentRuns = useQuery({
     queryKey: agentRunKeys.list(LIVENESS_PARAMS),
     queryFn: () => listAgentRuns(LIVENESS_PARAMS),
+    refetchInterval: 10_000,
+  });
+
+  // CT5 S1 (8s4): capital-risk strip — running simulated (paper/testnet) deployments.
+  // Polled every 10s to surface live drawdown / P&L / buffer changes promptly.
+  // Empty array when no deployments are running; the strip renders null in that case.
+  const liveDeployments = useQuery({
+    queryKey: liveDeploymentKeys.list({ status: "running" }),
+    queryFn: () => listLiveDeployments({ status: "running" }),
     refetchInterval: 10_000,
   });
 
@@ -210,6 +221,10 @@ export function HomeRoute() {
         <SafetyPauseBanner />
 
         <DeployReadinessStrip checks={readinessChecks} />
+
+        {/* CT5 S1 (8s4): capital-risk strip — paper/testnet deployments only.
+            Collapses to nothing when no deployments are running. */}
+        <CapitalRiskStrip deployments={liveDeployments.data ?? []} />
 
         {/* bead-008: inline, full-width window selector scoping the outcomes +
             findings surfaces below it. It does NOT scope the pulse hero,
