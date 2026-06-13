@@ -452,15 +452,23 @@ Engineering-side deployment + crate-level architecture moved to the
 
 ## Filter DSL — wake_when_in_position
 
-Controls whether the trader is called while a position is open. Set in filter JSON:
+Controls whether the trader is re-invoked while a position is open in the
+filter's asset (per-bar polling cost during a hold; it does not change entry
+firing). Set in filter JSON to one of three tokens:
 
 | Value | Behavior | When to use |
 |---|---|---|
-| `"never"` | No mid-position calls | Mean-reversion strategies (hold to target) |
-| `"on_invalidation_or_target_only"` | Fire when filter state changes | Strategies needing early exit on signal reversal — caution on oscillating indicators |
-| `"always"` | Every bar while in position | Almost never correct |
+| `"never"` | No mid-position calls; exits via `risk.stop_loss_atr_multiple` | Mean-reversion strategies (hold to target) — fewest decisions |
+| `"on_invalidation_or_target_only"` | Wake only on a fresh trip (the bar the condition tree first becomes true again); sustained-true bars suppressed | Strategies needing early exit on signal reversal — caution on oscillating indicators |
+| `"always"` | Wake on every true bar while in position (expensive — one trader-LLM call per in-position bar) | Almost never correct |
 
-Default: `"on_invalidation_or_target_only"`. Start with `"never"` unless you need early exits.
+Default: `"on_invalidation_or_target_only"` (the cost-safe default; the old
+`"always"` per-bar default was removed). Start with `"never"` unless you need
+early exits. With the default the filter will NOT re-fire while a position is
+open, so pair it with a distinct exit signal or `risk.stop_loss_atr_multiple` —
+otherwise an entry condition that stays true never re-wakes the trader to
+close, and a run can finish with only 1–2 decisions (look for `filter_blocked`
+events with `reason = position_open` in the run detail).
 
 **Session data:** A 21-trade SORB strategy produced 153 decisions with `on_invalidation_or_target_only` vs 14 decisions with `never`.
 
