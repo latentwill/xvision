@@ -27,7 +27,7 @@ jobs:
   freshness:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # We diff against the PR base, so we need that branch fetched
           # and a non-shallow history. depth=0 is the simplest knob; the
