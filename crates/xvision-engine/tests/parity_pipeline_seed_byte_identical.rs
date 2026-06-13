@@ -15,6 +15,7 @@ use chrono::{TimeZone, Utc};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agents::InputsPolicy;
 use xvision_engine::eval::executor::backtest::{build_decision_seed, DecisionSeedInput, PerpsContext};
+use xvision_engine::strategies::risk::RiskConfig;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -47,6 +48,17 @@ fn make_seed(policy: InputsPolicy) -> serde_json::Value {
     let history_refs: Vec<&Ohlcv> = history.iter().collect();
     let current = ohlcv(3, 103.0, 113.0, 93.0, 108.0, 1_300.0);
     let active_assets = vec!["BTC/USD".to_string()];
+    // Fixed risk config (identical across policies — #971 added the live
+    // `risk_config` field to DecisionSeedInput after this test landed; same
+    // value for Raw and Oracle keeps the byte-identity invariant intact).
+    let risk = RiskConfig {
+        risk_pct_per_trade: 0.015,
+        max_concurrent_positions: 3,
+        max_leverage: 2.0,
+        stop_loss_atr_multiple: 2.5,
+        daily_loss_kill_pct: 0.05,
+        max_position_pct_nav: 20.0,
+    };
 
     build_decision_seed(DecisionSeedInput {
         decision_idx: 7,
@@ -65,6 +77,7 @@ fn make_seed(policy: InputsPolicy) -> serde_json::Value {
         bars_held: 4,
         stop_loss_price: 95.0,
         take_profit_price: 120.0,
+        risk_config: &risk,
         // Spot/backtest path: empty perps context (all `None`). Identical for
         // both policies, so the Raw-vs-Oracle byte-identity invariant holds.
         perps: PerpsContext::default(),
