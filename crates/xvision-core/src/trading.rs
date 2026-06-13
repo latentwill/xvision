@@ -486,6 +486,13 @@ pub enum VetoReason {
     /// broker never sees a known-bad order. Operator-visible as a
     /// clean risk veto instead of an opaque broker rejection.
     BelowVenueMinNotional,
+    /// The perp funding rate the position would pay at entry exceeds the
+    /// configured punitive threshold (`[perps].max_funding_pay_8h`). Fired by
+    /// the `FundingCarryGuard` rule so an entry is never opened into funding
+    /// that erodes the edge. Exits (Flat/Close) are never blocked. Favorable
+    /// (carry) funding passes through unchanged. Operator-visible as a clean
+    /// risk veto.
+    PunitiveFunding,
     Custom(String),
 }
 

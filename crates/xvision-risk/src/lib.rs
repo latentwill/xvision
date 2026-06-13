@@ -9,7 +9,7 @@ pub mod rules;
 pub mod whitelist;
 
 pub use config::RiskConfig;
-pub use context::RiskEvalContext;
+pub use context::{MarketContext, RiskEvalContext};
 pub use whitelist::Whitelist;
 
 use std::path::Path;
@@ -127,6 +127,12 @@ impl RiskLayer {
             Box::new(DailyLossCircuit {
                 max_daily_loss_fraction: config.limits.max_daily_loss_pct / 100.0,
             }),
+            // Funding-aware carry guard. No-ops unless the caller threads a
+            // funding signal via `evaluate_with_market` (live perps path);
+            // spot/backtest leaves funding `None`, so this passes.
+            Box::new(FundingCarryGuard {
+                max_funding_pay_8h: config.perps.max_funding_pay_8h,
+            }),
             Box::new(MaxPositionSize { max_bps: max_pos_bps }),
             Box::new(MaxTotalExposure { max_bps: max_exp_bps }),
             Box::new(MaxOpenPositions {
@@ -207,6 +213,24 @@ impl RiskLayer {
         portfolio: &PortfolioState,
         conviction: f32,
     ) -> RiskDecision {
+        self.evaluate_with_market(decision, portfolio, conviction, MarketContext::default())
+    }
+
+    /// Like [`evaluate_with_conviction`] but also threads live [`MarketContext`]
+    /// (perp funding, …) so perps-aware rules (e.g. `FundingCarryGuard`) can
+    /// fire. Spot/backtest callers go through [`evaluate`] /
+    /// [`evaluate_with_conviction`], which pass an empty `MarketContext`
+    /// (all fields `None` ⇒ perps-aware rules no-op, fail-safe).
+    ///
+    /// [`evaluate`]: Self::evaluate
+    /// [`evaluate_with_conviction`]: Self::evaluate_with_conviction
+    pub fn evaluate_with_market(
+        &self,
+        decision: TraderDecision,
+        portfolio: &PortfolioState,
+        conviction: f32,
+        market: MarketContext,
+    ) -> RiskDecision {
         let original = decision.clone();
         let asset = decision.asset;
 
@@ -220,6 +244,7 @@ impl RiskLayer {
                 portfolio,
                 asset,
                 conviction,
+                funding_rate_8h: market.funding_rate_8h,
             };
             match rule.evaluate(&ctx) {
                 RuleVerdict::Pass => {
@@ -250,6 +275,7 @@ impl RiskLayer {
                 portfolio,
                 asset,
                 conviction,
+                &market,
                 &mut first_modify_reason,
             ) {
                 return RiskDecision::Vetoed { original, reason };
@@ -273,6 +299,7 @@ impl RiskLayer {
         portfolio: &PortfolioState,
         asset: xvision_core::AssetSymbol,
         conviction: f32,
+        market: &MarketContext,
         first_modify_reason: &mut Option<VetoReason>,
     ) -> Option<VetoReason> {
         let builtin_end = self.builtin_rule_start + self.builtin_rule_len;
@@ -282,6 +309,7 @@ impl RiskLayer {
                 portfolio,
                 asset,
                 conviction,
+                funding_rate_8h: market.funding_rate_8h,
             };
             match rule.evaluate(&ctx) {
                 RuleVerdict::Pass | RuleVerdict::Warn(_) => {}
@@ -358,6 +386,24 @@ pub(crate) mod tests_common {
             portfolio,
             asset,
             conviction: 0.0,
+            funding_rate_8h: None,
+        }
+    }
+
+    /// Like [`make_ctx`] but sets the perp `funding_rate_8h` signal, for
+    /// unit-testing funding-aware rules (e.g. `FundingCarryGuard`).
+    pub fn make_ctx_funding<'a>(
+        decision: &'a TraderDecision,
+        portfolio: &'a PortfolioState,
+        asset: AssetSymbol,
+        funding_rate_8h: Option<f64>,
+    ) -> RiskEvalContext<'a> {
+        RiskEvalContext {
+            decision,
+            portfolio,
+            asset,
+            conviction: 0.0,
+            funding_rate_8h,
         }
     }
 
@@ -465,7 +511,7 @@ pub(crate) mod tests_common {
     }
 
     pub fn default_risk_layer_for_venue(venue_id: Option<&str>) -> crate::RiskLayer {
-        use crate::config::{Limits, RiskConfig, Stops, VenueLimits};
+        use crate::config::{Limits, PerpsGuards, RiskConfig, Stops, VenueLimits};
         use std::collections::BTreeMap;
         let mut venues = BTreeMap::new();
         venues.insert(
@@ -495,6 +541,7 @@ pub(crate) mod tests_common {
                 take_profit_min_rr: 1.5,
             },
             venues,
+            perps: PerpsGuards::default(),
         };
         crate::RiskLayer::with_default_rules(config, test_whitelist(), venue_id)
     }
@@ -528,6 +575,46 @@ mod integration {
         assert!(
             matches!(result, RiskDecision::Approved { .. }),
             "expected Approved, got {result:?}"
+        );
+    }
+
+    /// FundingCarryGuard is part of the default ruleset, but only bites when a
+    /// funding signal is threaded via `evaluate_with_market`. A punitive
+    /// funding rate vetoes a long entry; the same decision through the
+    /// no-market `evaluate` path (spot/backtest) is not funding-vetoed.
+    #[test]
+    fn funding_carry_guard_vetoes_punitive_entry_only_with_market_signal() {
+        use tests_common::{default_risk_layer, flat_portfolio, make_decision};
+
+        let layer = default_risk_layer();
+        let decision = make_decision(Action::Buy, Direction::Long, 1000, 2.0, 5.0);
+        let portfolio = flat_portfolio();
+
+        // Punitive funding (0.05 > the 0.01 default threshold) threaded in ⇒ veto.
+        let with_funding = layer.evaluate_with_market(
+            decision.clone(),
+            &portfolio,
+            0.0,
+            MarketContext {
+                funding_rate_8h: Some(0.05),
+            },
+        );
+        assert!(
+            matches!(
+                with_funding,
+                RiskDecision::Vetoed {
+                    reason: VetoReason::PunitiveFunding,
+                    ..
+                }
+            ),
+            "punitive funding must veto through the default layer; got {with_funding:?}"
+        );
+
+        // No market signal (the spot/backtest path) ⇒ guard no-ops, decision stands.
+        let without = layer.evaluate(decision, &portfolio);
+        assert!(
+            matches!(without, RiskDecision::Approved { .. }),
+            "absent funding signal ⇒ guard no-ops (fail-safe); got {without:?}"
         );
     }
 
