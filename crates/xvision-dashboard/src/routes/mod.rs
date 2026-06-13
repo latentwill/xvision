@@ -24,6 +24,7 @@ pub mod marketplace_auth;
 pub mod marketplace_read;
 pub mod memory;
 pub mod optimizations;
+pub mod publish_receipts;
 pub mod safety;
 pub mod scenarios;
 pub mod search;

@@ -23,6 +23,33 @@ Cross-references for operator-facing concepts that have their own docs:
 
 ---
 
+## Optimizer window cap — migration (B22)
+
+PR B22 added a hard 120-day cap (`MAX_WINDOW_DAYS = 120`) on the
+`day_window` and `baseline_untouched_window` fields in
+`autooptimizer.toml`. This was a **breaking change**: any existing config
+with either field set above 120 now fails `xvn optimize` at startup with a
+field-level validation error.
+
+**To fix,** choose one:
+
+- **Shrink the window** to 120 days or below.
+- **Set `max_window_days`** to your intended limit (must be >= 1) to
+  explicitly acknowledge the memory tradeoff:
+
+  ```toml
+  max_window_days = 180   # opt-in to wider window
+
+  day_window = 180
+  baseline_untouched_window = 60
+  ```
+
+`max_window_days` only covers `day_window` and `baseline_untouched_window`;
+`regime_set` and `scenario_pool` windows remain capped at 120. See the
+full config reference in the dashboard wiki at `/docs?slug=autooptimizer-config`.
+
+---
+
 ## Live-node remote control
 
 If you need to drive a running xvision node over Tailscale, use the dashboard's
@@ -447,6 +474,20 @@ export ORDERLY_KEY=...                        # M6
 export ORDERLY_SECRET=...                     # M6
 export ORDERLY_ACCOUNT_ID=...                 # M6
 export ORDERLY_BASE_URL=https://testnet-api-evm.orderly.org
+
+# Byreal perps venue (executes on Hyperliquid via npx @byreal-io/byreal-perps-cli)
+export BYREAL_PRIVATE_KEY=$(op read 'op://Personal/xvision-byreal/private-key')
+export BYREAL_NETWORK=mainnet                 # or testnet; defaults to mainnet
+export BYREAL_ACCOUNT=...                      # optional account id
+# Then select Byreal as the execution venue from the CLI:
+#   xvn fire-trade --venue byreal --asset BTC --side buy --size-bps 100 ...
+#   xvn portfolio --venue byreal
+#   xvn close-position --venue byreal BTC
+# ([runtime] executor = "byreal" parses but is config-only / not yet dispatched,
+#  same as orderly — use --venue on the CLI verbs to select the venue.)
+# Live-eval engine runs: set broker_creds_ref="byreal" with BYREAL_NETWORK=testnet
+# (testnet-only in the current live scope; use the CLI verbs above for mainnet).
+# Alpaca creds (APCA_*) are still required — Alpaca supplies the live bar stream.
 
 # Phase 11.5 Mantle (only if identity.enabled = true)
 export MANTLE_RPC_URL=https://rpc.sepolia.mantle.xyz   # M7 (testnet, chain 5003)

@@ -74,6 +74,7 @@ assets in the data volume.
 | `CREDENTIAL_SECRET` | 32-byte hex; encrypts persisted broker keys | none |
 | `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` / `APCA_API_BASE_URL` | Alpaca paper creds | base URL defaults to paper |
 | `ORDERLY_KEY` / `ORDERLY_SECRET` / `ORDERLY_ACCOUNT_ID` / `ORDERLY_BASE_URL` | Orderly testnet creds | none |
+| `BYREAL_PRIVATE_KEY` / `BYREAL_NETWORK` / `BYREAL_ACCOUNT` | Byreal perps creds (executes on Hyperliquid via `npx @byreal-io/byreal-perps-cli`); used by `xvn fire-trade --venue byreal` etc. | `NETWORK` defaults to mainnet; `ACCOUNT` optional |
 | `MANTLE_RPC_URL` / `MANTLE_DEPLOYER_KEY` | Mantle access (identity image only) | none |
 | `RUST_LOG` | Tracing filter | unset |
 | `XVISION_OBSERVABILITY_RETENTION` | Agent-run retention mode (`full_debug`, `redacted`, `hash_only`) | `full_debug` |

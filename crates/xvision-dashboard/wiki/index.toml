@@ -122,7 +122,7 @@ path = "firing-conditions.md"
 slug = "filter-dsl-catalog"
 title = "Filter DSL Catalog"
 section = "Operator"
-last_reviewed = "2026-05-24"
+last_reviewed = "2026-06-13"
 path = "filter-dsl-catalog.md"
 
 [[page]]
@@ -138,6 +138,13 @@ title = "Operator Runbook"
 section = "Operator"
 last_reviewed = "2026-05-20"
 path = "runbook.md"
+
+[[page]]
+slug = "autooptimizer-config"
+title = "Optimizer Config"
+section = "Operator"
+last_reviewed = "2026-06-13"
+path = "autooptimizer-config.md"
 
 [[page]]
 slug = "research-index"

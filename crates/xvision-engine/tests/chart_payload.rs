@@ -536,7 +536,11 @@ async fn seed_backtest_run_with_equity(ctx: &ApiContext, bar_count: usize) -> St
     seed_cached_bars(ctx, &cache_key, "ETH/USD", bar_count).await;
 
     let store = RunStore::new(ctx.db.clone());
-    let run = Run::new_queued("pulse-test-strategy".into(), scenario.id.clone(), RunMode::Backtest);
+    let run = Run::new_queued(
+        "pulse-test-strategy".into(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
     store.create(&run).await.unwrap();
     store
         .record_decision(&hold_decision_for_asset(&run.id, "ETH/USD"))
@@ -558,13 +562,10 @@ async fn include_equity_only_skips_bars_indicators_markers() {
     let ctx = test_ctx().await;
     let run_id = seed_backtest_run_with_equity(&ctx, 8).await;
 
-    let payload = xvision_engine::api::chart::build_run_payload_with(
-        &ctx,
-        &run_id,
-        IncludeSet::parse("equity"),
-    )
-    .await
-    .unwrap();
+    let payload =
+        xvision_engine::api::chart::build_run_payload_with(&ctx, &run_id, IncludeSet::parse("equity"))
+            .await
+            .unwrap();
 
     assert_eq!(payload.equity.len(), 3, "equity always ships");
     assert_eq!(payload.drawdown.len(), 3, "drawdown derives from equity");
@@ -581,13 +582,10 @@ async fn include_bars_markers_skips_indicators_but_ships_candles() {
     let ctx = test_ctx().await;
     let run_id = seed_backtest_run_with_equity(&ctx, 8).await;
 
-    let payload = xvision_engine::api::chart::build_run_payload_with(
-        &ctx,
-        &run_id,
-        IncludeSet::parse("bars,markers"),
-    )
-    .await
-    .unwrap();
+    let payload =
+        xvision_engine::api::chart::build_run_payload_with(&ctx, &run_id, IncludeSet::parse("bars,markers"))
+            .await
+            .unwrap();
 
     assert_eq!(payload.bars.len(), 8, "bars ship");
     assert_eq!(payload.markers.holds.len(), 1, "markers ship");
@@ -655,7 +653,10 @@ async fn baseline_degrades_to_none_when_equity_empty() {
     )
     .await
     .unwrap();
-    assert!(payload.baseline_equity.is_none(), "no equity → baseline is None, not an error");
+    assert!(
+        payload.baseline_equity.is_none(),
+        "no equity → baseline is None, not an error"
+    );
     assert!(payload.equity.is_empty(), "no equity seeded");
 }
 
@@ -708,10 +709,16 @@ async fn empty_scenario_early_return_baseline_is_null_not_error() {
     .await
     .unwrap();
 
-    assert!(payload.baseline_equity.is_none(), "early return ships no baseline");
+    assert!(
+        payload.baseline_equity.is_none(),
+        "early return ships no baseline"
+    );
     assert!(payload.bars.is_empty(), "early return ships no bars");
     assert!(payload.equity.is_empty(), "no equity recorded for this run");
-    assert!(payload.indicators.sma_20.is_empty(), "early return ships no indicators");
+    assert!(
+        payload.indicators.sma_20.is_empty(),
+        "early return ships no indicators"
+    );
 }
 
 #[tokio::test]
@@ -723,7 +730,13 @@ async fn full_payload_unchanged_and_baseline_absent() {
         .await
         .unwrap();
     assert_eq!(payload.bars.len(), 64);
-    assert!(!payload.indicators.ema_20.is_empty(), "full payload computes indicators");
+    assert!(
+        !payload.indicators.ema_20.is_empty(),
+        "full payload computes indicators"
+    );
     assert_eq!(payload.markers.holds.len(), 1);
-    assert!(payload.baseline_equity.is_none(), "full mode never computes baseline");
+    assert!(
+        payload.baseline_equity.is_none(),
+        "full mode never computes baseline"
+    );
 }

@@ -103,8 +103,8 @@ fn xvn_binary_is_reachable_and_help_exits_zero() {
     );
 }
 
-/// Verify that `xvn optimize --help` exits 0 and lists the core
-/// operator-facing optimizer cycle subcommands.
+/// Verify that `xvn optimize --help` exits 0, lists the surviving
+/// operator-facing subcommands, and does NOT expose the removed verbs.
 #[test]
 fn optimize_help_exits_zero_and_lists_known_subcommands() {
     let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
@@ -118,16 +118,58 @@ fn optimize_help_exits_zero_and_lists_known_subcommands() {
         String::from_utf8_lossy(&out.stderr),
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // Surviving verbs must appear.
+    for verb in &["run", "ls", "show", "lineage", "unlock"] {
+        assert!(
+            stdout.contains(verb),
+            "optimize --help must list {verb:?}, got:\n{stdout}"
+        );
+    }
+
+    // Removed verbs must NOT appear.
     assert!(
-        stdout.contains("mutate-once"),
-        "optimize --help must list mutate-once, got:\n{stdout}"
+        !stdout.contains("mutate-once"),
+        "optimize --help must NOT list mutate-once (removed), got:\n{stdout}"
     );
     assert!(
-        stdout.contains("run-cycle"),
-        "optimize --help must list run-cycle, got:\n{stdout}"
+        !stdout.contains("run-cycle"),
+        "optimize --help must NOT list run-cycle (removed), got:\n{stdout}"
     );
     assert!(
-        stdout.contains("demo"),
-        "optimize --help must list demo, got:\n{stdout}"
+        !stdout.contains("demo"),
+        "optimize --help must NOT list demo (removed), got:\n{stdout}"
+    );
+}
+
+/// GH #965/#966/#968: `xvn optimize run --help` exposes the continuous-loop and
+/// live-streaming flags (`--max-cycles`, `--ipc-socket`) and HIDES the internal
+/// `--mock` smoke switch from the operator surface.
+#[test]
+fn optimize_run_help_shows_loop_and_ipc_flags_and_hides_mock() {
+    let out = Command::new(env!("CARGO_BIN_EXE_xvn"))
+        .args(["optimize", "run", "--help"])
+        .output()
+        .expect("xvn optimize run --help must not fail to spawn");
+    assert!(
+        out.status.success(),
+        "xvn optimize run --help must exit 0, got {:?}\nstderr={}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("--max-cycles"),
+        "optimize run --help must document --max-cycles (GH #965), got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("--ipc-socket"),
+        "optimize run --help must document --ipc-socket (GH #968), got:\n{stdout}"
+    );
+    // --mock is internal/CI only and hidden from the operator help surface (GH #966).
+    assert!(
+        !stdout.contains("--mock"),
+        "optimize run --help must NOT expose the hidden --mock flag, got:\n{stdout}"
     );
 }

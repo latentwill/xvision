@@ -487,7 +487,11 @@ pub async fn build_run_payload_with(
         let markers = if include.markers {
             split_markers(&decisions, &[])
         } else {
-            ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] }
+            ChartMarkers {
+                trades: vec![],
+                vetoes: vec![],
+                holds: vec![],
+            }
         };
         return Ok(RunChartPayload {
             run_id: run_id.into(),
@@ -519,13 +523,20 @@ pub async fn build_run_payload_with(
             scenario_id: run.scenario_id.clone(),
             asset: String::new(),
             granularity: String::new(),
-            time_window: TimeWindow { start: Default::default(), end: Default::default() },
+            time_window: TimeWindow {
+                start: Default::default(),
+                end: Default::default(),
+            },
             bars: vec![],
             indicators: Indicators::default(),
             equity,
             drawdown,
             position: vec![],
-            markers: ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] },
+            markers: ChartMarkers {
+                trades: vec![],
+                vetoes: vec![],
+                holds: vec![],
+            },
             baseline_equity: None,
         });
     }
@@ -602,7 +613,11 @@ pub async fn build_run_payload_with(
     let markers = if include.markers {
         split_markers(&decisions, &bars)
     } else {
-        ChartMarkers { trades: vec![], vetoes: vec![], holds: vec![] }
+        ChartMarkers {
+            trades: vec![],
+            vetoes: vec![],
+            holds: vec![],
+        }
     };
     let baseline_equity = if include.baseline {
         compute_baseline_equity(&bars, &equity)
@@ -723,10 +738,7 @@ fn compute_drawdown(equity: &[ChartEquityPoint]) -> Vec<DrawdownPoint> {
 /// convention as the scenario-preview baseline at `build_scenario_preview`),
 /// sampled at the equity curve's timestamps so both series share one time
 /// axis. Returns `None` when either input is empty.
-fn compute_baseline_equity(
-    bars: &[MarketBar],
-    equity: &[ChartEquityPoint],
-) -> Option<Vec<ChartEquityPoint>> {
+fn compute_baseline_equity(bars: &[MarketBar], equity: &[ChartEquityPoint]) -> Option<Vec<ChartEquityPoint>> {
     if bars.is_empty() || equity.is_empty() {
         return None;
     }
@@ -1653,10 +1665,8 @@ mod baseline_tests {
     use xvision_data::alpaca::MarketBar;
 
     fn bar(offset_h: i64, close: f64) -> MarketBar {
-        let ts = chrono::Utc
-            .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
-            .unwrap()
-            + chrono::Duration::hours(offset_h);
+        let ts =
+            chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::hours(offset_h);
         MarketBar {
             timestamp: ts,
             open: close,
@@ -1668,17 +1678,22 @@ mod baseline_tests {
     }
 
     fn eq_point(offset_h: i64, equity_usd: f64) -> ChartEquityPoint {
-        let ts = chrono::Utc
-            .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
-            .unwrap()
-            + chrono::Duration::hours(offset_h);
-        ChartEquityPoint { time: ts.timestamp(), equity_usd }
+        let ts =
+            chrono::Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::hours(offset_h);
+        ChartEquityPoint {
+            time: ts.timestamp(),
+            equity_usd,
+        }
     }
 
     #[test]
     fn baseline_is_100k_buy_and_hold_sampled_at_equity_times() {
         let bars = vec![bar(0, 100.0), bar(1, 110.0), bar(2, 120.0)];
-        let equity = vec![eq_point(0, 100_000.0), eq_point(1, 99_000.0), eq_point(2, 101_000.0)];
+        let equity = vec![
+            eq_point(0, 100_000.0),
+            eq_point(1, 99_000.0),
+            eq_point(2, 101_000.0),
+        ];
         let baseline = compute_baseline_equity(&bars, &equity).unwrap();
         assert_eq!(baseline.len(), 3);
         assert_eq!(baseline[0].time, equity[0].time);

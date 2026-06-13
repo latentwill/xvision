@@ -17,9 +17,33 @@ strategy id. Required author-facing fields are:
 
 The runtime defaults are `status: "draft"`, `scan_cadence: "bar_close"`,
 `cooldown_bars: 0`, `max_wakeups_per_day: null`,
-`wake_when_in_position: "always"`, and
+`wake_when_in_position: "on_invalidation_or_target_only"`, and
 `agent_context_template: "compact_trade_context_v1"` when those fields
 are omitted by higher-level authoring surfaces.
+
+`wake_when_in_position` controls whether the trader LLM is invoked while a
+position is open. Accepts exactly one of three tokens:
+
+- `"on_invalidation_or_target_only"` (default) — wake only on a fresh trip
+  (the bar the condition tree first becomes true again), so a new
+  invalidation/target signal still lets the trader close. Sustained-true bars
+  in between are suppressed, so a position is NOT re-evaluated on every bar.
+  This is the cost-safe default.
+- `"always"` — wake on every bar the tree is true while holding (the first
+  true bar AND every sustained-true bar). Expensive: a level operator that
+  stays true drives a trader-LLM call on every in-position bar. Opt-in only.
+- `"never"` — never wake while holding; exits rely entirely on the
+  deterministic `risk.stop_loss_atr_multiple`.
+
+> **Gotcha:** with the default `"on_invalidation_or_target_only"`, the filter
+> will NOT re-fire while a position is open in that asset — it wakes only on a
+> fresh trip of the condition tree. If your entry condition stays true after
+> the entry and you have no distinct exit signal, the trader is never
+> re-invoked to close, so a whole backtest can complete with only 1–2
+> decisions. Use the default only when you also have a reliable exit signal
+> (a target/invalidation condition or `risk.stop_loss_atr_multiple`). For
+> re-evaluation on every in-position bar, set `"always"` (expensive — one
+> trader-LLM call per in-position bar).
 
 Filters may also include optional LLM trigger metadata:
 

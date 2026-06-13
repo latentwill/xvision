@@ -634,7 +634,12 @@ fn parse_filter_payload(
     maybe_filter.map(Some)
 }
 
-fn parse_filter_value(
+/// Parse + validate a raw filter JSON value into a `Filter`, stamping a fresh
+/// `id` (when absent) and the owning `strategy_id`. Runs `xvision_filters::validate`,
+/// so the returned filter is guaranteed well-formed. Shared with the optimizer's
+/// structural filter-creation path (xvision-vxn) so an LLM-authored filter is
+/// validated exactly like an operator-authored one.
+pub(crate) fn parse_filter_value(
     raw_filter: serde_json::Value,
     strategy_id: &str,
 ) -> anyhow::Result<xvision_filters::Filter> {

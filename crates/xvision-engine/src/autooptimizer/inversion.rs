@@ -36,6 +36,7 @@ mod tests {
                 removed: vec![],
             },
             filter: vec![],
+            create_filter: None,
             rationale: "test inversion".into(),
         }
     }
@@ -97,6 +98,7 @@ mod tests {
                 removed: vec![],
             },
             filter: vec![],
+            create_filter: None,
             rationale: "t".into(),
         };
         normalize_prose_baseline(&mut forward, &parent);
@@ -176,6 +178,7 @@ mod tests {
                 before: serde_json::json!(20.0), // WRONG: live value is 25.0
                 after: serde_json::json!(28.0),
             }],
+            create_filter: None,
             rationale: "t".into(),
         };
         let after_before = forward.filter[0].after.clone();
@@ -328,6 +331,10 @@ pub fn invert_mutation(diff: &MutationDiff) -> MutationDiff {
             removed: diff.tools.added.clone(),
         },
         filter,
+        // A structural "create filter" has no meaningful numeric inversion for
+        // the honesty-check canary (the inverse of "add a filter" is "no filter",
+        // i.e. absence), so the inverted diff carries no create.
+        create_filter: None,
         rationale: diff.rationale.clone(),
     }
 }
