@@ -7,6 +7,7 @@ import { HomeRoute } from "./home";
 import * as chartApi from "@/api/chart";
 import * as evalApi from "@/api/eval";
 import * as strategyApi from "@/api/strategies";
+import * as deploymentsApi from "@/api/live-deployments";
 import type { RunSummary } from "@/api/types.gen";
 import {
   LAST_VISIT_LS,
@@ -163,6 +164,12 @@ describe("HomeRoute", () => {
     vi.mocked(evalApi.listRuns).mockResolvedValue([]);
     vi.mocked(chartApi.getRunChart).mockResolvedValue(null as never);
     vi.mocked(strategyApi.listStrategies).mockResolvedValue([]);
+    // Reset the live-deployments poll to an empty population each test. Without
+    // this, a `mockResolvedValue` set by one test (the live-row / capital-risk
+    // tests) leaks into later tests and the capital-risk strip would mount with
+    // stale rows — surfacing its honest "Deployed capital" label in tests that
+    // assert no live-money labels appear on an idle node.
+    vi.mocked(deploymentsApi.listDeployments).mockResolvedValue([]);
     // Each test starts with a clean last-visit boundary; tests that exercise
     // the populated delta seed localStorage explicitly. Reset the module-scoped
     // page-load-session snapshot too, so each test's first render re-reads the
@@ -383,6 +390,64 @@ describe("HomeRoute", () => {
         return p?.status === "running,paused";
       });
     expect(called).toBe(true);
+  });
+
+  // 8s4: the home capital-risk strip mounts from the SAME live-deployments
+  // poll (no second fetch) and aggregates the broker-sourced capital fields.
+  it("mounts the capital-risk strip from the live-deployments poll", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    vi.mocked(listDeployments).mockResolvedValue([
+      {
+        deployment_id: "dep-cap-1",
+        strategy_id: "strat-1",
+        strategy_name: "CapStrat",
+        mode: "paper",
+        status: "running",
+        started_at: "2026-06-13T00:00:00Z",
+        last_decision_at: "2026-06-13T01:00:00Z",
+        venue: "alpaca-paper",
+        venue_connected: true,
+        deployed_capital_usd: 2500,
+        realized_pnl_usd: null,
+        unrealized_pnl_usd: null,
+        drawdown_pct: 3.2,
+        daily_loss_limit_remaining_usd: 1800,
+        risk_veto_count_since_last_visit: null,
+        paused: false,
+        flatten_requested: false,
+        global_safety_paused: false,
+        source: "human",
+        unavailable_reason: null,
+      },
+    ]);
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    const strip = await screen.findByTestId("capital-risk-strip");
+    expect(strip).toBeInTheDocument();
+    // Aggregated deployed capital from the poll renders (not from a second fetch).
+    await waitFor(() =>
+      expect(strip.querySelector('[data-testid="capital-risk-deployed"]')!.textContent).toMatch(
+        /\$2,500/,
+      ),
+    );
+    // Deferred risk-veto chip is "—", never 0 (HONESTY).
+    expect(strip.querySelector('[data-testid="capital-risk-veto"]')!.textContent).toBe("—");
+  });
+
+  // 8s4: with zero live deployments, say nothing — no empty capital-risk strip
+  // implying live capital exists when none does.
+  it("does NOT render the capital-risk strip when there are no live deployments", async () => {
+    const { listDeployments } = await import("@/api/live-deployments");
+    vi.mocked(listDeployments).mockResolvedValue([]);
+
+    renderRoute();
+    await screen.findByRole("heading", { name: "Dashboard" });
+
+    // Give the deployments poll a chance to resolve, then assert absence.
+    await waitFor(() => expect(vi.mocked(listDeployments)).toHaveBeenCalled());
+    expect(screen.queryByTestId("capital-risk-strip")).toBeNull();
   });
 
   // A returned deployment renders as a live row inside the attention band.
