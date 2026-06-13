@@ -23,6 +23,33 @@ Cross-references for operator-facing concepts that have their own docs:
 
 ---
 
+## Optimizer window cap — migration (B22)
+
+PR B22 added a hard 120-day cap (`MAX_WINDOW_DAYS = 120`) on the
+`day_window` and `baseline_untouched_window` fields in
+`autooptimizer.toml`. This was a **breaking change**: any existing config
+with either field set above 120 now fails `xvn optimize` at startup with a
+field-level validation error.
+
+**To fix,** choose one:
+
+- **Shrink the window** to 120 days or below.
+- **Set `max_window_days`** to your intended limit (must be >= 1) to
+  explicitly acknowledge the memory tradeoff:
+
+  ```toml
+  max_window_days = 180   # opt-in to wider window
+
+  day_window = 180
+  baseline_untouched_window = 60
+  ```
+
+`max_window_days` only covers `day_window` and `baseline_untouched_window`;
+`regime_set` and `scenario_pool` windows remain capped at 120. See the
+full config reference in the dashboard wiki at `/docs?slug=autooptimizer-config`.
+
+---
+
 ## Live-node remote control
 
 If you need to drive a running xvision node over Tailscale, use the dashboard's

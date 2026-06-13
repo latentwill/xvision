@@ -140,6 +140,13 @@ last_reviewed = "2026-05-20"
 path = "runbook.md"
 
 [[page]]
+slug = "autooptimizer-config"
+title = "Optimizer Config"
+section = "Operator"
+last_reviewed = "2026-06-13"
+path = "autooptimizer-config.md"
+
+[[page]]
 slug = "research-index"
 title = "Research Index"
 section = "Research"
