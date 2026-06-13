@@ -174,3 +174,64 @@ async fn live_state_upsert_inserts_then_updates_in_place() {
         .bind(&run.id).fetch_one(&ctx.db).await.unwrap();
     assert_eq!(n, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Task 6 Step 1: list_live_deployments_excludes_backtests_and_live_venue
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_live_deployments_excludes_backtests_and_live_venue() {
+    use xvision_engine::api::eval::{list_live_deployments, LiveDeploymentSummary};
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::safety::venue::VenueLabel;
+    let ctx = support::api_context_fresh().await;
+    let store = RunStore::new(ctx.db.clone());
+    store.create(&support::backtest_run()).await.unwrap();
+    store.create(&support::live_run_with_venue(VenueLabel::Paper)).await.unwrap();
+
+    let out: Vec<LiveDeploymentSummary> = list_live_deployments(&ctx, None).await.unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].venue_label, "paper");
+    assert_eq!(out[0].status, "queued");
+}
+
+// ---------------------------------------------------------------------------
+// Task 6 Step 5: list_live_deployments_excludes_forced_live_venue_row
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_live_deployments_excludes_forced_live_venue_row() {
+    use xvision_engine::api::eval::list_live_deployments;
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::safety::venue::VenueLabel;
+    let ctx = support::api_context_fresh().await;
+    let store = RunStore::new(ctx.db.clone());
+    let run = support::live_run_with_venue(VenueLabel::Paper);
+    store.create(&run).await.unwrap();
+    // Force the venue_label to 'live' to simulate a real-live run that must
+    // never be exposed via the deployments API.
+    sqlx::query("UPDATE eval_runs SET venue_label='live' WHERE id=?")
+        .bind(&run.id)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    let out = list_live_deployments(&ctx, None).await.unwrap();
+    assert!(out.is_empty(), "venue_label='live' must never be exposed");
+}
+
+// ---------------------------------------------------------------------------
+// Task 6 Step 6: list_live_deployments_surfaces_testnet_label
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_live_deployments_surfaces_testnet_label() {
+    use xvision_engine::api::eval::list_live_deployments;
+    use xvision_engine::eval::store::RunStore;
+    use xvision_engine::safety::venue::VenueLabel;
+    let ctx = support::api_context_fresh().await;
+    let store = RunStore::new(ctx.db.clone());
+    store.create(&support::live_run_with_venue(VenueLabel::Testnet)).await.unwrap();
+    let out = list_live_deployments(&ctx, None).await.unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].venue_label, "testnet", "API response must carry the persisted venue_label");
+}
