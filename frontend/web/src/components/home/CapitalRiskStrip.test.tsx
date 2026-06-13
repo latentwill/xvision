@@ -60,6 +60,7 @@ const HEALTHY = aggregateCapitalRisk([
     deployed_capital_usd: 1000,
     drawdown_pct: 2.5,
     daily_loss_limit_remaining_usd: 800,
+    daily_loss_budget_usd: 1000,
   }),
 ]);
 
@@ -120,7 +121,7 @@ describe("CapitalRiskStrip", () => {
 
   it("color-codes the buffer danger as it approaches 0", () => {
     const danger = aggregateCapitalRisk([
-      dep({ deployed_capital_usd: 1000, daily_loss_limit_remaining_usd: 10 }),
+      dep({ daily_loss_limit_remaining_usd: 0, daily_loss_budget_usd: 1000 }),
     ]);
     renderStrip(danger);
     const buf = screen.getByTestId("capital-risk-buffer");
@@ -129,11 +130,20 @@ describe("CapitalRiskStrip", () => {
 
   it("color-codes the buffer warn in the middle band", () => {
     const warn = aggregateCapitalRisk([
-      dep({ deployed_capital_usd: 1000, daily_loss_limit_remaining_usd: 70 }),
+      dep({ daily_loss_limit_remaining_usd: 70, daily_loss_budget_usd: 1000 }),
     ]);
     renderStrip(warn);
     const buf = screen.getByTestId("capital-risk-buffer");
     expect(buf.getAttribute("data-tone")).toBe("warn");
+  });
+
+  it("keeps the buffer neutral when its budget is not sourced", () => {
+    const neutral = aggregateCapitalRisk([
+      dep({ daily_loss_limit_remaining_usd: 500, daily_loss_budget_usd: null }),
+    ]);
+    renderStrip(neutral);
+    const buf = screen.getByTestId("capital-risk-buffer");
+    expect(buf.getAttribute("data-tone")).toBeNull();
   });
 
   it("renders the risk-veto chip as '—' (deferred), never 0", () => {

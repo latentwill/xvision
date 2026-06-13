@@ -750,3 +750,41 @@ describe("ActiveTasksStrip", () => {
     expect(streamRegistry.last("d1")).toBeUndefined();
   });
 });
+
+// ─── awm ETA: stop_at field on DeploymentRow ─────────────────────────────────
+
+describe("ActiveTasksStrip — ETA display (awm / stop_at)", () => {
+  it("renders deployment-eta-* with '~...left' text when stop_at is a future timestamp", async () => {
+    const futureStopAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(); // 2h from now
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "dep-eta",
+        status: "running",
+        stop_at: futureStopAt,
+      }),
+    ]);
+
+    const etaEl = await screen.findByTestId("deployment-eta-dep-eta");
+    expect(etaEl).toBeInTheDocument();
+    expect(etaEl.textContent).toMatch(/~.+left/);
+  });
+
+  it("does NOT render deployment-eta-* when stop_at is null (no real limit)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "dep-noeta",
+        status: "running",
+        stop_at: null,
+      }),
+    ]);
+
+    await screen.findByTestId("deployment-row-dep-noeta");
+    expect(screen.queryByTestId("deployment-eta-dep-noeta")).toBeNull();
+  });
+});

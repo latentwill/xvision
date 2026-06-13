@@ -37,6 +37,7 @@ import {
 } from "@/api/live-deployments";
 import type { LiveDeploymentSummary, RunSummary } from "@/api/types.gen";
 import { fmtUsdSigned, pnlTone } from "@/features/live/live-format";
+import { formatEta } from "@/features/live/deployment-risk";
 import { formatRelativeTime } from "@/features/home/pulse";
 import {
   useOptimizerStatus,
@@ -250,6 +251,7 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
 
   const strategyName = dep.strategy_name?.trim() || "Unknown strategy";
   const decisionAgo = formatRelativeTime(dep.last_decision_at);
+  const eta = formatEta(dep.stop_at);
   const runaway = isRunaway(dep);
   const showStop =
     canStopDeployment(dep) && dep.status !== "stopped" && dep.status !== "failed";
@@ -298,6 +300,15 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
       {decisionAgo && (
         <span className="shrink-0 text-[12px] text-text-3 font-mono tabular-nums">
           {decisionAgo}
+        </span>
+      )}
+
+      {eta && (
+        <span
+          data-testid={`deployment-eta-${dep.deployment_id}`}
+          className="shrink-0 text-[12px] text-text-3 font-mono tabular-nums"
+        >
+          {eta}
         </span>
       )}
 

@@ -30,6 +30,8 @@ function makeSummary(
     unrealized_pnl_usd: 12.5,
     drawdown_pct: 1.2,
     daily_loss_limit_remaining_usd: 500,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     risk_veto_count_since_last_visit: null,
     paused: false,
     flatten_requested: false,
