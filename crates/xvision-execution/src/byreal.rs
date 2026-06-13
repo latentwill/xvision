@@ -971,7 +971,9 @@ mod tests {
         // Real CLI: `order market <side> <size> <coin>` — NOT --symbol/--side/--qty/--client-id.
         let a = order_market_args(ByrealSide::Buy, 0.01, "BTC", false, None, None);
         assert_eq!(argv(&a), vec!["order", "market", "buy", "0.01", "BTC"]);
-        assert!(!a.iter().any(|x| x == "--symbol" || x == "--side" || x == "--qty" || x == "--client-id"));
+        assert!(!a
+            .iter()
+            .any(|x| x == "--symbol" || x == "--side" || x == "--qty" || x == "--client-id"));
     }
 
     #[test]
@@ -979,7 +981,18 @@ mod tests {
         let a = order_market_args(ByrealSide::Sell, 2.5, "ETH", true, Some(1800.0), Some(2200.0));
         assert_eq!(
             argv(&a),
-            vec!["order", "market", "sell", "2.5", "ETH", "--reduce-only", "--tp", "1800", "--sl", "2200"]
+            vec![
+                "order",
+                "market",
+                "sell",
+                "2.5",
+                "ETH",
+                "--reduce-only",
+                "--tp",
+                "1800",
+                "--sl",
+                "2200"
+            ]
         );
     }
 
@@ -990,12 +1003,18 @@ mod tests {
 
     #[test]
     fn close_market_uses_position_subcommand() {
-        assert_eq!(argv(&close_market_args("BTC")), vec!["position", "close-market", "BTC"]);
+        assert_eq!(
+            argv(&close_market_args("BTC")),
+            vec!["position", "close-market", "BTC"]
+        );
     }
 
     #[test]
     fn set_leverage_args_shape() {
-        assert_eq!(argv(&set_leverage_args("BTC", 5.0)), vec!["position", "leverage", "BTC", "5"]);
+        assert_eq!(
+            argv(&set_leverage_args("BTC", 5.0)),
+            vec!["position", "leverage", "BTC", "5"]
+        );
     }
 
     #[test]
@@ -1014,7 +1033,10 @@ mod tests {
         approx(sl, 105.0);
         // Missing pct or non-positive reference ⇒ no leg.
         assert_eq!(bracket_prices(ByrealSide::Buy, 100.0, None, None), (None, None));
-        assert_eq!(bracket_prices(ByrealSide::Buy, 0.0, Some(10.0), Some(5.0)), (None, None));
+        assert_eq!(
+            bracket_prices(ByrealSide::Buy, 0.0, Some(10.0), Some(5.0)),
+            (None, None)
+        );
     }
 
     #[tokio::test]
@@ -1034,8 +1056,16 @@ mod tests {
         let recorded = orders.lock().unwrap();
         assert_eq!(recorded.len(), 1, "exactly one entry order");
         let o = &recorded[0];
-        assert!((o.tp_price.unwrap() - 62_400.0).abs() < 1e-6, "tp {:?}", o.tp_price);
-        assert!((o.sl_price.unwrap() - 58_800.0).abs() < 1e-6, "sl {:?}", o.sl_price);
+        assert!(
+            (o.tp_price.unwrap() - 62_400.0).abs() < 1e-6,
+            "tp {:?}",
+            o.tp_price
+        );
+        assert!(
+            (o.sl_price.unwrap() - 58_800.0).abs() < 1e-6,
+            "sl {:?}",
+            o.sl_price
+        );
         assert!(!o.reduce_only, "the entry leg is not reduce-only");
     }
 

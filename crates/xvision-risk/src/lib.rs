@@ -294,7 +294,10 @@ impl RiskLayer {
                 reason,
                 warnings,
             },
-            None => RiskDecision::Approved { decision: current, warnings },
+            None => RiskDecision::Approved {
+                decision: current,
+                warnings,
+            },
         }
     }
 
