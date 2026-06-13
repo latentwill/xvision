@@ -196,7 +196,7 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    live_broker as live_broker_route, marketplace as marketplace_route,
+    live_broker as live_broker_route, live_deployments, marketplace as marketplace_route,
     marketplace_read as marketplace_read_route, memory as memory_route, optimizations as optimizations_route,
     safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
     strategies_folder as strategies_folder_route, tools as tools_route,
@@ -231,6 +231,8 @@ fn readonly_router(state: AppState) -> Router {
         )
         .route("/api/assets", get(assets_route::list))
         .route("/api/live/venue-account", get(live_broker_route::venue_account))
+        .route("/api/live/deployments", get(live_deployments::list))
+        .route("/api/live/deployments/:id", get(live_deployments::get_one))
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))
