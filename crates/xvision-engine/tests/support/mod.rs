@@ -171,10 +171,15 @@ pub fn live_run_with_venue(label: VenueLabel) -> Run {
 /// Build a `Queued` backtest `Run` (mode=Backtest, a scenario_id, no
 /// `live_config`). Useful for list-filter tests that need a non-live run
 /// alongside a live run.
+///
+/// Uses `"flash-crash-aug-2024"` — the ID seeded by `ApiContext::open` via
+/// `scenario_seed::run_seed_if_needed`. This differs from the legacy
+/// `canonical_scenarios()` ID (`"flash-crash-2024-08"`) which is NOT in the
+/// canonical seed rows and would fail the trigger FK check.
 pub fn backtest_run() -> Run {
     Run::new_queued(
         "01TESTSUPPORT_BT".into(),
-        "flash-crash-2024-08".into(),
+        "flash-crash-aug-2024".into(),
         RunMode::Backtest,
     )
 }

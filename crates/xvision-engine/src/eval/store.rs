@@ -41,6 +41,10 @@ pub struct ListFilter {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
     pub status: Option<RunStatus>,
+    /// CT5: optional run mode filter. When set, only rows WHERE `mode = ?`
+    /// are returned, enabling SQL-level live/backtest separation. `None`
+    /// returns rows of any mode (existing behavior unchanged).
+    pub mode: Option<RunMode>,
     /// Optional page size. `None` returns every matching row. Caps are
     /// enforced at the API layer, not here, so internal callers that need
     /// "everything that matches" (e.g. retry-idempotency lookup) still
@@ -826,6 +830,11 @@ impl RunStore {
         if filter.status.is_some() {
             conditions.push("status = ?");
         }
+        // CT5: SQL-level mode filter (live vs backtest). Pushed after status
+        // so the bind order mirrors condition push order exactly.
+        if filter.mode.is_some() {
+            conditions.push("mode = ?");
+        }
         // bead-008: inclusive `started_at >= since`. Normalize both sides
         // through SQLite's `datetime()` so the comparison is correct across
         // the mixed on-disk shapes (`...+00:00` vs bare `YYYY-MM-DD HH:MM:SS`)
@@ -866,6 +875,9 @@ impl RunStore {
         if let Some(s) = filter.status {
             q = q.bind(s.as_str());
         }
+        if let Some(m) = filter.mode {
+            q = q.bind(m.as_str());
+        }
         if let Some(since) = filter.since {
             q = q.bind(since.to_rfc3339());
         }
@@ -896,6 +908,11 @@ impl RunStore {
         if filter.status.is_some() {
             conditions.push("status = ?");
         }
+        // CT5: mirror list()'s mode condition so count() is honest about what
+        // list() would return. Pushed after status, bound after status.
+        if filter.mode.is_some() {
+            conditions.push("mode = ?");
+        }
         // bead-008: mirror `list`'s inclusive `started_at >= since` clause so
         // the count is honest about what `list` would return.
         if filter.since.is_some() {
@@ -914,6 +931,9 @@ impl RunStore {
         }
         if let Some(s) = filter.status {
             q = q.bind(s.as_str().to_string());
+        }
+        if let Some(m) = filter.mode {
+            q = q.bind(m.as_str().to_string());
         }
         if let Some(since) = filter.since {
             q = q.bind(since.to_rfc3339());
