@@ -173,7 +173,12 @@ fn send_sigterm(_pid: u32) {}
 pub struct ListRunsRequest {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
-    pub status: Option<RunStatus>,
+    /// One or more statuses to filter on. `None` = no filter; a
+    /// single-element Vec behaves identically to the previous
+    /// single-`Option<RunStatus>` API. Serialises as a JSON array so
+    /// MCP / wizard callers that JSON-encode `ListRunsRequest` still
+    /// work after the change.
+    pub status: Option<Vec<RunStatus>>,
     /// Optional pagination — when both fields are absent, every matching
     /// row is returned. The dashboard's list endpoint passes both;
     /// internal callers (retry idempotency, chart preview) pass neither
@@ -391,7 +396,7 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
-        status: req.status,
+        status: req.status.clone(),
         limit: req.limit,
         offset: req.offset,
         since: req.since,
@@ -433,7 +438,7 @@ async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> 
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
-        status: req.status,
+        status: req.status.clone(),
         limit: req.limit,
         offset: req.offset,
         since: req.since,
@@ -4812,7 +4817,10 @@ mod tests {
     #[test]
     fn live_venue_alpaca_resolves_regardless_of_orderly_env() {
         for url in [None, Some("https://testnet-api-evm.orderly.org")] {
-            assert_eq!(resolve_live_venue("alpaca", url, None).unwrap(), LiveVenue::AlpacaPaper);
+            assert_eq!(
+                resolve_live_venue("alpaca", url, None).unwrap(),
+                LiveVenue::AlpacaPaper
+            );
         }
     }
 
@@ -4847,8 +4855,12 @@ mod tests {
     #[test]
     fn live_venue_orderly_testnet_accepts_testnet_base_url() {
         assert_eq!(
-            resolve_live_venue("orderly_testnet", Some("https://testnet-api-evm.orderly.org"), None)
-                .unwrap(),
+            resolve_live_venue(
+                "orderly_testnet",
+                Some("https://testnet-api-evm.orderly.org"),
+                None
+            )
+            .unwrap(),
             LiveVenue::OrderlyTestnet,
         );
     }
@@ -4862,7 +4874,10 @@ mod tests {
             let msg = err.to_string();
             assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
             assert!(msg.contains("BYREAL_NETWORK"), "must name the env var: {msg}");
-            assert!(msg.contains("fire-trade --venue byreal"), "must point to the CLI: {msg}");
+            assert!(
+                msg.contains("fire-trade --venue byreal"),
+                "must point to the CLI: {msg}"
+            );
             // Cred-safety: must NOT echo the env value into the error.
             assert!(!msg.contains("mainnet'"), "must not echo the env value: {msg}");
         }

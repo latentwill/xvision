@@ -937,7 +937,12 @@ impl XvisionTools {
         Parameters(req): Parameters<EvalListReq>,
     ) -> Result<String, rmcp::ErrorData> {
         let ctx = self.api_context().await?;
-        let status = req.status.as_deref().map(parse_status_for_mcp).transpose()?;
+        let status = req
+            .status
+            .as_deref()
+            .map(parse_status_for_mcp)
+            .transpose()?
+            .map(|s| vec![s]);
         let summaries = api_eval::list_summaries(
             &ctx,
             ListRunsRequest {

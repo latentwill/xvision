@@ -768,32 +768,29 @@ async fn import_pine_cmd(file: &PathBuf, name_override: Option<&str>) -> CliResu
     println!("name:     {}", outcome.strategy.manifest.display_name);
     println!();
     println!("Fidelity summary:");
-    println!(
-        "  captured:     {} item(s)",
-        report.captured.len()
-    );
+    println!("  captured:     {} item(s)", report.captured.len());
     for item in &report.captured {
         println!("    + {} — {}", item.item, item.reason);
     }
-    println!(
-        "  approximated: {} item(s)",
-        report.approximated.len()
-    );
+    println!("  approximated: {} item(s)", report.approximated.len());
     for item in &report.approximated {
         println!("    ~ {} — {}", item.item, item.reason);
     }
-    println!(
-        "  dropped:      {} item(s)",
-        report.dropped.len()
-    );
+    println!("  dropped:      {} item(s)", report.dropped.len());
     for item in &report.dropped {
         println!("    - {} — {}", item.item, item.reason);
     }
     println!();
     println!("Cost model (backtest defaults):");
     let cm = &report.cost_model;
-    println!("  commission: {} bps ({}) — {}", cm.commission_value_bps, cm.commission_type, "taker");
-    println!("  slippage:   {} bps ({})", cm.slippage_value_bps, cm.slippage_model);
+    println!(
+        "  commission: {} bps ({}) — {}",
+        cm.commission_value_bps, cm.commission_type, "taker"
+    );
+    println!(
+        "  slippage:   {} bps ({})",
+        cm.slippage_value_bps, cm.slippage_model
+    );
     println!("  fill:       {}", cm.fill_timing);
     println!();
     println!("{}", cm.note);
@@ -3075,7 +3072,7 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             ListRunsRequest {
                 agent_id: Some(sid.clone()),
                 scenario_id: None,
-                status: Some(RunStatus::Completed),
+                status: Some(vec![RunStatus::Completed]),
                 ..Default::default()
             },
         )

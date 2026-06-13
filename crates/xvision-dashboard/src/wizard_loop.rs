@@ -1881,10 +1881,8 @@ impl WizardLoop {
             "list_eval_runs" => {
                 let req: ListEvalRunsReq = serde_json::from_value(input)?;
                 let status = match req.status.as_deref() {
-                    Some(s) => Some(
-                        RunStatus::parse(s)
-                            .ok_or_else(|| anyhow::anyhow!("list_eval_runs: invalid status `{s}`"))?,
-                    ),
+                    Some(s) => Some(vec![RunStatus::parse(s)
+                        .ok_or_else(|| anyhow::anyhow!("list_eval_runs: invalid status `{s}`"))?]),
                     None => None,
                 };
                 let out = api_eval::list_summaries_paged(

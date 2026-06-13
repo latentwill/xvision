@@ -70,7 +70,7 @@ async fn list_filters_by_status() {
         .unwrap();
 
     let req = ListRunsRequest {
-        status: Some(RunStatus::Completed),
+        status: Some(vec![RunStatus::Completed]),
         ..Default::default()
     };
     let runs = eval::list(&ctx, req).await.unwrap();

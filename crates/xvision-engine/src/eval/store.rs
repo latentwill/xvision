@@ -40,7 +40,10 @@ pub struct RunStore {
 pub struct ListFilter {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
-    pub status: Option<RunStatus>,
+    /// One or more statuses to filter on (`status IN (?,...)`). `None` applies
+    /// no status filter. A single-element Vec behaves identically to the
+    /// pre-t4u8.1 single-`Option<RunStatus>` — the SQL is `status IN (?)`.
+    pub status: Option<Vec<RunStatus>>,
     /// Optional page size. `None` returns every matching row. Caps are
     /// enforced at the API layer, not here, so internal callers that need
     /// "everything that matches" (e.g. retry-idempotency lookup) still
@@ -841,22 +844,29 @@ impl RunStore {
                     source, unrealized_pnl_usd \
              FROM eval_runs",
         );
-        let mut conditions: Vec<&'static str> = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
         if filter.agent_id.is_some() {
-            conditions.push("agent_id = ?");
+            conditions.push("agent_id = ?".to_string());
         }
         if filter.scenario_id.is_some() {
-            conditions.push("scenario_id = ?");
+            conditions.push("scenario_id = ?".to_string());
         }
-        if filter.status.is_some() {
-            conditions.push("status = ?");
+        // Multi-status: emit `status IN (?, ?, ...)` for any non-empty Vec.
+        if let Some(ref statuses) = filter.status {
+            if !statuses.is_empty() {
+                let placeholders = std::iter::repeat("?")
+                    .take(statuses.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conditions.push(format!("status IN ({placeholders})"));
+            }
         }
         // bead-008: inclusive `started_at >= since`. Normalize both sides
         // through SQLite's `datetime()` so the comparison is correct across
         // the mixed on-disk shapes (`...+00:00` vs bare `YYYY-MM-DD HH:MM:SS`)
         // rather than a brittle lexicographic string compare.
         if filter.since.is_some() {
-            conditions.push("datetime(started_at) >= datetime(?)");
+            conditions.push("datetime(started_at) >= datetime(?)".to_string());
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -888,8 +898,10 @@ impl RunStore {
         if let Some(ref s) = filter.scenario_id {
             q = q.bind(s);
         }
-        if let Some(s) = filter.status {
-            q = q.bind(s.as_str());
+        if let Some(ref statuses) = filter.status {
+            for s in statuses {
+                q = q.bind(s.as_str());
+            }
         }
         if let Some(since) = filter.since {
             q = q.bind(since.to_rfc3339());
@@ -911,20 +923,27 @@ impl RunStore {
     /// return at `offset = 0, limit = ∞`.
     pub async fn count(&self, filter: &ListFilter) -> Result<u64> {
         let mut sql = String::from("SELECT COUNT(*) FROM eval_runs");
-        let mut conditions: Vec<&'static str> = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
         if filter.agent_id.is_some() {
-            conditions.push("agent_id = ?");
+            conditions.push("agent_id = ?".to_string());
         }
         if filter.scenario_id.is_some() {
-            conditions.push("scenario_id = ?");
+            conditions.push("scenario_id = ?".to_string());
         }
-        if filter.status.is_some() {
-            conditions.push("status = ?");
+        // Multi-status: mirror `list`'s `IN (...)` clause exactly.
+        if let Some(ref statuses) = filter.status {
+            if !statuses.is_empty() {
+                let placeholders = std::iter::repeat("?")
+                    .take(statuses.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conditions.push(format!("status IN ({placeholders})"));
+            }
         }
         // bead-008: mirror `list`'s inclusive `started_at >= since` clause so
         // the count is honest about what `list` would return.
         if filter.since.is_some() {
-            conditions.push("datetime(started_at) >= datetime(?)");
+            conditions.push("datetime(started_at) >= datetime(?)".to_string());
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -937,8 +956,10 @@ impl RunStore {
         if let Some(ref s) = filter.scenario_id {
             q = q.bind(s.clone());
         }
-        if let Some(s) = filter.status {
-            q = q.bind(s.as_str().to_string());
+        if let Some(ref statuses) = filter.status {
+            for s in statuses {
+                q = q.bind(s.as_str().to_string());
+            }
         }
         if let Some(since) = filter.since {
             q = q.bind(since.to_rfc3339());
@@ -1298,13 +1319,11 @@ impl RunStore {
     /// projection can re-emit it verbatim. A malformed/absent row yields
     /// `None` rather than an error (status surface, never a 500).
     pub async fn max_decision_timestamp(&self, run_id: &str) -> Result<Option<String>> {
-        let row = sqlx::query(
-            "SELECT MAX(timestamp) AS max_ts FROM eval_decisions WHERE run_id = ?",
-        )
-        .bind(run_id)
-        .fetch_optional(&self.pool)
-        .await
-        .context("max eval_decisions.timestamp")?;
+        let row = sqlx::query("SELECT MAX(timestamp) AS max_ts FROM eval_decisions WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("max eval_decisions.timestamp")?;
         Ok(row.and_then(|r| r.try_get::<Option<String>, _>("max_ts").ok().flatten()))
     }
 
@@ -2474,8 +2493,7 @@ mod since_filter_tests {
         seed_scenario(&pool, "fixture-scenario").await;
         let store = RunStore::new(pool);
 
-        let mut run =
-            Run::new_queued("agent-opt".into(), "fixture-scenario".into(), RunMode::Backtest);
+        let mut run = Run::new_queued("agent-opt".into(), "fixture-scenario".into(), RunMode::Backtest);
         run.source = DeploymentSource::Optimizer;
         run.unrealized_pnl_usd = Some(-12.5);
         store.create(&run).await.unwrap();
