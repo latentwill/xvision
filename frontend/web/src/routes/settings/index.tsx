@@ -630,14 +630,9 @@ function ByrealBrokerCard({ entry }: { entry: BrokerEntry }) {
       {showForm ? (
         <form onSubmit={onSubmit} className="space-y-3">
           <p className="m-0 text-[12px] text-text-3 leading-snug">
-            Paste a Hyperliquid{" "}
-            <strong className="text-text-2">trading-only agent key</strong> (an
-            API/agent wallet that <em>cannot withdraw</em>) — never your master
-            account key. Saved to{" "}
-            <code className="font-mono text-text-2">
-              ~/.xvn/secrets/brokers.toml
-            </code>{" "}
-            (owner-only) and used for live-eval byreal runs.
+            Use a Hyperliquid{" "}
+            <strong className="text-text-2">agent / API wallet key</strong> —
+            trading-only, cannot withdraw.
           </p>
           <div>
             <label className="block text-[12px] text-text-2 mb-1">
