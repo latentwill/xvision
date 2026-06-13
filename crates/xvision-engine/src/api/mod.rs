@@ -34,6 +34,7 @@ pub mod chart;
 pub mod charts_annotated;
 pub mod charts_dashboards;
 pub mod charts_market_context;
+pub mod cost;
 pub mod eval;
 pub mod experiment;
 pub mod flywheel;
@@ -157,6 +158,11 @@ const MIGRATION_062_EVAL_RUN_PAUSED: &str = include_str!("../../migrations/062_e
 /// via `migrate_eval_run_flatten_requested`, mirroring `migrate_eval_run_paused`.
 const MIGRATION_063_EVAL_RUN_FLATTEN_REQUESTED: &str =
     include_str!("../../migrations/063_eval_run_flatten_requested.sql");
+/// bead-8wn: persisted operator-set daily spend budget cap. A single-row
+/// `cost_budget` table (id = 1) holding the nullable `daily_cap_usd`. The DDL
+/// is `CREATE TABLE IF NOT EXISTS`, so `migrate_cost_budget` is idempotent and
+/// safe to re-run on an already-migrated DB.
+const MIGRATION_066_COST_BUDGET: &str = include_str!("../../migrations/066_cost_budget.sql");
 /// Migration 055: per-regime evaluation results for the Phase 2 regime matrix.
 /// The DDL is authoritative in `055_autooptimizer_regime_results.sql` and is
 /// provisioned at runtime via
@@ -444,6 +450,8 @@ impl ApiContext {
         migrate_autooptimizer_schedules(&pool).await?;
         migrate_eval_run_paused(&pool).await?;
         migrate_eval_run_flatten_requested(&pool).await?;
+        // bead-8wn: persisted operator-set daily spend budget cap.
+        migrate_cost_budget(&pool).await?;
         // P1-W2: crash recovery — mark any in-flight sessions as failed.
         crate::autooptimizer::session::mark_interrupted_sessions(&pool)
             .await
@@ -1290,6 +1298,17 @@ async fn migrate_eval_run_flatten_requested(pool: &SqlitePool) -> ApiResult<()> 
             .execute(pool)
             .await?;
     }
+    Ok(())
+}
+
+/// Apply migration 065 (bead-8wn): the single-row `cost_budget` table holding
+/// the operator-set daily spend cap. The DDL in `066_cost_budget.sql` (compiled
+/// in as `MIGRATION_066_COST_BUDGET`) is `CREATE TABLE IF NOT EXISTS`, so this
+/// is idempotent on already-migrated databases. No backfill (DB-wipe posture):
+/// an absent row means the cap is UNSET, which the API surfaces as `null` (the
+/// dashboard renders an em-dash, never a faked ceiling).
+async fn migrate_cost_budget(pool: &SqlitePool) -> ApiResult<()> {
+    sqlx::query(MIGRATION_066_COST_BUDGET).execute(pool).await?;
     Ok(())
 }
 
@@ -2825,5 +2844,35 @@ mod migration_registry_tests {
 
         // Re-open safe (column already present).
         migrate_eval_run_flatten_requested(&pool).await.unwrap();
+    }
+
+    /// Migration 065 (bead-8wn): on a clean DB the guard creates the single-row
+    /// `cost_budget` table and is idempotent on re-open. No backfill — the
+    /// table starts empty (cap UNSET).
+    #[tokio::test]
+    async fn migrate_cost_budget_creates_table_idempotently() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        let exists = |p: SqlitePool| async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cost_budget'",
+            )
+            .fetch_one(&p)
+            .await
+            .unwrap()
+        };
+        assert_eq!(exists(pool.clone()).await, 0, "table absent before migration");
+
+        migrate_cost_budget(&pool).await.unwrap();
+        assert_eq!(exists(pool.clone()).await, 1, "migrate_cost_budget must create the table");
+
+        // Fresh table holds no row — cap is UNSET (null), no fabricated cap.
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cost_budget")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "no backfill — cap starts UNSET");
+
+        // Re-run safe (CREATE TABLE IF NOT EXISTS).
+        migrate_cost_budget(&pool).await.unwrap();
     }
 }

@@ -63,8 +63,9 @@ pub use compare::{
     ComparisonReport, ComparisonRunSummary, ManifestMismatch,
 };
 pub use cost::{
-    aggregate_eval_run_inference_cost, compute_token_cost_usd, compute_token_cost_usd_from_catalog,
-    provider_reports_zero_cost,
+    aggregate_eval_run_inference_cost, aggregate_inference_cost_since, aggregate_optimizer_cost_since,
+    compute_token_cost_usd, compute_token_cost_usd_from_catalog, get_daily_budget_cap,
+    provider_reports_zero_cost, set_daily_budget_cap,
 };
 pub use cost_arrays::{BarCostEntry, BarCostTable};
 pub use findings::{Finding, Severity};

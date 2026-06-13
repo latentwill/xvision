@@ -192,7 +192,7 @@ use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
     autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
     charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
-    diagnostics as diagnostics_route, docs,
+    cost as cost_route, diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
@@ -417,6 +417,11 @@ fn readonly_router(state: AppState) -> Router {
             "/api/autooptimizer/events",
             get(crate::sse::autooptimizer_sse::autooptimizer_events_handler),
         )
+        // bead-8wn: cross-source cost surface (read-only). Windowed spend
+        // rollup + the persisted operator-set daily budget cap (null when
+        // UNSET — the FE renders an em-dash, never a faked ceiling).
+        .route("/api/cost/rollup", get(cost_route::rollup))
+        .route("/api/cost/budget", get(cost_route::get_budget))
         .route("/api/bars/:cache_key", get(bars::cache_row))
         .route("/api/cli/jobs/:id", get(cli::get))
         .route("/api/cli/jobs/:id/output", get(cli::output))
@@ -720,6 +725,10 @@ fn mutating_router(state: AppState) -> Router {
             "/api/optimize/memory-demos/:id/gate",
             post(flywheel::optimize_memory_demos_gate),
         )
+        // ── Cost budget (bead-8wn) ────────────────────────────────────────
+        // PUT sets the operator-set daily budget cap (mutation). A
+        // non-positive / NaN cap → 400 (autooptimizer_cycle budget validation).
+        .route("/api/cost/budget", put(cost_route::put_budget))
         // ── CLI jobs ──────────────────────────────────────────────────────
         .route("/api/cli/jobs", post(cli::create))
         .route("/api/cli/jobs/:id", delete(cli::delete))
