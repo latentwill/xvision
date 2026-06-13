@@ -53,14 +53,16 @@ use xvision_engine::eval::live_config::LiveConfig;
 use xvision_engine::safety::venue::VenueLabel;
 use xvision_engine::api::ApiContext;
 
-/// A fully-migrated ApiContext over an in-memory pool (incl. migration 065).
-/// Mirror the existing `api_eval_run_context` / `common::open_api_context`
-/// helper — it uses the production migration apply path, so 065 is included
-/// once registered in api/mod.rs (Task 1 Step 3).
+/// A fully-migrated ApiContext (incl. migration 065 once registered in
+/// api/mod.rs, Task 1 Step 2). Mirrors `tests/common/mod.rs open_api_context()`
+/// which calls `ApiContext::open(dir.path(), actor)`. CRITICAL: the file-backed
+/// SQLite DB lives in a TempDir — it must NOT be dropped, or every query fails
+/// with "unable to open database file". We `Box::leak` it so the signature can
+/// stay `-> ApiContext` (test processes are short-lived; the leak is bounded).
 pub async fn api_context_fresh() -> ApiContext {
-    // e.g. ApiContext::open_in_memory().await.unwrap()  — use the exact
-    // constructor the existing helpers use; expose the pool via `.db`.
-    crate::support::api_eval_run_context().await.0 // adjust to return ApiContext
+    let dir: &'static tempfile::TempDir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+    // Confirm the exact ApiContext::open signature (dir, actor) via tests/common/mod.rs:10.
+    ApiContext::open(dir.path(), "test").await.unwrap()
 }
 
 /// Build a live Run with the given venue label. Mirror how the engine
@@ -143,13 +145,13 @@ CREATE TABLE live_run_state (
 
 - [ ] **Step 2: Register it in `api/mod.rs`**
 
-In `crates/xvision-engine/src/api/mod.rs`, find the `MIGRATION_NNN` constants + apply sequence (~lines 56-169). Following the existing `064` pattern, add:
+In `crates/xvision-engine/src/api/mod.rs`, find the `MIGRATION_NNN` constants + apply sequence (~lines 56-169). **Mirror the `063` pattern, NOT 064** — migration `064_autooptimizer_pattern_snapshots.sql` exists only as a `.sql` file applied inline in a unit test; it is NOT in the api/mod.rs apply sequence, where `063` is the last registered migration. Mirror `MIGRATION_063_EVAL_RUN_FLATTEN_REQUESTED` (const ~`api/mod.rs:158`) and its apply fn `migrate_eval_run_flatten_requested` (~`api/mod.rs:446`):
 
 ```rust
-const MIGRATION_065: &str = include_str!("../../migrations/065_live_run_state.sql");
+const MIGRATION_065_LIVE_RUN_STATE: &str = include_str!("../../migrations/065_live_run_state.sql");
 ```
 
-and append its application **after** 064 in the same apply sequence (mirror the exact `sqlx::query(MIGRATION_064).execute(pool).await...` call style used there).
+Add an apply call after the 063 application in the same boot sequence, using the same guarded style (`sqlx::query(MIGRATION_065_LIVE_RUN_STATE).execute(pool).await` or a `migrate_live_run_state` fn mirroring `migrate_eval_run_flatten_requested`).
 
 - [ ] **Step 3: Write the migration test**
 
@@ -279,11 +281,13 @@ In `list()`, condition **after** the `status` push:
     if filter.mode.is_some() { conditions.push("mode = ?"); }
 ```
 
-bind **after** the `status` bind (mirror push order):
+bind **after** the `status` bind and **before** the `since` bind (the bind sequence must mirror the condition push order exactly):
 
 ```rust
     if let Some(m) = filter.mode { q = q.bind(m.as_str()); }
 ```
+
+> Note: `count()` (~store.rs:877) mirrors `list()`'s WHERE clauses. The CT5 contract uses its own raw SQL (Task 6), so `count()` does not need `mode` for this work — but for consistency add the same `mode` condition+bind to `count()` to avoid a future paginating caller getting wrong totals. Low risk; include it in this task's commit.
 
 - [ ] **Step 4: Run to verify it passes** → PASS.
 
@@ -448,7 +452,7 @@ async fn live_loop_writes_capital_risk_snapshot() {
 
 - [ ] **Step 3a: Add `risk_vetoed` to the decide-one-live outcome**
 
-Find the `decide_one_live` outcome struct (already carries `daily_loss_day`/`daily_realized_at_day_start`). Add `pub(crate) risk_vetoed: bool`, set `true` in the veto branch (where `record_supervisor_note(&run.id, "risk", "warn", &note)` is called, ~line 3696), default `false` elsewhere.
+Find the `decide_one_live` outcome struct `LiveDecisionOutcome` (~line 4321; already carries `daily_loss_day`/`daily_realized_at_day_start`). Add `pub(crate) risk_vetoed: bool`. **Rust struct literals require every field at every construction site** — set it at BOTH: `risk_vetoed: true` in the veto branch (after `record_supervisor_note(&run.id, "risk", "warn", &note)`, ~line 3697) AND `risk_vetoed: false` at the normal (non-veto) return site that constructs `LiveDecisionOutcome { … }` (~line 3887). Omitting either site is a compile error.
 
 - [ ] **Step 3b: Upsert in the outer loop**
 
@@ -472,7 +476,8 @@ peak_equity = peak_equity.max(equity);
 let realized_today = book.realized() - daily_realized_at_day_start;
 let kill_pct = strategy.risk.daily_loss_kill_pct;
 let daily_loss_remaining = (kill_pct * initial + realized_today).max(0.0);
-let drawdown_pct = if peak_equity > 0.0 { ((peak_equity - equity) / peak_equity).max(0.0) } else { 0.0 };
+// percentage (0–100), matching the live loop (backtest.rs:3369) + spec §5.2 thresholds (5%, 15%)
+let drawdown_pct = if peak_equity > 0.0 { ((peak_equity - equity) / peak_equity * 100.0).max(0.0) } else { 0.0 };
 let unrealized: f64 = book.open_legs().iter()
     .map(|(_, pos, entry, last_mark)| pos * (last_mark - entry)).sum();
 let snap = crate::eval::live_run_state::LiveRunState {
@@ -633,7 +638,23 @@ async fn list_live_deployments_excludes_forced_live_venue_row() {
 
 Run → PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Testnet venue_label surfaces in the API response (spec §9 item 3)**
+
+```rust
+#[tokio::test]
+async fn list_live_deployments_surfaces_testnet_label() {
+    let ctx = support::api_context_fresh().await;
+    let store = RunStore::new(ctx.db.clone());
+    store.create(&support::live_run_with_venue(VenueLabel::Testnet)).await.unwrap();
+    let out = list_live_deployments(&ctx, None).await.unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].venue_label, "testnet", "API response must carry the persisted venue_label");
+}
+```
+
+Run → PASS. (Pairs with Task 2's DB-column assertion to fully cover §9 item 3: DB + response agree.)
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add crates/xvision-engine/src/api/eval.rs crates/xvision-engine/tests/live_run_state.rs
@@ -655,7 +676,9 @@ mod support; // crates/xvision-dashboard/tests/support/mod.rs
 
 #[tokio::test]
 async fn get_deployments_returns_array() {
-    let server = support::test_server().await; // existing dashboard test harness
+    // test_server() returns (TestServer, TempDir) — bind _tmp so the DB dir
+    // is not dropped mid-test.
+    let (server, _tmp) = support::test_server().await;
     let res = server.get("/api/live/deployments").await;
     res.assert_status_ok();
     assert!(res.json::<serde_json::Value>().is_array());
@@ -795,7 +818,7 @@ git commit -m "feat: LiveRunState SSE event + /api/live/deployments/:id/stream (
 
 - [ ] **Step 1: Regenerate TS types**
 
-Run: `cargo xtask gen-types`
+Run: `scripts/cargo xtask gen-types`  (via the disk-guard wrapper per CLAUDE.md, never bare `cargo`)
 (This runs the `ts-export` tests for xvision-core/memory/engine and rewrites the barrel `frontend/web/src/api/types.gen.ts` automatically.)
 Expected: `frontend/web/src/api/types.gen/LiveDeploymentSummary.ts`, `LiveRunState.ts`, `LiveRunStatePayload.ts` written + re-exported in the barrel.
 
