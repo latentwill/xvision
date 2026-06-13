@@ -3054,6 +3054,16 @@ impl Executor {
         let mut daily_loss_day: Option<chrono::NaiveDate> = None;
         let mut daily_realized_at_day_start: f64 = 0.0;
 
+        // CT5: per-bar live_run_state upsert. One SQLite row per live run,
+        // written best-effort after each bar so the dashboard can display
+        // capital-risk state without waiting for the run to finish.
+        let mut risk_veto_count: i64 = 0;
+        let live_state =
+            crate::eval::live_run_state::LiveStateStore::new(store.pool().clone());
+        let deployed_capital = initial;
+        let strategy_id = run.live_config.as_ref().map(|c| c.strategy_id.clone());
+        let strategy_name = run.live_config.as_ref().map(|c| c.display_name.clone());
+
         // Pull the runtime out of the executor for the duration of the
         // loop. The `Mutex` is held across `.await`s on the stream + fills;
         // a live run has a single driver so there is no contention.
@@ -3378,6 +3388,40 @@ impl Executor {
                 n_trades,
             });
 
+            // CT5: per-bar capital-risk snapshot upserted into live_run_state.
+            // Best-effort — a snapshot write failure must never abort the live
+            // loop (real money may be riding on it).
+            if outcome.risk_vetoed {
+                risk_veto_count += 1;
+            }
+            {
+                let realized_today = book.realized() - daily_realized_at_day_start;
+                let kill_pct = strategy.risk.daily_loss_kill_pct;
+                let daily_loss_remaining = (kill_pct * initial + realized_today).max(0.0);
+                let unrealized: f64 = book
+                    .open_legs()
+                    .iter()
+                    .map(|(_, pos, entry, last_mark)| pos * (last_mark - entry))
+                    .sum();
+                let snap = crate::eval::live_run_state::LiveRunState {
+                    run_id: run.id.clone(),
+                    strategy_id: strategy_id.clone(),
+                    strategy_name: strategy_name.clone(),
+                    deployed_capital_usd: deployed_capital,
+                    equity_usd: Some(equity),
+                    unrealized_pnl_usd: Some(unrealized),
+                    realized_pnl_usd: Some(book.realized()),
+                    realized_today_usd: Some(realized_today),
+                    daily_loss_remaining_usd: Some(daily_loss_remaining),
+                    drawdown_pct: Some(drawdown_pct),
+                    peak_equity_usd: Some(peak_equity),
+                    risk_veto_count,
+                    last_decision_at: Some(decision_ts.to_rfc3339()),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                };
+                let _ = live_state.upsert(&snap).await;
+            }
+
             decision_idx += 1;
 
             // LANE byu — periodic auto-attest. Only a FILLED trade advances
@@ -3660,6 +3704,9 @@ impl Executor {
         //     holding an open position; a new open that would exceed the cap
         //     is vetoed. Re-opening / adjusting an asset that is already
         //     in-position is not blocked.
+        // CT5: track whether this cycle fired a risk veto so the loop driver
+        // can increment the monotonic `risk_veto_count` in `live_run_state`.
+        let mut risk_vetoed = false;
         let applied_action: String = {
             let is_new_open = applied_action == "long_open" || applied_action == "short_open";
             if !is_new_open {
@@ -3707,6 +3754,7 @@ impl Executor {
                         obs.emit_engine_event("risk_veto", None, Some(payload.to_string()))
                             .await;
                     }
+                    risk_vetoed = true;
                     "hold".to_string()
                 } else {
                     applied_action
@@ -3886,6 +3934,7 @@ impl Executor {
             broker_error,
             daily_loss_day,
             daily_realized_at_day_start,
+            risk_vetoed, // CT5: propagate to loop driver for live_run_state counter
         })
     }
 
@@ -4329,6 +4378,10 @@ struct LiveDecisionOutcome {
     /// calls on the same run.
     daily_loss_day: Option<chrono::NaiveDate>,
     daily_realized_at_day_start: f64,
+    /// CT5: true when the risk gate vetoed an open this decision cycle.
+    /// The loop driver increments `risk_veto_count` and persists it to
+    /// `live_run_state` each bar.
+    pub(crate) risk_vetoed: bool,
 }
 
 // executor-trait-extraction: `SimulateFillArgs`, `SimulateFillResult`,
