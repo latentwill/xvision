@@ -672,11 +672,20 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         if optimizer_memory_enabled {
             opt_mem = ctx.memory_recorder.clone();
         }
-        Box::new(CachedBacktestPaperTester::new(
-            ctx,
-            Arc::clone(&metered_dispatch),
-            Arc::new(ToolRegistry::default_with_builtins()),
-        ))
+        let tools = Arc::new(ToolRegistry::default_with_builtins());
+        let cline_ctx =
+            xvision_engine::api::eval::spawn_optimizer_cline_ctx(&ctx, &binding.provider, Arc::clone(&tools))
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("spawn optimizer sidecar: {e}")))?;
+        let agent_runtime = if cline_ctx.is_some() {
+            xvision_core::config::AgentRuntime::Cline
+        } else {
+            xvision_core::config::AgentRuntime::LlmDispatch
+        };
+        Box::new(
+            CachedBacktestPaperTester::new(ctx, Arc::clone(&metered_dispatch), tools)
+                .with_cline_runtime(agent_runtime, cline_ctx),
+        )
     };
 
     let budget_cap = args.budget.unwrap_or(f64::INFINITY);
