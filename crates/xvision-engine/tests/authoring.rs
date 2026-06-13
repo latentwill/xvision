@@ -47,7 +47,6 @@ async fn create_blank_strategy_produces_no_agents_and_no_placeholder_slot() {
         "no placeholder trader slot on blank draft"
     );
     assert!(draft.regime_slot.is_none());
-    assert!(draft.intern_slot.is_none());
     assert_eq!(draft.manifest.template, "custom");
     assert_eq!(draft.manifest.display_name, "Blank Draft");
     assert_eq!(draft.manifest.creator, "@op");
@@ -91,7 +90,6 @@ async fn create_strategy_produces_a_blank_draft_post_registry_removal() {
         "blank draft must not carry a placeholder trader slot",
     );
     assert!(strategy.regime_slot.is_none());
-    assert!(strategy.intern_slot.is_none());
     assert!(strategy.agents.is_empty());
     assert_eq!(strategy.manifest.creator, "@op");
 }

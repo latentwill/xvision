@@ -183,7 +183,6 @@ async fn save_strategy(ctx: &ApiContext, strategy_id: &str) -> Strategy {
         }],
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

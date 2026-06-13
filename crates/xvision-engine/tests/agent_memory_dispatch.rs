@@ -725,8 +725,8 @@ async fn execute_slot_skips_observation_write_without_source_window() {
 
 /// Build a minimal `Strategy` whose `agents` slot is populated so
 /// `run_pipeline` takes the agent-pipeline branch (the one this PR
-/// wired the recorder into) rather than the legacy regime/intern/
-/// trader branch. The legacy slots are cleared explicitly so the
+/// wired the recorder into) rather than the legacy regime/trader
+/// branch. The legacy slots are cleared explicitly so the
 /// agent-pipeline path is the only path that fires.
 fn pipeline_fixture_strategy() -> Strategy {
     Strategy {
@@ -752,7 +752,6 @@ fn pipeline_fixture_strategy() -> Strategy {
         agents: Vec::new(),
         pipeline: PipelineDef::sequential(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

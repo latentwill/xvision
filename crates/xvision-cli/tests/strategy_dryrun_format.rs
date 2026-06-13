@@ -157,7 +157,6 @@ fn seed_strategy(home: &std::path::Path) -> String {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),

@@ -22,8 +22,8 @@ simple market-making model that wants continuous quotes, for example)
 and wasteful for most (a regime-conditional momentum strategy doesn't
 need to think during a sideways drift).
 
-`xvn strategy validate` emits a warning when it finds a Trader or
-Critic agent with no upstream Filter:
+`xvn strategy validate` emits a warning when it finds a Trader agent
+with no upstream Filter:
 
 ```
 warning: strategy 'btc-mean-rev-v1' has a Trader agent with no upstream
@@ -80,7 +80,7 @@ tracked in the spec at
 ## Authoring a firing condition from the SPA
 
 1. Open the strategy in `/strategies/:id/edit`.
-2. Find the Trader (or Critic, Intern, Router) agent card you want to
+2. Find the Trader (or Router) agent card you want to
    gate. Each non-Filter agent card has a "When does this fire?"
    sub-section.
 3. Click **Add filter**. The inline composer opens.

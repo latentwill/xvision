@@ -152,7 +152,7 @@ pub struct StrategyId {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateSlotReq {
     pub id: String,
-    /// Slot to update: `regime` | `intern` | `trader`.
+    /// Slot to update: `regime` | `trader`.
     pub slot: String,
     /// Model requirement (e.g., `anthropic.claude-sonnet-4.6+`).
     #[serde(default)]
@@ -1401,7 +1401,6 @@ impl XvisionTools {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: None,
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),

@@ -1529,7 +1529,6 @@ fn provider_matches_default(entry: &ProviderEntry, cfg: &RuntimeConfig) -> bool 
 
 fn clear_default_llm(doc: &mut toml_edit::DocumentMut) {
     doc.remove("default_llm");
-    doc.remove("intern");
 }
 
 fn validate_model_ids(models: &[String]) -> ApiResult<()> {
@@ -1566,21 +1565,11 @@ fn write_default_llm(
 ) -> ApiResult<()> {
     use toml_edit::{value, Item};
 
-    let legacy_intern = doc.get("intern").and_then(|i| i.as_table()).cloned();
-    doc.remove("intern");
-
     let default_llm = doc
         .entry("default_llm")
         .or_insert(Item::Table(Default::default()))
         .as_table_mut()
         .ok_or_else(|| ApiError::Validation("[default_llm] is not a table".into()))?;
-    if let Some(legacy) = legacy_intern {
-        for (k, v) in legacy.iter() {
-            if default_llm.get(k).is_none() {
-                default_llm.insert(k, v.clone());
-            }
-        }
-    }
     default_llm.insert("provider", value(kind_to_str(kind)));
     default_llm.insert("base_url", value(base_url));
     default_llm.insert("api_key_env", value(api_key_env));
@@ -1881,7 +1870,7 @@ kind = "anthropic"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 
-[intern]
+[default_llm]
 provider = "anthropic"
 base_url = "https://api.anthropic.com"
 model = "x"

@@ -118,7 +118,7 @@ fn happy_path_ok() {
     let base = make_strategy();
     let diff = make_diff(
         vec![ProseEdit {
-            agent_role: "trader".into(),
+            agent_role: "regime".into(),
             before: "analyze market".into(),
             after: "analyze trends".into(),
         }],
@@ -147,7 +147,7 @@ fn unknown_agent_role() {
     let base = make_strategy();
     let diff = make_diff(
         vec![ProseEdit {
-            agent_role: "intern".into(),
+            agent_role: "regime".into(),
             before: "x".into(),
             after: "y".into(),
         }],
@@ -168,7 +168,7 @@ fn empty_prose_after_rejected() {
     let base = make_strategy();
     let diff = make_diff(
         vec![ProseEdit {
-            agent_role: "trader".into(),
+            agent_role: "regime".into(),
             before: "".into(),
             after: "   ".into(),
         }],
@@ -277,7 +277,7 @@ fn errors_aggregate_no_short_circuit() {
     let base = make_strategy();
     let diff = make_diff(
         vec![ProseEdit {
-            agent_role: "intern".into(),
+            agent_role: "regime".into(),
             before: "x".into(),
             after: "y".into(),
         }],

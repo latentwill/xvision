@@ -118,7 +118,6 @@ fn build_test_strategy(id: &str, name: &str) -> Strategy {
         agents: Vec::new(),
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(trader_slot()),
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),

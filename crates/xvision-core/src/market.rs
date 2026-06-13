@@ -1,7 +1,7 @@
-//! What the Stage 1 Intern sees about a market setup. Pure data: the Intern
-//! reads, the Intern's prompt builder formats, the Intern's backend sends to
-//! the LLM. No computation lives here — indicators are populated by
-//! `xvision-data` upstream.
+//! Data the Stage-1 briefing agent sees about a market cycle. Pure data: the
+//! briefing agent reads, the briefing agent's prompt builder formats, the
+//! briefing agent's backend sends to the LLM. No computation lives here —
+//! indicators are populated by `xvision-data` upstream.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -19,8 +19,8 @@ pub struct Ohlcv {
     pub volume: f64,
 }
 
-/// Snapshot of an asset at a point in time. The Intern receives this
-/// (formatted) and emits an [`InternBriefing`](super::trading::InternBriefing).
+/// Snapshot of an asset at a point in time. The agent receives this
+/// (formatted) as its market context to reason over.
 ///
 /// Field semantics:
 /// - `recent_bars` is ordered chronologically (oldest first); the last entry
@@ -38,8 +38,7 @@ pub struct MarketSnapshot {
     pub indicators: IndicatorPanel,
     pub onchain: OnchainPanel,
     pub regime: Regime,
-    /// Forward-looking horizon (hours) the Intern should evaluate against.
-    /// Mirrors `InternBriefing::horizon_hours`.
+    /// Forward-looking horizon (hours) the agent should evaluate against.
     pub horizon_hours: u32,
 }
 
@@ -74,7 +73,7 @@ pub struct OnchainPanel {
 }
 
 /// Reference to a skill catalog entry. v1 carries name + a one-line summary;
-/// the prompt builder includes the summary list so the Intern knows the
+/// the prompt builder includes the summary list so the briefing agent knows the
 /// domain context it has access to. Full skill bodies live on disk under
 /// `.claude/skills/{byreal,mantle}/skills/`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

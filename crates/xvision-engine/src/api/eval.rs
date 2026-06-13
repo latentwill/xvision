@@ -1744,14 +1744,10 @@ async fn collect_provider_names_for_strategy(
 ) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
 
-    // 1. Legacy inline slots on the strategy (trader / intern / regime).
-    for slot in [
-        strategy.trader_slot.as_ref(),
-        strategy.intern_slot.as_ref(),
-        strategy.regime_slot.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
+    // 1. Legacy inline slots on the strategy (trader / regime).
+    for slot in [strategy.trader_slot.as_ref(), strategy.regime_slot.as_ref()]
+        .into_iter()
+        .flatten()
     {
         if let Some(p) = slot.provider.as_deref() {
             let p = p.trim();
@@ -2021,14 +2017,10 @@ fn runtime_slots<'a>(
     if !agent_slots.is_empty() {
         return agent_slots.iter().map(|resolved| &resolved.slot).collect();
     }
-    [
-        strategy.trader_slot.as_ref(),
-        strategy.intern_slot.as_ref(),
-        strategy.regime_slot.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+    [strategy.trader_slot.as_ref(), strategy.regime_slot.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Pick the long-lived `agents.agent_id` of the agent acting as the
@@ -4061,7 +4053,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
     // F-1 (eval-launch-concurrency-cap, 2026-05-19): cap how many runs
     // can be in flight against a single upstream `(provider, model)`
     // bucket. Resolved from the trader slot (the dominant token spender);
-    // findings/intern slots ride along on the same permit because the
+    // findings/regime slots ride along on the same permit because the
     // F-1 audit (`team/intake/2026-05-16-eval-review-and-v2a.md`) tracked
     // the burst as a single user-perceived "launch". The guard is moved
     // into the spawned background task so it lives for the full run
@@ -5074,7 +5066,6 @@ mod tests {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: Some(legacy_slot),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),

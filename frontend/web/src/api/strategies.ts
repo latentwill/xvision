@@ -60,7 +60,7 @@ export type PipelineKind = "single" | "sequential" | "graph";
 // `frontend/web/src/api/types.gen/Capability.ts` for the canonical
 // generated form; mirror it locally so this module doesn't have to
 // import the generated barrel for one type.
-export type Capability = "trader" | "filter" | "critic" | "intern" | "router";
+export type Capability = "trader" | "filter" | "router";
 
 // Predicate evaluated against an upstream Filter agent's signal. Mirrors
 // `EdgePredicate` from the engine — kept inline so strategies.ts stays
@@ -155,7 +155,6 @@ import type { ActivationMode } from "./types.gen/ActivationMode";
 export type Strategy = {
   manifest: PublicManifest;
   regime_slot: LLMSlot | null;
-  intern_slot: LLMSlot | null;
   trader_slot: LLMSlot | null;
   risk: RiskConfig;
   mechanical_params: unknown;
@@ -205,9 +204,9 @@ export type ValidateDraftOut = {
   errors: string[];
   /// Soft signals — saveable but worth surfacing in the strategy editor
   /// alongside errors. As of the firing-filter wave the engine populates
-  /// this with the no-Filter warning (Trader/Critic agent with no
-  /// upstream Filter). Optional on the wire so older server responses
-  /// continue to parse — treat `undefined` as `[]`.
+  /// this with the no-Filter warning (Trader agent with no upstream
+  /// Filter). Optional on the wire so older server responses continue to
+  /// parse — treat `undefined` as `[]`.
   warnings?: string[];
 };
 

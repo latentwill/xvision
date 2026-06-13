@@ -35,7 +35,6 @@ fn fixture_strategy() -> Strategy {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({"ema_fast": 12, "ema_slow": 50}),

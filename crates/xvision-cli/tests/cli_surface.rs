@@ -266,7 +266,6 @@ const UNDOCUMENTED_VERBS: &[&str] = &[
     "close-position",
     // Stage-isolation commands — intended for developers probing a single
     // pipeline stage, not for routine operator use.
-    "intern",
     "trader",
     "risk",
     // Single-indicator computation helper — developer/debug tool.

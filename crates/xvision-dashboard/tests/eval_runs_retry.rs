@@ -142,7 +142,6 @@ sqlite_url = "sqlite://x.db"
         }],
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({}),
