@@ -10,19 +10,31 @@
 // here.
 //
 // HONESTY (CT5 §11): every nullable LiveDeploymentSummary field renders "—" /
-// "no data", NEVER a fabricated 0 / $0. Capital / P&L / drawdown come from the
-// honest 5s POLL (`GET /api/live/deployments`), passed in as the `deployments`
-// prop from the home route — NOT from SSE (per-tick capital streaming is
-// deferred; CT5 §4). `mode` (paper/live) comes from the deployment's `mode`
-// field, never inferred.
+// "no data", NEVER a fabricated 0 / $0. Capital / P&L / drawdown have a TWO
+// source contract:
+//   - the honest 5s POLL (`GET /api/live/deployments`), passed in as the
+//     `deployments` prop from the home route, is the list-membership source of
+//     truth AND the degrade floor for every capital field;
+//   - the per-deployment SSE (`openDeploymentStream`, CT5 §4 / bead s78.1)
+//     OVERLAYS the live-ticking capital block (esp. unrealized P&L) on top of
+//     the poll value. The streamed numbers are the SAME honest book/execution
+//     values; a field with no real data is OMITTED on the wire (stays
+//     undefined), so it falls back to the poll value — never a blank / 0 flash.
+//     On stream drop / close the overlay clears and the poll value shows again.
+// `mode` (paper/live) comes from the deployment's `mode` field, never inferred.
 //
 // Shows in-flight eval runs (queued | running) with elapsed time, stuck warning, cancel,
 // plus the running optimizer cycle (if any) with pause/resume controls (S0 / O2+O3),
 // plus the live/paper deployment rows (n0k/awm).
 
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { cancelRun, evalKeys, listRuns } from "@/api/eval";
+import {
+  openDeploymentStream,
+  type DeploymentMetricsPatch,
+} from "@/api/live-deployments";
 import type { LiveDeploymentSummary, RunSummary } from "@/api/types.gen";
 import { fmtUsdSigned, pnlTone } from "@/features/live/live-format";
 import { formatRelativeTime } from "@/features/home/pulse";
@@ -161,10 +173,61 @@ function RunRow({ run }: { run: RunSummary }) {
   );
 }
 
+/// s78.1: subscribe to a deployment's SSE and keep the latest live capital
+/// patch. Only LIVE / paper deployments that are actually running stream — a
+/// stopped row never opens a socket. The patch holds ONLY the capital fields the
+/// backend sent on the wire (omitted-null fields stay undefined), so a consumer
+/// overlays present fields and falls back to the poll for the rest. On unmount /
+/// id change the stream closes (no leak) and the overlay clears, so the row
+/// degrades to the poll value with no blank / 0 flash.
+function useDeploymentLiveMetrics(
+  id: string,
+  streaming: boolean,
+): DeploymentMetricsPatch | null {
+  const [patch, setPatch] = useState<DeploymentMetricsPatch | null>(null);
+
+  useEffect(() => {
+    if (!streaming) {
+      setPatch(null);
+      return;
+    }
+    // New subscription target: clear any stale overlay so the poll value shows
+    // until the first live tick lands (no carry-over from a previous id).
+    setPatch(null);
+    const close = openDeploymentStream(id, (ev) => {
+      if (ev.event === "metrics") {
+        // Merge so a later equity-only heartbeat does not wipe the capital
+        // fields a prior full tick delivered; present fields overlay, absent
+        // ones keep their last live value (still honest — last real number).
+        setPatch((prev) => ({ ...(prev ?? {}), ...ev.data }));
+      }
+    });
+    return () => {
+      close();
+      // Stream torn down — drop the overlay so the row falls back to the poll.
+      setPatch(null);
+    };
+  }, [id, streaming]);
+
+  return patch;
+}
+
+/// Pick the honest value to render: the live-streamed field when the SSE
+/// delivered one this session, else the poll value. NEVER fabricates a `0` —
+/// `null`/`undefined` on both sides stays `null` (rendered "—").
+function liveOrPoll(
+  live: number | null | undefined,
+  poll: number | null,
+): number | null {
+  return live ?? poll;
+}
+
 /**
- * n0k / awm: one live/paper deployment row, sourced from the 5s poll
- * (`LiveDeploymentSummary`). Capital/P&L are honesty-constrained — a `null`
- * unrealized P&L renders "—", never a fabricated $0.
+ * n0k / awm / s78.1: one live/paper deployment row. List membership + the
+ * capital floor come from the 5s poll (`LiveDeploymentSummary`); the live
+ * unrealized P&L ticks via the per-deployment SSE and overlays the poll value,
+ * degrading back to it on stream drop. Capital/P&L are honesty-constrained — a
+ * `null` unrealized P&L renders "—", never a fabricated $0.
  */
 function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
   const queryClient = useQueryClient();
@@ -175,6 +238,14 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
       queryClient.invalidateQueries({ queryKey: ["live-deployments"] });
     },
   });
+
+  // Only stream while the deployment is in a live, non-terminal state. A
+  // paused/stopped row has no live ticks to overlay; keep it on the poll.
+  const streaming = dep.status === "running";
+  const live = useDeploymentLiveMetrics(dep.deployment_id, streaming);
+
+  // Live-ticking unrealized P&L overlaid on the poll; "—" when both are null.
+  const unrealizedPnl = liveOrPoll(live?.unrealized_pnl_usd, dep.unrealized_pnl_usd);
 
   const strategyName = dep.strategy_name?.trim() || "Unknown strategy";
   const decisionAgo = formatRelativeTime(dep.last_decision_at);
@@ -209,15 +280,16 @@ function DeploymentRow({ dep }: { dep: LiveDeploymentSummary }) {
         {dep.status}
       </span>
 
-      {/* Unrealized P&L — "—" when null (honesty), signed $ otherwise. */}
+      {/* Unrealized P&L — live-ticking via SSE, overlaid on the poll value;
+          "—" when both are null (honesty), signed $ otherwise. */}
       <span
         data-testid="deployment-unrealized-pnl"
         className={`shrink-0 text-[12px] font-mono tabular-nums ${
-          dep.unrealized_pnl_usd == null ? "text-text-3" : pnlTone(dep.unrealized_pnl_usd)
+          unrealizedPnl == null ? "text-text-3" : pnlTone(unrealizedPnl)
         }`}
         title="Unrealized P&L"
       >
-        {fmtUsdSigned(dep.unrealized_pnl_usd)}
+        {fmtUsdSigned(unrealizedPnl)}
       </span>
 
       {/* Last decision, relative time (omitted when no decision recorded). */}

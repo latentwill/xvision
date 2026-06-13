@@ -49,6 +49,7 @@ export type { DaemonStatus } from "./types.gen/DaemonStatus";
 export type { DataSource } from "./types.gen/DataSource";
 export type { DecisionRowDto } from "./types.gen/DecisionRowDto";
 export type { DecisionTrace } from "./types.gen/DecisionTrace";
+export type { DeploymentMetricsTick } from "./types.gen/DeploymentMetricsTick";
 export type { DeploymentMode } from "./types.gen/DeploymentMode";
 export type { DeploymentSource } from "./types.gen/DeploymentSource";
 export type { DeploymentStatus } from "./types.gen/DeploymentStatus";

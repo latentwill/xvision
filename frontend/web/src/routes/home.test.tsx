@@ -83,13 +83,15 @@ vi.mock("@/api/agent-runs", () => ({
 }));
 
 // n0k/awm: the home route owns the 5s live-deployments poll; rows flow down
-// through AttentionBand → ActiveTasksStrip.
+// through AttentionBand → ActiveTasksStrip. s78.1: each running row also opens
+// a per-deployment SSE — stub it so the rows mount without a real EventSource.
 vi.mock("@/api/live-deployments", () => ({
   deploymentKeys: {
     all: ["live-deployments"],
     list: (p?: unknown) => ["live-deployments", "list", p ?? {}],
   },
   listDeployments: vi.fn().mockResolvedValue([]),
+  openDeploymentStream: vi.fn(() => () => {}),
 }));
 
 vi.mock("@/api/settings", () => ({

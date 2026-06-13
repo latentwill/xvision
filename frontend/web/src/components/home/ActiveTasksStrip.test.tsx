@@ -1,10 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import * as evalApi from "@/api/eval";
+import type {
+  DeploymentMetricsPatch,
+  DeploymentStreamEvent,
+} from "@/api/live-deployments";
 import type { LiveDeploymentSummary, RunSummary } from "@/api/types.gen";
 import { ActiveTasksStrip } from "./ActiveTasksStrip";
 
@@ -18,6 +22,46 @@ vi.mock("@/api/eval", async () => {
     cancelRun: vi.fn(),
   };
 });
+
+// s78.1: control the per-deployment SSE. Each `openDeploymentStream(id, cb)`
+// call records the id, exposes `emit(patch)` to drive a live `metrics` frame,
+// and tracks whether `close()` ran (leak detection on unmount / id change).
+const streamRegistry = vi.hoisted(() => {
+  type Sub = {
+    id: string;
+    cb: (ev: DeploymentStreamEvent) => void;
+    closed: boolean;
+  };
+  const subs: Sub[] = [];
+  function open(id: string, cb: (ev: DeploymentStreamEvent) => void) {
+    const sub: Sub = { id, cb, closed: false };
+    subs.push(sub);
+    return () => {
+      sub.closed = true;
+    };
+  }
+  return {
+    subs,
+    open: vi.fn(open),
+    emit(id: string, patch: DeploymentMetricsPatch) {
+      for (const s of subs) {
+        if (s.id === id && !s.closed) s.cb({ event: "metrics", data: patch });
+      }
+    },
+    last(id: string) {
+      return [...subs].reverse().find((s) => s.id === id);
+    },
+    reset() {
+      subs.length = 0;
+      streamRegistry.open.mockClear();
+    },
+  };
+});
+
+vi.mock("@/api/live-deployments", () => ({
+  openDeploymentStream: (id: string, cb: (ev: DeploymentStreamEvent) => void) =>
+    streamRegistry.open(id, cb),
+}));
 
 // S0 / O2+O3: control the optimizer-status hook + pause/resume mutations.
 const { pauseMutate, resumeMutate, statusRef } = vi.hoisted(() => ({
@@ -139,6 +183,7 @@ afterEach(() => {
   statusRef.current = undefined;
   pauseMutate.mockReset();
   resumeMutate.mockReset();
+  streamRegistry.reset();
 });
 
 describe("ActiveTasksStrip", () => {
@@ -515,5 +560,156 @@ describe("ActiveTasksStrip", () => {
     await screen.findByText("EvalAlpha");
     expect(screen.getByText("LiveBeta")).toBeInTheDocument();
     expect(screen.getByTestId("live-deployments-group")).toBeInTheDocument();
+  });
+
+  // ─── s78.1: live-ticking unrealized P&L via the per-deployment SSE ─────────
+
+  it("subscribes to the SSE for a running deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([makeDeployment({ deployment_id: "d1", status: "running" })]);
+
+    await screen.findByTestId("deployment-row-d1");
+    await waitFor(() =>
+      expect(streamRegistry.open).toHaveBeenCalledWith("d1", expect.any(Function)),
+    );
+  });
+
+  it("overlays the streamed unrealized P&L on top of the poll value", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        status: "running",
+        unrealized_pnl_usd: 10, // poll value
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    // Before any tick: the poll value shows.
+    expect(pnl.textContent).toBe("+$10.00");
+
+    // A live metrics tick arrives — the row ticks to the streamed value.
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    act(() => {
+      streamRegistry.emit("d1", { equity_usd: 1000, unrealized_pnl_usd: 88.5 });
+    });
+    await waitFor(() => expect(pnl.textContent).toBe("+$88.50"));
+  });
+
+  // DEGRADE: a heartbeat / tick that carries NO unrealized P&L must not blank
+  // the row — it falls back to the poll value (no 0 / blank flash).
+  it("falls back to the poll value when the tick omits unrealized P&L", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        status: "running",
+        unrealized_pnl_usd: 25, // poll value
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    // Equity-only heartbeat: no capital fields.
+    act(() => {
+      streamRegistry.emit("d1", { equity_usd: 999 });
+    });
+    // Still shows the honest poll value, never blanked / zeroed.
+    await waitFor(() => expect(pnl.textContent).toBe("+$25.00"));
+  });
+
+  // HONESTY: streamed null + poll null => "—", never a fabricated $0.
+  it("renders '—' when both the stream and poll have no unrealized P&L", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({
+        deployment_id: "d1",
+        status: "running",
+        unrealized_pnl_usd: null,
+      }),
+    ]);
+
+    const row = await screen.findByTestId("deployment-row-d1");
+    const pnl = row.querySelector('[data-testid="deployment-unrealized-pnl"]')!;
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    act(() => {
+      streamRegistry.emit("d1", { equity_usd: 100 }); // no pnl
+    });
+    await waitFor(() => expect(pnl.textContent).toBe("—"));
+    expect(pnl.textContent).not.toContain("0");
+    expect(pnl.textContent).not.toContain("$");
+  });
+
+  it("closes the EventSource on unmount (no leak)", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    const { unmount } = renderStrip([
+      makeDeployment({ deployment_id: "d1", status: "running" }),
+    ]);
+
+    await screen.findByTestId("deployment-row-d1");
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    const sub = streamRegistry.last("d1")!;
+    expect(sub.closed).toBe(false);
+
+    unmount();
+    expect(sub.closed).toBe(true);
+  });
+
+  it("closes the old stream and opens a new one when the row id changes", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    const { rerender } = renderStrip([
+      makeDeployment({ deployment_id: "d1", status: "running" }),
+    ]);
+    await screen.findByTestId("deployment-row-d1");
+    await waitFor(() => expect(streamRegistry.last("d1")).toBeTruthy());
+    const first = streamRegistry.last("d1")!;
+
+    // Replace the row with a different deployment id.
+    rerender(
+      <MemoryRouter>
+        <QueryClientProvider
+          client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+        >
+          <ActiveTasksStrip
+            deployments={[makeDeployment({ deployment_id: "d2", status: "running" })]}
+          />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+
+    await screen.findByTestId("deployment-row-d2");
+    await waitFor(() => expect(streamRegistry.last("d2")).toBeTruthy());
+    expect(first.closed).toBe(true);
+    expect(streamRegistry.last("d2")!.closed).toBe(false);
+  });
+
+  // A non-running (paused) deployment must NOT open a socket — nothing to tick.
+  it("does not open a stream for a paused deployment", async () => {
+    vi.mocked(evalApi.listRuns).mockResolvedValue([]);
+    setStatus(null);
+
+    renderStrip([
+      makeDeployment({ deployment_id: "d1", status: "paused" }),
+    ]);
+
+    await screen.findByTestId("deployment-row-d1");
+    // Flush effects.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(streamRegistry.last("d1")).toBeUndefined();
   });
 });
