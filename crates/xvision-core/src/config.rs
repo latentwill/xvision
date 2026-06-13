@@ -446,6 +446,28 @@ pub struct RiskConfig {
     #[garde(skip)]
     #[serde(default)]
     pub venues: std::collections::BTreeMap<String, RiskVenueLimits>,
+    /// Perps-guard thresholds. Like `venues`, xvision-core mirrors this section
+    /// only so `config/risk.toml` deserializes here too; the thresholds are
+    /// consumed by the xvision-risk crate's own `PerpsGuards`. Absent `[perps]`
+    /// ⇒ default (all `None`).
+    #[garde(skip)]
+    #[serde(default)]
+    pub perps: RiskPerpsGuards,
+}
+
+/// Pass-through mirror of the xvision-risk `[perps]` guard config. Deliberately
+/// NOT `deny_unknown_fields` so future perps thresholds don't break
+/// xvision-core's loader; the risk crate owns the authoritative schema/defaults.
+#[derive(Debug, Clone, Default, PartialEq, Validate, Serialize, Deserialize)]
+pub struct RiskPerpsGuards {
+    /// Funding-carry guard threshold. Mirrored for deserialization.
+    #[garde(skip)]
+    #[serde(default)]
+    pub max_funding_pay_8h: Option<f64>,
+    /// Liquidation-distance guard threshold (PR #992). Mirrored for deserialization.
+    #[garde(skip)]
+    #[serde(default)]
+    pub min_liq_distance_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Validate, Serialize, Deserialize)]
@@ -737,6 +759,7 @@ mod tests {
                 take_profit_min_rr: 1.5,
             },
             venues: std::collections::BTreeMap::new(),
+            perps: RiskPerpsGuards::default(),
         }
     }
 

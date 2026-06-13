@@ -31,6 +31,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { SafetyPauseBanner } from "@/components/home/SafetyPauseBanner";
 import { DeployReadinessStrip } from "@/components/home/DeployReadinessStrip";
+import { CapitalRiskStrip } from "@/components/home/CapitalRiskStrip";
 import { HomeDeltaSubtitle } from "@/components/home/HomeDeltaSubtitle";
 import { HomeOutcomeStrip } from "@/components/home/HomeOutcomeStrip";
 import {
@@ -47,6 +48,7 @@ import type { AttentionItem } from "@/components/home/NagStrip";
 import { chartKeys, getRunChart } from "@/api/chart";
 import { costKeys, getCostBudget, getCostRollup } from "@/api/cost";
 import { evalKeys, listRuns } from "@/api/eval";
+import { deploymentKeys, listDeployments } from "@/api/live-deployments";
 import { strategyKeys, listStrategies } from "@/api/strategies";
 import { getBrokers, listProviders, settingsKeys, testAlpacaConnection } from "@/api/settings";
 import { agentRunKeys, listAgentRuns } from "@/api/agent-runs";
@@ -55,6 +57,7 @@ import { listCriticalFindings } from "@/api/eval-review";
 import { livenessCounts } from "@/features/live/strip-status";
 import { pickHeroRun } from "@/features/home/pulse";
 import { buildDeployReadiness } from "@/features/home/deploy-readiness";
+import { aggregateCapitalRisk } from "@/features/home/capital-risk";
 import { failedRunFindings, failedRunNags } from "@/features/home/failed-runs";
 import {
   computeSinceDelta,
@@ -80,6 +83,11 @@ const LIVENESS_PARAMS = { status: "running,queued", limit: 100 } as const;
 // In-flight eval runs for the deploy-readiness "no blocking eval" check —
 // same shape ActiveTasksStrip uses, so the stuck-run story stays consistent.
 const INFLIGHT_PARAMS = { status: "queued,running" } as const;
+
+// n0k/awm (CT5 §9): active live/paper deployments for the ActiveTasksStrip live
+// rows. Capital / P&L / drawdown come from THIS 5s poll (per-tick capital
+// streaming is deferred; CT5 §4), filtered to the active window.
+const DEPLOYMENTS_PARAMS = { status: "running,paused" } as const;
 
 export function HomeRoute() {
   const runs = useQuery({
@@ -144,6 +152,15 @@ export function HomeRoute() {
     queryKey: evalKeys.runs(INFLIGHT_PARAMS),
     queryFn: () => listRuns(INFLIGHT_PARAMS),
     refetchInterval: 10_000,
+  });
+
+  // n0k/awm: live/paper deployments for the ActiveTasksStrip live rows. 5s
+  // poll matches the CT5 contract (§3) — list membership AND the honest
+  // capital/P&L/drawdown fields both ride this poll.
+  const deployments = useQuery({
+    queryKey: deploymentKeys.list(DEPLOYMENTS_PARAMS),
+    queryFn: () => listDeployments(DEPLOYMENTS_PARAMS),
+    refetchInterval: 5_000,
   });
 
   // jlm: findings for the "since you were last here" delta. Shares the exact
@@ -234,6 +251,14 @@ export function HomeRoute() {
     inflightRuns: inflightRuns.data ?? [],
   });
 
+  // 8s4: capital-risk strip aggregate. REUSES the live-deployments poll above
+  // (no second fetch). With zero live deployments we say nothing — never imply
+  // live capital exists when none does; the strip mounts only when there is at
+  // least one active deployment (its own below-floor "insufficient data" state
+  // covers the deployed-but-no-fills-yet case honestly).
+  const liveDeployments = deployments.data ?? [];
+  const capitalRisk = aggregateCapitalRisk(liveDeployments);
+
   return (
     <>
       <Topbar
@@ -245,6 +270,13 @@ export function HomeRoute() {
         <SafetyPauseBanner />
 
         <DeployReadinessStrip checks={readinessChecks} />
+
+        {/* 8s4: capital-risk safety strip — slim top band in the safety-gate
+            area, under SafetyPauseBanner (which keeps its top precedence) and
+            DeployReadinessStrip. Mounts only when there is at least one active
+            live/paper deployment, so an idle node says nothing rather than
+            implying live capital exists. */}
+        {liveDeployments.length > 0 && <CapitalRiskStrip agg={capitalRisk} />}
 
         {/* bead-008: inline, full-width window selector scoping the outcomes +
             findings surfaces below it. It does NOT scope the pulse hero,
@@ -274,6 +306,7 @@ export function HomeRoute() {
             strategies={strategies.data ?? []}
             nagItems={attentionItems}
             failedRunFindings={failedRunFindings(windowedRuns)}
+            deployments={deployments.data ?? []}
           />
         </div>
 

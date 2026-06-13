@@ -75,6 +75,12 @@ async fn engine_pool_with_026() -> SqlitePool {
         .execute(&pool)
         .await
         .unwrap();
+    sqlx::query(include_str!(
+        "../migrations/065_eval_run_source_and_unrealized_pnl.sql"
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
     // V2E foundation.
     sqlx::query(include_str!("../migrations/026_trace_surface_foundation.sql"))
         .execute(&pool)

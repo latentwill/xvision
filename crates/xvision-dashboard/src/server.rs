@@ -165,6 +165,8 @@
 //  R70. GET  /api/marketplace/listings/:id/attestations
 //  R70b. GET /api/marketplace/listings/:id/import-challenge (sealed proof nonce)
 //  R71. GET  /api/live/venue-account     (live venue status snapshot)
+//  R72. GET  /api/live/deployments       (CT5 live/paper deployment list, ~5s poll)
+//  R73. GET  /api/live/deployments/:id/stream (CT5 per-deployment SSE)
 //  R55. GET  /api/auth/session/current   (auth endpoint — own handler)
 //
 // AUTH endpoints (open — handle their own auth logic):
@@ -196,7 +198,8 @@ use crate::routes::{
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
-    live_broker as live_broker_route, marketplace as marketplace_route,
+    live_broker as live_broker_route, live_deployments as live_deployments_route,
+    marketplace as marketplace_route,
     marketplace_read as marketplace_read_route, memory as memory_route, optimizations as optimizations_route,
     safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
     strategies_folder as strategies_folder_route, tools as tools_route,
@@ -231,6 +234,15 @@ fn readonly_router(state: AppState) -> Router {
         )
         .route("/api/assets", get(assets_route::list))
         .route("/api/live/venue-account", get(live_broker_route::venue_account))
+        // CT5 (Epic s78 Wave 3): live/paper deployment list + per-deployment
+        // SSE. Static `/deployments` is registered before the `:id/stream`
+        // dynamic route (static-before-`:id` ordering). A deployment is an
+        // `eval_runs` row with mode='live'; honesty-constrained projection.
+        .route("/api/live/deployments", get(live_deployments_route::list_deployments))
+        .route(
+            "/api/live/deployments/:id/stream",
+            get(live_deployments_route::stream),
+        )
         .route("/api/skills", get(skills::list))
         .route("/api/skills/:id", get(skills::get))
         .route("/api/tools", get(tools_route::list))

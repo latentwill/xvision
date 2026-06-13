@@ -135,7 +135,24 @@ limit?:  usize (default 20, max 100)
 
 ## 4. `GET /api/live/deployments/:id/stream` (SSE)
 
-Mirrors the agent-runs `/:id/stream` (snapshot-first) plus the eval_runs terminal pre-check + 250ms batching. Read-only GET in `readonly_router`.
+Mirrors the agent-runs `/:id/stream` (snapshot-first) plus the eval_runs terminal pre-check. Read-only GET in `readonly_router`.
+
+> **⚠️ Wave 3a scope (landed 2026-06-13).** The SSE delivers the **snapshot**
+> frame, **equity** ticks (`RunChartEvent::Equity`), lifecycle/terminal
+> **status**, and `lagged`. The widened per-tick **capital block** (`metrics`
+> with `deployed_capital_usd` / `unrealized_pnl_usd` / `realized_pnl_usd` /
+> `daily_loss_limit_remaining_usd` / `drawdown_pct`) and the `risk_veto` event
+> are **DEFERRED** — those values are computed in the live loop but currently
+> ride the engine `ProgressBus` (`ProgressEvent::MetricsUpdated`), not the
+> `RunEventBus` the dashboard SSE subscribes to. **Consumers (`n0k`, `awm`,
+> `8s4`) read all capital/P&L/drawdown fields from the honest 5s POLL**
+> (`GET /api/live/deployments`, §3) — the poll surfaces the full
+> `LiveDeploymentSummary` every cycle. Streaming the capital block per-tick is a
+> follow-up that requires widening `RunChartEvent` (a core chart type with
+> existing consumers) or bridging `ProgressBus` → `RunEventBus`; it was held out
+> of Wave 3a to avoid that blast radius. The §4 event table below describes the
+> **target** contract; rows marked *(deferred)* are not yet emitted. 250ms
+> batching is likewise deferred (current builder forwards per-event).
 
 **Handler:** `live_deployments.rs::stream(State, Path<id>)`. **Builder:** new `crates/xvision-dashboard/src/sse/live_deployment_sse.rs`.
 
@@ -150,13 +167,13 @@ Mirrors the agent-runs `/:id/stream` (snapshot-first) plus the eval_runs termina
 | `event:` | Source variant | Payload (honest fields) |
 |---|---|---|
 | `snapshot` | (assembled) | full `LiveDeploymentSummary` |
-| `metrics` | `ProgressEvent::MetricsUpdated` (`backtest.rs:3338`) | `{ equity_usd, drawdown_pct, deployed_capital_usd, unrealized_pnl_usd, realized_pnl_usd, daily_loss_limit_remaining_usd, n_trades }` — all derived in-loop from the book + in-memory peak/day-start (§6) |
+| `metrics` *(equity only in 3a; capital block deferred)* | `RunChartEvent::Equity` now; `ProgressEvent::MetricsUpdated` (`backtest.rs:3338`) once bridged | TARGET: `{ equity_usd, drawdown_pct, deployed_capital_usd, unrealized_pnl_usd, realized_pnl_usd, daily_loss_limit_remaining_usd, n_trades }`. **3a emits `{ time, equity_usd }` only**; the capital fields come from the poll until the bus is bridged. All derived in-loop from the book + in-memory peak/day-start (§6) |
 | `decision` | per-decision record | `{ last_decision_at, action, asset, fill_price, fill_size, pnl_realized }` from the just-written `eval_decisions` row |
-| `risk_veto` | obs `risk_veto` event | `{ reason: "daily_loss_kill" \| "max_concurrent_positions", severity, at }` — increments `risk_veto_count_since_last_visit` |
+| `risk_veto` *(deferred — not yet emitted in 3a)* | obs `risk_veto` event | `{ reason: "daily_loss_kill" \| "max_concurrent_positions", severity, at }` — increments `risk_veto_count_since_last_visit` |
 | `status` | lifecycle / pause / flatten / safety | `{ status, paused, flatten_requested, global_safety_paused }` |
 | `lagged` | `RecvError::Lagged(n)` | `{ dropped: n }` |
 
-**Producer additions (engine):** the live loop already emits `ProgressEvent::MetricsUpdated { equity, drawdown_pct, n_trades }` (`backtest.rs:3338`) and `RunChartEvent::Equity` (`backtest.rs:3321`). CT5 **extends the `metrics` emission** to also carry `deployed_capital_usd` (Σ `book.open_legs()` notional), `unrealized_pnl_usd` (`book.equity(marks) - initial - book.realized()`), `realized_pnl_usd` (`book.realized()`), and `daily_loss_limit_remaining_usd` (§6.2 formula) — all already computable in-loop from `book` + the existing in-memory `peak_equity`/`daily_realized_at_day_start`. A new `status`/`risk_veto` emission is added on the existing veto + pause/flatten/safety paths. No new state; only widening existing in-loop emissions.
+**Producer additions (engine) — DEFERRED past Wave 3a.** The live loop already emits `ProgressEvent::MetricsUpdated { equity, drawdown_pct, n_trades, deployed_capital_usd, unrealized_pnl_usd, realized_pnl_usd, daily_loss_limit_remaining_usd }` (the capital fields were widened in 3a) and `RunChartEvent::Equity` (`backtest.rs:3321`). **The gap:** `MetricsUpdated` rides the engine `ProgressBus`, while the dashboard SSE subscribes to the `RunEventBus` (which carries `RunChartEvent`, whose `Equity` variant is `{ time, equity_usd }` only). So in 3a the `metrics` SSE frame carries equity only. Closing this requires EITHER (a) a new `RunChartEvent` variant (e.g. `DeploymentMetrics`) carrying the capital block, emitted via `emit_chart` and mapped in `event_name()` + the FE `LIVE_SSE_EVENTS`; OR (b) bridging `ProgressEvent::MetricsUpdated` → `RunEventBus` in the dashboard wiring. The `status`/`risk_veto` emissions are likewise deferred. **No consumer is blocked** — capital/P&L/drawdown are read from the §3 poll, which is honest and complete. This is a streaming-latency optimization, tracked as a Wave-3 follow-up.
 
 **Frontend:** `live-deployments.ts::openDeploymentStream(id, onEvent)` — `EventSource("/api/live/deployments/:id/stream")`, a `LIVE_SSE_EVENTS` const array matching the Rust `event_name()` exactly, exponential-backoff reconnect (copy `SSE_BACKOFF_MS` from `agent-runs.ts`), `close()` handle. Hand-written `DeploymentStreamEvent` union until ts-rs covers the event payloads.
 

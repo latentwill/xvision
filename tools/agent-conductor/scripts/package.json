@@ -5,7 +5,7 @@
   "description": "Standalone scripts for the agent-conductor control plane. Each script is runnable with `node`; share this package.json's dependencies. The daemon itself (tools/agent-conductor/{src,bin}) is a separate package set up by agent-cicd-daemon-skeleton.",
   "type": "module",
   "dependencies": {
-    "ajv": "8.17.1",
+    "ajv": "8.18.0",
     "ajv-formats": "3.0.1"
   }
 }

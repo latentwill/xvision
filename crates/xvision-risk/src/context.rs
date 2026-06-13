@@ -31,4 +31,25 @@ pub struct RiskEvalContext<'a> {
     /// engine's built-in rules do **not** use this value; it is exposed
     /// solely so user-authored rules can opt into conviction-scaled sizing.
     pub conviction: f32,
+    /// Latest perp funding rate for `asset`, in the same units as
+    /// [`xvision_core::OnchainPanel::funding_rate_8h`] (positive ⇒ longs pay
+    /// shorts). `None` when the caller has no funding signal — funding-aware
+    /// rules (e.g. `FundingCarryGuard`) then no-op (fail-safe). Spot/backtest
+    /// paths leave this `None`; the live perps path populates it.
+    pub funding_rate_8h: Option<f64>,
+}
+
+/// Live market context threaded into [`crate::RiskLayer::evaluate_with_market`].
+///
+/// Bundles the per-cycle market signals that perps-aware rules need but that
+/// live on neither the `TraderDecision` nor the `PortfolioState`. Every field
+/// is optional and defaults to `None`; spot/backtest callers pass
+/// `MarketContext::default()` so perps-aware rules no-op (fail-safe). The live
+/// perps path populates the fields it has.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MarketContext {
+    /// Latest perp funding rate for the cycle's asset (same units as
+    /// [`xvision_core::OnchainPanel::funding_rate_8h`]; positive ⇒ longs pay
+    /// shorts). Consumed by `FundingCarryGuard`.
+    pub funding_rate_8h: Option<f64>,
 }

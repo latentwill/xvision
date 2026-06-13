@@ -2754,6 +2754,13 @@ impl Executor {
                 equity,
                 drawdown_pct,
                 n_trades,
+                // CT5: backtests are NOT deployments — leave the capital fields
+                // None so the backtest path is behaviorally unchanged and no
+                // live-money number is ever emitted from a backtest.
+                deployed_capital_usd: None,
+                unrealized_pnl_usd: None,
+                realized_pnl_usd: None,
+                daily_loss_limit_remaining_usd: None,
             });
 
             timeline_idx += 1;
@@ -3053,6 +3060,16 @@ impl Executor {
         // daily kill check applies to the whole run's realized PnL.
         let mut daily_loss_day: Option<chrono::NaiveDate> = None;
         let mut daily_realized_at_day_start: f64 = 0.0;
+        // CT5 (§6): in-memory per-session execution-layer tracker. The
+        // authoritative source for the deployment's drawdown_pct +
+        // daily_loss_limit_remaining_usd, kept in lock-step with the loop-local
+        // peak / day-start above. NOT a persisted snapshot table.
+        let mut session_tracker =
+            crate::eval::executor::live_session::LiveSessionTracker::new(initial);
+        // CT5 (§6.3 option A): the most recent per-run unrealized PnL, persisted
+        // to `eval_runs.unrealized_pnl_usd` in the buffered equity flush so the
+        // poll path has an honest number between SSE ticks. `None` pre-first-mark.
+        let mut latest_unrealized_pnl: Option<f64> = None;
 
         // Pull the runtime out of the executor for the duration of the
         // loop. The `Mutex` is held across `.await`s on the stream + fills;
@@ -3190,6 +3207,10 @@ impl Executor {
                 let _ = store
                     .persist_partial(&run.id, &partial, total_input_tokens, total_output_tokens)
                     .await;
+                // CT5 (§6.3 option A): persist the latest per-run unrealized so
+                // the `LiveDeploymentSummary` poll path is fresh between SSE
+                // ticks. `None` (pre-first-mark) writes NULL, never a faked 0.
+                let _ = store.set_unrealized_pnl(&run.id, latest_unrealized_pnl).await;
                 last_partial_persist = Instant::now();
             }
 
@@ -3366,16 +3387,68 @@ impl Executor {
             if equity > peak_equity {
                 peak_equity = equity;
             }
-            let drawdown_pct = if peak_equity > 0.0 {
-                ((peak_equity - equity) / peak_equity * 100.0).max(0.0)
-            } else {
-                0.0
+            // CT5 (§6): keep the in-memory session tracker in lock-step with the
+            // loop-local peak / day-start so the drawdown + daily-loss-buffer
+            // formulas come from ONE authority (unit-tested in `live_session`).
+            session_tracker.observe_equity(equity);
+            if let Some(day) = daily_loss_day {
+                // The day baseline was already rolled inside `decide_one_live`;
+                // mirror it into the tracker (idempotent within a day).
+                session_tracker.roll_day(day, daily_realized_at_day_start);
+            }
+            // CT5 honesty (§6.1): source drawdown from the ONE session-tracker
+            // authority instead of re-deriving it with a literal-0 fallback. The
+            // tracker returns `None` only when there is genuinely no positive
+            // peak yet; `observe_equity(equity)` ran just above, so a peak always
+            // exists here and the `unwrap_or(0.0)` is never the fabricated "no
+            // data" path. The `MetricsUpdated.drawdown_pct` field is `f64` (the
+            // backtest path shares it), so per-tick `None` propagation over the
+            // event is a deferred follow-up tied to widening that field.
+            let drawdown_pct = session_tracker.drawdown_pct(equity).unwrap_or(0.0);
+            // CT5 capital fields derived in-loop from the book + tracker and
+            // emitted on the engine `ProgressBus` (`ProgressEvent::MetricsUpdated`).
+            // NOTE: these are NOT carried over the dashboard deployment SSE — that
+            // stream reads `RunChartEvent` (equity-only `metrics` + lifecycle
+            // `status`), not `ProgressEvent::MetricsUpdated`. `LiveDeploymentSummary`
+            // consumers read the full capital block via the 5s poll endpoint;
+            // per-tick capital streaming is a DEFERRED follow-up (would require
+            // widening `RunChartEvent`). HONESTY MANDATE: a realized figure with no
+            // fill history surfaces as None, never a faked 0.
+            let realized_now = book.realized();
+            let realized_pnl_usd = if n_trades > 0 { Some(realized_now) } else { None };
+            // Deployed capital = Σ |position| * mark over open legs.
+            let deployed_capital_usd = {
+                let notional: f64 = book
+                    .open_legs()
+                    .iter()
+                    .map(|(_, position, _entry, mark)| position.abs() * *mark)
+                    .sum();
+                if book.open_position_count() > 0 {
+                    Some(notional)
+                } else {
+                    None
+                }
             };
+            // Unrealized = equity - initial - realized (book mark-to-market).
+            let unrealized_pnl_usd = Some(equity - initial - realized_now);
+            let daily_loss_limit_remaining_usd = session_tracker
+                .daily_loss_limit_remaining_usd(strategy.risk.daily_loss_kill_pct, realized_now);
+            // CT5 §6.3 option A: persist the per-run unrealized so the poll path
+            // (`LiveDeploymentSummary` from `GET /api/live/deployments`) has an
+            // honest number — this is the source for the deployment's unrealized
+            // P&L, since the SSE does not stream the capital block.
+            if let Some(u) = unrealized_pnl_usd {
+                latest_unrealized_pnl = Some(u);
+            }
             self.emit(ProgressEvent::MetricsUpdated {
                 run_id: run.id.clone(),
                 equity,
                 drawdown_pct,
                 n_trades,
+                deployed_capital_usd,
+                unrealized_pnl_usd,
+                realized_pnl_usd,
+                daily_loss_limit_remaining_usd,
             });
 
             decision_idx += 1;
@@ -3433,6 +3506,9 @@ impl Executor {
         store
             .record_equity_upsert_batch(&run.id, &equity_samples_buf)
             .await?;
+        // CT5 (§6.3 option A): final persist of the per-run unrealized PnL so a
+        // run that ends keeps its last honest mark-to-market for the poll path.
+        let _ = store.set_unrealized_pnl(&run.id, latest_unrealized_pnl).await;
 
         if store.is_terminal(&run.id).await? {
             let partial = compute_run_metrics(

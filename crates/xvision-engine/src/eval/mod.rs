@@ -74,7 +74,7 @@ pub use progress::{send_event, ProgressBus, ProgressEvent, ProgressRx, ProgressT
 pub use review::{AgentProfile, EvalReview, ReviewStatus, ReviewVerdict};
 
 pub use batch_store::{Batch, BatchStore};
-pub use run::{MetricsSummary, Run, RunMode, RunStatus};
+pub use run::{DeploymentSource, MetricsSummary, Run, RunMode, RunStatus};
 #[allow(deprecated)]
 pub use scenario::canonical_scenarios;
 pub use scenario::{
