@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::agent::llm::{LlmDispatch, LlmRequest, Message, ResponseSchema};
 use crate::autooptimizer::config::AutoOptimizerConfig;
 use crate::autooptimizer::mutator::{
-    annotated_filter_paths_section, applicable_mutation_kinds, empty_mutation, filter_tunable_paths,
-    kind_focus_directive, tunable_param_keys, MutationDiff, Mutator,
+    annotated_filter_paths_section, applicable_mutation_kinds, empty_mutation,
+    filter_create_directive, filter_tunable_paths, kind_focus_directive, tunable_param_keys,
+    MutationDiff, Mutator,
 };
 use crate::autooptimizer::program_view;
 use crate::autooptimizer::validator::{validate_mutation_diff, ValidationError};
@@ -163,6 +164,7 @@ impl TournamentRunner {
                 candidate_slot,
                 attempt as usize,
                 exploration_seed,
+                parent.filter.is_some(),
                 last_err.as_deref(),
             );
             let req = LlmRequest {
@@ -319,12 +321,17 @@ fn build_proposal_user(
     candidate_slot: usize,
     attempt: usize,
     exploration_seed: u64,
+    // xvision-vxn: whether the parent already has a filter (drives create-vs-tune
+    // guidance, shared with the single-shot path via `filter_create_directive`).
+    filter_exists: bool,
     prev_err: Option<&str>,
 ) -> String {
     let kinds = allowed_kinds.join(", ");
     // B17 (xvision-ds0): list tunable filter paths with their domain-constraint
     // hints, shared verbatim with the single-shot mutator path.
     let filter_section = annotated_filter_paths_section(allowed_kinds, filter_paths);
+    // xvision-vxn: when the parent has no filter, invite a structural create.
+    let create_section = filter_create_directive(allowed_kinds, filter_exists);
     // B6 (xvision-ds0): rotate the focused mutation kind across retries / slots.
     let focus_section = kind_focus_directive(
         allowed_kinds,
@@ -340,7 +347,7 @@ fn build_proposal_user(
         .unwrap_or_default();
     format!(
         "Strategy program view:\n\n{program_md}\n\nAllowed experiment kinds: \
-         {kinds}{filter_section}{focus_section}{err_section}\n\nPropose ONE experiment as a JSON object."
+         {kinds}{filter_section}{create_section}{focus_section}{err_section}\n\nPropose ONE experiment as a JSON object."
     )
 }
 
@@ -469,6 +476,7 @@ mod tests {
                 removed: vec![],
             },
             filter: vec![],
+            create_filter: None,
             rationale: "test rationale".into(),
         })
         .unwrap()
@@ -497,7 +505,7 @@ mod tests {
             ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
         ];
         let out = build_proposal_user(
-            "PROGRAM", &allowed, &[], &filter_paths, &[], 0, 0, 0, None,
+            "PROGRAM", &allowed, &[], &filter_paths, &[], 0, 0, 0, /* filter_exists */ true, None,
         );
         assert!(
             out.contains("conditions.0.op.zscore_lt: 3  (positive integer >= 1)"),
@@ -539,7 +547,7 @@ mod tests {
         let mut kinds_seen = std::collections::HashSet::new();
         for attempt in 0..3usize {
             let out = build_proposal_user(
-                "PROGRAM", &allowed, &param_keys, &filter_paths, &prose_roles, 0, attempt, attempt as u64, None,
+                "PROGRAM", &allowed, &param_keys, &filter_paths, &prose_roles, 0, attempt, attempt as u64, /* filter_exists */ true, None,
             );
             kinds_seen.insert(focused_kind(&out));
         }
@@ -550,6 +558,21 @@ mod tests {
         assert!(
             !kinds_seen.contains("none"),
             "every attempt must focus a concrete kind; saw {kinds_seen:?}"
+        );
+    }
+
+    #[test]
+    fn tournament_proposal_user_offers_filter_creation_when_no_filter() {
+        // xvision-vxn: the tournament proposer, like the single-shot path, must
+        // invite the writer to AUTHOR a filter (create_filter) when the parent
+        // has none and `filter` is an allowed kind.
+        let allowed = vec!["filter".to_string(), "param".to_string()];
+        let out = build_proposal_user(
+            "PROGRAM", &allowed, &[], &[], &[], 0, 0, 0, /* filter_exists */ false, None,
+        );
+        assert!(
+            out.contains("create_filter"),
+            "filterless tournament parent + filter allowed must invite create_filter; got:\n{out}"
         );
     }
 

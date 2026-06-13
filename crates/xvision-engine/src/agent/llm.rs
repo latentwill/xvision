@@ -485,6 +485,12 @@ impl ResponseSchema {
         // object, array). Used for the permissive before/after fields.
         let any =
             || serde_json::json!({ "type": ["string", "number", "boolean", "null", "object", "array"] });
+        // xvision-vxn: a COMPLETE authored filter object to INSTALL when the
+        // strategy has no filter (structural creation), or null. Distinct from
+        // `filter` (path edits that tune an existing filter). Validated
+        // server-side via the filter crate's own validator, so the shape here is
+        // an intentionally permissive nullable object (like the `any` fields).
+        let create_filter_prop = || serde_json::json!({ "type": ["object", "null"] });
         Self {
             name: "mutation_diff".into(),
             schema: serde_json::json!({
@@ -543,9 +549,10 @@ impl ResponseSchema {
                             "required": ["path", "before", "after"]
                         }
                     },
+                    "create_filter": create_filter_prop(),
                     "rationale": { "type": "string" }
                 },
-                "required": ["kind", "prose", "params", "tools", "filter", "rationale"]
+                "required": ["kind", "prose", "params", "tools", "filter", "create_filter", "rationale"]
             }),
         }
     }
