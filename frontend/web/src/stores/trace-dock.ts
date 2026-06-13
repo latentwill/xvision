@@ -9,6 +9,31 @@ export type DockHeight = "collapsed" | "peek" | "working" | "full";
 export type DockMode = "post-hoc" | "live";
 
 /**
+ * Trace surface the dock state belongs to. The dashboard runs two
+ * independent trace contexts — the eval surfaces (`/eval-runs/*`, the
+ * standalone `/agent-runs/:runId`) and the live surfaces (`/live*`) —
+ * and each owns its own active run / selection / mode. Splitting the
+ * store per-scope kills the "capsule floats/flickers/follows to other
+ * pages" bug: nulling one scope on unmount no longer clobbers the
+ * other surface's run, and the floating capsule only renders for the
+ * scope that matches the current route.
+ */
+export type TraceScope = "eval" | "live";
+
+/**
+ * Per-scope dock slice. One of these exists for each {@link TraceScope}.
+ * The fields here were previously top-level on the store; they moved
+ * under `byScope` so the eval and live surfaces can't trample each
+ * other's run/selection state.
+ */
+type ScopeState = {
+  activeRunId: string | null;
+  selectedSpanId: string | null;
+  mode: DockMode;
+  costOverrideUsd: number | null;
+};
+
+/**
  * Metadata captured from `span_started` / snapshot frames so consumers
  * (e.g. RunStatusStrip) can render an active-span chip without needing
  * a second query for span details.
@@ -55,19 +80,31 @@ type State = {
    * `heightPx`. Persisted under `xvision.trace-dock.height` in localStorage.
    */
   heightPx: number;
-  selectedSpanId: string | null;
-  activeRunId: string | null;
+  /**
+   * Per-scope run / selection / mode / cost-override state. The eval and
+   * live surfaces each own one slice; route owners write only their own
+   * scope and the floating capsule reads the slice for the current route
+   * (see `useCurrentTraceScope`). This is the core of the WS-2 reshape —
+   * a single global `activeRunId` used to leak across surfaces.
+   */
+  byScope: Record<TraceScope, ScopeState>;
   /**
    * Chat-rail session the dock is bound to, when the active surface is a
    * chat session rather than a standalone agent run. When set, the dock's
    * span view projects from the unified `session-events` store (one stream,
    * two projections — Phase 1.2/1.4) instead of the agent-run SSE wire.
    * `null` keeps the existing agent-run path untouched.
+   *
+   * Shared (not per-scope): the chat rail is a single global surface.
    */
   activeSessionId: string | null;
-  mode: DockMode;
   /** Last non-collapsed height — restored by toggle(). */
   lastOpenHeight: DockHeight;
+  /**
+   * Live-stream slice. SHARED across scopes — only one live SSE stream
+   * runs at a time, so the streaming actions stay scope-free (operator
+   * decision; per-scope streaming is deferred to a later WU).
+   */
   streamingState: StreamingState;
   /**
    * Trace-view density. `false` = Simple (default): hide instrumentation
@@ -83,16 +120,6 @@ type State = {
    * Advanced is the forensics view.
    */
   advanced_view: boolean;
-  /**
-   * Eval-side cost override pushed by `eval-runs-detail` so the floating
-   * capsule renders the same number as the page meta strip. The eval's
-   * `inference_cost_quote_total` is the authoritative aggregate; the
-   * agent-run rollup (`summary.total_cost_usd`) can lag or stay at zero
-   * for runs whose pricing data lives only in the eval table. When
-   * `null` the capsule falls back to the agent-run summary value. Reset
-   * to `null` on every `setActiveRun` so it never leaks across runs.
-   */
-  costOverrideUsd: number | null;
 };
 
 type Actions = {
@@ -100,8 +127,15 @@ type Actions = {
   setHeightPx: (px: number) => void;
   toggle: () => void;
   minimize: () => void;
-  setSelectedSpan: (id: string | null) => void;
-  setActiveRun: (id: string | null, mode: DockMode) => void;
+  setSelectedSpan: (scope: TraceScope, id: string | null) => void;
+  /**
+   * Point `scope`'s dock at `id` in `mode`. Resets that scope's
+   * selection + cost override (so per-run state never leaks across
+   * runs) AND resets the SHARED streaming slice (preserving the
+   * existing reset-on-run-switch behavior). The OTHER scope and the
+   * shared `activeSessionId` are left untouched.
+   */
+  setActiveRun: (scope: TraceScope, id: string | null, mode: DockMode) => void;
   /** Bind (or clear) the chat-rail session whose unified log feeds the dock. */
   setActiveSession: (sessionId: string | null) => void;
   markSpanActive: (spanId: string, meta?: ActiveSpanMeta) => void;
@@ -111,7 +145,7 @@ type Actions = {
   applyStreamEvent: (ev: AgentRunStreamEvent) => void;
   resetStreamingState: () => void;
   setAdvancedView: (v: boolean) => void;
-  setCostOverrideUsd: (v: number | null) => void;
+  setCostOverrideUsd: (scope: TraceScope, v: number | null) => void;
 };
 
 const EMPTY_STREAMING: StreamingState = {
@@ -129,6 +163,16 @@ function freshStreaming(): StreamingState {
     deltaCharsBySpan: {},
     bodiesBySpan: {},
     droppedEvents: 0,
+  };
+}
+
+/** Empty per-scope slice — used for store init and to clear a scope. */
+function freshScopeState(): ScopeState {
+  return {
+    activeRunId: null,
+    selectedSpanId: null,
+    mode: "post-hoc",
+    costOverrideUsd: null,
   };
 }
 
@@ -196,19 +240,25 @@ function writePersistedAdvancedView(v: boolean): void {
 export const useTraceDock = create<State & Actions>((set, get) => ({
   height: "collapsed",
   heightPx: readPersistedHeightPx(),
-  selectedSpanId: null,
-  activeRunId: null,
+  byScope: {
+    eval: freshScopeState(),
+    live: freshScopeState(),
+  },
   activeSessionId: null,
-  mode: "post-hoc",
   lastOpenHeight: "working",
   streamingState: EMPTY_STREAMING,
   advanced_view: readPersistedAdvancedView(),
-  costOverrideUsd: null,
   setAdvancedView: (v) => {
     writePersistedAdvancedView(v);
     set({ advanced_view: v });
   },
-  setCostOverrideUsd: (v) => set({ costOverrideUsd: v }),
+  setCostOverrideUsd: (scope, v) =>
+    set((s) => ({
+      byScope: {
+        ...s.byScope,
+        [scope]: { ...s.byScope[scope], costOverrideUsd: v },
+      },
+    })),
   setHeight: (h) =>
     set((s) => ({
       height: h,
@@ -226,15 +276,31 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
     });
   },
   minimize: () => set({ height: "collapsed" }),
-  setSelectedSpan: (id) => set({ selectedSpanId: id }),
-  setActiveRun: (id, mode) =>
-    set({
-      activeRunId: id,
-      mode,
-      selectedSpanId: null,
+  setSelectedSpan: (scope, id) =>
+    set((s) => ({
+      byScope: {
+        ...s.byScope,
+        [scope]: { ...s.byScope[scope], selectedSpanId: id },
+      },
+    })),
+  setActiveRun: (scope, id, mode) =>
+    set((s) => ({
+      // Only the targeted scope's slice is rebuilt; the other scope is
+      // preserved by reference so nulling one surface on unmount can't
+      // clobber the other. Selection + cost override reset with the run.
+      byScope: {
+        ...s.byScope,
+        [scope]: {
+          activeRunId: id,
+          selectedSpanId: null,
+          mode,
+          costOverrideUsd: null,
+        },
+      },
+      // Streaming stays shared (one live stream at a time) but still
+      // resets on every run switch — same behavior as before the reshape.
       streamingState: freshStreaming(),
-      costOverrideUsd: null,
-    }),
+    })),
   setActiveSession: (sessionId) => set({ activeSessionId: sessionId }),
   markSpanActive: (spanId, meta) =>
     set((s) => {

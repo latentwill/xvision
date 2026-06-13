@@ -462,7 +462,7 @@ describe("agent-runs real-mode branch", () => {
       MockES as unknown as typeof EventSource;
 
     // Make sure prior test state doesn't bleed in.
-    useTraceDock.getState().setActiveRun(null, "post-hoc");
+    useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
 
     const received: AgentRunStreamEvent[] = [];
     const close = openAgentRunStream("run_stream_1", (ev) => received.push(ev));
@@ -548,7 +548,7 @@ describe("agent-runs real-mode branch", () => {
     } finally {
       close();
       (globalThis as { EventSource: unknown }).EventSource = original;
-      useTraceDock.getState().setActiveRun(null, "post-hoc");
+      useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     }
   });
 
@@ -567,7 +567,7 @@ describe("agent-runs real-mode branch", () => {
     (globalThis as { EventSource: unknown }).EventSource =
       MockES as unknown as typeof EventSource;
 
-    useTraceDock.getState().setActiveRun(null, "post-hoc");
+    useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     const received: AgentRunStreamEvent[] = [];
     const close = openAgentRunStream("run_stream_bad", (ev) => received.push(ev));
 
@@ -585,7 +585,7 @@ describe("agent-runs real-mode branch", () => {
     } finally {
       close();
       (globalThis as { EventSource: unknown }).EventSource = original;
-      useTraceDock.getState().setActiveRun(null, "post-hoc");
+      useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     }
   });
 });

@@ -6,6 +6,31 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { TraceDock } from "./TraceDock";
 import { useTraceDock } from "@/stores/trace-dock";
+import type { DockMode } from "@/stores/trace-dock";
+
+/**
+ * Seed the eval scope slice (the default MemoryRouter path "/" maps to
+ * the eval scope, which is what TraceDock reads here). Leaves the live
+ * scope at its init state.
+ */
+function setEvalScope(slice: {
+  activeRunId?: string | null;
+  selectedSpanId?: string | null;
+  mode?: DockMode;
+  costOverrideUsd?: number | null;
+}) {
+  useTraceDock.setState((s) => ({
+    byScope: {
+      ...s.byScope,
+      eval: {
+        activeRunId: slice.activeRunId ?? null,
+        selectedSpanId: slice.selectedSpanId ?? null,
+        mode: slice.mode ?? "post-hoc",
+        costOverrideUsd: slice.costOverrideUsd ?? null,
+      },
+    },
+  }));
+}
 
 function renderDock() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -22,11 +47,9 @@ describe("TraceDock", () => {
   beforeEach(() => {
     useTraceDock.setState({
       height: "collapsed",
-      selectedSpanId: null,
-      activeRunId: null,
       lastOpenHeight: "working",
-      costOverrideUsd: null,
     });
+    setEvalScope({ activeRunId: null, selectedSpanId: null, costOverrideUsd: null });
   });
 
   test("renders nothing when activeRunId is null", () => {
@@ -35,20 +58,23 @@ describe("TraceDock", () => {
   });
 
   test("renders header when activeRunId set, hidden body when collapsed", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "collapsed" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "collapsed" });
     renderDock();
     // Header still hidden at collapsed — strip handles that.
     expect(screen.queryByTestId("trace-dock-body")).toBeNull();
   });
 
   test("shows body at working height", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     expect(await screen.findByTestId("trace-dock-body")).toBeInTheDocument();
   });
 
   test("minimize button collapses the dock", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     await userEvent.click(screen.getByLabelText(/minimize/i));
@@ -56,7 +82,8 @@ describe("TraceDock", () => {
   });
 
   test("renders no Full preset button (resize handle owns height)", async () => {
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     expect(screen.queryByRole("button", { name: /^full$/i })).toBeNull();
@@ -71,22 +98,16 @@ describe("TraceDock", () => {
   });
 
   test("dock renders at the store's heightPx", async () => {
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      heightPx: 612,
-    });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", heightPx: 612 });
     renderDock();
     const dock = await screen.findByTestId("trace-dock");
     expect(dock).toHaveStyle({ height: "612px" });
   });
 
   test("inspector selection falls back to the first filtered span", async () => {
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      advanced_view: false,
-    });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", advanced_view: false });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     await screen.findByTestId("flame-bar-s1");
@@ -116,7 +137,8 @@ describe("TraceDock", () => {
     // MOCK_RUN_COMPLETED has no broker.call span — the affordance still
     // appears so the operator knows the concept exists, but a click is
     // a no-op. The disabled state surfaces the *reason* via title.
-    useTraceDock.setState({ activeRunId: "run_abc1234", height: "working" });
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     await screen.findByTestId("trace-dock-body");
     const btn = screen.getByTestId("trace-dock-trade-button");
@@ -132,11 +154,8 @@ describe("TraceDock", () => {
     // `inference_cost_quote_total` may differ when pricing rolled up on
     // the eval table only. The capsule must prefer the pinned override
     // so it matches the meta-strip number rather than the stale rollup.
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      costOverrideUsd: 0.4242,
-    });
+    setEvalScope({ activeRunId: "run_abc1234", costOverrideUsd: 0.4242 });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     const cost = await screen.findByTestId("trace-dock-cost");
     expect(cost.textContent).toBe("$0.4242");
@@ -144,11 +163,8 @@ describe("TraceDock", () => {
   });
 
   test("capsule cost falls back to the agent-run summary when no override is pinned", async () => {
-    useTraceDock.setState({
-      activeRunId: "run_abc1234",
-      height: "working",
-      costOverrideUsd: null,
-    });
+    setEvalScope({ activeRunId: "run_abc1234", costOverrideUsd: null });
+    useTraceDock.setState({ height: "working" });
     renderDock();
     const cost = await screen.findByTestId("trace-dock-cost");
     // MOCK_RUN_COMPLETED.summary.total_cost_usd === 0.0624.
