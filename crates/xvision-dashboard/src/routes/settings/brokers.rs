@@ -10,7 +10,7 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 
 use xvision_engine::api::settings::brokers::{
-    self, AlpacaStored, AlpacaTestReport, BrokersReport, SetAlpacaReq,
+    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, SetAlpacaReq, SetByrealReq,
 };
 
 use crate::error::DashboardError;
@@ -31,6 +31,22 @@ pub async fn set_alpaca(
 
 pub async fn delete_alpaca(State(state): State<AppState>) -> Result<impl IntoResponse, DashboardError> {
     brokers::clear_alpaca(&state.api_context()).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// POST `/api/settings/brokers/byreal` — persist a byreal trading-only agent
+/// key (+ optional network/account). The key never comes back through `GET`.
+pub async fn set_byreal(
+    State(state): State<AppState>,
+    Json(req): Json<SetByrealReq>,
+) -> Result<(StatusCode, Json<ByrealStored>), DashboardError> {
+    let stored = brokers::set_byreal(&state.api_context(), req).await?;
+    Ok((StatusCode::CREATED, Json(stored)))
+}
+
+/// DELETE `/api/settings/brokers/byreal` — drop stored byreal creds.
+pub async fn delete_byreal(State(state): State<AppState>) -> Result<impl IntoResponse, DashboardError> {
+    brokers::clear_byreal(&state.api_context()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
