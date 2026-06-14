@@ -99,7 +99,7 @@ const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
 ]);
 type SpanKindLike = RunSpan["kind"];
 
-function projectionToRunSpan(p: SpanProjection): RunSpan {
+export function projectionToRunSpan(p: SpanProjection): RunSpan {
   const kind = (
     KNOWN_SPAN_KINDS.has(p.kind) ? p.kind : "agent.run"
   ) as RunSpan["kind"];
@@ -120,6 +120,28 @@ function projectionToRunSpan(p: SpanProjection): RunSpan {
     // `engine.event` row resolves its family/label off
     // `attributes.engine_event_kind`, so dropping it would re-blank the row.
     attributes: p.attributes,
+    // Inspector fidelity (WS-8 Part 2 Part B): the unified projection populates
+    // these off the rich payload variants; carry each onto `RunSpan` so the
+    // SpanInspector renders the SAME model body/tokens/cost, broker fill, tool
+    // I/O, decision index, and error the raw agent-run path shows. Spread only
+    // the present fields so an undefined never overwrites a fixture value and
+    // the wire shape stays minimal.
+    ...(p.provider !== undefined ? { provider: p.provider } : {}),
+    ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.tokensIn !== undefined ? { tokens_in: p.tokensIn } : {}),
+    ...(p.tokensOut !== undefined ? { tokens_out: p.tokensOut } : {}),
+    ...(p.cost !== undefined ? { cost: p.cost } : {}),
+    ...(p.promptHash !== undefined ? { hash: p.promptHash } : {}),
+    ...(p.responseHash !== undefined ? { response_hash: p.responseHash } : {}),
+    ...(p.prompt !== undefined ? { prompt: p.prompt } : {}),
+    ...(p.response !== undefined ? { response: p.response } : {}),
+    ...(p.promptPayloadRef !== undefined ? { prompt_payload_ref: p.promptPayloadRef } : {}),
+    ...(p.responsePayloadRef !== undefined ? { response_payload_ref: p.responsePayloadRef } : {}),
+    ...(p.args !== undefined ? { args: p.args } : {}),
+    ...(p.result !== undefined ? { result: p.result } : {}),
+    ...(p.brokerCall !== undefined ? { broker_call: p.brokerCall } : {}),
+    ...(p.decisionIdx !== undefined ? { decision_idx: p.decisionIdx } : {}),
+    ...(p.errorMessage !== undefined ? { error_message: p.errorMessage } : {}),
   };
 }
 

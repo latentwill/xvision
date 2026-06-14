@@ -24,6 +24,8 @@
 import { create } from "zustand";
 
 import type { UnifiedEvent } from "@/api/unified-events";
+import type { BrokerCallDetail } from "@/api/types-agent-runs";
+import { decisionIdxFromIdempotencyKey } from "@/features/agent-runs/decision-idx";
 import {
   type MessageRow,
   reduceRows,
@@ -59,6 +61,48 @@ export type SpanProjection = {
    * lifecycle spans — they resolve their family off `kind` alone.
    */
   attributes: Record<string, unknown>;
+  // ── Inspector fidelity (WS-8 Part 2 Part B) ──────────────────────────────
+  //
+  // The raw agent-run dock reaches full inspector detail by refetching the
+  // canonical `AgentRunExport` (model bodies/tokens/cost/hashes, broker fill,
+  // tool I/O, decision index, error). The unified projection must populate the
+  // SAME fields off the rich `UnifiedPayload` variants — which wrap the exact
+  // event structs the raw path uses — so a future LIVE-wire flip onto the one
+  // envelope renders identical inspector content (the never-go-dark contract).
+  // All optional: a span that never saw a terminal model/tool/broker event
+  // leaves them undefined, exactly like the raw path.
+  /** Model: provider id (from `model_call_finished`). */
+  provider?: string;
+  /** Model: model id. */
+  model?: string;
+  /** Model: prompt token count. */
+  tokensIn?: number;
+  /** Model: completion token count. */
+  tokensOut?: number;
+  /** Model: cost in USD. */
+  cost?: number;
+  /** Model: `prompt_hash` (surfaced as `RunSpan.hash`). */
+  promptHash?: string;
+  /** Model: `response_hash`. */
+  responseHash?: string;
+  /** Model: full plaintext prompt body. */
+  prompt?: string;
+  /** Model: full plaintext response body. */
+  response?: string;
+  /** Model: blob-store ref for the prompt body. */
+  promptPayloadRef?: string;
+  /** Model: blob-store ref for the response body. */
+  responsePayloadRef?: string;
+  /** Tool: parsed input args (from `tool_requested.input_text`). */
+  args?: unknown;
+  /** Tool: parsed output result (from `tool_finished.output_text`). */
+  result?: unknown;
+  /** Broker: full fill/reject detail folded from started+finished events. */
+  brokerCall?: BrokerCallDetail;
+  /** Per-decision-cycle index (parsed off the broker idempotency key). */
+  decisionIdx?: number;
+  /** Human-readable error message (from `tool_failed` / `span_finished` error). */
+  errorMessage?: string;
 };
 
 // ─── Per-session slice ──────────────────────────────────────────────────────
@@ -202,6 +246,58 @@ function parseEnginePayloadJson(raw: string | null | undefined): unknown {
 }
 
 /**
+ * Parse a tool input/output `_text` body for the inspector's TOOL ARGS /
+ * TOOL RESULT pull-quotes. The recorder ships these as JSON strings (args
+ * object / result object); we parse to a value so the inspector renders the
+ * structured form, falling back to the raw string for non-JSON bodies so a
+ * plain-text tool output is still shown verbatim. `undefined` for empty/absent
+ * bodies → the inspector elides the section.
+ */
+function parseToolText(raw: string | null | undefined): unknown {
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Extract a human-readable error message from an observability `error_json`
+ * payload. Mirrors `parseErrorJson` in `api/agent-runs.ts` (the raw path) so
+ * the unified projection surfaces the SAME message: the recorder writes
+ * `JSON.stringify({ message })` for `ToolCallFailed` + `SpanFinished(Error)`,
+ * but some emitters write a bare string. Accept either; fall back to the raw
+ * string when JSON parse fails. `undefined` for null/empty so the field drops.
+ */
+function parseErrorJson(raw: string | null | undefined): string | undefined {
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      const msg = obj.message ?? obj.error ?? obj.detail;
+      if (typeof msg === "string" && msg.length > 0) return msg;
+    }
+  } catch {
+    // Bare string — fall through to the raw value.
+  }
+  return raw;
+}
+
+/** Coerce a `number | null | undefined` wire field to `number | undefined`. */
+function num(v: number | null | undefined): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/** Coerce a `string | null | undefined` wire field to `string | undefined`
+ * (drops empty so the inspector elides the field). */
+function str(v: string | null | undefined): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/**
  * Fold one event onto the span projection. Span/run lifecycle events update
  * a per-span record; terminal events close the span. Returns a new array
  * only when something changed (reference-stable otherwise).
@@ -265,7 +361,11 @@ function projectSpan(
           startedAt: p.data.started_at,
         },
       );
-    case "span_finished":
+    case "span_finished": {
+      // Carry a human-readable error message off the span's `error_json`
+      // (qa-trace-error-surfacing parity) so a failed span shows WHY it failed
+      // in the inspector instead of a bare "error" status.
+      const errorMessage = parseErrorJson(p.data.error_json);
       return upsert(p.data.span_id, (s) => ({
         ...s,
         finishedAt: ev.ts,
@@ -275,22 +375,130 @@ function projectSpan(
             : p.data.status === "cancelled"
               ? "cancelled"
               : "ok",
+        ...(errorMessage ? { errorMessage } : {}),
       }));
-    case "model_call_finished":
-    case "tool_finished":
-    case "broker_call_finished":
-      return close(p.data.span_id, "ok");
-    case "tool_failed":
-      return close(p.data.span_id, "error");
+    }
+    case "model_call_finished": {
+      // Fold the per-call provider/model/tokens/cost/hashes/bodies onto the
+      // model span — the SAME fields `normalizeAgentRunExport` projects from
+      // the `model_calls[]` table onto a `model.call`/`decision.model` span.
+      const d = p.data;
+      return upsert(d.span_id, (s) => ({
+        ...s,
+        status: s.status === "in_progress" ? "ok" : s.status,
+        finishedAt: s.finishedAt ?? ev.ts,
+        provider: str(d.provider) ?? s.provider,
+        model: str(d.model) ?? s.model,
+        tokensIn: num(d.input_token_count) ?? s.tokensIn,
+        tokensOut: num(d.output_token_count) ?? s.tokensOut,
+        cost: num(d.cost_usd) ?? s.cost,
+        promptHash: str(d.prompt_hash) ?? s.promptHash,
+        responseHash: str(d.response_hash) ?? s.responseHash,
+        prompt: str(d.prompt_text) ?? s.prompt,
+        response: str(d.response_text) ?? s.response,
+        promptPayloadRef: str(d.prompt_payload_ref) ?? s.promptPayloadRef,
+        responsePayloadRef: str(d.response_payload_ref) ?? s.responsePayloadRef,
+      }));
+    }
+    case "tool_finished": {
+      // Surface the tool output body (TOOL RESULT pull-quote) when retained.
+      const result = parseToolText(p.data.output_text);
+      return upsert(p.data.span_id, (s) => ({
+        ...s,
+        status: s.status === "in_progress" ? "ok" : s.status,
+        finishedAt: s.finishedAt ?? ev.ts,
+        ...(result !== undefined ? { result } : {}),
+      }));
+    }
+    case "broker_call_finished": {
+      // Merge the fill/reject detail onto the broker span's reconstructed
+      // `brokerCall` (started carried side/symbol/qty/…; finished carries the
+      // outcome/fill/fee/error) — the SAME shape the raw export folds onto
+      // `attributes_json.broker_call` and projects to `RunSpan.broker_call`.
+      const d = p.data;
+      return upsert(d.span_id, (s) => {
+        const prev = s.brokerCall;
+        const brokerCall: BrokerCallDetail = {
+          // Defaults mirror `extractBrokerCall` in api/agent-runs.ts so a
+          // finished-before-started ordering still yields a coherent row.
+          side: prev?.side ?? "buy",
+          symbol: prev?.symbol ?? "",
+          qty: prev?.qty ?? 0,
+          intended_price: prev?.intended_price ?? null,
+          order_type: prev?.order_type ?? "market",
+          venue: prev?.venue ?? "unknown",
+          idempotency_key: prev?.idempotency_key ?? null,
+          outcome: (d.outcome as BrokerCallDetail["outcome"]) ?? prev?.outcome ?? null,
+          fill_price: num(d.fill_price) ?? null,
+          fill_qty: num(d.fill_qty) ?? null,
+          fee: num(d.fee) ?? null,
+          broker_order_id: str(d.broker_order_id) ?? null,
+          error_class: str(d.error_class) ?? null,
+          error_message: str(d.error_message) ?? null,
+          severity:
+            d.severity === "warn" || d.severity === "error" ? d.severity : null,
+        };
+        return {
+          ...s,
+          status: s.status === "in_progress" ? "ok" : s.status,
+          finishedAt: s.finishedAt ?? ev.ts,
+          brokerCall,
+        };
+      }, { kind: "broker.call" });
+    }
+    case "tool_failed": {
+      const errorMessage = parseErrorJson(p.data.error_json);
+      return upsert(p.data.span_id, (s) => ({
+        ...s,
+        status: s.status === "in_progress" ? "error" : s.status,
+        finishedAt: s.finishedAt ?? ev.ts,
+        ...(errorMessage ? { errorMessage } : {}),
+      }));
+    }
     case "tool_cancelled":
       return close(p.data.span_id, "cancelled");
-    case "tool_requested":
+    case "tool_requested": {
+      // Surface the tool input args (TOOL ARGS pull-quote) when retained.
+      const args = parseToolText(p.data.input_text);
+      return upsert(p.data.span_id, (s) => ({
+        ...s,
+        ...(args !== undefined ? { args } : {}),
+      }));
+    }
     case "tool_started":
       return upsert(p.data.span_id, (s) => s);
-    case "broker_call_started":
-      return upsert(p.data.span_id, (s) => s, {
-        kind: "broker.call",
-      });
+    case "broker_call_started": {
+      // Seed the broker span's `brokerCall` from the submit detail + parse the
+      // per-decision-cycle index off the `<run_id>-<decision_idx>` idempotency
+      // key (the SAME carrier `decisionIdxFromAttributes` reads on the raw path).
+      const d = p.data;
+      const decisionIdx = decisionIdxFromIdempotencyKey(d.idempotency_key);
+      return upsert(d.span_id, (s) => {
+        const prev = s.brokerCall;
+        const brokerCall: BrokerCallDetail = {
+          side: (d.side as BrokerCallDetail["side"]) ?? prev?.side ?? "buy",
+          symbol: str(d.symbol) ?? prev?.symbol ?? "",
+          qty: num(d.qty) ?? prev?.qty ?? 0,
+          intended_price: num(d.intended_price) ?? prev?.intended_price ?? null,
+          order_type: str(d.order_type) ?? prev?.order_type ?? "market",
+          venue: str(d.venue) ?? prev?.venue ?? "unknown",
+          idempotency_key: str(d.idempotency_key) ?? prev?.idempotency_key ?? null,
+          outcome: prev?.outcome ?? null,
+          fill_price: prev?.fill_price ?? null,
+          fill_qty: prev?.fill_qty ?? null,
+          fee: prev?.fee ?? null,
+          broker_order_id: prev?.broker_order_id ?? null,
+          error_class: prev?.error_class ?? null,
+          error_message: prev?.error_message ?? null,
+          severity: prev?.severity ?? null,
+        };
+        return {
+          ...s,
+          brokerCall,
+          ...(decisionIdx != null ? { decisionIdx } : {}),
+        };
+      }, { kind: "broker.call" });
+    }
     // ── Engine lifecycle signals (WS-8 Part 2 — convergence parity) ────────
     // These are the rows WS-8 Part 1 made first-class on the raw dock path.
     // The unified projection must produce the SAME `engine.event` rows so a
