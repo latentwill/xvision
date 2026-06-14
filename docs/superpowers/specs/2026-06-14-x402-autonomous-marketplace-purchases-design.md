@@ -195,23 +195,36 @@ Governance reality (accepted): `onlyOwner` guards `_authorizeUpgrade`,
 (no delay), redirect fees, or repoint USDC. This is the accepted hackathon
 posture; no timelock/multisig.
 
-## 8. Hard gate (P0, blocking): USDC EIP-3009 on Mantle mainnet
+## 8. Hard gate (P0): USDC EIP-3009 on Mantle mainnet — ✅ CONFIRMED 2026-06-15
 
-Real x402 on Mantle requires an **EIP-3009-capable USDC**. The mainnet token
-referenced is **USDC.e (bridged)** at
-`0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9` (`config/mantle.toml:34`,
-flagged "illustrative; verify before mainnet"). `MockUSDC3009.sol:7-11` claims
-this bridged token supports EIP-3009 natively — **must be verified on-chain**.
+Real x402 on Mantle requires an **EIP-3009-capable USDC**. **Verified live on
+Mantle mainnet (chainId 5000)** against `https://rpc.mantle.xyz` on 2026-06-15.
 
-**P0 step:** call `authorizationState(address(0), bytes32(0))` (and inspect for
-the `transferWithAuthorization` selector) on that address against
-`https://rpc.mantle.xyz`.
+USDC.e at **`0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9`** is Circle's
+**FiatTokenV2** (`name="USD Coin"`, `symbol="USDC"`, `decimals=6`,
+`version="2"`) and implements EIP-3009:
 
-- ✅ supported → proceed with the EIP-3009 `exact` scheme as designed.
-- ❌ not supported → **fallback:** either deploy a 3009-wrapper/native USDC, or
-  switch the `exact` scheme to **Permit2** (x402's `@x402/evm` supports any
-  ERC-20 via Permit2). Permit2 requires a `Marketplace.sol` change (new buy
-  path) — a larger scope, surfaced here so it isn't discovered late.
+- `authorizationState(0,0)` → `false` (function live).
+- `TRANSFER_WITH_AUTHORIZATION_TYPEHASH()` → `0x7c7c6cdb67a18743f49ec6fa9b35f50d52ed05cbed4cc592e13b44501c1a2267` (canonical EIP-3009 typehash).
+- `DOMAIN_SEPARATOR()` → `0x213af627bcb897cb58330ea735c1dceb19deed319fd39bbb200b6fc6bd5450cd`, which **matches** the value recomputed from the domain below (byte-for-byte).
+
+**Exact EIP-712 domain the signer (C6) MUST use** — confirmed by matching the
+on-chain `DOMAIN_SEPARATOR`:
+
+```
+EIP712Domain(string name, string version, uint256 chainId, address verifyingContract)
+  name              = "USD Coin"
+  version           = "2"
+  chainId           = 5000
+  verifyingContract = 0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9
+```
+
+**Consequence:** the EIP-3009 `exact` scheme works on Mantle as designed.
+The Permit2 fallback and any 3009-wrapper deployment are **dropped** (open
+question #2 resolved). Update `config/mantle.toml:34` to remove the
+"illustrative; verify before mainnet" caveat.
+
+Reproduce: `cast call <USDC> "TRANSFER_WITH_AUTHORIZATION_TYPEHASH()(bytes32)" --rpc-url https://rpc.mantle.xyz`
 
 ## 9. Testing
 
@@ -233,7 +246,7 @@ the `transferWithAuthorization` selector) on that address against
 
 Each phase is testable on **Mantle Sepolia** before mainnet.
 
-- **P0 — Blocking gate:** verify USDC.e EIP-3009 on Mantle mainnet (§8).
+- **P0 — Blocking gate:** ✅ DONE (2026-06-15) — USDC.e EIP-3009 confirmed on Mantle mainnet (§8).
 - **P1 — Facilitator + 402 (Shape B):** C1–C5 on testnet; interop smoke.
 - **P2 — Client signing + non-custodial key:** C6, C7.
 - **P3 — MCP tools (Shape A):** C8.
@@ -266,7 +279,7 @@ Each phase is testable on **Mantle Sepolia** before mainnet.
 1. **Shape A key handling:** default = MCP tool holds the key and signs
    locally; strict variant = tool only accepts a pre-signed authorization.
    Confirm the default.
-2. **USDC fallback appetite:** if P0 fails, is deploying a native/wrapper 3009
-   USDC acceptable, or do we pivot to Permit2 (contract change)?
+2. ~~**USDC fallback appetite**~~ — ✅ RESOLVED (2026-06-15): EIP-3009 confirmed
+   live on Mantle mainnet USDC.e (§8). No fallback needed; Permit2 path dropped.
 3. **Endpoint auth/rate-limiting:** the public 402 endpoint is unauthenticated
    by design — any abuse controls needed for the hackathon, or open?
