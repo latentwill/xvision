@@ -229,7 +229,8 @@ describe("ApiMarketplaceData.getReceipt", () => {
     expect(r.at).toBe(iso);
     expect(r.buyer).toBe(receiptOut.buyer);
 
-    expect(r.listing.id).toBe("3");
+    // Part A (.7): listing.id uses agent_id (ULID) when non-empty.
+    expect(r.listing.id).toBe("01HXAGENT");
     expect(r.listing.version).toBe("v1");
     expect(r.listing.creator).toEqual({ address: "" });
     expect(r.listing.genArtSeed).toBe("seed-xyz");
@@ -247,7 +248,8 @@ describe("ApiMarketplaceData.getReceipt", () => {
 
     expect(r.install).toEqual({ xvnDetected: false, xvnEndpoint: "", ingredients: [] });
     expect(r.share.variants).toEqual([]);
-    expect(r.share.ogCard.id).toBe("3");
+    // Part A (.7): ogCard.id also uses agent_id (ULID) when non-empty.
+    expect(r.share.ogCard.id).toBe("01HXAGENT");
     expect(r.share.ogCard.genArtSeed).toBe("seed-xyz");
     expect(r.share.ogCard.priceUsdc).toBe(49);
   });

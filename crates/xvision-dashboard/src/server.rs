@@ -1034,6 +1034,8 @@ pub async fn serve(
                     let _indexer = crate::marketplace_index::spawn_indexer(
                         state.marketplace_snapshot.clone(),
                         indexer_cfg,
+                        state.pool.clone(),
+                        state.xvn_home.clone(),
                     );
                 }
                 None => tracing::info!(
