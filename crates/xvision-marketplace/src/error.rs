@@ -48,4 +48,8 @@ pub enum MarketplaceError {
     /// Wraps a lower-level identity-client error.
     #[error("identity: {0}")]
     Identity(#[from] xvision_identity::IdentityError),
+
+    /// EIP-3009 signing or ecrecover failure.
+    #[error("signing error: {0}")]
+    Signing(String),
 }

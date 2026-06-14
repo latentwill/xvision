@@ -2,9 +2,15 @@
 //! the x402 `exact` scheme. Pure — no network, no chain. Mirrors the EIP-712
 //! pattern in `xvision-execution/src/virtuals.rs`.
 
-use alloy::primitives::Address;
+use alloy::primitives::{Address, B256, U256};
+use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::SignerSync;
 use alloy::sol;
-use alloy::sol_types::{eip712_domain, Eip712Domain};
+use alloy::sol_types::{eip712_domain, Eip712Domain, SolStruct};
+
+use alloy::primitives::Signature;
+
+use crate::error::MarketplaceError;
 
 sol! {
     /// EIP-3009 TransferWithAuthorization payload (the EIP-712 message body).
@@ -32,6 +38,78 @@ pub fn usdc_domain(chain_id: u64, usdc: Address) -> Eip712Domain {
     }
 }
 
+/// The unsigned EIP-3009 authorization (host-friendly field names).
+#[derive(Debug, Clone)]
+pub struct Authorization {
+    pub from: Address,
+    pub to: Address,
+    pub value: U256,
+    pub valid_after: U256,
+    pub valid_before: U256,
+    pub nonce: B256,
+}
+
+/// Legacy-`v` (27/28) signature parts.
+#[derive(Debug, Clone, Copy)]
+pub struct SignedParts {
+    pub v: u8,
+    pub r: B256,
+    pub s: B256,
+}
+
+impl Authorization {
+    fn to_sol(&self) -> TransferWithAuthorization {
+        TransferWithAuthorization {
+            from: self.from,
+            to: self.to,
+            value: self.value,
+            validAfter: self.valid_after,
+            validBefore: self.valid_before,
+            nonce: self.nonce,
+        }
+    }
+}
+
+/// EIP-712 digest the buyer signs.
+pub fn signing_hash(auth: &Authorization, domain: &Eip712Domain) -> B256 {
+    auth.to_sol().eip712_signing_hash(domain)
+}
+
+/// Sign locally with the buyer's key (non-custodial). Never sends the key — only (v, r, s).
+pub fn sign_authorization(
+    signer: &PrivateKeySigner,
+    auth: &Authorization,
+    domain: &Eip712Domain,
+) -> Result<SignedParts, MarketplaceError> {
+    let hash = signing_hash(auth, domain);
+    let sig = signer
+        .sign_hash_sync(&hash)
+        .map_err(|e| MarketplaceError::Signing(format!("eip3009 sign: {e}")))?;
+    Ok(SignedParts {
+        // alloy-primitives 1.5.7: v()->bool, r()/s()->U256 (no Into<B256>).
+        v: 27 + sig.v() as u8,
+        r: B256::from(sig.r().to_be_bytes::<32>()),
+        s: B256::from(sig.s().to_be_bytes::<32>()),
+    })
+}
+
+/// Off-chain `ecrecover` for the facilitator `/verify` step.
+pub fn recover_authorizer(
+    auth: &Authorization,
+    domain: &Eip712Domain,
+    v: u8,
+    r: B256,
+    s: B256,
+) -> Result<Address, MarketplaceError> {
+    let hash = signing_hash(auth, domain);
+    let parity = v
+        .checked_sub(27)
+        .ok_or_else(|| MarketplaceError::Signing("bad v".into()))?;
+    let sig = Signature::from_scalars_and_parity(r, s, parity != 0);
+    sig.recover_address_from_prehash(&hash)
+        .map_err(|e| MarketplaceError::Signing(format!("ecrecover: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,7 +124,6 @@ mod tests {
     #[test]
     fn typehash_matches_canonical_eip3009() {
         use alloy::primitives::keccak256;
-        use alloy::sol_types::SolStruct;
         // Hash `eip712_encode_type()` directly so the test string-asserts the
         // canonical type string before taking its keccak — auditable without a
         // live contract.
@@ -65,5 +142,45 @@ mod tests {
         let domain = usdc_domain(5000, usdc);
         let sep = domain.separator();
         assert_eq!(format!("0x{:x}", sep), MANTLE_USDC_DOMAIN_SEP);
+    }
+
+    #[test]
+    fn sign_then_recover_round_trips() {
+        let signer = PrivateKeySigner::random();
+        let from = signer.address();
+        let usdc = Address::from_str(MANTLE_USDC).unwrap();
+        let domain = usdc_domain(5000, usdc);
+
+        let auth = Authorization {
+            from,
+            to: Address::from_str("0x000000000000000000000000000000000000dEaD").unwrap(),
+            value: U256::from(49_000_000u64),
+            valid_after: U256::ZERO,
+            valid_before: U256::from(9_999_999_999u64),
+            nonce: B256::repeat_byte(0x11),
+        };
+
+        let signed = sign_authorization(&signer, &auth, &domain).unwrap();
+        let recovered = recover_authorizer(&auth, &domain, signed.v, signed.r, signed.s).unwrap();
+        assert_eq!(recovered, from);
+    }
+
+    #[test]
+    fn recover_rejects_tampered_value() {
+        let signer = PrivateKeySigner::random();
+        let usdc = Address::from_str(MANTLE_USDC).unwrap();
+        let domain = usdc_domain(5000, usdc);
+        let mut auth = Authorization {
+            from: signer.address(),
+            to: Address::ZERO,
+            value: U256::from(1u64),
+            valid_after: U256::ZERO,
+            valid_before: U256::from(9_999_999_999u64),
+            nonce: B256::ZERO,
+        };
+        let signed = sign_authorization(&signer, &auth, &domain).unwrap();
+        auth.value = U256::from(999u64); // tamper
+        let recovered = recover_authorizer(&auth, &domain, signed.v, signed.r, signed.s).unwrap();
+        assert_ne!(recovered, signer.address());
     }
 }
