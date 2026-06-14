@@ -1,5 +1,6 @@
 // src/features/marketplace/data/FixtureMarketplaceData.test.ts
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/api/client";
 import { FixtureMarketplaceData } from "./MarketplaceData";
 import { defaultFilterState } from "./filter";
 import { ED_CREATOR } from "./fixtures/creators";
@@ -122,6 +123,23 @@ describe("FixtureMarketplaceData", () => {
     // beforeEach already makes the fetch reject (no backend).
     const got = await mp.listListableStrategies();
     expect(got).toEqual(LISTABLE_STRATEGIES);
+  });
+  it("listListableStrategies surfaces a real backend error (ApiError) instead of placeholder fixtures", async () => {
+    // A backend that RESPONDED with an error must not be papered over with demo
+    // strategies the operator can't actually list (their fixture ids 404 at
+    // save/publish) — the EJ QA loose end.
+    mockedFetchListable.mockRejectedValue(
+      new ApiError(503, "internal", "strategies index unavailable"),
+    );
+    await expect(mp.listListableStrategies()).rejects.toBeInstanceOf(ApiError);
+  });
+  it("createPublishDraft propagates a real backend error (no fixture dead-end at publish)", async () => {
+    mockedFetchDraft.mockRejectedValue(
+      new ApiError(404, "not_found", "strategy 'orb-breakout' not found"),
+    );
+    await expect(mp.createPublishDraft("orb-breakout")).rejects.toBeInstanceOf(
+      ApiError,
+    );
   });
   it("purchaseIntent returns a TxRef with network (testnet label source)", async () => {
     const ref = await mp.purchaseIntent("btc-momentum-v3");

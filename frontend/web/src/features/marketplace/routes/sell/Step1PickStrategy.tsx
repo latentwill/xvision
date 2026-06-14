@@ -10,10 +10,25 @@ export function Step1PickStrategy({
   onSelect: (strategy: ListableStrategy) => void;
 }) {
   const mp = useMarketplaceData();
-  const { data: strategies, isLoading } = useQuery({
+  const { data: strategies, isLoading, isError, refetch } = useQuery({
     queryKey: ["marketplace", "listable"],
     queryFn: () => mp.listListableStrategies(),
   });
+
+  if (isError) {
+    return (
+      <div className="text-[13px] text-text-2">
+        Couldn&apos;t load your strategies.{" "}
+        <button
+          type="button"
+          onClick={() => refetch()}
+          className="text-gold hover:underline underline-offset-2"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (isLoading || !strategies) {
     return <p className="text-[13px] text-text-3">Loading strategies…</p>;

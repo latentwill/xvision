@@ -1,4 +1,5 @@
 // src/features/marketplace/data/MarketplaceData.ts
+import { ApiError } from "@/api/client";
 import { applyFilter, defaultFilterState } from "./filter";
 import { DEMO_LISTINGS, getDemoDetail } from "./fixtures/listings";
 import { CREATORS } from "./fixtures/creators";
@@ -105,20 +106,27 @@ export class FixtureMarketplaceData implements MarketplaceData {
     // Listing your OWN strategies is operator-local — always served by the real
     // `/api/strategies`, never placeholder rows, even when the on-chain
     // marketplace indexer is inactive (so the sell picker is never gated behind
-    // it). Falls back to the offline demo fixtures only when the strategies API
-    // is genuinely unreachable (storybook / unit tests with no backend).
+    // it). Falls back to the offline demo fixtures ONLY when there is genuinely
+    // no backend (network error / storybook / unit tests). A backend that
+    // RESPONDED with an error (ApiError) surfaces honestly instead — presenting
+    // placeholder demo strategies that can't actually be listed (their fixture
+    // ids 404 at save/publish) was the QA loose end.
     try {
       return await fetchListableStrategies();
-    } catch {
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
       return LISTABLE_STRATEGIES;
     }
   }
   async createPublishDraft(strategyId: string) {
     // Mirror listListableStrategies: build the draft from the operator's real
-    // stored strategy, falling back to the fixture draft only when offline.
+    // stored strategy. Fixture fallback only when there's no backend; a real
+    // backend error (ApiError) propagates so the UI shows an honest failure
+    // rather than a fixture draft that dead-ends at publish.
     try {
       return await fetchPublishDraft(strategyId);
-    } catch {
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
       return buildPublishDraft(strategyId);
     }
   }
