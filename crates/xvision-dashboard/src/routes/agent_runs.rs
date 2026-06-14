@@ -90,6 +90,12 @@ pub struct AgentRunSummary {
     /// Per-run pause flag from the parent eval run (`eval_runs.paused`,
     /// migration 062). `None` without a parent.
     pub paused: Option<bool>,
+    /// Execution venue from the parent eval run's live_config
+    /// (`broker_creds_ref`, e.g. `"degen_arena"` / `"orderly_testnet"` /
+    /// `"byreal"` / `"alpaca"`). `None` for backtests / runs without a
+    /// live_config. The dashboard uses this for venue-specific surfaces (e.g.
+    /// the Degen Arena standing indicator).
+    pub venue: Option<String>,
     /// THE live-money discriminator: `true` iff the child agent run is
     /// non-terminal AND the parent eval run's `venue_label = 'live'` (real
     /// money) AND that eval run is non-terminal (queued/running).
@@ -183,7 +189,8 @@ pub async fn list_agent_runs(
     let mut sql = String::from(
         "SELECT ar.id, ar.objective, ar.strategy_id, ar.eval_run_id, ar.status, \
              ar.retention_mode, ar.started_at, ar.finished_at, ar.sidecar_version, \
-             ar.error, er.mode, er.venue_label, er.status, er.paused, er.agent_id \
+             ar.error, er.mode, er.venue_label, er.status, er.paused, er.agent_id, \
+             json_extract(er.live_config_json, '$.broker_creds_ref') \
              FROM agent_runs ar \
              LEFT JOIN eval_runs er ON er.id = ar.eval_run_id",
     );
@@ -207,8 +214,8 @@ pub async fn list_agent_runs(
             Option<String>,
             Option<String>,
             Option<String>,
-            Option<String>,
             Option<bool>,
+            Option<String>,
             Option<String>,
         ),
     >(&sql);
@@ -239,6 +246,7 @@ pub async fn list_agent_runs(
         eval_run_status,
         paused,
         eval_agent_id,
+        venue,
     ) in rows
     {
         let started_at = match started_at_str.parse::<DateTime<Utc>>() {
@@ -276,6 +284,7 @@ pub async fn list_agent_runs(
             eval_mode,
             eval_run_status,
             paused,
+            venue,
             is_live_money,
         });
     }

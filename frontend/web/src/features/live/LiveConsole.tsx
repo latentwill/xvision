@@ -195,19 +195,19 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
 
           {/*
             Arena standing — full-width inline chip row (no right-side box,
-            no popup). Props are derived conservatively:
-              - tradingViaArena: false until the run's execution venue is
-                exposed in AgentRunSummary. TODO(degen standing): derive
-                from run venue once exposed (look for a 'degen_arena' /
-                broker_creds_ref value in the run's live_config).
-              - aiPotInView: same gating as tradingViaArena for now.
+            no popup). Props:
+              - tradingViaArena: the selected run's execution venue is the
+                Degen Arena (broker_creds_ref == "degen_arena", now exposed on
+                the run summary).
+              - aiPotInView: same gating — if it's trading via the Arena, the
+                AI Pot is in view (a richer arena-standings feed is a follow-up).
               - pnlUsd: daily PnL from the lifted equity stream (same
                 derivation as LiveAccountStrip).
               - rank: null — no arena-standings API yet.
           */}
           <ArenaStandingIndicator
-            tradingViaArena={false /* TODO(degen standing): derive from run venue */}
-            aiPotInView={false /* TODO(degen standing): derive from run venue */}
+            tradingViaArena={selectedRun?.venue === "degen_arena"}
+            aiPotInView={selectedRun?.venue === "degen_arena"}
             rank={null}
             pnlUsd={
               stream.data
