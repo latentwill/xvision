@@ -464,6 +464,16 @@ impl Executor {
         self
     }
 
+    /// WS-9 — set the attest boundary interval WITHOUT wiring a hook. The
+    /// engine emits `attest_boundary_reached` at every `every_n`-trade boundary
+    /// independently of the hook, so an observed live run can surface the
+    /// boundary on the trace dock even before an identity-backed hook exists.
+    /// `every_n` is clamped to at least 1 (a `0` becomes "every trade").
+    pub fn with_attest_every_n_trades(mut self, every_n: u32) -> Self {
+        self.attest_every_n_trades = super::attest_hook::clamp_every_n(every_n);
+        self
+    }
+
     /// Stage 1 (Cline runtime unification) — select the agent runtime and,
     /// for `Cline`, the live sidecar context. Builder-style so the eval
     /// entry point can chain after `with_bars` / `with_observability`:
@@ -3843,8 +3853,24 @@ impl Executor {
             // chain submit) so a slow/failing attestation never stalls or
             // aborts the loop while we hold the runtime mutex. No hook (every
             // backtest, every test that does not wire one) is a no-op.
-            if let Some(hook) = self.attest_hook.as_ref() {
-                if super::attest_hook::is_attest_boundary(n_trades, self.attest_every_n_trades) {
+            if super::attest_hook::is_attest_boundary(n_trades, self.attest_every_n_trades) {
+                // WS-9: emit the chain-adjacent boundary event the ENGINE owns,
+                // regardless of which hook (if any) is wired. This is the one
+                // attestation-flow event that genuinely fires in a live run
+                // today, so it lands on the trace dock + export even with the
+                // no-op hook. The DOWNSTREAM lifecycle events (verdict / chain
+                // submit / posted) are the HOOK's to emit through the same
+                // emitter seam — the engine never adds an identity edge.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    let payload = serde_json::json!({
+                        "agent_id": strategy.manifest.id,
+                        "n_trades": n_trades,
+                        "run_id": run.id,
+                    });
+                    obs.emit_engine_event("attest_boundary_reached", None, Some(payload.to_string()))
+                        .await;
+                }
+                if let Some(hook) = self.attest_hook.as_ref() {
                     let summary = super::attest_hook::AttestSummary {
                         run_id: run.id.clone(),
                         agent_id: strategy.manifest.id.clone(),
@@ -3859,7 +3885,12 @@ impl Executor {
                         },
                         equity,
                     };
-                    hook.maybe_attest(summary).await;
+                    // Thread the run's ObsEmitter into the hook so a future
+                    // identity-backed impl can emit `attest_verdict` /
+                    // `chain_submit_started` / `chain_submit_finished` /
+                    // `attestation_posted` onto the same bus. `None` for
+                    // non-observed runs keeps the legacy quiet path.
+                    hook.maybe_attest(summary, self.obs_emitter.clone()).await;
                 }
             }
 
