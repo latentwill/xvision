@@ -351,7 +351,9 @@ pub async fn list_live_deployments(
     // in Rust (the live-run population is small relative to backtests).
     let runs = store
         .list(ListFilter {
-            status: status_filter,
+            // t4u8.1: ListFilter.status is now Option<Vec<RunStatus>> (multi-status
+            // IN filter). A single status maps to a one-element vec.
+            status: status_filter.map(|s| vec![s]),
             ..Default::default()
         })
         .await?;

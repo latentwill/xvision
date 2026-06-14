@@ -143,6 +143,33 @@ impl RunStatus {
         }
     }
 
+    /// Parse a comma-separated list of status tokens into a `Vec<RunStatus>`.
+    ///
+    /// Each token is trimmed of whitespace before matching. An empty input
+    /// string and any unrecognised token are errors; the error message names
+    /// the offending token so callers can surface it in a user-facing message.
+    ///
+    /// Valid tokens: `queued`, `running`, `completed`, `failed`, `cancelled`.
+    ///
+    /// # Examples
+    /// ```text
+    /// RunStatus::parse_list("queued,running")  // Ok([Queued, Running])
+    /// RunStatus::parse_list("queued, running") // Ok([Queued, Running])
+    /// RunStatus::parse_list("bogus")           // Err("unknown status 'bogus'")
+    /// RunStatus::parse_list("queued,bogus")    // Err("unknown status 'bogus'")
+    /// RunStatus::parse_list("")                // Err("status list must not be empty")
+    /// ```
+    pub fn parse_list(s: &str) -> Result<Vec<Self>, String> {
+        let tokens: Vec<&str> = s.split(',').map(str::trim).collect();
+        if tokens.is_empty() || (tokens.len() == 1 && tokens[0].is_empty()) {
+            return Err("status list must not be empty".to_string());
+        }
+        tokens
+            .into_iter()
+            .map(|t| RunStatus::parse(t).ok_or_else(|| format!("unknown run status '{t}'")))
+            .collect()
+    }
+
     /// True for the two terminal states. Once a run is terminal it never
     /// transitions again.
     pub fn is_terminal(&self) -> bool {

@@ -45,7 +45,10 @@ pub struct ListFilter {
     /// filter; use `agent_id` (strategy-hop path) for those.
     pub agents_agent_id: Option<String>,
     pub scenario_id: Option<String>,
-    pub status: Option<RunStatus>,
+    /// One or more statuses to filter on (`status IN (?,...)`). `None` applies
+    /// no status filter. A single-element Vec behaves identically to the
+    /// pre-t4u8.1 single-`Option<RunStatus>` — the SQL is `status IN (?)`.
+    pub status: Option<Vec<RunStatus>>,
     /// CT5: optional run mode filter. When set, only rows WHERE `mode = ?`
     /// are returned, enabling SQL-level live/backtest separation. `None`
     /// returns rows of any mode (existing behavior unchanged).
@@ -906,33 +909,40 @@ impl RunStore {
                     source, unrealized_pnl_usd \
              FROM eval_runs",
         );
-        let mut conditions: Vec<&'static str> = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
         if filter.agent_id.is_some() {
-            conditions.push("agent_id = ?");
+            conditions.push("agent_id = ?".to_string());
         }
         // W25 (PR6): filter by the workspace agent ULID in `agents_agent_id`.
         // NULL rows (pre-migration-022 legacy runs) are excluded by this
         // condition; the strategy-hop path (agent_id filter) covers those.
         if filter.agents_agent_id.is_some() {
-            conditions.push("agents_agent_id = ?");
+            conditions.push("agents_agent_id = ?".to_string());
         }
         if filter.scenario_id.is_some() {
-            conditions.push("scenario_id = ?");
+            conditions.push("scenario_id = ?".to_string());
         }
-        if filter.status.is_some() {
-            conditions.push("status = ?");
+        // Multi-status: emit `status IN (?, ?, ...)` for any non-empty Vec.
+        if let Some(ref statuses) = filter.status {
+            if !statuses.is_empty() {
+                let placeholders = std::iter::repeat("?")
+                    .take(statuses.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conditions.push(format!("status IN ({placeholders})"));
+            }
         }
         // CT5: SQL-level mode filter (live vs backtest). Pushed after status
         // so the bind order mirrors condition push order exactly.
         if filter.mode.is_some() {
-            conditions.push("mode = ?");
+            conditions.push("mode = ?".to_string());
         }
         // bead-008: inclusive `started_at >= since`. Normalize both sides
         // through SQLite's `datetime()` so the comparison is correct across
         // the mixed on-disk shapes (`...+00:00` vs bare `YYYY-MM-DD HH:MM:SS`)
         // rather than a brittle lexicographic string compare.
         if filter.since.is_some() {
-            conditions.push("datetime(started_at) >= datetime(?)");
+            conditions.push("datetime(started_at) >= datetime(?)".to_string());
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -967,8 +977,10 @@ impl RunStore {
         if let Some(ref s) = filter.scenario_id {
             q = q.bind(s);
         }
-        if let Some(s) = filter.status {
-            q = q.bind(s.as_str());
+        if let Some(ref statuses) = filter.status {
+            for s in statuses {
+                q = q.bind(s.as_str());
+            }
         }
         if let Some(m) = filter.mode {
             q = q.bind(m.as_str());
@@ -993,25 +1005,37 @@ impl RunStore {
     /// return at `offset = 0, limit = ∞`.
     pub async fn count(&self, filter: &ListFilter) -> Result<u64> {
         let mut sql = String::from("SELECT COUNT(*) FROM eval_runs");
-        let mut conditions: Vec<&'static str> = Vec::new();
+        let mut conditions: Vec<String> = Vec::new();
         if filter.agent_id.is_some() {
-            conditions.push("agent_id = ?");
+            conditions.push("agent_id = ?".to_string());
+        }
+        // W25 (PR6): mirror list()'s workspace-agent filter so paginated
+        // totals match the rows shown for agent-scoped eval history.
+        if filter.agents_agent_id.is_some() {
+            conditions.push("agents_agent_id = ?".to_string());
         }
         if filter.scenario_id.is_some() {
-            conditions.push("scenario_id = ?");
+            conditions.push("scenario_id = ?".to_string());
         }
-        if filter.status.is_some() {
-            conditions.push("status = ?");
+        // Multi-status: mirror `list`'s `IN (...)` clause exactly.
+        if let Some(ref statuses) = filter.status {
+            if !statuses.is_empty() {
+                let placeholders = std::iter::repeat("?")
+                    .take(statuses.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                conditions.push(format!("status IN ({placeholders})"));
+            }
         }
         // CT5: mirror list()'s mode condition so count() is honest about what
         // list() would return. Pushed after status, bound after status.
         if filter.mode.is_some() {
-            conditions.push("mode = ?");
+            conditions.push("mode = ?".to_string());
         }
         // bead-008: mirror `list`'s inclusive `started_at >= since` clause so
         // the count is honest about what `list` would return.
         if filter.since.is_some() {
-            conditions.push("datetime(started_at) >= datetime(?)");
+            conditions.push("datetime(started_at) >= datetime(?)".to_string());
         }
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -1021,11 +1045,16 @@ impl RunStore {
         if let Some(ref h) = filter.agent_id {
             q = q.bind(h.clone());
         }
+        if let Some(ref h) = filter.agents_agent_id {
+            q = q.bind(h.clone());
+        }
         if let Some(ref s) = filter.scenario_id {
             q = q.bind(s.clone());
         }
-        if let Some(s) = filter.status {
-            q = q.bind(s.as_str().to_string());
+        if let Some(ref statuses) = filter.status {
+            for s in statuses {
+                q = q.bind(s.as_str().to_string());
+            }
         }
         if let Some(m) = filter.mode {
             q = q.bind(m.as_str().to_string());

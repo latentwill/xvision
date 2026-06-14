@@ -206,7 +206,7 @@ async fn run_store_round_trips_agents_agent_id() {
     let listed_b = store
         .list(ListFilter {
             scenario_id: Some("scenario-b".into()),
-            status: Some(RunStatus::Queued),
+            status: Some(vec![RunStatus::Queued]),
             ..ListFilter::default()
         })
         .await

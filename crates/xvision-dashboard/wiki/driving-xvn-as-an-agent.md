@@ -345,7 +345,12 @@ The `(enabled, auto_approve)` pair encodes three states:
 | Disabled | false | — | Hidden from the model; denied if called anyway. |
 
 A tool absent from the list uses its **class default**: read tools default to
-Auto, write tools default to Ask. The classifier fails safe — an unknown tool is
+Auto, **write tools default to Auto** (they auto-run in Act mode with no approval
+round-trip; Research mode denies all write tools regardless of policy), and
+Dangerous-class tools default to Disabled. To require an approval prompt for a
+write tool, set its policy to the **Ask** state (`auto_approve:false`). Note
+`run_eval` is Write-class, so by default it launches a backtest in Act mode
+without a confirmation step. The classifier fails safe — an unknown tool is
 treated as a write. Policy is keyed by scope and scopes are isolated.
 
 ### Focus chain

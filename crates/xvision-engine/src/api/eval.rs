@@ -173,7 +173,12 @@ fn send_sigterm(_pid: u32) {}
 pub struct ListRunsRequest {
     pub agent_id: Option<String>,
     pub scenario_id: Option<String>,
-    pub status: Option<RunStatus>,
+    /// One or more statuses to filter on. `None` = no filter; a
+    /// single-element Vec behaves identically to the previous
+    /// single-`Option<RunStatus>` API. Serialises as a JSON array so
+    /// MCP / wizard callers that JSON-encode `ListRunsRequest` still
+    /// work after the change.
+    pub status: Option<Vec<RunStatus>>,
     /// Optional pagination — when both fields are absent, every matching
     /// row is returned. The dashboard's list endpoint passes both;
     /// internal callers (retry idempotency, chart preview) pass neither
@@ -391,7 +396,7 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
-        status: req.status,
+        status: req.status.clone(),
         mode: None,
         limit: req.limit,
         offset: req.offset,
@@ -435,7 +440,7 @@ async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> 
     let filter = ListFilter {
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
-        status: req.status,
+        status: req.status.clone(),
         mode: None,
         limit: req.limit,
         offset: req.offset,

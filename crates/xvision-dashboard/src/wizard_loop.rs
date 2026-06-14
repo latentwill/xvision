@@ -97,6 +97,17 @@ const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 /// noisy failure loops early.
 const MAX_TOOL_LOOP_ITERATIONS: usize = 12;
 
+/// Maximum number of messages replayed from the persisted session history
+/// into every LLM context. Without this cap the context grows linearly with
+/// session length and was observed to cause a 24 s → 122 s latency blow-up
+/// across `MAX_TOOL_LOOP_ITERATIONS` iterations (xvision-t4u8 Finding #3).
+///
+/// 60 messages ≈ 30 user/assistant turn pairs, enough for meaningful
+/// multi-step authoring sessions while keeping context bounded.
+/// `window_chat_messages` enforces this cap and never splits a
+/// tool_use / tool_result pair.
+const CHAT_HISTORY_WINDOW_MESSAGES: usize = 60;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentProfile {
@@ -196,6 +207,84 @@ pub struct PolicyEvent {
 enum PolicyVerdict {
     Allow,
     Blocked(serde_json::Value),
+}
+
+/// Trim `messages` to at most `cap` entries, keeping the **most recent** ones.
+///
+/// Tool-use/tool-result pairs are kept together: if the raw window boundary
+/// falls so that a `ToolResult` block would appear at the start of the window
+/// without its matching `ToolUse` (or vice versa), the boundary is shifted
+/// forward (dropping more messages) until the window starts on a clean
+/// message that is not an orphan `ToolResult`.
+///
+/// The system prompt is assembled separately and is NOT part of `messages`,
+/// so this function only touches the transcript messages — the system prompt
+/// is always preserved in full.
+///
+/// Callers that want the full history (e.g. `latest_text_for_role`,
+/// `ChatSessionStore::resolve`) should call `load_history` directly.
+fn window_chat_messages(mut messages: Vec<Message>, cap: usize) -> Vec<Message> {
+    if messages.len() <= cap {
+        return messages;
+    }
+
+    // Start with a naive tail slice of `cap` messages.
+    let mut start = messages.len() - cap;
+
+    // Collect the tool_use ids that appear in msgs[0..start] — these were
+    // dropped by the window. Any tool_result for one of those ids at
+    // msgs[start..] would be an orphan.
+    loop {
+        // Build the set of tool_use ids dropped by the current window.
+        let dropped_tool_use_ids: std::collections::HashSet<String> = messages[..start]
+            .iter()
+            .flat_map(|m| &m.content)
+            .filter_map(|b| {
+                if let ContentBlock::ToolUse { id, .. } = b {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if dropped_tool_use_ids.is_empty() {
+            // No dropped tool_use ids — no orphan risk.
+            break;
+        }
+
+        // Check whether the first message(s) in the window reference a
+        // dropped tool_use id via a ToolResult block.
+        let first_is_orphan = messages[start..]
+            .iter()
+            .next()
+            .map(|m| {
+                m.content.iter().any(|b| {
+                    if let ContentBlock::ToolResult { tool_use_id, .. } = b {
+                        dropped_tool_use_ids.contains(tool_use_id.as_str())
+                    } else {
+                        false
+                    }
+                })
+            })
+            .unwrap_or(false);
+
+        if !first_is_orphan {
+            break;
+        }
+
+        // The first message in the current window is an orphan tool_result.
+        // Drop it and try again (also drop the matching tool_use if it's
+        // within the current window).
+        start += 1;
+        if start >= messages.len() {
+            // Entire history is orphaned (shouldn't happen in practice).
+            return vec![];
+        }
+    }
+
+    messages.drain(..start);
+    messages
 }
 
 pub struct WizardLoop {
@@ -1308,6 +1397,14 @@ impl WizardLoop {
     /// `ChatMessage.content_blocks` is a `Vec<serde_json::Value>` whose
     /// shape matches `ContentBlock`'s tagged-union derive — round-trip
     /// via `from_value`.
+    ///
+    /// The returned slice is capped at `CHAT_HISTORY_WINDOW_MESSAGES` so the
+    /// context sent to the model stays constant-bounded regardless of how many
+    /// turns the session has accumulated. Without this cap, every iteration of
+    /// the tool-use loop would replay the ENTIRE history, so a long session
+    /// would send a linearly-growing context on each of the up-to-12 loop
+    /// iterations — the dominant cause of the 24 s → 122 s latency blow-up
+    /// observed in long sessions (xvision-t4u8 Finding #3).
     async fn load_messages_from_store(&self) -> anyhow::Result<Vec<Message>> {
         let history = ChatSessionStore::load_history(&self.pool, &self.session_id).await?;
         let mut out = Vec::with_capacity(history.len());
@@ -1323,7 +1420,7 @@ impl WizardLoop {
                 content: blocks,
             });
         }
-        Ok(out)
+        Ok(window_chat_messages(out, CHAT_HISTORY_WINDOW_MESSAGES))
     }
 
     /// Track consecutive same-tool same-error failures. Generalised from
@@ -1881,10 +1978,8 @@ impl WizardLoop {
             "list_eval_runs" => {
                 let req: ListEvalRunsReq = serde_json::from_value(input)?;
                 let status = match req.status.as_deref() {
-                    Some(s) => Some(
-                        RunStatus::parse(s)
-                            .ok_or_else(|| anyhow::anyhow!("list_eval_runs: invalid status `{s}`"))?,
-                    ),
+                    Some(s) => Some(vec![RunStatus::parse(s)
+                        .ok_or_else(|| anyhow::anyhow!("list_eval_runs: invalid status `{s}`"))?]),
                     None => None,
                 };
                 let out = api_eval::list_summaries_paged(
@@ -5899,5 +5994,160 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             .iter()
             .any(|pe| matches!(pe.payload, UnifiedPayload::FocusInjected(_)));
         assert!(!any_focus, "no focus file → no FocusInjected event");
+    }
+
+    // -- Chat history windowing tests (W3 / xvision-t4u8.3) -------------------
+
+    use xvision_engine::agent::llm::{ContentBlock, Message};
+
+    /// Build a user message containing a ToolResult block.
+    fn tool_result_msg(tool_use_id: &str) -> Message {
+        Message {
+            role: "user".into(),
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: tool_use_id.to_string(),
+                content: "result".into(),
+                is_error: None,
+            }],
+        }
+    }
+
+    /// Build an assistant message containing a ToolUse block.
+    fn tool_use_msg(id: &str) -> Message {
+        Message {
+            role: "assistant".into(),
+            content: vec![ContentBlock::ToolUse {
+                id: id.to_string(),
+                name: "list_strategies".into(),
+                input: serde_json::json!({}),
+            }],
+        }
+    }
+
+    /// Build a plain user or assistant text message.
+    fn text_msg(role: &str, text: &str) -> Message {
+        Message {
+            role: role.into(),
+            content: vec![ContentBlock::Text { text: text.into() }],
+        }
+    }
+
+    /// A short session (N messages ≤ cap) must come back completely unchanged.
+    #[test]
+    fn window_short_session_returns_all_messages() {
+        // 3 messages, cap of 10 — all should survive.
+        let msgs = vec![
+            text_msg("user", "hello"),
+            text_msg("assistant", "hi"),
+            text_msg("user", "what time is it"),
+        ];
+        let windowed = window_chat_messages(msgs.clone(), 10);
+        assert_eq!(windowed.len(), 3);
+        assert_eq!(windowed, msgs);
+    }
+
+    /// When the cap boundary falls cleanly between messages (no orphan
+    /// tool_use/tool_result pair), the window drops the oldest messages
+    /// and the count equals the cap.
+    #[test]
+    fn window_drops_oldest_messages_respecting_cap() {
+        let msgs: Vec<Message> = (0..8)
+            .map(|i| {
+                if i % 2 == 0 {
+                    text_msg("user", &format!("msg {i}"))
+                } else {
+                    text_msg("assistant", &format!("reply {i}"))
+                }
+            })
+            .collect();
+        // cap = 4 → keep the last 4
+        let windowed = window_chat_messages(msgs.clone(), 4);
+        assert_eq!(windowed.len(), 4);
+        // The last 4 messages of the original 8 must survive.
+        assert_eq!(windowed, msgs[4..]);
+    }
+
+    /// CORE PAIRING TEST (spec DoD §1):
+    /// When the raw cap boundary falls BETWEEN a tool_use and its matching
+    /// tool_result (i.e. the tool_use is the last message inside the window
+    /// and its tool_result is the first message dropped — or vice versa),
+    /// the windower must extend or shrink the boundary so both messages
+    /// are either kept or dropped together. No orphan must be returned.
+    ///
+    /// Layout (8 messages, cap = 5):
+    ///   0: user "msg 0"
+    ///   1: assistant "reply 1"
+    ///   2: user "msg 2"
+    ///   3: assistant tool_use id="tu_1"   ← raw tail of cap-5 window (msgs[3..])
+    ///   4: user tool_result id="tu_1"     ← paired with 3
+    ///   5: assistant "reply 5"
+    ///   6: user "msg 6"
+    ///   7: assistant "reply 7"
+    ///
+    /// A naive slice of msgs[3..] keeps msg[3] (tool_use) + msg[4..7]
+    /// — that's exactly 5 messages, and msgs[3]/msgs[4] form a complete
+    /// pair, so there is actually no orphan. We need the boundary to fall
+    /// INSIDE the pair. Adjust: cap = 4.
+    ///   msgs[4..] = tool_result "tu_1" (orphan — its tool_use was at [3]).
+    ///
+    /// The windower MUST shrink the window further to [5..] to avoid
+    /// the orphan tool_result.
+    #[test]
+    fn window_snaps_boundary_to_avoid_orphan_tool_result() {
+        let msgs = vec![
+            text_msg("user", "msg 0"),        // 0
+            text_msg("assistant", "reply 1"), // 1
+            text_msg("user", "msg 2"),        // 2
+            tool_use_msg("tu_1"),             // 3  ← tool_use
+            tool_result_msg("tu_1"),          // 4  ← matching tool_result
+            text_msg("assistant", "reply 5"), // 5
+            text_msg("user", "msg 6"),        // 6
+            text_msg("assistant", "reply 7"), // 7
+        ];
+        // cap = 4 → raw slice starts at msgs[4] = tool_result "tu_1" (orphan!).
+        // The windower must snap to msgs[5..] so the orphan tool_result is dropped.
+        let windowed = window_chat_messages(msgs.clone(), 4);
+        // Must NOT contain the orphan tool_result.
+        for m in &windowed {
+            for block in &m.content {
+                if let ContentBlock::ToolResult { tool_use_id, .. } = block {
+                    assert_ne!(
+                        tool_use_id, "tu_1",
+                        "orphan tool_result for tu_1 must not appear in the window"
+                    );
+                }
+            }
+        }
+        // Must NOT contain the tool_use for tu_1 either (both must be dropped or
+        // both kept — since the tool_result was orphaned, both are dropped).
+        for m in &windowed {
+            for block in &m.content {
+                if let ContentBlock::ToolUse { id, .. } = block {
+                    assert_ne!(
+                        id, "tu_1",
+                        "tool_use for tu_1 was paired with a dropped tool_result and must also be dropped"
+                    );
+                }
+            }
+        }
+        // The remaining messages (msgs[5..]) must all be present.
+        assert_eq!(windowed.len(), 3, "windowed: {windowed:?}");
+    }
+
+    /// A tool_use/tool_result pair that fits entirely within the window
+    /// must be preserved intact.
+    #[test]
+    fn window_keeps_intact_tool_pair_within_cap() {
+        let msgs = vec![
+            text_msg("user", "old msg"),        // 0 — will be dropped
+            text_msg("assistant", "old reply"), // 1 — will be dropped
+            text_msg("user", "ask"),            // 2
+            tool_use_msg("tu_2"),               // 3
+            tool_result_msg("tu_2"),            // 4
+            text_msg("assistant", "done"),      // 5
+        ];
+        // cap = 4 → raw slice starts at msgs[2] (no orphan — tu_2 pair is fully inside).
+        let windowed = window_chat_messages(msgs.clone(), 4);
+        assert_eq!(windowed, msgs[2..], "windowed: {windowed:?}");
     }
 }

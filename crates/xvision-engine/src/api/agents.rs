@@ -859,6 +859,7 @@ mod tests {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         };
         let store = FilesystemStore::new(strategy_store_dir(&ctx.xvn_home));
         store.save(&legacy).await.unwrap();

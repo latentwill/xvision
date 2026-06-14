@@ -3068,7 +3068,7 @@ async fn leaderboard(sort: &str, top: usize, since_days: Option<u32>, json: bool
             ListRunsRequest {
                 agent_id: Some(sid.clone()),
                 scenario_id: None,
-                status: Some(RunStatus::Completed),
+                status: Some(vec![RunStatus::Completed]),
                 ..Default::default()
             },
         )
