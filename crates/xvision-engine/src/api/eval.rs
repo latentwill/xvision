@@ -3352,7 +3352,7 @@ fn market_bars_to_ohlcv(bars: Vec<xvision_data::alpaca::MarketBar>) -> Vec<Ohlcv
 // owns its own broker + min-notional surface in the
 // `live-bar-source-alpaca` track. The risk-config crate's `"paper"`
 // venue-id label is preserved (separate concept from RunMode); see
-// `xvision_risk::config::venue_limits`.
+// `xvision_core::config::RiskVenueLimits`.
 
 /// Build the backtest executor, fanning out bar-loading over the strategy's
 /// active asset set (multi-asset B7, Task C3).

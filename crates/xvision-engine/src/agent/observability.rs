@@ -1724,7 +1724,7 @@ impl ObsEmitter {
             .await;
     }
 
-    /// Open a `risk.gate` span around one `RiskLayer::evaluate` call.
+    /// Open a `risk.gate` span around one engine R3 risk-veto pass.
     /// Pair with exactly one `emit_risk_gate_finished` using the same
     /// `span_id`. `parent_span_id` should be the enclosing
     /// `agent.decision` span when one exists.

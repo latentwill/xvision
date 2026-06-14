@@ -461,6 +461,15 @@ pub trait BrokerSurface: Send + Sync {
     fn signing_scheme(&self) -> &str {
         "broker"
     }
+
+    /// Whether this surface trades directional perpetual futures, where
+    /// funding and liquidation risk apply. Default `false` (spot); the
+    /// directional-perps adapters (Hyperliquid/byreal, Orderly, Bybit linear)
+    /// override to `true`. Gates the engine's perps risk vetoes so they
+    /// stay inert on spot venues. Read-only.
+    fn is_perp_venue(&self) -> bool {
+        false
+    }
 }
 
 // ── AlpacaPaperSurface ───────────────────────────────────────────────────────
@@ -965,6 +974,10 @@ impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A> {
     fn signing_scheme(&self) -> &str {
         "ed25519"
     }
+
+    fn is_perp_venue(&self) -> bool {
+        true
+    }
 }
 
 // ── MockBrokerSurface ────────────────────────────────────────────────────────
@@ -1387,6 +1400,17 @@ mod orderly_live_surface_tests {
         let surface = OrderlyLiveSurface::with_api(api);
         assert_eq!(surface.balance().await.unwrap(), 950.0);
     }
+
+    #[test]
+    fn orderly_live_surface_is_perp_venue() {
+        let api = MockApi {
+            create_result: Some(filled_order(42, 0.05, 70_100.0)),
+            get_result: Some(filled_order(42, 0.05, 70_100.0)),
+            ..Default::default()
+        };
+        let surface = OrderlyLiveSurface::with_api(api);
+        assert!(surface.is_perp_venue(), "Orderly is a directional-perps venue");
+    }
 }
 
 // ── WS-4 venue identity (venue / signing_scheme) ─────────────────────────────
@@ -1459,5 +1483,42 @@ mod venue_identity_tests {
         let m = MockBrokerSurface::new(1_000.0);
         assert_eq!(m.venue(), "live");
         assert_eq!(m.signing_scheme(), "broker");
+    }
+
+    // ── WS-perps-risk: is_perp_venue gate ────────────────────────────────────
+
+    #[test]
+    fn default_surface_is_not_perp_venue() {
+        let b = DefaultsBroker;
+        assert!(
+            !b.is_perp_venue(),
+            "default BrokerSurface must be spot (is_perp_venue=false)"
+        );
+    }
+
+    struct PerpTestSurface;
+
+    #[async_trait]
+    impl BrokerSurface for PerpTestSurface {
+        async fn submit_order(&self, _req: OrderRequest) -> anyhow::Result<OrderConfirmation> {
+            anyhow::bail!("not exercised")
+        }
+        async fn position(&self, _asset: &str) -> anyhow::Result<f64> {
+            Ok(0.0)
+        }
+        async fn balance(&self) -> anyhow::Result<f64> {
+            Ok(0.0)
+        }
+        fn venue(&self) -> &str {
+            "hyperliquid"
+        }
+        fn is_perp_venue(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn perp_surface_reports_perp_venue() {
+        assert!(PerpTestSurface.is_perp_venue());
     }
 }

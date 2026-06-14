@@ -2164,12 +2164,70 @@ impl Executor {
                         let max_positions_breached =
                             max_positions > 0 && !already_open && open_positions >= max_positions as usize;
 
-                        if daily_loss_breached || max_positions_breached {
-                            let reason = if daily_loss_breached {
-                                "daily_loss_kill"
+                        // Perps entry veto (venue-gated). Backtest is spot-only
+                        // so `is_perp_venue=false` keeps this permanently inert
+                        // here. Funding data is not plumbed in the backtest path
+                        // (PerpsContext::default() → all None). Liq-distance is
+                        // not yet plumbed into the engine book (follow-on track);
+                        // pass None → that check no-ops.
+                        let is_perp_venue = false;
+                        let perps_funding_rate: Option<f64> = None;
+                        let direction = if applied_action == "short_open" {
+                            xvision_core::trading::Direction::Short
+                        } else {
+                            xvision_core::trading::Direction::Long
+                        };
+                        let perps_veto = crate::strategies::risk::perps::perps_entry_veto(
+                            &strategy.risk,
+                            is_perp_venue,
+                            true, // is_new_open: this branch only runs for new opens
+                            direction,
+                            perps_funding_rate,
+                            None,
+                        );
+
+                        let exposure_breached = {
+                            let cap = strategy.risk.max_total_exposure_pct;
+                            if cap > 0.0 {
+                                let existing: f64 = book
+                                    .open_legs()
+                                    .iter()
+                                    .map(|(_, pos, _entry, mark)| pos.abs() * mark)
+                                    .sum();
+                                let new_notional = {
+                                    let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                                    usd_at_risk.max(0.0)
+                                };
+                                crate::strategies::risk::perps::exceeds_total_exposure(
+                                    cap,
+                                    equity,
+                                    existing,
+                                    new_notional,
+                                )
                             } else {
-                                "max_concurrent_positions"
-                            };
+                                false
+                            }
+                        };
+
+                        let breach_reason: Option<&str> = if daily_loss_breached {
+                            Some("daily_loss_kill")
+                        } else if max_positions_breached {
+                            Some("max_concurrent_positions")
+                        } else if exposure_breached {
+                            Some("max_total_exposure")
+                        } else {
+                            match perps_veto {
+                                Some(xvision_core::trading::VetoReason::PunitiveFunding) => {
+                                    Some("punitive_funding")
+                                }
+                                Some(xvision_core::trading::VetoReason::NearLiquidation) => {
+                                    Some("near_liquidation")
+                                }
+                                _ => None,
+                            }
+                        };
+
+                        if let Some(reason) = breach_reason {
                             // WS-13: surface the veto reason to the
                             // enclosing `risk.gate` span finish (read-only
                             // — does not change the veto behavior below).
@@ -4002,6 +4060,13 @@ impl Executor {
         // don't have a T+1 bar yet (the broker fills at the live market
         // price; `next_open` is only the reference price for sizing).
         let next_open = bar.close;
+        // LIVE PERPS ATTACH POINT: extracted to a named binding so the R3 veto
+        // below can read `perps_ctx.funding_rate` without duplicating the
+        // default. A follow-on track populates funding/OI here from an
+        // out-of-band poller (xvision_data::perp_feed::fetch_perp_snapshot).
+        // Until that poller exists all fields are None → the funding-carry veto
+        // no-ops regardless of `is_perp_venue`.
+        let perps_ctx = PerpsContext::default();
         // Shared seed-context prologue: position/entry/mark are derived inside
         // `build_seed_context` (single source of truth), so this path can't
         // drift from the backtest one.
@@ -4026,14 +4091,7 @@ impl Executor {
                 stop_loss_price: 0.0,
                 take_profit_price: 0.0,
                 risk_config: &strategy.risk,
-                // LIVE PERPS ATTACH POINT: this is the call-site for the perps
-                // feed. A network fetch in this sync hot loop is the wrong shape
-                // — an out-of-band poller
-                // (xvision_data::perp_feed::fetch_perp_snapshot) should cache the
-                // latest reading per asset; read that cache here and build
-                // PerpsContext { funding_rate, open_interest, .. }. Until that
-                // poller exists the agent simply sees no perps block (None).
-                perps: PerpsContext::default(),
+                perps: perps_ctx,
             },
         )));
 
@@ -4148,12 +4206,68 @@ impl Executor {
                 let max_positions_breached =
                     max_positions > 0 && !already_open && open_positions >= max_positions as usize;
 
-                if daily_loss_breached || max_positions_breached {
-                    let reason = if daily_loss_breached {
-                        "daily_loss_kill"
+                // Perps entry veto (venue-gated). `fill_sink.is_perp_venue()`
+                // returns true only for directional-perps brokers (Orderly,
+                // byreal/Hyperliquid, Bybit linear) — false on Alpaca and all
+                // other spot venues, keeping the perps guards permanently inert
+                // for spot runs. Funding rate comes from the named `perps_ctx`
+                // binding above (all None until the out-of-band poller lands).
+                // Liq-distance is not yet plumbed into the engine book
+                // (follow-on track); pass None → that check no-ops.
+                let is_perp_venue = fill_sink.is_perp_venue();
+                let perps_funding_rate = perps_ctx.funding_rate;
+                let direction = if applied_action == "short_open" {
+                    xvision_core::trading::Direction::Short
+                } else {
+                    xvision_core::trading::Direction::Long
+                };
+                let perps_veto = crate::strategies::risk::perps::perps_entry_veto(
+                    &strategy.risk,
+                    is_perp_venue,
+                    true, // is_new_open: this branch only runs for new opens
+                    direction,
+                    perps_funding_rate,
+                    None,
+                );
+
+                let exposure_breached = {
+                    let cap = strategy.risk.max_total_exposure_pct;
+                    if cap > 0.0 {
+                        let existing: f64 = book
+                            .open_legs()
+                            .iter()
+                            .map(|(_, pos, _entry, mark)| pos.abs() * mark)
+                            .sum();
+                        let new_notional = {
+                            let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                            usd_at_risk.max(0.0)
+                        };
+                        crate::strategies::risk::perps::exceeds_total_exposure(
+                            cap,
+                            equity,
+                            existing,
+                            new_notional,
+                        )
                     } else {
-                        "max_concurrent_positions"
-                    };
+                        false
+                    }
+                };
+
+                let breach_reason: Option<&str> = if daily_loss_breached {
+                    Some("daily_loss_kill")
+                } else if max_positions_breached {
+                    Some("max_concurrent_positions")
+                } else if exposure_breached {
+                    Some("max_total_exposure")
+                } else {
+                    match perps_veto {
+                        Some(xvision_core::trading::VetoReason::PunitiveFunding) => Some("punitive_funding"),
+                        Some(xvision_core::trading::VetoReason::NearLiquidation) => Some("near_liquidation"),
+                        _ => None,
+                    }
+                };
+
+                if let Some(reason) = breach_reason {
                     let note = format!(
                         "risk veto `{reason}` at decision {decision_idx} ({asset}): \
                          open {applied_action} rewritten to hold \
