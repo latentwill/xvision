@@ -1959,6 +1959,28 @@ impl Executor {
                 // drives `simulate_fill` / marker derivation. A `RewriteTo`
                 // also writes a `supervisor_notes` row so the operator sees
                 // the block.
+                // WS-13 (`trace-obs-risk-gate`): open a `risk.gate` span
+                // around the engine's REAL risk window — the guardrail
+                // rewrite below + the deterministic risk-config vetoes
+                // that follow. The span is a child of this decision's
+                // `agent.decision` span and is closed (with a verdict
+                // derived read-only from what actually happened) once the
+                // final `applied_action` is known. This is emit-only: the
+                // guardrail/risk-config/veto LOGIC and the trade outcome
+                // are unchanged. Snapshot the trader's pre-risk action so
+                // the verdict can tell "approved" (unchanged) apart from
+                // "modified"/"vetoed" (rewritten) without re-deriving it.
+                let risk_gate_span_id = crate::agent::observability::fresh_span_id();
+                let trader_action_pre_risk = parsed.action.clone();
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    obs.emit_risk_gate_started(&risk_gate_span_id, Some(decision_span_id.clone()))
+                        .await;
+                }
+                // Reason carried out of the risk-config veto block so the
+                // span finish can report it (`daily_loss_kill` /
+                // `max_concurrent_positions`). `None` when nothing vetoed.
+                let mut risk_veto_reason: Option<&'static str> = None;
+
                 let original_action = GuardAction::parse(&parsed.action);
                 let position_state = position_state_from_size(pre_fill_position);
                 let decision = guardrails::classify(
@@ -2058,6 +2080,10 @@ impl Executor {
                             } else {
                                 "max_concurrent_positions"
                             };
+                            // WS-13: surface the veto reason to the
+                            // enclosing `risk.gate` span finish (read-only
+                            // — does not change the veto behavior below).
+                            risk_veto_reason = Some(reason);
                             let note = format!(
                                 "risk veto `{reason}` at decision {decision_idx} ({asset}): \
                                  open {applied_action} rewritten to hold \
@@ -2087,6 +2113,31 @@ impl Executor {
                         }
                     }
                 };
+
+                // WS-13 (`trace-obs-risk-gate`): close the `risk.gate`
+                // span with a verdict derived READ-ONLY from what the
+                // guardrail + risk-config checks above already did. The
+                // mapping (checked in this order — a veto also rewrites
+                // the action, so the veto case must win over "modified"):
+                //   * `vetoed`   — the risk-config block rewrote a new
+                //                  open to `hold` (reason carried).
+                //   * `modified` — the guardrail rewrote the trader's
+                //                  action (action changed, no veto).
+                //   * `approved` — risk ran, the action is unchanged.
+                // Emitted for ALL THREE verdicts so `risk.gate` shows
+                // every decision, not only the bars where risk fired.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    let (verdict, veto_reason): (&str, Option<&str>) = if let Some(reason) = risk_veto_reason
+                    {
+                        ("vetoed", Some(reason))
+                    } else if applied_action != trader_action_pre_risk {
+                        ("modified", None)
+                    } else {
+                        ("approved", None)
+                    };
+                    obs.emit_risk_gate_finished(&risk_gate_span_id, verdict, veto_reason, None)
+                        .await;
+                }
 
                 // eval-broker-rule-findings: validate new open orders against venue
                 // rules before calling simulate_fill. Only `long_open` and

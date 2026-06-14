@@ -1503,10 +1503,17 @@ impl ObsEmitter {
                 payload.insert("modified_qty".to_string(), serde_json::Value::Number(n));
             }
         }
-        let error_json = if status == SpanStatus::Error {
-            Some(serde_json::Value::Object(payload).to_string())
-        } else {
+        // WS-13 (`trace-obs-risk-gate`): carry the verdict payload for any
+        // verdict that CHANGED the trader's action — `vetoed` (status
+        // error) AND `modified` (status ok). `approved` stays clean (no
+        // payload) so the persisted span row distinguishes "risk ran and
+        // touched nothing" from "risk ran and rewrote the action", while
+        // still matching the sibling `filter.eval` convention that a
+        // clean pass carries no error payload.
+        let error_json = if verdict == "approved" {
             None
+        } else {
+            Some(serde_json::Value::Object(payload).to_string())
         };
         self.bus
             .publish(RunEvent::SpanFinished(SpanFinishedEvent {
