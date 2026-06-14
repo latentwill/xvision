@@ -214,6 +214,19 @@ pub enum Command {
     /// run the full cycle). Also hosts cycle history (ls/show), lineage, and
     /// unlock. See `xvn optimize --help`.
     Optimize(commands::optimize::OptimizeCmd),
+    /// Launch a guarded live run against a real-money or testnet venue.
+    ///
+    /// Real-money mainnet runs require `--i-understand-real-money`.
+    ///
+    /// Examples:
+    ///   xvn live --venue byreal --network testnet --strategy <id> \
+    ///     --display-name "Testnet smoke" --asset BTC/USD \
+    ///     --capital 1000 --bar-limit 50
+    ///
+    ///   xvn live --venue byreal --network mainnet --i-understand-real-money \
+    ///     --strategy <id> --display-name "Mainnet perps" --asset BTC/USD \
+    ///     --capital 5000 --time-limit-secs 3600
+    Live(commands::live::LiveArgs),
     /// Show the most recent eval run(s) as a compact health card.
     Last {
         /// Override the xvn home directory.
@@ -311,6 +324,7 @@ impl Cli {
             Command::Model(cmd) => commands::model::run(cmd).await,
             Command::Trajectory(cmd) => commands::trajectory::run(cmd).await,
             Command::Optimize(cmd) => commands::optimize::run(cmd).await,
+            Command::Live(args) => commands::live::run(args).await,
             Command::Last {
                 xvn_home,
                 strategy,
