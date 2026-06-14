@@ -2,13 +2,11 @@
 //! the x402 `exact` scheme. Pure — no network, no chain. Mirrors the EIP-712
 //! pattern in `xvision-execution/src/virtuals.rs`.
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, Signature, B256, U256};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::signers::SignerSync;
 use alloy::sol;
 use alloy::sol_types::{eip712_domain, Eip712Domain, SolStruct};
-
-use alloy::primitives::Signature;
 
 use crate::error::MarketplaceError;
 
@@ -102,10 +100,14 @@ pub fn recover_authorizer(
     s: B256,
 ) -> Result<Address, MarketplaceError> {
     let hash = signing_hash(auth, domain);
-    let parity = v
-        .checked_sub(27)
-        .ok_or_else(|| MarketplaceError::Signing("bad v".into()))?;
-    let sig = Signature::from_scalars_and_parity(r, s, parity != 0);
+    // USDC transferWithAuthorization requires v ∈ {27, 28}; reject anything else
+    // rather than silently coercing (e.g. v=29) to a wrong parity.
+    let parity = match v {
+        27 => false,
+        28 => true,
+        other => return Err(MarketplaceError::Signing(format!("bad v: {other}"))),
+    };
+    let sig = Signature::from_scalars_and_parity(r, s, parity);
     sig.recover_address_from_prehash(&hash)
         .map_err(|e| MarketplaceError::Signing(format!("ecrecover: {e}")))
 }
@@ -182,5 +184,22 @@ mod tests {
         auth.value = U256::from(999u64); // tamper
         let recovered = recover_authorizer(&auth, &domain, signed.v, signed.r, signed.s).unwrap();
         assert_ne!(recovered, signer.address());
+    }
+
+    #[test]
+    fn recover_rejects_bad_v() {
+        let usdc = Address::from_str(MANTLE_USDC).unwrap();
+        let domain = usdc_domain(5000, usdc);
+        let auth = Authorization {
+            from: Address::ZERO,
+            to: Address::ZERO,
+            value: U256::ZERO,
+            valid_after: U256::ZERO,
+            valid_before: U256::from(9_999_999_999u64),
+            nonce: B256::ZERO,
+        };
+        // v outside {27, 28} must error, not silently coerce.
+        assert!(recover_authorizer(&auth, &domain, 29, B256::ZERO, B256::ZERO).is_err());
+        assert!(recover_authorizer(&auth, &domain, 26, B256::ZERO, B256::ZERO).is_err());
     }
 }
