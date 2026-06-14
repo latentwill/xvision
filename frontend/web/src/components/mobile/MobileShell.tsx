@@ -146,6 +146,5 @@ function routeTitle(pathname: string): string {
   if (pathname.startsWith("/agents")) return "Agents";
   if (pathname.startsWith("/authoring")) return "Authoring";
   if (pathname.startsWith("/settings")) return "Settings";
-  if (pathname.startsWith("/setup")) return "Setup";
   return "xvn";
 }

@@ -32,7 +32,6 @@ const AgentRunDetailRoute = lazy(() => import("./routes/agent-runs-detail").then
 const EvalCompareRoute = lazy(() => import("./routes/eval-compare").then((m) => ({ default: m.EvalCompareRoute })));
 const LiveRoute = lazy(() => import("./routes/live").then((m) => ({ default: m.LiveRoute })));
 const LiveRunDetailRoute = lazy(() => import("./routes/live-run-detail").then((m) => ({ default: m.LiveRunDetailRoute })));
-const SetupRoute = lazy(() => import("./routes/setup").then((m) => ({ default: m.SetupRoute })));
 const DocsRoute = lazy(() => import("./routes/docs").then((m) => ({ default: m.DocsRoute })));
 const MemoryPage = lazy(() => import("./features/memory/MemoryPage").then((m) => ({ default: m.MemoryPage })));
 const SettingsLayout = lazy(() => import("./routes/settings").then((m) => ({ default: m.SettingsLayout })));
@@ -184,7 +183,6 @@ export const router = createBrowserRouter([
       // inspector wins over `/live/:id` for /live/runs/* deep links.
       { path: "live/runs/:runId", element: page(<LiveRunDetailRoute />) },
       { path: "live/:id", element: page(<LiveRoute />) },
-      { path: "setup", element: page(<SetupRoute />) },
       { path: "safety", element: page(<SafetyRoute />) },
       {
         path: "chart-lab",
