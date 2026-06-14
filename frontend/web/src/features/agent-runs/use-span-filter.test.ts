@@ -24,6 +24,32 @@ describe("useSpanFilter", () => {
     expect(result.current.filtered.every((s) => s.kind === "model.call")).toBe(true);
   });
 
+  // WS-8: engine.event rows are a parallel lifecycle band, not a span
+  // category. A span-category kind chip must NOT hide them — otherwise
+  // activating e.g. the MODEL chip would silently drop every risk veto /
+  // regime transition / order-state signal.
+  test("engine.event rows survive a span-category kind chip (never dropped)", () => {
+    const spansWithEngineEvent = [
+      ...allSpans,
+      {
+        span_id: "ee_x",
+        parent_span_id: null,
+        name: "risk_veto",
+        kind: "engine.event" as const,
+        started_at: "2026-06-14T10:00:00.000Z",
+        finished_at: "2026-06-14T10:00:00.000Z",
+        status: "ok" as const,
+        attributes: { engine_event_kind: "risk_veto" },
+      },
+    ];
+    const { result } = renderHook(() =>
+      useSpanFilter({ runId: "run_engine_evt", spans: spansWithEngineEvent }),
+    );
+    act(() => result.current.toggleKind("model"));
+    // The MODEL chip narrows the span rows, but the engine.event row stays.
+    expect(result.current.filtered.some((s) => s.span_id === "ee_x")).toBe(true);
+  });
+
   test("free-text `model:opus` filters by model field substring", () => {
     const { result } = renderHook(() => useSpanFilter({ runId, spans: allSpans }));
     act(() => result.current.setQuery("model:gpt-5"));

@@ -7,8 +7,125 @@
 // `model.reasoning` wire values stay recognised as legacy aliases.
 
 import { describe, expect, test } from "vitest";
-import type { SpanKind } from "@/api/types-agent-runs";
-import { CATEGORY_STYLES, categoryOf, spanColor } from "./span-colors";
+import type { RunSpan, SpanKind } from "@/api/types-agent-runs";
+import {
+  CATEGORY_STYLES,
+  categoryOf,
+  categoryOfSpan,
+  isKnownSpanKind,
+  spanColor,
+  spanColorForSpan,
+} from "./span-colors";
+
+function span(over: Partial<RunSpan> = {}): RunSpan {
+  return {
+    span_id: "s_1",
+    parent_span_id: null,
+    name: "x",
+    kind: "agent.run",
+    started_at: "2026-06-14T10:00:00.000Z",
+    finished_at: "2026-06-14T10:00:01.000Z",
+    status: "ok",
+    attributes: {},
+    ...over,
+  };
+}
+
+// Every SpanKind in the union must resolve to a non-fallback category +
+// color. WS-8 render parity: nothing in the taxonomy may silently fall into
+// the unknown bucket.
+const ALL_SPAN_KINDS: SpanKind[] = [
+  "agent.run",
+  "agent.plan",
+  "agent.decision",
+  "decision.model",
+  "decision.reasoning",
+  "model.call",
+  "model.reasoning",
+  "tool.call",
+  "tool.validate_input",
+  "tool.validate_output",
+  "approval.request",
+  "approval.response",
+  "sandbox.exec",
+  "supervisor.review",
+  "financial.eval",
+  "artifact.write",
+  "ipc.notification",
+  "skill.invoke",
+  "broker.call",
+  "recovery.attempt",
+  "state.transition",
+  "engine.event",
+];
+
+describe("span taxonomy completeness — WS-8 render parity", () => {
+  test("every known SpanKind resolves to a non-unknown category", () => {
+    for (const kind of ALL_SPAN_KINDS) {
+      // engine.event resolves per-span (its family lives in attributes), so
+      // it's allowed to read as `unknown` on a bare kind lookup; assert it's
+      // recognised by the predicate instead.
+      expect(isKnownSpanKind(kind), `SpanKind "${kind}" is not recognised`).toBe(true);
+      if (kind !== "engine.event") {
+        expect(
+          categoryOf(kind),
+          `SpanKind "${kind}" fell into the unknown category`,
+        ).not.toBe("unknown");
+      }
+    }
+  });
+
+  test("every known SpanKind has a defined color + label", () => {
+    for (const kind of ALL_SPAN_KINDS) {
+      const style = spanColor(kind);
+      expect(style.hex, `SpanKind "${kind}" has no hex`).toMatch(/^#[0-9a-fA-F]{6}$/);
+      expect(style.label.length, `SpanKind "${kind}" has empty label`).toBeGreaterThan(0);
+    }
+  });
+
+  test("an unknown SpanKind resolves to the typed unknown fallback, not a mislabel", () => {
+    const cat = categoryOf("future.unforeseen.kind" as SpanKind);
+    expect(cat).toBe("unknown");
+    expect(isKnownSpanKind("future.unforeseen.kind" as SpanKind)).toBe(false);
+    const style = spanColor("future.unforeseen.kind" as SpanKind);
+    expect(style.hex).toMatch(/^#[0-9a-fA-F]{6}$/);
+    expect(style.label.length).toBeGreaterThan(0);
+  });
+
+  test("engine.event span derives its color/label from the engine-event family", () => {
+    const riskRow = span({
+      kind: "engine.event",
+      attributes: { engine_event_kind: "risk_veto" },
+    });
+    // Risk family is distinct from a model/decision span.
+    expect(categoryOfSpan(riskRow)).not.toBe("unknown");
+    expect(spanColorForSpan(riskRow).label).toBe("RISK");
+
+    const orderRow = span({
+      kind: "engine.event",
+      attributes: { engine_event_kind: "order_signed" },
+    });
+    expect(spanColorForSpan(orderRow).label).toBe("ORDER");
+  });
+
+  test("engine.event span with an unknown engine kind still renders (typed fallback)", () => {
+    const row = span({
+      kind: "engine.event",
+      attributes: { engine_event_kind: "brand_new_engine_signal" },
+    });
+    const style = spanColorForSpan(row);
+    expect(style.hex).toMatch(/^#[0-9a-fA-F]{6}$/);
+    expect(style.label.length).toBeGreaterThan(0);
+  });
+
+  test("a span with a genuinely unknown kind renders the unknown fallback color", () => {
+    const row = span({ kind: "totally.unknown" as SpanKind });
+    const style = spanColorForSpan(row);
+    expect(categoryOfSpan(row)).toBe("unknown");
+    expect(style.hex).toMatch(/^#[0-9a-fA-F]{6}$/);
+    expect(style.label.length).toBeGreaterThan(0);
+  });
+});
 
 describe("categoryOf — WS-17 decision span taxonomy", () => {
   test("decision.model maps to the model category (blue MODEL swatch)", () => {
@@ -42,6 +159,7 @@ describe("categoryOf — WS-17 decision span taxonomy", () => {
       "broker",
       "supervisor",
       "artifact",
+      "unknown",
     ] as const) {
       expect(CATEGORY_STYLES[cat]).toBeDefined();
       expect(CATEGORY_STYLES[cat].hex).toMatch(/^#[0-9a-fA-F]{6}$/);

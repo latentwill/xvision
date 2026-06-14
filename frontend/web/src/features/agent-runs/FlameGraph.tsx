@@ -2,7 +2,7 @@
 import { useMemo } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
-import { spanColor, withAlpha } from "./span-colors";
+import { spanColorForSpan, withAlpha } from "./span-colors";
 
 type LayoutRow = {
   span: RunSpan;
@@ -102,7 +102,7 @@ export function FlameGraph({
     <div className="scrollbar-stable relative w-full overflow-x-auto h-full" role="figure" aria-label="span flame graph">
       <div className="relative" style={{ height: totalH, minWidth: "100%" }}>
         {rows.map((r) => {
-          const color = spanColor(r.span.kind);
+          const color = spanColorForSpan(r.span);
           const selected = r.span.span_id === selectedSpanId;
           // Real export-backed model.call spans land on `span.cost` (see
           // normalisation in api/agent-runs.ts); the legacy `attributes.cost_usd`

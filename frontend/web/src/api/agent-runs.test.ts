@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   REAL_SSE_EVENTS,
   agentRunKeys,
+  engineEventFrameToSpan,
   fetchAgentRunBlob,
   getAgentRun,
   getAgentRunMemoryEvents,
@@ -556,6 +557,16 @@ describe("agent-runs real-mode branch", () => {
         text_preview: "remembered",
       });
 
+      // WS-8: a live engine_event frame must reach the consumer (transport
+      // must NOT drop it) so TraceDock can project it onto an engine.event row.
+      fire("engine_event", {
+        run_id: "run_stream_1",
+        span_id: "s_live2",
+        kind: "risk_veto",
+        payload_json: JSON.stringify({ reason: "max_drawdown" }),
+        created_at: "2026-05-17T10:00:01.200Z",
+      });
+
       // 4) Terminal span event.
       fire("span_finished", {
         span_id: "s_live2",
@@ -572,8 +583,13 @@ describe("agent-runs real-mode branch", () => {
         "lagged",
         "memory_recall",
         "memory_write",
+        "engine_event",
         "span_finished",
       ]);
+      // The engine_event frame is delivered with its raw payload intact so the
+      // dock can project it (engineEventFrameToSpan). Nothing dropped.
+      const engineFrame = received.find((e) => e.event === "engine_event");
+      expect(engineFrame?.data).toMatchObject({ kind: "risk_veto" });
 
       // Store side effects applied.
       const s = useTraceDock.getState().streamingState;
@@ -797,6 +813,165 @@ describe("normalizeAgentRunExport — broker.call projection", () => {
     for (const span of detail.spans) {
       expect(span.broker_call).toBeUndefined();
     }
+  });
+});
+
+// WS-8 taxonomy convergence: the v3 export carries an `events` array (every
+// EngineEvent for the run). Before WS-8 the trace rendered only `spans` and
+// dropped every engine event on the floor. `normalizeAgentRunExport` now
+// projects each lifecycle event onto an `engine.event` RunSpan so it flows
+// through the existing tree / inspector / filter machinery — nothing dropped.
+describe("normalizeAgentRunExport — engine-event projection (WS-8)", () => {
+  test("projects events[] lifecycle rows onto engine.event spans", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      schema_version: "xvn.agent_run.v3",
+      events: [
+        {
+          span_id: "span_model",
+          kind: "risk_veto",
+          payload_json: { reason: "max_drawdown", decision_index: 3 },
+          created_at: "2026-05-17T16:00:01.500Z",
+        },
+        {
+          span_id: null,
+          kind: "regime_transition",
+          payload_json: { from: "bull", to: "chop" },
+          created_at: "2026-05-17T16:00:02.000Z",
+        },
+      ],
+    };
+    const detail = validateAgentRunDetail(payload);
+    const engineSpans = detail.spans.filter((s) => s.kind === "engine.event");
+    expect(engineSpans).toHaveLength(2);
+
+    const risk = engineSpans.find(
+      (s) => s.attributes.engine_event_kind === "risk_veto",
+    );
+    expect(risk).toBeDefined();
+    // The lifecycle event inherits its scoping span as parent so the tree can
+    // nest it under the decision/model it fired against.
+    expect(risk?.parent_span_id).toBe("span_model");
+    // Payload survives so the inspector can render it.
+    expect((risk?.attributes.engine_event_payload as { reason?: string })?.reason).toBe(
+      "max_drawdown",
+    );
+
+    const regime = engineSpans.find(
+      (s) => s.attributes.engine_event_kind === "regime_transition",
+    );
+    // Run-scoped (span_id null) events become top-level rows, never dropped.
+    expect(regime?.parent_span_id).toBeNull();
+  });
+
+  test("does NOT project payload-carrier events (model_call_payload / tool_call_payload)", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      schema_version: "xvn.agent_run.v3",
+      events: [
+        {
+          span_id: "span_model",
+          kind: "model_call_payload",
+          payload_json: { prompt: "…" },
+          created_at: "2026-05-17T16:00:01.500Z",
+        },
+        {
+          span_id: "span_model",
+          kind: "tool_call_payload",
+          payload_json: { input: "…" },
+          created_at: "2026-05-17T16:00:01.600Z",
+        },
+      ],
+    };
+    const detail = validateAgentRunDetail(payload);
+    // Those carrier events are folded onto the model/tool spans elsewhere;
+    // they must NOT show up as duplicate engine.event rows.
+    expect(detail.spans.filter((s) => s.kind === "engine.event")).toHaveLength(0);
+  });
+
+  test("a run with no events[] array yields no engine.event spans", () => {
+    const detail = validateAgentRunDetail(EXPORT_PAYLOAD);
+    expect(detail.spans.some((s) => s.kind === "engine.event")).toBe(false);
+  });
+
+  test("an unknown engine-event kind is projected, not dropped", () => {
+    const payload = {
+      ...EXPORT_PAYLOAD,
+      schema_version: "xvn.agent_run.v3",
+      events: [
+        {
+          span_id: null,
+          kind: "brand_new_future_signal",
+          payload_json: { x: 1 },
+          created_at: "2026-05-17T16:00:02.000Z",
+        },
+      ],
+    };
+    const detail = validateAgentRunDetail(payload);
+    const projected = detail.spans.filter((s) => s.kind === "engine.event");
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.attributes.engine_event_kind).toBe("brand_new_future_signal");
+  });
+});
+
+// WS-8: live `engine_event` SSE frames must convert to the SAME engine.event
+// row shape the post-hoc export produces, so live + replayed runs render
+// engine events identically.
+describe("engineEventFrameToSpan (WS-8 live path)", () => {
+  test("parses payload_json string and links to its scoping span", () => {
+    const span = engineEventFrameToSpan({
+      span_id: "span_42",
+      kind: "risk_veto",
+      payload_json: JSON.stringify({ reason: "max_drawdown" }),
+      created_at: "2026-06-14T10:00:01.500Z",
+    });
+    expect(span).not.toBeNull();
+    expect(span?.kind).toBe("engine.event");
+    expect(span?.parent_span_id).toBe("span_42");
+    expect(span?.attributes.engine_event_kind).toBe("risk_veto");
+    expect(
+      (span?.attributes.engine_event_payload as { reason?: string })?.reason,
+    ).toBe("max_drawdown");
+  });
+
+  test("run-scoped frame (null span_id) becomes a top-level row", () => {
+    const span = engineEventFrameToSpan({
+      span_id: null,
+      kind: "regime_transition",
+      payload_json: null,
+      created_at: "2026-06-14T10:00:02.000Z",
+    });
+    expect(span?.parent_span_id).toBeNull();
+    expect(span?.attributes.engine_event_kind).toBe("regime_transition");
+  });
+
+  test("keeps malformed payload_json as a raw string (never dropped)", () => {
+    const span = engineEventFrameToSpan({
+      kind: "filter_fired",
+      payload_json: "{not-json",
+      created_at: "2026-06-14T10:00:03.000Z",
+    });
+    expect(span?.attributes.engine_event_payload).toBe("{not-json");
+  });
+
+  test("returns null for carrier kinds (model_call_payload / tool_call_payload)", () => {
+    expect(
+      engineEventFrameToSpan({
+        kind: "model_call_payload",
+        payload_json: "{}",
+        created_at: "2026-06-14T10:00:04.000Z",
+      }),
+    ).toBeNull();
+  });
+
+  test("unknown kind still projects (typed fallback)", () => {
+    const span = engineEventFrameToSpan({
+      kind: "brand_new_live_signal",
+      payload_json: null,
+      created_at: "2026-06-14T10:00:05.000Z",
+    });
+    expect(span?.kind).toBe("engine.event");
+    expect(span?.attributes.engine_event_kind).toBe("brand_new_live_signal");
   });
 });
 
