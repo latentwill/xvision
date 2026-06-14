@@ -79,12 +79,19 @@ Add to the `BrokerSurface` trait:
 ```rust
 /// Whether this venue trades directional perpetual futures (funding +
 /// liquidation apply). Default false; overridden true only on the
-/// directional-perps adapters (Hyperliquid/byreal, Orderly perps).
+/// directional-perps adapters.
 fn is_perp_venue(&self) -> bool { false }
 ```
 
-- Hyperliquid/byreal adapter, Orderly perps surface → `true`.
-- Alpaca (spot), Byreal CLMM LP, mock spot surfaces → `false` (default).
+Override `→ true` on every directional-perps `BrokerSurface` impl that already
+exists in the codebase:
+- `ByrealLiveSurface<A>` (`byreal.rs:625`, Hyperliquid perps — `ByrealPerpsApi`)
+- `OrderlyLiveSurface<A>` (`broker_surface.rs:828`, venue `"orderly"`)
+- `BybitPaperSurface<A>` (`bybit.rs:319`, Bybit `category=linear` perps)
+
+Leave `→ false` (default) on the spot/test surfaces: `AlpacaPaperSurface`,
+`AlpacaLiveSurface`, `MockBrokerSurface`, `DefaultsBroker`. (The Byreal CLMM LP
+DEX is not a `BrokerSurface` impl and is unaffected.)
 
 The perps guards run **only when `is_perp_venue()` is true**. Backtest and
 live-spot are `false` → guards are completely inert.
@@ -98,15 +105,18 @@ function (logic lifted verbatim from the two `xvision-risk` rules):
 pub fn perps_entry_veto(
     cfg: &RiskConfig,
     is_perp_venue: bool,
-    action: &str,          // applied_action ("long_open" / "short_open" / ...)
+    is_new_open: bool,     // true only for long_open / short_open; caller-computed
     direction: Direction,
     funding_rate_8h: Option<f64>,        // from PerpsContext (None ⇒ no-op)
     min_position_liq_distance_pct: Option<f64>, // min over open positions (None ⇒ no-op)
 ) -> Option<VetoReason>
 ```
 
-Early-returns `None` when: `!is_perp_venue`, action is not a new open, or the
-relevant datum is absent. Otherwise:
+The caller passes `is_new_open`/`direction` pre-computed (the R3 block already
+gates on new-open and has the applied action in hand), so the helper stays a
+pure decision function with no string parsing. Early-returns `None` when:
+`!is_perp_venue`, not a new open (exits included), or the relevant datum is
+absent. Otherwise:
 - **Funding-carry:** a long pays `+funding`, a short pays `-funding`; if the pay
   rate exceeds `cfg.max_funding_pay_8h` ⇒ `Some(PunitiveFunding)`.
 - **Liquidation-distance:** if any open position's liq distance %

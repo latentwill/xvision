@@ -18,7 +18,9 @@
 
 | File | Responsibility | Change |
 |---|---|---|
-| `crates/xvision-execution/src/broker_surface.rs` | `BrokerSurface` trait | Add `is_perp_venue()` default method + a perps test surface |
+| `crates/xvision-execution/src/broker_surface.rs` | `BrokerSurface` trait + Alpaca/Orderly/Mock impls | Add `is_perp_venue()` default (`false`) + override `→ true` on `OrderlyLiveSurface`; add a perps test surface |
+| `crates/xvision-execution/src/byreal.rs` | Hyperliquid perps adapter | Override `is_perp_venue() → true` on `ByrealLiveSurface<A>` |
+| `crates/xvision-execution/src/bybit.rs` | Bybit linear-perps adapter | Override `is_perp_venue() → true` on `BybitPaperSurface<A>` |
 | `crates/xvision-engine/src/eval/executor/real_broker_fills.rs` | live fill sink | Add `is_perp_venue()` passthrough to the wrapped broker |
 | `crates/xvision-engine/src/strategies/risk.rs` | `RiskConfig` + presets | Add 3 config fields + preset defaults; declare `pub mod perps` |
 | `crates/xvision-engine/src/strategies/risk/perps.rs` | **NEW** perps veto helper | `perps_entry_veto(...)` + unit tests |
@@ -38,7 +40,9 @@
 ## Task 1: `BrokerSurface::is_perp_venue()` gate
 
 **Files:**
-- Modify: `crates/xvision-execution/src/broker_surface.rs` (trait ~L421-465; add test surface in the `#[cfg(test)] mod tests`)
+- Modify: `crates/xvision-execution/src/broker_surface.rs` (trait ~L421-465; `OrderlyLiveSurface<A>` impl at L828; add test surface in the `#[cfg(test)] mod tests`)
+- Modify: `crates/xvision-execution/src/byreal.rs` (`ByrealLiveSurface<A>` impl at L625)
+- Modify: `crates/xvision-execution/src/bybit.rs` (`BybitPaperSurface<A>` impl at L319)
 - Modify: `crates/xvision-engine/src/eval/executor/real_broker_fills.rs`
 
 - [ ] **Step 1: Write the failing test** (in `broker_surface.rs` test module, near the existing `DefaultsBroker` at ~L1406)
@@ -68,7 +72,20 @@ async fn perp_surface_reports_perp_venue() {
 }
 ```
 
-> If the existing `impl BrokerSurface for DefaultsBroker` already supplies the required methods with different signatures, mirror its exact method signatures in `PerpTestSurface`. Check `DefaultsBroker` at L1406 first and copy its `submit_order`/`position`/`balance` shapes.
+Also add a test that a **real** perps adapter reports `true`, reusing the
+existing Orderly mock-API test harness (an `OrderlyLiveSurface::with_api(mock)`
+constructor is already used by tests at ~L1215). Place it near those tests:
+
+```rust
+#[test]
+fn orderly_live_surface_is_perp_venue() {
+    // Build via the same mock-API path the other Orderly tests use.
+    let surface = OrderlyLiveSurface::with_api(MockOrderlyApi::default());
+    assert!(surface.is_perp_venue(), "Orderly is a directional-perps venue");
+}
+```
+
+> Match the exact `with_api(...)` mock constructor the surrounding Orderly tests use (copy from the test at ~L1215). If a spot Alpaca surface is trivially constructible in tests, also assert `!alpaca.is_perp_venue()`; otherwise the `DefaultsBroker` default-false test already covers the spot path. Mirror `DefaultsBroker`'s method signatures in `PerpTestSurface` (check L1406).
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -88,10 +105,24 @@ Expected: FAIL — `no method named is_perp_venue`.
     }
 ```
 
+- [ ] **Step 3b: Override `→ true` on the directional-perps adapters.** Add this identical method inside three existing `impl BrokerSurface` blocks (place it next to each impl's `venue()` method):
+
+```rust
+    fn is_perp_venue(&self) -> bool {
+        true
+    }
+```
+
+  - `impl<A: OrderlyApi> BrokerSurface for OrderlyLiveSurface<A>` — `broker_surface.rs:828` (venue `"orderly"`, `PERP_*` symbols)
+  - `impl<A: ByrealPerpsApi + 'static> BrokerSurface for ByrealLiveSurface<A>` — `byreal.rs:625` (Hyperliquid perps)
+  - `impl<A: BybitApi + 'static> BrokerSurface for BybitPaperSurface<A>` — `bybit.rs:319` (Bybit `category=linear` perps)
+
+  Leave `AlpacaPaperSurface` / `AlpacaLiveSurface` / `MockBrokerSurface` / `DefaultsBroker` on the default `false`. (Without these overrides the gate is permanently inert on real perps venues — the guards would be dead code.)
+
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `scripts/cargo test -p xvision-execution is_not_perp_venue perp_surface_reports`
-Expected: PASS (both).
+Run: `scripts/cargo test -p xvision-execution is_not_perp_venue perp_surface_reports orderly_live_surface_is_perp_venue`
+Expected: PASS (all three).
 
 - [ ] **Step 5: Add passthrough on `RealBrokerFills`** (`real_broker_fills.rs`; it wraps `broker: Arc<dyn BrokerSurface>` and already calls `self.broker.venue()` ~L154)
 
@@ -110,8 +141,8 @@ Run: `scripts/cargo build -p xvision-execution -p xvision-engine`
 Expected: clean build.
 
 ```bash
-git add crates/xvision-execution/src/broker_surface.rs crates/xvision-engine/src/eval/executor/real_broker_fills.rs
-git commit -m "feat(risk): add BrokerSurface::is_perp_venue() gate + RealBrokerFills passthrough"
+git add crates/xvision-execution/src/broker_surface.rs crates/xvision-execution/src/byreal.rs crates/xvision-execution/src/bybit.rs crates/xvision-engine/src/eval/executor/real_broker_fills.rs
+git commit -m "feat(risk): add BrokerSurface::is_perp_venue() gate (true on Orderly/byreal/Bybit) + RealBrokerFills passthrough"
 ```
 
 ---
@@ -321,15 +352,15 @@ The existing blocks compute `daily_loss_breached || max_positions_breached` then
 
 - [ ] **Step 1: Compute `is_perp_venue` once per loop.**
   - **Backtest loop** (constant — backtest is spot-only). Just before the R3 block (~L2028), no broker exists: use `let is_perp_venue = false;`.
-  - **Live loop** (~L3982): derive from the live runtime's broker. The live loop already holds the `LiveRuntime` (via `self.live_runtime`); add a passthrough read near where the loop sets up. If the `LiveRuntime`/`fill_sink` is locked once at loop start, read `is_perp_venue` there into a local `bool`. Concretely, where the live loop first borrows the runtime, add:
+  - **Live loop** (~L3982): derive from the live runtime's broker. The locked `LiveRuntime` guard is bound as `runtime` and exposes `runtime.fill_sink` (a `RealBrokerFills`, passed as `&mut runtime.fill_sink` into `decide_one_live`). Read the gate once, **above** the asset/decision loop (~L3428, where `runtime` is first available), into a local `bool`:
 
 ```rust
     // Perps risk gate: only directional-perps venues run the funding /
     // liquidation guards. Read once; the broker venue is fixed per run.
-    let is_perp_venue = live_runtime_guard.fill_sink.is_perp_venue();
+    let is_perp_venue = runtime.fill_sink.is_perp_venue();
 ```
 
-  > Find the existing binding name for the locked `LiveRuntime` in the live loop (search `live_runtime` in the live-loop method). If it is borrowed per-iteration rather than once, compute `is_perp_venue` at the same point `fill_sink` is accessed for fills and hoist it to a `let` above the decision loop.
+  > Confirm the guard binding name by searching `live_runtime` / `fill_sink` in the live-loop method (verified to be `runtime` at the time of writing). The bool is `Copy`, so threading it into `decide_one_live` (add a `bool` param) or computing it inside that fn from the `&mut RealBrokerFills` it already receives both work — prefer adding the param so the value is read exactly once.
 
 - [ ] **Step 2: Extend the breach condition** — in **both** blocks, after the existing `let ... = max_positions_breached ...;` line and before `if daily_loss_breached || max_positions_breached {`, insert:
 
@@ -354,7 +385,13 @@ The existing blocks compute `daily_loss_breached || max_positions_breached` then
 
 - [ ] **Step 3: Source the funding rate.**
   - **Backtest loop:** `let perps_funding_rate: Option<f64> = None;` (backtest passes `PerpsContext::default()`).
-  - **Live loop:** read from the same `PerpsContext` the seed builder uses for this decision. Search the live loop for where `perps:` / `PerpsContext` is constructed (around the `build_decision_seed` / `DecisionSeedInput` call ~L3895). Bind `let perps_funding_rate = perps_ctx.funding_rate;` using that struct. Until the live perps feed lands it is `None` ⇒ no-op (correct).
+  - **Live loop:** the live `PerpsContext` is currently an inline `PerpsContext::default()` literal at the `DecisionSeedInput { ... perps: PerpsContext::default() ... }` construction (~L3895). First extract it to a named binding so both the seed and the veto read the same value:
+
+```rust
+    let perps_ctx = PerpsContext::default(); // follow-on track populates funding/OI here
+    // ... then use `perps: perps_ctx,` in DecisionSeedInput, and:
+    let perps_funding_rate = perps_ctx.funding_rate; // Option<f64>; None until the feed lands ⇒ no-op
+```
 
 - [ ] **Step 4: Fold the perps veto into the breach handling** — change the breach gate and reason selection in **both** blocks:
 
@@ -531,6 +568,10 @@ Delete `emit_risk_gate_started` and `emit_risk_gate_finished` (the methods at ~L
 - [ ] **Step 4: Fix the engine test** (`crates/xvision-engine/tests/risk_min_notional.rs`)
 Remove the imports `use xvision_risk::rules::MinNotional;` (L41) and `use xvision_risk::{RiskEvalContext, RiskRule, RuleVerdict};` (L42), and delete the `exact_min_notional_boundary_passes_risk_rule` test fn (the only user of those imports). Leave the `#[ignore]`d integration tests untouched.
 
+- [ ] **Step 4b: Update stale doc references to the deleted surfaces**
+  - `crates/xvision-core/src/config.rs` (~L396, L405, L412): the `RiskPerpsGuards` struct + `RiskConfig.perps` field are the **xvision-core mirror** of the `risk.toml [perps]` section (per the "risk.toml parsed by two crates" convention). **Keep the struct and field** so existing `risk.toml` files still deserialize, but update the doc comments that say "consumed by the xvision-risk crate's own `PerpsGuards`" — that crate is gone. New wording: note that `risk.toml [perps]` is now a **vestigial global mirror**; the live perps vetoes read the per-strategy `strategy.risk.{max_funding_pay_8h,min_liq_distance_pct}` instead (consistent with how `daily_loss_kill_pct` / `max_concurrent_positions` are sourced). Flag the vestigial mirror for a future cleanup; do not remove it here.
+  - `docs/cli-non-surfaced.md` (L66, L106): remove/replace the `xvn risk show-config` / `xvn risk evaluate` references — that command is deleted. Point readers at the engine R3 veto (`strategy.risk`) instead.
+
 - [ ] **Step 5: Delete the two crates + workspace wiring**
 
 ```bash
@@ -541,11 +582,11 @@ Edit root `Cargo.toml`: remove `"crates/xvision-risk",` and `"crates/xvision-har
 
 - [ ] **Step 6: Re-grep for dangling references**
 
-Run:
+Run (scan source AND docs):
 ```bash
-grep -rn "xvision_risk\|xvision-risk\|xvision_harness\|xvision-harness\|RiskLayer\|commands::risk\|harness::BacktestRunner" crates/ --include='*.rs' --include='*.toml' | grep -v '/target/'
+grep -rn "xvision_risk\|xvision-risk\|xvision_harness\|xvision-harness\|RiskLayer\|commands::risk\|harness::BacktestRunner\|xvn risk" crates/ docs/ --include='*.rs' --include='*.toml' --include='*.md' | grep -v '/target/'
 ```
-Expected: only the `Cargo.lock` (regenerated next step) — **no** `.rs`/`.toml` source hits. Fix any that remain.
+Expected: **no** hits except (a) this plan/spec's own prose under `docs/superpowers/`, and (b) the kept `RiskPerpsGuards` struct in `xvision-core/config.rs` with its now-corrected doc wording. Fix any other source/doc hit (esp. stray comment refs in `api/eval.rs`, `autooptimizer/mutator.rs`, `xvision-observability/types.rs`).
 
 - [ ] **Step 7: Build the whole workspace**
 
@@ -596,6 +637,7 @@ Review the full diff for out-of-scope/unreported changes (scan for `D ` deletion
 
 ## Self-Review
 
-- **Spec coverage:** venue gate (T1), helper+config+presets (T2), both-block wiring (T3), MaxTotalExposure general veto with disabled-by-default (T4), full retirement incl. Cargo/default-members/test fix/dead obs methods (T5), build/test verification incl. parity gate (T4.6, T6). `max_leverage` correctly out of scope. ✓
-- **Placeholders:** none — every code step shows code; the two "find the binding name" notes (T3.1/T3.3) are search-guidance for site-specific local names, with explicit fallbacks.
-- **Type consistency:** `perps_entry_veto` / `exceeds_total_exposure` signatures, `VetoReason::{PunitiveFunding,NearLiquidation}`, `Direction::{Long,Short,Flat}`, `book.open_legs()` 4-tuple, `is_perp_venue()` — all consistent across tasks.
+- **Spec coverage:** venue gate incl. `→ true` overrides on the three real perps adapters — Orderly/byreal/Bybit (T1.3b), helper+config+presets (T2), both-block wiring (T3), MaxTotalExposure general veto with disabled-by-default (T4), full retirement incl. Cargo/default-members/test fix/dead obs methods + stale-doc cleanup (T5), build/test verification incl. parity gate (T4.6, T6). `max_leverage` correctly out of scope. ✓
+- **Gate iteration 1 fixes applied:** (1) added `is_perp_venue()=true` overrides on `OrderlyLiveSurface`/`ByrealLiveSurface`/`BybitPaperSurface` so the gate is not permanently inert (T1.3b + test T1.1); (2) helper signature `is_new_open: bool, direction: Direction` now matches the spec (spec §2 updated); (3) folded stale-doc cleanup for `xvision-core/config.rs RiskPerpsGuards` + `docs/cli-non-surfaced.md` into T5.4b + broadened T5.6 re-grep to `docs/`; (4) corrected the live-loop bindings to the verified `runtime.fill_sink` / named `perps_ctx` (T3.1, T3.3).
+- **Placeholders:** none — every code step shows code; the "confirm the binding name" notes (T3.1/T3.3) are verified-name guidance with explicit fallbacks.
+- **Type consistency:** `perps_entry_veto` / `exceeds_total_exposure` signatures, `VetoReason::{PunitiveFunding,NearLiquidation}`, `Direction::{Long,Short,Flat}`, `book.open_legs()` 4-tuple, `is_perp_venue()` — all consistent across tasks and with the spec.
