@@ -14,6 +14,9 @@
 //   opti.parent     — ParentSelected
 //   opti.experiment — MutationProposed (one per candidate; nests under the cycle)
 //   opti.gate       — MutationGated (nests under its experiment, matched by hash)
+//   opti.eval-run   — WS-11b: the candidate's persisted eval run, nested under
+//                     its experiment. A navigable drill-link node (links to the
+//                     run's /agent-runs/:runId trace), NOT an inline span-tree.
 //   opti.honesty    — HonestyCheckRun (per-cycle null-result canary)
 //   opti.judge      — JudgeFinding (nests under its experiment, matched by hash)
 //   opti.flywheel   — FlywheelCompiled (DSPy compile step)
@@ -91,6 +94,7 @@ function attributesFor(e: CycleProgressEvent): Record<string, unknown> {
     "active_count",
     "suspect_count",
     "rejected_count",
+    "eval_run_id",
   ];
   for (const k of copyKeys) {
     const v = (e as Record<string, unknown>)[k];
@@ -218,13 +222,19 @@ export function projectOptiRows(events: CycleProgressEvent[]): RunSpan[] {
         const outcome = classifyGate(e);
         const parentId =
           (childHash && experimentByHash.get(childHash)) || rootId;
+        const evalRunId = readString(e, "eval_run_id");
         // Resolve the parent experiment now it's gated.
         if (childHash && experimentByHash.has(childHash)) {
           const expId = experimentByHash.get(childHash)!;
           const exp = rows.find((r) => r.span_id === expId);
-          if (exp && exp.finished_at == null) {
-            exp.finished_at = ts;
-            exp.status = gateStatus(outcome);
+          if (exp) {
+            if (exp.finished_at == null) {
+              exp.finished_at = ts;
+              exp.status = gateStatus(outcome);
+            }
+            // WS-11b: surface the candidate's eval run id on the experiment so
+            // the inspector/strip can show it alongside the experiment row.
+            if (evalRunId) exp.attributes.eval_run_id = evalRunId;
           }
         }
         rows.push({
@@ -237,6 +247,25 @@ export function projectOptiRows(events: CycleProgressEvent[]): RunSpan[] {
           status: gateStatus(outcome),
           attributes: { ...attributesFor(e), outcome },
         });
+        // WS-11b: nest a navigable eval-run node under the experiment (the gate
+        // resolves to either the candidate's experiment row or the cycle root
+        // when the proposal wasn't buffered). Carries `eval_run_id` so the
+        // SpanInspector can drill to the run's `/agent-runs/:runId` trace. This
+        // is a drill-link node only — the eval run's full span tree is NOT
+        // inlined here (a future step). Skipped when the gate carries no run id
+        // (regime path / test-stub runner) so no dangling node is created.
+        if (evalRunId) {
+          rows.push({
+            span_id: `opti-evalrun:${cycleId}:${childHash ?? seq}`,
+            parent_span_id: parentId,
+            name: "Eval run",
+            kind: "opti.eval-run",
+            started_at: ts,
+            finished_at: ts,
+            status: gateStatus(outcome),
+            attributes: { eval_run_id: evalRunId, child_hash: childHash ?? "" },
+          });
+        }
         break;
       }
 

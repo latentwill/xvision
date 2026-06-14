@@ -238,9 +238,10 @@ describe("LineageRoute", () => {
     expect(await screen.findByText("receipt")).toBeInTheDocument();
   });
 
-  it("Clone to edit is enabled for open-tier listings", async () => {
-    // btc-momentum-v3 is "sealed" but viewer owns it (ownedListingIds includes it via fixture)
-    // Override viewer to have ownership
+  it("does not render a 'Clone to edit' button — clone lives on the Strategies page, and sealed listings are encrypted", async () => {
+    // Even for a listing the viewer owns, the marketplace detail no longer
+    // offers clone: sealed bundles are encrypted and cannot be duplicated,
+    // and cloning a local draft is a Strategies-page action.
     const client = new FixtureMarketplaceData();
     vi.spyOn(client, "getViewer").mockResolvedValue({
       isConnected: true,
@@ -251,23 +252,9 @@ describe("LineageRoute", () => {
     });
     render(<Wrapper client={client} />);
     await screen.findByTestId("lineage-purchase-col");
-    const cloneBtn = screen.getByRole("button", { name: /clone to edit/i });
-    expect(cloneBtn).not.toBeDisabled();
-  });
-
-  it("Clone to edit is disabled when not owned and tier is sealed", async () => {
-    const client = new FixtureMarketplaceData();
-    vi.spyOn(client, "getViewer").mockResolvedValue({
-      isConnected: true,
-      address: "0xabc",
-      handle: "@stranger",
-      createdListingIds: [],
-      ownedListingIds: [], // does NOT own btc-momentum-v3
-    });
-    render(<Wrapper client={client} />);
-    await screen.findByTestId("lineage-purchase-col");
-    const cloneBtn = screen.getByRole("button", { name: /clone to edit/i });
-    expect(cloneBtn).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: /clone to edit/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("ingredient banner is shown when some ingredients are missing", async () => {

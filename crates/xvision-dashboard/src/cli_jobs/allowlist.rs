@@ -199,7 +199,9 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "portfolio",
     "provider",
     "report",
-    "risk",
+    // `risk` was retired from the CLI in #1038 (Byreal/perps risk unified onto
+    // the engine veto path); this stale allowlist entry pointed at a removed
+    // verb and tripped `remote_allowlist_paths_exist_in_clap_tree`.
     "run",
     "scenario", // scenario show, scenario select — read-only paths allowed
     "show-decision",

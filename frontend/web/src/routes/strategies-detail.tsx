@@ -1,13 +1,12 @@
 import { useCallback, useRef, useState } from "react";
-import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, ApiError } from "@/api/client";
-import { Icon } from "@/components/primitives/Icon";
 import { InlineEditField } from "@/features/strategies/InlineEditField";
 import { StrategyReadinessPanel } from "@/components/diagnostics/StrategyReadinessPanel";
 import { CHART2_STRATEGY_ROTATION } from "@/theme/themes";
-import { cloneStrategy, type TunableBound } from "@/api/strategies";
+import type { TunableBound } from "@/api/strategies";
 
 /**
  * Minimal strategy-detail route added by the
@@ -365,7 +364,6 @@ export function StrategyDetailRoute() {
 
 function StrategyDetailView({ id }: { id: string }) {
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const query = useQuery({
     queryKey: detailQueryKey(id),
     queryFn: () => getStrategy(id),
@@ -378,28 +376,6 @@ function StrategyDetailView({ id }: { id: string }) {
   const [plainSummaryError, setPlainSummaryError] = useState<string | null>(
     null,
   );
-  const [cloneError, setCloneError] = useState<string | null>(null);
-
-  // Clone the strategy via the shared `POST /api/strategy/:id/clone`
-  // endpoint (same flow the strategies list "Duplicate" action uses),
-  // then navigate to the new draft's detail page. The display name is
-  // derived from the loaded strategy at click time, so the mutation
-  // closure reads `query.data` rather than the post-load `m` binding
-  // (which is declared below the rules-of-hooks early returns).
-  const cloneMutation = useMutation({
-    mutationFn: () => {
-      const name = query.data?.manifest.display_name ?? "Strategy";
-      return cloneStrategy(id, { display_name: `${name} (clone)` });
-    },
-    onSuccess: (created) => {
-      navigate(`/strategies/${encodeURIComponent(created.manifest.id)}`);
-    },
-    onError: (err) => {
-      setCloneError(
-        err instanceof ApiError ? err.message : "Could not clone strategy.",
-      );
-    },
-  });
 
   const patchMutation = useMutation({
     mutationFn: (patch: MetadataPatch) => patchStrategyMetadata(id, patch),
@@ -471,40 +447,13 @@ function StrategyDetailView({ id }: { id: string }) {
   return (
     <main data-testid="strategy-detail-view" data-strategy-id={m.id}>
       <header>
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <Link
-            to="/strategies"
-            data-testid="strategy-detail-back"
-            className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text"
-          >
-            ← Back to strategies
-          </Link>
-          <div className="flex items-center gap-2">
-            {cloneError ? (
-              <span
-                role="alert"
-                data-testid="strategy-detail-clone-error"
-                title={cloneError}
-                className="max-w-[240px] truncate text-[12px] text-rose-300"
-              >
-                {cloneError}
-              </span>
-            ) : null}
-            <button
-              type="button"
-              data-testid="strategy-detail-clone"
-              onClick={() => {
-                setCloneError(null);
-                cloneMutation.mutate();
-              }}
-              disabled={cloneMutation.isPending}
-              className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text transition-colors hover:border-text-3 active:border-text-2 focus:outline-none focus-visible:ring-1 focus-visible:ring-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Icon name="copy" size={13} />
-              {cloneMutation.isPending ? "Cloning…" : "Clone strategy"}
-            </button>
-          </div>
-        </div>
+        <Link
+          to="/strategies"
+          data-testid="strategy-detail-back"
+          className="inline-flex items-center gap-1.5 text-[12px] text-text-2 hover:text-text mb-3"
+        >
+          ← Back to strategies
+        </Link>
         <h1>
           <InlineEditField
             id="display-name"
