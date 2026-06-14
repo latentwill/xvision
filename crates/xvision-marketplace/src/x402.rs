@@ -18,12 +18,15 @@ sol! {
     }
 }
 
-/// Build the USDC EIP-712 domain. For Mantle mainnet USDC.e (FiatTokenV2):
-/// name="USD Coin", version="2", chainId=5000, verifyingContract=<usdc>.
-pub fn usdc_domain(name: &str, version: &str, chain_id: u64, usdc: Address) -> Eip712Domain {
+/// Build the USDC EIP-712 domain. `name`/`version` are invariant for Circle
+/// FiatTokenV2 USDC ("USD Coin"/"2") on every chain, so only the per-network
+/// values vary: `chain_id` (Mantle mainnet 5000, Sepolia 5003) and the USDC
+/// `verifyingContract` address. Hardcoding name/version removes a footgun where
+/// a wrong literal would silently produce a domain the contract rejects.
+pub fn usdc_domain(chain_id: u64, usdc: Address) -> Eip712Domain {
     eip712_domain! {
-        name: name.to_string(),
-        version: version.to_string(),
+        name: "USD Coin",
+        version: "2",
         chain_id: chain_id,
         verifying_contract: usdc,
     }
@@ -44,8 +47,9 @@ mod tests {
     fn typehash_matches_canonical_eip3009() {
         use alloy::primitives::keccak256;
         use alloy::sol_types::SolStruct;
-        // In alloy-sol-types 1.5.7 `eip712_type_hash` is an instance method, but
-        // `eip712_encode_type()` is a type-level fn — keccak of it IS the typehash.
+        // Hash `eip712_encode_type()` directly so the test string-asserts the
+        // canonical type string before taking its keccak — auditable without a
+        // live contract.
         let encoded = <TransferWithAuthorization as SolStruct>::eip712_encode_type();
         assert_eq!(
             encoded,
@@ -58,7 +62,7 @@ mod tests {
     #[test]
     fn domain_separator_matches_mantle_mainnet() {
         let usdc = Address::from_str(MANTLE_USDC).unwrap();
-        let domain = usdc_domain("USD Coin", "2", 5000, usdc);
+        let domain = usdc_domain(5000, usdc);
         let sep = domain.separator();
         assert_eq!(format!("0x{:x}", sep), MANTLE_USDC_DOMAIN_SEP);
     }
