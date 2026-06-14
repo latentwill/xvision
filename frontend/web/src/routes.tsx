@@ -72,6 +72,11 @@ const OptimizerExperiment = lazy(() =>
     default: m.ExperimentDetail,
   }))
 );
+const OptimizerSessionDetail = lazy(() =>
+  import("./features/autooptimizer/screens/OptimizerSessionDetail").then((m) => ({
+    default: m.OptimizerSessionDetail,
+  }))
+);
 const MarketplaceLayout = lazy(() => import("./features/marketplace/routes/MarketplaceLayout").then((m) => ({ default: m.MarketplaceLayout })));
 const BrowseRoute = lazy(() => import("./features/marketplace/routes/BrowseRoute").then((m) => ({ default: m.BrowseRoute })));
 const LeaderboardIndex = lazy(() => import("./features/marketplace/routes/leaderboard/LeaderboardIndex").then((m) => ({ default: m.LeaderboardIndex })));
@@ -97,8 +102,9 @@ function RouteLoaded() {
   return null;
 }
 
-/** Run detail folded into Home (session-scoped). Old /optimizer/run/:sessionId
- *  deep-links land on Home with the session filter applied. */
+/** Legacy redirect — only used when `OptimizerSessionDetail` is not available
+ *  (should not happen in practice; kept as a safety-net export for any
+ *  deep-links that still reference this symbol from old code paths). */
 export function OptimizerRunRedirect() {
   const { sessionId } = useParams<{ sessionId: string }>();
   if (!sessionId) return <Navigate to="/optimizer" replace />;
@@ -238,7 +244,7 @@ export const router = createBrowserRouter([
           { index: true, element: page(<OptimizerHome />) },
           { path: "cycle/:cycleId", element: page(<OptimizerCycle />) },
           { path: "experiment/:hash", element: page(<OptimizerExperiment />) },
-          { path: "run/:sessionId", element: <OptimizerRunRedirect /> },
+          { path: "run/:sessionId", element: page(<OptimizerSessionDetail />) },
           { path: "strategy/:hash", element: page(<OptimizerStrategyInspector />) },
         ],
       },
