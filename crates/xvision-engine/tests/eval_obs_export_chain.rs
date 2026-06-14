@@ -174,6 +174,219 @@ fn flatten_kinds(nodes: &[xvision_observability::SpanNode]) -> Vec<String> {
     out
 }
 
+// ── GAP 3 — batch-path obs regression (`fix/eval-obs-batch`) ───────────────
+//
+// `xvn eval batch` is a SEPARATE CLI entry from `xvn eval run`: it built its
+// `ApiContext` via a bus-less `open_ctx` and looped `eval::run_with_deps` per
+// scenario. Because the batch ctx left `obs_event_bus: None`, `run_inner`'s
+// `obs_emitter` was `None` and EVERY `emit_*` was a silent no-op — so the
+// SAME root cause as GAP 1 produced TWO visible symptoms for batch runs:
+//
+//   Bug 1 — no spans were emitted/persisted (the trace dock was blank).
+//   Bug 2 — no `RunFinished` event fired, so the obs recorder never
+//           transitioned `agent_runs.status` from its
+//           `ensure_agent_run_baseline` default `'running'` to `'completed'`;
+//           the runs looked stuck forever.
+//
+// The fix wires a `RunEventBus` + `SqliteRecorder` onto the batch ctx
+// (mirroring the single-run `wire_obs_bus`) and `quiesce()`s before exit.
+//
+// `run_with_deps` itself can't be driven cheaply here (it now demands a
+// launchable Cline runtime — the whole `api_eval_run.rs` surface is red on
+// this tree for exactly that reason). So these two tests pin BOTH halves at
+// the lowest faithful layer: the SAME lifecycle `run_inner` drives —
+// `ensure_agent_run_baseline` → `emit_run_started` → executor span emit →
+// `emit_run_finished(Completed)` → bus → `SqliteRecorder` → SQLite — gated on
+// the bus exactly as `run_inner` gates it. No fabricated spans, no
+// hand-published synthetic events.
+//
+// The positive test asserts the fix's effect; the negative test omits the
+// bus (the pre-fix batch ctx) and proves BOTH symptoms, so the positive
+// assertions are not vacuously true.
+
+/// Build the deterministic backtest fixture the lifecycle tests share: a
+/// flash-crash scenario, a small hold-after-open bar series, and a sequenced
+/// dispatch. Returns the store, the queued run, the strategy, scenario,
+/// bars, dispatch, and tools.
+async fn lifecycle_fixture() -> (
+    xvision_engine::eval::store::RunStore,
+    Run,
+    xvision_engine::strategies::Strategy,
+    xvision_engine::eval::scenario::Scenario,
+    Vec<Ohlcv>,
+    Arc<dyn LlmDispatch>,
+    Arc<ToolRegistry>,
+) {
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+
+    let agent_id = "01TESTOBSBATCHLIFECYCLE0000A";
+    let strategy = strategy_with(agent_id, &["BTC/USD"], RiskPreset::Balanced, 1_440);
+
+    let run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let start = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let bars: Vec<Ohlcv> = (0..6)
+        .map(|i| Ohlcv {
+            timestamp: start + Duration::days(i as i64),
+            open: 100.0,
+            high: 101.0,
+            low: 99.0,
+            close: 100.0,
+            volume: 1_000.0,
+        })
+        .collect();
+    let dispatch: Arc<dyn LlmDispatch> =
+        sequenced_dispatch(&["long_open", "hold", "hold", "hold", "hold", "hold"]);
+    let tools = Arc::new(ToolRegistry::empty());
+    (store, run, strategy, scenario, bars, dispatch, tools)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn obs_wired_eval_lifecycle_records_spans_and_completes_agent_run() {
+    // The faithful batch path with the bus wired (the fix's effect): the
+    // exact emit sequence `run_inner` performs when `ctx.obs_event_bus` is
+    // `Some` — baseline → RunStarted → executor spans → RunFinished(Completed).
+    let (store, mut run, strategy, scenario, bars, dispatch, tools) = lifecycle_fixture().await;
+    let pool = store.pool().clone();
+
+    // `run_inner` opens the agent_runs baseline (status 'running') BEFORE the
+    // obs lifecycle; mirror that so the RunFinished UPDATE has a row to flip.
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
+
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
+    let bus = Arc::new(RunEventBus::new(vec![recorder]));
+    let obs = ObsEmitter::new(bus.clone(), run.id.clone());
+
+    obs.emit_run_started("eval:Backtest:flash-crash", "hash_only")
+        .await;
+
+    let executor = Executor::with_bars(bars).with_observability(obs.clone());
+    executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("backtest run should complete");
+
+    // The success path's terminal event — the half the batch ctx was missing.
+    obs.emit_run_finished(RunStatus::Completed, None).await;
+
+    // Drain the bus to SQLite — the CLI's post-run `quiesce`.
+    bus.quiesce().await;
+
+    // Bug 1: a non-empty spans tree must persist (not `spans: []`).
+    let span_count = wait_for_count(&pool, "SELECT COUNT(*) FROM spans", 2).await;
+    assert!(
+        span_count >= 2,
+        "an obs-wired eval lifecycle must persist spans (got {span_count})"
+    );
+    let export = xvision_observability::build_export(&pool, &run.id)
+        .await
+        .expect("build_export must succeed");
+    assert!(
+        !export.spans.is_empty(),
+        "build_export must return a non-empty spans tree"
+    );
+    let kinds = flatten_kinds(&export.spans);
+    assert!(
+        kinds.iter().any(|k| k == "agent.decision"),
+        "export must contain at least one agent.decision span; kinds = {kinds:?}"
+    );
+
+    // Bug 2: the RunFinished(Completed) event must flip agent_runs.status from
+    // the baseline 'running' to 'completed'. (The agent.run lifecycle lives in
+    // `agent_runs`, not as a span row, so assert it directly.)
+    let status = wait_for_status(&pool, &run.id, "completed").await;
+    assert_eq!(
+        status.as_deref(),
+        Some("completed"),
+        "RunFinished(Completed) must transition agent_runs.status to 'completed'; \
+         a stuck 'running' is the batch-runs-look-stuck bug"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_bus_eval_lifecycle_leaves_run_stuck_running_and_spans_empty() {
+    // Negative control: the SAME run with NO obs bus reproduces BOTH bugs —
+    // the pre-fix batch ctx (`open_ctx` leaves `obs_event_bus: None`, so the
+    // engine builds no `ObsEmitter` and every `emit_*` is skipped). This
+    // proves the positive test above is not vacuously passing.
+    let (store, mut run, strategy, scenario, bars, dispatch, tools) = lifecycle_fixture().await;
+    let pool = store.pool().clone();
+
+    // `run_inner` writes the baseline (status 'running') unconditionally, even
+    // on a bus-less ctx — so the row exists and is stuck, never absent.
+    store
+        .ensure_agent_run_baseline(&run.id, "hash_only")
+        .await
+        .unwrap();
+
+    // NO ObsEmitter is attached — exactly what a bus-less ctx yields. The
+    // executor runs without observability, so it emits no spans.
+    let executor = Executor::with_bars(bars);
+    executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("backtest run should complete even without an obs bus");
+
+    // Bug 1, pre-fix: no spans were ever emitted, so none persist.
+    let span_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spans")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        span_count, 0,
+        "a bus-less eval emits no spans — the trace-dock-blank bug"
+    );
+    let export = xvision_observability::build_export(&pool, &run.id)
+        .await
+        .expect("build_export must succeed");
+    assert!(
+        export.spans.is_empty(),
+        "a bus-less eval must have an empty spans tree"
+    );
+
+    // Bug 2, pre-fix: with no RunFinished event the baseline stays 'running'.
+    let (status,): (String,) = sqlx::query_as("SELECT status FROM agent_runs WHERE id = ?")
+        .bind(&run.id)
+        .fetch_one(&pool)
+        .await
+        .expect("the unconditional baseline row must exist");
+    assert_eq!(
+        status, "running",
+        "without the obs bus the RunFinished event never fires, so the \
+         agent_runs baseline stays stuck at 'running'"
+    );
+}
+
+/// Poll `agent_runs.status` until it reaches `expected` (or times out). The
+/// recorder applies `RunFinished` on the bus's background task, so we wait
+/// for the transition rather than racing the drain.
+async fn wait_for_status(pool: &SqlitePool, run_id: &str, expected: &str) -> Option<String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let status: Option<String> = sqlx::query_scalar("SELECT status FROM agent_runs WHERE id = ?")
+            .bind(run_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+        if status.as_deref() == Some(expected) || std::time::Instant::now() >= deadline {
+            return status;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 // ── GAP 2 ────────────────────────────────────────────────────────────────
 // The Cline trader success path emits `ModelCallFinished`, so a
 // `model_calls` row lands with the sidecar's reported token usage.
