@@ -441,6 +441,65 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
   applyStreamEvent: (ev) => {
     const actions = get();
     switch (ev.event) {
+      // WS-8 Part 2 B2: the real LIVE tail arrives as `UnifiedEvent` frames.
+      // Drive the SAME streaming-slice indicators (active spans / assistant
+      // deltas / lag) the legacy per-`RunEvent`-name arms below maintained,
+      // reading off the unified payload. Span DETAIL is reconstructed by the
+      // dock's `live-stream-reducer` (the cache mutation), not here.
+      case "unified": {
+        const p = ev.data.payload;
+        switch (p.kind) {
+          case "span_started":
+            actions.markSpanActive(p.data.span_id, {
+              name: p.data.name,
+              started_at: p.data.started_at,
+              kind: p.data.kind as SpanKind,
+            });
+            return;
+          case "span_finished":
+          case "model_call_finished":
+          case "tool_finished":
+          case "tool_failed":
+          case "tool_cancelled":
+          case "broker_call_finished":
+            // Terminal events on a span — drop it from the active set if an
+            // explicit span_finished hasn't already closed it.
+            actions.markSpanInactive(p.data.span_id);
+            return;
+          case "assistant_token_delta":
+            // The unified delta carries text but no per-span length count; the
+            // dock's live response pull-quote appends the text and tracks its
+            // length. The envelope's `span_id` scopes it.
+            if (ev.data.span_id) {
+              actions.appendDelta(ev.data.span_id, p.data.text.length, p.data.text);
+            }
+            return;
+          case "backpressure_dropped":
+            actions.recordLag(p.data.dropped);
+            if (typeof console !== "undefined") {
+              console.warn(
+                `[trace-dock] backpressure: dropped ${p.data.dropped} stream event(s)`,
+              );
+            }
+            return;
+          case "run_finished":
+          case "run_interrupted":
+            // Run-terminal: any still-active spans are now stale. Clear the
+            // streaming indicators so consumers stop showing a live chip.
+            set((s) => ({
+              streamingState: {
+                ...s.streamingState,
+                activeSpanIds: new Set<string>(),
+                activeSpanMeta: {},
+              },
+            }));
+            return;
+          default:
+            // Lifecycle / informational unified payloads — no streaming-slice
+            // side effect (engine_event rows, memory, broker_call_started, …).
+            return;
+        }
+      }
       case "snapshot": {
         // Authoritative resync. A reconnect snapshot must REPLACE the
         // active set, not merge into it — a span that finished while we
