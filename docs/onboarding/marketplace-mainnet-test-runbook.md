@@ -13,8 +13,12 @@ env block below.
 ## 0. Prerequisites
 
 - A **funded relayer key** for `XVN_PUBLISHER_PK` — the server signs publish txs
-  and relays the gasless EIP-3009 buy, so it pays MNT gas. The deploy wallet
-  (`XVN Wallet`, `0xb5d2…E553`) already holds MNT and works.
+  (it mints the agent NFT via `register` and becomes the listing `seller`) and
+  relays the gasless EIP-3009 buy, so it pays MNT gas. A dedicated relayer is
+  already provisioned: **`Olympus/xvision-mantle-relayer`**, address
+  `0x128a0474b44d59607Bd328F862A177bf437b7699` — **fund it with ~0.5 MNT**
+  (Mantle gas is cheap; ~0.017 MNT/tx). No on-chain grant needed (`register` +
+  `createListing` + `buyWithAuthorization` are permissionless).
 - (Buyer side, for a **paid** listing) the buyer wallet needs **USDC.e on Mantle**.
   For the simplest proof, publish a **free** listing (`price = 0`) — then buy
   needs no USDC and still mints the license.
@@ -53,7 +57,7 @@ marketplace routes return 503 and the UI shows demo fixtures.
 # Chain core + relayer (required)
 export XVN_RPC_URL=https://rpc.mantle.xyz
 export XVN_CHAIN_ID=5000
-export XVN_PUBLISHER_PK=<funded relayer private key>   # pays gas; needs MNT
+export XVN_PUBLISHER_PK=$(op read 'op://Olympus/xvision-mantle-relayer/private_key')  # relayer 0x128a…7699; fund ~0.5 MNT
 
 # Deployed addresses (chain 5000)
 export XVN_IDENTITY_REGISTRY=0xa0c9A5a00cbD5bcC7DBc92acE170356471352f2E
