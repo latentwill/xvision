@@ -944,7 +944,13 @@ impl Executor {
         // Errors (CompiledRules, FilterGated without filter) surface
         // here and abort the run, matching the rest of the pre-loop
         // strategy invariants.
-        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?;
+        // trace-obs WS-6: thread the run's ObsEmitter into the hook so a
+        // filter trip emits a `filter_fired` engine event onto the bus
+        // (in addition to the per-bar `eval_filter_evaluations` row +
+        // ProgressEvent). `None` for non-observed runs keeps the legacy
+        // table-only path.
+        let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
+            .map(|hook| hook.with_obs(self.obs_emitter.clone()));
         // Cache the pool handle for the hook's per-bar inserts. We
         // reach through `store` rather than threading it as a separate
         // parameter so the executor's surface area stays unchanged.
