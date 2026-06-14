@@ -111,6 +111,7 @@ async fn raw_response_text_is_byte_identical_to_trader_decision_response_text() 
         run_id: "run-parity".into(),
         scenario_id: "sc-parity".into(),
         cycle_idx: 0,
+        invocation_suffix: None,
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,

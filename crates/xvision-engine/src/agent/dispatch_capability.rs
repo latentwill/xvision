@@ -214,6 +214,11 @@ pub struct DispatchInput<'a> {
     pub run_id: String,
     pub scenario_id: String,
     pub cycle_idx: i64,
+    /// Optional stable suffix for multiple logical dispatches of the same
+    /// slot inside one decision cycle. The Cline sidecar deduplicates by
+    /// run_id, so multi-filter re-fires of `trader` need distinct ids while
+    /// preserving retry stability for each logical invocation.
+    pub invocation_suffix: Option<String>,
     pub catalog: Option<Arc<Catalog>>,
     pub delta_briefing: bool,
     pub prev_briefing: Option<serde_json::Value>,
@@ -399,16 +404,23 @@ fn should_use_cline(input: &DispatchInput<'_>) -> bool {
     input.cline.is_some()
 }
 
-/// Build the Cline idempotency `run_id` (item 2) for a slot invocation:
-/// `{eval_run_id}::{role}::cycle{cycle_idx}`. Unique per logical slot per
-/// cycle so a retried cycle re-uses the same id and the sidecar dedups it.
+/// Build the Cline idempotency `run_id` (item 2) for a slot invocation.
+/// The default shape is `{eval_run_id}::{role}::cycle{cycle_idx}`. Pipeline
+/// paths that invoke the same slot more than once in one decision cycle append
+/// a stable suffix so the sidecar dedups retries of each logical invocation
+/// without treating sibling invocations as duplicates.
 fn cline_run_id(input: &DispatchInput<'_>) -> String {
     let base = if input.run_id.is_empty() {
         input.scenario_id.as_str()
     } else {
         input.run_id.as_str()
     };
-    format!("{base}::{}::cycle{}", input.resolved.role, input.cycle_idx)
+    let mut run_id = format!("{base}::{}::cycle{}", input.resolved.role, input.cycle_idx);
+    if let Some(suffix) = input.invocation_suffix.as_deref().filter(|s| !s.is_empty()) {
+        run_id.push_str("::");
+        run_id.push_str(suffix);
+    }
+    run_id
 }
 
 /// Run the slot's LLM call through the Cline sidecar. Since WU-6 retired

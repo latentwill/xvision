@@ -237,6 +237,7 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         run_id: "run-cache-key".into(),
         scenario_id: scenario_id.clone(),
         cycle_idx,
+        invocation_suffix: None,
         catalog: None,
         delta_briefing: false,
         prev_briefing: None,
