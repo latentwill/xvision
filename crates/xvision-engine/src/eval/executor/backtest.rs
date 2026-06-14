@@ -2074,10 +2074,35 @@ impl Executor {
                             None,
                         );
 
+                        let exposure_breached = {
+                            let cap = strategy.risk.max_total_exposure_pct;
+                            if cap > 0.0 {
+                                let existing: f64 = book
+                                    .open_legs()
+                                    .iter()
+                                    .map(|(_, pos, _entry, mark)| pos.abs() * mark)
+                                    .sum();
+                                let new_notional = {
+                                    let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                                    usd_at_risk.max(0.0)
+                                };
+                                crate::strategies::risk::perps::exceeds_total_exposure(
+                                    cap,
+                                    equity,
+                                    existing,
+                                    new_notional,
+                                )
+                            } else {
+                                false
+                            }
+                        };
+
                         let breach_reason: Option<&str> = if daily_loss_breached {
                             Some("daily_loss_kill")
                         } else if max_positions_breached {
                             Some("max_concurrent_positions")
+                        } else if exposure_breached {
+                            Some("max_total_exposure")
                         } else {
                             match perps_veto {
                                 Some(xvision_core::trading::VetoReason::PunitiveFunding) => {
@@ -4058,10 +4083,35 @@ impl Executor {
                     None,
                 );
 
+                let exposure_breached = {
+                    let cap = strategy.risk.max_total_exposure_pct;
+                    if cap > 0.0 {
+                        let existing: f64 = book
+                            .open_legs()
+                            .iter()
+                            .map(|(_, pos, _entry, mark)| pos.abs() * mark)
+                            .sum();
+                        let new_notional = {
+                            let usd_at_risk = equity * strategy.risk.risk_pct_per_trade;
+                            usd_at_risk.max(0.0)
+                        };
+                        crate::strategies::risk::perps::exceeds_total_exposure(
+                            cap,
+                            equity,
+                            existing,
+                            new_notional,
+                        )
+                    } else {
+                        false
+                    }
+                };
+
                 let breach_reason: Option<&str> = if daily_loss_breached {
                     Some("daily_loss_kill")
                 } else if max_positions_breached {
                     Some("max_concurrent_positions")
+                } else if exposure_breached {
+                    Some("max_total_exposure")
                 } else {
                     match perps_veto {
                         Some(xvision_core::trading::VetoReason::PunitiveFunding) => Some("punitive_funding"),

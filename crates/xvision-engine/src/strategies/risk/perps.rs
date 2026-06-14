@@ -54,6 +54,28 @@ pub fn perps_entry_veto(
     None
 }
 
+/// Return `true` when adding `new_notional_usd` to the existing open notional
+/// would push the portfolio past `max_total_exposure_pct` of NAV.
+///
+/// Disabled (returns `false`) when `max_total_exposure_pct <= 0.0` or
+/// `nav_usd <= 0.0`.
+///
+/// - `existing_notional_usd`: Σ |position| × mark over currently-open legs.
+/// - `new_notional_usd`: estimated notional of the position being evaluated
+///   (e.g. `risk_pct_per_trade × equity`).
+pub fn exceeds_total_exposure(
+    max_total_exposure_pct: f64,
+    nav_usd: f64,
+    existing_notional_usd: f64,
+    new_notional_usd: f64,
+) -> bool {
+    if max_total_exposure_pct <= 0.0 || nav_usd <= 0.0 {
+        return false;
+    }
+    let projected_pct = (existing_notional_usd + new_notional_usd) / nav_usd * 100.0;
+    projected_pct > max_total_exposure_pct
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +143,25 @@ mod tests {
             perps_entry_veto(&cfg(), true, true, Direction::Long, None, Some(9.0)),
             None
         );
+    }
+
+    // --- exceeds_total_exposure ---
+
+    #[test]
+    fn exposure_disabled_at_zero_cap() {
+        // cap=0.0 ⇒ disabled, always false regardless of notionals.
+        assert!(!exceeds_total_exposure(0.0, 10_000.0, 5_000.0, 1_000.0));
+    }
+
+    #[test]
+    fn exposure_under_cap_passes() {
+        // (3_000 + 1_500) / 10_000 * 100 = 45% < 50% ⇒ false
+        assert!(!exceeds_total_exposure(50.0, 10_000.0, 3_000.0, 1_500.0));
+    }
+
+    #[test]
+    fn exposure_over_cap_vetoes() {
+        // (4_000 + 1_500) / 10_000 * 100 = 55% > 50% ⇒ true
+        assert!(exceeds_total_exposure(50.0, 10_000.0, 4_000.0, 1_500.0));
     }
 }
