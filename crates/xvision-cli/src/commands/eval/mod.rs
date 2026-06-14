@@ -1052,7 +1052,7 @@ pub(super) async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContex
 /// `bus.quiesce().await` after the run finishes (the bus drains on a
 /// background task and a short-lived CLI process can exit before it
 /// persists).
-fn wire_obs_bus(ctx: ApiContext) -> (ApiContext, Arc<xvision_observability::RunEventBus>) {
+pub(crate) fn wire_obs_bus(ctx: ApiContext) -> (ApiContext, Arc<xvision_observability::RunEventBus>) {
     use xvision_observability::{AgentRunRecorder, ObservabilityConfig, RunEventBus, SqliteRecorder};
 
     let recorder = Arc::new(SqliteRecorder::new(ctx.db.clone())) as Arc<dyn AgentRunRecorder>;
@@ -2378,6 +2378,10 @@ async fn run_sweep(args: SweepArgs) -> CliResult<()> {
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
+    // Wire the observability bus so each window's eval run records spans +
+    // finalizes its agent_run (same gap as `eval run`/`eval batch`/`experiment
+    // run`). Drained via `obs_bus.quiesce().await` after the window loop.
+    let (ctx, obs_bus) = wire_obs_bus(ctx);
     let window_days = parse_duration_days(&args.window).map_err(|e| CliError {
         exit: XvnExit::Usage,
         source: anyhow::anyhow!("{e}"),
@@ -2435,39 +2439,49 @@ async fn run_sweep(args: SweepArgs) -> CliResult<()> {
         args.strategy,
         args.scenario
     );
-    let mut results: Vec<SweepRunResult> = Vec::new();
-    for (i, (win_start, win_end)) in windows.iter().enumerate() {
-        let result = run_sweep_window(
-            &ctx,
-            i,
-            windows.len(),
-            *win_start,
-            *win_end,
-            &args.strategy,
-            &args.scenario,
-            args.skip_preflight,
-            provider_override.clone(),
-            assets_subset.clone(),
-            eff_max_decisions,
-        )
-        .await?;
-        eprintln!(
-            "  return={} sharpe={} dd={}",
-            result
-                .return_pct
-                .map(|v| format!("{:.2}%", v))
-                .unwrap_or_else(|| "-".into()),
-            result
-                .sharpe
-                .map(|v| format!("{:.3}", v))
-                .unwrap_or_else(|| "-".into()),
-            result
-                .max_drawdown_pct
-                .map(|v| format!("{:.2}%", v))
-                .unwrap_or_else(|| "-".into()),
-        );
-        results.push(result);
+    // Run every window, then drain the obs bus on ALL post-run paths (success
+    // OR a mid-loop window error) before this short-lived CLI process exits —
+    // a `?` inside the loop must not skip the flush, or prior windows' spans /
+    // RunFinished events are lost.
+    let run_result: CliResult<Vec<SweepRunResult>> = async {
+        let mut results: Vec<SweepRunResult> = Vec::new();
+        for (i, (win_start, win_end)) in windows.iter().enumerate() {
+            let result = run_sweep_window(
+                &ctx,
+                i,
+                windows.len(),
+                *win_start,
+                *win_end,
+                &args.strategy,
+                &args.scenario,
+                args.skip_preflight,
+                provider_override.clone(),
+                assets_subset.clone(),
+                eff_max_decisions,
+            )
+            .await?;
+            eprintln!(
+                "  return={} sharpe={} dd={}",
+                result
+                    .return_pct
+                    .map(|v| format!("{:.2}%", v))
+                    .unwrap_or_else(|| "-".into()),
+                result
+                    .sharpe
+                    .map(|v| format!("{:.3}", v))
+                    .unwrap_or_else(|| "-".into()),
+                result
+                    .max_drawdown_pct
+                    .map(|v| format!("{:.2}%", v))
+                    .unwrap_or_else(|| "-".into()),
+            );
+            results.push(result);
+        }
+        Ok(results)
     }
+    .await;
+    obs_bus.quiesce().await;
+    let results = run_result?;
     print_sweep_results(&results, args.json)
 }
 
