@@ -509,6 +509,7 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
             recorder: None,
             runtime: AgentRuntime::Cline,
             cline: Some(cline.clone()),
+            model_call_span_id: None,
         })
         .await
         .expect("pipeline runs for each asset");

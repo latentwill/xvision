@@ -177,6 +177,7 @@ async fn filter_signal_flows_into_trader_briefing() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
@@ -262,6 +263,7 @@ async fn malformed_filter_output_does_not_panic_and_emits_null_signal() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs even with malformed Filter");
@@ -328,6 +330,7 @@ async fn graph_predicate_true_invokes_trader() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("graph pipeline runs");
@@ -392,6 +395,7 @@ async fn graph_predicate_false_skips_trader() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("graph pipeline runs");
@@ -465,6 +469,7 @@ async fn filter_provider_error_aborts_pipeline() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect_err("provider failures must not become null Filter signals");

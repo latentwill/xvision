@@ -90,6 +90,7 @@ async fn execute_slot_cline_output_is_byte_identical_to_llm_dispatch_path() {
         trajectory_mode: TrajectoryMode::Record,
         record_slot_role: None,
         obs: None,
+        model_call_span_id: None,
         reasoning_effort: None,
     };
 

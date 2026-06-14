@@ -179,6 +179,7 @@ async fn router_jumps_pipeline_forward_to_target_index() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
@@ -238,6 +239,7 @@ async fn dispatch_capability_router_returns_route_selection() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("router dispatch succeeds");
@@ -291,6 +293,7 @@ async fn dispatch_capability_router_rejects_backward_target() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap_err();

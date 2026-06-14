@@ -825,12 +825,34 @@ fn parse_model_call_payload(payload_json: Option<&str>) -> (Option<String>, Opti
     (prompt, response)
 }
 
+/// Extract a single string field (`input` / `output`) from a
+/// `tool_call_payload` side-row's `payload_json`. Mirrors
+/// `parse_model_call_payload`, but tool input and output arrive on
+/// separate events so each is reconstructed independently.
+fn parse_tool_call_payload_field(payload_json: Option<&str>, field: &str) -> Option<String> {
+    let raw = payload_json?;
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    value.get(field).and_then(|v| v.as_str()).map(ToOwned::to_owned)
+}
+
 async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCallRow>, ExportError> {
     let rows: Vec<SqliteRow> = sqlx::query(
         "SELECT tc.span_id, tc.tool_name, tc.origin, tc.tool_version, tc.tool_hash, \
                 tc.input_hash, tc.output_hash, tc.input_payload_ref, tc.output_payload_ref, \
                 tc.side_effect_level, tc.risk_level, tc.requires_approval, tc.approval_id, \
-                tc.exit_code, tc.is_run_terminator \
+                tc.exit_code, tc.is_run_terminator, \
+                (SELECT e.payload_json \
+                   FROM events e \
+                  WHERE e.span_id = tc.span_id AND e.kind = 'tool_call_payload' \
+                    AND json_extract(e.payload_json, '$.input') IS NOT NULL \
+                  ORDER BY e.created_at DESC, e.id DESC \
+                  LIMIT 1) AS tool_input_payload_json, \
+                (SELECT e.payload_json \
+                   FROM events e \
+                  WHERE e.span_id = tc.span_id AND e.kind = 'tool_call_payload' \
+                    AND json_extract(e.payload_json, '$.output') IS NOT NULL \
+                  ORDER BY e.created_at DESC, e.id DESC \
+                  LIMIT 1) AS tool_output_payload_json \
          FROM tool_calls tc \
          JOIN spans s ON s.id = tc.span_id \
          WHERE s.run_id = ? \
@@ -844,6 +866,10 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
         .map(|r| {
             let requires_approval: i64 = r.try_get("requires_approval")?;
             let is_run_terminator: i64 = r.try_get("is_run_terminator")?;
+            let input_payload_json: Option<String> = r.try_get("tool_input_payload_json")?;
+            let output_payload_json: Option<String> = r.try_get("tool_output_payload_json")?;
+            let input_text = parse_tool_call_payload_field(input_payload_json.as_deref(), "input");
+            let output_text = parse_tool_call_payload_field(output_payload_json.as_deref(), "output");
             Ok(ToolCallRow {
                 span_id: r.try_get("span_id")?,
                 tool_name: r.try_get("tool_name")?,
@@ -852,6 +878,8 @@ async fn load_tool_calls(pool: &SqlitePool, run_id: &str) -> Result<Vec<ToolCall
                 tool_hash: r.try_get("tool_hash")?,
                 input_hash: r.try_get("input_hash")?,
                 output_hash: r.try_get("output_hash")?,
+                input_text,
+                output_text,
                 input_payload_ref: r.try_get("input_payload_ref")?,
                 output_payload_ref: r.try_get("output_payload_ref")?,
                 side_effect_level: r.try_get("side_effect_level")?,
@@ -1154,7 +1182,7 @@ mod blob_owner_tests {
     async fn seed_span(pool: &SqlitePool, span_id: &str, run_id: &str) {
         sqlx::query(
             "INSERT INTO spans (id, run_id, kind, name, status, started_at) \
-             VALUES (?1, ?2, 'model.call', 'm', 'ok', '2026-05-17T16:00:01Z')",
+             VALUES (?1, ?2, 'decision.model', 'm', 'ok', '2026-05-17T16:00:01Z')",
         )
         .bind(span_id)
         .bind(run_id)

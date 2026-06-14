@@ -157,6 +157,15 @@ pub struct PipelineInputs<'a> {
     /// spawned a Cline client for this run. `None` keeps every dispatch on
     /// `LlmDispatch`.
     pub cline: Option<crate::agent::dispatch_capability::ClineDispatchCtx>,
+    /// WS-17 parent: the `decision.model` span id the executor opened
+    /// around this `run_pipeline` call (a child of the enclosing
+    /// `agent.decision` span). Threaded down into each Cline trader
+    /// dispatch so the captured chain-of-thought `decision.reasoning` span
+    /// nests under `decision.model` (which nests under `agent.decision`).
+    /// `None` on call sites that don't own a decision-model span (e.g.
+    /// rehearsal / non-eval paths) — the reasoning span then emits
+    /// top-level, exactly as it did before this field existed.
+    pub model_call_span_id: Option<String>,
 }
 
 /// Phase C — runtime context owned by the executor for the duration
@@ -662,6 +671,9 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                 recorder: input.recorder,
                 runtime: input.runtime,
                 cline: input.cline.clone(),
+                // WS-17: forward the executor's `decision.model` span id so
+                // the captured chain-of-thought nests under it.
+                model_call_span_id: input.model_call_span_id.clone(),
             })
             .await?
         };
@@ -811,6 +823,9 @@ async fn run_agent_pipeline<'a>(mut input: PipelineInputs<'a>) -> anyhow::Result
                         recorder: input.recorder,
                         runtime: input.runtime,
                         cline: input.cline.clone(),
+                        // WS-17: forward the executor's `decision.model`
+                        // span id (multi-filter re-fire of the trader).
+                        model_call_span_id: input.model_call_span_id.clone(),
                     })
                     .await?;
                     total_in += outcome2.input_tokens;

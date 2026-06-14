@@ -41,9 +41,21 @@ async function runTour(opts: { force: boolean }) {
     return;
   }
   const theme = tourThemeConfig(firstRunTourSteps);
+  // The tour ends on the user's actual first action. When the auto-launched
+  // first-run tour reaches its final step, drop the user on Settings →
+  // Providers to connect a model. Track whether the last step was reached so
+  // closing early never redirects, and skip the redirect on an explicit replay
+  // (`force`) since the operator is browsing the tour deliberately.
+  const lastStepIndex = firstRunTourSteps.length - 1;
+  let reachedLastStep = false;
   const drv = mod.driver({
     ...theme,
     allowClose: true,
+    onHighlighted: (_element, _step, info) => {
+      if (info.state.activeIndex === lastStepIndex) {
+        reachedLastStep = true;
+      }
+    },
     onCloseClick: () => {
       markCompleted();
       drv.destroy();
@@ -52,6 +64,9 @@ async function runTour(opts: { force: boolean }) {
       theme.__teardown();
       markCompleted();
       tourLaunching = false;
+      if (reachedLastStep && !opts.force && typeof window !== "undefined") {
+        window.location.assign("/settings/providers");
+      }
     },
     steps: firstRunTourSteps,
   });

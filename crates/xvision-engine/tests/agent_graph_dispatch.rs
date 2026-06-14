@@ -171,6 +171,7 @@ async fn three_capability_pipeline_routes_each_kind_correctly() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
@@ -248,6 +249,7 @@ async fn dispatch_capability_preserves_cycle_id_in_dispatcher_call() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("dispatch_capability runs");

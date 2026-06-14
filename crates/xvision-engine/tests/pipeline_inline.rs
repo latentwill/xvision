@@ -149,6 +149,7 @@ async fn two_slot_pipeline_chains_outputs() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();
@@ -203,6 +204,7 @@ async fn skips_missing_optional_slots() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();
@@ -285,6 +287,7 @@ async fn resolved_agent_pipeline_uses_trader_role_as_decision_output() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();
@@ -371,6 +374,7 @@ async fn resolved_agent_pipeline_does_not_treat_non_trader_as_decision_output() 
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .unwrap();

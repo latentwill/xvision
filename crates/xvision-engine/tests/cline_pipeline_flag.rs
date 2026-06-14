@@ -178,6 +178,7 @@ async fn pipeline_cline_runtime_produces_trader_decision() {
             recording_slot_role: None,
             tool_asset_guard: None,
         }),
+        model_call_span_id: None,
     })
     .await
     .expect("cline pipeline runs");
@@ -223,6 +224,7 @@ async fn pipeline_cline_without_client_is_hard_error() {
         recorder: None,
         runtime: AgentRuntime::Cline,
         cline: None,
+        model_call_span_id: None,
     })
     .await;
 

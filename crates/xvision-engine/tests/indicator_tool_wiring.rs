@@ -253,6 +253,7 @@ async fn agent_loop_dispatch_advertises_indicator_panel_tool_when_strategy_requi
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     };
 
     let _ = run_pipeline(inputs).await.expect("pipeline runs");
@@ -319,6 +320,7 @@ async fn agent_loop_routes_tool_use_to_indicator_panel_and_feeds_result_back() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     };
 
     let outputs = run_pipeline(inputs).await.expect("pipeline runs");
@@ -408,6 +410,7 @@ async fn agent_loop_rejects_unadvertised_indicator_panel_tool_use() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     };
 
     let outputs = run_pipeline(inputs).await.expect("pipeline runs");
@@ -502,6 +505,7 @@ async fn indicator_panel_invocation_emits_validate_spans_for_trace_dock() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     };
 
     let _ = run_pipeline(inputs).await.expect("pipeline runs");

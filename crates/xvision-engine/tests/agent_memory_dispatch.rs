@@ -857,6 +857,7 @@ async fn pipeline_threads_memory_recorder_to_execute_slot() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("run_pipeline must succeed");

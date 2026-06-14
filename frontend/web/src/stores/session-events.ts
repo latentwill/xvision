@@ -102,8 +102,10 @@ function freshSlice(): SessionSlice {
 
 const SPAN_KIND_BY_PAYLOAD: Record<string, string> = {
   // Best-effort kind labels when a span is first observed via a terminal
-  // event rather than span_started.
-  model_call_finished: "model.call",
+  // event rather than span_started. WS-17: a `model_call_finished` event
+  // (the SSE event name is unchanged — it carries model data, not a span
+  // kind) projects onto the renamed `decision.model` span kind.
+  model_call_finished: "decision.model",
   tool_requested: "tool.call",
   tool_started: "tool.call",
   tool_finished: "tool.call",

@@ -47,14 +47,12 @@ function BuyerCard({
   humans,
   agents,
   paidToCreatorUsd,
-  platformFeeBps,
   creator,
   isDemo,
 }: {
   humans: number;
   agents: number;
   paidToCreatorUsd: number;
-  platformFeeBps: number;
   creator: Creator;
   /** Fixture/demo client — adoption + earnings figures are illustrative. */
   isDemo: boolean;
@@ -102,8 +100,7 @@ function BuyerCard({
         </p>
         {hasPaid && (
           <p className="font-mono text-[10px] text-text-3">
-            ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)} ·{" "}
-            {platformFeeBps / 100}% platform fee
+            ${paidToCreatorUsd.toLocaleString()} paid to {creator.handle ?? creator.address.slice(0, 8)}
           </p>
         )}
       </div>
@@ -740,7 +737,6 @@ export function LineageRoute() {
             humans={detail.buyers.humans}
             agents={detail.buyers.agents}
             paidToCreatorUsd={detail.paidToCreatorUsd}
-            platformFeeBps={detail.platformFeeBps}
             creator={detail.creator}
             isDemo={isDemo}
           />

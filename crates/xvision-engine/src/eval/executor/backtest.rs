@@ -901,6 +901,14 @@ impl Executor {
         // doesn't leak into ETH's flip detection.
         let mut last_open_direction: BTreeMap<xvision_core::trading::AssetSymbol, GuardAction> =
             BTreeMap::new();
+        // WS-15 (`trace-obs` market-context): per-asset last-seen regime
+        // label. A market regime change is the highest-signal pre-decision
+        // state shift; when the label for an asset differs from the prior
+        // decision we emit a queryable `regime_transition` engine event
+        // (see the per-decision emit below). Keyed per asset so a regime
+        // flip on BTC doesn't masquerade as one on ETH. Purely
+        // observational — never feeds back into regime/briefing/trading.
+        let mut last_regime_label: BTreeMap<xvision_core::trading::AssetSymbol, String> = BTreeMap::new();
         // Running peak for drawdown_pct in MetricsUpdated. Start at the
         // initial capital so the first tick's drawdown is well-defined.
         let mut peak_equity = initial.max(0.0);
@@ -1652,6 +1660,44 @@ impl Executor {
                         Some(payload.to_string()),
                     )
                     .await;
+
+                    // WS-15 (`trace-obs` market-context): emit a
+                    // `regime_transition` engine event when the regime
+                    // label for THIS asset changed from the prior
+                    // decision. The label is COMPUTED here per decision
+                    // (deterministic + cheap, no LLM) by running the shared
+                    // `derive_regime_labels` heuristic over the executor's
+                    // OWN trailing bar-history window for this asset — the
+                    // last `history_window` bars plus the current bar
+                    // (`combined_bars[history_start..=combined_idx]`). The
+                    // empty `seed.regime` field the backtest emits is never
+                    // a usable source here, so reading it would make this
+                    // event dead in backtests. Purely observational: the
+                    // computed label feeds ONLY this trace event — it is
+                    // NEVER injected into the trader seed / briefing /
+                    // prompt, so regime/briefing/trading logic is untouched.
+                    // No event on the first observation (no prior) or when
+                    // the regime is stable.
+                    let regime_window = &combined_bars[history_start..=combined_idx];
+                    let curr_regime = compute_regime_label(regime_window);
+                    let prev_regime = last_regime_label.get(&asset_sym).cloned();
+                    if let Some((from, to)) = regime_changed(prev_regime.as_deref(), curr_regime.as_deref()) {
+                        let payload = serde_json::json!({
+                            "asset": asset,
+                            "from": from,
+                            "to": to,
+                            "decision_index": decision_idx,
+                        });
+                        obs.emit_engine_event(
+                            "regime_transition",
+                            Some(decision_span_id.clone()),
+                            Some(payload.to_string()),
+                        )
+                        .await;
+                    }
+                    if let Some(c) = curr_regime {
+                        last_regime_label.insert(asset_sym, c);
+                    }
                 }
                 macro_rules! finish_decision_span_error {
                     ($message:expr) => {
@@ -1728,6 +1774,36 @@ impl Executor {
                     )
                 } else {
                     let seed_for_repair = seed.clone();
+                    // WS-17: open a `decision.model` span as a CHILD of this
+                    // bar's `agent.decision` span BEFORE running the pipeline,
+                    // and thread its id down so the Cline trader's captured
+                    // chain-of-thought (`decision.reasoning`) nests under it.
+                    // The span is the single per-cycle record of the model
+                    // invocation that produced the trade decision (the
+                    // trader/regime/filter slot roles were retired — it's one
+                    // decision-model call now). Closed after the pipeline
+                    // returns, carrying the input/output token counts from
+                    // `PipelineOutputs`. `None` emitter ⇒ no-op + `None` id.
+                    let decision_model_span_id = self
+                        .obs_emitter
+                        .as_ref()
+                        .map(|_| crate::agent::observability::fresh_span_id());
+                    if let (Some(obs), Some(dm_span_id)) =
+                        (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
+                    {
+                        let provider = trader_provider(agent_slots, strategy).unwrap_or_default();
+                        let model = trader_model_id(agent_slots, strategy).unwrap_or_default();
+                        obs.emit_model_call_started(
+                            dm_span_id,
+                            Some(decision_span_id.clone()),
+                            &provider,
+                            &model,
+                            Some("trader"),
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
                     let outs = run_pipeline(PipelineInputs {
                         strategy,
                         agent_slots,
@@ -1773,8 +1849,22 @@ impl Executor {
                         // eval entry point selected it.
                         runtime: self.agent_runtime,
                         cline: self.cline.clone(),
+                        // WS-17: parent for the captured chain-of-thought.
+                        model_call_span_id: decision_model_span_id.clone(),
                     })
-                    .await?;
+                    .await;
+                    // WS-17: close the `decision.model` span on BOTH arms
+                    // before propagating — an Err would otherwise leave the
+                    // span dangling open on the trace dock.
+                    if let (Some(obs), Some(dm_span_id)) =
+                        (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
+                    {
+                        match &outs {
+                            Ok(_) => obs.emit_span_finished_ok(dm_span_id).await,
+                            Err(e) => obs.emit_span_finished_error(dm_span_id, &e.to_string()).await,
+                        }
+                    }
+                    let outs = outs?;
                     total_input_tokens += outs.total_input_tokens as u64;
                     total_output_tokens += outs.total_output_tokens as u64;
                     run.actual_input_tokens = Some(total_input_tokens);
@@ -1959,6 +2049,28 @@ impl Executor {
                 // drives `simulate_fill` / marker derivation. A `RewriteTo`
                 // also writes a `supervisor_notes` row so the operator sees
                 // the block.
+                // WS-13 (`trace-obs-risk-gate`): open a `risk.gate` span
+                // around the engine's REAL risk window — the guardrail
+                // rewrite below + the deterministic risk-config vetoes
+                // that follow. The span is a child of this decision's
+                // `agent.decision` span and is closed (with a verdict
+                // derived read-only from what actually happened) once the
+                // final `applied_action` is known. This is emit-only: the
+                // guardrail/risk-config/veto LOGIC and the trade outcome
+                // are unchanged. Snapshot the trader's pre-risk action so
+                // the verdict can tell "approved" (unchanged) apart from
+                // "modified"/"vetoed" (rewritten) without re-deriving it.
+                let risk_gate_span_id = crate::agent::observability::fresh_span_id();
+                let trader_action_pre_risk = parsed.action.clone();
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    obs.emit_risk_gate_started(&risk_gate_span_id, Some(decision_span_id.clone()))
+                        .await;
+                }
+                // Reason carried out of the risk-config veto block so the
+                // span finish can report it (`daily_loss_kill` /
+                // `max_concurrent_positions`). `None` when nothing vetoed.
+                let mut risk_veto_reason: Option<&'static str> = None;
+
                 let original_action = GuardAction::parse(&parsed.action);
                 let position_state = position_state_from_size(pre_fill_position);
                 let decision = guardrails::classify(
@@ -2058,6 +2170,10 @@ impl Executor {
                             } else {
                                 "max_concurrent_positions"
                             };
+                            // WS-13: surface the veto reason to the
+                            // enclosing `risk.gate` span finish (read-only
+                            // — does not change the veto behavior below).
+                            risk_veto_reason = Some(reason);
                             let note = format!(
                                 "risk veto `{reason}` at decision {decision_idx} ({asset}): \
                                  open {applied_action} rewritten to hold \
@@ -2087,6 +2203,31 @@ impl Executor {
                         }
                     }
                 };
+
+                // WS-13 (`trace-obs-risk-gate`): close the `risk.gate`
+                // span with a verdict derived READ-ONLY from what the
+                // guardrail + risk-config checks above already did. The
+                // mapping (checked in this order — a veto also rewrites
+                // the action, so the veto case must win over "modified"):
+                //   * `vetoed`   — the risk-config block rewrote a new
+                //                  open to `hold` (reason carried).
+                //   * `modified` — the guardrail rewrote the trader's
+                //                  action (action changed, no veto).
+                //   * `approved` — risk ran, the action is unchanged.
+                // Emitted for ALL THREE verdicts so `risk.gate` shows
+                // every decision, not only the bars where risk fired.
+                if let Some(obs) = self.obs_emitter.as_ref() {
+                    let (verdict, veto_reason): (&str, Option<&str>) = if let Some(reason) = risk_veto_reason
+                    {
+                        ("vetoed", Some(reason))
+                    } else if applied_action != trader_action_pre_risk {
+                        ("modified", None)
+                    } else {
+                        ("approved", None)
+                    };
+                    obs.emit_risk_gate_finished(&risk_gate_span_id, verdict, veto_reason, None)
+                        .await;
+                }
 
                 // eval-broker-rule-findings: validate new open orders against venue
                 // rules before calling simulate_fill. Only `long_open` and
@@ -3923,6 +4064,12 @@ impl Executor {
             recorder: self.recorder.as_deref(),
             runtime: self.agent_runtime,
             cline: self.cline.clone(),
+            // WS-17: the live `decide_one_live` path does not open an
+            // `agent.decision`/`decision.model` span around this dispatch,
+            // so there is no parent to thread — the captured reasoning
+            // emits top-level. Wiring a decision span here is a separate
+            // live-observability follow-up.
+            model_call_span_id: None,
         })
         .await?;
         let input_tokens = outs.total_input_tokens as u64;
@@ -5025,6 +5172,32 @@ fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Op
     None
 }
 
+/// Find the trader slot's configured provider for the WS-17
+/// `decision.model` span attributes. Mirrors [`trader_model_id`]'s
+/// resolution order (attached agent with canonical role `trader`, then
+/// the legacy `strategy.trader_slot`). Returns `None` when the slot
+/// left `provider` unset — the span then records no provider, matching
+/// the `model_call`-span behaviour on the retired LlmDispatch path.
+fn trader_provider(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Option<String> {
+    if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
+        if let Some(p) = resolved.slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() {
+                return Some(p.to_string());
+            }
+        }
+    }
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        if let Some(p) = slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() {
+                return Some(p.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Role label for the trader position, used to attribute the
 /// `invalid_output_schema` guardrail short-circuit to a slot. Prefers the
 /// attached agent with canonical role `trader`; falls back to the literal
@@ -5895,6 +6068,54 @@ pub fn inject_briefing_indicators_into_seed(
 /// but gone this bar surfaces as `null`) — consistent with the
 /// `indicators` panel this snapshot reports. When `"full"`, no
 /// `changed_indicators` key is emitted.
+/// Compute the current market regime LABEL for an asset from the trailing
+/// window of bars up to and including the current decision bar.
+///
+/// WS-15 (`trace-obs` market-context): the regime label is **computed**
+/// here per decision (deterministic, cheap, no LLM) by delegating to the
+/// shared [`derive_regime_labels`](crate::eval::regime::derive_regime_labels)
+/// heuristic over the executor's own bar-history window. This is purely
+/// observational — the label feeds ONLY the `regime_transition` trace
+/// event; it is never injected into the trader seed / briefing / prompt,
+/// so it changes nothing about what the agent sees or decides.
+///
+/// `window` is the trailing slice of bars (oldest first) ending at the
+/// current decision bar. `derive_regime_labels` requires at least two bars;
+/// with fewer it returns `None` (no transition can fire on the first bar).
+/// The `&Ohlcv` view is converted to the `MarketBar` shape the heuristic
+/// expects (the two structs carry identical OHLCV fields).
+fn compute_regime_label(window: &[&Ohlcv]) -> Option<String> {
+    let bars: Vec<xvision_data::alpaca::MarketBar> = window
+        .iter()
+        .map(|b| xvision_data::alpaca::MarketBar {
+            timestamp: b.timestamp,
+            open: b.open,
+            high: b.high,
+            low: b.low,
+            close: b.close,
+            volume: b.volume,
+        })
+        .collect();
+    crate::eval::regime::derive_regime_labels(&bars).regime_label
+}
+
+/// Detect a regime transition between two consecutive decisions on the
+/// same asset.
+///
+/// Returns `Some((from, to))` ONLY when a `prev` label exists AND it
+/// differs from `curr` AND `curr` is present — i.e. a concrete
+/// from→to label change. Returns `None` on the first observation
+/// (`prev` is `None`), when the regime is unchanged, or when the
+/// current label is absent. This is the predicate the executor uses to
+/// decide whether to emit a `regime_transition` engine event; it never
+/// fires on the first bar or on a stable regime.
+pub fn regime_changed(prev: Option<&str>, curr: Option<&str>) -> Option<(String, String)> {
+    match (prev, curr) {
+        (Some(p), Some(c)) if p != c => Some((p.to_string(), c.to_string())),
+        _ => None,
+    }
+}
+
 pub fn build_decision_input(
     seed: &serde_json::Value,
     prev_seed: Option<&serde_json::Value>,

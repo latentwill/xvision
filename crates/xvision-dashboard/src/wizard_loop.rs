@@ -90,6 +90,17 @@ struct WizardCreateStrategyInput {
 /// should stream progress, not block.
 const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Hard ceiling on a single model-dispatch (`LlmDispatch::complete`) call.
+/// The provider HTTP clients have their own per-attempt timeouts + retries,
+/// but a genuinely-wedged provider (black-holed TCP, a backend that accepts
+/// the request and never responds) can still hang the call indefinitely —
+/// which strands the whole turn with no tokens streamed and no error. This
+/// outer bound converts that into a typed `Error` event the rail can recover
+/// from. 120s is well above any healthy interactive completion (max_tokens is
+/// 1500) while still bounding a hang. Defense-in-depth companion to
+/// `TOOL_EXECUTION_TIMEOUT`.
+const MODEL_DISPATCH_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Cap on tool-use → tool-result iterations per `next_event` call. Prevents
 /// a misbehaving model from looping forever; v1 wizards never need more
 /// than 3-4 round trips per user turn.
@@ -174,11 +185,24 @@ pub enum WizardEvent {
     /// arrive; clients append to the visible bubble.
     Token { text: String },
     /// The agent is about to call an authoring verb. Front-end uses this
-    /// to render a "running tool" indicator.
-    ToolCall { tool: String, args: serde_json::Value },
-    /// Result of the most-recent tool call. Front-end uses this to update
-    /// the displayed draft state.
-    ToolResult { tool: String, result: serde_json::Value },
+    /// to render a "running tool" indicator. `id` is the model's
+    /// `tool_use` id (same value carried in the matching `ToolResult`),
+    /// so the unified projector can pair `tool_requested`→`tool_finished`
+    /// EXACTLY — by id, not by tool name — regardless of repeats or
+    /// out-of-order/interleaved results.
+    ToolCall {
+        id: String,
+        tool: String,
+        args: serde_json::Value,
+    },
+    /// Result of the tool call identified by `id`. Front-end uses this to
+    /// update the displayed draft state; the projector closes the span its
+    /// matching `ToolCall` (same `id`) opened.
+    ToolResult {
+        id: String,
+        tool: String,
+        result: serde_json::Value,
+    },
     /// A typed rich display block to append to the active assistant bubble.
     ContentBlock { block: serde_json::Value },
     /// Conversation complete. `draft_id` carries the most recently created
@@ -342,6 +366,11 @@ pub struct WizardLoop {
     /// before P4. Recall/record errors are always swallowed — memory is
     /// best-effort and must never fail a chat turn.
     chat_memory: Option<Arc<MemoryRecorder>>,
+    /// Hard timeout applied to each `dispatch.complete` call. Defaults to
+    /// [`MODEL_DISPATCH_TIMEOUT`]; overridable (see
+    /// [`WizardLoop::with_dispatch_timeout`]) so tests can drive the
+    /// hung-provider path deterministically without waiting the full ceiling.
+    dispatch_timeout: Duration,
 }
 
 /// Hard cap on consecutive failures of the **same tool with the same
@@ -834,6 +863,7 @@ impl WizardLoop {
             pending: vec![],
             is_done: false,
             chat_memory: None,
+            dispatch_timeout: MODEL_DISPATCH_TIMEOUT,
         })
     }
 
@@ -843,6 +873,15 @@ impl WizardLoop {
     /// Pass `None` (or skip the call) to leave memory disabled.
     pub fn with_chat_memory(mut self, mem: Option<Arc<MemoryRecorder>>) -> Self {
         self.chat_memory = mem;
+        self
+    }
+
+    /// Override the per-dispatch timeout (default [`MODEL_DISPATCH_TIMEOUT`]).
+    /// Test-only seam: lets the hung-provider path be exercised in real time
+    /// with a tiny timeout instead of stalling on the production ceiling.
+    #[cfg(test)]
+    pub fn with_dispatch_timeout(mut self, timeout: Duration) -> Self {
+        self.dispatch_timeout = timeout;
         self
     }
 
@@ -1169,7 +1208,26 @@ impl WizardLoop {
                 cache_control: None,
                 force_json: false,
             };
-            let resp: LlmResponse = self.dispatch.complete(req).await?;
+            // Bound the model call so a wedged provider can't strand the turn
+            // with no tokens and no error. On elapse, surface a typed error
+            // that propagates to `next_event` as a `WizardEvent::Error`
+            // (→ `SessionFailed`, which also terminalizes any open tool spans).
+            let resp: LlmResponse =
+                match tokio::time::timeout(self.dispatch_timeout, self.dispatch.complete(req)).await {
+                    Ok(result) => result?,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            target: "xvision::dashboard::wizard_loop",
+                            session_id = %self.session_id,
+                            timeout_secs = self.dispatch_timeout.as_secs(),
+                            "model dispatch timed out — surfacing a typed error to the chat rail"
+                        );
+                        anyhow::bail!(
+                            "model dispatch timed out after {}s",
+                            self.dispatch_timeout.as_secs()
+                        );
+                    }
+                };
 
             // Persist the assistant turn — text + any tool_use blocks all
             // go to the same row. The store keeps the same JSON shape
@@ -1248,6 +1306,7 @@ impl WizardLoop {
             let mut rich_blocks: Vec<serde_json::Value> = Vec::new();
             for (id, name, input) in tool_uses {
                 self.pending.push(WizardEvent::ToolCall {
+                    id: id.clone(),
                     tool: name.clone(),
                     args: input.clone(),
                 });
@@ -1305,6 +1364,7 @@ impl WizardLoop {
                 self.maybe_track_draft_id(&name, &result_value);
                 self.update_tool_failure_streak(&name, &result_value);
                 self.pending.push(WizardEvent::ToolResult {
+                    id: id.clone(),
                     tool: name.clone(),
                     result: result_value.clone(),
                 });
@@ -4356,7 +4416,7 @@ mod tests {
         let events = drain(&mut wl).await;
         assert!(matches!(&events[0], WizardEvent::ToolCall { tool, .. } if tool == "list_strategies"));
         match &events[1] {
-            WizardEvent::ToolResult { tool, result } => {
+            WizardEvent::ToolResult { tool, result, .. } => {
                 assert_eq!(tool, "list_strategies");
                 assert!(result.is_array(), "expected an array, got {result}");
             }
@@ -4477,7 +4537,7 @@ mod tests {
             events.first()
         );
         match &events[1] {
-            WizardEvent::ToolResult { tool, result } => {
+            WizardEvent::ToolResult { tool, result, .. } => {
                 assert_eq!(tool, "list_strategies_folder");
                 let arr = result.as_array().expect("entries[]");
                 assert!(
@@ -4526,13 +4586,13 @@ mod tests {
 
         let events = drain(&mut wl).await;
         assert!(
-            matches!(&events[0], WizardEvent::ToolCall { tool, args } if tool == "list_strategy_ideas"
+            matches!(&events[0], WizardEvent::ToolCall { tool, args, .. } if tool == "list_strategy_ideas"
                 && args.get("category").and_then(|v| v.as_str()) == Some("ema")),
             "expected list_strategy_ideas with category=ema, got {:?}",
             events.first()
         );
         match &events[1] {
-            WizardEvent::ToolResult { tool, result } => {
+            WizardEvent::ToolResult { tool, result, .. } => {
                 assert_eq!(tool, "list_strategy_ideas");
                 let arr = result.as_array().expect("ideas[]");
                 assert!(
@@ -5644,7 +5704,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let job_id = events
             .iter()
             .find_map(|e| match e {
-                WizardEvent::ToolResult { tool, result } if tool == "fetch_bars" => {
+                WizardEvent::ToolResult { tool, result, .. } if tool == "fetch_bars" => {
                     result.get("job_id").and_then(|v| v.as_str()).map(str::to_string)
                 }
                 _ => None,
@@ -5893,6 +5953,45 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
             "system prompt did not include scope header: {}",
             prompts[0]
         );
+    }
+
+    /// A genuinely-hung provider (the model dispatch never returns) must not
+    /// wedge the turn forever: the loop bounds `dispatch.complete` with
+    /// `dispatch_timeout` and surfaces a typed `Error` event so the chat rail
+    /// can recover instead of streaming nothing indefinitely. The timeout is
+    /// shrunk via `with_dispatch_timeout` so the path runs in real time
+    /// (tokio's paused clock can't be used here — it trips the sqlx pool's
+    /// internal acquire timeout during setup).
+    #[tokio::test]
+    async fn hung_model_dispatch_times_out_with_error_event() {
+        struct HangingDispatch;
+        #[async_trait::async_trait]
+        impl LlmDispatch for HangingDispatch {
+            async fn complete(&self, _req: LlmRequest) -> anyhow::Result<LlmResponse> {
+                // Far longer than the (shrunk) dispatch timeout — models a
+                // wedged provider / black-holed connection.
+                tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
+                unreachable!("the model-dispatch timeout must cut this off");
+            }
+        }
+
+        let dispatch: Arc<dyn LlmDispatch> = Arc::new(HangingDispatch);
+        let (wl, _pool, _td, _sid) = loop_with_session(dispatch, "hello", ContextScope::Workspace).await;
+        let mut wl = wl.with_dispatch_timeout(Duration::from_millis(20));
+        let events = drain(&mut wl).await;
+
+        assert_eq!(
+            events.len(),
+            1,
+            "a hung provider should surface exactly one Error event; got {events:?}"
+        );
+        match &events[0] {
+            WizardEvent::Error { message } => assert!(
+                message.to_lowercase().contains("timed out"),
+                "error should report the model dispatch timed out, got: {message}"
+            ),
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 
     // ---- F-10: chat-rail-tool-id-validation -------------------------------
@@ -6376,7 +6475,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
         let updated = events.iter().any(|e| {
             matches!(
                 e,
-                WizardEvent::ToolResult { tool, result }
+                WizardEvent::ToolResult { tool, result, .. }
                     if tool == "update_manifest" && result.get("error").is_none()
             )
         });

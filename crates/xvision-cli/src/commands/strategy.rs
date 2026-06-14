@@ -2956,6 +2956,9 @@ async fn run_inline(id: &str, fixture: &str, decisions: u32, mock: bool) -> CliR
             // caller that selects Cline.
             runtime: Default::default(),
             cline: None,
+            // WS-17: rehearsal path has no observability emitter / decision
+            // span — reasoning (if any) emits top-level.
+            model_call_span_id: None,
         })
         .await
         .exit_with(XvnExit::Upstream)?;
