@@ -380,6 +380,32 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     let role = input.role().to_string();
     let run_id = input.run_id.clone();
 
+    // Observability: provider / model / span for the model-call lifecycle
+    // written on the success path below. The backtest executor opens the
+    // `decision.model` span (`emit_model_call_started`) and threads its id
+    // here as `model_call_span_id`; we close it with `emit_model_call_finished`
+    // so a `model_calls` row lands with the sidecar's reported token usage.
+    // Mirrors `trader_provider` / `trader_model_id` in the backtest executor
+    // (slot.provider, slot.effective_model) so the finish event keys the same
+    // provider/model the started span recorded. Captured before `input` is
+    // partially consumed below.
+    let obs_provider = input
+        .slot
+        .provider
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| input.provider_entry.name.clone());
+    let obs_model = input.slot.effective_model();
+    let obs_model_call_span_id = input.model_call_span_id.clone();
+    // Hash the rendered prompt now (the same text shipped to the sidecar via
+    // `step`), so the `model_calls.prompt_hash` is a real digest of the
+    // request rather than a placeholder. `compute_response_hash` is a generic
+    // `sha256:<hex>` of a string; reuse it for the prompt text.
+    let obs_prompt_hash = input
+        .render_prompt()
+        .ok()
+        .map(|p| crate::agent::observability::compute_response_hash(&p));
+
     // Item 5: map provider → Cline gateway selection. An unmapped provider
     // (e.g. local-candle) aborts with a typed error — NO silent fallback.
     let mapped = map_provider(input.provider_entry, &input.slot.effective_model())
@@ -582,6 +608,39 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         }
     };
 
+    let input_tokens = u32::try_from(step.usage.input_tokens).unwrap_or(u32::MAX);
+    let output_tokens = u32::try_from(step.usage.output_tokens).unwrap_or(u32::MAX);
+
+    // Observability: the Cline trader path is the only trader runtime now, and
+    // it previously emitted no model-call lifecycle on success — so even with
+    // the obs bus wired, `model_calls` stayed empty (a `model_calls` row is
+    // written ONLY by `RunEvent::ModelCallFinished`). Emit it here with the
+    // sidecar's reported token usage, keyed on the `decision.model` span the
+    // backtest executor opened (`emit_model_call_started`) and threaded down
+    // as `model_call_span_id`. When the caller did NOT thread a span id (e.g.
+    // legacy/unit callers), there is no span to attach to and we skip the
+    // emit rather than fabricate one — the span-finished close stays the
+    // caller's responsibility. The response_hash digests the decision JSON;
+    // `cost_usd: None` lets the emitter fall back to catalog-based pricing.
+    if let (Some(obs), Some(span_id)) = (input.obs.as_ref(), obs_model_call_span_id.as_deref()) {
+        let response_hash = if decision_json.is_empty() {
+            None
+        } else {
+            Some(crate::agent::observability::compute_response_hash(&decision_json))
+        };
+        obs.emit_model_call_finished(
+            span_id,
+            &obs_provider,
+            &obs_model,
+            Some(input_tokens),
+            Some(output_tokens),
+            None,
+            obs_prompt_hash.clone().unwrap_or_default(),
+            response_hash,
+        )
+        .await;
+    }
+
     Ok(LlmResponse {
         // The existing decision parser (`dispatch_capability::parse_*` and
         // `TraderOutput::parse_response`) reads `resp.text()`, which
@@ -589,8 +648,8 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         // Text block so the parser is byte-identical to the LlmDispatch path.
         content: vec![ContentBlock::Text { text: decision_json }],
         stop_reason: StopReason::EndTurn,
-        input_tokens: u32::try_from(step.usage.input_tokens).unwrap_or(u32::MAX),
-        output_tokens: u32::try_from(step.usage.output_tokens).unwrap_or(u32::MAX),
+        input_tokens,
+        output_tokens,
     })
 }
 
