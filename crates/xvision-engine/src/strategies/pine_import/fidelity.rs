@@ -193,6 +193,9 @@ fn stmt_references_request_security(stmt: &Statement) -> bool {
     match stmt {
         Statement::Assignment { value, .. } => expr_references_request_security(value),
         Statement::Unsupported { raw, .. } => raw.contains("request.security"),
+        Statement::If { condition, body } => {
+            expr_references_request_security(condition) || body.iter().any(stmt_references_request_security)
+        }
         _ => false,
     }
 }

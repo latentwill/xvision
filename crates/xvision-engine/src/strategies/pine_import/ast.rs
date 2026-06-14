@@ -137,6 +137,22 @@ pub enum Statement {
     StrategyClose { args: Vec<(Option<String>, Expr)> },
     /// `strategy.exit("id", ...)`.
     StrategyExit { args: Vec<(Option<String>, Expr)> },
+    /// An `if <condition>` block with a captured body.
+    ///
+    /// When the `if` guard is a mappable expression (comparison, crossover/crossunder,
+    /// boolean operator), the condition is preserved here so the mapper can thread it
+    /// into a Filter condition for the enclosed `strategy.entry`/`strategy.exit` calls.
+    /// Body statements that are not parseable degrade to `Unsupported` rather than
+    /// causing an error.
+    ///
+    /// `else` / `else if` branches are not yet fully supported — when encountered they
+    /// are recorded as `Unsupported` in the body and do not block parsing.
+    If {
+        /// The guard expression (e.g. `ta.rsi(close,14) < 30`).
+        condition: Expr,
+        /// Statements in the indented body of the `if` block.
+        body: Vec<Statement>,
+    },
     /// A construct outside the supported subset.
     ///
     /// `source_span` is a `(start_byte, end_byte)` range in the original
