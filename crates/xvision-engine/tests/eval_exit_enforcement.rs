@@ -373,6 +373,9 @@ async fn daily_loss_kill_vetoes_further_opens_after_loss_budget_breached() {
         stop_loss_atr_multiple: 2.0,
         daily_loss_kill_pct: 0.001, // 0.1% of initial — tight on purpose
         max_position_pct_nav: 20.0,
+        max_funding_pay_8h: 0.0,
+        min_liq_distance_pct: 0.0,
+        max_total_exposure_pct: 0.0,
     };
     let strategy = strategy_with_risk(agent_id, &["BTC/USD"], risk, 1);
 
