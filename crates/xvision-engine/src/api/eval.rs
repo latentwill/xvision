@@ -3751,7 +3751,10 @@ async fn build_live_executor(
                 .to_string()
         }
         LiveVenue::DegenArena => {
-            // TODO(degen market-data): swap to HL marks (perp_feed.rs) — see plan §6 / task "HL market-data source"
+            // TODO(degen market-data): swap to HL candles. The fetcher is ready —
+            // `xvision_data::hl_bars::production_hl_fetcher(base)` is a drop-in
+            // `LivePollFetcher`. Remaining: a poll-only/HL-warmup `LiveStream`
+            // path + a venue branch here so Degen Arena doesn't need Alpaca.
             "no Alpaca credentials configured for Live run: Degen Arena runs currently use Alpaca \
              to supply the live market-data stream (bars) while Degen Arena executes orders on \
              Hyperliquid. Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."

@@ -704,8 +704,19 @@ export function LineageRoute() {
           )}
 
           {/* Metric strip — every value FITS: tabular-nums + whitespace-nowrap,
-              "—" for absent values (never 0). */}
-          <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2 pt-1">
+              "—" for absent values (never 0).
+              Provenance: these figures come from XVN backtest/eval (indicative).
+              Live Degen Arena (on-chain) PnL is shown in the PerformanceSection
+              provenance banner below when available. */}
+          <div className="flex items-center gap-2 pt-1 pb-0.5">
+            <span
+              data-testid="metric-strip-provenance"
+              className="font-mono text-[9px] tracking-[0.12em] uppercase text-text-3 whitespace-nowrap"
+            >
+              Indicative · XVN backtest
+            </span>
+          </div>
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(104px,1fr))] gap-2">
             <MetricCell
               label="30D Return"
               value={

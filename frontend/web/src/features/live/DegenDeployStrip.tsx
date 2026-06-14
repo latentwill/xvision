@@ -9,6 +9,7 @@
 // Key validation: 0x-prefixed 64-hex private key (128 chars total).
 
 import { useState } from "react";
+import { VirtualsMark } from "./VirtualsMark";
 
 export type DeployVenue = "orderly" | "degen-arena";
 
@@ -127,13 +128,7 @@ export function DegenDeployStrip({
                 className="sr-only"
                 data-testid="venue-degen-arena"
               />
-              {/* ◈ Virtuals mark placeholder — branding SVG is a separate task */}
-              <span
-                aria-hidden="true"
-                className="font-mono text-[11px] text-text-3"
-              >
-                ◈
-              </span>
+              <VirtualsMark size={13} className="text-text-3" />
               Degen Arena — Hyperliquid via Virtuals
             </label>
           </div>

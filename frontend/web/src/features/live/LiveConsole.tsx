@@ -31,6 +31,7 @@ import { useWallet } from "@/features/marketplace/lib/wallet";
 import { displayStrategyName } from "@/lib/run-display";
 import { useTraceDock } from "@/stores/trace-dock";
 
+import { ArenaStandingIndicator } from "./ArenaStandingIndicator";
 import { DegenDeployStrip, type DegenDeployPayload } from "./DegenDeployStrip";
 import { LiveAccountStrip } from "./LiveAccountStrip";
 import { LivePositionsTable } from "./LivePositionsTable";
@@ -38,6 +39,7 @@ import { VenueAccountPanel } from "./VenueAccountPanel";
 import { StrategyStrip } from "./StrategyStrip";
 import { useDeployDegenArena } from "./useDeployDegenArena";
 import { WalletBanner } from "./WalletBanner";
+import { dailyPnl } from "./live-account";
 import { pickDefaultRun } from "./strip-status";
 import { useTransport } from "./useTransport";
 
@@ -190,6 +192,29 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
             <LiveAccountStrip data={stream.data} decisions={decisions} />
             <LivePositionsTable data={stream.data} decisions={decisions} />
           </section>
+
+          {/*
+            Arena standing — full-width inline chip row (no right-side box,
+            no popup). Props are derived conservatively:
+              - tradingViaArena: false until the run's execution venue is
+                exposed in AgentRunSummary. TODO(degen standing): derive
+                from run venue once exposed (look for a 'degen_arena' /
+                broker_creds_ref value in the run's live_config).
+              - aiPotInView: same gating as tradingViaArena for now.
+              - pnlUsd: daily PnL from the lifted equity stream (same
+                derivation as LiveAccountStrip).
+              - rank: null — no arena-standings API yet.
+          */}
+          <ArenaStandingIndicator
+            tradingViaArena={false /* TODO(degen standing): derive from run venue */}
+            aiPotInView={false /* TODO(degen standing): derive from run venue */}
+            rank={null}
+            pnlUsd={
+              stream.data
+                ? (dailyPnl(stream.data.equity).usd ?? null)
+                : null
+            }
+          />
         </section>
       ) : (
         <div className="space-y-5 py-8">

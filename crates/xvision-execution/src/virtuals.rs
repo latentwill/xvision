@@ -52,19 +52,32 @@ const DEFAULT_SLIPPAGE_BPS: f64 = 500.0;
 
 // ── Trait seam types ────────────────────────────────────────────────────────
 
+/// A reduce-only trigger (stop-loss / take-profit) bracket leg.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HlTrigger {
+    /// Price at which the market trigger fires.
+    pub trigger_px: f64,
+    /// `"tp"` (take-profit) or `"sl"` (stop-loss).
+    pub tpsl: String,
+}
+
 /// One order to place on Hyperliquid. `coin` is the bare perp ticker (`"BTC"`).
 /// The real impl resolves the perp-universe asset index internally.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HlOrderReq {
     pub coin: String,
     pub is_buy: bool,
-    /// Limit price (for a "market" order this is the slippage-adjusted price).
+    /// Limit price (for a "market" order this is the slippage-adjusted price; for
+    /// a trigger order it's the post-trigger marketable price).
     pub px: f64,
     /// Base-asset size (e.g. 0.05 BTC).
     pub sz: f64,
     pub reduce_only: bool,
     /// Optional 128-bit client order id (`0x` + 32 hex) for venue-side dedupe.
     pub cloid: Option<String>,
+    /// When set, this is a market **trigger** order (a reduce-only TP/SL bracket
+    /// leg) instead of a plain IOC limit.
+    pub trigger: Option<HlTrigger>,
 }
 
 /// Acknowledgement of a placed order.
@@ -139,9 +152,50 @@ mod sign {
         pub tif: String,
     }
 
+    /// Trigger (stop / take-profit) order params. Field order
+    /// `isMarket,triggerPx,tpsl` matches the HL Python SDK's
+    /// `order_type_to_wire`.
+    #[derive(Serialize, Clone)]
+    pub(super) struct TriggerParams {
+        #[serde(rename = "isMarket")]
+        pub is_market: bool,
+        #[serde(rename = "triggerPx")]
+        pub trigger_px: String,
+        /// `"tp"` or `"sl"`.
+        pub tpsl: String,
+    }
+
+    /// The order `t` field — exactly one of `limit` / `trigger` is set, so the
+    /// msgpack is a single-key map (`{"limit":{…}}` or `{"trigger":{…}}`),
+    /// matching HL's wire.
     #[derive(Serialize, Clone)]
     pub(super) struct OrderTypeWire {
-        pub limit: LimitParams,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub limit: Option<LimitParams>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub trigger: Option<TriggerParams>,
+    }
+
+    impl OrderTypeWire {
+        /// A limit order with the given time-in-force (`"Ioc"`, `"Gtc"`, `"Alo"`).
+        pub(super) fn limit(tif: &str) -> Self {
+            Self {
+                limit: Some(LimitParams { tif: tif.into() }),
+                trigger: None,
+            }
+        }
+
+        /// A market trigger order (stop / take-profit) at `trigger_px`.
+        pub(super) fn trigger(trigger_px: String, tpsl: &str) -> Self {
+            Self {
+                limit: None,
+                trigger: Some(TriggerParams {
+                    is_market: true,
+                    trigger_px,
+                    tpsl: tpsl.into(),
+                }),
+            }
+        }
     }
 
     /// One order's wire shape. **Field declaration order is the msgpack key
@@ -239,9 +293,7 @@ mod sign {
                 p: p.into(),
                 s: s.into(),
                 r: false,
-                t: OrderTypeWire {
-                    limit: LimitParams { tif: tif.into() },
-                },
+                t: OrderTypeWire::limit(tif),
                 cloid: None,
             }
         }
@@ -252,6 +304,20 @@ mod sign {
             assert_eq!(float_to_wire(100.0), "100");
             assert_eq!(float_to_wire(0.0147), "0.0147");
             assert_eq!(float_to_wire(-0.0), "0");
+        }
+
+        // No published signing vector exists for trigger orders, so guard the
+        // wire SHAPE: exactly one of limit/trigger present, camelCase renames.
+        #[test]
+        fn order_type_wire_shapes() {
+            assert_eq!(
+                serde_json::to_value(OrderTypeWire::limit("Ioc")).unwrap(),
+                serde_json::json!({"limit": {"tif": "Ioc"}})
+            );
+            assert_eq!(
+                serde_json::to_value(OrderTypeWire::trigger("103.5".into(), "sl")).unwrap(),
+                serde_json::json!({"trigger": {"isMarket": true, "triggerPx": "103.5", "tpsl": "sl"}})
+            );
         }
 
         // Vector 1 — ETH IOC order, nonce 1677777606040, no vault.
@@ -535,6 +601,12 @@ fn now_ms() -> u64 {
 impl HyperliquidApi for ReqwestHyperliquidApi {
     async fn place_order(&self, order: HlOrderReq) -> Result<HlOrderAck, ExecutorError> {
         let a = self.asset_index_for(&order.coin).await?;
+        // A trigger order (TP/SL bracket leg) uses the `trigger` order type;
+        // everything else is an aggressive IOC limit ("market").
+        let order_type = match &order.trigger {
+            Some(t) => sign::OrderTypeWire::trigger(sign::float_to_wire(t.trigger_px), &t.tpsl),
+            None => sign::OrderTypeWire::limit("Ioc"),
+        };
         let action = sign::OrderAction {
             type_: "order".into(),
             orders: vec![sign::OrderWire {
@@ -543,9 +615,7 @@ impl HyperliquidApi for ReqwestHyperliquidApi {
                 p: sign::float_to_wire(order.px),
                 s: sign::float_to_wire(order.sz),
                 r: order.reduce_only,
-                t: sign::OrderTypeWire {
-                    limit: sign::LimitParams { tif: "Ioc".into() },
-                },
+                t: order_type,
                 cloid: order.cloid.clone(),
             }],
             grouping: "na".into(),
@@ -738,15 +808,67 @@ impl<A: HyperliquidApi + 'static> BrokerSurface for DegenArenaSurface<A> {
         let ack = self
             .api
             .place_order(HlOrderReq {
-                coin,
+                coin: coin.clone(),
                 is_buy,
                 px,
                 sz: req.size,
                 reduce_only: false,
                 cloid: cloid_from(&req.idempotency_key),
+                trigger: None,
             })
             .await
             .map_err(|e| anyhow::anyhow!("degen arena place_order: {e}"))?;
+
+        // Best-effort reduce-only TP/SL bracket legs (HL market trigger orders),
+        // derived from the fill (or reference) anchor. Direction-aware: a long
+        // takes profit above / stops below; a short is inverted. Bracket
+        // failures never fail the entry — same policy as Orderly/Byreal.
+        let bracket_sz = if ack.filled_sz > 0.0 {
+            ack.filled_sz
+        } else {
+            req.size
+        };
+        let fill_anchor = ack.avg_px.filter(|p| *p > 0.0 && p.is_finite()).unwrap_or(anchor);
+        let dir = if is_buy { 1.0 } else { -1.0 };
+        let close_is_buy = !is_buy;
+        for (pct, tpsl, sign) in [
+            (req.take_profit_pct, "tp", 1.0_f64),
+            (req.stop_loss_pct, "sl", -1.0_f64),
+        ] {
+            let Some(pct) = pct.filter(|p| *p > 0.0) else {
+                continue;
+            };
+            let trigger_px = round_px(fill_anchor * (1.0 + dir * sign * pct as f64 / 100.0));
+            // Marketable cap past the trigger in the close direction.
+            let order_px = round_px(if close_is_buy {
+                trigger_px * (1.0 + slip)
+            } else {
+                trigger_px * (1.0 - slip)
+            });
+            if let Err(e) = self
+                .api
+                .place_order(HlOrderReq {
+                    coin: coin.clone(),
+                    is_buy: close_is_buy,
+                    px: order_px,
+                    sz: bracket_sz,
+                    reduce_only: true,
+                    cloid: None,
+                    trigger: Some(HlTrigger {
+                        trigger_px,
+                        tpsl: tpsl.into(),
+                    }),
+                })
+                .await
+            {
+                tracing::warn!(
+                    target: "xvision::degen",
+                    asset = %req.asset,
+                    tpsl,
+                    "degen arena {tpsl} bracket leg failed (entry stands): {e}"
+                );
+            }
+        }
 
         Ok(OrderConfirmation {
             broker_order_id: ack.oid.to_string(),
@@ -873,6 +995,7 @@ mod reqwest_tests {
                 sz: 0.05,
                 reduce_only: false,
                 cloid: None,
+                trigger: None,
             })
             .await
             .expect("place_order must succeed");
@@ -919,6 +1042,7 @@ mod reqwest_tests {
                 sz: 0.000001,
                 reduce_only: false,
                 cloid: None,
+                trigger: None,
             })
             .await
             .expect_err("venue error must propagate");
@@ -957,6 +1081,7 @@ mod reqwest_tests {
                 sz: 10.0,
                 reduce_only: false,
                 cloid: None,
+                trigger: None,
             })
             .await
             .expect_err("unsupported asset must error");
@@ -977,6 +1102,7 @@ mod reqwest_tests {
                 sz: 10.0,
                 reduce_only: false,
                 cloid: None,
+                trigger: None,
             })
             .await
             .expect_err("second call must also error without re-fetching meta");
@@ -1107,6 +1233,7 @@ mod reqwest_tests {
                 sz: 0.01,
                 reduce_only: false,
                 cloid: None,
+                trigger: None,
             })
             .await
             .expect_err("500 response must propagate as error");
@@ -1224,6 +1351,60 @@ mod tests {
         let placed = surface.api.placed.lock().unwrap().clone();
         assert!(!placed[0].is_buy);
         assert!(placed[0].px < 70_000.0, "sell prices through the book downward");
+    }
+
+    #[tokio::test]
+    async fn submit_buy_with_brackets_places_entry_plus_reduce_only_tp_sl() {
+        // Fill at a clean 70k (mock would otherwise fill at the aggressive cap).
+        let surface = DegenArenaSurface::with_api(MockHyperliquidApi {
+            ack: Some(HlOrderAck {
+                oid: 1,
+                status: "filled".into(),
+                avg_px: Some(70_000.0),
+                filled_sz: 0.05,
+            }),
+            ..Default::default()
+        });
+        let req = OrderRequest {
+            asset: "BTC/USD".into(),
+            side: Side::Buy,
+            size: 0.05,
+            reference_price_usd: 70_000.0,
+            stop_loss_pct: Some(2.0),
+            take_profit_pct: Some(5.0),
+            idempotency_key: "cycle-xyz".into(),
+        };
+        surface.submit_order(req).await.unwrap();
+
+        let placed = surface.api.placed.lock().unwrap().clone();
+        assert_eq!(placed.len(), 3, "entry + TP + SL legs");
+
+        // Entry: market IOC long, no trigger, not reduce-only.
+        assert!(placed[0].is_buy && placed[0].trigger.is_none() && !placed[0].reduce_only);
+
+        let leg = |tpsl: &str| {
+            placed
+                .iter()
+                .find(|o| o.trigger.as_ref().map(|t| t.tpsl.as_str()) == Some(tpsl))
+                .unwrap_or_else(|| panic!("missing {tpsl} leg"))
+                .clone()
+        };
+        let tp = leg("tp");
+        let sl = leg("sl");
+        for b in [&tp, &sl] {
+            assert!(!b.is_buy, "close a long with a sell");
+            assert!(b.reduce_only, "bracket legs are reduce-only");
+            assert!((b.sz - 0.05).abs() < 1e-9, "bracket size = filled size");
+        }
+        // Long: TP above the fill anchor, SL below.
+        assert!(
+            tp.trigger.unwrap().trigger_px > 70_000.0,
+            "TP triggers above for a long"
+        );
+        assert!(
+            sl.trigger.unwrap().trigger_px < 70_000.0,
+            "SL triggers below for a long"
+        );
     }
 
     #[tokio::test]
