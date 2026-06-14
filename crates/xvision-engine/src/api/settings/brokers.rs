@@ -151,7 +151,24 @@ pub struct DegenArenaStored {
     pub network: Option<String>,
 }
 
-/// On-disk file containing optional `[alpaca]` / `[byreal]` / `[degen_arena]` sections.
+/// Persisted Hyperliquid credentials (plain `hyperliquid` venue, distinct from
+/// Degen Arena). Lives in `$XVN_HOME/secrets/brokers.toml` under the
+/// `[hyperliquid]` table. The `api_key` is a Hyperliquid trade-only HL
+/// agent-wallet private key (`0x` + 64 hex). Never returned through the read
+/// API; only a `last4` suffix surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HyperliquidCredentials {
+    /// Hyperliquid trade-only HL agent-wallet private key (`0x` + 64 hex).
+    /// Cannot withdraw — enforced by the HL protocol.
+    pub api_key: String,
+    /// Master account address (`0x` + 40 hex). Used for read queries.
+    pub account_address: String,
+    /// `"mainnet"` or `"testnet"`.
+    pub network: String,
+}
+
+/// On-disk file containing optional `[alpaca]` / `[byreal]` / `[degen_arena]`
+/// / `[hyperliquid]` sections.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BrokersSecretsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +177,8 @@ struct BrokersSecretsFile {
     byreal: Option<ByrealCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     degen_arena: Option<DegenArenaCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hyperliquid: Option<HyperliquidCredentials>,
 }
 
 /// Request body for `set_alpaca`. Mirrors `AlpacaCredentials` but is
@@ -984,6 +1003,65 @@ async fn clear_degen_arena_inner(xvn_home: &Path) -> ApiResult<DegenArenaStored>
         stored_key_suffix: None,
         network: None,
     })
+}
+
+// ── Hyperliquid credential store ──────────────────────────────────────────────
+
+/// Read the persisted Hyperliquid credentials, if any.
+pub async fn load_hyperliquid_credentials(xvn_home: &Path) -> ApiResult<Option<HyperliquidCredentials>> {
+    let file = load_brokers_secrets(xvn_home).await?;
+    Ok(file.hyperliquid)
+}
+
+/// Fully-resolved Hyperliquid credentials plus the source they came from.
+#[derive(Debug, Clone)]
+pub struct ResolvedHyperliquidCredentials {
+    /// Trade-only HL agent-wallet private key (`0x` + 64 hex).
+    pub api_key: String,
+    /// Master account address (`0x` + 40 hex).
+    pub account_address: String,
+    /// `"mainnet"` or `"testnet"`.
+    pub network: String,
+    /// `"store"` from `brokers.toml`, `"env"` from `HL_*`.
+    pub source: &'static str,
+}
+
+/// Resolve Hyperliquid credentials: stored (Settings → Brokers) win over env,
+/// matching the Alpaca/Byreal/DegenArena convention. `None` when neither is
+/// configured. Uses `HL_API_KEY` / `HL_ACCOUNT_ADDRESS` / `HL_NETWORK`
+/// (defaults to `"mainnet"` when unset).
+pub async fn resolve_hyperliquid_credentials(
+    xvn_home: &Path,
+) -> ApiResult<Option<ResolvedHyperliquidCredentials>> {
+    // 1. Stored creds win.
+    if let Some(c) = load_hyperliquid_credentials(xvn_home).await? {
+        if !c.api_key.trim().is_empty() {
+            return Ok(Some(ResolvedHyperliquidCredentials {
+                api_key: c.api_key,
+                account_address: c.account_address,
+                network: c.network,
+                source: "store",
+            }));
+        }
+    }
+    // 2. Env fallback.
+    if let Some(api_key) = env::var("HL_API_KEY").ok().filter(|s| !s.trim().is_empty()) {
+        let account_address = env::var("HL_ACCOUNT_ADDRESS")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_default();
+        let network = env::var("HL_NETWORK")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "mainnet".into());
+        return Ok(Some(ResolvedHyperliquidCredentials {
+            api_key,
+            account_address,
+            network,
+            source: "env",
+        }));
+    }
+    Ok(None)
 }
 
 /// Connectivity probe — calls Alpaca `/v2/account` with the stored (or

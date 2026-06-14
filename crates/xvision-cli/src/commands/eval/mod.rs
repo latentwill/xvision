@@ -13,6 +13,7 @@ pub mod probe_lookahead;
 pub mod review;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use std::collections::HashMap;
@@ -648,6 +649,12 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
     let ctx = open_ctx(args.xvn_home.clone())
         .await
         .exit_with(XvnExit::Upstream)?;
+    // Wire the agent-run observability bus so this CLI-launched eval records
+    // spans / events / model_calls into SQLite (the trace the dashboard
+    // surfaces). The bus drains on a background task; we `quiesce` it after
+    // the run finishes — success OR error — so a short-lived CLI process
+    // doesn't exit before the recorder persists what was emitted.
+    let (ctx, obs_bus) = wire_obs_bus(ctx);
     let mode = parse_mode(&args.mode).exit_with(XvnExit::Usage)?;
 
     // Apply profile defaults — explicit flags take priority.
@@ -880,9 +887,14 @@ async fn run_run(args: RunArgs) -> CliResult<()> {
         emit_eval_progress_line(&req.agent_id, 0, 0);
     }
 
-    let run = eval::run(&ctx, req)
-        .await
-        .map_err(|e| api_to_cli("eval run", e))?;
+    let run_result = eval::run(&ctx, req).await;
+
+    // Drain the obs bus to SQLite BEFORE returning, on both the success and
+    // error paths — a failed eval still emitted spans/events up to the point
+    // of failure, and those must reach the recorder before the process exits.
+    obs_bus.quiesce().await;
+
+    let run = run_result.map_err(|e| api_to_cli("eval run", e))?;
 
     if args.stream_progress {
         let decisions = run.metrics.as_ref().map(|m| m.n_decisions as u64).unwrap_or(0);
@@ -1019,6 +1031,57 @@ pub(super) async fn open_ctx(override_path: Option<PathBuf>) -> Result<ApiContex
     ApiContext::open(&xvn_home, Actor::Cli { user })
         .await
         .map_err(|e| anyhow::anyhow!("open ApiContext: {e}"))
+}
+
+/// Attach an agent-run observability bus to a CLI eval `ApiContext` so a
+/// CLI-launched eval records spans / events / model_calls into SQLite — the
+/// same trace the dashboard surfaces for `xvn eval run`.
+///
+/// Without this the CLI ctx leaves `obs_event_bus: None`
+/// (`ApiContext::open` default), so the engine never builds an `ObsEmitter`
+/// and every `emit_*` on the executor is a silent no-op (`spans: []`,
+/// `model_calls: 0`). The dashboard wires its own singleton bus in
+/// `xvision_dashboard::state` (`with_obs_event_bus`); this is the CLI
+/// equivalent, scoped to the eval-run subcommand only.
+///
+/// CLI needs persistence only — no `BroadcastSubscriber` (there is no live
+/// SSE consumer in a one-shot CLI process). The recorder fans into the same
+/// pool the run writes to, so `eval export` / the trace dock read it back.
+///
+/// Returns the wired ctx plus the bus `Arc`; the caller MUST
+/// `bus.quiesce().await` after the run finishes (the bus drains on a
+/// background task and a short-lived CLI process can exit before it
+/// persists).
+fn wire_obs_bus(ctx: ApiContext) -> (ApiContext, Arc<xvision_observability::RunEventBus>) {
+    use xvision_observability::{AgentRunRecorder, ObservabilityConfig, RunEventBus, SqliteRecorder};
+
+    let recorder = Arc::new(SqliteRecorder::new(ctx.db.clone())) as Arc<dyn AgentRunRecorder>;
+    let obs_bus = Arc::new(RunEventBus::new(vec![recorder]));
+
+    // Resolve the active retention config the same way the engine does for
+    // `RunStarted` — precedence CLI flag > env > file > default. The eval-run
+    // subcommand takes no retention flags today, so the chain is env > file >
+    // default. Resolve against THIS ctx's `xvn_home` (honours `--xvn-home`),
+    // matching `effective_obs_config` in the engine.
+    let config_path = ctx
+        .xvn_home
+        .join("config")
+        .join(xvision_observability::config::CONFIG_FILE_NAME);
+    let obs_config = match xvision_observability::retention::resolve(
+        &config_path,
+        &xvision_observability::retention::CliOverrides::default(),
+    ) {
+        Ok(view) => Arc::new(view.config()),
+        Err(e) => {
+            eprintln!("warn: could not resolve observability config ({e}); using defaults");
+            Arc::new(ObservabilityConfig::default())
+        }
+    };
+
+    let ctx = ctx
+        .with_obs_event_bus(obs_bus.clone())
+        .with_obs_config(obs_config);
+    (ctx, obs_bus)
 }
 
 fn parse_status(s: &str) -> Result<RunStatus> {
@@ -3058,5 +3121,36 @@ mod tests {
         assert_eq!(line["run_id"], "01ABC");
         assert_eq!(line["decisions"], 42);
         assert_eq!(line["elapsed_s"], 45);
+    }
+
+    /// Regression guard for the CLI-eval observability gap: a freshly opened
+    /// CLI `ApiContext` has NO obs bus (`ApiContext::open` default), so the
+    /// engine never builds an `ObsEmitter` and every executor `emit_*` is a
+    /// silent no-op (`spans: []`, `model_calls: 0`). `wire_obs_bus` must
+    /// attach a bus so a CLI-launched eval records its trace. Without the
+    /// `with_obs_event_bus` call this fails (the ctx stays `None`).
+    #[tokio::test]
+    async fn wire_obs_bus_attaches_bus_to_cli_eval_ctx() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ApiContext::open(
+            dir.path(),
+            Actor::Cli {
+                user: "obs-wiring-test".into(),
+            },
+        )
+        .await
+        .expect("open ApiContext");
+
+        // The bug: the CLI ctx ships with no obs bus.
+        assert!(
+            ctx.obs_event_bus.is_none(),
+            "precondition: a freshly opened CLI ApiContext has no obs bus"
+        );
+
+        let (wired, _bus) = wire_obs_bus(ctx);
+        assert!(
+            wired.obs_event_bus.is_some(),
+            "wire_obs_bus must attach an ObsRunEventBus so CLI evals record spans"
+        );
     }
 }

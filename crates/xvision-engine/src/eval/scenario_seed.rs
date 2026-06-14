@@ -30,10 +30,16 @@ fn legacy_default_strategy_filename() -> String {
 /// The four canonical BTC scenarios seeded on first-run.
 pub fn canonical_seed_rows() -> Vec<Scenario> {
     vec![
+        // ERROR-4 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
+        // Q1 2025 (2025-01-01 → 2025-04-01) had a buy-hold return of ≈ −11.5%
+        // (BTC fell ~$93k → ~$82k) — a correction, not a bull. Label it
+        // honestly so regime-specific testing isn't misled. The ID slug stays
+        // `crypto-bull-q1-2025` for back-compat with existing runs/tests that
+        // reference it; only the human-facing name + regime tag change.
         seed_btc(
             "crypto-bull-q1-2025",
-            "Crypto bull — Q1 2025",
-            "regime:bull",
+            "Crypto correction — Q1 2025",
+            "regime:correction",
             Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap(),
             Utc.with_ymd_and_hms(2025, 4, 1, 0, 0, 0).unwrap(),
         ),
@@ -158,4 +164,35 @@ pub async fn run_seed_if_needed(ctx: &ApiContext) -> ApiResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_seed_rows;
+
+    #[test]
+    fn q1_2025_scenario_is_labeled_as_a_correction_not_a_bull() {
+        // ERROR-4 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
+        // the 2025-01-01 → 2025-04-01 window has a buy-hold return of ≈ −11.5%
+        // (BTC fell from ~$93k to ~$82k over Q1 2025) — it is a correction, not
+        // a bull market. The display name + regime tag must reflect that so
+        // regime-specific testing isn't misled. The ID slug is kept ("bull")
+        // for back-compat with existing runs/tests that reference it.
+        let rows = canonical_seed_rows();
+        let q1 = rows
+            .iter()
+            .find(|s| s.id == "crypto-bull-q1-2025")
+            .expect("canonical seed must include the Q1-2025 scenario");
+
+        assert!(
+            !q1.display_name.to_lowercase().contains("bull"),
+            "Q1-2025 (-11.5% buy-hold) must not be labeled a bull; got display_name {:?}",
+            q1.display_name
+        );
+        assert!(
+            !q1.tags.iter().any(|t| t == "regime:bull"),
+            "Q1-2025 must not carry the regime:bull tag; got tags {:?}",
+            q1.tags
+        );
+    }
 }

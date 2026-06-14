@@ -141,10 +141,10 @@ export async function fetchBundle(listingId: Id): Promise<BundleOut> {
 
 /**
  * Standalone sealed-tier import: fetch bundle → Lit-gated decrypt → POST the
- * plaintext manifest to import-sealed. Exported so the InstallSteps stepper can
- * drive it without instantiating the data client. See `importSealed` below for
- * the error contract; the server's on-chain `content_hash` recheck (409) is the
- * integrity authority.
+ * plaintext manifest to import-sealed. Exported so callers can drive it without
+ * instantiating the data client (the LineageRoute buy flow finalizes through
+ * `importSealed` below). See `importSealed` for the error contract; the
+ * server's on-chain `content_hash` recheck (409) is the integrity authority.
  */
 export async function importSealedListing(
   listingId: Id,
@@ -552,8 +552,22 @@ export class ApiMarketplaceData implements MarketplaceData {
   async importSealed(listingId: Id): Promise<{ agent_id: string }> {
     return importSealedListing(listingId);
   }
-  cloneIntent(listingId: Id): Promise<TxRef> {
-    return this.fallback.cloneIntent(listingId);
+  /**
+   * OPEN/free-tier finalize: POST `{address}` to the plain import route, which
+   * materializes the referenced agents server-side and returns the new local
+   * strategy `agent_id`. Mirrors the legacy InstallSteps.runImport apiFetch
+   * shape. Fixture slug ids delegate to the fixture client (deterministic fake).
+   */
+  async importListing(listingId: Id): Promise<{ agent_id: string }> {
+    if (!/^\d+$/.test(listingId)) {
+      return this.fallback.importListing(listingId);
+    }
+    const address = await currentAddress();
+    if (!address) throw new WalletRequiredError();
+    return apiFetch<{ agent_id: string }>(
+      `/api/marketplace/listings/${encodeURIComponent(String(listingId))}/import`,
+      { method: "POST", body: JSON.stringify({ address }) },
+    );
   }
 }
 

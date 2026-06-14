@@ -1,6 +1,10 @@
 // src/features/marketplace/routes/leaderboard/LeaderboardSlice.test.tsx
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render as rtlRender, screen, fireEvent } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MarketplaceDataProvider } from "@/features/marketplace/data/provider";
+import { FixtureMarketplaceData } from "@/features/marketplace/data/MarketplaceData";
 import { renderMarketplace } from "@/features/marketplace/test-utils";
 import { LeaderboardSlice } from "./LeaderboardSlice";
 
@@ -87,5 +91,49 @@ describe("LeaderboardSlice", () => {
     render();
     await screen.findByTestId("slice-label");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("LeaderboardSlice — buy routes to detail for confirmation (QA #11)", () => {
+  function renderWithLineage(sliceId = "sol-7d") {
+    const client = new FixtureMarketplaceData();
+    const purchaseSpy = vi.spyOn(client, "purchaseIntent");
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    rtlRender(
+      <QueryClientProvider client={qc}>
+        <MarketplaceDataProvider client={client}>
+          <MemoryRouter
+            initialEntries={[`/marketplace/leaderboard/${sliceId}`]}
+          >
+            <Routes>
+              <Route
+                path="/marketplace/leaderboard/:sliceId"
+                element={<LeaderboardSlice />}
+              />
+              <Route
+                path="/marketplace/lineage/:id"
+                element={<div data-testid="lineage-detail">detail</div>}
+              />
+            </Routes>
+          </MemoryRouter>
+        </MarketplaceDataProvider>
+      </QueryClientProvider>,
+    );
+    return { purchaseSpy };
+  }
+
+  it("navigates to the strategy detail page instead of instant-purchasing", async () => {
+    const { purchaseSpy } = renderWithLineage();
+    await screen.findByTestId("slice-label");
+
+    const buyButton = screen.getAllByRole("button", { name: /^buy$/i })[0];
+    fireEvent.click(buyButton);
+
+    // The buy CTA must route the user to the detail page (where requirements
+    // are shown and they confirm) — NOT fire an on-chain purchase immediately.
+    await screen.findByTestId("lineage-detail");
+    expect(purchaseSpy).not.toHaveBeenCalled();
   });
 });

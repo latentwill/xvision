@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarketplaceLayout } from "./routes/MarketplaceLayout";
 import { MarketplaceBrowseStub, MarketplaceLineageStub } from "./routes/stubs";
-import { ReceiptRoute } from "./routes/ReceiptRoute";
 import { SellRoute } from "./routes/SellRoute";
 import { MARKETPLACE_OPTIN_KEY } from "./lib/optin";
 
@@ -68,65 +67,5 @@ describe("marketplace routes", () => {
     // W2-SELL renamed the funnel from "Share your strategy" to "List your strategy"
     // (QA2). The word "Share" no longer labels this flow.
     expect(await screen.findByText(/List your strategy/)).toBeInTheDocument();
-  });
-});
-
-// ── Receipt route integration ─────────────────────────────────────────────────
-function receiptRouterAt(path: string) {
-  return createMemoryRouter(
-    [
-      {
-        path: "/marketplace",
-        element: <MarketplaceLayout />,
-        children: [
-          { index: true, element: <MarketplaceBrowseStub /> },
-          { path: "lineage/:name", element: <MarketplaceLineageStub /> },
-          { path: "receipts/:tx", element: <ReceiptRoute /> },
-        ],
-      },
-    ],
-    { initialEntries: [path] },
-  );
-}
-
-function renderReceiptRoute(path: string) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
-      <RouterProvider router={receiptRouterAt(path)} />
-    </QueryClientProvider>
-  );
-}
-
-describe("marketplace receipt route integration", () => {
-  it("renders the receipt page for the demo fixture tx", async () => {
-    renderReceiptRoute("/marketplace/receipts/0xdemo-tx");
-    // W2-RECEIPT branches the success header on price (QA12): the paid demo tx
-    // (pricePaidUsdc=49) reads "Acquired {name}", never "You bought". The header
-    // uses the editorial display name, not the raw URL slug.
-    expect(await screen.findByText(/Acquired BTC Momentum v3/)).toBeInTheDocument();
-    const matches = await screen.findAllByText("BTC Momentum v3");
-    expect(matches.length).toBeGreaterThan(0);
-  });
-
-  it("renders the bundle install step title", async () => {
-    renderReceiptRoute("/marketplace/receipts/0xdemo-tx");
-    expect(await screen.findByText(/Fetch strategy bundle/i)).toBeInTheDocument();
-  });
-
-  it("renders the collapsed share strip (QA13)", async () => {
-    renderReceiptRoute("/marketplace/receipts/0xdemo-tx");
-    // W2-RECEIPT collapses share to an inline accordion strip by default (QA13):
-    // the strip shows "Share this acquisition" + "Customize post"; the full
-    // composer (Post to X / Farcaster) is revealed only on expand.
-    expect(await screen.findByText(/Share this acquisition/i)).toBeInTheDocument();
-    expect(await screen.findByText(/Customize post/i)).toBeInTheDocument();
-  });
-
-  it("unknown tx falls back to demo receipt (fixture behaviour)", async () => {
-    renderReceiptRoute("/marketplace/receipts/0xunknown");
-    // FixtureMarketplaceData.getReceipt falls back to 0xdemo-tx for unknown hashes;
-    // the paid demo header reads "Acquired {name}" after the QA12 header branch.
-    expect(await screen.findByText(/Acquired BTC Momentum v3/)).toBeInTheDocument();
   });
 });

@@ -19,7 +19,7 @@ function SuspendedChatRail(_: ChatRailProps) {
 }
 
 describe("TabletSplitShell", () => {
-  it("keeps the rail grid cell mounted while the chat rail is suspended", () => {
+  function renderShell() {
     const { container } = render(
       <MemoryRouter initialEntries={["/"]}>
         <Routes>
@@ -29,12 +29,25 @@ describe("TabletSplitShell", () => {
         </Routes>
       </MemoryRouter>,
     );
+    return container.firstElementChild;
+  }
 
-    const shell = container.firstElementChild;
+  it("keeps the rail grid cell mounted while the chat rail is suspended", () => {
+    const shell = renderShell();
+    const main = screen.getByRole("main");
+    // Rail cell is the LAST child (right column) and stays mounted.
+    expect(shell?.children[1]).not.toBe(main);
+    expect(shell?.children[1]).toHaveClass("min-w-0", "overflow-hidden");
+  });
+
+  it("places main first and the chat rail on the right (QA #5)", () => {
+    // The chat rail must stay on the right edge at tablet width, matching the
+    // desktop three-pane shell — it must NOT flip to the left column.
+    const shell = renderShell();
     const main = screen.getByRole("main");
 
-    expect(shell?.children[0]).not.toBe(main);
-    expect(shell?.children[1]).toBe(main);
-    expect(shell?.children[0]).toHaveClass("min-w-0", "overflow-hidden");
+    expect(shell?.children[0]).toBe(main);
+    expect(shell?.children[1]).not.toBe(main);
+    expect(shell).toHaveClass("grid-cols-[minmax(0,1fr)_min(360px,45vw)]");
   });
 });

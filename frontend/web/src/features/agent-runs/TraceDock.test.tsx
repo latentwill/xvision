@@ -223,4 +223,28 @@ describe("TraceDock", () => {
     // Collapsed parent shows its one-line rollup.
     expect(screen.getByTestId("span-tree-rollup-s3")).toBeInTheDocument();
   });
+
+  test("a sticky filter that hides every span shows Clear filters, and clicking it reveals the spans", async () => {
+    setEvalScope({ activeRunId: "run_abc1234" });
+    useTraceDock.setState({ height: "working", advanced_view: true });
+    // Reproduce the real bug: a sticky URL filter (the `?q=` useSpanFilter
+    // persists + reloads) matching no span in this run.
+    window.history.replaceState({}, "", "/?q=zzz_no_such_span");
+    renderDock();
+    await screen.findByTestId("trace-dock-body");
+
+    // Honest empty state — names the filter as the cause and offers recovery,
+    // instead of dead-ending the operator with an unexplained "no spans".
+    expect(
+      await screen.findByText(/no spans match the current filter/i),
+    ).toBeInTheDocument();
+    // The spans were NOT lost — they're hidden, not absent.
+    expect(screen.queryByTestId("span-tree-row-s1")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /clear filters/i }));
+
+    // One click brings the run's spans back.
+    expect(await screen.findByTestId("span-tree-row-s1")).toBeInTheDocument();
+    expect(screen.queryByText(/no spans match the current filter/i)).toBeNull();
+  });
 });

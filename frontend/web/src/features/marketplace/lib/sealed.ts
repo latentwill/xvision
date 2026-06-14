@@ -21,7 +21,7 @@
 // it decoded to an object; the authoritative hash gate is the 409 on import.
 
 import { apiFetch } from "@/api/client";
-import { currentAddress, mantleSepolia, walletClient } from "./chain";
+import { activeChain, currentAddress, walletClient } from "./chain";
 import { WalletRequiredError } from "./purchaseErrors";
 import { SEALED_GATE_ACTION_SRC } from "./sealedGateCode";
 
@@ -354,7 +354,7 @@ export async function decryptSealedBundle(params: {
     signature,
     listingId: String(listingId),
     nftAddress,
-    rpcUrl: mantleSepolia.rpcUrls.default.http[0],
+    rpcUrl: activeChain.rpcUrls.default.http[0],
   });
 
   let manifest: unknown;

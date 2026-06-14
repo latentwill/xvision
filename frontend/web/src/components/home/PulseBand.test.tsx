@@ -201,7 +201,10 @@ describe("PulseBand", () => {
     });
 
     await waitFor(() => {
-      expect(chartApi.getRunChart).toHaveBeenCalledWith("run-alpha", ["equity"]);
+      expect(chartApi.getRunChart).toHaveBeenCalledWith("run-alpha", [
+        "equity",
+        "markers",
+      ]);
     });
 
     const selector = screen.getByTestId("pulse-strategy-selector");
@@ -211,7 +214,10 @@ describe("PulseBand", () => {
     await user.click(screen.getByRole("button", { name: /beta/i }));
 
     await waitFor(() => {
-      expect(chartApi.getRunChart).toHaveBeenCalledWith("run-beta", ["equity"]);
+      expect(chartApi.getRunChart).toHaveBeenCalledWith("run-beta", [
+        "equity",
+        "markers",
+      ]);
     });
     expect(screen.getByRole("button", { name: /beta/i })).toHaveAttribute(
       "aria-pressed",

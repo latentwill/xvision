@@ -91,6 +91,40 @@ then pass `--batch <batch_id>` to `eval compare` to resolve run ids automaticall
 
 ---
 
+### `xvn live …`
+
+Guarded launcher for live runs against a testnet or real-money venue. The verb
+builds a `LiveConfig` and submits it through the same engine `eval run` path as
+the dashboard, but it is intentionally denied by the remote-CLI allowlist: run it
+only from a trusted local shell.
+
+| Flag | Effect |
+|---|---|
+| `--venue <name>` | Broker credential key / execution venue; defaults to `byreal`. |
+| `--network mainnet\|testnet` | Selects `venue_label=Live` for mainnet or `venue_label=Testnet` for testnet. Mainnet is real money. |
+| `--i-understand-real-money` | Required for `--network mainnet`; omitted for testnet. |
+| `--strategy <id>` | Strategy id to run. |
+| `--display-name <name>` | Human-readable run name shown in eval history. |
+| `--asset <symbol>` | Venue asset pair, e.g. `BTC/USD`. |
+| `--capital <usd>` | Initial capital for the live run. |
+| `--bar-limit <n>` / `--decision-limit <n>` / `--time-limit-secs <n>` | Optional stop limits. |
+| `--warmup-bars <n>` | Historical warm-up bars before live streaming starts; default `200`. |
+| `--xvn-home <path>` | Override `XVN_HOME`. |
+| `--json` | Print the launched run object as JSON. |
+
+Examples:
+
+```
+xvn live --venue byreal --network testnet --strategy <id> \
+  --display-name "Testnet smoke" --asset BTC/USD --capital 1000 --bar-limit 50
+
+xvn live --venue byreal --network mainnet --i-understand-real-money \
+  --strategy <id> --display-name "Mainnet perps" --asset BTC/USD \
+  --capital 5000 --time-limit-secs 3600
+```
+
+---
+
 ### `xvn marketplace …`
 
 Testnet marketplace listing, purchase, and attestation commands. The CLI uses
