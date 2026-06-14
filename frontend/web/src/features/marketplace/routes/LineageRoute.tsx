@@ -946,7 +946,18 @@ export function LineageRoute() {
       {/* ===== BELOW THE FOLD — single full-width column ===== */}
       <div className="p-6 space-y-6">
         {/* PERFORMANCE — first-class citizen, full-width, on-chain markers */}
-        <PerformanceSection curve={detail.equityCurve} trades={detail.onChain.trades} />
+        <PerformanceSection
+          curve={detail.equityCurve}
+          trades={detail.onChain.trades}
+          // Live Degen Arena PnL is authoritative once there's real on-chain
+          // trading; hidden (null) until the indexer reports trades, so an
+          // un-traded listing doesn't show a misleading $0.00 live figure.
+          liveDegenPnlUsd={
+            detail.onChain.tradesMeta.totalOnChain > 0
+              ? detail.onChain.tradesMeta.netPnlUsd
+              : null
+          }
+        />
 
         {/* EVAL ATTESTATIONS (inline, only for attested on-chain listings) */}
         {/^\d+$/.test(detail.id) && detail.verification === "verified" && (
