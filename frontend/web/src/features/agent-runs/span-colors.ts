@@ -23,7 +23,11 @@ export type SpanCategory =
   | "opti_phase"
   | "opti_kept"
   | "opti_suspect"
-  | "opti_rejected";
+  | "opti_rejected"
+  // WS-11b: the candidate's nested eval-run drill-link node. A distinct teal
+  // so it reads as a "go look at the actual run" affordance under the
+  // experiment, separate from the phase rows.
+  | "opti_eval_run";
 
 type CategoryStyle = {
   hex: string;     // canonical color used everywhere (bar, dot, badge)
@@ -59,6 +63,9 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   opti_kept:     { hex: "#fbbf24", label: "ACTIV" }, // Active (kept) — positive
   opti_suspect:  { hex: "#f59e0b", label: "SUSPT" }, // Suspect — warn
   opti_rejected: { hex: "#6b7280", label: "REJCT" }, // Rejected — muted
+  // WS-11b: the candidate's eval-run drill-link. Teal, distinct from the
+  // cyan phase tint, so the "open the actual run" node stands out.
+  opti_eval_run: { hex: "#2dd4bf", label: "EVRUN" },
 };
 
 export function categoryOf(kind: SpanKind): SpanCategory {
@@ -90,6 +97,8 @@ export function categoryOf(kind: SpanKind): SpanCategory {
   // `attributes.outcome` via `spanColorForSpan` — `categoryOf` (kind-only)
   // can't see the outcome, so a bare opti.gate defaults to the phase tint.
   if (kind === "opti.cycle") return "opti_cycle";
+  // WS-11b: the candidate's eval-run drill-link node gets its own teal swatch.
+  if (kind === "opti.eval-run") return "opti_eval_run";
   if (
     kind === "opti.parent" ||
     kind === "opti.experiment" ||

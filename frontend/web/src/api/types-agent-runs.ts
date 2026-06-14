@@ -70,13 +70,19 @@ export type SpanKind =
   //   opti.honesty    — the per-cycle honesty check (null-result canary)
   //   opti.judge      — a reviewer finding on a candidate
   //   opti.flywheel   — the DSPy flywheel compile step
+  //   opti.eval-run   — WS-11b: the candidate's persisted eval run, nested
+  //                     under its experiment. A navigable drill-link node
+  //                     (its `attributes.eval_run_id` points at the
+  //                     `/agent-runs/:runId` trace); NOT an inline embed of
+  //                     that run's span tree.
   | "opti.cycle"
   | "opti.parent"
   | "opti.experiment"
   | "opti.gate"
   | "opti.honesty"
   | "opti.judge"
-  | "opti.flywheel";
+  | "opti.flywheel"
+  | "opti.eval-run";
 
 /**
  * Trace-dock-visible side of a broker submit. `Close` / `Short` are

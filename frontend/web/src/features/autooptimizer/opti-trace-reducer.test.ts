@@ -233,6 +233,116 @@ describe("projectOptiRows — opti.* kind taxonomy", () => {
     expect(judge.parent_span_id).toBe(OPTI_CYCLE_ROOT_ID("cyc_2"));
   });
 
+  // WS-11b — nest each candidate's persisted eval run under its experiment.
+  describe("eval-run nesting (WS-11b)", () => {
+    test("a gate carrying eval_run_id puts the id on the experiment + emits a nested opti.eval-run node", () => {
+      const events: CycleProgressEvent[] = [
+        { event_type: "cycle_started", cycle_id: "cyc_e1", ts: "2026-06-14T10:00:00Z" },
+        {
+          event_type: "mutation_proposed",
+          cycle_id: "cyc_e1",
+          parent_hash: "parent0001",
+          child_hash: "child0001",
+          mutator_model: "claude-haiku",
+          ts: "2026-06-14T10:00:01Z",
+        },
+        {
+          event_type: "mutation_gated",
+          cycle_id: "cyc_e1",
+          child_hash: "child0001",
+          outcome: "kept",
+          passed: true,
+          delta_day: 0.21,
+          eval_run_id: "01EVALRUNULID",
+          ts: "2026-06-14T10:00:02Z",
+        },
+      ];
+      const rows = projectOptiRows(events);
+      const experiment = rows.find((r) => r.kind === "opti.experiment")!;
+      expect(experiment).toBeDefined();
+      // The eval_run_id is surfaced on the experiment row's attributes.
+      expect(experiment.attributes.eval_run_id).toBe("01EVALRUNULID");
+
+      // A navigable eval-run node is nested under the experiment.
+      const evalRun = rows.find((r) => r.kind === "opti.eval-run")!;
+      expect(evalRun).toBeDefined();
+      expect(evalRun.parent_span_id).toBe(experiment.span_id);
+      // It carries the run id so the inspector can drill to its trace.
+      expect(evalRun.attributes.eval_run_id).toBe("01EVALRUNULID");
+    });
+
+    test("a gate WITHOUT eval_run_id leaves the experiment with no eval-run child (no dangling node)", () => {
+      const events: CycleProgressEvent[] = [
+        { event_type: "cycle_started", cycle_id: "cyc_e2", ts: "2026-06-14T11:00:00Z" },
+        {
+          event_type: "mutation_proposed",
+          cycle_id: "cyc_e2",
+          parent_hash: "parent0002",
+          child_hash: "child0002",
+          mutator_model: "claude-haiku",
+          ts: "2026-06-14T11:00:01Z",
+        },
+        {
+          event_type: "mutation_gated",
+          cycle_id: "cyc_e2",
+          child_hash: "child0002",
+          outcome: "dropped",
+          passed: false,
+          delta_day: -0.1,
+          // no eval_run_id (regime path / test-stub runner)
+          ts: "2026-06-14T11:00:02Z",
+        },
+      ];
+      const rows = projectOptiRows(events);
+      const experiment = rows.find((r) => r.kind === "opti.experiment")!;
+      expect(experiment).toBeDefined();
+      expect(experiment.attributes.eval_run_id).toBeUndefined();
+      // No eval-run node was synthesized.
+      expect(rows.find((r) => r.kind === "opti.eval-run")).toBeUndefined();
+    });
+
+    test("a NoCandidate experiment row renders fine with no eval-run child", () => {
+      const events: CycleProgressEvent[] = [
+        { event_type: "cycle_started", cycle_id: "cyc_e3", ts: "2026-06-14T12:00:00Z" },
+        {
+          event_type: "no_candidate",
+          cycle_id: "cyc_e3",
+          parent_hash: "parent0003",
+          reason: "writer produced only no-op diffs",
+          ts: "2026-06-14T12:00:01Z",
+        },
+      ];
+      const rows = projectOptiRows(events);
+      const experiment = rows.find((r) => r.kind === "opti.experiment")!;
+      expect(experiment).toBeDefined();
+      expect(rows.find((r) => r.kind === "opti.eval-run")).toBeUndefined();
+    });
+
+    test("a gate whose eval_run_id matches no experiment still nests the eval-run under the cycle root (no orphan)", () => {
+      // Page reload lands mid-cycle: only the gate event is buffered, so the
+      // experiment row is synthesized by the gate's fallback. The eval-run
+      // should still parent off whatever experiment id the gate resolves to.
+      const events: CycleProgressEvent[] = [
+        { event_type: "cycle_started", cycle_id: "cyc_e4", ts: "2026-06-14T13:00:00Z" },
+        {
+          event_type: "mutation_gated",
+          cycle_id: "cyc_e4",
+          child_hash: "orphan0004",
+          outcome: "kept",
+          passed: true,
+          eval_run_id: "01ORPHANRUN",
+          ts: "2026-06-14T13:00:01Z",
+        },
+      ];
+      const rows = projectOptiRows(events);
+      const evalRun = rows.find((r) => r.kind === "opti.eval-run");
+      expect(evalRun).toBeDefined();
+      // Its parent must exist in the row set (no dangling parent_span_id).
+      const parent = rows.find((r) => r.span_id === evalRun!.parent_span_id);
+      expect(parent).toBeDefined();
+    });
+  });
+
   test("empty stream → empty rows (no synthetic cycle)", () => {
     expect(projectOptiRows([])).toEqual([]);
   });
