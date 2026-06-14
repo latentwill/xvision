@@ -14,7 +14,7 @@ export function TabletSplitShell({
   ChatRailComponent: ElementType<ChatRailProps>;
 }) {
   return (
-    <div className="grid grid-cols-[360px_minmax(0,1fr)] h-[100dvh] bg-bg text-text overflow-hidden">
+    <div className="grid grid-cols-[min(360px,45vw)_minmax(0,1fr)] h-[100dvh] bg-bg text-text overflow-hidden">
       <div className="min-w-0 overflow-hidden">
         <Suspense fallback={null}>
           <ChatRailComponent

@@ -69,6 +69,54 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe("CommandPalette a11y roles", () => {
+  it("dialog has explicit role=dialog", () => {
+    renderPalette();
+    const dialog = document.querySelector("dialog");
+    expect(dialog).not.toBeNull();
+    expect(dialog?.getAttribute("role")).toBe("dialog");
+  });
+
+  it("results container has role=listbox with aria-label", () => {
+    renderPalette();
+    const listbox = document.querySelector('[role="listbox"]');
+    expect(listbox).not.toBeNull();
+    expect(listbox?.getAttribute("aria-label")).toBeTruthy();
+  });
+
+  it("search input has combobox role and aria attributes", () => {
+    renderPalette();
+    const input = screen.getByPlaceholderText(
+      /jump to a strategy, run, scenario, or action/i,
+    );
+    expect(input.getAttribute("role")).toBe("combobox");
+    expect(input.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(input.getAttribute("aria-autocomplete")).toBe("list");
+    expect(input.getAttribute("aria-controls")).toBeTruthy();
+    // Verify aria-controls points at the listbox element
+    const listboxId = input.getAttribute("aria-controls");
+    const listbox = document.getElementById(listboxId ?? "");
+    expect(listbox?.getAttribute("role")).toBe("listbox");
+  });
+
+  it("result buttons have role=option and aria-selected", async () => {
+    renderPalette();
+    await act(async () => {
+      vi.advanceTimersByTime(80);
+      await Promise.resolve();
+    });
+    // Static actions are always rendered; grab the first option button
+    const options = document.querySelectorAll('[role="option"]');
+    expect(options.length).toBeGreaterThan(0);
+    // First item should be aria-selected=true (activeIdx=0)
+    expect(options[0]?.getAttribute("aria-selected")).toBe("true");
+    // Remaining items should be aria-selected=false
+    if (options.length > 1) {
+      expect(options[1]?.getAttribute("aria-selected")).toBe("false");
+    }
+  });
+});
+
 describe("CommandPalette static actions", () => {
   it("names the root route as Dashboard", () => {
     const home = STATIC_ACTIONS.find((a) => a.artifact_id === "nav:home");
