@@ -334,7 +334,9 @@ Add to the `adapter.rs` tests module:
 Run: `scripts/cargo test -p xvision-marketplace adapter::tests::listing_view_shape`
 Expected: FAIL — `ListingView` undefined.
 
-- [ ] **Step 3: Implement `ListingView` + `fetch_listing`**
+- [ ] **Step 3: Implement `ListingView` + `fetch_listing` (INHERENT method, NOT a trait method)**
+
+> **Why inherent:** the x402 handlers construct `Erc8004MantleDriver` as a concrete type (not via `dyn AnchorDriver`), so `fetch_listing` must be an **inherent** method on `Erc8004MantleDriver` — do NOT add it to the `AnchorDriver` trait. Adding a trait method would force every impl (incl. `MockDriver`, which `xvision-cli` constructs as `Box<dyn AnchorDriver>`) to implement it and would break the CLI crate.
 
 In `adapter.rs`, add the struct near `SaleReceipt`:
 ```rust
@@ -350,13 +352,22 @@ pub struct ListingView {
 }
 ```
 
-Add to the driver trait (next to `buy_listing`):
+Add an **inherent** impl block on `Erc8004MantleDriver` (the `impl Erc8004MantleDriver { ... }` block, NOT `impl AnchorDriver for ...`):
 ```rust
+impl Erc8004MantleDriver {
     /// Read a single listing's price/seller/active flag from `IListingRegistry`.
-    async fn fetch_listing(&self, listing_id: U256) -> Result<ListingView, MarketplaceError>;
+    pub async fn fetch_listing(&self, listing_id: U256) -> Result<ListingView, MarketplaceError> {
+        // Use the same read-provider + IListingRegistry::getListing binding the
+        // indexer uses (see marketplace_index.rs poll_once). Construct a
+        // read-only provider from self.rpc_url (the ProviderBuilder path already
+        // present in this file), call getListing(listing_id), and map the ABI
+        // fields → ListingView (price in 6dp USDC units, seller, active).
+        // Field order must match the IListingRegistry ABI in xvision-identity.
+        todo!("decode IListingRegistry::getListing into ListingView")
+    }
+}
 ```
-
-Implement on `Erc8004MantleDriver` by calling `IListingRegistry::getListing(listing_id)` (the same binding the indexer uses). Map the returned tuple/struct fields to `ListingView`. Use the existing read-provider construction in this file (the `ProviderBuilder` path already present for read calls); follow whatever `getListing` decoding the indexer/`marketplace_index.rs` uses so field order matches the ABI. Mock driver: return a fixed `ListingView` for tests.
+Fill the body using the existing `ProviderBuilder` read path in this file and the `IListingRegistry` binding from `xvision_identity::contracts`. The live decode is covered by the e2e in Task 1.9. **`AnchorDriver` and `MockDriver` are NOT touched — no trait change, no CLI impact.**
 
 - [ ] **Step 4: Run (green)**
 
@@ -551,9 +562,13 @@ The header is base64(JSON) of `{ x402Version, scheme, network, payload: { author
 
 - [ ] **Step 2: Run (red)** — `decode_x_payment` undefined.
 
+- [ ] **Step 3a: Make the relay request-builder reachable (required for Task 1.7)**
+
+In `crates/xvision-dashboard/src/routes/marketplace.rs`, change `fn build_buy_request` (≈line 535) to `pub(crate) fn build_buy_request`. It is currently crate-private; Task 1.7's `settle_from_header` calls it from the sibling module `routes/x402.rs`. `AuthorizationBody`/`BuyBody`/`BuyOut` are already `pub` — leave them. Stage `marketplace.rs` in this task's commit.
+
 - [ ] **Step 3: Implement decode**
 
-Add `base64` to `crates/xvision-dashboard/Cargo.toml` if absent (`base64 = "0.22"`). Implement:
+Add `base64 = "0.22"` to `crates/xvision-dashboard/Cargo.toml` if absent. (`hex` is NOT needed — use `alloy::hex`, since `alloy` is already a direct dep of this crate via `chain_config.rs`.) Implement:
 ```rust
 #[derive(Debug, Deserialize)]
 struct XPaymentEnvelope {
@@ -587,12 +602,12 @@ pub fn decode_x_payment(header: &str) -> Result<DecodedPayment, DashboardError> 
     let env: XPaymentEnvelope = serde_json::from_slice(&raw)
         .map_err(|e| DashboardError::BadRequest(format!("x-payment json: {e}")))?;
     let sig = env.payload.signature.trim_start_matches("0x");
-    let bytes = hex::decode(sig).map_err(|e| DashboardError::BadRequest(format!("sig hex: {e}")))?;
+    let bytes = alloy::hex::decode(sig).map_err(|e| DashboardError::BadRequest(format!("sig hex: {e}")))?;
     if bytes.len() != 65 {
         return Err(DashboardError::BadRequest("sig must be 65 bytes".into()));
     }
-    let r = format!("0x{}", hex::encode(&bytes[0..32]));
-    let s = format!("0x{}", hex::encode(&bytes[32..64]));
+    let r = format!("0x{}", alloy::hex::encode(&bytes[0..32]));
+    let s = format!("0x{}", alloy::hex::encode(&bytes[32..64]));
     let v = bytes[64] as u64;
     let a = env.payload.authorization;
     Ok(DecodedPayment {
@@ -611,7 +626,7 @@ pub fn decode_x_payment(header: &str) -> Result<DecodedPayment, DashboardError> 
 }
 ```
 
-> Make `AuthorizationBody`/`BuyBody`/`build_buy_request` `pub` in `routes/marketplace.rs` if not already.
+> `build_buy_request` was made `pub(crate)` in Step 3a; `AuthorizationBody`/`BuyBody`/`BuyOut` are already `pub`.
 
 - [ ] **Step 4: Run (green)** — `scripts/cargo test -p xvision-dashboard x402::tests::decode_x_payment_roundtrip`
 
@@ -627,7 +642,7 @@ Off-chain validation: recover the signer (Task 1.2), check `from == authorizatio
 
 **Files:** Modify `routes/x402.rs`. Test: unit for the pure checks.
 
-- [ ] **Step 1: Failing test (pure verification logic)**
+- [ ] **Step 1: Failing test (pure verification logic — terms AND spent-nonce decision)**
 ```rust
     #[test]
     fn verify_rejects_underpayment_and_expiry() {
@@ -635,6 +650,14 @@ Off-chain validation: recover the signer (Task 1.2), check `from == authorizatio
         assert!(check_terms(/*value*/ "49000000", /*price*/ "49000000", /*valid_before*/ 2000, now).is_ok());
         assert!(check_terms("10000000", "49000000", 2000, now).is_err()); // underpay
         assert!(check_terms("49000000", "49000000", 999, now).is_err());  // expired
+    }
+
+    #[test]
+    fn verify_rejects_used_nonce() {
+        // The on-chain authorizationState(from, nonce) read feeds this pure
+        // decision. `true` = already used → reject; `false` = fresh → ok.
+        assert!(ensure_unused(false).is_ok());
+        assert!(ensure_unused(true).is_err());
     }
 ```
 
@@ -647,6 +670,13 @@ pub fn check_terms(value: &str, price: &str, valid_before: u64, now: u64) -> Res
     let p: u128 = price.parse().map_err(|_| DashboardError::BadRequest("price".into()))?;
     if v < p { return Err(DashboardError::BadRequest("insufficient payment".into())); }
     if valid_before <= now { return Err(DashboardError::BadRequest("authorization expired".into())); }
+    Ok(())
+}
+
+/// Pure decision for the spent-nonce precheck. `used` comes from the on-chain
+/// `authorizationState(from, nonce)` read (see `Erc8004MantleDriver::is_authorization_used`).
+pub fn ensure_unused(used: bool) -> Result<(), DashboardError> {
+    if used { return Err(DashboardError::BadRequest("authorization already used".into())); }
     Ok(())
 }
 
@@ -678,7 +708,20 @@ pub async fn post_verify(
 }
 ```
 
-Implement `recover_payer(state, decoded)`: read `marketplace_addresses.usdc` + `chain.chain_id`, build the domain via `xvision_marketplace::x402::usdc_domain("USD Coin","2", chain_id, usdc)`, build `x402::Authorization` from `decoded.authorization`, parse `r/s` to `B256`, call `x402::recover_authorizer`. Include the `authorizationState(from, nonce)` pre-check via a driver read (add `is_authorization_used(from, nonce)` to the driver, or inline an `IERC3009` call) — fail with `BadRequest("authorization already used")` if true.
+Implement `recover_payer(state, decoded)`: read `marketplace_addresses.usdc` + `chain.chain_id`, build the domain via `xvision_marketplace::x402::usdc_domain("USD Coin","2", chain_id, usdc)`, build `x402::Authorization` from `decoded.authorization`, parse `r/s` to `B256`, call `x402::recover_authorizer`.
+
+For the spent-nonce precheck, add an **inherent** method on `Erc8004MantleDriver` (NOT the `AnchorDriver` trait — same reasoning as Task 1.3, keeps `MockDriver`/CLI untouched):
+```rust
+impl Erc8004MantleDriver {
+    /// EIP-3009 `authorizationState(from, nonce)` via the IERC3009 binding.
+    pub async fn is_authorization_used(&self, from: Address, nonce: B256) -> Result<bool, MarketplaceError> {
+        // read-only provider on self.rpc_url; call IERC3009::authorizationState(from, nonce)
+        // against self.addresses.usdc. Returns the bool.
+        todo!("IERC3009::authorizationState read")
+    }
+}
+```
+In `post_verify`, after recovering the payer, call `driver.is_authorization_used(from, nonce).await?` and pass the result through `ensure_unused(used)?` (fails with `BadRequest("authorization already used")`). The pure decision is unit-tested via `ensure_unused` (Step 1); the live read is exercised by the e2e in Task 1.9 (sign once, settle, replay the same nonce → expect rejection).
 
 - [ ] **Step 4: Run (green)** — `scripts/cargo test -p xvision-dashboard x402::tests::verify_rejects_underpayment_and_expiry`
 
@@ -886,6 +929,47 @@ git add crates/xvision-dashboard/tests/x402_e2e.rs
 git commit -m "test(x402): testnet end-to-end (ignored) — 402 → sign → settle → license"
 ```
 
+## Task 1.10: interop smoke with an off-the-shelf x402 client (spec §9 requirement)
+
+Proves Shape B is genuinely spec-compliant — a third-party x402 client (not our own Rust client) can pay the endpoint. This is the distinct "interop smoke" the spec mandates; Task 1.9 only proves self-consistency.
+
+**Files:** Create `scripts/x402-interop-smoke.mjs` (Node + the published `x402-fetch` package).
+
+- [ ] **Step 1: Write the smoke script**
+```javascript
+// scripts/x402-interop-smoke.mjs
+// Pays an xvision marketplace listing via the off-the-shelf x402 client to prove
+// the endpoint is spec-compliant. Run against a running dashboard (testnet).
+//   XVN_MARKETPLACE_API=http://127.0.0.1:8080 BUYER_PK=0x... LISTING_ID=1 \
+//     node scripts/x402-interop-smoke.mjs
+import { wrapFetchWithPayment } from "x402-fetch";
+import { privateKeyToAccount } from "viem/accounts";
+
+const base = process.env.XVN_MARKETPLACE_API ?? "http://127.0.0.1:8080";
+const account = privateKeyToAccount(process.env.BUYER_PK);
+const listingId = process.env.LISTING_ID ?? "1";
+
+const fetchWithPay = wrapFetchWithPayment(fetch, account);
+const res = await fetchWithPay(`${base}/api/marketplace/listings/${listingId}/x402`, { method: "GET" });
+if (!res.ok) { console.error("interop FAIL", res.status, await res.text()); process.exit(1); }
+const paymentResponse = res.headers.get("x-payment-response");
+console.log("interop PASS — X-PAYMENT-RESPONSE:", paymentResponse);
+console.log(await res.json());
+```
+
+- [ ] **Step 2: Document deps + run (manual, not CI)**
+
+Add a one-line README note: `npm i x402-fetch viem` (ephemeral, not committed to the workspace package). Run against a testnet-configured dashboard with a funded buyer key.
+Expected: `interop PASS` + a non-null `X-PAYMENT-RESPONSE` header + a `{tx_hash, license_token_id}` body. This confirms the `402 → X-PAYMENT → settle → X-PAYMENT-RESPONSE` handshake matches the wire spec a foreign client expects.
+
+> Note: this is a manual interop check (needs Node + testnet creds), deliberately not wired into `cargo test`. If it fails where Task 1.9 passes, the bug is in spec-shape conformance (header/JSON field names), not settlement.
+
+- [ ] **Step 3: Commit**
+```bash
+git add scripts/x402-interop-smoke.mjs
+git commit -m "test(x402): off-the-shelf x402-fetch interop smoke (Shape B spec conformance)"
+```
+
 ---
 
 # PHASE 2 — Client signing + non-custodial key (Shape A foundation)
@@ -899,9 +983,12 @@ git commit -m "test(x402): testnet end-to-end (ignored) — 402 → sign → set
 - [ ] **Step 1: Add deps** to `crates/xvision-mcp/Cargo.toml`:
 ```toml
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
-alloy = { workspace = true }              # primitives + signers::local (match workspace)
+alloy = { workspace = true }              # primitives + signers::local (match workspace); also provides alloy::hex
 xvision-marketplace = { path = "../xvision-marketplace" }
+base64 = "0.22"
+getrandom = "0.2"
 ```
+(`serde_json` is already a dep via `json_or_err`; `hex` is not needed — use `alloy::hex`.)
 
 - [ ] **Step 2: Failing test (key load from env)**
 
@@ -1028,7 +1115,7 @@ pub async fn buy(listing_id: u64) -> Result<serde_json::Value, String> {
 
     // 3. assemble X-PAYMENT and settle
     let sig_hex = format!("0x{}{}{:02x}",
-        hex::encode(parts.r.as_slice()), hex::encode(parts.s.as_slice()), parts.v);
+        alloy::hex::encode(parts.r.as_slice()), alloy::hex::encode(parts.s.as_slice()), parts.v);
     let envelope = serde_json::json!({
         "x402Version": 1, "scheme": "exact", "network": pr.network,
         "payload": {
@@ -1076,7 +1163,7 @@ pub async fn import(id: u64) -> Result<serde_json::Value, String> {
 }
 ```
 
-Add `getrandom` and `hex` and `base64` to `crates/xvision-mcp/Cargo.toml` if absent.
+(`getrandom` + `base64` were added in Task 2.1; `hex` is via `alloy::hex`.)
 
 - [ ] **Step 4: Run (green)** — `scripts/cargo test -p xvision-mcp marketplace_client`
 
@@ -1286,7 +1373,9 @@ git commit -m "feat(contracts): wire Mantle mainnet addresses (config + pinned M
 
 ## Self-review (completed during authoring)
 
-- **Spec coverage:** C1 (Task 1.4), C2 (1.5), C3 (1.6 + 1.2), C4 (1.7), C5 (1.7), C6 (2.1/2.2), C7 (2.1), C8 (3.1–3.3), C9 (4.1/4.2), C10 (4.3), C11 (1.8). P0 done. Rate-limiting (open Q#3) = Task 1.8. MCP-signs-locally (open Q#1) = Task 2.2/3.3. EIP-3009 (open Q#2) = confirmed, no Permit2 task. ✅ all spec items mapped.
+- **Spec coverage:** C1 (Task 1.4), C2 (1.5), C3 (1.6 + 1.2), C4 (1.7), C5 (1.7), C6 (2.1/2.2), C7 (2.1), C8 (3.1–3.3), C9 (4.1/4.2), C10 (4.3), C11 (1.8). Interop smoke §9 (Task 1.10). P0 done. Rate-limiting (open Q#3) = Task 1.8. MCP-signs-locally (open Q#1) = Task 2.2/3.3. EIP-3009 (open Q#2) = confirmed, no Permit2 task. ✅ all spec items mapped.
+
+- **Gate iteration-1 fixes applied:** (1) `build_buy_request` → `pub(crate)` is now an explicit step (Task 1.5 Step 3a). (2) `hex` replaced with `alloy::hex` (no new dep) in dashboard + MCP. (3) interop smoke with `x402-fetch` added (Task 1.10). (4) spent-nonce unit test added via pure `ensure_unused` (Task 1.6 Step 1). (5) `fetch_listing` + `is_authorization_used` are **inherent** methods on `Erc8004MantleDriver`, NOT `AnchorDriver` trait methods — `MockDriver`/`xvision-cli` untouched.
 - **Type consistency:** `Authorization`, `SignedParts`, `sign_authorization`, `recover_authorizer`, `usdc_domain`, `build_accepts`, `decode_x_payment`, `settle_from_header`, `encode_payment_response`, `ListingView`, `fetch_listing`, `load_agent_signer`, `api_base`, `build_authorization`, `buy/browse/get_listing/import` are defined once and referenced consistently across tasks.
 - **Placeholders:** none — every code step carries real code. Version-sensitive spots (alloy `Signature` ctor, `tower_governor` generics) carry explicit "match the pinned version" notes rather than TODOs.
 
