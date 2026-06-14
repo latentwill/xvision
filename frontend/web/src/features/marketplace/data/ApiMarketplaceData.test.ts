@@ -579,6 +579,50 @@ describe("ApiMarketplaceData delegation", () => {
   });
 });
 
+describe("ApiMarketplaceData.importListing (open tier)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("posts to the open import route with the wallet address and returns {agent_id}", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => mockOkJson({ agent_id: "01HNEWAGENT" }));
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const out = await api.importListing("4");
+
+    expect(out).toEqual({ agent_id: "01HNEWAGENT" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/marketplace/listings/4/import",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ address: ADDR }),
+      }),
+    );
+  });
+
+  it("throws WalletRequiredError when no wallet is connected", async () => {
+    mockedChain.currentAddress.mockResolvedValue(null);
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const api = new ApiMarketplaceData(makeFallback());
+    await expect(api.importListing("4")).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("FixtureMarketplaceData.importListing (open tier)", () => {
+  it("returns a deterministic fake {agent_id} (no chain, no fetch)", async () => {
+    const fixture = new FixtureMarketplaceData();
+    const a = await fixture.importListing("4");
+    const b = await fixture.importListing("4");
+    // Deterministic per listing id (same input → same agent_id).
+    expect(a.agent_id).toBe(b.agent_id);
+    expect(typeof a.agent_id).toBe("string");
+    expect(a.agent_id.length).toBeGreaterThan(0);
+  });
+});
+
 describe("chooseMarketplaceData", () => {
   afterEach(() => vi.restoreAllMocks());
 

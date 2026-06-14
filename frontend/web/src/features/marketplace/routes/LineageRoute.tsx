@@ -29,7 +29,7 @@ import { AgentIcon } from "@/features/marketplace/components/AgentIcon";
 import { TxChip } from "@/features/marketplace/components/TxChip";
 import { relativeTime } from "@/features/marketplace/lib/time";
 import { humanize } from "./browse/ListingEntry";
-import { IngredientBanner } from "./IngredientBanner";
+import { finalizeImportWithRetry } from "@/features/marketplace/lib/finalizeImport";
 import { PerformanceSection } from "./PerformanceSection";
 import { ReceiptsDrawer } from "./ReceiptsDrawer";
 import type {
@@ -479,12 +479,22 @@ export function LineageRoute() {
 
   // Real purchase via the MarketplaceData seam: ApiMarketplaceData signs an
   // EIP-3009 TransferWithAuthorization and POSTs the gasless relay (falling
-  // back to approve+buy when the relay 503s); the fixture client still
-  // returns a fake TxRef for fixture slugs. Errors render inline below the
-  // Acquire button (no popups); InsufficientUsdcError gets a faucet affordance.
+  // back to approve+buy when the relay 503s); the fixture client still returns
+  // a fake TxRef for fixture slugs. The relay awaits the on-chain receipt, so
+  // the license is minted by the time purchaseIntent resolves; we then finalize
+  // the acquisition (decrypt + import + materialize the referenced agents) and
+  // land the buyer on the runnable Strategy detail page — no receipt page (QA
+  // #11/#12). The import license-gate can briefly 403 while the freshly-mined
+  // license isn't yet visible to the gate's RPC node, so importSealed runs
+  // through a bounded retry on that condition (finalizeImportWithRetry). Any
+  // final failure renders inline below the Acquire button (no popups, no dead
+  // end, no navigate-to-500); InsufficientUsdcError gets a faucet affordance.
   const buyMutation = useMutation({
-    mutationFn: () => mp.purchaseIntent(detail!.id),
-    onSuccess: (ref) => navigate(`/marketplace/receipts/${ref.txHash}`),
+    mutationFn: async () => {
+      await mp.purchaseIntent(detail!.id);
+      return finalizeImportWithRetry(() => mp.importSealed(detail!.id));
+    },
+    onSuccess: ({ agent_id }) => navigate(`/strategies/${agent_id}`),
   });
 
   // Testnet affordance: mint the missing test USDC, then retry the purchase
@@ -494,11 +504,13 @@ export function LineageRoute() {
     onSuccess: () => buyMutation.mutate(),
   });
 
-  // Free / clone path. Open-tier listings route through cloneIntent (QA12) —
-  // a clone receipt, never a purchase.
+  // Free / open path (Run free + Clone to edit). Open-tier listings import for
+  // real via the plain import route, which materializes the referenced agents
+  // server-side and returns the new local strategy ULID — then land on the
+  // Strategy detail page. No fake clone tx, no receipt (QA #7/#12).
   const cloneMutation = useMutation({
-    mutationFn: () => mp.cloneIntent(detail!.id),
-    onSuccess: (ref) => navigate(`/marketplace/receipts/${ref.txHash}`),
+    mutationFn: () => mp.importListing(detail!.id),
+    onSuccess: ({ agent_id }) => navigate(`/strategies/${agent_id}`),
   });
 
   const isOpenTier = !!detail && detail.tier === "open";
@@ -778,8 +790,8 @@ export function LineageRoute() {
               perpetual license · one-time
             </div>
 
-            {/* Primary CTA. Open tier = Run free (cloneIntent); paid = Acquire
-                (purchaseIntent) gated on wallet connection. */}
+            {/* Primary CTA. Open tier = Run free (importListing); paid = Acquire
+                (purchaseIntent → finalize) gated on wallet connection. */}
             {isOpenTier ? (
               <button
                 data-testid="run-free-btn"
@@ -937,9 +949,6 @@ export function LineageRoute() {
           </p>
         </section>
       )}
-
-      {/* ===== INGREDIENT BANNER ===== */}
-      <IngredientBanner ingredients={detail.ingredients} />
 
       {/* ===== BELOW THE FOLD — single full-width column ===== */}
       <div className="p-6 space-y-6">
