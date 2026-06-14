@@ -1182,7 +1182,7 @@ mod blob_owner_tests {
     async fn seed_span(pool: &SqlitePool, span_id: &str, run_id: &str) {
         sqlx::query(
             "INSERT INTO spans (id, run_id, kind, name, status, started_at) \
-             VALUES (?1, ?2, 'model.call', 'm', 'ok', '2026-05-17T16:00:01Z')",
+             VALUES (?1, ?2, 'decision.model', 'm', 'ok', '2026-05-17T16:00:01Z')",
         )
         .bind(span_id)
         .bind(run_id)

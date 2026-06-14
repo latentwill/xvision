@@ -123,6 +123,7 @@ async fn raw_response_text_is_byte_identical_to_trader_decision_response_text() 
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("dispatch_capability must succeed");

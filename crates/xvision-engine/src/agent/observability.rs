@@ -1174,8 +1174,13 @@ impl ObsEmitter {
             .await;
     }
 
-    /// Open a `ModelCall` span. Caller pairs this with exactly one
-    /// `emit_span_finished_*` call carrying the same `span_id`.
+    /// Open a `DecisionModel` span (`"decision.model"`) — the model
+    /// invocation that produces the trade decision. Caller pairs this with
+    /// exactly one `emit_span_finished_*` call carrying the same `span_id`.
+    /// The backtest executor opens this as a CHILD of the enclosing
+    /// `agent.decision` span (passing `decision_span_id` as
+    /// `parent_span_id`) so the decision model call nests under the
+    /// decision it produced.
     ///
     /// `stage` is the `LLMSlot.role` label ("regime" / "trader" or
     /// any free-form per-strategy name) so the trace dock
@@ -1183,6 +1188,10 @@ impl ObsEmitter {
     /// `SpanAttributes` bag with `run_id`, `provider`, `model`, and
     /// the stage so F-7's planned Simple/Advanced toggle has the
     /// fields to triage on — see harness audit F-2.
+    ///
+    /// (The emit-helper name keeps the `model_call` prefix — only the
+    /// `SpanKind` it sets was renamed from `ModelCall` to `DecisionModel`
+    /// — to limit churn across the cost/hash/blob test surface.)
     pub async fn emit_model_call_started(
         &self,
         span_id: &str,
@@ -1214,7 +1223,7 @@ impl ObsEmitter {
                 span_id: span_id.to_string(),
                 run_id: self.run_id.clone(),
                 parent_span_id,
-                kind: SpanKind::ModelCall,
+                kind: SpanKind::DecisionModel,
                 name: name_override
                     .map(|name| name.to_string())
                     .unwrap_or_else(|| format!("{provider}/{model}")),
@@ -1450,6 +1459,108 @@ impl ObsEmitter {
                 response_payload_ref,
                 tool_calls_requested: None,
                 capability_path: None,
+            }))
+            .await;
+    }
+
+    /// Emit a `decision.reasoning` span carrying the inline chain-of-thought
+    /// captured from a model's `<think>…</think>` block (WS-17). The span
+    /// is opened and immediately closed (`Ok`) as a CHILD of the enclosing
+    /// `decision.model` span (`parent_span_id`) so the trace nests the
+    /// reasoning under the decision-model call that produced it. When no
+    /// `decision.model` span id is available the span is emitted top-level
+    /// (`parent_span_id = None`); the chain-of-thought still reaches the
+    /// trace.
+    ///
+    /// Retention (mirrors the model-call payload gate in
+    /// `emit_model_call_finished_with_payloads`):
+    /// - `reasoning_char_count` is ALWAYS recorded (cost legibility, no
+    ///   raw-body leak).
+    /// - `full_debug`/`redacted` + a `BlobStore` + `store_responses` →
+    ///   the reasoning body is written to a blob (redacted first under
+    ///   `redacted`), and `reasoning_blob_ref` points at it.
+    /// - `full_debug` + `store_responses` additionally inlines a bounded
+    ///   `reasoning_text` on the span attributes (same gate as
+    ///   `emit_assistant_text_delta` via `apply_to_body`).
+    /// - `hash_only` (or any non-debug mode) → NO blob write, NO inline
+    ///   body: only the char count survives.
+    pub async fn emit_model_reasoning(&self, parent_span_id: Option<String>, reasoning_text: &str) {
+        let span_id = fresh_span_id();
+        let char_count = reasoning_text.chars().count();
+
+        // Payload gate — identical predicate to the model-call response
+        // blob write: store the body only under FullDebug | Redacted with
+        // store_responses set, NEVER under HashOnly.
+        let write_body = self.retention.store_responses
+            && matches!(
+                self.retention.mode,
+                RetentionMode::FullDebug | RetentionMode::Redacted
+            );
+
+        let mut reasoning_blob_ref: Option<String> = None;
+        if write_body {
+            if let Some(store) = self.blob_store.as_ref() {
+                let body: String = match self.retention.mode {
+                    RetentionMode::FullDebug => reasoning_text.to_string(),
+                    RetentionMode::Redacted => Redactor::new().redact(reasoning_text).text,
+                    // Already gated by `write_body`; explicit fall-through.
+                    _ => reasoning_text.to_string(),
+                };
+                let bytes = cap_blob_bytes(body.into_bytes(), self.retention.max_payload_bytes);
+                match store.write(&bytes) {
+                    Ok(blob_ref) => reasoning_blob_ref = Some(blob_ref.as_str().to_string()),
+                    Err(e) => {
+                        tracing::error!(
+                            run_id = %self.run_id,
+                            span_id = %span_id,
+                            error = %e,
+                            "BlobStore::write failed for reasoning payload — \
+                             ref will be None, char count still recorded",
+                        );
+                    }
+                }
+            }
+        }
+
+        // Inline body only under the same gate the assistant-text delta
+        // uses (FullDebug + store_responses). `apply_to_body` returns ""
+        // when emission is disallowed, so under hash_only/redacted no raw
+        // reasoning text rides on the span attributes.
+        let inline_body = self.retention.apply_to_body(reasoning_text);
+
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("reasoning_char_count".to_string(), serde_json::json!(char_count));
+        if let Some(blob_ref) = reasoning_blob_ref.as_ref() {
+            attrs.insert("reasoning_blob_ref".to_string(), serde_json::json!(blob_ref));
+        }
+        if !inline_body.is_empty() {
+            attrs.insert("reasoning_text".to_string(), serde_json::json!(inline_body));
+        }
+        let attrs = SpanAttributes {
+            run_id: Some(self.run_id.clone()),
+            ..SpanAttributes::default()
+        }
+        .merge_into_object(attrs);
+
+        self.bus
+            .publish(RunEvent::SpanStarted(SpanStartedEvent {
+                span_id: span_id.clone(),
+                run_id: self.run_id.clone(),
+                parent_span_id,
+                kind: SpanKind::DecisionReasoning,
+                name: "decision.reasoning".to_string(),
+                started_at: Utc::now(),
+                otel_trace_id: None,
+                otel_span_id: None,
+                attributes_json: Some(attrs),
+            }))
+            .await;
+        self.bus
+            .publish(RunEvent::SpanFinished(SpanFinishedEvent {
+                span_id,
+                ended_at: Utc::now(),
+                status: SpanStatus::Ok,
+                error_json: None,
             }))
             .await;
     }

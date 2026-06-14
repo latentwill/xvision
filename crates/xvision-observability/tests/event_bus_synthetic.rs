@@ -128,7 +128,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     }))
     .await;
 
-    // 3 model.call spans + their ModelCallFinished rows.
+    // 3 decision.model spans + their ModelCallFinished rows.
     for i in 0..3 {
         let span_id = format!("span_model_{i}");
         let ts = started_at + Duration::seconds(i as i64 + 1);
@@ -136,8 +136,8 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
             span_id: span_id.clone(),
             run_id: run_id.clone(),
             parent_span_id: Some(run_span_id.clone()),
-            kind: SpanKind::ModelCall,
-            name: format!("model.call.{i}"),
+            kind: SpanKind::DecisionModel,
+            name: format!("decision.model.{i}"),
             started_at: ts,
             otel_trace_id: None,
             otel_span_id: None,
@@ -250,7 +250,7 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     wait_for_rows(&pool, "spans", 10).await;
 
     let timeline: Vec<String> =
-        sqlx::query_as("SELECT name FROM spans WHERE run_id = ? AND kind IN ('model.call', 'tool.call') ORDER BY started_at, id")
+        sqlx::query_as("SELECT name FROM spans WHERE run_id = ? AND kind IN ('decision.model', 'tool.call') ORDER BY started_at, id")
             .bind(&run_id)
             .fetch_all(&pool)
             .await
@@ -261,9 +261,9 @@ async fn synthetic_run_records_every_row_then_marks_interrupted() {
     assert_eq!(
         timeline,
         vec![
-            "model.call.0",
-            "model.call.1",
-            "model.call.2",
+            "decision.model.0",
+            "decision.model.1",
+            "decision.model.2",
             "tool.call.0",
             "tool.call.1",
             "tool.call.2",

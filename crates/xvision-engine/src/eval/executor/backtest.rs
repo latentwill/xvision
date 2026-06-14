@@ -1774,6 +1774,36 @@ impl Executor {
                     )
                 } else {
                     let seed_for_repair = seed.clone();
+                    // WS-17: open a `decision.model` span as a CHILD of this
+                    // bar's `agent.decision` span BEFORE running the pipeline,
+                    // and thread its id down so the Cline trader's captured
+                    // chain-of-thought (`decision.reasoning`) nests under it.
+                    // The span is the single per-cycle record of the model
+                    // invocation that produced the trade decision (the
+                    // trader/regime/filter slot roles were retired — it's one
+                    // decision-model call now). Closed after the pipeline
+                    // returns, carrying the input/output token counts from
+                    // `PipelineOutputs`. `None` emitter ⇒ no-op + `None` id.
+                    let decision_model_span_id = self
+                        .obs_emitter
+                        .as_ref()
+                        .map(|_| crate::agent::observability::fresh_span_id());
+                    if let (Some(obs), Some(dm_span_id)) =
+                        (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
+                    {
+                        let provider = trader_provider(agent_slots, strategy).unwrap_or_default();
+                        let model = trader_model_id(agent_slots, strategy).unwrap_or_default();
+                        obs.emit_model_call_started(
+                            dm_span_id,
+                            Some(decision_span_id.clone()),
+                            &provider,
+                            &model,
+                            Some("trader"),
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
                     let outs = run_pipeline(PipelineInputs {
                         strategy,
                         agent_slots,
@@ -1819,8 +1849,22 @@ impl Executor {
                         // eval entry point selected it.
                         runtime: self.agent_runtime,
                         cline: self.cline.clone(),
+                        // WS-17: parent for the captured chain-of-thought.
+                        model_call_span_id: decision_model_span_id.clone(),
                     })
-                    .await?;
+                    .await;
+                    // WS-17: close the `decision.model` span on BOTH arms
+                    // before propagating — an Err would otherwise leave the
+                    // span dangling open on the trace dock.
+                    if let (Some(obs), Some(dm_span_id)) =
+                        (self.obs_emitter.as_ref(), decision_model_span_id.as_ref())
+                    {
+                        match &outs {
+                            Ok(_) => obs.emit_span_finished_ok(dm_span_id).await,
+                            Err(e) => obs.emit_span_finished_error(dm_span_id, &e.to_string()).await,
+                        }
+                    }
+                    let outs = outs?;
                     total_input_tokens += outs.total_input_tokens as u64;
                     total_output_tokens += outs.total_output_tokens as u64;
                     run.actual_input_tokens = Some(total_input_tokens);
@@ -4020,6 +4064,12 @@ impl Executor {
             recorder: self.recorder.as_deref(),
             runtime: self.agent_runtime,
             cline: self.cline.clone(),
+            // WS-17: the live `decide_one_live` path does not open an
+            // `agent.decision`/`decision.model` span around this dispatch,
+            // so there is no parent to thread — the captured reasoning
+            // emits top-level. Wiring a decision span here is a separate
+            // live-observability follow-up.
+            model_call_span_id: None,
         })
         .await?;
         let input_tokens = outs.total_input_tokens as u64;
@@ -5117,6 +5167,32 @@ fn trader_model_id(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Op
         let model = slot.effective_model();
         if !model.trim().is_empty() {
             return Some(model);
+        }
+    }
+    None
+}
+
+/// Find the trader slot's configured provider for the WS-17
+/// `decision.model` span attributes. Mirrors [`trader_model_id`]'s
+/// resolution order (attached agent with canonical role `trader`, then
+/// the legacy `strategy.trader_slot`). Returns `None` when the slot
+/// left `provider` unset — the span then records no provider, matching
+/// the `model_call`-span behaviour on the retired LlmDispatch path.
+fn trader_provider(agent_slots: &[ResolvedAgentSlot], strategy: &Strategy) -> Option<String> {
+    if let Some(resolved) = agent_slots.iter().find(|r| canonical_role(&r.role) == "trader") {
+        if let Some(p) = resolved.slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() {
+                return Some(p.to_string());
+            }
+        }
+    }
+    if let Some(slot) = strategy.trader_slot.as_ref() {
+        if let Some(p) = slot.provider.as_deref() {
+            let p = p.trim();
+            if !p.is_empty() {
+                return Some(p.to_string());
+            }
         }
     }
     None

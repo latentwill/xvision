@@ -352,7 +352,7 @@ fn dispatch_inner(
                 span_id,
                 run_id,
                 parent_span_id: None,
-                kind: SpanKind::ModelCall,
+                kind: SpanKind::DecisionModel,
                 name: format!("{}/{}", provider, model),
                 started_at: Utc::now(),
                 otel_trace_id: None,
@@ -926,7 +926,7 @@ mod tests {
             RunEvent::SpanStarted(s) => {
                 assert_eq!(s.span_id, "sp-m1");
                 assert_eq!(s.run_id, "r1");
-                assert!(matches!(s.kind, SpanKind::ModelCall));
+                assert!(matches!(s.kind, SpanKind::DecisionModel));
                 assert_eq!(s.name, "anthropic/claude-opus-4-7");
             }
             _ => panic!("wrong variant"),
