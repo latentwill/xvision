@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { type CycleProgressEvent } from "../api";
 
 const SSE_EVENT_NAMES = [
@@ -64,52 +64,92 @@ function parseSsePayload(raw: unknown, fallbackKind: string): CycleProgressEvent
   };
 }
 
+// ─── Shared single-connection store ───────────────────────────────────────────
+// Every consumer (home headline, console, launch panel, river, the live-activity
+// hook) reads the SAME EventSource. Opening one connection per component would
+// fan out to half a dozen SSE sockets on the optimizer page and let consumers
+// derive divergent running state from independently-buffered events. The store
+// keeps one buffer so every surface agrees, and refcounts the connection so it
+// closes when the last consumer unmounts.
+
+let events: EventRow[] = [];
+let connected = false;
+let source: EventSource | null = null;
+let refCount = 0;
+const listeners = new Set<() => void>();
+
+function notify() {
+  for (const l of listeners) l();
+}
+
+function appendEvent(event: CycleProgressEvent) {
+  const row: EventRow = { ...event, _row_id: nextRowId++ };
+  const base = events.length >= 200 ? events.slice(1) : events;
+  events = [...base, row];
+  notify();
+}
+
+function openSource() {
+  if (source) return;
+  const es = new EventSource("/api/autooptimizer/events");
+  source = es;
+  const handleMessage = (ev: Event) => {
+    const event = parseSsePayload((ev as MessageEvent).data, ev.type);
+    if (event) appendEvent(event);
+  };
+  es.addEventListener("open", () => {
+    connected = true;
+    notify();
+  });
+  es.addEventListener("message", handleMessage);
+  for (const name of SSE_EVENT_NAMES) es.addEventListener(name, handleMessage);
+  es.addEventListener("error", () => {
+    connected = false;
+    notify();
+  });
+}
+
+function closeSource() {
+  source?.close();
+  source = null;
+  connected = false;
+}
+
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  refCount += 1;
+  openSource();
+  return () => {
+    listeners.delete(cb);
+    refCount -= 1;
+    if (refCount <= 0) {
+      refCount = 0;
+      closeSource();
+    }
+  };
+}
+
+const getEvents = () => events;
+const getConnected = () => connected;
+
 export function useCycleEventStream(): {
   events: EventRow[];
   connected: boolean;
   isRunning: boolean;
   activeCycleId: string | null;
 } {
-  const [events, setEvents] = useState<EventRow[]>([]);
-  const [connected, setConnected] = useState(false);
-
-  const appendEvent = useCallback((event: CycleProgressEvent) => {
-    setEvents((prev) => {
-      const row: EventRow = { ...event, _row_id: nextRowId++ };
-      const next = prev.length >= 200 ? prev.slice(1) : prev;
-      return [...next, row];
-    });
-  }, []);
-
-  useEffect(() => {
-    const source = new EventSource("/api/autooptimizer/events");
-    const handleMessage = (ev: Event) => {
-      const event = parseSsePayload((ev as MessageEvent).data, ev.type);
-      if (event) appendEvent(event);
-    };
-    source.addEventListener("open", () => { setConnected(true); });
-    source.addEventListener("message", handleMessage);
-    for (const name of SSE_EVENT_NAMES) source.addEventListener(name, handleMessage);
-    source.addEventListener("error", () => { setConnected(false); });
-    return () => {
-      source.removeEventListener("message", handleMessage);
-      for (const eventName of SSE_EVENT_NAMES) {
-        source.removeEventListener(eventName, handleMessage);
-      }
-      source.close();
-      setConnected(false);
-    };
-  }, [appendEvent]);
+  const evs = useSyncExternalStore(subscribe, getEvents, getEvents);
+  const isConnected = useSyncExternalStore(subscribe, getConnected, getConnected);
 
   // Derive running state from the event buffer — single source of truth for
   // both the heatmap and command bar so they don't diverge.
   let isRunning = false;
   let activeCycleId: string | null = null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const et = events[i].event_type ?? events[i].type ?? events[i].kind ?? "";
+  for (let i = evs.length - 1; i >= 0; i--) {
+    const et = evs[i].event_type ?? evs[i].type ?? evs[i].kind ?? "";
     if (et === "cycle_finished") { isRunning = false; activeCycleId = null; break; }
-    if (et === "cycle_started") { isRunning = true; activeCycleId = events[i].cycle_id ?? null; break; }
+    if (et === "cycle_started") { isRunning = true; activeCycleId = evs[i].cycle_id ?? null; break; }
   }
 
-  return { events, connected, isRunning, activeCycleId };
+  return { events: evs, connected: isConnected, isRunning, activeCycleId };
 }
