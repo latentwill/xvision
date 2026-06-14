@@ -48,15 +48,24 @@ async fn get_pine_library_returns_200_with_at_least_ten_summaries() {
     // Each item must have id, name, description — but NO source field.
     for item in items {
         assert!(
-            item.get("id").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false),
+            item.get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
             "each library item must have non-empty `id`; got: {item}"
         );
         assert!(
-            item.get("name").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false),
+            item.get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
             "each library item must have non-empty `name`; got: {item}"
         );
         assert!(
-            item.get("description").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false),
+            item.get("description")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
             "each library item must have non-empty `description`; got: {item}"
         );
         assert!(
@@ -133,10 +142,7 @@ async fn get_pine_library_includes_known_entry_ids() {
     let json: serde_json::Value = response.json();
     let items = json["items"].as_array().expect("`items` array");
 
-    let ids: Vec<&str> = items
-        .iter()
-        .filter_map(|item| item["id"].as_str())
-        .collect();
+    let ids: Vec<&str> = items.iter().filter_map(|item| item["id"].as_str()).collect();
 
     // At minimum, the two canonical starter entries must be present.
     assert!(

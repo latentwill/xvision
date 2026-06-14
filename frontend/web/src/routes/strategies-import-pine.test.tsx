@@ -49,7 +49,6 @@ const SUCCESS_RESPONSE: pineApi.PineImportResult = {
       published_at: null,
     },
     regime_slot: null,
-    intern_slot: null,
     trader_slot: null,
     risk: {
       risk_pct_per_trade: 1,

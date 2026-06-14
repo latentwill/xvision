@@ -153,19 +153,20 @@ export function EvalRunDetailRoute() {
     const status = q.data?.summary.status;
     useTraceDock
       .getState()
-      .setActiveRun(traceRun, status && isInflightRunStatus(status) ? "live" : "post-hoc");
+      .setActiveRun("eval", traceRun, status && isInflightRunStatus(status) ? "live" : "post-hoc");
   }, [traceRun, q.data?.summary.status]);
 
-  // Drop the active run from the trace-dock store on unmount so the floating
-  // capsule doesn't bleed onto other routes after navigation.
+  // Drop the eval scope's active run on unmount so the floating capsule
+  // doesn't bleed onto other routes after navigation. Unconditional
+  // (WS-2): this route is the sole owner of the eval scope, so it always
+  // nulls eval on the way out — no guard on the current run id, which
+  // previously left the capsule stuck when a fast nav swapped runs.
+  // Only the eval scope is touched; the live scope is independent.
   useEffect(() => {
     return () => {
-      const dock = useTraceDock.getState();
-      if (dock.activeRunId === traceRun) {
-        dock.setActiveRun(null, "post-hoc");
-      }
+      useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
     };
-  }, [traceRun]);
+  }, []);
 
   // Push the eval-side cost into the trace-dock so the floating capsule
   // renders the same number as the meta strip / SummaryCard. Without this
@@ -179,7 +180,7 @@ export function EvalRunDetailRoute() {
       q.data.summary,
       linkedAgentRun.data?.summary.total_cost_usd ?? null,
     );
-    useTraceDock.getState().setCostOverrideUsd(cost);
+    useTraceDock.getState().setCostOverrideUsd("eval", cost);
   }, [q.data, linkedAgentRun.data?.summary.total_cost_usd]);
 
   if (q.isPending) {
@@ -408,6 +409,8 @@ export function EvalRunDetailRoute() {
             <DecisionsCard
               rows={detail.decisions}
               filterSummaries={detail.filter_summaries ?? []}
+              status={detail.summary.status}
+              errorMsg={detail.summary.error}
             />
 
             {/*
@@ -871,23 +874,62 @@ function Stat({
 function DecisionsCard({
   rows,
   filterSummaries,
+  status,
+  errorMsg,
 }: {
   rows: DecisionRowDto[];
   filterSummaries: FilterSummary[];
+  status: string;
+  errorMsg: string | null | undefined;
 }) {
   const [focusedIdx, setFocusedIdx] = useState<number | null>(null);
   const decisions = useMemo(() => toTimelineDecisions(rows), [rows]);
 
   if (rows.length === 0) {
+    if (!isTerminalStatus(status)) {
+      return (
+        <div className="bg-surface-card border border-border rounded-card px-6 py-12 text-center text-text-2">
+          <div className="font-sans text-[22px] text-text-3 mb-2" style={{ fontWeight: 600 }}>
+            No decisions
+          </div>
+          <p className="m-0 text-[13px]">
+            This run hasn't recorded any decisions yet — likely still queued or
+            running.
+          </p>
+        </div>
+      );
+    }
+    // Terminal status with no decisions — show error message if present
     return (
       <div className="bg-surface-card border border-border rounded-card px-6 py-12 text-center text-text-2">
-        <div className="font-sans text-[22px] text-text-3 mb-2" style={{ fontWeight: 600 }}>
-          No decisions
-        </div>
-        <p className="m-0 text-[13px]">
-          This run hasn't recorded any decisions yet — likely still queued or
-          running.
-        </p>
+        {status === "failed" && errorMsg ? (
+          <>
+            <div
+              className="font-sans text-[22px] mb-2 text-danger"
+              style={{ fontWeight: 600 }}
+            >
+              Run failed
+            </div>
+            <p className="m-0 mb-2 text-[13px]">
+              This run did not record any decisions.
+            </p>
+            <pre
+              role="alert"
+              className="mt-3 mx-auto max-w-lg rounded border border-danger/30 bg-danger/[0.06] px-4 py-3 text-left font-mono text-[11px] text-danger overflow-x-auto"
+            >
+              {errorMsg}
+            </pre>
+          </>
+        ) : (
+          <>
+            <div className="font-sans text-[22px] text-text-3 mb-2" style={{ fontWeight: 600 }}>
+              No decisions
+            </div>
+            <p className="m-0 text-[13px]">
+              This run finished with no recorded decisions.
+            </p>
+          </>
+        )}
       </div>
     );
   }

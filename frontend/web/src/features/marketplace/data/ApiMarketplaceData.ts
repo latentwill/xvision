@@ -378,7 +378,21 @@ export class ApiMarketplaceData implements MarketplaceData {
     const out = await apiFetch<{ items: IndexedListing[]; total: number }>(
       "/api/marketplace/listings",
     );
-    return applyFilter(out.items.map(toRow), f);
+    const allRows = out.items.map(toRow);
+
+    // "Mine" segment: restrict to listings created by the connected wallet.
+    // If no wallet is connected, return an empty pool so the empty state renders
+    // (never show all listings when the ownership check cannot be performed).
+    if (f.segment === "mine") {
+      const viewer = await this.getViewer();
+      if (!viewer.isConnected || viewer.createdListingIds.length === 0) {
+        return { rows: [], total: allRows.length, matched: 0 };
+      }
+      const owned = allRows.filter((r) => viewer.createdListingIds.includes(r.id));
+      return applyFilter(owned, f);
+    }
+
+    return applyFilter(allRows, f);
   }
 
   async getListing(idOrName: string): Promise<ListingDetail> {

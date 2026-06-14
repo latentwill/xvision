@@ -104,7 +104,6 @@ fn sample_strategy(id: &str, agent_id: &str) -> Strategy {
         }],
         pipeline: Default::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: serde_json::json!({"window": 14}),
@@ -114,6 +113,7 @@ fn sample_strategy(id: &str, agent_id: &str) -> Strategy {
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

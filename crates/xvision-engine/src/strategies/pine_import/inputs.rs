@@ -37,9 +37,9 @@
 //! `InputTarget` list complements that by providing explicit search-space bounds
 //! that the auto-optimizer can use for smarter random sampling (future work).
 
-use serde::{Deserialize, Serialize};
 use super::ast::{Expr, PineScript, Statement};
 use super::map::MapOutcome;
+use serde::{Deserialize, Serialize};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -102,7 +102,12 @@ pub fn input_mutation_targets(script: &PineScript, outcome: &MapOutcome) -> Vec<
     let mut targets = Vec::new();
 
     for stmt in &script.statements {
-        let Statement::Input { name, input_type, args } = stmt else {
+        let Statement::Input {
+            name,
+            input_type,
+            args,
+        } = stmt
+        else {
             continue;
         };
 
@@ -135,7 +140,14 @@ pub fn input_mutation_targets(script: &PineScript, outcome: &MapOutcome) -> Vec<
             .map(|(_, p)| p.clone())
             .unwrap_or_else(|| format!("unbound.{name}"));
 
-        targets.push(InputTarget { path, default, min, max, step, kind });
+        targets.push(InputTarget {
+            path,
+            default,
+            min,
+            max,
+            step,
+            kind,
+        });
     }
 
     targets
@@ -198,7 +210,9 @@ mod tests {
     fn bool_input_has_bool_kind_and_no_bounds() {
         let src = "//@version=5\nstrategy(\"T\", overlay=false)\nuse_rsi = input.bool(true, title=\"Use RSI\")\nif true\n    strategy.entry(\"L\", strategy.long)\n";
         let targets = parse_and_targets(src);
-        let bool_t = targets.iter().find(|t| t.kind == InputKind::Bool)
+        let bool_t = targets
+            .iter()
+            .find(|t| t.kind == InputKind::Bool)
             .expect("must have a Bool target");
         assert_eq!(bool_t.default, serde_json::json!(true));
         assert!(bool_t.min.is_none());
@@ -211,14 +225,19 @@ mod tests {
         let src = "//@version=5\nstrategy(\"T\", overlay=false)\nlabel = input.string(\"foo\", title=\"Label\")\nif true\n    strategy.entry(\"L\", strategy.long)\n";
         let targets = parse_and_targets(src);
         // string inputs are not emitted
-        assert!(targets.is_empty(), "input.string must not produce an InputTarget; got: {targets:?}");
+        assert!(
+            targets.is_empty(),
+            "input.string must not produce an InputTarget; got: {targets:?}"
+        );
     }
 
     #[test]
     fn int_input_bounds_extracted() {
         let src = "//@version=5\nstrategy(\"T\", overlay=false)\nmy_len = input.int(14, minval=2, maxval=100)\nif true\n    strategy.entry(\"L\", strategy.long)\n";
         let targets = parse_and_targets(src);
-        let t = targets.iter().find(|t| t.kind == InputKind::Int)
+        let t = targets
+            .iter()
+            .find(|t| t.kind == InputKind::Int)
             .expect("must have an Int target");
         assert_eq!(t.default, serde_json::json!(14));
         assert_eq!(t.min, Some(2.0));
@@ -230,7 +249,9 @@ mod tests {
     fn float_input_bounds_and_step_extracted() {
         let src = "//@version=5\nstrategy(\"T\", overlay=false)\nstop = input.float(2.0, minval=0.5, maxval=10.0, step=0.1)\nif true\n    strategy.entry(\"L\", strategy.long)\nif true\n    strategy.exit(\"LE\", \"L\", loss=stop)\n";
         let targets = parse_and_targets(src);
-        let t = targets.iter().find(|t| t.kind == InputKind::Float)
+        let t = targets
+            .iter()
+            .find(|t| t.kind == InputKind::Float)
             .expect("must have a Float target");
         assert_eq!(t.default, serde_json::json!(2.0));
         assert_eq!(t.min, Some(0.5));
@@ -242,7 +263,9 @@ mod tests {
     fn stop_pct_input_binds_to_mechanistic_path() {
         let src = "//@version=5\nstrategy(\"T\", overlay=false)\nstop_pct = input.float(2.0, minval=0.5, maxval=10.0)\nif true\n    strategy.entry(\"L\", strategy.long)\nif true\n    strategy.exit(\"LE\", \"L\", loss=stop_pct)\n";
         let targets = parse_and_targets(src);
-        let t = targets.iter().find(|t| t.path.starts_with("mechanistic.close_policies"))
+        let t = targets
+            .iter()
+            .find(|t| t.path.starts_with("mechanistic.close_policies"))
             .expect("stop_pct must bind to a mechanistic path; targets: {targets:?}");
         assert!(t.path.ends_with(".pct"), "path must end with .pct: {}", t.path);
         assert_eq!(t.default, serde_json::json!(2.0));
@@ -252,7 +275,9 @@ mod tests {
     fn unbound_input_gets_unbound_path() {
         let src = "//@version=5\nstrategy(\"T\", overlay=false)\nmy_len = input.int(14, minval=2, maxval=100)\nif true\n    strategy.entry(\"L\", strategy.long)\n";
         let targets = parse_and_targets(src);
-        let t = targets.iter().find(|t| t.kind == InputKind::Int)
+        let t = targets
+            .iter()
+            .find(|t| t.kind == InputKind::Int)
             .expect("must have Int target");
         // my_len is not used in any strategy.exit or condition, so it's unbound
         assert!(

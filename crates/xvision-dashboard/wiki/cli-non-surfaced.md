@@ -85,9 +85,8 @@ The current surface, for reference:
 | `xvn strategy *` | Create, validate, list, show, run strategies |
 | `xvn eval *` | Launch and inspect eval runs |
 | `xvn scenario *` | Create, classify, inspect scenarios |
-| `xvn intern brief / preview` | Stage 1 (briefing) in isolation |
-| `xvn trader run / preview` | Stage 2 (trader decision) in isolation |
-| `xvn risk evaluate / show-config` | Stage 3 risk gate |
+| `xvn trader run / preview` | Agent dispatch in isolation |
+| `xvn risk evaluate / show-config` | Risk gate |
 | `xvn portfolio --venue` | Read live venue state (read-only) |
 | `xvn close-position --venue --asset` | Flatten one symbol |
 | `xvn fire-trade --venue` | Submit a trade (paper or testnet) |

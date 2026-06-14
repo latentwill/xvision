@@ -207,7 +207,20 @@ function LiveRunRow({
   const status = deriveStripStatus(run);
   const name = run.agent_id
     ? displayStrategyName(run.agent_id, strategies)
-    : run.objective || run.strategy_id || run.run_id.slice(0, 8);
+    : run.strategy_id
+      ? displayStrategyName(run.strategy_id, strategies)
+      : (() => {
+          const obj = run.objective ?? "";
+          if (!obj) return run.run_id.slice(0, 8);
+          // Strip a leading "eval:<kind>:" prefix (e.g. "eval:Backtest:scenario")
+          const stripped = obj.replace(/^eval:[^:]+:/i, "");
+          // De-slug: replace hyphens/underscores with spaces and title-case
+          const deslug = stripped
+            .replace(/[-_]+/g, " ")
+            .trim()
+            .replace(/\b\w/g, (ch) => ch.toUpperCase());
+          return deslug || run.run_id.slice(0, 8);
+        })();
   const pnl = computeStripMetric("daily_pnl_usd", run);
   const sharpe = computeStripMetric("sharpe", run);
 
@@ -244,8 +257,8 @@ function LiveRunRow({
         </span>
       </div>
       <MetricCell label="PnL" value={pnl.text} tone={pnl.tone} />
-      <MetricCell label="Decisions" value={String(run.model_call_count)} />
-      <MetricCell label="Trades" value={String(run.tool_call_count)} />
+      <MetricCell label="Decisions" value={String(run.model_call_count ?? "—")} />
+      <MetricCell label="Trades" value={String(run.tool_call_count ?? "—")} />
       <MetricCell label="Sharpe" value={sharpe.text} tone={sharpe.tone} />
       {run.span_count > 0 ? (
         <Link

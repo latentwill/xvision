@@ -137,6 +137,14 @@ pub struct LiveDeploymentSummary {
     /// kill policy or no day baseline yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_loss_limit_remaining_usd: Option<f64>,
+    /// Daily-loss budget denominator for buffer percentage. `None` when no
+    /// daily-loss kill policy exists or the budget is not yet sourced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock stop deadline (RFC3339). `None` when the stop policy is not
+    /// time-bounded or the deadline is not yet sourced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_at: Option<String>,
     /// Count of risk vetoes since the operator's last visit. `None` until
     /// last-visit tracking lands (Wave 5) — render `None`, not `0`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -178,12 +186,25 @@ pub struct ExecutionTruth {
     /// Headroom before the daily-loss kill. `None` ⇒ no kill policy / day
     /// baseline.
     pub daily_loss_limit_remaining_usd: Option<f64>,
+    /// Daily-loss budget denominator for the strip's buffer percentage.
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock deadline for time-bounded stop policies.
+    pub stop_at: Option<String>,
     /// Live reachability probe. `false` ⇒ capital fields are forced `null`.
     pub venue_connected: bool,
     /// Why the venue is unavailable / no snapshot (connection-as-data).
     pub unavailable_reason: Option<String>,
     /// `GET /api/safety/state.paused` snapshot for this list build.
     pub global_safety_paused: bool,
+    /// bead s78.2: count of REAL recorded `role='risk'` supervisor notes since
+    /// the operator's last-visit boundary (`COUNT(*)` from
+    /// [`RunStore::count_risk_vetoes_since`]). `None` when NO `?since` boundary
+    /// was supplied — counting "since an unknown time" is not a knowable fact —
+    /// OR when the count query errors (degrade to unknown, never a fabricated
+    /// affirmative zero); either way the field renders "—". A boundary WITH zero
+    /// matching notes is a real, honest `Some(0)` ("0 vetoes since you were last
+    /// here"), NEVER `None`.
+    pub risk_veto_count_since_last_visit: Option<u32>,
 }
 
 /// Resolve the venue id label from a live run's `broker_creds_ref`. The
@@ -277,8 +298,13 @@ pub fn project_deployment(run: Run, truth: ExecutionTruth) -> LiveDeploymentSumm
         unrealized_pnl_usd: run.unrealized_pnl_usd,
         drawdown_pct,
         daily_loss_limit_remaining_usd,
-        // Wave 5: last-visit tracking. `None` until then (never a faked `0`).
-        risk_veto_count_since_last_visit: None,
+        daily_loss_budget_usd: truth.daily_loss_budget_usd,
+        stop_at: truth.stop_at,
+        // bead s78.2: a REAL count of recorded risk-veto supervisor notes since
+        // the last-visit boundary. `None` when no `?since` was supplied (can't
+        // count "since an unknown time"); `Some(0)` is an honest real zero when
+        // a boundary IS supplied but no veto landed after it. Never a faked `0`.
+        risk_veto_count_since_last_visit: truth.risk_veto_count_since_last_visit,
         paused: run.paused,
         flatten_requested: run.flatten_requested,
         global_safety_paused: truth.global_safety_paused,
@@ -316,6 +342,7 @@ pub async fn list_live_deployments(
     store: &RunStore,
     status_filter: Option<RunStatus>,
     global_safety_paused: bool,
+    since: Option<DateTime<Utc>>,
 ) -> anyhow::Result<Vec<LiveDeploymentSummary>> {
     use crate::eval::store::ListFilter;
 
@@ -335,6 +362,13 @@ pub async fn list_live_deployments(
     for run in runs.into_iter().filter(|r| r.mode == RunMode::Live) {
         let last_decision_at = store.max_decision_timestamp(&run.id).await.unwrap_or(None);
         let realized_pnl_usd = store.sum_realized_pnl(&run.id).await.unwrap_or(None);
+        // bead s78.2: only count risk vetoes when a last-visit boundary is
+        // supplied. No boundary ⇒ `None` (can't count "since an unknown time");
+        // a boundary ⇒ a real `COUNT(*)`, including an honest `Some(0)`.
+        let risk_veto_count_since_last_visit = match since {
+            Some(since) => store.count_risk_vetoes_since(&run.id, since).await.ok(),
+            None => None,
+        };
         // The poll path has no attached live snapshot, so deployed capital /
         // drawdown / daily-loss stay `None` and the venue is reported as not
         // having a live snapshot. Per-tick values stream via the SSE path.
@@ -344,9 +378,12 @@ pub async fn list_live_deployments(
             deployed_capital_usd: None,
             drawdown_pct: None,
             daily_loss_limit_remaining_usd: None,
+            daily_loss_budget_usd: None,
+            stop_at: None,
             venue_connected: false,
             unavailable_reason: Some("no live snapshot (poll path)".to_string()),
             global_safety_paused,
+            risk_veto_count_since_last_visit,
         };
         out.push(project_deployment(run, truth));
     }
@@ -364,6 +401,7 @@ pub async fn get_live_deployment(
     store: &RunStore,
     run_id: &str,
     global_safety_paused: bool,
+    since: Option<DateTime<Utc>>,
 ) -> anyhow::Result<Option<LiveDeploymentSummary>> {
     let run = match store.get(run_id).await {
         Ok(run) => run,
@@ -375,15 +413,26 @@ pub async fn get_live_deployment(
     }
     let last_decision_at = store.max_decision_timestamp(run_id).await.unwrap_or(None);
     let realized_pnl_usd = store.sum_realized_pnl(run_id).await.unwrap_or(None);
+    // bead s78.2: see `list_live_deployments` — `None` without a boundary, a
+    // real `COUNT(*)` (incl. honest `Some(0)`) with one. The SSE snapshot frame
+    // passes `since = None` (risk-veto counts are read via the poll, not the
+    // stream — see this module's doc + the dashboard stream handler).
+    let risk_veto_count_since_last_visit = match since {
+        Some(since) => store.count_risk_vetoes_since(run_id, since).await.ok(),
+        None => None,
+    };
     let truth = ExecutionTruth {
         last_decision_at,
         realized_pnl_usd,
         deployed_capital_usd: None,
         drawdown_pct: None,
         daily_loss_limit_remaining_usd: None,
+        daily_loss_budget_usd: None,
+        stop_at: None,
         venue_connected: false,
         unavailable_reason: Some("no live snapshot (poll path)".to_string()),
         global_safety_paused,
+        risk_veto_count_since_last_visit,
     };
     Ok(Some(project_deployment(run, truth)))
 }
@@ -650,7 +699,7 @@ mod tests {
         seed_run(&pool, "live2", "live", "optimizer").await;
         let store = RunStore::new(pool);
 
-        let deps = list_live_deployments(&store, None, false).await.unwrap();
+        let deps = list_live_deployments(&store, None, false, None).await.unwrap();
         let ids: std::collections::BTreeSet<&str> = deps.iter().map(|d| d.deployment_id.as_str()).collect();
         assert_eq!(ids, ["live1", "live2"].into_iter().collect());
         // The backtest run is NEVER projected as a deployment.
@@ -666,7 +715,7 @@ mod tests {
         seed_run(&pool, "live1", "live", "human").await;
         let store = RunStore::new(pool);
 
-        let deps = list_live_deployments(&store, None, false).await.unwrap();
+        let deps = list_live_deployments(&store, None, false, None).await.unwrap();
         assert_eq!(deps.len(), 1);
         let d = &deps[0];
         assert_eq!(d.last_decision_at, None);
@@ -685,7 +734,7 @@ mod tests {
         seed_decision(&pool, "live1", 1, "2026-06-13T11:00:00+00:00", Some(-4.0)).await;
         let store = RunStore::new(pool);
 
-        let deps = list_live_deployments(&store, None, false).await.unwrap();
+        let deps = list_live_deployments(&store, None, false, None).await.unwrap();
         let d = &deps[0];
         // MAX(timestamp), not started_at.
         assert_eq!(d.last_decision_at.as_deref(), Some("2026-06-13T11:00:00+00:00"));
@@ -702,7 +751,7 @@ mod tests {
         seed_decision(&pool, "live1", 0, "2026-06-13T10:00:00+00:00", None).await;
         let store = RunStore::new(pool);
 
-        let deps = list_live_deployments(&store, None, false).await.unwrap();
+        let deps = list_live_deployments(&store, None, false, None).await.unwrap();
         let d = &deps[0];
         assert_eq!(d.realized_pnl_usd, None, "all-null pnl ⇒ None, never a faked 0");
         // The decision was still recorded, so last_decision_at IS set.
@@ -716,8 +765,108 @@ mod tests {
         seed_run(&pool, "live1", "live", "optimizer").await;
         let store = RunStore::new(pool);
 
-        let deps = list_live_deployments(&store, None, false).await.unwrap();
+        let deps = list_live_deployments(&store, None, false, None).await.unwrap();
         assert_eq!(deps[0].source, DeploymentSource::Optimizer);
+    }
+
+    // ── bead s78.2: risk_veto_count_since_last_visit wiring ─────────────────
+
+    /// Seed an `agent_runs` parent so `supervisor_notes.run_id` has a real
+    /// parent (mirrors the live path's invariant). The note's `run_id` matches
+    /// the deployment (eval_runs) id, exactly as the live executor records it
+    /// via `record_supervisor_note(&run.id, "risk", ...)`.
+    async fn seed_agent_run(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO agent_runs (id, objective, status, started_at, retention_mode) \
+             VALUES (?, 'obj', 'running', '2026-06-13T00:00:00Z', 'full_debug')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("seed agent_runs row");
+    }
+
+    /// Seed one `role='risk'` supervisor note with an explicit `created_at` so
+    /// the count's inclusive boundary is deterministic.
+    async fn seed_risk_note(pool: &SqlitePool, run_id: &str, created_at: &str, content: &str) {
+        sqlx::query(
+            "INSERT INTO supervisor_notes (id, run_id, role, content, severity, created_at) \
+             VALUES (?, ?, 'risk', ?, 'warn', ?)",
+        )
+        .bind(ulid::Ulid::new().to_string())
+        .bind(run_id)
+        .bind(content)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .expect("seed supervisor_notes risk row");
+    }
+
+    #[tokio::test]
+    async fn list_risk_veto_count_is_none_without_a_since_boundary() {
+        // No `?since` ⇒ the field is None (can't count "since an unknown time"),
+        // even though risk vetoes EXIST on the run.
+        let pool = fresh_pool().await;
+        seed_scenario(&pool, "scn").await;
+        seed_run(&pool, "live1", "live", "human").await;
+        seed_agent_run(&pool, "live1").await;
+        seed_risk_note(&pool, "live1", "2026-06-13T10:00:00+00:00", "veto").await;
+        let store = RunStore::new(pool);
+
+        let deps = list_live_deployments(&store, None, false, None).await.unwrap();
+        assert_eq!(
+            deps[0].risk_veto_count_since_last_visit, None,
+            "no boundary ⇒ None, never a count (even with real vetoes present)"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_risk_veto_count_excludes_notes_before_boundary() {
+        let pool = fresh_pool().await;
+        seed_scenario(&pool, "scn").await;
+        seed_run(&pool, "live1", "live", "human").await;
+        seed_agent_run(&pool, "live1").await;
+        // One veto BEFORE the boundary (excluded), two AT/AFTER (counted).
+        seed_risk_note(&pool, "live1", "2026-06-10T00:00:00+00:00", "old").await;
+        seed_risk_note(&pool, "live1", "2026-06-12T00:00:00+00:00", "boundary").await;
+        seed_risk_note(&pool, "live1", "2026-06-12T06:00:00+00:00", "after").await;
+        let store = RunStore::new(pool);
+
+        let since = DateTime::parse_from_rfc3339("2026-06-12T00:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let deps = list_live_deployments(&store, None, false, Some(since))
+            .await
+            .unwrap();
+        assert_eq!(
+            deps[0].risk_veto_count_since_last_visit,
+            Some(2),
+            "inclusive boundary counts the at/after vetoes, excludes the earlier one"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_risk_veto_count_is_honest_zero_with_boundary_no_matching_notes() {
+        // Boundary supplied, no veto after it ⇒ Some(0): an honest real zero
+        // ("0 vetoes since you were last here"), NOT None.
+        let pool = fresh_pool().await;
+        seed_scenario(&pool, "scn").await;
+        seed_run(&pool, "live1", "live", "human").await;
+        seed_agent_run(&pool, "live1").await;
+        seed_risk_note(&pool, "live1", "2026-06-01T00:00:00+00:00", "old only").await;
+        let store = RunStore::new(pool);
+
+        let since = DateTime::parse_from_rfc3339("2026-06-12T00:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let deps = list_live_deployments(&store, None, false, Some(since))
+            .await
+            .unwrap();
+        assert_eq!(
+            deps[0].risk_veto_count_since_last_visit,
+            Some(0),
+            "boundary with zero matching notes ⇒ honest Some(0), never None"
+        );
     }
 
     #[test]

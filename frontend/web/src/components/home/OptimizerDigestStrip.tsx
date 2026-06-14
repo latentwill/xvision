@@ -71,7 +71,7 @@ export function OptimizerDigestStrip() {
   const rows = stats ?? [];
 
   const costLabel =
-    session.cost_usd != null ? `$${session.cost_usd.toFixed(2)}` : "$?";
+    session.cost_usd != null ? `$${session.cost_usd.toFixed(2)}` : "—";
 
   // suspect_count is now part of SessionListItem (S0 / O1a) — render the real
   // value, falling back to a dash only when the field is genuinely absent.

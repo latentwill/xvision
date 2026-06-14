@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+use crate::autooptimizer::mutator::clamp_to_bound;
 use crate::autooptimizer::mutator::{
     filter_tunable_paths, set_filter_value, FilterEdit, MutationDiff, ParamChange, ProseEdit,
 };
@@ -44,10 +45,52 @@ pub fn validate_mutation_diff(diff: &MutationDiff, base: &Strategy) -> Result<()
     validate_tools(&diff.tools.removed, &diff.tools.added, base, &mut errors);
     validate_filter_create(&diff.create_filter, base, &mut errors);
     validate_filter_edits(&diff.filter, base, &mut errors);
+    // WU-B: non-fatal observability — warn when a proposed value would be
+    // clamped by a TunableBound. The clamp in apply_to is the hard guarantee;
+    // this only logs so operators can see that the LLM proposed an out-of-range
+    // value (and the bounds soft guide in to_markdown may need improvement).
+    warn_out_of_bounds(diff, base);
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+/// Emit a non-fatal tracing warn for each proposed value that is outside its
+/// declared `TunableBound`. Does NOT add to `errors` — `apply_to` clamps the
+/// value, so this is purely for observability.
+fn warn_out_of_bounds(diff: &MutationDiff, base: &Strategy) {
+    if base.tunable_bounds.is_empty() {
+        return;
+    }
+    // Check param changes (covers mechanistic.*, risk.*, and mechanical_params paths).
+    for change in &diff.params {
+        if let Some(bound) = base.tunable_bounds.iter().find(|b| b.path == change.key) {
+            let clamped = clamp_to_bound(&change.after, bound);
+            if clamped != change.after {
+                tracing::warn!(
+                    path = %change.key,
+                    proposed = %change.after,
+                    clamped = %clamped,
+                    "proposed param value is out of declared TunableBound; will be clamped in apply_to"
+                );
+            }
+        }
+    }
+    // Check filter edits.
+    for edit in &diff.filter {
+        if let Some(bound) = base.tunable_bounds.iter().find(|b| b.path == edit.path) {
+            let clamped = clamp_to_bound(&edit.after, bound);
+            if clamped != edit.after {
+                tracing::warn!(
+                    path = %edit.path,
+                    proposed = %edit.after,
+                    clamped = %clamped,
+                    "proposed filter value is out of declared TunableBound; will be clamped in apply_to"
+                );
+            }
+        }
     }
 }
 

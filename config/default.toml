@@ -41,8 +41,8 @@ api_key_env = "NOUS_API_KEY"
 [default_llm]
 # Workspace-level default LLM. Used by the chat rail, the setup wizard, and
 # as a fallback for any agent slot that doesn't override its own provider/
-# model. Renamed from [intern] on 2026-05-12 — old configs with [intern]
-# still parse (one-release deprecation alias).
+# model. (Formerly the [intern] section; the Intern stage was retired and the
+# [intern] alias removed — use [default_llm].)
 provider          = "anthropic"  # anthropic | openai-compat | local-candle
 base_url          = "https://api.anthropic.com"
 model             = "claude-haiku-4-5"

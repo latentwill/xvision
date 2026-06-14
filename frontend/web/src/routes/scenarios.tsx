@@ -109,7 +109,7 @@ export function ScenariosRoute() {
     () => ({
       source:
         sourceToken === "optimizer"
-          ? "Generated"
+          ? null
           : sourceTokenToFilter(sourceToken),
       tags: sourceToken === "optimizer" ? [OPTIMIZER_SCENARIO_TAG] : [],
       exclude_tags:
@@ -213,7 +213,7 @@ export function ScenariosRoute() {
 
   return (
     <>
-      <Topbar title="Scenarios" sub={subtitleFor(q, total, list.rows.length)} />
+      <Topbar title="Scenarios" sub={subtitleFor(q, total, list.rows.length, archivedToken)} />
 
       <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
         <Link
@@ -259,8 +259,8 @@ export function ScenariosRoute() {
             </Link>
           ) : null
         }
-        renderRow={(row) => (
-          <DesktopRow key={row.id} row={row} onGo={go} />
+        renderRow={(row, _i, visibleKeys) => (
+          <DesktopRow key={row.id} row={row} onGo={go} visibleKeys={visibleKeys} />
         )}
         renderMobileRow={(row) => (
           <MListRow
@@ -293,22 +293,27 @@ function subtitleFor(
   q: { isPending: boolean; isError: boolean },
   total: number,
   visibleRows: number,
+  archivedToken: string,
 ): string {
   if (q.isPending) return "Loading…";
   if (q.isError) return "Couldn't load scenarios";
-  if (total === 0) return "0 scenarios";
-  if (visibleRows === total) {
-    return `${total} ${total === 1 ? "scenario" : "scenarios"}`;
-  }
-  return `${visibleRows} of ${total} scenarios`;
+  const base =
+    total === 0
+      ? "0 scenarios"
+      : visibleRows === total
+        ? `${total} ${total === 1 ? "scenario" : "scenarios"}`
+        : `${visibleRows} of ${total} scenarios`;
+  return archivedToken === "exclude" ? `${base} · archived hidden` : base;
 }
 
 function DesktopRow({
   row,
   onGo,
+  visibleKeys,
 }: {
   row: Scenario;
   onGo: (id: string) => void;
+  visibleKeys: Set<string>;
 }) {
   return (
     <tr
@@ -329,36 +334,46 @@ function DesktopRow({
           </div>
         ) : null}
       </td>
-      <td className="px-3 py-3 font-mono text-[12px] text-text-2">
-        {marketOf(row)}
-      </td>
-      <td className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2">
-        {fmtWindow(row.time_window.start, row.time_window.end)}
-      </td>
+      {visibleKeys.has("market") ? (
+        <td className="px-3 py-3 font-mono text-[12px] text-text-2">
+          {marketOf(row)}
+        </td>
+      ) : null}
+      {visibleKeys.has("window") ? (
+        <td className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2">
+          {fmtWindow(row.time_window.start, row.time_window.end)}
+        </td>
+      ) : null}
       {/* Granularity <td> removed — see column-list comment above. */}
-      <td
-        className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2"
-        title={row.created_at}
-      >
-        {fmtCreated(row.created_at)}
-      </td>
-      <td className="px-3 py-3">
-        <SourcePill source={row.source} />
-      </td>
-      <td className="px-3 py-3">
-        <div className="flex flex-wrap gap-1">
-          {row.tags.length > 0
-            ? row.tags.slice(0, 3).map((tag) => (
-                <Pill key={tag} tone="default">
-                  {tag}
-                </Pill>
-              ))
-            : <span className="text-[11px] text-text-3">—</span>}
-          {row.tags.length > 3 ? (
-            <Pill tone="default">+{row.tags.length - 3}</Pill>
-          ) : null}
-        </div>
-      </td>
+      {visibleKeys.has("created") ? (
+        <td
+          className="whitespace-nowrap px-3 py-3 text-[12px] text-text-2"
+          title={row.created_at}
+        >
+          {fmtCreated(row.created_at)}
+        </td>
+      ) : null}
+      {visibleKeys.has("source") ? (
+        <td className="px-3 py-3">
+          <SourcePill source={row.source} />
+        </td>
+      ) : null}
+      {visibleKeys.has("tags") ? (
+        <td className="px-3 py-3">
+          <div className="flex flex-wrap gap-1">
+            {row.tags.length > 0
+              ? row.tags.slice(0, 3).map((tag) => (
+                  <Pill key={tag} tone="default">
+                    {tag}
+                  </Pill>
+                ))
+              : <span className="text-[11px] text-text-3">—</span>}
+            {row.tags.length > 3 ? (
+              <Pill tone="default">+{row.tags.length - 3}</Pill>
+            ) : null}
+          </div>
+        </td>
+      ) : null}
       <td
         className="px-5 py-3 text-right"
         onClick={(e) => e.stopPropagation()}

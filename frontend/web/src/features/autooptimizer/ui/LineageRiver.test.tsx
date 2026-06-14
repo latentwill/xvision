@@ -236,10 +236,12 @@ describe("LineageRiver", () => {
     expect(screen.queryByTestId("river-ghost")).toBeNull();
   });
 
-  it("labels zero-kept rivers with 'nothing kept yet'", () => {
+  it("does NOT show 'nothing kept yet' for a single-node (one active node = kept)", () => {
+    // W18 fix: keptCount counts nodes, not edges. A single active node has
+    // keptCount=1, which is > 0, so the banner must not appear.
     mockRiver(SINGLE_NODE);
     renderWithProviders(<LineageRiver />);
-    expect(screen.getByText(/1 line · nothing kept yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing kept yet/)).not.toBeInTheDocument();
   });
 
   it("renders an honest empty panel when the river is empty but history exists", () => {

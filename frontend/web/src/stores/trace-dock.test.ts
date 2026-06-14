@@ -28,7 +28,8 @@ function span(overrides: Partial<RunSpan> = {}): RunSpan {
 }
 
 function resetStore() {
-  useTraceDock.getState().setActiveRun(null, "post-hoc");
+  useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
+  useTraceDock.getState().setActiveRun("live", null, "post-hoc");
 }
 
 describe("trace-dock store — dock shell", () => {
@@ -50,12 +51,56 @@ describe("trace-dock store — dock shell", () => {
     }
   });
 
-  test("setActiveRun resets selectedSpan", () => {
-    useTraceDock.setState({ selectedSpanId: "s5" });
-    useTraceDock.getState().setActiveRun("run_other", "post-hoc");
-    expect(useTraceDock.getState().selectedSpanId).toBeNull();
-    expect(useTraceDock.getState().activeRunId).toBe("run_other");
-    expect(useTraceDock.getState().mode).toBe("post-hoc");
+  test("setActiveRun resets selectedSpan within its scope", () => {
+    useTraceDock.getState().setSelectedSpan("eval", "s5");
+    useTraceDock.getState().setActiveRun("eval", "run_other", "post-hoc");
+    expect(useTraceDock.getState().byScope.eval.selectedSpanId).toBeNull();
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBe("run_other");
+    expect(useTraceDock.getState().byScope.eval.mode).toBe("post-hoc");
+  });
+});
+
+describe("trace-dock store — per-scope state", () => {
+  beforeEach(resetStore);
+
+  test("setActiveRun on eval leaves the live scope untouched", () => {
+    useTraceDock.getState().setActiveRun("eval", "A", "live");
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBe("A");
+    expect(useTraceDock.getState().byScope.eval.mode).toBe("live");
+    // Live scope stays at its init values.
+    expect(useTraceDock.getState().byScope.live.activeRunId).toBeNull();
+    expect(useTraceDock.getState().byScope.live.mode).toBe("post-hoc");
+  });
+
+  test("setActiveRun on live leaves the eval scope untouched", () => {
+    useTraceDock.getState().setActiveRun("eval", "A", "post-hoc");
+    useTraceDock.getState().setActiveRun("live", "B", "live");
+    expect(useTraceDock.getState().byScope.live.activeRunId).toBe("B");
+    // Eval scope keeps its earlier run.
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBe("A");
+  });
+
+  test("nulling the eval scope does not affect the live scope", () => {
+    useTraceDock.getState().setActiveRun("eval", "A", "post-hoc");
+    useTraceDock.getState().setActiveRun("live", "B", "live");
+    useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBeNull();
+    // Live run survives the eval-side cleanup — the bug this reshape fixes.
+    expect(useTraceDock.getState().byScope.live.activeRunId).toBe("B");
+  });
+
+  test("setSelectedSpan is per-scope", () => {
+    useTraceDock.getState().setSelectedSpan("eval", "s_eval");
+    useTraceDock.getState().setSelectedSpan("live", "s_live");
+    expect(useTraceDock.getState().byScope.eval.selectedSpanId).toBe("s_eval");
+    expect(useTraceDock.getState().byScope.live.selectedSpanId).toBe("s_live");
+  });
+
+  test("setCostOverrideUsd is per-scope", () => {
+    useTraceDock.getState().setCostOverrideUsd("eval", 0.11);
+    useTraceDock.getState().setCostOverrideUsd("live", 0.22);
+    expect(useTraceDock.getState().byScope.eval.costOverrideUsd).toBe(0.11);
+    expect(useTraceDock.getState().byScope.live.costOverrideUsd).toBe(0.22);
   });
 });
 
@@ -328,7 +373,7 @@ describe("trace-dock store — streamingState", () => {
       kind: "model.call",
     });
     useTraceDock.getState().recordLag(2);
-    useTraceDock.getState().setActiveRun("run_new", "live");
+    useTraceDock.getState().setActiveRun("eval", "run_new", "live");
     const s = useTraceDock.getState().streamingState;
     expect([...s.activeSpanIds]).toEqual([]);
     expect(s.droppedEvents).toBe(0);
@@ -340,16 +385,16 @@ describe("trace-dock store — costOverrideUsd", () => {
   beforeEach(resetStore);
 
   test("setCostOverrideUsd stores the eval-side cost", () => {
-    expect(useTraceDock.getState().costOverrideUsd).toBeNull();
-    useTraceDock.getState().setCostOverrideUsd(0.4242);
-    expect(useTraceDock.getState().costOverrideUsd).toBe(0.4242);
-    useTraceDock.getState().setCostOverrideUsd(null);
-    expect(useTraceDock.getState().costOverrideUsd).toBeNull();
+    expect(useTraceDock.getState().byScope.eval.costOverrideUsd).toBeNull();
+    useTraceDock.getState().setCostOverrideUsd("eval", 0.4242);
+    expect(useTraceDock.getState().byScope.eval.costOverrideUsd).toBe(0.4242);
+    useTraceDock.getState().setCostOverrideUsd("eval", null);
+    expect(useTraceDock.getState().byScope.eval.costOverrideUsd).toBeNull();
   });
 
-  test("setActiveRun clears any pinned cost override", () => {
-    useTraceDock.getState().setCostOverrideUsd(1.23);
-    useTraceDock.getState().setActiveRun("run_next", "post-hoc");
-    expect(useTraceDock.getState().costOverrideUsd).toBeNull();
+  test("setActiveRun clears any pinned cost override for its scope", () => {
+    useTraceDock.getState().setCostOverrideUsd("eval", 1.23);
+    useTraceDock.getState().setActiveRun("eval", "run_next", "post-hoc");
+    expect(useTraceDock.getState().byScope.eval.costOverrideUsd).toBeNull();
   });
 });

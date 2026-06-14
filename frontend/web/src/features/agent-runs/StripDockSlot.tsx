@@ -8,6 +8,7 @@ import { agentKeys, listAgents } from "@/api/agents";
 import { scenarioKeys, listScenarios } from "@/api/scenarios";
 import { evalKeys, getRun as getEvalRun, listRuns } from "@/api/eval";
 import { useTraceDock } from "@/stores/trace-dock";
+import { useCurrentTraceScope } from "./use-trace-scope";
 import { formatSpendUsd } from "@/lib/format";
 import { shortTag } from "@/lib/short-tag";
 import { spanColor } from "./span-colors";
@@ -18,6 +19,7 @@ import {
   type EvalCapsuleRow,
   type EvalCapsuleStatus,
 } from "./EvalCapsule";
+import { LiveCapsule } from "../live/LiveCapsule";
 import { TraceDock } from "./TraceDock";
 
 function deriveFocusedTone(
@@ -129,7 +131,15 @@ function useLiveActiveSpanChip(isLive: boolean): EvalCapsuleCurrentSpan | null {
 }
 
 export function StripDockSlot() {
-  const { activeRunId, height, setHeight, mode } = useTraceDock();
+  // The capsule is scoped to the surface the operator is currently on:
+  // eval routes read the eval slice, live routes the live slice. This
+  // is what stops the capsule from following navigation onto unrelated
+  // pages — when the route's scope has no active run, this returns null.
+  const scope = useCurrentTraceScope();
+  const activeRunId = useTraceDock((s) => s.byScope[scope].activeRunId);
+  const mode = useTraceDock((s) => s.byScope[scope].mode);
+  const height = useTraceDock((s) => s.height);
+  const setHeight = useTraceDock((s) => s.setHeight);
   const navigate = useNavigate();
 
   const q = useQuery({
@@ -213,12 +223,12 @@ export function StripDockSlot() {
     staleTime: 30_000,
   });
 
-  useEffect(() => {
-    if (!activeRunId) return;
-    if (q.error instanceof ApiError && q.error.code === "not_found") {
-      useTraceDock.getState().setActiveRun(null, "post-hoc");
-    }
-  }, [activeRunId, q.error]);
+  // NOTE: no 404 self-clear here. A not_found agent-run must render an
+  // explicit empty/error state (handled by the `!q.data` guard below) —
+  // it must NOT mutate run ownership. The old self-clear caused the
+  // capsule to flicker as a sibling-eval 404 wiped the active run that
+  // the route owner had just set. Cleanup is now the route owner's
+  // job (unconditional unmount effect), not the dock slot's.
 
   // Tick once per second so the m:ss duration refreshes while live.
   useEffect(() => {
@@ -338,6 +348,23 @@ export function StripDockSlot() {
         pnl: formatPnlPct(r.total_return_pct ?? null),
       };
     });
+
+  // Live routes get the dedicated LiveCapsule: a single focused run row plus a
+  // compact orders section listing the run's `broker.call` spans. There's no
+  // sibling stack (live is single-run), so the eval-only sibling polling above
+  // simply yields an empty list for these runs. Eval routes keep the eval
+  // capsule (focused row + concurrent-cluster sibling stack) exactly as before.
+  if (scope === "live") {
+    const brokerCallSpans = q.data.spans.filter((s) => s.kind === "broker.call");
+    return (
+      <LiveCapsule
+        run={focused}
+        brokerSpans={brokerCallSpans}
+        onExpandDock={() => setHeight("working")}
+        onPopOut={() => navigate(`/live/runs/${activeRunId}`)}
+      />
+    );
+  }
 
   return (
     <EvalCapsule

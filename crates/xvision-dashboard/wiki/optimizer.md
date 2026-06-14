@@ -86,8 +86,8 @@ detail toggle is opened — the default surface is the candidate table, the prom
 diff, and the metric delta.
 
 `--capability` must have a DSPy **signature** to be optimizable. Today that is
-`trader` and `filter`; requesting an unsupported capability (`critic`, `router`,
-`decision_grader`, `intern`, `chat_authoring`) fails with exit `11`
+`trader` and `filter`; requesting an unsupported capability (`router`,
+`decision_grader`, `chat_authoring`) fails with exit `11`
 (`OptMissingCapability`, the typed `missing_capability_optimizer` error).
 
 ---

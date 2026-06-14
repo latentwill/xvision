@@ -81,6 +81,7 @@ const CreatorRoute = lazy(() => import("./features/marketplace/routes/CreatorRou
 const SellRoute = lazy(() => import("./features/marketplace/routes/SellRoute").then((m) => ({ default: m.SellRoute })));
 const ReceiptRoute = lazy(() => import("./features/marketplace/routes/ReceiptRoute").then((m) => ({ default: m.ReceiptRoute })));
 const MarketplaceWalletRoute = lazy(() => import("./features/marketplace/routes/WalletRoute").then((m) => ({ default: m.WalletRoute })));
+const NotFoundRoute = lazy(() => import("./routes/not-found").then((m) => ({ default: m.NotFoundRoute })));
 
 /**
  * Marker that only mounts after its parent Suspense has resolved
@@ -261,7 +262,7 @@ export const router = createBrowserRouter([
           { path: "danger", element: page(<SettingsDangerRoute />) },
         ],
       },
-      { path: "*", element: <Navigate to="/" replace /> },
+      { path: "*", element: page(<NotFoundRoute />) },
     ],
   },
 ]);

@@ -587,18 +587,6 @@ async fn provider_model_inventory(
     collect_summary_runtime_pair(
         &mut inventory,
         strategy
-            .intern_slot
-            .as_ref()
-            .and_then(|slot| slot.provider.as_deref()),
-        strategy
-            .intern_slot
-            .as_ref()
-            .and_then(|slot| slot.model.as_deref()),
-        "intern slot",
-    );
-    collect_summary_runtime_pair(
-        &mut inventory,
-        strategy
             .regime_slot
             .as_ref()
             .and_then(|slot| slot.provider.as_deref()),
@@ -612,12 +600,7 @@ async fn provider_model_inventory(
     if inventory.models.is_empty() && inventory.providers.is_empty() {
         // Legacy slot fallback for older strategy JSON. Trader is the
         // decision-maker, so it wins over advisory/scoring slots.
-        if let Some(slot) = strategy
-            .trader_slot
-            .as_ref()
-            .or(strategy.intern_slot.as_ref())
-            .or(strategy.regime_slot.as_ref())
-        {
+        if let Some(slot) = strategy.trader_slot.as_ref().or(strategy.regime_slot.as_ref()) {
             if let Some(provider) = slot.provider.as_ref() {
                 push_unique_trimmed(&mut inventory.providers, provider.clone());
             }
@@ -694,8 +677,6 @@ fn capability_string(capability: Capability) -> &'static str {
     match capability {
         Capability::Trader => "trader",
         Capability::Filter => "filter",
-        Capability::Critic => "critic",
-        Capability::Intern => "intern",
         Capability::Router => "router",
     }
 }
@@ -1486,19 +1467,6 @@ async fn collect_strategy_runtime_requirements(
             .and_then(|slot| slot.provider.as_deref()),
         strategy
             .trader_slot
-            .as_ref()
-            .and_then(|slot| slot.model.as_deref()),
-        &mut requirements,
-        &mut errors,
-    );
-    collect_runtime_requirements_for_slot(
-        "intern slot",
-        strategy
-            .intern_slot
-            .as_ref()
-            .and_then(|slot| slot.provider.as_deref()),
-        strategy
-            .intern_slot
             .as_ref()
             .and_then(|slot| slot.model.as_deref()),
         &mut requirements,

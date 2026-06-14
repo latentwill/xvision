@@ -699,7 +699,10 @@ pub fn set_filter_value(filter: &mut Filter, path: &str, value: &serde_json::Val
 #[derive(Debug, Clone, PartialEq)]
 pub enum MutatePathError {
     UnknownPath(String),
-    VariantMismatch { path: String, expected_leaf: &'static str },
+    VariantMismatch {
+        path: String,
+        expected_leaf: &'static str,
+    },
     InvalidValue(String),
 }
 
@@ -708,7 +711,10 @@ impl std::fmt::Display for MutatePathError {
         match self {
             MutatePathError::UnknownPath(p) => write!(f, "unknown mechanistic path: {p}"),
             MutatePathError::VariantMismatch { path, expected_leaf } => {
-                write!(f, "variant mismatch at {path}: variant only supports .{expected_leaf}")
+                write!(
+                    f,
+                    "variant mismatch at {path}: variant only supports .{expected_leaf}"
+                )
             }
             MutatePathError::InvalidValue(msg) => write!(f, "invalid value: {msg}"),
         }
@@ -777,10 +783,7 @@ pub fn set_mechanistic_value(
     // Parse: "mechanistic.close_policies.<i>.<leaf>"
     let parts: Vec<&str> = path.splitn(5, '.').collect();
     // Expected: ["mechanistic", "close_policies", "<i>", "<leaf>"]
-    if parts.len() != 4
-        || parts[0] != "mechanistic"
-        || parts[1] != "close_policies"
-    {
+    if parts.len() != 4 || parts[0] != "mechanistic" || parts[1] != "close_policies" {
         return Err(MutatePathError::UnknownPath(path.to_string()));
     }
     let idx: usize = parts[2]
@@ -795,9 +798,9 @@ pub fn set_mechanistic_value(
 
     // Variant-aware: check that the leaf matches the variant BEFORE mutating.
     let variant_leaf: &'static str = match policy {
-        ClosePolicy::StopLoss { .. }
-        | ClosePolicy::TakeProfit { .. }
-        | ClosePolicy::TrailingStop { .. } => "pct",
+        ClosePolicy::StopLoss { .. } | ClosePolicy::TakeProfit { .. } | ClosePolicy::TrailingStop { .. } => {
+            "pct"
+        }
         ClosePolicy::TimeExit { .. } => "bars",
         ClosePolicy::TargetPnl { .. } => "usd",
     };
@@ -814,20 +817,21 @@ pub fn set_mechanistic_value(
         ClosePolicy::StopLoss { pct }
         | ClosePolicy::TakeProfit { pct }
         | ClosePolicy::TrailingStop { pct } => {
-            let v = value
-                .as_f64()
-                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected f64 for .pct, got {value}")))?;
+            let v = value.as_f64().ok_or_else(|| {
+                MutatePathError::InvalidValue(format!("expected f64 for .pct, got {value}"))
+            })?;
             *pct = v;
         }
         ClosePolicy::TimeExit { bars } => {
-            let v = value_as_u32(value)
-                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected u32 for .bars, got {value}")))?;
+            let v = value_as_u32(value).ok_or_else(|| {
+                MutatePathError::InvalidValue(format!("expected u32 for .bars, got {value}"))
+            })?;
             *bars = v;
         }
         ClosePolicy::TargetPnl { usd } => {
-            let v = value
-                .as_f64()
-                .ok_or_else(|| MutatePathError::InvalidValue(format!("expected f64 for .usd, got {value}")))?;
+            let v = value.as_f64().ok_or_else(|| {
+                MutatePathError::InvalidValue(format!("expected f64 for .usd, got {value}"))
+            })?;
             *usd = v;
         }
     }
@@ -909,16 +913,34 @@ impl MutationDiff {
                 // WU3a: route mechanistic.* keys through the variant-aware setter.
                 // A mismatch or invalid value is a silent no-op here (the validator
                 // rejects those upstream; apply stays total).
+                // WU-B: clamp to TunableBound before writing, if a bound exists.
                 if let Some(ref mut mc) = s.mechanistic_config {
-                    let _ = set_mechanistic_value(mc, &change.key, &change.after);
+                    let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &change.key) {
+                        clamp_to_bound(&change.after, bound)
+                    } else {
+                        change.after.clone()
+                    };
+                    let _ = set_mechanistic_value(mc, &change.key, &value_to_write);
                 }
             } else if let Some(field) = risk_field_for_key(base, &change.key) {
+                // WU-B: risk params — clamp to TunableBound if present.
+                let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &change.key) {
+                    clamp_to_bound(&change.after, bound)
+                } else {
+                    change.after.clone()
+                };
                 if let Some(obj) = risk_json.as_object_mut() {
-                    obj.insert(field, change.after.clone());
+                    obj.insert(field, value_to_write);
                     risk_touched = true;
                 }
             } else {
-                set_param_value(&mut s.mechanical_params, &change.key, change.after.clone());
+                // WU-B: mechanical_params — clamp to TunableBound if present.
+                let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &change.key) {
+                    clamp_to_bound(&change.after, bound)
+                } else {
+                    change.after.clone()
+                };
+                set_param_value(&mut s.mechanical_params, &change.key, value_to_write);
             }
         }
         if risk_touched {
@@ -964,11 +986,17 @@ impl MutationDiff {
         // path or a wrong-type value is a silent no-op (validator rejects those
         // upstream; apply stays total). The filter field is cloned before mutation
         // so a partial-failure edit doesn't leave the filter half-changed.
+        // WU-B: clamp each filter edit's value to its TunableBound before writing.
         if let Some(ref mut f) = s.filter {
             for edit in &self.filter {
                 // Ignore the return value; validator already ensured the path
                 // resolves and the value has the right type.
-                set_filter_value(f, &edit.path, &edit.after);
+                let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &edit.path) {
+                    clamp_to_bound(&edit.after, bound)
+                } else {
+                    edit.after.clone()
+                };
+                set_filter_value(f, &edit.path, &value_to_write);
             }
         }
         s
@@ -1000,6 +1028,81 @@ fn set_param_value(params: &mut serde_json::Value, key: &str, value: serde_json:
     if let Some(map) = cur.as_object_mut() {
         map.insert(last.to_string(), value);
     }
+}
+
+/// Clamp `value` to the `[min, max]` range declared by a `TunableBound`, then
+/// apply step alignment for `Int` kind.
+///
+/// Behaviour per kind:
+/// - **Int**: clamp to `[min, max]` (if present), then round to nearest
+///   integer (so step=1 is honoured; finer steps are rounded to integer
+///   because Pine `input.int` is always integer-valued).
+/// - **Float**: clamp to `[min, max]` (if present). Non-numeric values are
+///   returned unchanged (the write path below will handle or ignore them).
+/// - **Bool**: coerce the value to a JSON bool.  Any truthy non-zero number
+///   → `true`; zero / JSON `false` / `null` → `false`.  Non-numeric,
+///   non-bool values are returned unchanged.
+///
+/// Paths with no matching `TunableBound` call this function's caller with
+/// the original value — this function is never called for unbound paths.
+pub fn clamp_to_bound(value: &serde_json::Value, b: &crate::strategies::TunableBound) -> serde_json::Value {
+    use crate::strategies::pine_import::inputs::InputKind;
+
+    match b.kind {
+        InputKind::Bool => {
+            // Coerce to bool: numeric 0 / JSON false / null → false; anything
+            // else truthy → true.
+            let result = match value {
+                serde_json::Value::Bool(v) => *v,
+                serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+                serde_json::Value::Null => false,
+                _ => return value.clone(), // non-coercible; caller handles
+            };
+            serde_json::Value::Bool(result)
+        }
+        InputKind::Float => {
+            let Some(mut v) = value.as_f64() else {
+                return value.clone();
+            };
+            if let Some(min) = b.min {
+                if v < min {
+                    v = min;
+                }
+            }
+            if let Some(max) = b.max {
+                if v > max {
+                    v = max;
+                }
+            }
+            serde_json::json!(v)
+        }
+        InputKind::Int => {
+            let Some(mut v) = value.as_f64() else {
+                return value.clone();
+            };
+            if let Some(min) = b.min {
+                if v < min {
+                    v = min;
+                }
+            }
+            if let Some(max) = b.max {
+                if v > max {
+                    v = max;
+                }
+            }
+            // Round to nearest integer (Pine input.int is always integer-valued).
+            v = v.round();
+            serde_json::json!(v)
+        }
+    }
+}
+
+/// Look up the `TunableBound` for `path` in `bounds`, if any.
+fn find_bound<'a>(
+    bounds: &'a [crate::strategies::TunableBound],
+    path: &str,
+) -> Option<&'a crate::strategies::TunableBound> {
+    bounds.iter().find(|b| b.path == path)
 }
 
 pub struct Mutator {
@@ -1753,7 +1856,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             with.contains("Prior optimizer outcomes on similar strategies"),
@@ -1767,7 +1870,20 @@ mod tests {
         );
 
         // None / empty → no memory section, but F32 exploration still present.
-        let without = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
+        let without = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
         assert!(
             !without.contains("Prior optimizer outcomes on similar strategies"),
             "memory section must be absent when None: {without}"
@@ -1789,7 +1905,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             !empty.contains("Prior optimizer outcomes on similar strategies"),
@@ -1805,7 +1921,20 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            5,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
         assert!(
             payload.contains("Tunable filter paths"),
             "filter section header must be present: {payload}"
@@ -1833,7 +1962,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         assert!(
             !no_filter_payload.contains("Tunable filter paths"),
@@ -1856,7 +1985,20 @@ mod tests {
             ("conditions.1.op.within_pct".to_string(), serde_json::json!(1.5)),
             ("conditions.2.rhs.numeric".to_string(), serde_json::json!(25.0)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 5, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            5,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
 
         // The window-op path must be listed AND annotated as a positive integer.
         assert!(
@@ -1912,7 +2054,20 @@ mod tests {
             ("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0)),
             ("cooldown_bars".to_string(), serde_json::json!(3u32)),
         ];
-        let payload = build_user_payload("prog", &kinds, &keys, &filter_paths, None, 7, 0, None, 0, &[], 0, true);
+        let payload = build_user_payload(
+            "prog",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            7,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
+        );
 
         // Param key list and risk.* references must be absent.
         assert!(
@@ -1964,7 +2119,7 @@ mod tests {
                 0,
                 &prose_roles,
                 0,
-            true,
+                true,
             );
             // Exactly one lever is focused per cycle (the three directive
             // signatures are mutually exclusive).
@@ -2006,7 +2161,7 @@ mod tests {
                 0,
                 &[],
                 0,
-            true,
+                true,
             );
             assert!(
                 !p.contains("agent's system prompt"),
@@ -2304,7 +2459,18 @@ mod tests {
         let keys = vec!["risk.risk_pct_per_trade".to_string()];
         let filter_paths: Vec<(String, serde_json::Value)> = vec![]; // no filter
         let out = build_user_payload(
-            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, false,
+            "PROGRAM",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            3,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            false,
         );
         assert!(
             out.contains("create_filter"),
@@ -2318,7 +2484,18 @@ mod tests {
         let keys: Vec<String> = vec![];
         let filter_paths = vec![("conditions.0.rhs.numeric".to_string(), serde_json::json!(25.0))];
         let out = build_user_payload(
-            "PROGRAM", &kinds, &keys, &filter_paths, None, 3, 0, None, 0, &[], 0, true,
+            "PROGRAM",
+            &kinds,
+            &keys,
+            &filter_paths,
+            None,
+            3,
+            0,
+            None,
+            0,
+            &[],
+            0,
+            true,
         );
         assert!(
             !out.contains("create_filter"),
@@ -2478,7 +2655,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         let p1 = build_user_payload(
             "prog",
@@ -2492,7 +2669,7 @@ mod tests {
             0,
             &[],
             0,
-        true,
+            true,
         );
         // The focus directive must name a different key for attempt 0 vs attempt 1.
         // Since `build_user_payload` embeds the focus in the exploration_section,
@@ -2550,7 +2727,7 @@ mod tests {
                 0,
                 &prose_roles,
                 attempt,
-            true,
+                true,
             );
             // Detect kind via the existing directive substrings the tests already use.
             if p.contains("agent system prompt") || p.contains("agent's system prompt") {
@@ -2584,8 +2761,7 @@ mod tests {
     fn mechanistic_tunable_paths_enumerates_correct_leaf_paths() {
         let cfg = fixture_mechanistic_config();
         let paths = mechanistic_tunable_paths(&cfg);
-        let path_map: std::collections::HashMap<String, serde_json::Value> =
-            paths.into_iter().collect();
+        let path_map: std::collections::HashMap<String, serde_json::Value> = paths.into_iter().collect();
 
         // StopLoss at index 0 → .pct
         assert!(
@@ -2631,17 +2807,21 @@ mod tests {
         let mut cfg = fixture_mechanistic_config();
 
         // Set index 0 (.pct on StopLoss) to 3.5
-        let result = set_mechanistic_value(&mut cfg, "mechanistic.close_policies.0.pct", &serde_json::json!(3.5));
-        assert!(result.is_ok(), "setting .pct on StopLoss must succeed: {result:?}");
+        let result = set_mechanistic_value(
+            &mut cfg,
+            "mechanistic.close_policies.0.pct",
+            &serde_json::json!(3.5),
+        );
+        assert!(
+            result.is_ok(),
+            "setting .pct on StopLoss must succeed: {result:?}"
+        );
 
         // Get-back via tunable paths
         let paths: std::collections::HashMap<String, serde_json::Value> =
             mechanistic_tunable_paths(&cfg).into_iter().collect();
         let val = paths["mechanistic.close_policies.0.pct"].as_f64().unwrap();
-        assert!(
-            (val - 3.5).abs() < 1e-9,
-            "round-trip: expected 3.5, got {val}"
-        );
+        assert!((val - 3.5).abs() < 1e-9, "round-trip: expected 3.5, got {val}");
 
         // Also verify the underlying variant is still StopLoss
         assert!(
@@ -2657,7 +2837,11 @@ mod tests {
         let cfg_before = cfg.clone();
 
         // index 1 is TimeExit{bars:10}; trying to set .pct on it is a cross-variant mismatch
-        let result = set_mechanistic_value(&mut cfg, "mechanistic.close_policies.1.pct", &serde_json::json!(5.0));
+        let result = set_mechanistic_value(
+            &mut cfg,
+            "mechanistic.close_policies.1.pct",
+            &serde_json::json!(5.0),
+        );
         assert!(
             result.is_err(),
             "cross-variant mismatch (.pct on TimeExit) must return an error"
@@ -2673,11 +2857,13 @@ mod tests {
         // Regression: a strategy with a filter and no mechanistic_config must
         // still expose the same filter paths it did before WU3a.
         let base = fixture_filter_strategy();
-        assert!(base.mechanistic_config.is_none(), "fixture has no mechanistic config");
+        assert!(
+            base.mechanistic_config.is_none(),
+            "fixture has no mechanistic config"
+        );
         let filter = base.filter.as_ref().expect("fixture has a filter");
         let paths = filter_tunable_paths(filter);
-        let path_map: std::collections::HashMap<String, serde_json::Value> =
-            paths.into_iter().collect();
+        let path_map: std::collections::HashMap<String, serde_json::Value> = paths.into_iter().collect();
 
         // Must still include conditions.0.rhs.numeric and cooldown_bars
         assert!(
@@ -2692,6 +2878,297 @@ mod tests {
         assert!(
             !path_map.keys().any(|k| k.starts_with("mechanistic.")),
             "filter_tunable_paths must not emit mechanistic.* keys"
+        );
+    }
+
+    // ── WU-B: tunable bounds clamp tests ─────────────────────────────────────
+
+    /// Build a Strategy whose `tunable_bounds` has two entries:
+    ///   - `conditions.0.rhs.numeric`  → Int [2, 50, step=1]
+    ///   - `mechanistic.close_policies.0.pct` → Float [0.5, 10.0, step=none]
+    /// The strategy also carries a filter (so filter edits resolve) and a
+    /// mechanistic config (so mechanistic writes apply).
+    fn fixture_bounded_strategy() -> Strategy {
+        use crate::strategies::pine_import::inputs::InputKind;
+        use crate::strategies::{ClosePolicy, MechanisticConfig, TunableBound};
+
+        // Build from the filter fixture (which has conditions.0.rhs.numeric = 25.0)
+        // and layer in mechanistic_config + tunable_bounds.
+        let mut s = fixture_filter_strategy();
+        s.mechanistic_config = Some(MechanisticConfig {
+            entry_rules: vec![],
+            close_policies: vec![ClosePolicy::StopLoss { pct: 2.0 }],
+        });
+        s.tunable_bounds = vec![
+            TunableBound {
+                path: "conditions.0.rhs.numeric".to_string(),
+                min: Some(2.0),
+                max: Some(50.0),
+                step: Some(1.0),
+                kind: InputKind::Int,
+            },
+            TunableBound {
+                path: "mechanistic.close_policies.0.pct".to_string(),
+                min: Some(0.5),
+                max: Some(10.0),
+                step: None,
+                kind: InputKind::Float,
+            },
+        ];
+        s
+    }
+
+    #[test]
+    fn clamp_to_bound_int_clamps_above_max() {
+        // A filter edit proposing 999 on a bound with max=50 must be clamped to 50.
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(999),
+            }],
+            create_filter: None,
+            rationale: "out-of-range test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter
+            .conditions
+            .leaves_dfs()
+            .into_iter()
+            .next()
+            .expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!(
+                    (v - 50.0).abs() < 1e-9,
+                    "Int bound: 999 clamped to max=50, got {v}"
+                );
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_int_clamps_below_min() {
+        // A filter edit proposing 0 on a bound with min=2 must be clamped to 2.
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(0),
+            }],
+            create_filter: None,
+            rationale: "below-min test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter
+            .conditions
+            .leaves_dfs()
+            .into_iter()
+            .next()
+            .expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!((v - 2.0).abs() < 1e-9, "Int bound: 0 clamped to min=2, got {v}");
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_int_step_alignment() {
+        // In-range value 7.3 with step=1 must be rounded to nearest integer (7).
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Filter,
+            prose: vec![],
+            params: vec![],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![FilterEdit {
+                path: "conditions.0.rhs.numeric".to_string(),
+                before: serde_json::json!(25.0),
+                after: serde_json::json!(7.3),
+            }],
+            create_filter: None,
+            rationale: "step-alignment test".into(),
+        };
+        let child = diff.apply_to(&base);
+        let filter = child.filter.as_ref().expect("child must have a filter");
+        let cond = filter
+            .conditions
+            .leaves_dfs()
+            .into_iter()
+            .next()
+            .expect("one condition");
+        match &cond.rhs {
+            Operand::Numeric(v) => {
+                assert!(
+                    (v - 7.0).abs() < 1e-9,
+                    "Int kind: 7.3 should round to 7.0, got {v}"
+                );
+            }
+            other => panic!("expected Numeric rhs, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_float_mechanistic_clamped() {
+        // A mechanistic param write proposing 50.0 on a bound max=10.0 clamps to 10.0.
+        let base = fixture_bounded_strategy();
+        let diff = MutationDiff {
+            kind: MutationKind::Param,
+            prose: vec![],
+            params: vec![ParamChange {
+                key: "mechanistic.close_policies.0.pct".to_string(),
+                before: serde_json::json!(2.0),
+                after: serde_json::json!(50.0),
+            }],
+            tools: ToolDiff {
+                added: vec![],
+                removed: vec![],
+            },
+            filter: vec![],
+            create_filter: None,
+            rationale: "mechanistic clamp test".into(),
+        };
+        let child = diff.apply_to(&base);
+        use crate::strategies::ClosePolicy;
+        let mc = child
+            .mechanistic_config
+            .as_ref()
+            .expect("must have mechanistic config");
+        match &mc.close_policies[0] {
+            ClosePolicy::StopLoss { pct } => {
+                assert!(
+                    (pct - 10.0).abs() < 1e-9,
+                    "Float bound: 50.0 clamped to max=10.0, got {pct}"
+                );
+            }
+            other => panic!("expected StopLoss, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clamp_to_bound_param_change_clamped() {
+        // A mechanical_params write on a path with a bound also gets clamped.
+        // Use a strategy with a tunable_bounds entry for a mechanical_params key.
+        use crate::strategies::pine_import::inputs::InputKind;
+        use crate::strategies::TunableBound;
+
+        let mut base = fixture_strategy();
+        base.tunable_bounds = vec![TunableBound {
+            path: "ema_fast".to_string(),
+            min: Some(5.0),
+            max: Some(20.0),
+            step: None,
+            kind: InputKind::Int,
+        }];
+
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "ema_fast".into(),
+                before: serde_json::json!(12),
+                after: serde_json::json!(999),
+            }],
+            vec![],
+            vec![],
+        );
+        let child = diff.apply_to(&base);
+        // 999 clamped to max=20, then rounded to integer → 20
+        assert_eq!(
+            child.mechanical_params["ema_fast"],
+            serde_json::json!(20.0),
+            "ema_fast: 999 must be clamped to max=20"
+        );
+    }
+
+    #[test]
+    fn clamp_to_bound_bool_coercion() {
+        // A Bool bound: any truthy numeric value (e.g. 1.0) stays true; 0.0 → false.
+        // Since filter paths don't commonly carry bool, we test via a mechanical_params
+        // bool-kind bound.
+        use crate::strategies::pine_import::inputs::InputKind;
+        use crate::strategies::TunableBound;
+
+        let mut base = fixture_strategy();
+        // Add a bool-typed param
+        base.mechanical_params = serde_json::json!({ "use_ema_filter": true });
+        base.tunable_bounds = vec![TunableBound {
+            path: "use_ema_filter".to_string(),
+            min: None,
+            max: None,
+            step: None,
+            kind: InputKind::Bool,
+        }];
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "use_ema_filter".into(),
+                before: serde_json::json!(true),
+                after: serde_json::json!(0),
+            }],
+            vec![],
+            vec![],
+        );
+        let child = diff.apply_to(&base);
+        assert_eq!(
+            child.mechanical_params["use_ema_filter"],
+            serde_json::json!(false),
+            "Bool bound: 0 must coerce to false"
+        );
+    }
+
+    #[test]
+    fn unbound_path_is_byte_identical_to_no_bounds() {
+        // A path NOT in tunable_bounds must be written exactly as before (no-op on logic).
+        // We compare child from a bounded strategy vs child from the same strategy
+        // with empty bounds — they must agree on the unbound path's written value.
+        let mut base_with_bounds = fixture_bounded_strategy();
+        let diff = diff_with(
+            vec![ParamChange {
+                key: "ema_fast".into(), // not in tunable_bounds for bounded fixture
+                before: serde_json::json!(12),
+                after: serde_json::json!(99),
+            }],
+            vec![],
+            vec![],
+        );
+        // Apply with bounds present
+        let child_with_bounds = diff.apply_to(&base_with_bounds);
+
+        // Apply without any bounds
+        let mut base_no_bounds = base_with_bounds.clone();
+        base_no_bounds.tunable_bounds = vec![];
+        let child_no_bounds = diff.apply_to(&base_no_bounds);
+
+        assert_eq!(
+            child_with_bounds.mechanical_params["ema_fast"], child_no_bounds.mechanical_params["ema_fast"],
+            "unbound path must produce the same value with or without bounds present"
+        );
+        assert_eq!(
+            child_with_bounds.mechanical_params["ema_fast"],
+            serde_json::json!(99),
+            "unbound path must write the proposed value unchanged"
         );
     }
 }

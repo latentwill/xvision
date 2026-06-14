@@ -853,18 +853,22 @@ pub async fn post_import_sealed(
 
     // c. PROOF OF ADDRESS (lane cgz). The signed challenge + signature are
     //    required; a missing one is a clean 400 (after address/listing checks).
-    let message = body.message.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
-        DashboardError::Validation {
-            field: "message".into(),
-            msg: "sealed import requires the signed challenge message (GET …/import-challenge)".into(),
-        }
-    })?;
-    let signature = body.signature.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
-        DashboardError::Validation {
+    let message =
+        body.message
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| DashboardError::Validation {
+                field: "message".into(),
+                msg: "sealed import requires the signed challenge message (GET …/import-challenge)".into(),
+            })?;
+    let signature = body
+        .signature
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| DashboardError::Validation {
             field: "signature".into(),
             msg: "sealed import requires the personal_sign signature of the challenge message".into(),
-        }
-    })?;
+        })?;
     //    Recover the signer from the EIP-191 signature and require it to equal
     //    the claimed address, then validate the message's listing binding +
     //    freshness. Runs BEFORE the license gate so a forged/mismatched proof

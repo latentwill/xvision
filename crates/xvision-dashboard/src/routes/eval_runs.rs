@@ -467,6 +467,7 @@ fn event_name(ev: &RunChartEvent) -> &'static str {
         // distinct name so it never collides with the chart's `equity` frame.
         RunChartEvent::DeploymentMetrics(_) => "deployment_metrics",
         RunChartEvent::Status { .. } => "status",
+        RunChartEvent::LiveRunState(_) => "live_run_state",
     }
 }
 

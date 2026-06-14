@@ -86,11 +86,11 @@ mod tests {
     fn sample_manifest() -> AgentManifest {
         AgentManifest {
             schema: SCHEMA_VERSION.to_string(),
-            name: "xvision-trader-arm".to_string(),
-            description: "LLM-driven trader arm".to_string(),
+            name: "xvision-sample-agent".to_string(),
+            description: "LLM-driven sample agent".to_string(),
             model: "Qwen/Qwen3-32B".to_string(),
             strategy_config: StrategyConfigSummary {
-                name: "trader_arm".to_string(),
+                name: "sample_strategy".to_string(),
                 params: vec![],
             },
             code_commit: "abc1234".to_string(),

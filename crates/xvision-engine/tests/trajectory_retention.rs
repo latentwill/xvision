@@ -161,7 +161,7 @@ async fn purge_expired_does_not_delete_fresh_recordings() {
     let tmp = TempDir::new().unwrap();
     let store = open_store_with_ttl(&tmp, RetentionMode::FullDebug, 86400).await; // 1 day TTL
 
-    let key = make_key("intern");
+    let key = make_key("regime");
     let rid = store.begin_recording(&key).await.unwrap();
     store.complete_recording(&rid).await.unwrap();
 
