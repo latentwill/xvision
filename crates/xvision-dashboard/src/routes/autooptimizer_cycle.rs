@@ -11,7 +11,7 @@ use axum::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use xvision_core::config::ProviderKind;
+use xvision_core::config::{AgentRuntime, ProviderKind};
 use xvision_engine::agent::llm::{AnthropicDispatch, LlmDispatch, OpenaiCompatDispatch};
 use xvision_engine::api::memory;
 use xvision_engine::autooptimizer::{
@@ -115,6 +115,9 @@ fn event_ids(ev: &CycleProgressEvent) -> (String, Option<String>) {
             session_id, cycle_id, ..
         } => (session_id.clone(), Some(cycle_id.clone())),
         NoCandidate {
+            session_id, cycle_id, ..
+        } => (session_id.clone(), Some(cycle_id.clone())),
+        CandidateError {
             session_id, cycle_id, ..
         } => (session_id.clone(), Some(cycle_id.clone())),
         MutationGated {
@@ -403,6 +406,24 @@ pub async fn start_cycle(
     } else {
         None
     };
+    // WU-3b: spawn the shared Cline sidecar before moving api_ctx into the task.
+    // On error, fall back to LlmDispatch (soft fallback; WU-1.6 converts to hard
+    // error once the plumbing is verified end-to-end across both launch surfaces).
+    let cline_ctx = xvision_engine::api::eval::spawn_optimizer_cline_ctx(
+        &api_ctx,
+        &cfg.mutator.provider, // TODO: prefer the strategy's resolved trader provider (select_eval_provider parity)
+        Arc::new(ToolRegistry::default_with_builtins()),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "dashboard cycle: sidecar spawn failed; trader falls back to LlmDispatch");
+        None
+    });
+    let agent_runtime = if cline_ctx.is_some() {
+        AgentRuntime::Cline
+    } else {
+        AgentRuntime::LlmDispatch
+    };
     tokio::spawn(async move {
         // The production paper tester: real cached-backtest Executor, metered at
         // the dispatch boundary, with the shared per-cycle meter feeding both the
@@ -411,7 +432,8 @@ pub async fn start_cycle(
             api_ctx,
             backtest_dispatch,
             Arc::new(ToolRegistry::default_with_builtins()),
-        );
+        )
+        .with_cline_runtime(agent_runtime, cline_ctx);
         // F28: enforce the operator-set budget ceiling. Once the metered
         // paper-test cost reaches `budget_cap`, the cycle stops before launching
         // another backtest (no cap → f64::INFINITY). This is the guard against the
@@ -759,6 +781,7 @@ pub(super) fn build_cycle_config(
         // The dashboard cycle launcher does not (yet) surface a per-cycle
         // output-token cap; preserve prior behaviour (no cycle-level cap).
         max_output_tokens: None,
+        max_consecutive_errors: 3,
     }
 }
 

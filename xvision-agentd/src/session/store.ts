@@ -51,6 +51,14 @@ export interface StartRunConfig {
    * `"default"` in the recorder when omitted.
    */
   slot_role?: string
+  /**
+   * Reasoning effort hint forwarded from the Rust engine to the @cline/sdk
+   * gateway. Passed as `GatewayModelHandleOptions.reasoning.effort` when
+   * building the provider model. Applies to CoT models (e.g. deepseek-r1 via
+   * Ollama) where "medium" prevents reasoning from starving the JSON answer.
+   * One of "low" | "medium" | "high" | "none".
+   */
+  reasoning_effort?: string
 }
 
 export interface Session {
