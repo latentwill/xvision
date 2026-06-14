@@ -91,6 +91,11 @@ const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "broker.call",
   "recovery.attempt",
   "state.transition",
+  // WS-8 Part 2: the synthetic kind for projected engine lifecycle signals
+  // (risk veto / regime / order / memory …). Keeping it in the known set means
+  // `projectionToRunSpan` preserves it instead of flattening to `agent.run`;
+  // the carried `attributes.engine_event_kind` then drives the family/label.
+  "engine.event",
 ]);
 type SpanKindLike = RunSpan["kind"];
 
@@ -111,7 +116,10 @@ function projectionToRunSpan(p: SpanProjection): RunSpan {
         : p.status === "error"
           ? "error"
           : "ok",
-    attributes: {},
+    // Carry the projection's attribute bag through (WS-8 Part 2): an
+    // `engine.event` row resolves its family/label off
+    // `attributes.engine_event_kind`, so dropping it would re-blank the row.
+    attributes: p.attributes,
   };
 }
 
