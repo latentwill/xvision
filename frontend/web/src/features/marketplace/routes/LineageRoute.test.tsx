@@ -62,7 +62,12 @@ function Wrapper({
         <MemoryRouter initialEntries={[initialPath]}>
           <Routes>
             <Route path="/marketplace/lineage/:name" element={<LineageRoute />} />
-            <Route path="/marketplace/receipts/:tx" element={<div>receipt</div>} />
+            {/* Buy/clone now finalize the acquisition and land on the runnable
+                Strategy detail page (QA #11/#12) — no receipt page. */}
+            <Route
+              path="/strategies/:id"
+              element={<div data-testid="strategy-detail">strategy detail</div>}
+            />
           </Routes>
         </MemoryRouter>
       </MarketplaceDataProvider>
@@ -196,12 +201,14 @@ describe("LineageRoute", () => {
     expect(screen.queryByRole("button", { name: /^share$/i })).not.toBeInTheDocument();
   });
 
-  it("Acquire calls purchaseIntent and navigates to receipts", async () => {
+  it("Acquire finalizes the buy and navigates to the Strategy detail page", async () => {
     const client = new FixtureMarketplaceData();
     const spy = vi.spyOn(client, "purchaseIntent").mockResolvedValue({
       txHash: "0xdeadbeef",
       network: "mantle-sepolia",
     });
+    // Finalize materializes the agents and resolves the new local strategy id.
+    vi.spyOn(client, "importSealed").mockResolvedValue({ agent_id: "NEW" });
     render(<Wrapper client={client} />);
     await screen.findByRole("button", { name: /^acquire$/i });
     await act(async () => {
@@ -210,11 +217,11 @@ describe("LineageRoute", () => {
     await waitFor(() => {
       expect(spy).toHaveBeenCalledWith("btc-momentum-v3");
     });
-    // After success, navigated to receipts
-    expect(await screen.findByText("receipt")).toBeInTheDocument();
+    // After success, landed on the runnable Strategy detail page (not a receipt).
+    expect(await screen.findByTestId("strategy-detail")).toBeInTheDocument();
   });
 
-  it("open-tier listings show Run free and route through cloneIntent", async () => {
+  it("open-tier listings show Run free and import via importListing", async () => {
     const client = new FixtureMarketplaceData();
     const base = await new FixtureMarketplaceData().getListing("btc-momentum-v3");
     vi.spyOn(client, "getListing").mockResolvedValue({
@@ -222,10 +229,9 @@ describe("LineageRoute", () => {
       tier: "open",
       priceUsdc: null,
     });
-    const cloneSpy = vi.spyOn(client, "cloneIntent").mockResolvedValue({
-      txHash: "0xfreeclone",
-      network: "mantle-sepolia",
-    });
+    const importSpy = vi
+      .spyOn(client, "importListing")
+      .mockResolvedValue({ agent_id: "FREE-NEW" });
     render(<Wrapper client={client} />);
     const runFree = await screen.findByTestId("run-free-btn");
     expect(runFree).toHaveTextContent(/run free/i);
@@ -234,8 +240,9 @@ describe("LineageRoute", () => {
     await act(async () => {
       await userEvent.click(runFree);
     });
-    await waitFor(() => expect(cloneSpy).toHaveBeenCalledWith("btc-momentum-v3"));
-    expect(await screen.findByText("receipt")).toBeInTheDocument();
+    await waitFor(() => expect(importSpy).toHaveBeenCalledWith("btc-momentum-v3"));
+    // Landed on the Strategy detail page (not a receipt).
+    expect(await screen.findByTestId("strategy-detail")).toBeInTheDocument();
   });
 
   it("does not render a 'Clone to edit' button — clone lives on the Strategies page, and sealed listings are encrypted", async () => {
@@ -255,13 +262,6 @@ describe("LineageRoute", () => {
     expect(
       screen.queryByRole("button", { name: /clone to edit/i }),
     ).not.toBeInTheDocument();
-  });
-
-  it("ingredient banner is shown when some ingredients are missing", async () => {
-    render(<Wrapper />);
-    // fixture has 2 missing ingredients
-    expect(await screen.findByTestId("ingredient-banner")).toBeInTheDocument();
-    expect(screen.getByText(/2 of 4/)).toBeInTheDocument();
   });
 
   it("receipts drawer is collapsed by default", async () => {

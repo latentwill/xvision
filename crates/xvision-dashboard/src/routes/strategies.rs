@@ -14,8 +14,9 @@ use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, archive_strategy, clear_strategy_filter, remove_agent, rename_agent_role,
     set_mechanistic_config, set_pipeline, set_risk_config, update_inspector, update_metadata, update_slot,
-    validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, RemoveAgentReq, RenameAgentRoleReq,
-    SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, MarketplaceProvenance,
+    RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategyRequirements,
+    StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -118,6 +119,28 @@ pub async fn get(
 ) -> Result<Json<Strategy>, DashboardError> {
     let strategy = strategy::get(&state.api_context(), &id).await?;
     Ok(Json(strategy))
+}
+
+/// `GET /api/strategy/:id/requirements` — per-strategy model/skill/tool
+/// readiness for the buyer's machine. The Strategy detail page renders these
+/// and gates the eval/go-live action when `all_models_satisfied` is false.
+pub async fn requirements(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<StrategyRequirements>, DashboardError> {
+    let req = strategy::strategy_requirements(&state.api_context(), &id).await?;
+    Ok(Json(req))
+}
+
+/// `GET /api/strategy/:id/marketplace` — marketplace provenance for a strategy
+/// acquired from the marketplace (creator, price paid, license NFT, explorer
+/// link). `null` when the strategy was not bought (hand-authored / optimizer).
+pub async fn marketplace_provenance(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Option<MarketplaceProvenance>>, DashboardError> {
+    let mp = strategy::read_marketplace_provenance(&state.api_context(), &id).await?;
+    Ok(Json(mp))
 }
 
 /// `POST /api/strategy/:id/clone` — duplicate a strategy draft for editing.

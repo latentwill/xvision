@@ -182,9 +182,16 @@ pub async fn post_publish(
     // a. Load the strategy (404s via ApiError::NotFound when absent).
     let strategy = strategy::get(&state.api_context(), &body.strategy_id).await?;
 
-    // b. Canonical JSON → manifest hash.
-    let value = serde_json::to_value(&strategy)
-        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize strategy: {e}")))?;
+    // b. Build the self-contained export bundle (the Strategy PLUS the full
+    //    Agent definitions every AgentRef points at) and serialize THAT for
+    //    the content hash / pin / seal. The bare Strategy only carries
+    //    `AgentRef` pointers; a buyer who imported it would have no agent rows
+    //    and the strategy couldn't run. The on-chain content_hash now covers
+    //    strategy + agents — acceptable pre-mainnet. Import (open + sealed)
+    //    accepts both the envelope and a legacy bare Strategy.
+    let export = strategy::export_strategy(&state.api_context(), &body.strategy_id).await?;
+    let value = serde_json::to_value(&export)
+        .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize strategy export: {e}")))?;
     let canonical = canonical_json(&value);
     let manifest_hash = manifest_hash_hex(&canonical);
 
@@ -689,6 +696,11 @@ pub async fn post_import(
     // e. Install as a NEW local strategy (fresh ULID).
     let imported = strategy::import_strategy(&state.api_context(), manifest).await?;
 
+    // f. Stamp marketplace provenance (issue #12 / QA #8). Best-effort — a
+    //    failure here is logged, never fatal: the buyer already holds the
+    //    strategy; provenance is decoration on the detail page.
+    stamp_marketplace_provenance(&state, &imported.manifest.id, &listing).await;
+
     Ok((
         StatusCode::CREATED,
         Json(ImportOut {
@@ -737,6 +749,121 @@ async fn license_gate(state: &AppState, address: Address, id: u64) -> Result<(),
         )));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace provenance (issue #12 / QA #8)
+// ---------------------------------------------------------------------------
+//
+// After an import mints the local strategy, the handlers stamp where it came
+// from (creator, price paid, license NFT, explorer link) so the Strategy
+// detail page can show a provenance strip. Stamping is BEST-EFFORT: a failure
+// is logged, never fatal — the buyer already paid.
+
+/// Maps the on-chain tier code to its wire label: `0` → `"open"`,
+/// `1` → `"sealed"`, anything else → `"open"` (best-effort label; provenance
+/// is decoration, not a gate).
+fn tier_label(tier: u8) -> &'static str {
+    match tier {
+        1 => "sealed",
+        _ => "open",
+    }
+}
+
+/// Maps a chain id to a human network label. Mirrors the frontend
+/// `TxChip`/`chain.ts` convention: Mantle Sepolia (5003) is the dev/test
+/// network, Mantle mainnet (5000) is production. Unknown chain ids fall back
+/// to a generic `"chain-{id}"` label so the strip still says *something*.
+fn network_label(chain_id: Option<u64>) -> String {
+    match chain_id {
+        Some(5003) => "mantle-sepolia".to_string(),
+        Some(5000) => "mantle".to_string(),
+        Some(id) => format!("chain-{id}"),
+        None => "mantle-sepolia".to_string(),
+    }
+}
+
+/// The block-explorer base for a chain id, matching the canonical Mantle
+/// explorers used by the frontend `TxChip` (NOT mantlescan.xyz). `None` for
+/// chains with no known explorer.
+fn explorer_base(chain_id: Option<u64>) -> Option<&'static str> {
+    match chain_id {
+        Some(5003) | None => Some("https://explorer.sepolia.mantle.xyz"),
+        Some(5000) => Some("https://explorer.mantle.xyz"),
+        Some(_) => None,
+    }
+}
+
+/// Builds the direct block-explorer URL for an owned ERC-1155 license token.
+/// Blockscout-style explorers (which the Mantle explorers are) expose a
+/// per-token-instance page at `{base}/token/{contract}/instance/{tokenId}`.
+/// `None` when the chain has no known explorer or the license-token address is
+/// unconfigured.
+fn license_token_explorer_url(
+    chain_id: Option<u64>,
+    license_token: Option<Address>,
+    token_id: &str,
+) -> Option<String> {
+    let base = explorer_base(chain_id)?;
+    let token = license_token?;
+    Some(format!("{base}/token/{token:#x}/instance/{token_id}"))
+}
+
+/// Build the [`MarketplaceProvenance`] to stamp onto a freshly-imported
+/// strategy from the listing it was bought from plus the resolved chain
+/// config. Pure / chain-free so it is unit-testable.
+///
+/// `license_token` / `chain_id` come from the startup-resolved
+/// `MarketplaceChainConfig`; when the chain env is dormant the explorer link
+/// degrades to `None` (the UI renders a muted, non-link label) but the rest of
+/// the provenance (creator, price, license id, best-known network label) is
+/// still populated — provenance never blocks the import.
+fn provenance_from_listing(
+    listing: &crate::marketplace_index::IndexedListing,
+    license_token: Option<Address>,
+    chain_id: Option<u64>,
+) -> xvision_engine::api::strategy::MarketplaceProvenance {
+    let token_id = listing.listing_id.to_string();
+    // The seller is the strategy author; prefer their decoded handle/name when
+    // present, else the seller address.
+    let creator = if listing.name.trim().is_empty() {
+        listing.seller.clone()
+    } else {
+        listing.name.clone()
+    };
+    xvision_engine::api::strategy::MarketplaceProvenance {
+        listing_id: token_id.clone(),
+        tier: tier_label(listing.tier).to_string(),
+        creator,
+        price_usdc: listing.price_usdc,
+        explorer_url: license_token_explorer_url(chain_id, license_token, &token_id),
+        license_token_id: token_id,
+        network: network_label(chain_id),
+    }
+}
+
+/// Best-effort provenance stamp: builds provenance from the listing + chain
+/// config and persists it onto the just-imported strategy. Any error is logged
+/// and swallowed — the purchase succeeded, provenance is decoration.
+async fn stamp_marketplace_provenance(
+    state: &AppState,
+    strategy_id: &str,
+    listing: &crate::marketplace_index::IndexedListing,
+) {
+    let mp = state.marketplace_chain();
+    let license_token = mp.and_then(|c| c.license_token);
+    let chain_id = mp.and_then(|c| c.chain.as_ref()).map(|c| c.chain_id);
+    let provenance = provenance_from_listing(listing, license_token, chain_id);
+    if let Err(e) =
+        strategy::write_marketplace_provenance(&state.api_context(), strategy_id, &provenance).await
+    {
+        tracing::warn!(
+            strategy_id,
+            listing_id = listing.listing_id,
+            error = %e,
+            "failed to stamp marketplace provenance after import (non-fatal; purchase succeeded)"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -924,6 +1051,10 @@ pub async fn post_import_sealed(
 
     // f. Install as a NEW local strategy (fresh ULID).
     let imported = strategy::import_strategy(&state.api_context(), body.manifest).await?;
+
+    // g. Stamp marketplace provenance (issue #12 / QA #8). Best-effort — see
+    //    `post_import` step f.
+    stamp_marketplace_provenance(&state, &imported.manifest.id, &listing).await;
 
     Ok((
         StatusCode::CREATED,
@@ -1188,6 +1319,90 @@ mod tests {
         assert_eq!(tier_code("open").unwrap(), 0);
         assert_eq!(tier_code("sealed").unwrap(), 1);
         assert!(tier_code("bogus").is_err());
+    }
+
+    // --- marketplace provenance (issue #12 / QA #8) --------------------------
+
+    fn sample_listing() -> crate::marketplace_index::IndexedListing {
+        crate::marketplace_index::IndexedListing {
+            listing_id: 42,
+            agent_nft_id: "100".into(),
+            agent_id: "01AGENT".into(),
+            seller: "0xseller00000000000000000000000000000000ab".into(),
+            content_hash: "deadbeef".into(),
+            content_uri: "ipfs://cid".into(),
+            tier: 0,
+            price_usdc: 12.5,
+            transferable_license: true,
+            revoked: false,
+            gen_art_seed: "01AGENT:deadbeef".into(),
+            name: "Momentum Maxi".into(),
+            symmetry: "".into(),
+            palette: "".into(),
+            attestation_count: 0,
+            units_sold: 0,
+            earned_usdc: 0.0,
+            return30d_pct: None,
+            sharpe: None,
+        }
+    }
+
+    #[test]
+    fn provenance_built_from_listing_with_chain_config() {
+        let license: Address = "0x1111111111111111111111111111111111111111".parse().unwrap();
+        let p = provenance_from_listing(&sample_listing(), Some(license), Some(5003));
+        assert_eq!(p.listing_id, "42");
+        assert_eq!(p.license_token_id, "42");
+        assert_eq!(p.tier, "open");
+        // Prefers the decoded listing name as the creator handle.
+        assert_eq!(p.creator, "Momentum Maxi");
+        assert_eq!(p.price_usdc, 12.5);
+        assert_eq!(p.network, "mantle-sepolia");
+        assert_eq!(
+            p.explorer_url.as_deref(),
+            Some("https://explorer.sepolia.mantle.xyz/token/0x1111111111111111111111111111111111111111/instance/42")
+        );
+    }
+
+    #[test]
+    fn provenance_sealed_tier_and_mainnet_explorer() {
+        let license: Address = "0x2222222222222222222222222222222222222222".parse().unwrap();
+        let mut listing = sample_listing();
+        listing.tier = 1;
+        let p = provenance_from_listing(&listing, Some(license), Some(5000));
+        assert_eq!(p.tier, "sealed");
+        assert_eq!(p.network, "mantle");
+        assert_eq!(
+            p.explorer_url.as_deref(),
+            Some("https://explorer.mantle.xyz/token/0x2222222222222222222222222222222222222222/instance/42")
+        );
+    }
+
+    #[test]
+    fn provenance_falls_back_to_seller_when_name_blank() {
+        let mut listing = sample_listing();
+        listing.name = "".into();
+        let p = provenance_from_listing(&listing, None, None);
+        assert_eq!(p.creator, "0xseller00000000000000000000000000000000ab");
+    }
+
+    #[test]
+    fn provenance_no_explorer_when_chain_unconfigured() {
+        // License token unset → no explorer link, but network label still set
+        // to the best-known default and the rest of the provenance present.
+        let p = provenance_from_listing(&sample_listing(), None, None);
+        assert_eq!(p.explorer_url, None);
+        assert_eq!(p.network, "mantle-sepolia");
+        assert_eq!(p.listing_id, "42");
+        assert_eq!(p.price_usdc, 12.5);
+    }
+
+    #[test]
+    fn provenance_no_explorer_for_unknown_chain() {
+        let license: Address = "0x3333333333333333333333333333333333333333".parse().unwrap();
+        let p = provenance_from_listing(&sample_listing(), Some(license), Some(1));
+        assert_eq!(p.explorer_url, None);
+        assert_eq!(p.network, "chain-1");
     }
 
     #[test]
