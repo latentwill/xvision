@@ -969,6 +969,21 @@ impl Executor {
         // table-only path.
         let mut filter_hook = crate::eval::filter_hook::FilterHook::new(strategy)?
             .map(|hook| hook.with_obs(self.obs_emitter.clone()));
+        // ERROR-1 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
+        // the documented `wake_when_in_position = Never` contract is "no
+        // mid-position calls; exits rely ENTIRELY on the deterministic risk
+        // gate (risk.stop_loss_atr_multiple)". A model that nonetheless emits a
+        // protective bracket at open time plants a stop tighter than the config
+        // ATR stop; because the trader is never re-woken in-position, the entry
+        // bar's own intraday low trips it and the position re-opens next bar →
+        // 1-bar churn / fee bleed. Honor the contract: under wake:never, ignore
+        // the model's protective brackets so only the config ATR stop (applied
+        // via the R1 fallback below) manages the exit.
+        let wake_never = strategy
+            .filter
+            .as_ref()
+            .map(|f| matches!(f.wake_when_in_position, xvision_filters::WakeInPosition::Never))
+            .unwrap_or(false);
         // Cache the pool handle for the hook's per-bar inserts. We
         // reach through `store` rather than threading it as a separate
         // parameter so the executor's surface area stays unchanged.
@@ -2650,8 +2665,24 @@ impl Executor {
                         } else {
                             xvision_core::trading::Direction::Short
                         };
-                        let sl_pct = parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0);
-                        let tp_pct = parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0);
+                        // ERROR-1: under wake:never the model's protective
+                        // brackets are ignored (see `wake_never` above) — only
+                        // the config ATR stop manages the exit. Neutralizing the
+                        // model's `*_pct` / `*_atr_mult` / trailing / breakeven /
+                        // fade / TP1-2 / time-exit inputs here leaves the R1
+                        // config-ATR fallback as the sole stop source.
+                        let sl_pct = if wake_never {
+                            0.0
+                        } else {
+                            parsed.stop_loss_pct.map(|v| v as f64).unwrap_or(0.0)
+                        };
+                        let tp_pct = if wake_never {
+                            0.0
+                        } else {
+                            parsed.take_profit_pct.map(|v| v as f64).unwrap_or(0.0)
+                        };
+                        let model_sl_atr_mult = if wake_never { None } else { parsed.sl_atr_mult };
+                        let model_tp_atr_mult = if wake_never { None } else { parsed.tp_atr_mult };
                         // R1: enforce the strategy's configured protective stop
                         // even when the model emits no bracket of its own. If
                         // the trader supplied neither a percent SL nor an ATR
@@ -2661,7 +2692,7 @@ impl Executor {
                         // `sl_atr_mult` wins when present; otherwise the
                         // strategy config supplies a deterministic ATR stop.
                         let config_atr_mult = strategy.risk.stop_loss_atr_multiple;
-                        let effective_sl_atr_mult = parsed.sl_atr_mult.or_else(|| {
+                        let effective_sl_atr_mult = model_sl_atr_mult.or_else(|| {
                             if sl_pct <= 0.0 && config_atr_mult > 0.0 {
                                 Some(config_atr_mult)
                             } else {
@@ -2672,10 +2703,39 @@ impl Executor {
                         // config fallback) needs it. When warmup leaves ATR
                         // unavailable, `atr_sl_price`/`atr_tp_price` no-op, so
                         // no spurious stop fires.
-                        let entry_atr = if effective_sl_atr_mult.is_some() || parsed.tp_atr_mult.is_some() {
+                        let entry_atr = if effective_sl_atr_mult.is_some() || model_tp_atr_mult.is_some() {
                             crate::eval::executor::sltp::compute_atr14(history_slice)
                         } else {
                             None
+                        };
+                        // Model-supplied management brackets, suppressed wholesale
+                        // under wake:never so the config ATR stop is authoritative.
+                        let (
+                            trailing_stop_pct,
+                            breakeven_trigger_pct,
+                            breakeven_offset_pct,
+                            fade_sl_bars,
+                            fade_sl_start_pct,
+                            fade_sl_end_pct,
+                            max_bars_held,
+                            tp1_pct,
+                            tp1_close_fraction,
+                            tp2_pct,
+                        ) = if wake_never {
+                            (None, None, None, None, None, None, None, None, None, None)
+                        } else {
+                            (
+                                parsed.trailing_stop_pct,
+                                parsed.breakeven_trigger_pct,
+                                parsed.breakeven_offset_pct,
+                                parsed.fade_sl_bars,
+                                parsed.fade_sl_start_pct,
+                                parsed.fade_sl_end_pct,
+                                parsed.max_bars_held,
+                                parsed.tp1_pct,
+                                parsed.tp1_close_fraction,
+                                parsed.tp2_pct,
+                            )
                         };
                         sltp_state.insert(
                             asset_sym,
@@ -2685,18 +2745,18 @@ impl Executor {
                                 sl_pct,
                                 tp_pct,
                                 entry_atr,
-                                parsed.trailing_stop_pct,
-                                parsed.breakeven_trigger_pct,
-                                parsed.breakeven_offset_pct,
-                                parsed.fade_sl_bars,
-                                parsed.fade_sl_start_pct,
-                                parsed.fade_sl_end_pct,
-                                parsed.max_bars_held,
+                                trailing_stop_pct,
+                                breakeven_trigger_pct,
+                                breakeven_offset_pct,
+                                fade_sl_bars,
+                                fade_sl_start_pct,
+                                fade_sl_end_pct,
+                                max_bars_held,
                                 effective_sl_atr_mult,
-                                parsed.tp_atr_mult,
-                                parsed.tp1_pct,
-                                parsed.tp1_close_fraction,
-                                parsed.tp2_pct,
+                                model_tp_atr_mult,
+                                tp1_pct,
+                                tp1_close_fraction,
+                                tp2_pct,
                             ),
                         );
                     } else if fill.new_pos.abs() <= f64::EPSILON {

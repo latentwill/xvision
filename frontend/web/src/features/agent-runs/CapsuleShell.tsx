@@ -163,11 +163,21 @@ export function CapsuleRow({
   focused,
   currentSpan,
   onClick,
+  retentionMode,
 }: {
   run: EvalCapsuleRow;
   focused: boolean;
   currentSpan?: EvalCapsuleCurrentSpan | null;
   onClick?: () => void;
+  /**
+   * Retention/fidelity of the focused run (`AgentRunSummary.retention_mode`).
+   * When provided AND this is the focused row, the `FidelityBadge` renders
+   * INLINE in the row's chip cluster (trailing the spans·cost·pnl text) so the
+   * operator always sees whether bodies are present — without the badge ever
+   * stacking as a separate row that adds vertical height (the collapsed-pill
+   * layout bug it used to cause). Sibling rows never render their own badge.
+   */
+  retentionMode?: RetentionMode;
 }): ReactNode {
   const tok = STATUS[run.status] ?? STATUS.eval;
   // Live-money rows get a LIVE prefix in the gold tint and route to the
@@ -272,6 +282,19 @@ export function CapsuleRow({
         ) : null}
       </span>
 
+      {/*
+        WS-5 Gap 2 (inline placement): the focused run's fidelity badge sits
+        INLINE here in the chip cluster — `shrink-0`, on the single horizontal
+        line — instead of being injected by CapsuleShell as a separate stacked
+        row above the body (which added a near-empty second line and broke the
+        collapsed pill). Only the focused row carries it.
+      */}
+      {focused && retentionMode ? (
+        <span className="relative z-10 pointer-events-none shrink-0">
+          <FidelityBadge retentionMode={retentionMode} />
+        </span>
+      ) : null}
+
       {focused && currentSpan && (
         <>
           <span className="relative z-10 pointer-events-none w-px h-4 shrink-0" style={{ background: "var(--border)" }} />
@@ -319,21 +342,12 @@ export function CapsuleShell({
   tone,
   borderColor,
   expanded = false,
-  retentionMode,
   children,
 }: {
   testId: string;
   tone: string;
   borderColor: string;
   expanded?: boolean;
-  /**
-   * Retention/fidelity of the focused run, read off the run summary
-   * (`AgentRunSummary.retention_mode`). When provided, a small fidelity
-   * badge is rendered in the shell so the operator always knows whether
-   * prompt/response/tool bodies are present. Optional so call sites that
-   * don't yet thread the run summary render unchanged.
-   */
-  retentionMode?: RetentionMode;
   children: ReactNode;
 }) {
   return (
@@ -354,14 +368,6 @@ export function CapsuleShell({
         transition: "border-radius 180ms ease",
       }}
     >
-      {retentionMode ? (
-        <div
-          className="flex items-center justify-end gap-2 px-3 pt-1.5"
-          style={{ pointerEvents: "none" }}
-        >
-          <FidelityBadge retentionMode={retentionMode} />
-        </div>
-      ) : null}
       {children}
     </div>
   );

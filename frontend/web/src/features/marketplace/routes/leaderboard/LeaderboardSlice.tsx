@@ -3,7 +3,7 @@
 // Fetches the leaderboard for a given slice and renders the slice header
 // plus a ranked list of rows reusing F1's ListingCard.
 import { useCallback } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useMarketplaceData } from "@/features/marketplace/data/provider";
 import { ListingCard } from "@/features/marketplace/routes/browse/ListingCard";
@@ -34,6 +34,7 @@ function ListHeader() {
 export function LeaderboardSlice() {
   const { sliceId = "" } = useParams<{ sliceId: string }>();
   const mp = useMarketplaceData();
+  const navigate = useNavigate();
 
   const { data, isLoading } = useQuery<{ slice: Slice; rows: ListingRow[] }>({
     queryKey: ["marketplace", "leaderboard", sliceId],
@@ -41,12 +42,14 @@ export function LeaderboardSlice() {
     enabled: !!sliceId,
   });
 
+  // QA #11: the marketplace list CTA must NOT instant-purchase. Route to the
+  // strategy detail page (LineageRoute), where requirements are shown before
+  // the buyer confirms via the real Acquire / Run-free CTA.
   const handleBuy = useCallback(
-    async (id: string) => {
-      await mp.purchaseIntent(id);
-      // TODO(F6): navigate to /marketplace/receipts/:tx
+    (id: string) => {
+      navigate(`/marketplace/lineage/${id}`);
     },
-    [mp]
+    [navigate]
   );
 
   if (isLoading) {

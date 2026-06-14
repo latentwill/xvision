@@ -36,7 +36,13 @@ export interface MarketplaceData {
   // deployed and `useWallet` exposes a signer) signs the authorization and
   // submits it here. Callers MUST treat this as testnet/simulated until then.
   purchaseIntent(listingId: Id): Promise<TxRef>;
-  cloneIntent(listingId: Id): Promise<TxRef>;
+  // SEALED-tier finalize: decrypt the bundle (Lit-gated) and materialize the
+  // referenced agents server-side, resolving to the new local strategy ULID.
+  importSealed(listingId: Id): Promise<{ agent_id: string }>;
+  // OPEN/free-tier finalize: import + materialize the referenced agents
+  // server-side (no decrypt), resolving to the new local strategy ULID. The
+  // open/free buy path imports for real — there is no fake-tx clone receipt.
+  importListing(listingId: Id): Promise<{ agent_id: string }>;
   subscribePurchases(cb: (e: PurchaseEvent) => void): () => void;
 }
 
@@ -44,6 +50,11 @@ const fakeTx = (): TxRef => ({
   txHash: `0x${Math.random().toString(16).slice(2).padEnd(8, "0")}`,
   network: "mantle-sepolia",
 });
+
+// Deterministic fake local strategy ULID for fixture imports — same listing id
+// always yields the same agent_id so callers (and tests) can rely on a stable
+// landing target without an on-chain materialize.
+const fakeAgentId = (listingId: Id): string => `demo-agent-${listingId}`;
 
 export class FixtureMarketplaceData implements MarketplaceData {
   readonly dataSource = "fixture" as const;
@@ -136,8 +147,11 @@ export class FixtureMarketplaceData implements MarketplaceData {
   async purchaseIntent(_listingId: Id): Promise<TxRef> {
     return fakeTx();
   }
-  async cloneIntent(_listingId: Id): Promise<TxRef> {
-    return fakeTx();
+  async importSealed(listingId: Id): Promise<{ agent_id: string }> {
+    return { agent_id: fakeAgentId(listingId) };
+  }
+  async importListing(listingId: Id): Promise<{ agent_id: string }> {
+    return { agent_id: fakeAgentId(listingId) };
   }
   subscribePurchases(cb: (e: PurchaseEvent) => void): () => void {
     const id = setInterval(() => {

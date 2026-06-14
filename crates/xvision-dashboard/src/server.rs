@@ -109,6 +109,7 @@
 //  R12. GET  /api/templates
 //  R12b. GET /api/strategy/pine-library          strategies::get_pine_library   (WU9)
 //  R13. GET  /api/strategy/:id
+//  R13b. GET /api/strategy/:id/requirements      strategies::requirements      (QA #4)
 //  R14. GET  /api/strategies/:id/chart
 //  R15. GET  /api/strategies-folder/list
 //  R16. GET  /api/scenarios
@@ -261,6 +262,18 @@ fn readonly_router(state: AppState) -> Router {
             get(strategies::get_pine_library),
         )
         .route("/api/strategy/:id", get(strategies::get))
+        // QA #4: per-strategy model/skill/tool requirements for the buyer's
+        // machine. The Strategy detail page highlights gaps + gates eval.
+        .route(
+            "/api/strategy/:id/requirements",
+            get(strategies::requirements),
+        )
+        // #12 / QA #8: marketplace provenance (creator, price paid, license
+        // NFT, explorer link) for a strategy acquired from the marketplace.
+        .route(
+            "/api/strategy/:id/marketplace",
+            get(strategies::marketplace_provenance),
+        )
         // Phase 4.5: strategy capability-readiness diagnostics. Surfaces WHY
         // a strategy can't launch (typed per-agent blockers) BEFORE launch.
         .route(

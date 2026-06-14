@@ -338,10 +338,21 @@ export function xvnZeroLine(): DrawHookPlugin {
  */
 export function xvnTradeMarkers(
   markers: V2Marker[],
-  opts: { buyColor?: string; sellColor?: string } = {},
+  opts: {
+    buyColor?: string;
+    sellColor?: string;
+    /** "triangle" (default, candle panes) or "letter" (B/S text, equity line). */
+    glyph?: "triangle" | "letter";
+    /** Ignore marker.price and anchor to the series value at the marker's
+     *  time. Required on the %-return equity line, where marker.price (an
+     *  absolute fill price) is off-scale. */
+    anchorToSeries?: boolean;
+  } = {},
 ): DrawHookPlugin {
   const buyColor = opts.buyColor ?? "#00e676";
   const sellColor = opts.sellColor ?? "#ff4d4d";
+  const glyph = opts.glyph ?? "triangle";
+  const anchorToSeries = opts.anchorToSeries ?? false;
   const SIZE = 6; // half-size of triangle in pixels
 
   return {
@@ -359,8 +370,10 @@ export function xvnTradeMarkers(
           if (xMax != null && m.time > xMax) continue;
 
           // Determine y: use marker.price when available, else look up series value.
+          // anchorToSeries forces the series-value lookup (price is off-scale on
+          // the %-return equity line).
           let yVal: number | null | undefined;
-          if (m.price != null && Number.isFinite(m.price)) {
+          if (!anchorToSeries && m.price != null && Number.isFinite(m.price)) {
             yVal = m.price;
           } else {
             // Fall back to the first series (index 1) value at the nearest time point.
@@ -383,6 +396,19 @@ export function xvnTradeMarkers(
           if (!allFinite(x, y)) continue;
 
           const isBuy = m.kind === "buy";
+          ctx.fillStyle = isBuy ? buyColor : sellColor;
+
+          if (glyph === "letter") {
+            // Bold "B"/"S" label: buys above the curve point, sells below, so
+            // the letter clears the equity line.
+            ctx.font = "700 10px ui-monospace, SFMono-Regular, Menlo, monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            const ty = isBuy ? y - SIZE - 1 : y + SIZE + 1;
+            ctx.fillText(isBuy ? "B" : "S", x, ty);
+            continue;
+          }
+
           ctx.beginPath();
           if (isBuy) {
             // Upward triangle ▲
@@ -396,7 +422,6 @@ export function xvnTradeMarkers(
             ctx.lineTo(x - SIZE, y - SIZE);
           }
           ctx.closePath();
-          ctx.fillStyle = isBuy ? buyColor : sellColor;
           ctx.fill();
         }
         ctx.restore();

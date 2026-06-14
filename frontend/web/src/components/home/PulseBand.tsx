@@ -31,6 +31,7 @@ import {
   PULSE_VIEW_STORAGE_KEY,
   pulseChartSeries,
   recentMetricSeries,
+  tradeMarkersFromPayload,
   type PulseView,
 } from "@/features/home/pulse";
 import { PulseEquityChart } from "./PulseEquityChart";
@@ -231,8 +232,10 @@ export function PulseBand({
   };
 
   const chart = useQuery({
-    queryKey: chartKeys.run(heroRunId, ["equity"]),
-    queryFn: () => getRunChart(heroRunId, ["equity"]),
+    // QA #1: fetch trade markers alongside equity so the return view can overlay
+    // green "B" / red "S" markers on the curve.
+    queryKey: chartKeys.run(heroRunId, ["equity", "markers"]),
+    queryFn: () => getRunChart(heroRunId, ["equity", "markers"]),
     enabled: heroRunId !== "",
     staleTime: 30_000,
   });
@@ -261,6 +264,7 @@ export function PulseBand({
     staleTime: 30_000,
   });
 
+  const equityMarkers = tradeMarkersFromPayload(chart.data);
   const series = chart.data
     ? pulseChartSeries(normalizeEquityToReturnPct(chart.data.equity))
     : null;
@@ -355,7 +359,7 @@ export function PulseBand({
             {view === "return" &&
               (chart.isPending ? <ViewSkeleton /> :
                chart.isError ? <ViewError onRetry={() => chart.refetch()} /> :
-               hasSeries ? <PulseEquityChart series={series!} /> :
+               hasSeries ? <PulseEquityChart series={series!} markers={equityMarkers} /> :
                <ViewEmpty
                  testId="pulse-chart-unavailable"
                  message="No equity samples recorded for this run."
