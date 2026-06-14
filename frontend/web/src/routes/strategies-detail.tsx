@@ -131,12 +131,7 @@ function deriveBoundLabel(path: string): string {
  * - Dark-mode-safe borders: border-border only; never border-white / border-gray-*.
  * - Colored badges use low-opacity bg + dark: variants.
  *
- * v1 is READ-ONLY: it displays the declared search space but does not wire
- * edits to `PUT /api/strategy/:id/mechanical_params`. The edit path was
- * assessed but skipped — the `mechanical_params` shape is `unknown` on the
- * TS type and the path-based partial-patch semantics would require type-safe
- * path traversal that is out of scope for WU-C. Read-only is intentional and
- * noted in the PR.
+ * v1 is READ-ONLY: it displays the declared search space.
  */
 function TunableBoundsPanel({ bounds }: { bounds: TunableBound[] }) {
   if (bounds.length === 0) return null;

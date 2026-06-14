@@ -3,6 +3,8 @@ import {
   buildTransferAuthTypedData,
   relayBodyFromSignature,
   getContracts,
+  networkConfig,
+  activeNetwork,
   __resetContractsCacheForTest,
 } from "./chain";
 
@@ -14,6 +16,27 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   __resetContractsCacheForTest();
+});
+
+describe("networkConfig (network selection)", () => {
+  it("mainnet → Mantle 5000 with the real USDC.e EIP-712 domain", () => {
+    const c = networkConfig("mainnet");
+    expect(c.chain.id).toBe(5000);
+    expect(c.hex).toBe("0x1388");
+    expect(c.usdcDomain).toEqual({ name: "USD Coin", version: "2" });
+  });
+
+  it("sepolia → Mantle Sepolia 5003 with the test-USDC domain", () => {
+    const c = networkConfig("sepolia");
+    expect(c.chain.id).toBe(5003);
+    expect(c.hex).toBe("0x138b");
+    expect(c.usdcDomain).toEqual({ name: "USD Coin (xvn test)", version: "1" });
+  });
+
+  it("defaults to sepolia when VITE_MARKETPLACE_NETWORK is unset", () => {
+    // Guards the existing testnet behavior + tests (no mainnet env in CI).
+    expect(activeNetwork).toBe("sepolia");
+  });
 });
 
 describe("buildTransferAuthTypedData", () => {

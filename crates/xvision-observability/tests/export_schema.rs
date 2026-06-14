@@ -1,9 +1,9 @@
-//! Snapshot test for the `xvn.agent_run.v2` JSON export.
+//! Snapshot test for the `xvn.agent_run.v3` JSON export.
 //!
 //! Inserts a deterministic fixture run via the `SqliteRecorder` event
 //! path (so the rows exercise the same write surface production uses),
 //! then calls `build_export` and asserts the serialized JSON matches
-//! `tests/fixtures/xvn_run_v2.golden.json` byte-for-byte. A schema-
+//! `tests/fixtures/xvn_run_v3.golden.json` byte-for-byte. A schema-
 //! version bump is therefore the intentional way to land any breaking
 //! change to the export shape.
 //!
@@ -29,7 +29,7 @@ const MIGRATION_002: &str = include_str!("../../xvision-engine/migrations/002_ev
 const MIGRATION_013: &str = include_str!("../../xvision-engine/migrations/013_cli_jobs.sql");
 const MIGRATION_018: &str = include_str!("../../xvision-engine/migrations/018_agent_run_observability.sql");
 
-const GOLDEN_JSON: &str = include_str!("fixtures/xvn_run_v2.golden.json");
+const GOLDEN_JSON: &str = include_str!("fixtures/xvn_run_v3.golden.json");
 
 const RUN_ID: &str = "run_export_fixture_01";
 const ARTIFACT_ID: &str = "art_export_fixture_01";
@@ -107,8 +107,8 @@ async fn seed_run(pool: &SqlitePool) {
         span_id: model_span.clone(),
         run_id: RUN_ID.into(),
         parent_span_id: Some(root_span.clone()),
-        kind: SpanKind::ModelCall,
-        name: "model.call.plan".into(),
+        kind: SpanKind::DecisionModel,
+        name: "decision.model.plan".into(),
         started_at: fixed_ts(2),
         otel_trace_id: Some("trace_export_fixture".into()),
         otel_span_id: Some("span_model_otel".into()),
@@ -166,6 +166,7 @@ async fn seed_run(pool: &SqlitePool) {
         is_run_terminator: false,
         input_hash: "sha256:in_fixture".into(),
         input_payload_ref: None,
+        input_text: None,
     }))
     .await;
     bus.publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
@@ -173,6 +174,7 @@ async fn seed_run(pool: &SqlitePool) {
         output_hash: Some("sha256:out_fixture".into()),
         output_payload_ref: None,
         exit_code: Some(0),
+        output_text: None,
     }))
     .await;
     bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {
@@ -254,6 +256,20 @@ async fn seed_run(pool: &SqlitePool) {
     // otherwise diff on every run.
     pool.execute(
         sqlx::query("UPDATE supervisor_notes SET id = 'note_fixture_01' WHERE run_id = ?").bind(RUN_ID),
+    )
+    .await
+    .unwrap();
+
+    // Pin the `model_call_payload` event's `created_at`. The recorder
+    // stamps it with `Utc::now()` (the export's `events` array is WS-7's
+    // full-fidelity addition), so without this the golden file would diff
+    // on every run.
+    pool.execute(
+        sqlx::query(
+            "UPDATE events SET created_at = '2026-05-17T16:00:02Z' \
+             WHERE run_id = ? AND kind = 'model_call_payload'",
+        )
+        .bind(RUN_ID),
     )
     .await
     .unwrap();

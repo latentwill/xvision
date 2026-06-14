@@ -1,4 +1,8 @@
-// Chain-side helpers for the marketplace purchase flow (Mantle Sepolia).
+// Chain-side helpers for the marketplace purchase flow (Mantle).
+//
+// Network is selected at build time via `VITE_MARKETPLACE_NETWORK`
+// (default "sepolia" = Mantle Sepolia 5003; "mainnet" = Mantle 5000). The
+// chain + USDC EIP-712 domain come from `networkConfig`/`activeConfig`.
 //
 // Contract addresses are NEVER hardcoded in the bundle — they're discovered
 // from `GET /api/marketplace/status` (`contracts` block) and cached for the
@@ -6,10 +10,12 @@
 // conversion happens only at the relay-body edge.
 //
 // The EIP-3009 `transferWithAuthorization` typed data here must match the
-// test USDC's EIP-712 domain exactly: name "USD Coin (xvn test)", version
-// "1", chainId 5003, verifyingContract = the USDC address. The typehash
-// field order (from, to, value, validAfter, validBefore, nonce) is
-// normative — reordering changes the digest and the relay tx reverts.
+// active network USDC's EIP-712 domain exactly (mainnet USDC.e: name
+// "USD Coin", version "2", chainId 5000; testnet test USDC: "USD Coin
+// (xvn test)", version "1", chainId 5003), verifyingContract = the USDC
+// address. The typehash field order (from, to, value, validAfter,
+// validBefore, nonce) is normative — reordering changes the digest and the
+// relay tx reverts.
 
 import {
   createPublicClient,
@@ -19,6 +25,7 @@ import {
   http,
   parseSignature,
   type Address,
+  type Chain,
   type Hex,
   type PublicClient,
   type WalletClient,
@@ -45,8 +52,91 @@ export const mantleSepolia = defineChain({
   },
 });
 
-/** `5003` as the hex chain-id string wallets expect. */
+export const mantleMainnet = defineChain({
+  id: 5000,
+  name: "Mantle",
+  nativeCurrency: { name: "Mantle", symbol: "MNT", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.mantle.xyz"] },
+  },
+  blockExplorers: {
+    default: { name: "Mantle Explorer", url: "https://explorer.mantle.xyz" },
+  },
+});
+
+export type MarketplaceNetwork = "sepolia" | "mainnet";
+
+export interface MarketplaceNetworkConfig {
+  chain: Chain;
+  /** chainId as the hex string wallets expect (wallet_switchEthereumChain). */
+  hex: `0x${string}`;
+  /**
+   * The network USDC's EIP-712 domain name/version, for the EIP-3009
+   * `transferWithAuthorization` signature. Verified on-chain:
+   * mainnet USDC.e (0x09Bc…0dF9) is "USD Coin"/"2"; the testnet test USDC
+   * is "USD Coin (xvn test)"/"1".
+   */
+  usdcDomain: { name: string; version: string };
+}
+
+/** Pure: the chain + USDC-domain config for a network. */
+export function networkConfig(
+  network: MarketplaceNetwork,
+): MarketplaceNetworkConfig {
+  return network === "mainnet"
+    ? {
+        chain: mantleMainnet,
+        hex: "0x1388", // 5000
+        usdcDomain: { name: "USD Coin", version: "2" },
+      }
+    : {
+        chain: mantleSepolia,
+        hex: "0x138b", // 5003
+        usdcDomain: { name: "USD Coin (xvn test)", version: "1" },
+      };
+}
+
+/**
+ * Build-time network selector. Defaults to "sepolia" unless
+ * `VITE_MARKETPLACE_NETWORK=mainnet`. MUST stay the literal
+ * `import.meta.env.VITE_…` expression so Vite's define replacement rewrites it.
+ */
+function resolveNetwork(): MarketplaceNetwork {
+  return import.meta.env.VITE_MARKETPLACE_NETWORK === "mainnet"
+    ? "mainnet"
+    : "sepolia";
+}
+
+/** The active marketplace network + its chain/USDC-domain config. */
+export const activeNetwork: MarketplaceNetwork = resolveNetwork();
+export const activeConfig = networkConfig(activeNetwork);
+/** The viem chain for the active network (5003 testnet or 5000 mainnet). */
+export const activeChain = activeConfig.chain;
+
+/** Active chain id as the hex string wallets expect. */
+export const MANTLE_ACTIVE_HEX = activeConfig.hex;
+/** @deprecated kept for back-compat; use {@link MANTLE_ACTIVE_HEX}. */
 export const MANTLE_SEPOLIA_HEX = "0x138b";
+
+/**
+ * Network slug stamped onto `TxRef.network` / on-chain NFT metadata. Drives the
+ * block-explorer choice in `TxChip` ("mantle" → explorer.mantle.xyz;
+ * "mantle-sepolia" → explorer.sepolia.mantle.xyz). Build-time constant; mirrors
+ * {@link activeNetwork}. Replaces the old hardcoded "mantle-sepolia" literals so
+ * a mainnet build never renders Sepolia explorer links.
+ */
+export const activeNetworkSlug: string =
+  activeNetwork === "mainnet" ? "mantle" : "mantle-sepolia";
+
+/**
+ * Call-time mainnet check. Reads the build-time `VITE_MARKETPLACE_NETWORK`
+ * literal (so Vite's define-replacement applies, and tests can `vi.stubEnv` it).
+ * Used by the testnet badge/banner so they stay honest on a mainnet build —
+ * a "purchases are simulated" notice on mainnet would be false and unsafe.
+ */
+export function isMainnetNetwork(): boolean {
+  return import.meta.env.VITE_MARKETPLACE_NETWORK === "mainnet";
+}
 
 // ---------------------------------------------------------------------------
 // Contract discovery (cached from /api/marketplace/status)
@@ -145,7 +235,7 @@ export function __resetContractsCacheForTest(): void {
 // ---------------------------------------------------------------------------
 
 export function publicClient(): PublicClient {
-  return createPublicClient({ chain: mantleSepolia, transport: http() });
+  return createPublicClient({ chain: activeChain, transport: http() });
 }
 
 export function walletClient(): WalletClient {
@@ -155,7 +245,7 @@ export function walletClient(): WalletClient {
     );
   }
   return createWalletClient({
-    chain: mantleSepolia,
+    chain: activeChain,
     transport: custom(window.ethereum),
   });
 }
@@ -189,9 +279,10 @@ export async function currentAddress(): Promise<Address | null> {
 }
 
 /**
- * Ensure the wallet is on Mantle Sepolia: check `eth_chainId`, attempt
- * `wallet_switchEthereumChain`, and on error 4902 (chain unknown to the
- * wallet) add the chain first, then switch.
+ * Ensure the wallet is on the active Mantle network (Sepolia 5003 by default,
+ * or mainnet 5000 when `VITE_MARKETPLACE_NETWORK=mainnet`): check `eth_chainId`,
+ * attempt `wallet_switchEthereumChain`, and on error 4902 (chain unknown to the
+ * wallet) add the chain first, then switch. (Name kept for back-compat.)
  */
 export async function ensureMantleSepolia(): Promise<void> {
   if (!window.ethereum) {
@@ -202,30 +293,33 @@ export async function ensureMantleSepolia(): Promise<void> {
   const chainId = (await window.ethereum.request({
     method: "eth_chainId",
   })) as string;
-  if (chainId?.toLowerCase() === MANTLE_SEPOLIA_HEX) return;
+  if (chainId?.toLowerCase() === MANTLE_ACTIVE_HEX) return;
   try {
     await window.ethereum.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: MANTLE_SEPOLIA_HEX }],
+      params: [{ chainId: MANTLE_ACTIVE_HEX }],
     });
   } catch (err) {
     const code = (err as { code?: number })?.code;
     if (code !== 4902) throw err;
+    const blockExplorerUrl = activeChain.blockExplorers?.default?.url;
     await window.ethereum.request({
       method: "wallet_addEthereumChain",
       params: [
         {
-          chainId: MANTLE_SEPOLIA_HEX,
-          chainName: mantleSepolia.name,
-          nativeCurrency: mantleSepolia.nativeCurrency,
-          rpcUrls: mantleSepolia.rpcUrls.default.http,
-          blockExplorerUrls: [mantleSepolia.blockExplorers.default.url],
+          chainId: MANTLE_ACTIVE_HEX,
+          chainName: activeChain.name,
+          nativeCurrency: activeChain.nativeCurrency,
+          rpcUrls: activeChain.rpcUrls.default.http,
+          ...(blockExplorerUrl
+            ? { blockExplorerUrls: [blockExplorerUrl] }
+            : {}),
         },
       ],
     });
     await window.ethereum.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: MANTLE_SEPOLIA_HEX }],
+      params: [{ chainId: MANTLE_ACTIVE_HEX }],
     });
   }
 }
@@ -331,7 +425,7 @@ export async function faucetUsdc(amount6: bigint): Promise<Hex> {
       functionName: "faucet",
       args: [amount6],
       account,
-      chain: mantleSepolia,
+      chain: activeChain,
     }),
   );
 }
@@ -346,7 +440,7 @@ export async function approveUsdc(amount6: bigint): Promise<Hex> {
       functionName: "approve",
       args: [marketplace, amount6],
       account,
-      chain: mantleSepolia,
+      chain: activeChain,
     }),
   );
 }
@@ -364,7 +458,7 @@ export async function buyDirect(
       functionName: "buy",
       args: [listingId, recipient],
       account,
-      chain: mantleSepolia,
+      chain: activeChain,
     }),
   );
 }
@@ -418,9 +512,9 @@ export function buildTransferAuthTypedData(params: {
 }) {
   return {
     domain: {
-      name: "USD Coin (xvn test)",
-      version: "1",
-      chainId: 5003,
+      name: activeConfig.usdcDomain.name,
+      version: activeConfig.usdcDomain.version,
+      chainId: activeChain.id,
       verifyingContract: params.usdc,
     },
     types: {

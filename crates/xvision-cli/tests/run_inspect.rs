@@ -385,7 +385,7 @@ fn inspect_writes_both_files_into_out_dir() {
 
     let json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&json_path).unwrap()).expect("json parse");
-    assert_eq!(json["schema_version"], "xvn.agent_run.v2");
+    assert_eq!(json["schema_version"], "xvn.agent_run.v3");
     assert_eq!(json["run_id"], run_id);
     for key in [
         "schema_version",
@@ -552,7 +552,7 @@ fn inspect_reconciles_completed_eval_accounting_when_sidecar_is_stale() {
     let completed_at = rt.block_on(seed_stale_sidecar_eval(&db_path, run_id, eval_run_id, "backtest"));
 
     let json = inspect_to_dir(&db_path, run_id, home.path(), out_dir.path());
-    assert_eq!(json["schema_version"], "xvn.agent_run.v2");
+    assert_eq!(json["schema_version"], "xvn.agent_run.v3");
     assert_eq!(json["status"], "completed");
     assert_eq!(json["finished_at"], fmt_ts(completed_at));
     assert_eq!(json["eval_run_id"], eval_run_id);
@@ -588,7 +588,7 @@ fn inspect_reconciles_live_eval_accounting_when_sidecar_is_stale() {
     let completed_at = rt.block_on(seed_stale_sidecar_eval(&db_path, run_id, eval_run_id, "live"));
 
     let json = inspect_to_dir(&db_path, run_id, home.path(), out_dir.path());
-    assert_eq!(json["schema_version"], "xvn.agent_run.v2");
+    assert_eq!(json["schema_version"], "xvn.agent_run.v3");
     assert_eq!(json["status"], "completed");
     assert_eq!(json["finished_at"], fmt_ts(completed_at));
     assert_eq!(json["totals"]["input_tokens"], 46473);
@@ -631,7 +631,7 @@ fn inspect_stdout_json_reconciles_eval_accounting() {
         String::from_utf8_lossy(&out.stderr)
     );
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("stdout json");
-    assert_eq!(json["schema_version"], "xvn.agent_run.v2");
+    assert_eq!(json["schema_version"], "xvn.agent_run.v3");
     assert_eq!(json["status"], "completed");
     assert_eq!(json["finished_at"], fmt_ts(completed_at));
     assert_eq!(json["totals"]["input_tokens"], 46473);
@@ -653,7 +653,7 @@ fn inspect_preserves_agent_model_call_details_when_eval_is_linked() {
     rt.block_on(seed_linked_model_call_eval(&db_path, run_id, eval_run_id));
 
     let json = inspect_to_dir(&db_path, run_id, home.path(), out_dir.path());
-    assert_eq!(json["schema_version"], "xvn.agent_run.v2");
+    assert_eq!(json["schema_version"], "xvn.agent_run.v3");
     assert_eq!(json["model_calls"][0]["provider"], "openai");
     assert_eq!(json["model_calls"][0]["model"], "gpt-5");
     assert_eq!(json["totals"]["model_calls"], 1);
@@ -677,7 +677,7 @@ fn inspect_direct_eval_run_id_without_sidecar_uses_eval_projection() {
     let completed_at = rt.block_on(seed_direct_eval_only(&db_path, eval_run_id));
 
     let json = inspect_to_dir(&db_path, eval_run_id, home.path(), out_dir.path());
-    assert_eq!(json["schema_version"], "xvn.agent_run.v2");
+    assert_eq!(json["schema_version"], "xvn.agent_run.v3");
     assert_eq!(json["run_id"], eval_run_id);
     assert_eq!(json["eval_run_id"], eval_run_id);
     assert_eq!(json["status"], "completed");
@@ -703,7 +703,7 @@ fn inspect_legacy_agent_db_without_eval_table_still_exports() {
     rt.block_on(seed_legacy_agent_only(&db_path, run_id));
 
     let json = inspect_to_dir(&db_path, run_id, home.path(), out_dir.path());
-    assert_eq!(json["schema_version"], "xvn.agent_run.v2");
+    assert_eq!(json["schema_version"], "xvn.agent_run.v3");
     assert_eq!(json["run_id"], run_id);
     assert_eq!(json["status"], "completed");
     assert_eq!(json["accounting"]["source"], "none");

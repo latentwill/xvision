@@ -6,7 +6,7 @@
 //! 1. The patch surface mutates only the in-scope fields
 //!    (display_name / plain_summary / asset_universe) and leaves
 //!    everything else — including the strategy id, template, creator,
-//!    agents, pipeline, risk, and mechanical_params — untouched.
+//!    agents, pipeline, and risk — untouched.
 //!
 //! 2. **Cycle-id-stable round-trip**: editing a strategy that has
 //!    completed eval runs against it must keep the `agent_id ==
@@ -94,7 +94,6 @@ async fn update_metadata_applies_in_scope_fields_and_preserves_others() {
     let original_risk = before.risk.clone();
     let original_agents = before.agents.clone();
     let original_pipeline = before.pipeline.clone();
-    let original_mechanical = before.mechanical_params.clone();
 
     let patched = store
         .update_metadata(
@@ -127,7 +126,6 @@ async fn update_metadata_applies_in_scope_fields_and_preserves_others() {
     assert_eq!(patched.risk, original_risk);
     assert_eq!(patched.agents, original_agents);
     assert_eq!(patched.pipeline, original_pipeline);
-    assert_eq!(patched.mechanical_params, original_mechanical);
 }
 
 #[tokio::test]

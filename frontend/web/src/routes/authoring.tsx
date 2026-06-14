@@ -3,13 +3,17 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Topbar } from "@/components/shell/Topbar";
 import { Card } from "@/components/primitives/Card";
+import { Icon } from "@/components/primitives/Icon";
 import { ApiError } from "@/api/client";
 import { toVenuePair } from "@/lib/assets";
 import { useAlpacaAssets } from "@/api/assets";
 import {
   addStrategyAgent,
+  cloneStrategy,
   deleteStrategy,
   getStrategy,
+  getStrategyMarketplace,
+  getStrategyRequirements,
   patchStrategyMetadata,
   renameStrategyAgentRole,
   removeStrategyAgent,
@@ -23,15 +27,17 @@ import {
   type EntryDirection,
   type EntryRule,
   type PipelineDef,
+  type MarketplaceProvenance,
   type PipelineKind,
   type RiskConfig,
   type Strategy,
+  type StrategyRequirements,
 } from "@/api/strategies";
 import { createAgent, listAgents, type Agent } from "@/api/agents";
 // `FiringSection` is still exported from `@/components/strategy` for the
 // deferred per-agent filter composer; re-add it to this import when
 // un-deferring (see authoring.tsx FilterCard wiring below).
-import { FilterCard } from "@/components/strategy";
+import { FilterCard, StrategyRequirementChip } from "@/components/strategy";
 import { listProviders, settingsKeys } from "@/api/settings";
 import { getStrategyChart, strategyChartKeys } from "@/api/chart";
 import { StrategyHistoryChartV2 } from "@/components/chart/v2/surfaces/StrategyHistoryChartV2";
@@ -61,6 +67,13 @@ function InspectorPage({ id }: { id: string }) {
     queryKey: strategyKeys.detail(id),
     queryFn: () => getStrategy(id),
   });
+  // #12 / QA #8: marketplace provenance lives in a backend sidecar (not on the
+  // Strategy artifact), so it's fetched separately. `null` for non-marketplace
+  // strategies → no strip.
+  const marketplaceQ = useQuery({
+    queryKey: strategyKeys.marketplace(id),
+    queryFn: () => getStrategyMarketplace(id),
+  });
 
   return (
     <>
@@ -86,6 +99,10 @@ function InspectorPage({ id }: { id: string }) {
       />
 
       <InspectorActions strategyId={id} strategy={strategyQ.data ?? null} />
+
+      {marketplaceQ.data ? (
+        <MarketplaceProvenanceStrip provenance={marketplaceQ.data} />
+      ) : null}
 
       <div className="space-y-5">
         <div className="space-y-5">
@@ -240,6 +257,7 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
   return (
     <>
       <ManifestCard strategy={strategy} />
+      <RequirementsCard strategyId={strategy.manifest.id} />
       <FilterCard strategy={strategy} />
       {isMechanistic ? (
         <MechanisticConfigCard strategy={strategy} />
@@ -249,6 +267,105 @@ function StrategyEditor({ strategy }: { strategy: Strategy }) {
       <RiskCard strategy={strategy} />
       <ValidationCard strategy={strategy} />
     </>
+  );
+}
+
+// QA #4 + Q1: a purchased strategy may reference models/skills the buyer
+// hasn't configured locally. This full-width inline card (no right sidebar —
+// chat-rail rule) lists each requirement as satisfied (✓) or missing (⚠) with
+// a Configure CTA. Missing MODEL requirements gate the eval/go-live action in
+// `InspectorActions`; skills warn and tools are informational.
+function configureTargetFor(kind: string): string {
+  // Models live under Settings → Providers; everything else (skills, tools)
+  // routes to the Settings root.
+  return kind === "model" ? "/settings/providers" : "/settings";
+}
+
+function RequirementsCard({ strategyId }: { strategyId: string }) {
+  const requirementsQ = useQuery({
+    queryKey: strategyKeys.requirements(strategyId),
+    queryFn: () => getStrategyRequirements(strategyId),
+    staleTime: 30_000,
+  });
+
+  if (requirementsQ.isPending) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="Checking the models and skills this strategy needs on your machine..."
+        />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-text-3">Loading…</div>
+      </Card>
+    );
+  }
+  if (requirementsQ.isError) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="Could not load this strategy's requirements."
+        />
+        <div className="px-5 pt-4 pb-5 text-[13px] text-danger">
+          {errorMessage(requirementsQ.error)}
+        </div>
+      </Card>
+    );
+  }
+
+  const data = requirementsQ.data;
+  const requirements = data.requirements ?? [];
+  if (requirements.length === 0) {
+    return (
+      <Card>
+        <SectionHeader
+          label="Requirements"
+          hint="This strategy declares no model, skill, or tool requirements."
+        />
+      </Card>
+    );
+  }
+
+  const missing = requirements.filter((r) => !r.satisfied);
+  const hint = data.all_models_satisfied
+    ? "All required models are configured on this machine."
+    : "Some required models are not configured — configure them before running eval.";
+
+  return (
+    <Card>
+      <SectionHeader label="Requirements" hint={hint} />
+      <div className="px-5 pt-4 pb-5 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          {requirements.map((requirement) => (
+            <StrategyRequirementChip
+              key={`${requirement.kind}:${requirement.name}`}
+              requirement={requirement}
+            />
+          ))}
+        </div>
+        {missing.length > 0 ? (
+          <ul className="space-y-1.5">
+            {missing.map((requirement) => (
+              <li
+                key={`missing:${requirement.kind}:${requirement.name}`}
+                className="flex flex-wrap items-center gap-2 text-[12px] text-text-2"
+              >
+                <span className="font-mono text-text">{requirement.name}</span>
+                {requirement.hint ? (
+                  <span className="text-text-3">— {requirement.hint}</span>
+                ) : null}
+                <Link
+                  to={configureTargetFor(requirement.kind)}
+                  className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[12px] font-medium text-text hover:border-text-3"
+                >
+                  Configure
+                </Link>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
+    </Card>
   );
 }
 
@@ -1591,6 +1708,102 @@ function riskFormFromConfig(risk: RiskConfig): RiskFormState {
   };
 }
 
+// Issue #12 / QA #8: when a strategy was acquired from the marketplace, surface
+// its on-chain provenance inline at the top of the detail page — creator, price
+// paid, license NFT (token id), and a working "View on Explorer" link to the
+// owned license token. Full-width strip (no right sidebar — chat-rail rule);
+// renders nothing for hand-authored / optimizer strategies (the caller only
+// mounts it when `strategy.marketplace` is present).
+function formatProvenancePrice(priceUsdc: number): string {
+  if (!Number.isFinite(priceUsdc) || priceUsdc <= 0) return "Free";
+  // Trim trailing zeros: 12.5 → "12.5 USDC", 49 → "49 USDC".
+  const trimmed = Number(priceUsdc.toFixed(2)).toString();
+  return `${trimmed} USDC`;
+}
+
+function MarketplaceProvenanceStrip({
+  provenance,
+}: {
+  provenance: MarketplaceProvenance;
+}) {
+  const hasExplorer =
+    typeof provenance.explorer_url === "string" &&
+    provenance.explorer_url.length > 0;
+
+  return (
+    <Card>
+      <div
+        data-testid="marketplace-provenance-strip"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 text-[12px]"
+      >
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-gold/30 bg-gold/[0.1] px-2.5 py-1 font-medium text-gold">
+          Acquired from marketplace
+        </span>
+        <ProvenanceFact label="Creator" value={provenance.creator} mono />
+        <ProvenanceFact
+          label="Price paid"
+          value={formatProvenancePrice(provenance.price_usdc)}
+        />
+        <ProvenanceFact
+          label="License"
+          value={`#${provenance.license_token_id}`}
+          mono
+        />
+        <span className="text-text-3">{provenance.network}</span>
+        {hasExplorer ? (
+          <a
+            href={provenance.explorer_url ?? undefined}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 font-medium text-text hover:border-text-3"
+          >
+            View on Explorer
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 2h6v6M10 2L4.5 7.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </a>
+        ) : (
+          <span
+            className="inline-flex items-center gap-1 rounded border border-border-soft px-2 py-0.5 text-text-3"
+            title="No block explorer is configured for this network."
+          >
+            Explorer unavailable
+          </span>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ProvenanceFact({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="uppercase tracking-wide text-text-3">{label}</span>
+      <span className={`text-text ${mono ? "font-mono" : ""}`}>{value}</span>
+    </span>
+  );
+}
+
 function SectionHeader({ label, hint }: { label: string; hint?: string }) {
   return (
     <header className="px-5 pt-4 pb-3 border-b border-border-soft">
@@ -1620,6 +1833,33 @@ function InspectorActions({
       navigate("/strategies");
     },
   });
+  // QA #4 + Q1: gate the eval/go-live action when a required MODEL is
+  // unsatisfied. Inspect/edit stays allowed. While this query is still
+  // loading we keep the action enabled (don't flash a gate) — the gate only
+  // engages once we KNOW a model is unconfigured.
+  const requirementsQ = useQuery({
+    queryKey: strategyKeys.requirements(strategyId),
+    queryFn: () => getStrategyRequirements(strategyId),
+    staleTime: 30_000,
+  });
+  const requirements: StrategyRequirements | undefined = requirementsQ.data;
+  const modelsBlocked =
+    requirements !== undefined && requirements.all_models_satisfied === false;
+
+  // Clone the strategy via the shared `POST /api/strategy/:id/clone` endpoint,
+  // then jump to the new draft's inspector. Clone lives here on the Strategies
+  // page only — the marketplace surface deliberately has no clone, because
+  // sealed listings are encrypted and cannot be duplicated.
+  const cloneMut = useMutation({
+    mutationFn: () =>
+      cloneStrategy(strategyId, {
+        display_name: `${strategy?.manifest.display_name ?? "Strategy"} (clone)`,
+      }),
+    onSuccess: async (created) => {
+      await qc.invalidateQueries({ queryKey: strategyKeys.all });
+      navigate(`/strategies/${encodeURIComponent(created.manifest.id)}`);
+    },
+  });
 
   function onDelete() {
     const label = strategy?.manifest.display_name || strategyId;
@@ -1640,6 +1880,26 @@ function InspectorActions({
       {deleteMut.isPending ? "Deleting..." : "Delete"}
     </button>
   );
+
+  const cloneButton = (
+    <button
+      type="button"
+      data-testid="inspector-clone"
+      onClick={() => cloneMut.mutate()}
+      disabled={cloneMut.isPending}
+      aria-label={`Clone strategy ${strategyId}`}
+      className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium border border-border text-text transition-colors hover:border-text-3 active:border-text-2 focus:outline-none focus-visible:ring-1 focus-visible:ring-text-2 disabled:opacity-50 disabled:cursor-not-allowed"
+    >
+      <Icon name="copy" size={13} />
+      {cloneMut.isPending ? "Cloning…" : "Clone strategy"}
+    </button>
+  );
+
+  const cloneError = cloneMut.isError ? (
+    <span className="text-[12px] text-danger">
+      {errorMessage(cloneMut.error)}
+    </span>
+  ) : null;
 
   if (!strategy) {
     return (
@@ -1670,6 +1930,39 @@ function InspectorActions({
           Go to agents
         </a>
         {deleteButton}
+        {cloneError}
+        {cloneButton}
+      </div>
+    );
+  }
+
+  if (modelsBlocked) {
+    return (
+      <div className="flex flex-wrap items-center justify-end gap-3 mb-5">
+        {deleteMut.isError ? (
+          <span className="text-[12px] text-danger">
+            {errorMessage(deleteMut.error)}
+          </span>
+        ) : null}
+        <span className="text-[12px] text-amber-700 dark:text-amber-300">
+          Configure the required model(s) before running.
+        </span>
+        <Link
+          to="/settings/providers"
+          className="inline-flex items-center gap-1 rounded border border-border px-3.5 py-2 text-[13px] font-medium text-text hover:border-text-3"
+        >
+          Configure
+        </Link>
+        {deleteButton}
+        <button
+          type="button"
+          disabled
+          aria-disabled="true"
+          title="Configure the required model(s) before running"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold/40 text-bg cursor-not-allowed"
+        >
+          Run eval →
+        </button>
       </div>
     );
   }
@@ -1682,6 +1975,8 @@ function InspectorActions({
         </span>
       ) : null}
       {deleteButton}
+      {cloneError}
+      {cloneButton}
       <Link
         to={`/eval-runs?strategy=${encodeURIComponent(strategyId)}&start=1`}
         className="inline-flex items-center gap-2 px-3.5 py-2 rounded text-[13px] font-medium bg-gold text-bg hover:bg-gold-soft transition-colors motion-safe:active:scale-[0.96]"

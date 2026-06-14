@@ -42,25 +42,29 @@ afterEach(() => {
 });
 
 describe("useFirstRunTour", () => {
-  it("covers the primary XVN surfaces in sidebar order", () => {
-    expect(firstRunTourSteps).toHaveLength(7);
+  it("walks the getting-started path, then the advanced surfaces", () => {
+    expect(firstRunTourSteps).toHaveLength(9);
     expect(firstRunTourSteps.map((step) => step.element ?? null)).toEqual([
       null,
+      'a[href="/settings"]',
       'a[href="/strategies"]',
       'a[href="/scenarios"]',
       'a[href="/eval-runs"]',
       'a[href="/live"]',
-      'a[href="/marketplace"]',
       'a[href="/optimizer"]',
+      'a[href="/marketplace"]',
+      null,
     ]);
     expect(firstRunTourSteps.map((step) => step.popover?.title)).toEqual([
       "Welcome to XVN",
-      "Strategies",
-      "Scenarios",
-      "Eval Runs",
-      "Live Trading",
-      "Marketplace",
-      "Optimizer",
+      "Connect a model",
+      "Build a strategy",
+      "Pick a market window",
+      "Run your first backtest",
+      "Deploy your winners",
+      "Improve your strategy",
+      "Discover & monetize",
+      "You're set",
     ]);
   });
 
@@ -80,7 +84,7 @@ describe("useFirstRunTour", () => {
     expect(config?.popoverClass).toBe("xvn-tour");
     expect(config?.doneBtnText).toBe("Finish tour");
     expect(Array.isArray(config?.steps)).toBe(true);
-    expect((config?.steps ?? []).length).toBe(7);
+    expect((config?.steps ?? []).length).toBe(9);
   });
 
   it("does not fire again once completed", async () => {

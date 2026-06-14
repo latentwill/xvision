@@ -41,6 +41,7 @@ function strictCtx() {
     stroke: vi.fn(),
     arc: vi.fn(),
     fillRect: vi.fn(),
+    fillText: vi.fn(),
     setLineDash: vi.fn(),
   };
 }
@@ -270,5 +271,58 @@ describe("xvnTradeMarkers", () => {
     });
     expect(() => xvnTradeMarkers(markers).hooks.draw(u)).not.toThrow();
     expect(u.ctx.fill).not.toHaveBeenCalled();
+  });
+
+  describe("glyph: 'letter' (QA #1 equity B/S markers)", () => {
+    function plotWithSeries() {
+      return fakePlot({
+        data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+        bbox: { top: 0, height: 100, left: 0, width: 300 },
+        scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+        valToPos: (v: number) => v * 0.1,
+      });
+    }
+
+    it("draws 'B' for a buy marker and 'S' for a sell marker", () => {
+      const markers: V2Marker[] = [
+        { kind: "buy", time: 2000, price: 1.1 },
+        { kind: "sell", time: 3000, price: 1.2 },
+      ];
+      const u = plotWithSeries();
+      xvnTradeMarkers(markers, { glyph: "letter" }).hooks.draw(u);
+      const ft = u.ctx.fillText as ReturnType<typeof vi.fn>;
+      const letters = ft.mock.calls.map((c) => c[0]);
+      expect(letters).toContain("B");
+      expect(letters).toContain("S");
+    });
+
+    it("anchors letters to the series value, ignoring marker.price", () => {
+      // price 99 is off the y-scale; with anchorToSeries we must use the
+      // equity series value at the marker's time, so valToPos sees ~1.1 not 99.
+      const seen: number[] = [];
+      const u = fakePlot({
+        data: [[1000, 2000, 3000], [1.0, 1.1, 1.2]],
+        bbox: { top: 0, height: 100, left: 0, width: 300 },
+        scales: { x: { min: 1000, max: 3000 }, y: { min: 0, max: 2 } },
+        valToPos: (v: number, axis?: string) => {
+          if (axis === "y") seen.push(v);
+          return v * 0.1;
+        },
+      });
+      xvnTradeMarkers([{ kind: "buy", time: 2000, price: 99 }], {
+        glyph: "letter",
+        anchorToSeries: true,
+      }).hooks.draw(u);
+      expect(seen).toContain(1.1); // series value, not 99
+      expect(seen).not.toContain(99);
+    });
+
+    it("does not throw on empty markers in letter mode", () => {
+      const u = plotWithSeries();
+      expect(() =>
+        xvnTradeMarkers([], { glyph: "letter" }).hooks.draw(u),
+      ).not.toThrow();
+      expect(u.ctx.fillText).not.toHaveBeenCalled();
+    });
   });
 });

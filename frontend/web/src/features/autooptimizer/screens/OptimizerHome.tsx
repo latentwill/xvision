@@ -23,6 +23,8 @@ import {
   type LineageNode,
 } from "../api";
 import { useLiveActivity } from "../hooks/useLiveActivity";
+import { useCycleEventStream } from "../hooks/useCycleEventStream";
+import { OptiCapsuleSlot } from "../OptiCapsuleSlot";
 import { formatRelativeTime, formatUntil } from "../utils/time";
 
 /** Distinct cycles that still hold an active (kept) node. */
@@ -118,6 +120,10 @@ export function OptimizerHome() {
   // Resolved across live SSE → server status → latest cycle, so Pause/Resume/
   // Cancel stay wired even after a reload mid-run (empty SSE buffer).
   const activeCycleId = live.activeCycleId;
+  // Raw SSE buffer for the OPTI trace capsule. useCycleEventStream is a shared
+  // singleton, so this is the SAME socket useLiveActivity reads — no second
+  // EventSource.
+  const { events: cycleEvents, isRunning: streamRunning } = useCycleEventStream();
   const pauseMutation = usePauseCycle();
   const resumeMutation = useResumeCycle();
   const cancelMutation = useCancelCycle();
@@ -189,6 +195,15 @@ export function OptimizerHome() {
   return (
     <>
       <Topbar title="Optimizer" />
+      {/* WS-11a: the OPTI trace capsule — the live autooptimizer cycle rendered
+          on the trace-dock surface. Fed by THIS screen's single cycle SSE
+          subscription (no second EventSource). Fixed-position; renders only
+          while a cycle is in flight / freshly finished. */}
+      <OptiCapsuleSlot
+        events={cycleEvents}
+        activeCycleId={activeCycleId}
+        isRunning={streamRunning}
+      />
       <div className="space-y-5">
         <EditorialHeadline headline={headline} digest={digest}>
           {action}

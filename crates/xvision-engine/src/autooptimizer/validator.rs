@@ -64,7 +64,7 @@ fn warn_out_of_bounds(diff: &MutationDiff, base: &Strategy) {
     if base.tunable_bounds.is_empty() {
         return;
     }
-    // Check param changes (covers mechanistic.*, risk.*, and mechanical_params paths).
+    // Check param changes (covers mechanistic.* and risk.* paths).
     for change in &diff.params {
         if let Some(bound) = base.tunable_bounds.iter().find(|b| b.path == change.key) {
             let clamped = clamp_to_bound(&change.after, bound);
@@ -126,18 +126,30 @@ fn validate_prose_edits(prose: &[ProseEdit], base: &Strategy, errors: &mut Vec<V
     }
 }
 
-/// Resolve a param key to its current value on `base`. F14: a key may address
-/// a top-level `mechanical_params` entry OR a tunable `risk.<field>` (or a bare
-/// risk-field name not shadowed by a mechanical key). Returns `None` when the
-/// key matches no tunable surface.
+/// Resolve a param key to its current value on `base`. A key may address a
+/// tunable `risk.<field>` (or a bare risk-field name) or a
+/// `mechanistic.close_policies.<i>.<leaf>` scalar in `mechanistic_config` —
+/// the surfaces the executor actually reads at decision time. Returns `None`
+/// when the key matches no tunable surface (the validator then reports
+/// `unknown_param`). Resolution must stay in sync with
+/// [`crate::autooptimizer::mutator::tunable_param_keys`].
 fn resolve_param_current_value(base: &Strategy, key: &str) -> Option<serde_json::Value> {
     if let Some(field) = crate::autooptimizer::mutator::risk_field_for_key(base, key) {
         let risk = serde_json::to_value(&base.risk).ok()?;
         return risk.get(&field).cloned();
     }
-    base.mechanical_params
-        .as_object()
-        .and_then(|mp| mp.get(key).cloned())
+    // mechanistic.* keys resolve against the typed config's enumerated tunable
+    // leaves (the same paths `tunable_param_keys` advertises). Closing this
+    // gap — previously masked by the now-removed `mechanical_params` fallback —
+    // makes the mechanistic surface genuinely validatable, matching `apply_to`.
+    if key.starts_with("mechanistic.") {
+        let mc = base.mechanistic_config.as_ref()?;
+        return crate::autooptimizer::mutator::mechanistic_tunable_paths(mc)
+            .into_iter()
+            .find(|(path, _)| path == key)
+            .map(|(_, value)| value);
+    }
+    None
 }
 
 fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut Vec<ValidationError>) {
@@ -156,6 +168,11 @@ fn validate_param_changes(params: &[ParamChange], base: &Strategy, errors: &mut 
             ));
             continue;
         };
+        // Defensive guard: a tunable key whose current value is composite cannot
+        // be scalar-mutated. Currently unreachable on the post-mechanical_params
+        // surface — every `risk.*` field and every `mechanistic_tunable_paths`
+        // leaf resolves to a scalar — but retained so a future composite tunable
+        // surface is rejected cleanly rather than mis-applied.
         if current_val.is_object() || current_val.is_array() {
             errors.push(ValidationError::with_path(
                 "param_not_mutable",
@@ -187,6 +204,10 @@ fn is_integer_param_key(key: &str) -> bool {
         || k.contains("lookback")
         || k.contains("window")
         || k.ends_with("_bars")
+        // mechanistic TimeExit bar count: `mechanistic.close_policies.<i>.bars`.
+        // A dotted-path leaf, so `_bars` (above) does not catch it — it must be a
+        // positive integer just like the underscore forms.
+        || k.ends_with(".bars")
         || k.ends_with("_minutes")
         || k.ends_with("_trades")
         || k.contains("cadence")
@@ -468,8 +489,7 @@ mod tests {
                 "max_leverage": 1.0,
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": {}
+            }
         });
         serde_json::from_value(v).expect("fixture strategy must deserialise")
     }
@@ -515,7 +535,6 @@ mod tests {
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
             },
-            "mechanical_params": {},
             "activation_mode": "filter_gated",
             "filter": {
                 "id": "01HZFILTER000000000000000V",

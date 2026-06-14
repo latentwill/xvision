@@ -23,6 +23,12 @@ describe("scopeForPath", () => {
     expect(scopeForPath("/eval-runs/01ABC")).toBe("eval");
   });
 
+  test("optimizer surfaces map to the opti scope (WS-11a)", () => {
+    expect(scopeForPath("/optimizer")).toBe("opti");
+    expect(scopeForPath("/optimizer?session=01ABC")).toBe("opti");
+    expect(scopeForPath("/optimizer/experiment/abc")).toBe("opti");
+  });
+
   test("the standalone agent-run route maps to the eval scope", () => {
     expect(scopeForPath("/agent-runs/01ABC")).toBe("eval");
   });

@@ -1,5 +1,6 @@
 // frontend/web/src/features/agent-runs/SpanInspector.tsx
 import { useCallback, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import type {
   AgentRunDetail,
   AgentRunSummary,
@@ -12,7 +13,8 @@ import { agentRunKeys, fetchAgentRunBlob } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { useCurrentTraceScope } from "./use-trace-scope";
-import { spanColor, withAlpha } from "./span-colors";
+import { engineEventKindOf, spanColorForSpan, withAlpha } from "./span-colors";
+import { engineEventLabelOf } from "./engine-event-kinds";
 import { PullQuote } from "./PullQuote";
 import { formatTraceLabel } from "./trace-labels";
 import { useQueryClient } from "@tanstack/react-query";
@@ -268,7 +270,7 @@ export function SpanInspector({
   onRequestAdvanced,
   runSummary,
 }: SpanInspectorProps) {
-  const color = spanColor(span.kind);
+  const color = spanColorForSpan(span);
   const ms = durationMs(span);
   // The blob-fetch route is keyed by run id; the inspector itself
   // doesn't carry it as a prop (parent always sets activeRunId on the
@@ -386,6 +388,23 @@ export function SpanInspector({
             body={<BrokerCallDetailRows detail={span.broker_call} />}
           />
         ) : null}
+        {span.kind === "opti.eval-run" ? (
+          // WS-11b: the candidate's nested eval-run drill-link. The OPTI cycle
+          // trace surfaces the candidate's PERSISTED eval run as a navigable
+          // node under its experiment — this is the only place the operator can
+          // jump from "experiment kept/rejected" to "the actual backtest the
+          // gate scored". The full span tree of that run is NOT inlined here
+          // (a future step); this is a route link to its trace surface. No
+          // popup — it's a plain in-flow link per the project UI rule.
+          <EvalRunDrillLink
+            evalRunId={
+              typeof span.attributes.eval_run_id === "string"
+                ? span.attributes.eval_run_id
+                : null
+            }
+            accent={color.hex}
+          />
+        ) : null}
         {span.kind === "agent.decision" ? (
           // QA30: decision spans previously rendered empty. The engine
           // now stamps the entry-state snapshot (asset, bar_ts,
@@ -399,6 +418,18 @@ export function SpanInspector({
             accent={color.hex}
             glyph="◆"
             body={<DecisionSpanDetailRows attrs={span.attributes} />}
+          />
+        ) : null}
+        {span.kind === "engine.event" ? (
+          // WS-8: engine-event rows render their friendly kind label + raw
+          // payload. Known kinds (risk_veto, order_signed, …) read as their
+          // family; unknown kinds still render (typed fallback) — a new engine
+          // signal is never blank or dropped.
+          <PullQuote
+            label="ENGINE EVENT"
+            accent={color.hex}
+            glyph="◇"
+            body={<EngineEventDetail span={span} />}
           />
         ) : null}
         {span.prompt ? (
@@ -736,6 +767,55 @@ export function SpanInspector({
   );
 }
 
+/**
+ * WS-11b — the navigable eval-run drill-link rendered on an `opti.eval-run`
+ * span in the optimizer cycle trace. Links to the candidate's persisted eval
+ * run trace at `/agent-runs/:runId`. Falls back to muted copy when no run id is
+ * present (defensive — the reducer only emits this node when a run id exists).
+ * No popup: a plain in-flow `<Link>`, consistent with the project UI rule.
+ */
+function EvalRunDrillLink({
+  evalRunId,
+  accent,
+}: {
+  evalRunId: string | null;
+  accent: string;
+}) {
+  if (!evalRunId) {
+    return (
+      <div
+        data-testid="span-inspector-eval-run-missing"
+        className="mb-3 text-[11px] font-mono text-text-3"
+      >
+        eval run id not available for this candidate
+      </div>
+    );
+  }
+  return (
+    <div className="mb-3" data-testid="span-inspector-eval-run">
+      <div className="text-[9px] font-mono tracking-[0.18em] text-text-3 mb-1">
+        EVAL RUN
+      </div>
+      <Link
+        to={`/agent-runs/${encodeURIComponent(evalRunId)}`}
+        data-testid="span-inspector-eval-run-link"
+        className="inline-flex items-center gap-2 h-7 px-2 text-[11px] font-mono rounded"
+        style={{
+          background: withAlpha(accent, 0.1),
+          border: `1px solid ${withAlpha(accent, 0.4)}`,
+          color: "var(--text)",
+        }}
+      >
+        <span aria-hidden style={{ color: accent }}>
+          ↗
+        </span>
+        View eval-run trace
+        <span className="text-text-3 break-all">{evalRunId}</span>
+      </Link>
+    </div>
+  );
+}
+
 function BrokerCallDetailRows({ detail }: { detail: BrokerCallDetail }) {
   const fmt = (n: number | null | undefined, digits = 4) =>
     n == null || !Number.isFinite(n) ? "—" : n.toFixed(digits);
@@ -876,5 +956,36 @@ function DecisionSpanDetailRows({
       <dt className="text-text-3">position pre</dt>
       <dd className="text-text">{fmt(positionPre, 6)}</dd>
     </dl>
+  );
+}
+
+/**
+ * Body for an `engine.event` span (WS-8). Renders the friendly kind label and
+ * the raw payload. Known kinds get a human descriptor (`Risk veto`); unknown
+ * kinds fall back to a Title-Cased form of the raw kind so the row is never
+ * blank — a brand-new engine signal still tells the operator what fired.
+ */
+function EngineEventDetail({ span }: { span: RunSpan }) {
+  const kind = engineEventKindOf(span) ?? span.name;
+  const label = engineEventLabelOf(kind);
+  const payload = span.attributes?.["engine_event_payload"];
+  return (
+    <div data-testid="span-inspector-engine-event" className="text-[11px] font-mono">
+      <div className="flex items-baseline gap-2">
+        <span className="text-text">{label}</span>
+        <span className="text-text-3">·</span>
+        <span className="text-text-3 break-all">{kind}</span>
+      </div>
+      {payload !== undefined && payload !== null ? (
+        <pre
+          data-testid="span-inspector-engine-event-payload"
+          className="mt-1.5 whitespace-pre-wrap break-all text-text-2"
+        >
+          {typeof payload === "string"
+            ? payload
+            : JSON.stringify(payload, null, 2)}
+        </pre>
+      ) : null}
+    </div>
   );
 }

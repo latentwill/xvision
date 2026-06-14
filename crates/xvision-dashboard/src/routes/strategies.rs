@@ -13,9 +13,10 @@ use ulid::Ulid;
 use xvision_engine::api::chart::{self as chart_api, StrategyChartPayload};
 use xvision_engine::api::strategy::{
     self, add_agent, archive_strategy, clear_strategy_filter, remove_agent, rename_agent_role,
-    set_mechanical_param, set_mechanistic_config, set_pipeline, set_risk_config, update_inspector,
-    update_metadata, update_slot, validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest,
-    RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategySummary,
+    set_mechanistic_config, set_pipeline, set_risk_config, update_inspector, update_metadata, update_slot,
+    validate_draft, AddAgentReq, CloneStrategyReq, ListStrategiesRequest, MarketplaceProvenance,
+    RemoveAgentReq, RenameAgentRoleReq, SetPipelineReq, StrategyAgentsOut, StrategyRequirements,
+    StrategySummary,
 };
 use xvision_engine::api::ApiError;
 use xvision_engine::authoring::{
@@ -120,6 +121,28 @@ pub async fn get(
     Ok(Json(strategy))
 }
 
+/// `GET /api/strategy/:id/requirements` — per-strategy model/skill/tool
+/// readiness for the buyer's machine. The Strategy detail page renders these
+/// and gates the eval/go-live action when `all_models_satisfied` is false.
+pub async fn requirements(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<StrategyRequirements>, DashboardError> {
+    let req = strategy::strategy_requirements(&state.api_context(), &id).await?;
+    Ok(Json(req))
+}
+
+/// `GET /api/strategy/:id/marketplace` — marketplace provenance for a strategy
+/// acquired from the marketplace (creator, price paid, license NFT, explorer
+/// link). `null` when the strategy was not bought (hand-authored / optimizer).
+pub async fn marketplace_provenance(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<Option<MarketplaceProvenance>>, DashboardError> {
+    let mp = strategy::read_marketplace_provenance(&state.api_context(), &id).await?;
+    Ok(Json(mp))
+}
+
 /// `POST /api/strategy/:id/clone` — duplicate a strategy draft for editing.
 /// An empty body means use the parent display name with a `(clone)` suffix.
 pub async fn clone(
@@ -213,31 +236,6 @@ pub async fn put_risk(
         explicit: body.explicit,
     };
     let out = set_risk_config(&state.api_context(), req).await?;
-    Ok(Json(out))
-}
-
-#[derive(Deserialize)]
-pub struct PutMechanicalParamBody {
-    pub key: String,
-    pub value: serde_json::Value,
-}
-
-/// `PUT /api/strategy/:id/mechanical_params` — set one key inside the
-/// strategy's untyped mechanical-params object.
-pub async fn put_mechanical_params(
-    Path(id): Path<String>,
-    State(state): State<AppState>,
-    Json(body): Json<PutMechanicalParamBody>,
-) -> Result<Json<serde_json::Value>, DashboardError> {
-    let out = set_mechanical_param(
-        &state.api_context(),
-        authoring::SetMechanicalParamReq {
-            id,
-            key: body.key,
-            value: body.value,
-        },
-    )
-    .await?;
     Ok(Json(out))
 }
 
@@ -539,7 +537,7 @@ impl StrategyInspectorPatchBody {
 /// `PATCH /api/strategy/:id` — update top-level manifest fields
 /// (display_name, plain_summary, asset_universe, cadence). Out of scope:
 /// id/creator/template/published_at and the sub-resources covered by
-/// dedicated routes (slot/agents/pipeline/risk/mechanical_params).
+/// dedicated routes (slot/agents/pipeline/risk).
 ///
 /// `None`-valued patch fields are left unchanged on disk; an empty
 /// body (`{}`) is a valid no-op. Validation failures surface as

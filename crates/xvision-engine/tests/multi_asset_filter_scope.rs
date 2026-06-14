@@ -317,7 +317,6 @@ fn two_filter_multi_asset_strategy() -> Strategy {
         regime_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
-        mechanical_params: serde_json::json!({}),
         activation_mode: xvision_filters::ActivationMode::EveryBar,
         filter: None,
         acknowledge_no_filter: false,
@@ -510,6 +509,7 @@ async fn cache_holds_four_distinct_entries_for_two_filters_two_assets() {
             recorder: None,
             runtime: AgentRuntime::Cline,
             cline: Some(cline.clone()),
+            model_call_span_id: None,
         })
         .await
         .expect("pipeline runs for each asset");

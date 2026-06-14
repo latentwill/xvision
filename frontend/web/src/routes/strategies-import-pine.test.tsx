@@ -57,7 +57,6 @@ const SUCCESS_RESPONSE: pineApi.PineImportResult = {
       stop_loss_atr_multiple: 2,
       daily_loss_kill_pct: 5,
     },
-    mechanical_params: null,
     decision_mode: "mechanistic",
   },
   fidelity_report: {

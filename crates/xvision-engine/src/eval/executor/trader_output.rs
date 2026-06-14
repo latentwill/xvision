@@ -359,6 +359,18 @@ impl TraderOutput {
                     // `self.action` therefore show the normalized form the
                     // parser actually tested.
                     parsed.action = parsed.action.to_ascii_lowercase();
+                    // ERROR-3: a model emits `stop_loss_pct`/`take_profit_pct`
+                    // = 0 to mean "no bracket of my own; rely on the configured
+                    // risk gate". Normalize an exact 0 to `None` so it validates
+                    // first-try (no schema-patch repair retry) and the R1
+                    // config-ATR fallback supplies the protective stop. A
+                    // nonzero out-of-range value still fails validate() below.
+                    if parsed.stop_loss_pct == Some(0.0) {
+                        parsed.stop_loss_pct = None;
+                    }
+                    if parsed.take_profit_pct == Some(0.0) {
+                        parsed.take_profit_pct = None;
+                    }
                     parsed.validate(run_id, decision_index, response, raw)?;
                     return Ok(parsed);
                 }
@@ -735,16 +747,38 @@ mod tests {
     }
 
     #[test]
-    fn zero_stop_loss_pct_is_rejected() {
-        // 0 would be silently treated as "no stop" by the SL/TP engine — the
-        // exact failure mode (a position with a degenerate bracket riding an
-        // adverse move) this validation guards against.
-        let err = TraderOutput::parse_strict(
-            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.0}"#,
+    fn zero_brackets_normalize_to_none() {
+        // ERROR-3 (docs/QA/2026-06-14-eval-test-gemini-flash-churn-findings.md):
+        // a model told to "let the deterministic ATR stop manage the exit"
+        // emits `stop_loss_pct: 0` ("no bracket of my own"). Pre-fix the parser
+        // REJECTED 0 as a degenerate bracket, forcing a schema-patch repair
+        // retry on every such call (the 58 `trader_output_schema_patch_recovered`
+        // events). Since the R1 fix planted a config ATR-stop floor for any
+        // position lacking a model SL, 0 is no longer degenerate — normalize it
+        // to `None` so the first emission validates and the config ATR stop
+        // takes over. Same for `take_profit_pct: 0`.
+        let parsed = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.0,"take_profit_pct":0.0}"#,
             "01TEST",
             0,
         )
-        .expect_err("zero stop_loss_pct must be rejected");
+        .expect("zero brackets must normalize to None, not error");
+        assert_eq!(parsed.stop_loss_pct, None);
+        assert_eq!(parsed.take_profit_pct, None);
+    }
+
+    #[test]
+    fn nonzero_out_of_range_stop_loss_pct_still_rejected() {
+        // The degenerate-bracket guard still rejects a genuinely invalid
+        // nonzero stop (e.g. 0.05% — below the 0.1 floor): only an exact 0
+        // means "no model stop". This keeps a churny micro-stop from slipping
+        // through while letting the "no stop" intent validate first-try.
+        let err = TraderOutput::parse_strict(
+            r#"{"action":"long_open","conviction":0.7,"justification":"breakout","stop_loss_pct":0.05}"#,
+            "01TEST",
+            0,
+        )
+        .expect_err("nonzero out-of-range stop_loss_pct must still be rejected");
         assert_eq!(err.kind, TraderFailureKind::InvalidField);
         assert!(err.to_string().contains("stop_loss_pct must be between"));
     }

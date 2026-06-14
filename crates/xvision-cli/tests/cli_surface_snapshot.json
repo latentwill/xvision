@@ -343,7 +343,9 @@
       "long_flags": [
         "--asset",
         "--help",
-        "--venue"
+        "--i-understand-real-money",
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [
@@ -1296,12 +1298,14 @@
       "long_flags": [
         "--asset",
         "--help",
+        "--i-understand-real-money",
         "--side",
         "--size-bps",
         "--stop-loss-pct",
         "--summary",
         "--take-profit-pct",
-        "--venue"
+        "--venue",
+        "--xvn-home"
       ],
       "mutates": true,
       "path": [
@@ -2099,10 +2103,30 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "init"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": false,
       "path": [
         "help",
         "last"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "live"
       ]
     },
     {
@@ -2335,16 +2359,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": true,
-      "path": [
-        "help",
-        "migrate"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -2463,6 +2477,17 @@
       "path": [
         "help",
         "optimize"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
+        "export"
       ]
     },
     {
@@ -2658,39 +2683,18 @@
       "mutates": false,
       "path": [
         "help",
-        "risk"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "risk",
-        "evaluate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "risk",
-        "show-config"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "run",
+        "export-run"
       ]
     },
     {
@@ -2945,7 +2949,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "help",
         "strategies",
@@ -3551,6 +3555,19 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": true,
+      "path": [
+        "init"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--help",
         "--json",
         "--n",
@@ -3560,6 +3577,30 @@
       "mutates": false,
       "path": [
         "last"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--asset",
+        "--bar-limit",
+        "--capital",
+        "--decision-limit",
+        "--display-name",
+        "--help",
+        "--i-understand-real-money",
+        "--json",
+        "--network",
+        "--strategy",
+        "--time-limit-secs",
+        "--venue",
+        "--warmup-bars",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "live"
       ]
     },
     {
@@ -4113,19 +4154,6 @@
     },
     {
       "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--dry-run",
-        "--help",
-        "--xvn-home"
-      ],
-      "mutates": true,
-      "path": [
-        "migrate"
-      ]
-    },
-    {
-      "aliases": [],
       "has_subcommands": true,
       "long_flags": [
         "--help"
@@ -4532,12 +4560,38 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--format",
+        "--help",
+        "--path"
+      ],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
       "path": [
         "optimize",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
+        "export"
       ]
     },
     {
@@ -4748,8 +4802,10 @@
         "--day-start",
         "--db",
         "--experiments-per-cycle",
+        "--export",
         "--help",
         "--ipc-socket",
+        "--max-consecutive-errors",
         "--max-cycles",
         "--max-output-tokens",
         "--mock",
@@ -5041,92 +5097,24 @@
       ],
       "mutates": false,
       "path": [
-        "risk"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--asset",
-        "--decision",
-        "--help",
-        "--portfolio",
-        "--risk-config",
-        "--whitelist"
-      ],
-      "mutates": false,
-      "path": [
-        "risk",
-        "evaluate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help",
-        "evaluate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help",
-        "show-config"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--help",
-        "--risk-config",
-        "--whitelist"
-      ],
-      "mutates": false,
-      "path": [
-        "risk",
-        "show-config"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [
-        "--help"
-      ],
-      "mutates": false,
-      "path": [
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--blob-root",
+        "--db",
+        "--format",
+        "--help",
+        "--out",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "run",
+        "export-run"
       ]
     },
     {
@@ -5137,6 +5125,17 @@
       "path": [
         "run",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "run",
+        "help",
+        "export-run"
       ]
     },
     {
@@ -5737,7 +5736,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "strategies",
         "help",
@@ -5768,7 +5767,7 @@
         "--help",
         "--xvn-home"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "strategies",
         "init"

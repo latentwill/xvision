@@ -473,6 +473,9 @@ fn seed_builder_injects_briefing_indicator_into_seed() {
         stop_loss_atr_multiple: 2.0,
         daily_loss_kill_pct: 0.05,
         max_position_pct_nav: 20.0,
+        max_funding_pay_8h: 0.0,
+        min_liq_distance_pct: 0.0,
+        max_total_exposure_pct: 0.0,
     };
 
     // Build the base decision seed (no briefing_indicators yet).

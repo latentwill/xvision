@@ -16,7 +16,7 @@ use xvision_engine::api::eval::RunDetail;
 use xvision_engine::api::settings::providers::ProviderModelsReport;
 use xvision_engine::api::{Actor, ApiContext};
 use xvision_engine::autooptimizer::progress::CycleProgressEvent;
-use xvision_engine::safety::SafetyManager;
+use xvision_engine::safety::{SafetyGate, SafetyManager};
 use xvision_observability::{
     AgentRunRecorder, BroadcastSubscriber, RunEventBus as ObsRunEventBus, SqliteRecorder,
 };
@@ -499,6 +499,10 @@ impl AppState {
         // `/api/agent-runs/<eval_run_id>` and the trace dock.
         .with_obs_event_bus(self.obs_event_bus.clone())
         .with_obs_config(self.obs_config.clone())
+        // Wire the real safety gate backed by the process-wide SafetyManager
+        // singleton. Without this the gate would default to allow_all (no-op)
+        // in production even though the manager is bootstrapped at startup.
+        .with_safety_gate(SafetyGate::new(self.safety_manager.clone()))
     }
 
     /// Read a cached models report for `provider` if it's within the TTL.
@@ -688,12 +692,22 @@ impl AppState {
                 token_id     TEXT NOT NULL,
                 listing_id   TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
-                published_at TEXT NOT NULL
+                published_at TEXT NOT NULL,
+                name         TEXT
             )"#,
         )
         .execute(&self.pool)
         .await
         .context("create publish_receipts table")?;
+
+        // `name`: the creator-chosen listing name captured at publish time
+        // (defaults to the strategy's display name). Added after the original
+        // table shipped, so ALTER any pre-existing table idempotently — a
+        // "duplicate column name" error on a table that already has it is
+        // expected and ignored.
+        let _ = sqlx::query("ALTER TABLE publish_receipts ADD COLUMN name TEXT")
+            .execute(&self.pool)
+            .await;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_publish_receipts_token_id ON publish_receipts (token_id)",
@@ -703,5 +717,33 @@ impl AppState {
         .context("create publish_receipts token_id index")?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// WU-1.3: Verify that `AppState::api_context()` returns an `ApiContext`
+    /// whose `safety_gate` is backed by the real `SafetyManager` (enforcing),
+    /// not the no-op `allow_all` gate that `ApiContext::new` defaults to.
+    ///
+    /// RED: before `AppState::api_context()` calls `.with_safety_gate(...)`,
+    /// this test fails because the gate is `allow_all` → `is_enforcing()` is
+    /// false. GREEN: after the wiring, the gate is backed by `self.safety_manager`
+    /// and `is_enforcing()` returns true.
+    #[tokio::test]
+    async fn api_context_carries_enforcing_safety_gate() {
+        let tmp = TempDir::new().expect("tempdir");
+        let state = AppState::new(tmp.path().to_path_buf())
+            .await
+            .expect("AppState::new");
+        assert!(
+            state.api_context().safety_gate.is_enforcing(),
+            "api_context().safety_gate should be enforcing (backed by SafetyManager), \
+             but got allow_all — check that AppState::api_context calls \
+             .with_safety_gate(SafetyGate::new(self.safety_manager.clone()))"
+        );
     }
 }

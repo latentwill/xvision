@@ -5281,6 +5281,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmp"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ba8be72d372b2c9b35542551678538b562e7cf86c3315773cae48dfbfe7790c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "rmp-serde"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
+dependencies = [
+ "rmp",
+ "serde",
+]
+
+[[package]]
 name = "rsa"
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8030,12 +8049,10 @@ dependencies = [
  "xvision-eval",
  "xvision-execution",
  "xvision-filters",
- "xvision-harness",
  "xvision-identity",
  "xvision-marketplace",
  "xvision-memory",
  "xvision-observability",
- "xvision-risk",
 ]
 
 [[package]]
@@ -8176,7 +8193,6 @@ dependencies = [
  "xvision-identity",
  "xvision-memory",
  "xvision-observability",
- "xvision-risk",
 ]
 
 [[package]]
@@ -8195,13 +8211,13 @@ dependencies = [
  "xvision-core",
  "xvision-execution",
  "xvision-observability",
- "xvision-risk",
 ]
 
 [[package]]
 name = "xvision-execution"
 version = "0.21.0"
 dependencies = [
+ "alloy",
  "anyhow",
  "apca",
  "async-trait",
@@ -8213,6 +8229,7 @@ dependencies = [
  "mockito",
  "num-decimal",
  "reqwest",
+ "rmp-serde",
  "serde",
  "serde_json",
  "sha2",
@@ -8235,17 +8252,6 @@ dependencies = [
  "toml",
  "ts-rs",
  "ulid",
-]
-
-[[package]]
-name = "xvision-harness"
-version = "0.21.0"
-dependencies = [
- "chrono",
- "tracing",
- "uuid",
- "xvision-core",
- "xvision-risk",
 ]
 
 [[package]]
@@ -8344,20 +8350,6 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "xvision-risk"
-version = "0.21.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "toml",
- "tracing",
- "uuid",
- "xvision-core",
 ]
 
 [[package]]

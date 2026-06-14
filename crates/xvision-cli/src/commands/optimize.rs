@@ -117,6 +117,11 @@ enum OptimizeAction {
     Ls(LsArgs),
     /// Show a single optimizer cycle's gated candidates and counts.
     Show(ShowArgs),
+    /// Export a complete optimizer cycle as a high-fidelity, agent-feedable
+    /// document (every event + per-experiment outcomes + honesty check + reviewer
+    /// findings + the compiled prompt pattern). Markdown or JSON; to a file or
+    /// stdout. Works on any past cycle — the feedback artifact for the flywheel.
+    Export(ExportArgs),
     /// Lineage graph inspection (ls / show).
     Lineage(LineageCmd),
     /// Force-clear a wedged optimizer cycle lock (e.g. after a killed/crashed
@@ -163,6 +168,23 @@ pub struct ShowArgs {
     /// Emit the cycle detail as JSON.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ExportArgs {
+    /// Cycle id to export.
+    pub cycle_id: String,
+    /// SQLite database path. Defaults to the shared $XVN_HOME/xvn.db (F8).
+    #[arg(long)]
+    pub db: Option<PathBuf>,
+    /// Output format: `md` (Markdown document, default) or `json` (the
+    /// machine-readable `xvn.optimizer_cycle.v1` payload).
+    #[arg(long, default_value = "md", value_parser = ["md", "json"])]
+    pub format: String,
+    /// Write the document to this file. When omitted, the document is printed to
+    /// stdout.
+    #[arg(long, value_name = "FILE")]
+    pub path: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -322,6 +344,14 @@ pub struct RunCycleArgs {
         help = "Halt after N consecutive candidate eval failures (default 3)"
     )]
     pub max_consecutive_errors: Option<u32>,
+    /// WS-11c: directory to auto-write a cycle document into when each cycle of
+    /// this run completes. Each completed cycle is exported as
+    /// `<DIR>/<cycle_id>.md` — the same high-fidelity, agent-feedable artifact
+    /// `xvn optimize export` produces — so a CLI-driven cycle leaves a feedback
+    /// document behind without a second command. Use `optimize export <cycle_id>`
+    /// to re-export any past cycle on demand.
+    #[arg(long, value_name = "DIR")]
+    pub export: Option<PathBuf>,
 }
 
 // ── Top-level dispatch ────────────────────────────────────────────────────────
@@ -333,6 +363,7 @@ pub async fn run(cmd: OptimizeCmd) -> CliResult<()> {
         Some(OptimizeAction::Run(args)) => run_cycle_cmd(args).await,
         Some(OptimizeAction::Ls(args)) => run_ls(args).await,
         Some(OptimizeAction::Show(args)) => run_show(args).await,
+        Some(OptimizeAction::Export(args)) => run_export(args).await,
         Some(OptimizeAction::Lineage(cmd)) => match cmd.op {
             LineageOp::Ls(args) => lineage_ls(args).await,
             LineageOp::Show(args) => lineage_show(args).await,
@@ -880,6 +911,11 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let cancel_ref = &cancel;
     let sustained_ref = &sustained;
 
+    // WS-11c: collect each completed cycle's id so `--export <DIR>` can write a
+    // feedback document per cycle after the session loop returns.
+    let completed_cycle_ids: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let completed_ids_ref = &completed_cycle_ids;
+
     let session_result = xvision_engine::autooptimizer::run_session(
         &pool,
         &session_id,
@@ -924,6 +960,11 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 )
                 .await
                 .map_err(|e| anyhow::anyhow!("run_cycle: {e}"))?;
+
+                // WS-11c: record the completed cycle id for `--export`.
+                if let Ok(mut ids) = completed_ids_ref.lock() {
+                    ids.push(result.cycle_id.clone());
+                }
 
                 let bucket = if !result.active_nodes.is_empty() {
                     "kept"
@@ -984,6 +1025,32 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
     let _ = xvision_engine::autooptimizer::run_lock::release(&pool, &session_id).await;
 
     session_result.map_err(|e| CliError::upstream(anyhow::anyhow!("run session: {e}")))?;
+
+    // WS-11c: with --export <DIR>, write a feedback document per completed cycle.
+    // The drain task above already flushed every event to autooptimizer_events,
+    // so each cycle's document is complete. Best-effort: a write failure is a
+    // warning, never a session failure.
+    if let Some(export_dir) = args.export.as_ref() {
+        let ids = completed_cycle_ids.lock().map(|g| g.clone()).unwrap_or_default();
+        if let Err(e) = std::fs::create_dir_all(export_dir) {
+            eprintln!("note: could not create export dir {}: {e}", export_dir.display());
+        } else {
+            for cid in &ids {
+                match xvision_engine::autooptimizer::build_cycle_export(&pool, cid).await {
+                    Ok(export) => {
+                        let md = xvision_engine::autooptimizer::render_cycle_export_markdown(&export);
+                        let path = export_dir.join(format!("{cid}.md"));
+                        if let Err(e) = std::fs::write(&path, &md) {
+                            eprintln!("note: could not write cycle export {}: {e}", path.display());
+                        } else {
+                            eprintln!("wrote cycle export to {}", path.display());
+                        }
+                    }
+                    Err(e) => eprintln!("note: could not build cycle export for {cid}: {e}"),
+                }
+            }
+        }
+    }
 
     // Final session summary.
     let totals = *meter.lock().expect("meter mutex poisoned");
@@ -1195,6 +1262,66 @@ fn print_cycle_detail(detail: &CycleRunDetail) {
          Full genealogy: `xvn optimize lineage ls --cycle {}`.",
         s.cycle_id
     );
+}
+
+// ── export (cycle document) ───────────────────────────────────────────────────
+
+/// `xvn optimize export <cycle_id>` — write a complete optimizer cycle as a
+/// high-fidelity, agent-feedable document (Markdown or JSON) to a file or
+/// stdout.
+///
+/// Reads the persisted `autooptimizer_events` rows for the cycle from the shared
+/// `$XVN_HOME/xvn.db` (the same store the dashboard cycle-replay endpoint uses)
+/// and renders the WS-11c flywheel-feedback artifact: every event (operator
+/// labeled), per-experiment gate outcomes (Active / Suspect / Rejected) with the
+/// day-Sharpe delta and the nested candidate eval-run id, the honesty check, the
+/// reviewer findings, and the compiled prompt-pattern summary.
+///
+/// An empty/unknown cycle yields a graceful "no events" document rather than a
+/// panic.
+async fn run_export(args: ExportArgs) -> CliResult<()> {
+    let db_path = resolve_lineage_db(args.db)?;
+    let export = if db_path.exists() {
+        let pool = open_lineage_db(&db_path).await?;
+        xvision_engine::autooptimizer::build_cycle_export(&pool, &args.cycle_id)
+            .await
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("build cycle export: {e}")))?
+    } else {
+        // No DB yet → an empty export so the doc still renders gracefully.
+        xvision_engine::autooptimizer::assemble_cycle_export(&args.cycle_id, Vec::new())
+    };
+
+    let document = match args.format.as_str() {
+        "json" => serde_json::to_string_pretty(&export)
+            .map_err(|e| CliError::upstream(anyhow::anyhow!("serialize cycle export: {e}")))?,
+        // "md" (default) — clap's value_parser guarantees one of {md, json}.
+        _ => xvision_engine::autooptimizer::render_cycle_export_markdown(&export),
+    };
+
+    if export.events.is_empty() {
+        eprintln!(
+            "note: no events recorded for cycle {} — wrote an empty document.",
+            args.cycle_id
+        );
+    }
+
+    match args.path {
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| CliError::upstream(anyhow::anyhow!("create export dir: {e}")))?;
+                }
+            }
+            std::fs::write(&path, &document)
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("write export {}: {e}", path.display())))?;
+            eprintln!("wrote cycle export to {}", path.display());
+        }
+        None => {
+            println!("{document}");
+        }
+    }
+    Ok(())
 }
 
 // ── lineage ──────────────────────────────────────────────────────────────────

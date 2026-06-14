@@ -198,6 +198,24 @@ describe("LiveCapsule", () => {
     expect(rows[3]).toHaveTextContent("AVAX-PERP");
   });
 
+  test("renders the fidelity badge inline inside the focused content row", () => {
+    renderLive({ retentionMode: "full_debug" });
+    const cap = screen.getByTestId("live-capsule");
+    const badge = within(cap).getByTestId("capsule-fidelity-badge");
+    expect(badge.textContent).toContain("full");
+
+    // Inline on the focused row (carrying the LIVE prefix), not a stacked row.
+    const kindLabel = within(cap).getByTestId("capsule-kind-label");
+    const contentRow = kindLabel.closest("div.transition-colors");
+    expect(contentRow).not.toBeNull();
+    expect(contentRow!.contains(badge)).toBe(true);
+  });
+
+  test("omits the fidelity badge when no retentionMode is provided", () => {
+    renderLive();
+    expect(screen.queryByTestId("capsule-fidelity-badge")).toBeNull();
+  });
+
   test("error and warn run statuses tint the capsule border (no crash)", () => {
     renderLive({ run: focused({ status: "error" }) });
     expect(screen.getByTestId("live-capsule")).toBeInTheDocument();

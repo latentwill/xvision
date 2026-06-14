@@ -167,7 +167,8 @@ const DENYLIST_SUBCOMMANDS: &[&str] = &[
     "mcp",            // starts an MCP server/session
     "fire-trade",     // explicit live order smoke test
     "close-position", // explicit live position mutation
-    "migrate",        // applies migrations/seeds to the dashboard host
+    "init",           // initializes/migrates the dashboard host DB (alias: migrate)
+    "live",           // guarded real-money launch — local operator only, never remote
 ];
 
 /// Top-level commands that are supported through the remote CLI job API.
@@ -192,14 +193,16 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "gate",
     "indicator",
     "metrics",
-    // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
+    // "init" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
     "obs",
     "optimize", // bounded via STRICT_TEMPLATES (optimize run only)
     "portfolio",
     "provider",
     "report",
-    "risk",
+    // `risk` was retired from the CLI in #1038 (Byreal/perps risk unified onto
+    // the engine veto path); this stale allowlist entry pointed at a removed
+    // verb and tripped `remote_allowlist_paths_exist_in_clap_tree`.
     "run",
     "scenario", // scenario show, scenario select — read-only paths allowed
     "show-decision",
@@ -407,7 +410,7 @@ pub fn devmode_enabled() -> bool {
 ///
 /// With dev mode **on** it is a FULL bypass — every non-empty argv is allowed,
 /// including the live-trade (`fire-trade`, `close-position`) and host-admin
-/// (`migrate`, `dashboard`, `mcp`) verbs that [`check_argv`] denies. This is an
+/// (`init`, `dashboard`, `mcp`) verbs that [`check_argv`] denies. This is an
 /// explicit per-node opt-in (set [`DEVMODE_ENV`] only on a trusted dev node
 /// with no live broker credentials); it does NOT replace the (pending) auth
 /// gate.
@@ -716,8 +719,59 @@ mod tests {
     }
 
     #[test]
-    fn top_level_migrate_is_rejected() {
-        assert_reject(&["migrate", "--dry-run"], "not allowed over remote cli");
+    fn top_level_init_is_rejected() {
+        assert_reject(&["init", "--dry-run"], "not allowed over remote cli");
+    }
+
+    // Real-money launch verb is local-only — must never execute over the
+    // remote CLI API (bypasses broker credential isolation + operator ack).
+    #[test]
+    fn live_real_money_subcommand_is_rejected_over_remote_cli() {
+        // Testnet variant — still denied: the remote CLI has no interactive
+        // terminal for operator confirmation and no way to gate on
+        // --i-understand-real-money safely.
+        assert_reject(
+            &[
+                "live",
+                "--venue",
+                "byreal",
+                "--network",
+                "testnet",
+                "--strategy",
+                "st_01",
+                "--display-name",
+                "remote-test",
+                "--asset",
+                "BTC/USD",
+                "--capital",
+                "1000",
+                "--bar-limit",
+                "50",
+            ],
+            "not allowed over remote cli",
+        );
+        // Mainnet variant.
+        assert_reject(
+            &[
+                "live",
+                "--venue",
+                "byreal",
+                "--network",
+                "mainnet",
+                "--i-understand-real-money",
+                "--strategy",
+                "st_01",
+                "--display-name",
+                "remote-mainnet",
+                "--asset",
+                "BTC/USD",
+                "--capital",
+                "5000",
+                "--time-limit-secs",
+                "3600",
+            ],
+            "not allowed over remote cli",
+        );
     }
 
     // ── write-path gaps we still want blocked remotely ───────────────────

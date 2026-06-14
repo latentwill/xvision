@@ -2,45 +2,8 @@
   "base_template": "trend_follower",
   "display_name": "EMA Ribbon Alignment",
   "family": "EMA",
-  "mechanical_params": [
-    {
-      "default": "9",
-      "name": "fast_period",
-      "range": "fixed (Fib)"
-    },
-    {
-      "default": "21",
-      "name": "mid_period",
-      "range": "fixed (Fib)"
-    },
-    {
-      "default": "50",
-      "name": "slow_period",
-      "range": "fixed (cultural)"
-    },
-    {
-      "default": "3",
-      "name": "min_alignment_bars",
-      "range": "1 \u2013 10"
-    },
-    {
-      "default": "3",
-      "name": "min_slope_count",
-      "range": "2 \u2013 3"
-    },
-    {
-      "default": "true",
-      "name": "exit_on_first_cross",
-      "range": "bool"
-    },
-    {
-      "default": "1.5",
-      "name": "stop_atr_multiple",
-      "range": "1.0 \u2013 3.0"
-    }
-  ],
   "name": "ema_ribbon_alignment",
-  "plain_summary": "A single cross is binary; a ribbon stack tells you about trend strength and regime confidence simultaneously. When fast > mid > slow with positive slopes on all three, the trend is unambiguous and pullbacks are shallow. When the ribbon tangles (rank-order breaks), regime is transitioning. This strategy enters only when the ribbon is fully aligned and exits the moment alignment breaks \u2014 not waiting for a full cross.",
+  "plain_summary": "A single cross is binary; a ribbon stack tells you about trend strength and regime confidence simultaneously. When fast > mid > slow with positive slopes on all three, the trend is unambiguous and pullbacks are shallow. When the ribbon tangles (rank-order breaks), regime is transitioning. This strategy enters only when the ribbon is fully aligned and exits the moment alignment breaks — not waiting for a full cross.",
   "regime_fit": [
     "any"
   ],
@@ -54,12 +17,12 @@
     "decision_rule": "```\nbull_aligned = ema_9 > ema_21 > ema_50\n              and slope(ema_9), slope(ema_21), slope(ema_50) all positive\n              (where >=2 must be positive if min_slope_count == 2)\n\nbear_aligned = ema_9 < ema_21 < ema_50\n              and corresponding slopes negative\n\nif bull_aligned for >= min_alignment_bars consecutive bars and is_flat:\n    enter long\nelif bear_aligned for >= min_alignment_bars consecutive bars and is_flat:\n    enter short\n\nexit immediately when alignment breaks (any rank-order violation), or on\nstop / take-profit. tight stop because the regime signal is the stop.\n```",
     "expected_regime": "R1 (strong trend), specifically established trends after the initial\nbreak. Underperforms in R3 (squeeze) and R4 (early reversal) where the\nribbon constantly tangles. Toxic in R5.",
     "inputs": "- `IndicatorPanel.ema_9`, `IndicatorPanel.ema_21`, `IndicatorPanel.ema_50`.\n- `PriceFrame.close`.\n- `IndicatorPanel.atr_14`.",
-    "parameters": "| Param                       | Default | Range            |\n| --------------------------- | ------- | ---------------- |\n| `fast_period`               | 9       | fixed (Fib)      |\n| `mid_period`                | 21      | fixed (Fib)      |\n| `slow_period`               | 50      | fixed (cultural) |\n| `min_alignment_bars`        | 3       | 1 \u2013 10           |\n| `min_slope_count`           | 3       | 2 \u2013 3            |\n| `exit_on_first_cross`       | `true`  | bool             |\n| `stop_atr_multiple`         | 1.5     | 1.0 \u2013 3.0        |\n\n`min_slope_count` lets you require all three slopes positive (3) or just\nthe two fastest (2). Tighter = fewer signals; looser = more entries but\nweaker trend.",
-    "references": "- Atlas Page 3 (P3 \u00d7 R1).\n- Pair (slower): [`ema_50_200_golden_cross`](ema_50_200_golden_cross.md).\n- Filter: [`ema_bullbear_regime_filter`](ema_bullbear_regime_filter.md) on top of this.",
+    "parameters": "| Param                       | Default | Range            |\n| --------------------------- | ------- | ---------------- |\n| `fast_period`               | 9       | fixed (Fib)      |\n| `mid_period`                | 21      | fixed (Fib)      |\n| `slow_period`               | 50      | fixed (cultural) |\n| `min_alignment_bars`        | 3       | 1 – 10           |\n| `min_slope_count`           | 3       | 2 – 3            |\n| `exit_on_first_cross`       | `true`  | bool             |\n| `stop_atr_multiple`         | 1.5     | 1.0 – 3.0        |\n\n`min_slope_count` lets you require all three slopes positive (3) or just\nthe two fastest (2). Tighter = fewer signals; looser = more entries but\nweaker trend.",
+    "references": "- Atlas Page 3 (P3 × R1).\n- Pair (slower): [`ema_50_200_golden_cross`](ema_50_200_golden_cross.md).\n- Filter: [`ema_bullbear_regime_filter`](ema_bullbear_regime_filter.md) on top of this.",
     "status": "`queued`. Faster cousin of `ema_50_200_golden_cross`; both should be in\nthe seed population to compare entry-speed vs whipsaw tradeoff directly.",
-    "thesis": "A single cross is binary; a ribbon stack tells you about *trend strength\nand regime confidence simultaneously*. When fast > mid > slow with\npositive slopes on all three, the trend is unambiguous and pullbacks are\nshallow. When the ribbon tangles (rank-order breaks), regime is\ntransitioning. This strategy enters only when the ribbon is fully aligned\nand exits the moment alignment breaks \u2014 not waiting for a full cross.\n\nFaster than `ema_50_200_golden_cross` to enter and exit. Pays for that\nspeed with more whipsaws \u2014 best-paired with a regime gate."
+    "thesis": "A single cross is binary; a ribbon stack tells you about *trend strength\nand regime confidence simultaneously*. When fast > mid > slow with\npositive slopes on all three, the trend is unambiguous and pullbacks are\nshallow. When the ribbon tangles (rank-order breaks), regime is\ntransitioning. This strategy enters only when the ribbon is fully aligned\nand exits the moment alignment breaks — not waiting for a full cross.\n\nFaster than `ema_50_200_golden_cross` to enter and exit. Pays for that\nspeed with more whipsaws — best-paired with a regime gate."
   },
   "source_doc": "strategies/EMA/ema_ribbon_alignment.md",
   "status": "queued",
-  "trader_prompt": "You are trading the `EMA Ribbon Alignment` strategy.\n\nThesis:\nA single cross is binary; a ribbon stack tells you about trend strength and regime confidence simultaneously. When fast > mid > slow with positive slopes on all three, the trend is unambiguous and pullbacks are shallow. When the ribbon tangles (rank-order breaks), regime is transitioning. This strategy enters only when the ribbon is fully aligned and exits the moment alignment breaks \u2014 not waiting for a full cross.\n\nInputs:\n- `IndicatorPanel.ema_9`, `IndicatorPanel.ema_21`, `IndicatorPanel.ema_50`.\n- `PriceFrame.close`.\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nbull_aligned = ema_9 > ema_21 > ema_50\n              and slope(ema_9), slope(ema_21), slope(ema_50) all positive\n              (where >=2 must be positive if min_slope_count == 2)\n\nbear_aligned = ema_9 < ema_21 < ema_50\n              and corresponding slopes negative\n\nif bull_aligned for >= min_alignment_bars consecutive bars and is_flat:\n    enter long\nelif bear_aligned for >= min_alignment_bars consecutive bars and is_flat:\n    enter short\n\nexit immediately when alignment breaks (any rank-order violation), or on\nstop / take-profit. tight stop because the regime signal is the stop.\n```\n\nExpected regime:\nR1 (strong trend), specifically established trends after the initial break. Underperforms in R3 (squeeze) and R4 (early reversal) where the ribbon constantly tangles. Toxic in R5.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
+  "trader_prompt": "You are trading the `EMA Ribbon Alignment` strategy.\n\nThesis:\nA single cross is binary; a ribbon stack tells you about trend strength and regime confidence simultaneously. When fast > mid > slow with positive slopes on all three, the trend is unambiguous and pullbacks are shallow. When the ribbon tangles (rank-order breaks), regime is transitioning. This strategy enters only when the ribbon is fully aligned and exits the moment alignment breaks — not waiting for a full cross.\n\nInputs:\n- `IndicatorPanel.ema_9`, `IndicatorPanel.ema_21`, `IndicatorPanel.ema_50`.\n- `PriceFrame.close`.\n- `IndicatorPanel.atr_14`.\n\nDecision rule:\n```\nbull_aligned = ema_9 > ema_21 > ema_50\n              and slope(ema_9), slope(ema_21), slope(ema_50) all positive\n              (where >=2 must be positive if min_slope_count == 2)\n\nbear_aligned = ema_9 < ema_21 < ema_50\n              and corresponding slopes negative\n\nif bull_aligned for >= min_alignment_bars consecutive bars and is_flat:\n    enter long\nelif bear_aligned for >= min_alignment_bars consecutive bars and is_flat:\n    enter short\n\nexit immediately when alignment breaks (any rank-order violation), or on\nstop / take-profit. tight stop because the regime signal is the stop.\n```\n\nExpected regime:\nR1 (strong trend), specifically established trends after the initial break. Underperforms in R3 (squeeze) and R4 (early reversal) where the ribbon constantly tangles. Toxic in R5.\n\nData dependencies:\nNone beyond price.\n\nReturn JSON only: {\"action\":\"long_open|short_open|flat|hold\",\"conviction\":0.0,\"justification\":\"one concise reason\"}.\n"
 }

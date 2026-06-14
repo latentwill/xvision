@@ -34,7 +34,7 @@
 use crate::events::{BackpressureDroppedEvent, RunEvent};
 use crate::recorder::{AgentRunRecorder, RecorderError};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 use tokio::task::JoinHandle;
@@ -76,7 +76,30 @@ struct Inner {
     /// Only used in the degenerate "queue full of lifecycle events"
     /// fallback.
     notify_producer: Notify,
+    /// Monotone count of events that have been ENQUEUED onto the bus
+    /// (every successful `push_back`, including re-queued backpressure
+    /// markers). Paired with `settled` to give `quiesce` an
+    /// unambiguous, race-free drain signal: snapshot `enqueued` on
+    /// entry, then wait until `settled` catches up.
+    enqueued: AtomicU64,
+    /// Monotone count of events that have LEFT the bus for good — either
+    /// fully handled by every subscriber (the consumer finished
+    /// `handle_event`) or evicted on overflow. `settled >= enqueued`
+    /// means nothing is queued and nothing is mid-fan-out.
+    settled: AtomicU64,
+    /// Woken each time `settled` advances, so a parked `quiesce`
+    /// re-checks its `settled >= snapshot` condition.
+    notify_quiesce: Notify,
     closed: AtomicBool,
+}
+
+impl Inner {
+    /// Record that one event has permanently left the bus (handled or
+    /// evicted) and wake any parked `quiesce`.
+    fn settle_one(&self) {
+        self.settled.fetch_add(1, Ordering::Release);
+        self.notify_quiesce.notify_waiters();
+    }
 }
 
 pub struct RunEventBus {
@@ -119,6 +142,9 @@ impl RunEventBus {
             span_to_run: Mutex::new(HashMap::new()),
             notify_consumer: Notify::new(),
             notify_producer: Notify::new(),
+            enqueued: AtomicU64::new(0),
+            settled: AtomicU64::new(0),
+            notify_quiesce: Notify::new(),
             closed: AtomicBool::new(false),
         });
         let inner_for_task = inner.clone();
@@ -157,12 +183,17 @@ impl RunEventBus {
                 let mut q = self.inner.queue.lock().await;
                 if q.len() < self.inner.capacity {
                     q.push_back(pending);
+                    self.inner.enqueued.fetch_add(1, Ordering::Release);
                     self.inner.notify_consumer.notify_one();
                     return;
                 }
                 if let Some(idx) = q.iter().position(|e| !e.is_lifecycle_critical()) {
                     let evicted = q.remove(idx).expect("idx was just observed");
                     q.push_back(pending);
+                    // Net queue size unchanged: the new event is enqueued and
+                    // the evicted one settles (it will never be handled).
+                    self.inner.enqueued.fetch_add(1, Ordering::Release);
+                    self.inner.settle_one();
                     PublishOutcome::Evicted(evicted)
                 } else {
                     // Every queued event is lifecycle-critical — we
@@ -205,12 +236,15 @@ impl RunEventBus {
         };
         if q.len() < self.inner.capacity {
             q.push_back(event);
+            self.inner.enqueued.fetch_add(1, Ordering::Release);
             self.inner.notify_consumer.notify_one();
             return Ok(());
         }
         if let Some(idx) = q.iter().position(|e| !e.is_lifecycle_critical()) {
             let evicted = q.remove(idx).expect("idx was just observed");
             q.push_back(event);
+            self.inner.enqueued.fetch_add(1, Ordering::Release);
+            self.inner.settle_one();
             drop(q);
             // Best-effort drop accounting without awaiting.
             if let Ok(mut drops) = self.inner.drops.try_lock() {
@@ -222,10 +256,44 @@ impl RunEventBus {
         Err(event)
     }
 
-    /// Test helper: drain the bus and let subscribers finish. Returns
-    /// when there are no in-flight messages.
+    /// Block until every event published *before this call* has fully
+    /// settled — handled by every subscriber (the consumer finished
+    /// `handle_event`, so the recorder INSERT has committed) or evicted on
+    /// overflow. Used by short-lived producers (the `xvn eval run` CLI
+    /// process) to guarantee the recorder has persisted everything before
+    /// the process exits; without it the async consumer task can be
+    /// dropped with events still queued, losing the trace.
+    ///
+    /// Implemented on a `enqueued`/`settled` sequence pair rather than a
+    /// queue-empty + processing-flag check: the latter has a window where
+    /// the consumer has popped the last event but not yet marked itself
+    /// busy, letting `quiesce` return one event early. Snapshotting
+    /// `enqueued` and waiting for `settled` to catch up is race-free and
+    /// independent of consumer scheduling.
+    ///
+    /// Events published concurrently *after* `quiesce` is entered are not
+    /// guaranteed to be drained — callers should `quiesce` only once the
+    /// run has finished publishing (after `emit_run_finished`).
     pub async fn quiesce(&self) {
-        tokio::task::yield_now().await;
+        // Snapshot the high-water mark of enqueued events. We only promise
+        // to drain everything up to here.
+        let target = self.inner.enqueued.load(Ordering::Acquire);
+        loop {
+            // Register interest BEFORE the check so we can't miss a wake
+            // that fires between the check and the await.
+            let woken = self.inner.notify_quiesce.notified();
+            tokio::pin!(woken);
+            woken.as_mut().enable();
+
+            if self.inner.settled.load(Ordering::Acquire) >= target
+                || self.inner.closed.load(Ordering::Acquire)
+            {
+                return;
+            }
+            // Wait for the consumer to settle another event, with a short
+            // timeout as a safety net against a lost wake. Re-checks on loop.
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(50), woken).await;
+        }
     }
 }
 
@@ -241,6 +309,11 @@ async fn consumer_loop(inner: Arc<Inner>, subscribers: Vec<Arc<dyn AgentRunRecor
             }
         }
         flush_drops(&inner, &event).await;
+        // This event is now fully handled (the recorder INSERT has
+        // committed). Any backpressure markers `flush_drops` re-queued were
+        // counted into `enqueued` on push and will settle on their own pass.
+        // Advancing `settled` here wakes any parked `quiesce`.
+        inner.settle_one();
     }
 }
 
@@ -252,6 +325,9 @@ async fn next_event(inner: &Arc<Inner>) -> Option<RunEvent> {
             if let Some(e) = q.pop_front() {
                 // We just freed a slot; wake any backpressured
                 // producer that was waiting on a lifecycle-only queue.
+                // The event is NOT settled until `handle_event` completes
+                // in `consumer_loop` (which calls `settle_one`), so
+                // `quiesce` keeps waiting until the recorder INSERT lands.
                 inner.notify_producer.notify_waiters();
                 return Some(e);
             }
@@ -343,6 +419,7 @@ async fn publish_marker(inner: &Arc<Inner>, marker: BackpressureDroppedEvent) {
         let mut q = inner.queue.lock().await;
         if q.len() < inner.capacity {
             q.push_back(event);
+            inner.enqueued.fetch_add(1, Ordering::Release);
             inner.notify_consumer.notify_one();
             return;
         }
@@ -386,4 +463,69 @@ fn recorder_error(e: &RecorderError) {
         error = %e,
         "recorder failed to handle event"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::SpanStartedEvent;
+    use crate::recorder::NoopRecorder;
+    use crate::types::SpanKind;
+    use chrono::Utc;
+
+    fn span_event(i: usize) -> RunEvent {
+        RunEvent::SpanStarted(SpanStartedEvent {
+            span_id: format!("span-{i}"),
+            run_id: "run-quiesce".to_string(),
+            parent_span_id: None,
+            kind: SpanKind::AgentDecision,
+            name: format!("decision-{i}"),
+            started_at: Utc::now(),
+            otel_trace_id: None,
+            otel_span_id: None,
+            attributes_json: None,
+        })
+    }
+
+    /// `quiesce` must block until EVERY published event has been handled by
+    /// the subscriber — not merely yield once. This is the property the
+    /// short-lived `xvn eval run` CLI depends on: publish the run's events,
+    /// `quiesce`, exit, and the recorder has seen all of them. A single
+    /// `yield_now` (the old behaviour) would let the consumer keep events
+    /// in-flight and lose them on process exit.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn quiesce_drains_all_published_events_to_subscriber() {
+        let recorder = Arc::new(NoopRecorder::new());
+        let bus = RunEventBus::new(vec![recorder.clone()]);
+
+        const N: usize = 64;
+        for i in 0..N {
+            bus.publish(span_event(i)).await;
+        }
+
+        // No sleeps, no polling: a single quiesce must guarantee the drain.
+        bus.quiesce().await;
+
+        let seen = recorder.snapshot().await;
+        assert_eq!(
+            seen.len(),
+            N,
+            "quiesce must drain every published event to the subscriber \
+             before returning (saw {} of {N})",
+            seen.len()
+        );
+    }
+
+    /// On an already-idle bus `quiesce` returns immediately (nothing in
+    /// flight), and remains correct when called repeatedly.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn quiesce_is_noop_when_idle() {
+        let recorder = Arc::new(NoopRecorder::new());
+        let bus = RunEventBus::new(vec![recorder.clone()]);
+        bus.quiesce().await;
+        bus.publish(span_event(0)).await;
+        bus.quiesce().await;
+        bus.quiesce().await;
+        assert_eq!(recorder.snapshot().await.len(), 1);
+    }
 }

@@ -213,8 +213,9 @@ pub struct StrategyDiff {
 /// - **Prose**: walks `b.agents`; for each role present in both strategies,
 ///   emits a [`ProseEdit`] when `prompt_override` differs (treating `None` as
 ///   `""`).
-/// - **Params**: flat-diffs scalar values in `mechanical_params`; keys only in
-///   `b` are emitted with `before: null`.
+/// - **Params**: always empty — scalar tuning flows through `risk.*` /
+///   `mechanistic.*` keys proposed directly by the experiment writer, not via
+///   a free-form params blob.
 /// - **Tools**: always returns an empty [`ToolDiff`] — tools are managed at
 ///   the agent level, not the strategy level.
 /// - **Filter**: recursively diffs numeric leaf values in the serialised filter
@@ -242,27 +243,11 @@ pub fn strategy_diff(a: &Strategy, b: &Strategy) -> StrategyDiff {
     }
 
     // ── Params ─────────────────────────────────────────────────────────────
-    let mut params: Vec<ParamChange> = Vec::new();
-    if let Some(b_obj) = b.mechanical_params.as_object() {
-        for (key, val_b) in b_obj {
-            // Only diff scalar leaves (skip nested objects/arrays).
-            if val_b.is_object() || val_b.is_array() {
-                continue;
-            }
-            let val_a = a
-                .mechanical_params
-                .get(key)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            if val_a != *val_b {
-                params.push(ParamChange {
-                    key: key.clone(),
-                    before: val_a,
-                    after: val_b.clone(),
-                });
-            }
-        }
-    }
+    // No free-form mechanical-params blob to diff any more. Scalar tuning now
+    // flows exclusively through the surfaces the executor reads (risk.* and
+    // mechanistic.* keys), which the LLM experiment writer proposes directly as
+    // ParamChange entries; strategy_diff produces no scalar param edits.
+    let params: Vec<ParamChange> = Vec::new();
 
     // ── Tools ──────────────────────────────────────────────────────────────
     // Tools are agent-level, not strategy-level; always empty here.
@@ -336,10 +321,10 @@ fn diff_filter_values(a: &serde_json::Value, b: &serde_json::Value, path: &str, 
 }
 
 /// Numeric `RiskConfig` fields the mutator may tune via `risk.<field>` param
-/// keys. F14/F20 (QA 2026-06-04): the real strategies on the node all have an
-/// empty `mechanical_params`; their only tunable knobs live in `risk`, so
-/// without this the optimizer could never produce a valid param experiment for
-/// any real strategy. Keep in sync with `RiskConfig` (xvision-risk).
+/// keys. F14/F20 (QA 2026-06-04): the real strategies on the node have no
+/// mechanistic config, so their only tunable knobs live in `risk` — without
+/// this the optimizer could never produce a valid param experiment for any
+/// real strategy. Keep in sync with `RiskConfig` (xvision-engine strategies::risk).
 pub const RISK_PARAM_FIELDS: &[&str] = &[
     "risk_pct_per_trade",
     "max_concurrent_positions",
@@ -350,38 +335,21 @@ pub const RISK_PARAM_FIELDS: &[&str] = &[
 ];
 
 /// If `key` addresses a tunable `risk` field — either `risk.<field>` or a bare
-/// `<field>` that isn't shadowed by a `mechanical_params` key — return the field
-/// name; otherwise `None` (the key targets `mechanical_params`).
-pub fn risk_field_for_key(base: &Strategy, key: &str) -> Option<String> {
+/// `<field>` naming a known risk knob — return the field name; otherwise `None`.
+pub fn risk_field_for_key(_base: &Strategy, key: &str) -> Option<String> {
     if let Some(field) = key.strip_prefix("risk.") {
         return RISK_PARAM_FIELDS.contains(&field).then(|| field.to_string());
     }
-    let shadowed_by_mechanical = base
-        .mechanical_params
-        .as_object()
-        .map(|m| m.contains_key(key))
-        .unwrap_or(false);
-    if !shadowed_by_mechanical && RISK_PARAM_FIELDS.contains(&key) {
-        return Some(key.to_string());
-    }
-    None
+    RISK_PARAM_FIELDS.contains(&key).then(|| key.to_string())
 }
 
-/// The param keys an experiment may target on `base`: every `mechanical_params`
-/// top-level key plus `risk.<field>` for each tunable risk knob, plus
-/// `mechanistic.close_policies.<i>.<leaf>` for each tunable scalar in
-/// `mechanistic_config` (WU3a). Used to tell the experiment writer which keys
-/// exist (F21) and to render a helpful `unknown_param` error.
+/// The param keys an experiment may target on `base`: `risk.<field>` for each
+/// tunable risk knob, plus `mechanistic.close_policies.<i>.<leaf>` for each
+/// tunable scalar in `mechanistic_config` (WU3a). These are the surfaces the
+/// executor actually reads at decision time. Used to tell the experiment writer
+/// which keys exist (F21) and to render a helpful `unknown_param` error.
 pub fn tunable_param_keys(base: &Strategy) -> Vec<String> {
     let mut keys = Vec::new();
-    if let Some(mp) = base.mechanical_params.as_object() {
-        for (k, v) in mp {
-            // Only scalar leaves are directly tunable.
-            if !v.is_object() && !v.is_array() {
-                keys.push(k.clone());
-            }
-        }
-    }
     for f in RISK_PARAM_FIELDS {
         keys.push(format!("risk.{f}"));
     }
@@ -892,9 +860,11 @@ impl MutationDiff {
     /// applies:
     ///   - `params` targeting `risk.<field>` (or a bare risk-field name): routed
     ///     into the typed `risk` config via a JSON round-trip (F14/F20 — this is
-    ///     the only tunable surface real strategies have).
-    ///   - `params` otherwise: dot-path keys into `mechanical_params` (nested
-    ///     objects are created as needed).
+    ///     the primary tunable surface real strategies have).
+    ///   - `params` targeting `mechanistic.*`: routed into the typed
+    ///     `mechanistic_config` via the variant-aware setter.
+    ///   - `params` otherwise: a no-op (the validator rejects unknown keys
+    ///     upstream, so apply stays total).
     ///   - `tools`: add/remove against `manifest.required_tools`.
     ///   - `prose`: each `ProseEdit` sets the matching `AgentRef.prompt_override`
     ///     on the strategy (matched by `canonical_role`). This lands in the
@@ -933,15 +903,10 @@ impl MutationDiff {
                     obj.insert(field, value_to_write);
                     risk_touched = true;
                 }
-            } else {
-                // WU-B: mechanical_params — clamp to TunableBound if present.
-                let value_to_write = if let Some(bound) = find_bound(&base.tunable_bounds, &change.key) {
-                    clamp_to_bound(&change.after, bound)
-                } else {
-                    change.after.clone()
-                };
-                set_param_value(&mut s.mechanical_params, &change.key, value_to_write);
             }
+            // A key that is neither `mechanistic.*` nor a known risk field is a
+            // silent no-op — the validator rejects such keys upstream (they are
+            // not in `tunable_param_keys`), so apply stays total.
         }
         if risk_touched {
             if let Ok(new_risk) = serde_json::from_value(risk_json) {
@@ -1000,33 +965,6 @@ impl MutationDiff {
             }
         }
         s
-    }
-}
-
-/// Set `params[key] = value`, where `key` is a dot path (`a.b.c`). Missing
-/// intermediate objects are created. A path that traverses a non-object value
-/// is left unchanged rather than clobbering it.
-fn set_param_value(params: &mut serde_json::Value, key: &str, value: serde_json::Value) {
-    if key.is_empty() {
-        return;
-    }
-    let parts: Vec<&str> = key.splitn(16, '.').collect();
-    let (last, prefix) = parts.split_last().expect("splitn yields at least one part");
-    if !params.is_object() {
-        *params = serde_json::Value::Object(serde_json::Map::new());
-    }
-    let mut cur = params;
-    for &part in prefix {
-        let map = match cur.as_object_mut() {
-            Some(m) => m,
-            None => return,
-        };
-        cur = map
-            .entry(part.to_string())
-            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    }
-    if let Some(map) = cur.as_object_mut() {
-        map.insert(last.to_string(), value);
     }
 }
 
@@ -1644,8 +1582,7 @@ mod tests {
                 "max_leverage": 1.0,
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
-            },
-            "mechanical_params": { "ema_fast": 12, "ema_slow": 26 }
+            }
         });
         serde_json::from_value(v).expect("fixture strategy must deserialise")
     }
@@ -1660,42 +1597,6 @@ mod tests {
             create_filter: None,
             rationale: "test".into(),
         }
-    }
-
-    #[test]
-    fn apply_to_sets_top_level_param() {
-        let base = fixture_strategy();
-        let diff = diff_with(
-            vec![ParamChange {
-                key: "ema_fast".into(),
-                before: serde_json::json!(12),
-                after: serde_json::json!(20),
-            }],
-            vec![],
-            vec![],
-        );
-        let child = diff.apply_to(&base);
-        assert_eq!(child.mechanical_params["ema_fast"], serde_json::json!(20));
-        assert_eq!(child.mechanical_params["ema_slow"], serde_json::json!(26));
-    }
-
-    #[test]
-    fn apply_to_creates_nested_param_path() {
-        let base = fixture_strategy();
-        let diff = diff_with(
-            vec![ParamChange {
-                key: "signals.rsi.period".into(),
-                before: serde_json::Value::Null,
-                after: serde_json::json!(14),
-            }],
-            vec![],
-            vec![],
-        );
-        let child = diff.apply_to(&base);
-        assert_eq!(
-            child.mechanical_params["signals"]["rsi"]["period"],
-            serde_json::json!(14)
-        );
     }
 
     #[test]
@@ -1728,10 +1629,6 @@ mod tests {
                 child.risk.stop_loss_atr_multiple, 3.5,
                 "key {key} must update risk"
             );
-            assert!(
-                child.mechanical_params.get("stop_loss_atr_multiple").is_none(),
-                "risk param must not leak into mechanical_params for key {key}"
-            );
             // And it's a real change, not an identity no-op.
             assert!(
                 !is_identity_diff(&diff, &base),
@@ -1746,8 +1643,6 @@ mod tests {
         let keys = tunable_param_keys(&base);
         assert!(keys.contains(&"risk.stop_loss_atr_multiple".to_string()));
         assert!(keys.contains(&"risk.risk_pct_per_trade".to_string()));
-        // mechanical_params scalar keys are included too.
-        assert!(keys.contains(&"ema_fast".to_string()));
     }
 
     #[test]
@@ -1807,12 +1702,14 @@ mod tests {
     #[test]
     fn identity_diff_detected_for_noop_change() {
         let base = fixture_strategy();
-        // Setting a param to its current value is a no-op at the hash level.
+        let current_sl = serde_json::json!(base.risk.stop_loss_atr_multiple);
+        // Setting a tunable risk param to its current value is a no-op at the
+        // hash level.
         let noop = diff_with(
             vec![ParamChange {
-                key: "ema_fast".into(),
-                before: serde_json::json!(12),
-                after: serde_json::json!(12),
+                key: "risk.stop_loss_atr_multiple".into(),
+                before: current_sl.clone(),
+                after: current_sl,
             }],
             vec![],
             vec![],
@@ -1825,12 +1722,12 @@ mod tests {
         // An empty diff is also identity.
         assert!(is_identity_diff(&empty_mutation(), &base));
 
-        // A real change is not identity.
+        // A real change to a kept tunable surface is not identity.
         let real = diff_with(
             vec![ParamChange {
-                key: "ema_fast".into(),
-                before: serde_json::json!(12),
-                after: serde_json::json!(99),
+                key: "risk.stop_loss_atr_multiple".into(),
+                before: serde_json::json!(base.risk.stop_loss_atr_multiple),
+                after: serde_json::json!(base.risk.stop_loss_atr_multiple + 1.5),
             }],
             vec![],
             vec![],
@@ -2260,7 +2157,6 @@ mod tests {
                 "stop_loss_atr_multiple": 2.0,
                 "daily_loss_kill_pct": 0.05
             },
-            "mechanical_params": {},
             "activation_mode": "filter_gated",
             "filter": {
                 "id": "01HZFILTER000000000000000A",
@@ -2605,19 +2501,6 @@ mod tests {
         assert_eq!(diff.prose[0].before, "buy low");
         assert_eq!(diff.prose[0].after, "sell high");
         assert!(diff.params.is_empty());
-    }
-
-    #[test]
-    fn strategy_diff_detects_param_change() {
-        let mut a = fixture_strategy();
-        a.mechanical_params = serde_json::json!({ "rsi_period": 14 });
-        let mut b = a.clone();
-        b.mechanical_params = serde_json::json!({ "rsi_period": 21 });
-        let diff = strategy_diff(&a, &b);
-        assert_eq!(diff.params.len(), 1);
-        assert_eq!(diff.params[0].key, "rsi_period");
-        assert_eq!(diff.params[0].before, serde_json::json!(14));
-        assert_eq!(diff.params[0].after, serde_json::json!(21));
     }
 
     #[test]
@@ -3070,105 +2953,72 @@ mod tests {
     }
 
     #[test]
-    fn clamp_to_bound_param_change_clamped() {
-        // A mechanical_params write on a path with a bound also gets clamped.
-        // Use a strategy with a tunable_bounds entry for a mechanical_params key.
+    fn clamp_to_bound_int_rounds_and_clamps() {
+        // Int kind: clamp to [min, max], then round to nearest integer.
         use crate::strategies::pine_import::inputs::InputKind;
         use crate::strategies::TunableBound;
-
-        let mut base = fixture_strategy();
-        base.tunable_bounds = vec![TunableBound {
-            path: "ema_fast".to_string(),
+        let bound = TunableBound {
+            path: "x".to_string(),
             min: Some(5.0),
             max: Some(20.0),
             step: None,
             kind: InputKind::Int,
-        }];
-
-        let diff = diff_with(
-            vec![ParamChange {
-                key: "ema_fast".into(),
-                before: serde_json::json!(12),
-                after: serde_json::json!(999),
-            }],
-            vec![],
-            vec![],
-        );
-        let child = diff.apply_to(&base);
-        // 999 clamped to max=20, then rounded to integer → 20
+        };
         assert_eq!(
-            child.mechanical_params["ema_fast"],
+            clamp_to_bound(&serde_json::json!(999), &bound),
             serde_json::json!(20.0),
-            "ema_fast: 999 must be clamped to max=20"
+            "999 must clamp to max=20"
+        );
+        assert_eq!(
+            clamp_to_bound(&serde_json::json!(1), &bound),
+            serde_json::json!(5.0),
+            "1 must clamp up to min=5"
         );
     }
 
     #[test]
-    fn clamp_to_bound_bool_coercion() {
-        // A Bool bound: any truthy numeric value (e.g. 1.0) stays true; 0.0 → false.
-        // Since filter paths don't commonly carry bool, we test via a mechanical_params
-        // bool-kind bound.
+    fn clamp_to_bound_bool_coerces() {
+        // Bool kind: 0 / false / null → false; any truthy numeric → true.
         use crate::strategies::pine_import::inputs::InputKind;
         use crate::strategies::TunableBound;
-
-        let mut base = fixture_strategy();
-        // Add a bool-typed param
-        base.mechanical_params = serde_json::json!({ "use_ema_filter": true });
-        base.tunable_bounds = vec![TunableBound {
-            path: "use_ema_filter".to_string(),
+        let bound = TunableBound {
+            path: "x".to_string(),
             min: None,
             max: None,
             step: None,
             kind: InputKind::Bool,
-        }];
+        };
+        assert_eq!(
+            clamp_to_bound(&serde_json::json!(0), &bound),
+            serde_json::json!(false),
+            "0 must coerce to false"
+        );
+        assert_eq!(
+            clamp_to_bound(&serde_json::json!(1), &bound),
+            serde_json::json!(true),
+            "truthy numeric must coerce to true"
+        );
+    }
+
+    #[test]
+    fn unbound_risk_path_writes_proposed_value_unchanged() {
+        // A risk path NOT in tunable_bounds must be written exactly as proposed
+        // (no clamping). risk.* is a kept tunable surface post mechanical_params
+        // removal.
+        let base = fixture_strategy();
         let diff = diff_with(
             vec![ParamChange {
-                key: "use_ema_filter".into(),
-                before: serde_json::json!(true),
-                after: serde_json::json!(0),
+                key: "risk.stop_loss_atr_multiple".into(),
+                before: serde_json::json!(base.risk.stop_loss_atr_multiple),
+                after: serde_json::json!(3.5),
             }],
             vec![],
             vec![],
         );
         let child = diff.apply_to(&base);
         assert_eq!(
-            child.mechanical_params["use_ema_filter"],
-            serde_json::json!(false),
-            "Bool bound: 0 must coerce to false"
-        );
-    }
-
-    #[test]
-    fn unbound_path_is_byte_identical_to_no_bounds() {
-        // A path NOT in tunable_bounds must be written exactly as before (no-op on logic).
-        // We compare child from a bounded strategy vs child from the same strategy
-        // with empty bounds — they must agree on the unbound path's written value.
-        let mut base_with_bounds = fixture_bounded_strategy();
-        let diff = diff_with(
-            vec![ParamChange {
-                key: "ema_fast".into(), // not in tunable_bounds for bounded fixture
-                before: serde_json::json!(12),
-                after: serde_json::json!(99),
-            }],
-            vec![],
-            vec![],
-        );
-        // Apply with bounds present
-        let child_with_bounds = diff.apply_to(&base_with_bounds);
-
-        // Apply without any bounds
-        let mut base_no_bounds = base_with_bounds.clone();
-        base_no_bounds.tunable_bounds = vec![];
-        let child_no_bounds = diff.apply_to(&base_no_bounds);
-
-        assert_eq!(
-            child_with_bounds.mechanical_params["ema_fast"], child_no_bounds.mechanical_params["ema_fast"],
-            "unbound path must produce the same value with or without bounds present"
-        );
-        assert_eq!(
-            child_with_bounds.mechanical_params["ema_fast"],
-            serde_json::json!(99),
-            "unbound path must write the proposed value unchanged"
+            child.risk.stop_loss_atr_multiple, 3.5,
+            "unbound risk path must write the proposed value unchanged"
         );
     }
 }

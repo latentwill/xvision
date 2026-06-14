@@ -1,10 +1,20 @@
 // frontend/web/src/features/agent-runs/TraceDock.tsx
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
-import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
+import {
+  agentRunKeys,
+  engineEventFrameToSpan,
+  getAgentRun,
+  openAgentRunStream,
+} from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
+import {
+  applyUnifiedToDetail,
+  freshLiveStreamState,
+  type LiveStreamState,
+} from "./live-stream-reducer";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { useCurrentTraceScope } from "./use-trace-scope";
@@ -14,6 +24,8 @@ import {
 } from "@/stores/session-events";
 import { DockResizeHandle } from "./DockResizeHandle";
 import { FlameGraph } from "./FlameGraph";
+import { SpanTree } from "./SpanTree";
+import { emptyTreeReason, TraceEmptyState } from "./trace-empty-state";
 import { SpanInspector } from "./SpanInspector";
 import { HaltStrategyButton } from "./HaltStrategyButton";
 import { FilterBar } from "./FilterBar";
@@ -65,7 +77,12 @@ const ALWAYS_HIDDEN_KINDS: ReadonlySet<string> = new Set(["state.transition"]);
 const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "agent.run",
   "agent.plan",
+  "agent.decision",
+  // WS-17 span taxonomy (+ `model.call`/`model.reasoning` legacy aliases).
+  "decision.model",
+  "decision.reasoning",
   "model.call",
+  "model.reasoning",
   "tool.call",
   "tool.validate_input",
   "tool.validate_output",
@@ -80,10 +97,15 @@ const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "broker.call",
   "recovery.attempt",
   "state.transition",
+  // WS-8 Part 2: the synthetic kind for projected engine lifecycle signals
+  // (risk veto / regime / order / memory …). Keeping it in the known set means
+  // `projectionToRunSpan` preserves it instead of flattening to `agent.run`;
+  // the carried `attributes.engine_event_kind` then drives the family/label.
+  "engine.event",
 ]);
 type SpanKindLike = RunSpan["kind"];
 
-function projectionToRunSpan(p: SpanProjection): RunSpan {
+export function projectionToRunSpan(p: SpanProjection): RunSpan {
   const kind = (
     KNOWN_SPAN_KINDS.has(p.kind) ? p.kind : "agent.run"
   ) as RunSpan["kind"];
@@ -100,7 +122,32 @@ function projectionToRunSpan(p: SpanProjection): RunSpan {
         : p.status === "error"
           ? "error"
           : "ok",
-    attributes: {},
+    // Carry the projection's attribute bag through (WS-8 Part 2): an
+    // `engine.event` row resolves its family/label off
+    // `attributes.engine_event_kind`, so dropping it would re-blank the row.
+    attributes: p.attributes,
+    // Inspector fidelity (WS-8 Part 2 Part B): the unified projection populates
+    // these off the rich payload variants; carry each onto `RunSpan` so the
+    // SpanInspector renders the SAME model body/tokens/cost, broker fill, tool
+    // I/O, decision index, and error the raw agent-run path shows. Spread only
+    // the present fields so an undefined never overwrites a fixture value and
+    // the wire shape stays minimal.
+    ...(p.provider !== undefined ? { provider: p.provider } : {}),
+    ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.tokensIn !== undefined ? { tokens_in: p.tokensIn } : {}),
+    ...(p.tokensOut !== undefined ? { tokens_out: p.tokensOut } : {}),
+    ...(p.cost !== undefined ? { cost: p.cost } : {}),
+    ...(p.promptHash !== undefined ? { hash: p.promptHash } : {}),
+    ...(p.responseHash !== undefined ? { response_hash: p.responseHash } : {}),
+    ...(p.prompt !== undefined ? { prompt: p.prompt } : {}),
+    ...(p.response !== undefined ? { response: p.response } : {}),
+    ...(p.promptPayloadRef !== undefined ? { prompt_payload_ref: p.promptPayloadRef } : {}),
+    ...(p.responsePayloadRef !== undefined ? { response_payload_ref: p.responsePayloadRef } : {}),
+    ...(p.args !== undefined ? { args: p.args } : {}),
+    ...(p.result !== undefined ? { result: p.result } : {}),
+    ...(p.brokerCall !== undefined ? { broker_call: p.brokerCall } : {}),
+    ...(p.decisionIdx !== undefined ? { decision_idx: p.decisionIdx } : {}),
+    ...(p.errorMessage !== undefined ? { error_message: p.errorMessage } : {}),
   };
 }
 
@@ -122,6 +169,12 @@ export function TraceDock() {
   const setSelectedSpan = (id: string | null) =>
     useTraceDock.getState().setSelectedSpan(scope, id);
   const navigate = useNavigate();
+
+  // Structured-view selector. The collapsible span tree (WS-16) is the new
+  // default — it lets a DECISION collapse to one line and expand to its full
+  // subtree. The FlameGraph remains available behind the toggle (timeline /
+  // overlap view); neither replaces the other.
+  const [structuredView, setStructuredView] = useState<"tree" | "flame">("tree");
 
   // Unified-session span projection — the chat-session path. When a chat
   // session is bound (and no standalone agent run is active), the dock
@@ -234,12 +287,52 @@ export function TraceDock() {
   const summary = q.data?.summary;
   const isLive = summary?.status === "running";
 
+  // Why is the tree empty? Name the real reason instead of always blaming the
+  // filter. `null` means there ARE rows to render.
+  const emptyReason = emptyTreeReason({
+    sourceCount: sourceSpans.length,
+    filteredCount: filter.filtered.length,
+    displayCount: displaySpans.length,
+    filterActive: filter.active,
+    isLive,
+    advancedView: advanced_view,
+  });
+
   const qc = useQueryClient();
   useEffect(() => {
     if (!activeRunId || !isLive) return;
     const key = agentRunKeys.run(activeRunId);
+    // WS-8 Part 2 B2: per-stream projection accumulator. Holds the folded
+    // `SpanProjection[]` across `unified` frames so the dock reconstructs span
+    // detail (model body/tokens/cost, broker fill, tool I/O, engine rows,
+    // error) WITHOUT a per-frame export refetch. Reset on every `snapshot`
+    // (the authoritative resync / reconnect seed).
+    let liveState: LiveStreamState = freshLiveStreamState();
     const close = openAgentRunStream(activeRunId, (ev) => {
       switch (ev.event) {
+        // ── WS-8 Part 2 B2: the converged LIVE tail ────────────────────────
+        // Every live frame is a `UnifiedEvent`. Fold it onto the cached detail
+        // via the shared fidelity-complete projection. The reducer asks for a
+        // refetch ONLY on a terminal frame (canonical run-level aggregates);
+        // span DETAIL never triggers a refetch — that's the whole point of B2.
+        case "unified": {
+          const prev = qc.getQueryData<AgentRunDetail>(key) ?? null;
+          const out = applyUnifiedToDetail(prev, liveState, ev.data);
+          liveState = out.state;
+          // Only write when we actually have a cached detail to mutate (the
+          // snapshot seeds it first; a frame that races ahead is a no-op until
+          // then). `applyUnifiedToDetail` is reference-stable on no-op.
+          if (out.detail && out.detail !== prev) {
+            qc.setQueryData<AgentRunDetail>(key, out.detail);
+          }
+          if (out.requestRefetch) {
+            // Single aggregate refetch on terminal — pulls canonical
+            // span_count / model_call_count / total_cost / retention the
+            // stream doesn't carry. NOT a per-detail-frame refetch.
+            qc.invalidateQueries({ queryKey: key });
+          }
+          return;
+        }
         // Legacy mock-branch arms — kept for test/dev MODE.
         case "summary":
           qc.setQueryData<AgentRunDetail>(key, (prev) =>
@@ -253,9 +346,19 @@ export function TraceDock() {
           return;
         // Real-wire arms.
         case "snapshot":
-          // Authoritative resync — replaces the cached detail wholesale.
+          // Authoritative resync — replaces the cached detail wholesale AND
+          // resets the per-stream live projection so the next `unified` frames
+          // fold onto the fresh seed (reconnect must not double-count).
+          liveState = freshLiveStreamState();
           qc.setQueryData<AgentRunDetail>(key, ev.data);
           return;
+        // ── Legacy raw-`RunEvent`-name arms (back-compat only) ─────────────
+        // The current backend emits ONLY `snapshot` + `unified` (+ `lagged`),
+        // so these never fire against it. Retained so a stale backend or the
+        // integration shim that still emits raw frames keeps rendering rather
+        // than going dark. They DO still refetch on terminal/detail frames —
+        // that's acceptable for the legacy path; the converged path above does
+        // not.
         case "span_started": {
           const partial: RunSpan = {
             span_id: ev.data.span_id,
@@ -323,6 +426,23 @@ export function TraceDock() {
           // aggregates honest.
           qc.invalidateQueries({ queryKey: key });
           return;
+        case "engine_event": {
+          // WS-8: project the live engine event onto an engine.event row and
+          // append it to the cached detail so the trace surfaces lifecycle
+          // signals (risk veto, regime transition, order state, …) in real
+          // time instead of dropping them. Carrier kinds + kindless frames
+          // project to null and are skipped.
+          const projected = engineEventFrameToSpan(ev.data);
+          if (!projected) return;
+          qc.setQueryData<AgentRunDetail>(key, (prev) => {
+            if (!prev) return prev;
+            if (prev.spans.some((s) => s.span_id === projected.span_id)) {
+              return prev;
+            }
+            return { ...prev, spans: [...prev.spans, projected] };
+          });
+          return;
+        }
         // Lifecycle / informational arms — no cache side effect.
         case "run_started":
         case "tool_call_started":
@@ -333,6 +453,8 @@ export function TraceDock() {
         case "supervisor_note":
         case "artifact_written":
         case "backpressure_dropped":
+        case "memory_recall":
+        case "memory_write":
         case "lagged":
           return;
       }
@@ -355,6 +477,20 @@ export function TraceDock() {
       style={{ height: heightPx, maxHeight: "calc(100vh - 60px)" }}
     >
       <DockResizeHandle />
+      {/*
+        Filter-first layout (operator request): the search / kind / status
+        filter is the FIRST row of the dock — above the TRACE stats header and
+        the TREE/FLAME view toggle — so filtering is the primary action and the
+        views below react to it.
+      */}
+      <FilterBar
+        query={filter.query} setQuery={filter.setQuery}
+        kinds={filter.kinds} toggleKind={filter.toggleKind}
+        status={filter.status} setStatus={filter.setStatus}
+        decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
+        decisions={decisions}
+        total={filter.summary.total} filtered={filter.summary.filtered}
+      />
       <div className="flex items-center gap-3 px-3 h-8 border-b border-border text-[11px] font-mono">
         <span className="text-text-2">TRACE</span>
         {summary ? (
@@ -419,6 +555,49 @@ export function TraceDock() {
             }}
           >
             ADVANCED
+          </button>
+        </div>
+        {/*
+          WS-16: structured-view selector. TREE is the collapsible nested
+          span tree (default); FLAME is the timeline/overlap flame graph.
+          Both read the same `displaySpans` so Simple/Advanced + filters
+          apply identically to either view.
+        */}
+        <div
+          role="group"
+          aria-label="Structured view"
+          data-testid="trace-dock-view-toggle"
+          className="ml-2 flex items-center gap-0.5"
+        >
+          <button
+            type="button"
+            aria-pressed={structuredView === "tree"}
+            onClick={() => setStructuredView("tree")}
+            title="Tree — collapsible nested spans"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: structuredView === "tree" ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${structuredView === "tree" ? "var(--text-2)" : "var(--border)"}`,
+              color: structuredView === "tree" ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            TREE
+          </button>
+          <button
+            type="button"
+            aria-pressed={structuredView === "flame"}
+            onClick={() => setStructuredView("flame")}
+            title="Flame — timeline / overlap view"
+            className="h-6 px-1.5 text-[10px] font-mono tracking-[0.14em] flex items-center"
+            style={{
+              background: structuredView === "flame" ? "var(--surface-card)" : "transparent",
+              border: `1px solid ${structuredView === "flame" ? "var(--text-2)" : "var(--border)"}`,
+              color: structuredView === "flame" ? "var(--text)" : "var(--text-3)",
+              borderRadius: 4,
+            }}
+          >
+            FLAME
           </button>
         </div>
         <div className="ml-auto flex items-center gap-1">
@@ -512,22 +691,29 @@ export function TraceDock() {
           </button>
         </div>
       </div>
-      <FilterBar
-        query={filter.query} setQuery={filter.setQuery}
-        kinds={filter.kinds} toggleKind={filter.toggleKind}
-        status={filter.status} setStatus={filter.setStatus}
-        decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
-        decisions={decisions}
-        total={filter.summary.total} filtered={filter.summary.filtered}
-      />
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className="min-w-0 flex-1 border-r border-border">
           {q.data || hasSessionTrace ? (
-            <FlameGraph
-              spans={displaySpans}
-              selectedSpanId={selectedSpan?.span_id ?? null}
-              onSelect={setSelectedSpan}
-            />
+            emptyReason ? (
+              <TraceEmptyState
+                reason={emptyReason}
+                hiddenCount={simpleHiddenCount}
+                onClearFilters={filter.reset}
+                onShowAdvanced={() => setAdvancedView(true)}
+              />
+            ) : structuredView === "tree" ? (
+              <SpanTree
+                spans={displaySpans}
+                selectedSpanId={selectedSpan?.span_id ?? null}
+                onSelect={setSelectedSpan}
+              />
+            ) : (
+              <FlameGraph
+                spans={displaySpans}
+                selectedSpanId={selectedSpan?.span_id ?? null}
+                onSelect={setSelectedSpan}
+              />
+            )
           ) : null}
         </div>
         {selectedSpan ? (
