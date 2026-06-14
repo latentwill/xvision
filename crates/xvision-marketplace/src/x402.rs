@@ -1,0 +1,65 @@
+//! EIP-3009 (`transferWithAuthorization`) typed-data: the off-chain crypto for
+//! the x402 `exact` scheme. Pure — no network, no chain. Mirrors the EIP-712
+//! pattern in `xvision-execution/src/virtuals.rs`.
+
+use alloy::primitives::Address;
+use alloy::sol;
+use alloy::sol_types::{eip712_domain, Eip712Domain};
+
+sol! {
+    /// EIP-3009 TransferWithAuthorization payload (the EIP-712 message body).
+    struct TransferWithAuthorization {
+        address from;
+        address to;
+        uint256 value;
+        uint256 validAfter;
+        uint256 validBefore;
+        bytes32 nonce;
+    }
+}
+
+/// Build the USDC EIP-712 domain. For Mantle mainnet USDC.e (FiatTokenV2):
+/// name="USD Coin", version="2", chainId=5000, verifyingContract=<usdc>.
+pub fn usdc_domain(name: &str, version: &str, chain_id: u64, usdc: Address) -> Eip712Domain {
+    eip712_domain! {
+        name: name.to_string(),
+        version: version.to_string(),
+        chain_id: chain_id,
+        verifying_contract: usdc,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    // Canonical EIP-3009 typehash (verified on-chain on Mantle mainnet USDC.e).
+    const CANON_TYPEHASH: &str = "0x7c7c6cdb67a18743f49ec6fa9b35f50d52ed05cbed4cc592e13b44501c1a2267";
+    // On-chain DOMAIN_SEPARATOR() of Mantle mainnet USDC.e (chainId 5000).
+    const MANTLE_USDC_DOMAIN_SEP: &str = "0x213af627bcb897cb58330ea735c1dceb19deed319fd39bbb200b6fc6bd5450cd";
+    const MANTLE_USDC: &str = "0x09Bc4E0D864854c6aFB6eB9A9cdF58aC190D0dF9";
+
+    #[test]
+    fn typehash_matches_canonical_eip3009() {
+        use alloy::primitives::keccak256;
+        use alloy::sol_types::SolStruct;
+        // In alloy-sol-types 1.5.7 `eip712_type_hash` is an instance method, but
+        // `eip712_encode_type()` is a type-level fn — keccak of it IS the typehash.
+        let encoded = <TransferWithAuthorization as SolStruct>::eip712_encode_type();
+        assert_eq!(
+            encoded,
+            "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+        );
+        let got = keccak256(encoded.as_bytes());
+        assert_eq!(format!("0x{:x}", got), CANON_TYPEHASH);
+    }
+
+    #[test]
+    fn domain_separator_matches_mantle_mainnet() {
+        let usdc = Address::from_str(MANTLE_USDC).unwrap();
+        let domain = usdc_domain("USD Coin", "2", 5000, usdc);
+        let sep = domain.separator();
+        assert_eq!(format!("0x{:x}", sep), MANTLE_USDC_DOMAIN_SEP);
+    }
+}

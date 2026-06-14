@@ -34,6 +34,7 @@ pub mod adapter;
 pub mod error;
 pub mod ipfs;
 pub mod sealed;
+pub mod x402;
 
 pub use adapter::{
     AnchorDriver, AttestRequest, BuyRequest, Erc8004MantleDriver, ListingRef, MockDriver, PublishRequest,
