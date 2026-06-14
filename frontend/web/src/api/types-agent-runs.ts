@@ -30,7 +30,19 @@ export type SpanKind =
   | "agent.run"
   | "agent.plan"
   | "agent.decision"
+  // WS-17 span taxonomy: the model invocation that produces the trade
+  // decision (`decision.model`) and its captured chain-of-thought
+  // (`decision.reasoning`, nested under `decision.model`). These replace
+  // the generic `model.call` / `model.reasoning` on the trading path —
+  // the slot ROLES (trader/regime/filter) were retired, so it's a single
+  // decision-model call now.
+  | "decision.model"
+  | "decision.reasoning"
+  // Legacy wire values, retained so historical exports / older recorded
+  // rows still type-check. The engine no longer emits these (the variant
+  // was renamed to DecisionModel/DecisionReasoning).
   | "model.call"
+  | "model.reasoning"
   | "tool.call"
   | "tool.validate_input"
   | "tool.validate_output"

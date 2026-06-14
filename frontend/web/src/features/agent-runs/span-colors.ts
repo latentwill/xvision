@@ -10,6 +10,7 @@ export type SpanCategory =
   | "agent"
   | "decision"
   | "model"
+  | "reasoning"
   | "tool"
   | "broker"
   | "supervisor"
@@ -29,6 +30,10 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   // 5-char DECDE label so the trace dock reads as the producer wired it.
   decision:   { hex: "#fbbf24", label: "DECDE" },
   model:      { hex: "#7dd3fc", label: "MODEL" },
+  // WS-17: chain-of-thought (`decision.reasoning`). A softer indigo tint
+  // so it reads as a distinct child band under the blue `decision.model`
+  // call it nests beneath, without colliding with the MODEL swatch.
+  reasoning:  { hex: "#a5b4fc", label: "REASN" },
   tool:       { hex: "#6ee7b7", label: "TOOL"  },
   // qa-trace-broker-spans: distinct rose tint for broker.call rows so
   // Buy / Sell / Close / Short submissions read as a separate column
@@ -45,7 +50,11 @@ export function categoryOf(kind: SpanKind): SpanCategory {
   // + positions + price/asset on close and need to read as the
   // producer-stamped action they are.
   if (kind === "agent.decision") return "decision";
-  if (kind === "model.call") return "model";
+  // WS-17 span taxonomy: the decision-producing model call + its
+  // chain-of-thought. `model.call` is kept as a legacy alias so older
+  // exports still colour correctly.
+  if (kind === "decision.model" || kind === "model.call") return "model";
+  if (kind === "decision.reasoning" || kind === "model.reasoning") return "reasoning";
   // F-4 validate brackets are tool-adjacent — keep them in the tool
   // column so a flame-graph reader sees one continuous tool band per
   // call rather than three differently-coloured slices.

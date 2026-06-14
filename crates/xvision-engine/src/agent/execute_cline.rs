@@ -313,6 +313,16 @@ pub struct ClineSlotInput<'a> {
     /// obs emitter wired). The successful path does NOT call this — the
     /// sidecar's `completed` status is correct and should be preserved.
     pub obs: Option<crate::agent::observability::ObsEmitter>,
+    /// Parent span id for the WS-17 `model.reasoning` span. When the Cline
+    /// dispatch is wrapped by a `model.call` span, the caller threads that
+    /// span id here so the captured chain-of-thought (extracted from a CoT
+    /// model's `<think>` block at the recovery strip site) nests under the
+    /// model call. `None` ⇒ the reasoning span is emitted top-level (the
+    /// chain-of-thought still reaches the trace). The Cline trader path
+    /// does not currently own a `model.call` span, so production callers
+    /// pass `None` today; the field is the seam for a future WS that adds
+    /// one.
+    pub model_call_span_id: Option<String>,
     /// Reasoning effort hint forwarded to the sidecar for CoT reasoning
     /// models (deepseek-r1, qwq, etc.) via `StartRunParams::reasoning_effort`.
     /// Derived at the Cline dispatch site via
@@ -448,7 +458,15 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     // a weak tool-caller that emitted end_turn without calling submit_decision.
     // The session is still open, so a second step attempt is valid.
     let step_result = match step_result {
-        Ok(step) => Ok(try_nodecision_recovery(step, &input.cline_client, &run_id, &role).await),
+        Ok(step) => Ok(try_nodecision_recovery(
+            step,
+            &input.cline_client,
+            &run_id,
+            &role,
+            input.obs.as_ref(),
+            input.model_call_span_id.as_deref(),
+        )
+        .await),
         Err(e) => Err(e),
     };
 
@@ -615,6 +633,8 @@ async fn try_nodecision_recovery(
     client: &AgentClient,
     run_id: &str,
     role: &str,
+    obs: Option<&crate::agent::observability::ObsEmitter>,
+    model_call_span_id: Option<&str>,
 ) -> StepResult {
     if step.status != "completed" || step.decision_json.is_some() {
         return step;
@@ -624,7 +644,18 @@ async fn try_nodecision_recovery(
     // Reasoning models (deepseek-r1, Fino1, etc.) emit chain-of-thought prose or
     // <think>…</think> wrappers before — or instead of — a submit_decision call.
     // Stripping think blocks prevents false-positive {…} matches inside reasoning traces.
-    let cleaned = strip_think_blocks(&step.output_text);
+    //
+    // WS-17 (reasoning capture): the captured `<think>` text is the
+    // highest-signal "why" for the flywheel — emit it as a `model.reasoning`
+    // span BEFORE it would otherwise be discarded. The clean body fed to the
+    // JSON extractor is unchanged (byte-identical), so parsing is unaffected.
+    let (cleaned, reasoning) = strip_and_capture_think_blocks(&step.output_text);
+    if let Some(obs) = obs {
+        if let Some(reasoning_text) = reasoning.as_deref() {
+            obs.emit_model_reasoning(model_call_span_id.map(str::to_string), reasoning_text)
+                .await;
+        }
+    }
     if let Some(json_str) = extract_first_json_object(&cleaned) {
         if serde_json::from_str::<serde_json::Value>(&json_str).is_ok() {
             tracing::info!(
@@ -650,11 +681,22 @@ async fn try_nodecision_recovery(
         .await;
 
     if let Ok(repair_step) = repair {
-        // Accept either a tool call or raw JSON in output_text from the repair step.
-        let found = repair_step.decision_json.or_else(|| {
-            let c = strip_think_blocks(&repair_step.output_text);
-            extract_first_json_object(&c).filter(|j| serde_json::from_str::<serde_json::Value>(j).is_ok())
-        });
+        // WS-17: capture+emit the repair step's reasoning too. `decision_json`
+        // short-circuits the strip (tool call already gave us JSON), so only
+        // capture when we fall through to the output_text scan.
+        let found = match repair_step.decision_json {
+            Some(json) => Some(json),
+            None => {
+                let (c, reasoning) = strip_and_capture_think_blocks(&repair_step.output_text);
+                if let Some(obs) = obs {
+                    if let Some(reasoning_text) = reasoning.as_deref() {
+                        obs.emit_model_reasoning(model_call_span_id.map(str::to_string), reasoning_text)
+                            .await;
+                    }
+                }
+                extract_first_json_object(&c).filter(|j| serde_json::from_str::<serde_json::Value>(j).is_ok())
+            }
+        };
         if found.is_some() {
             tracing::info!(
                 event = "nodecision_recovery_succeeded",
@@ -669,27 +711,56 @@ async fn try_nodecision_recovery(
     step
 }
 
-/// Strip `<think>…</think>` blocks from model output (case-insensitive).
-/// Called before JSON extraction so reasoning traces don't shadow the decision object.
-fn strip_think_blocks(s: &str) -> String {
+/// Strip `<think>…</think>` blocks (case-insensitive) AND return the
+/// captured chain-of-thought (WS-17 reasoning capture).
+///
+/// Called before JSON extraction so reasoning traces don't shadow the
+/// decision object. Returns `(clean_body, Option<reasoning>)`:
+/// - `clean_body` is byte-identical to the historic strip output (think
+///   block removed, trimmed) — the trader still parses the same clean
+///   JSON.
+/// - `reasoning` is the concatenation of every captured `<think>` inner
+///   text (joined with `\n` when a model emits more than one block),
+///   trimmed; `None` when no `<think>` block was present.
+///
+/// The inner text of an UNCLOSED `<think>` (no matching `</think>`) is
+/// captured too — the engine treats everything from the tag to end of
+/// string as reasoning, so it's surfaced rather than silently dropped.
+pub fn strip_and_capture_think_blocks(s: &str) -> (String, Option<String>) {
     let mut result = s.to_string();
+    let mut captured: Vec<String> = Vec::new();
     loop {
         let lower = result.to_ascii_lowercase();
         let Some(start) = lower.find("<think>") else { break };
         let after_open = start + "<think>".len();
         match lower[after_open..].find("</think>") {
             Some(rel) => {
-                let end = after_open + rel + "</think>".len();
+                let inner_end = after_open + rel;
+                let end = inner_end + "</think>".len();
+                let inner = result[after_open..inner_end].trim();
+                if !inner.is_empty() {
+                    captured.push(inner.to_string());
+                }
                 result = format!("{}{}", &result[..start], result[end..].trim_start());
             }
             None => {
-                // Unclosed <think> — strip everything from the tag to end of string.
+                // Unclosed <think> — strip everything from the tag to end
+                // of string, capturing the partial reasoning.
+                let inner = result[after_open..].trim();
+                if !inner.is_empty() {
+                    captured.push(inner.to_string());
+                }
                 result = result[..start].trim_end().to_string();
                 break;
             }
         }
     }
-    result.trim().to_string()
+    let reasoning = if captured.is_empty() {
+        None
+    } else {
+        Some(captured.join("\n"))
+    };
+    (result.trim().to_string(), reasoning)
 }
 
 /// Read the recorded frames for this slot's first step, validate they are
@@ -890,6 +961,7 @@ mod tests {
             trajectory_mode: TrajectoryMode::default(),
             record_slot_role: None,
             obs: None,
+            model_call_span_id: None,
             reasoning_effort: None,
         }
     }

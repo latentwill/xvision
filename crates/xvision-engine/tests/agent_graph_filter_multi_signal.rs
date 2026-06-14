@@ -273,6 +273,7 @@ async fn short_bar_coalesces_both_filter_signals_into_one_trader_call() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
@@ -340,6 +341,7 @@ async fn long_bar_multi_fires_trader_per_emitting_filter() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");
@@ -404,6 +406,7 @@ async fn threshold_zero_forces_multi_fire_on_short_bars() {
         recorder: None,
         runtime: Default::default(),
         cline: None,
+        model_call_span_id: None,
     })
     .await
     .expect("pipeline runs");

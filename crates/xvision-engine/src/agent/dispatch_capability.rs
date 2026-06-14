@@ -253,6 +253,12 @@ pub struct DispatchInput<'a> {
     /// The live sidecar context, spawned by the eval entry point for this run.
     /// Since WU-6, the trader hard-errors if this is `None`. See [`ClineDispatchCtx`].
     pub cline: Option<ClineDispatchCtx>,
+    /// WS-17 parent: the `decision.model` span id the executor opened
+    /// around the enclosing `run_pipeline` call. Forwarded into
+    /// `ClineSlotInput.model_call_span_id` so the captured
+    /// `decision.reasoning` span nests under `decision.model`. `None`
+    /// keeps the reasoning span top-level (rehearsal / non-eval paths).
+    pub model_call_span_id: Option<String>,
 }
 
 /// Result of `dispatch_capability`: the typed `AgentOutput` AND the
@@ -467,6 +473,15 @@ async fn execute_slot_for_runtime(
             // correct the child `agent_runs` row status (see
             // `ClineSlotInput::obs` field docs).
             obs: input.obs.clone(),
+            // WS-17 (reasoning capture): the executor opens a `decision.model`
+            // span around `run_pipeline` (child of the `agent.decision`
+            // span) and threads its id down to here, so the captured
+            // `<think>` chain-of-thought emits as a `decision.reasoning`
+            // span nested under `decision.model`. `None` (rehearsal /
+            // non-eval call sites that don't own a decision-model span)
+            // keeps the reasoning span top-level — it still reaches the
+            // trace.
+            model_call_span_id: input.model_call_span_id.clone(),
             // Derive reasoning_effort from model metadata so CoT models
             // (deepseek-r1, qwq, etc.) get an explicit effort hint forwarded
             // to the provider gateway. Non-CoT models produce None (field

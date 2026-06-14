@@ -214,6 +214,7 @@ fn replay_input<'a>(
         trajectory_mode: TrajectoryMode::Replay { recording_id, store },
         record_slot_role: None,
         obs: None,
+        model_call_span_id: None,
         reasoning_effort: None,
     }
 }

@@ -447,7 +447,7 @@ async fn sqlite_recorder_persists_positive_cost_usd_for_priced_runs() {
             span_id: span_id.clone(),
             run_id: run_id.to_string(),
             parent_span_id: None,
-            kind: SpanKind::ModelCall,
+            kind: SpanKind::DecisionModel,
             name: "openrouter/anthropic/claude-opus-4.7".to_string(),
             started_at: chrono::Utc::now(),
             otel_trace_id: None,

@@ -268,6 +268,192 @@ async fn decision_completed_carries_pnl_and_position_arc() {
     );
 }
 
+/// 4. WS-17 span taxonomy — the executor opens a `decision.model` span
+///    (kind `decision.model`) as a CHILD of the per-bar `agent.decision`
+///    span, around the model invocation that produces the trade decision.
+///    This is the parent the captured `decision.reasoning` chain-of-thought
+///    nests under (the reasoning-capture path itself only fires on the
+///    Cline runtime; the nesting contract `agent.decision → decision.model
+///    → decision.reasoning` is locked in
+///    `decision_model_parents_a_captured_reasoning_span` below using the
+///    emitter directly with the same parent-id threading the executor does).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn executor_emits_decision_model_span_child_of_agent_decision() {
+    let store = fresh_store().await;
+    let scenario = canonical_scenarios()
+        .into_iter()
+        .find(|s| s.id == "flash-crash-2024-08")
+        .expect("flash-crash-2024-08 scenario must exist");
+
+    let agent_id = "01TESTWS17DECISIONMODEL000A";
+    let strategy = strategy_with(agent_id, &["BTC/USD"], RiskPreset::Balanced, 1_440);
+
+    let mut run = Run::new_queued(
+        strategy.manifest.id.clone(),
+        scenario.id.clone(),
+        RunMode::Backtest,
+    );
+    store.create(&run).await.unwrap();
+
+    let (bars, dispatch) = tp_exit_setup();
+    let tools = Arc::new(ToolRegistry::empty());
+
+    let recorder = Arc::new(NoopRecorder::new());
+    let bus = Arc::new(RunEventBus::new(vec![recorder.clone()]));
+    let obs = ObsEmitter::new(bus.clone(), run.id.clone());
+    let executor = Executor::with_bars(bars).with_observability(obs);
+
+    executor
+        .run(&mut run, &strategy, &scenario, &[], dispatch, tools, &store)
+        .await
+        .expect("backtest run should complete");
+
+    let events = collect_events(&bus, &recorder).await;
+
+    // Index every SpanStarted by id so we can walk the parent chain.
+    let started: std::collections::HashMap<String, &xvision_observability::SpanStartedEvent> = events
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::SpanStarted(s) => Some((s.span_id.clone(), s)),
+            _ => None,
+        })
+        .collect();
+
+    // At least one decision.model span must exist.
+    let decision_models: Vec<&xvision_observability::SpanStartedEvent> = events
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::SpanStarted(s) if matches!(s.kind, SpanKind::DecisionModel) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !decision_models.is_empty(),
+        "executor must open a decision.model span around the trade-decision model call"
+    );
+
+    // The executor-owned decision.model span (the one this track adds) is a
+    // CHILD of the per-bar agent.decision span. NB: the MockDispatch test
+    // runtime also drives the retired LlmDispatch `execute_slot` path, which
+    // emits its own (parentless) decision.model span — production's Cline
+    // path does not. We assert the executor-owned, agent.decision-parented
+    // span exists; that is the parent the reasoning span nests under.
+    let executor_owned: Vec<&&xvision_observability::SpanStartedEvent> = decision_models
+        .iter()
+        .filter(|dm| {
+            dm.parent_span_id
+                .as_deref()
+                .and_then(|pid| started.get(pid))
+                .is_some_and(|parent| matches!(parent.kind, SpanKind::AgentDecision))
+        })
+        .collect();
+    assert!(
+        !executor_owned.is_empty(),
+        "the executor's decision.model span must nest under an agent.decision span; \
+         found decision.model parents = {:?}",
+        decision_models
+            .iter()
+            .map(|dm| dm
+                .parent_span_id
+                .as_deref()
+                .and_then(|pid| started.get(pid))
+                .map(|p| format!("{:?}", p.kind)))
+            .collect::<Vec<_>>()
+    );
+
+    // The executor-owned decision.model span is closed so the trace dock can
+    // compute its duration (mirrors the broker.call / agent.decision lifecycle).
+    for dm in &executor_owned {
+        let finished = events
+            .iter()
+            .any(|e| matches!(e, RunEvent::SpanFinished(f) if f.span_id == dm.span_id));
+        assert!(
+            finished,
+            "decision.model span {} must be closed (SpanFinished)",
+            dm.span_id
+        );
+    }
+}
+
+/// WS-17 nesting contract: a captured `decision.reasoning` span nests
+/// under `decision.model`, which nests under `agent.decision`. The
+/// executor threads `decision_model_span_id` into the Cline dispatch as
+/// the reasoning span's parent; here we reproduce that threading with
+/// the emitter directly (the MockDispatch executor path never emits a
+/// `<think>` block) so the full chain is locked regardless of runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn decision_model_parents_a_captured_reasoning_span() {
+    let recorder = Arc::new(NoopRecorder::new());
+    let bus = Arc::new(RunEventBus::new(vec![recorder.clone()]));
+    let obs = ObsEmitter::new(bus.clone(), "run-ws17-chain".to_string());
+
+    // agent.decision (top) → decision.model (child) → decision.reasoning.
+    let decision_span = xvision_engine::agent::observability::fresh_span_id();
+    let decision_model_span = xvision_engine::agent::observability::fresh_span_id();
+
+    obs.emit_decision_span_started(&decision_span, None, 0, Some("BTC/USD"), None, None, None, None)
+        .await;
+    obs.emit_model_call_started(
+        &decision_model_span,
+        Some(decision_span.clone()),
+        "anthropic",
+        "claude-sonnet-4-6",
+        Some("trader"),
+        None,
+        None,
+    )
+    .await;
+    // The Cline strip site passes the threaded decision.model span id as
+    // the reasoning span's parent.
+    obs.emit_model_reasoning(
+        Some(decision_model_span.clone()),
+        "1h trend up, RSI crossed 30 — long looks favorable.",
+    )
+    .await;
+    obs.emit_span_finished_ok(&decision_model_span).await;
+    obs.emit_span_finished_ok(&decision_span).await;
+
+    let events = collect_events(&bus, &recorder).await;
+    let started: std::collections::HashMap<String, &xvision_observability::SpanStartedEvent> = events
+        .iter()
+        .filter_map(|e| match e {
+            RunEvent::SpanStarted(s) => Some((s.span_id.clone(), s)),
+            _ => None,
+        })
+        .collect();
+
+    // Find the decision.reasoning span and walk up two levels.
+    let reasoning = events
+        .iter()
+        .find_map(|e| match e {
+            RunEvent::SpanStarted(s) if matches!(s.kind, SpanKind::DecisionReasoning) => Some(s),
+            _ => None,
+        })
+        .expect("a decision.reasoning span must be emitted");
+
+    let dm_id = reasoning
+        .parent_span_id
+        .as_deref()
+        .expect("decision.reasoning must have a parent");
+    let dm = started.get(dm_id).expect("decision.reasoning parent must exist");
+    assert!(
+        matches!(dm.kind, SpanKind::DecisionModel),
+        "decision.reasoning must nest under decision.model; got {:?}",
+        dm.kind
+    );
+
+    let ad_id = dm
+        .parent_span_id
+        .as_deref()
+        .expect("decision.model must have a parent");
+    let ad = started.get(ad_id).expect("decision.model parent must exist");
+    assert!(
+        matches!(ad.kind, SpanKind::AgentDecision),
+        "decision.model must nest under agent.decision; got {:?}",
+        ad.kind
+    );
+}
+
 /// 3. A simulated (backtest) fill produces a `broker.call` span stamped with
 ///    the `backtest` venue, mirroring the live path's broker.call coverage.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

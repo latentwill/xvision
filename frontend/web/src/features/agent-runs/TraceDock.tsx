@@ -65,7 +65,12 @@ const ALWAYS_HIDDEN_KINDS: ReadonlySet<string> = new Set(["state.transition"]);
 const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "agent.run",
   "agent.plan",
+  "agent.decision",
+  // WS-17 span taxonomy (+ `model.call`/`model.reasoning` legacy aliases).
+  "decision.model",
+  "decision.reasoning",
   "model.call",
+  "model.reasoning",
   "tool.call",
   "tool.validate_input",
   "tool.validate_output",

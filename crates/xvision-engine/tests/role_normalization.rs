@@ -134,6 +134,7 @@ async fn pipeline_output_assigned_for_role_variants() {
             recorder: None,
             runtime: Default::default(),
             cline: None,
+            model_call_span_id: None,
         })
         .await
         .expect("pipeline runs");
