@@ -1302,6 +1302,14 @@ impl Executor {
                         let sltp_entry = book.entry_price(asset_sym);
                         match crate::eval::executor::sltp::check_and_update(sltp, bar) {
                             Some(SltpTrigger::FullExit { reason }) => {
+                                // WS-14: capture the effective bracket prices the
+                                // exit fired against BEFORE the state is removed
+                                // (line below clears `sltp_state`). These are the
+                                // values the deterministic exit already computed —
+                                // we only read them for the `position_exit` trace
+                                // event, never recompute or change exit logic.
+                                let exit_effective_sl_price = sltp.get_effective_sl_price();
+                                let exit_effective_tp_price = sltp.get_effective_tp_price();
                                 let (sltp_pnl, sltp_fee) = apply_sltp_full_exit(
                                     sltp_position,
                                     sltp_entry,
@@ -1382,6 +1390,48 @@ impl Executor {
                                         crate::agent::episodic::IndicatorSnapshot::default(),
                                     );
                                     episodic_store.push(sltp_obs);
+                                }
+                                // WS-14: emit a `position_exit` engine event so the
+                                // deterministic SL/TP/trailing/time exit — often THE
+                                // realized-PnL event — is first-class in the trace,
+                                // not just a DB row + chart blip. This exit site runs
+                                // BEFORE the LLM-decision span is opened (and bails via
+                                // `continue 'asset`), so it gets its own short-lived
+                                // `agent.decision` span scoped to the exit, mirroring
+                                // how an LLM decision carries its outcome events.
+                                // Emit-only: every value below is already computed for
+                                // the exit above — no recompute, no logic change.
+                                if let Some(obs) = self.obs_emitter.as_ref() {
+                                    let exit_span_id = crate::agent::observability::fresh_span_id();
+                                    obs.emit_decision_span_started(
+                                        &exit_span_id,
+                                        None,
+                                        decision_idx as i64,
+                                        Some(&asset),
+                                        Some(bar.timestamp),
+                                        Some(bar.close),
+                                        Some(sltp_position),
+                                        // decision_input (WS-10): a deterministic SL/TP exit
+                                        // carries no agent briefing, so there is no
+                                        // market-context snapshot to attach here.
+                                        None,
+                                    )
+                                    .await;
+                                    let payload = serde_json::json!({
+                                        "asset": asset,
+                                        "exit_reason": reason,
+                                        "effective_sl_price": exit_effective_sl_price,
+                                        "effective_tp_price": exit_effective_tp_price,
+                                        "realized_pnl": net_sltp_pnl,
+                                        "exit_price": fill_price,
+                                    });
+                                    obs.emit_engine_event(
+                                        "position_exit",
+                                        Some(exit_span_id.clone()),
+                                        Some(payload.to_string()),
+                                    )
+                                    .await;
+                                    obs.emit_span_finished_ok(&exit_span_id).await;
                                 }
                                 decision_idx += 1;
                                 continue 'asset;
@@ -2491,6 +2541,48 @@ impl Executor {
                         qty: fill.fill_size.unwrap_or(0.0),
                         fee: fill.fee.unwrap_or(0.0),
                     });
+
+                    // WS-14: emit a typed `broker.call` span around the simulated
+                    // fill so backtest fills are auditable on the trace dock the
+                    // same way live fills are (live emits these via
+                    // `RealBrokerFills`; only the simulated path was missing them).
+                    // Stamped with the `backtest` venue so a reader can tell a
+                    // simulated fill from a real one at a glance. Emit-only: the
+                    // fill geometry (side/qty/price/fee) is read from the
+                    // already-produced `FillRecord` — no change to fill logic.
+                    if let Some(obs) = self.obs_emitter.as_ref() {
+                        let broker_side = if side == "buy" {
+                            xvision_observability::BrokerSide::Buy
+                        } else {
+                            xvision_observability::BrokerSide::Sell
+                        };
+                        let qty = fill.fill_size.unwrap_or(0.0);
+                        let broker_span_id = crate::agent::observability::fresh_span_id();
+                        obs.emit_broker_call_started(
+                            &broker_span_id,
+                            Some(decision_span_id.clone()),
+                            broker_side,
+                            asset.clone(),
+                            qty,
+                            Some(next_bar_open),
+                            "market",
+                            "backtest",
+                            Some(format!("backtest-{}-{}", asset, bar.timestamp.timestamp())),
+                        )
+                        .await;
+                        obs.emit_broker_call_finished(
+                            &broker_span_id,
+                            xvision_observability::BrokerCallOutcome::Filled,
+                            fill.fill_price,
+                            fill.fill_size,
+                            fill.fee,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await;
+                    }
                 }
 
                 // F43 (`trace-dock-emitters`): emit `fill_attempted` per
@@ -2717,6 +2809,30 @@ impl Executor {
                 if let Some(obs) = self.obs_emitter.as_ref() {
                     obs.emit_span_finished_ok(&decision_span_id).await;
                     let post_fill_position = book.position(asset_sym);
+                    // WS-14: surface this decision's PnL/position arc on the
+                    // engine event so the per-decision outcome lives in the trace,
+                    // not only on the chart SSE. Every value is read from state
+                    // already mutated by the fill above — no extra computation
+                    // pass, no change to fill/book logic.
+                    //
+                    // `mark` is this asset's next-bar open (the same per-asset mark
+                    // the pooled-NAV step below uses) so `unrealized_pnl` /
+                    // `equity_delta` agree with the recorded equity series. The
+                    // decision entered with `equity` (last set at the prior
+                    // timestamp's NAV step); `equity_post` re-marks the book after
+                    // this decision's realized + position change.
+                    let mark = next_bar_open;
+                    let cumulative_realized = book.realized();
+                    let unrealized_pnl = if post_fill_position.abs() > f64::EPSILON {
+                        post_fill_position * (mark - book.entry_price(asset_sym))
+                    } else {
+                        0.0
+                    };
+                    let mut decision_marks: BTreeMap<xvision_core::trading::AssetSymbol, f64> =
+                        BTreeMap::new();
+                    decision_marks.insert(asset_sym, mark);
+                    let equity_post = book.equity(&decision_marks);
+                    let equity_delta = equity_post - equity;
                     let payload = serde_json::json!({
                         "decision_index": decision_idx,
                         "asset": asset,
@@ -2730,11 +2846,10 @@ impl Executor {
                         "fill_price": fill.fill_price,
                         "fill_size": fill.fill_size,
                         "fee": fill.fee,
-                        "realized_pnl": if fill.realized_pnl != 0.0 {
-                            Some(fill.realized_pnl)
-                        } else {
-                            None
-                        },
+                        "realized_pnl": fill.realized_pnl,
+                        "cumulative_realized": cumulative_realized,
+                        "unrealized_pnl": unrealized_pnl,
+                        "equity_delta": equity_delta,
                         "position_pre": pre_fill_position,
                         "position_post": post_fill_position,
                     });
