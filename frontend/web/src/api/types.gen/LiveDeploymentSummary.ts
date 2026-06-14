@@ -7,95 +7,105 @@ import type { DeploymentStatus } from "./DeploymentStatus";
  * Slim wire shape of one live/paper deployment. Every nullable field renders
  * "—" / "no data" in the UI, never a fabricated `0` (HONESTY MANDATE §8.1).
  */
-export type LiveDeploymentSummary = { 
+export type LiveDeploymentSummary = {
 /**
  * `eval_runs.id` (ULID). The run is the deployment.
  */
-deployment_id: string, 
+deployment_id: string,
 /**
  * `eval_runs.agent_id` (strategy bundle hash). Persisted at run start.
  */
-strategy_id: string, 
+strategy_id: string,
 /**
  * Resolved display name (`live_config.display_name`); `None` if unresolved.
  * NOT fabricated.
  */
-strategy_name: string | null, 
+strategy_name: string | null,
 /**
  * `live_config.venue_label` (execution config), NOT inferred.
  */
-mode: DeploymentMode, 
+mode: DeploymentMode,
 /**
  * Derived from `eval_runs.status` overlaid with pause flags.
  */
-status: DeploymentStatus, 
+status: DeploymentStatus,
 /**
  * `eval_runs.started_at`. Execution lifecycle.
  */
-started_at: string, 
+started_at: string,
 /**
  * `MAX(eval_decisions.timestamp)` — a real recorded broker-fed decision.
  * `None` if no decision recorded yet (NOT `started_at`, NOT faked).
  */
-last_decision_at: string | null, 
+last_decision_at: string | null,
 /**
  * Resolved venue id ("alpaca-paper" / "orderly" / …) from
  * `live_config.broker_creds_ref`. Execution config.
  */
-venue: string, 
+venue: string,
 /**
  * Live reachability of the execution venue. `false` ⇒ capital fields go
  * `null`.
  */
-venue_connected: boolean, 
+venue_connected: boolean,
 /**
  * Σ open-position notional from broker/book state. `None` when no live
  * snapshot is available. NOT `live_config.capital.initial`.
  */
-deployed_capital_usd: number | null, 
+deployed_capital_usd: number | null,
 /**
  * `SUM(eval_decisions.pnl_realized)` (engine book realized). `None` if no
  * decision/fill history yet. NEVER the Alpaca proxy, NEVER a faked `0`.
  */
-realized_pnl_usd: number | null, 
+realized_pnl_usd: number | null,
 /**
  * Per-run mark-to-market (`eval_runs.unrealized_pnl_usd`). `None` when
  * unavailable.
  */
-unrealized_pnl_usd: number | null, 
+unrealized_pnl_usd: number | null,
 /**
  * `(peak_equity - current_equity) / peak_equity * 100` from the in-memory
  * per-session peak. `None` when no peak yet. Execution-layer-sourced, NOT
  * the eval `max_drawdown_pct` field.
  */
-drawdown_pct: number | null, 
+drawdown_pct: number | null,
 /**
  * Exact headroom before the enforced daily-loss kill fires. `None` when no
  * kill policy or no day baseline yet.
  */
-daily_loss_limit_remaining_usd: number | null, 
+daily_loss_limit_remaining_usd: number | null,
+/**
+ * Daily-loss budget denominator for buffer percentage. `None` when no
+ * daily-loss kill policy exists or the budget is not yet sourced.
+ */
+daily_loss_budget_usd: number | null,
+/**
+ * Wall-clock stop deadline (RFC3339). `None` when the stop policy is not
+ * time-bounded or the deadline is not yet sourced.
+ */
+stop_at: string | null,
 /**
  * Count of risk vetoes since the operator's last visit. `None` until
  * last-visit tracking lands (Wave 5) — render `None`, not `0`.
  */
-risk_veto_count_since_last_visit: number | null, 
+risk_veto_count_since_last_visit: number | null,
 /**
  * `eval_runs.paused` (per-run pause; execution control).
  */
-paused: boolean, 
+paused: boolean,
 /**
  * `eval_runs.flatten_requested` (execution control).
  */
-flatten_requested: boolean, 
+flatten_requested: boolean,
 /**
  * `GET /api/safety/state.paused` (SafetyManager). Surfaced so a deployment
  * never shows green "running" while writes are globally paused (§8).
  */
-global_safety_paused: boolean, 
+global_safety_paused: boolean,
 /**
  * `eval_runs.source` (CT5 migration 065). Drives `awm`'s Cancel-gate.
  */
-source: DeploymentSource, 
+source: DeploymentSource,
 /**
  * Populated when `venue_connected=false` or a capital snapshot is
  * unavailable. Connection-as-data, mirrors `VenueAccountDto.reason`.

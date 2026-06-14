@@ -63,7 +63,7 @@ contracts in `team/contracts/` right now.
 | `frontend/web/src/features/docs/DocsSidebar.test.tsx` | `docs-search-list-component-adoption` (deferred) | docs-followup |
 | `frontend/web/src/routes/docs/index.tsx` | `docs-search-list-component-adoption` (deferred) | docs-followup |
 | `crates/xvision-cli/src/commands/eval/mod.rs` | `cli-eval-model-override` + `cli-model-bakeoff` — disjoint regions (override: extend RunArgs with --provider/--model; bakeoff: dispatch wiring only via new commands/model.rs) | cli-operator-safety-wave-b-2026-05-22 |
-| `crates/xvision-engine/src/api/eval.rs` | `cli-eval-model-override` (narrow: EvalRunRequest gets provider_override field; resolve_provider honors it) | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/api/eval.rs` | `cli-eval-model-override` (narrow: EvalRunRequest gets provider_override field; resolve_provider honors it) + `ct5-live-deployments` (LiveDeploymentSummary wire type + list/get queries — disjoint region) | multiple |
 | `crates/xvision-engine/src/eval/run.rs` | `cli-eval-model-override` (propagate override into agent dispatch) | cli-operator-safety-wave-b-2026-05-22 |
 | `crates/xvision-cli/src/commands/strategy.rs` | `cli-strategy-clone-model-override` (add `clone` subcommand) | cli-operator-safety-wave-b-2026-05-22 |
 | `crates/xvision-engine/src/api/strategy.rs` | `cli-strategy-clone-model-override` (clone endpoint, thin wrapper on existing create path) | cli-operator-safety-wave-b-2026-05-22 |
@@ -78,6 +78,13 @@ contracts in `team/contracts/` right now.
 | `crates/xvision-engine/migrations/035_eval_bakeoffs.sql` | `cli-model-bakeoff` (NEW migration: eval_bakeoffs + eval_bakeoff_runs) | cli-operator-safety-wave-b-2026-05-22 |
 | `crates/xvision-engine/migrations/035_eval_bakeoffs.down.sql` | `cli-model-bakeoff` (NEW down) | cli-operator-safety-wave-b-2026-05-22 |
 | `crates/xvision-dashboard/src/cli_jobs/allowlist.rs` | `cli-model-bakeoff` (extend `["model", "bakeoff"]` permitted_flags) + `cli-eval-model-override` (extend `["eval", "run"]` permitted_flags) — disjoint regions | cli-operator-safety-wave-b-2026-05-22 |
+| `crates/xvision-engine/src/eval/store.rs` | `ct5-live-deployments` (create persists venue_label; list_filter gains mode field) | ct5-live-deployments |
+| `crates/xvision-engine/src/api/eval.rs` | `ct5-live-deployments` (LiveDeploymentSummary wire type + list/get queries) | ct5-live-deployments |
+| `crates/xvision-engine/src/api/mod.rs` | `ct5-live-deployments` (register /api/live/* router) | ct5-live-deployments |
+| `crates/xvision-dashboard/src/server.rs` | `ct5-live-deployments` (mount live-deployments and live-stream routes) | ct5-live-deployments |
+| `crates/xvision-engine/migrations/065_live_run_state.sql` | `ct5-live-deployments` (NEW: live_run_state table) | ct5-live-deployments |
+| `crates/xvision-engine/src/eval/live_run_state.rs` | `ct5-live-deployments` (NEW: LiveRunState row + LiveStateStore) | ct5-live-deployments |
+| `crates/xvision-dashboard/src/routes/live_deployments.rs` | `ct5-live-deployments` (NEW: GET /api/live/deployments[/:id] + SSE stream) | ct5-live-deployments |
 
 ## Multi-owner Exemptions
 
@@ -91,7 +98,7 @@ contracts in `team/contracts/` right now.
 | `crates/xvision-engine/src/agent/dispatch_capability.rs` | held: agent-graph-capability-dispatch (Phase B, NEW file), agent-graph-filter-capability (Phase C — wires Filter handler into dispatch_capability) | Sequential: Phase B authors the seam; Phase C replaces the Filter stub with the real handler. Phase C MUST rebase on Phase B's merged version. |
 | `crates/xvision-engine/src/strategies/validate.rs` | held: agent-graph-capability-dispatch (Phase B — predicate signal-source check), agent-graph-filter-capability (Phase C — signal_field warning extension) | Sequential. Phase C extends the validator after Phase B's base validator lands. |
 | `crates/xvision-engine/src/agent/pipeline.rs` | held: indicator-tool-wiring (#521), trace-dock-emitters (#524, merged), agent-graph-capability-dispatch (Phase B — full rewrite), agent-graph-filter-capability (Phase C — granularity_runtime + signal cache lookup) | Phase B is a full rewrite; Phase C adds granularity hooks to the rewritten version. Wave-2 #521 lands first (smallest delta) so Phase B rebases on the post-wave-2 main. |
-| `crates/xvision-engine/src/eval/executor/{paper,backtest}.rs` | held: trace-dock-emitters (#524, merged), agent-graph-capability-dispatch (Phase B — lift onto seam), agent-graph-filter-capability (Phase C — construct SignalCache + pass into dispatch), agent-graph-unified-recorder (Phase D — construct EvalRecorder + pass &dyn Recorder) | Sequential by phase order: B → C → D. Each rebases on the previous. |
+| `crates/xvision-engine/src/eval/executor/{paper,backtest}.rs` | held: trace-dock-emitters (#524, merged), agent-graph-capability-dispatch (Phase B — lift onto seam), agent-graph-filter-capability (Phase C — construct SignalCache + pass into dispatch), agent-graph-unified-recorder (Phase D — construct EvalRecorder + pass &dyn Recorder), ct5-live-deployments (ListFilter.mode guard — disjoint from all held regions) | Sequential by phase order: B → C → D. ct5 patch is narrow and disjoint; each rebases on the previous. |
 | `crates/xvision-observability/src/{events,types,sqlite,lib}.rs` (Phase D extension) | held: trace-dock-emitters (merged #524), memory-provenance-in-decisions-trace (#523), agent-graph-unified-recorder (Phase D — adds Recorder trait + eval implementor) | Sequential. Phase D depends on trace-dock-emitters' merged ObsEmitter surface; the trait wraps it. |
 | `crates/xvision-engine/src/agents/templates.rs` | held: agent-graph-template-capabilities (Phase E — explicit capability declarations on every builtin template) | Phase E exclusive owner; no overlap. |
 

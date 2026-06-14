@@ -65,7 +65,9 @@ export function ListingCard({ row, onBuy }: ListingCardProps) {
           data-return-pct
           className={`font-mono text-[16px] font-semibold tracking-[-0.01em] ${positive ? "text-gold" : "text-danger"}`}
         >
-          {retSign}{row.return30dPct}%
+          {row.return30dPct === 0 && row.sharpe === 0
+            ? "—"
+            : `${retSign}${row.return30dPct}%`}
         </span>
         <Sparkline seed={row.id} positive={positive} />
       </div>
@@ -83,7 +85,9 @@ export function ListingCard({ row, onBuy }: ListingCardProps) {
       {/* Sharpe */}
       <div className="text-right">
         <span className="font-mono text-[12px] text-text-3">
-          {row.sharpe > 0 ? "+" : ""}{row.sharpe.toFixed(2)}
+          {row.return30dPct === 0 && row.sharpe === 0
+            ? "—"
+            : `${row.sharpe > 0 ? "+" : ""}${row.sharpe.toFixed(2)}`}
         </span>
       </div>
 

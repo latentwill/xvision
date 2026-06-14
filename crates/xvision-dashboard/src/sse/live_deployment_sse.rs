@@ -59,6 +59,7 @@ pub fn event_name(ev: &RunChartEvent) -> &'static str {
         RunChartEvent::Marker(_) => "marker",
         RunChartEvent::Equity(_) => "metrics",
         RunChartEvent::DeploymentMetrics(_) => "metrics",
+        RunChartEvent::LiveRunState(_) => "live_run_state",
         RunChartEvent::Status { .. } => "status",
     }
 }
@@ -171,7 +172,9 @@ pub fn live_deployment_sse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xvision_engine::api::chart::{ChartEquityPoint, DeploymentMetricsTick, RunChartEvent};
+    use xvision_engine::api::chart::{
+        ChartEquityPoint, DeploymentMetricsTick, LiveRunStatePayload, RunChartEvent,
+    };
 
     fn full_tick() -> DeploymentMetricsTick {
         DeploymentMetricsTick {
@@ -206,6 +209,18 @@ mod tests {
                 message: None
             }),
             "status"
+        );
+        assert_eq!(
+            event_name(&RunChartEvent::LiveRunState(LiveRunStatePayload {
+                equity_usd: None,
+                unrealized_pnl_usd: None,
+                realized_today_usd: None,
+                daily_loss_remaining_usd: None,
+                drawdown_pct: None,
+                risk_veto_count: 0,
+                last_decision_at: None,
+            })),
+            "live_run_state"
         );
     }
 
@@ -246,9 +261,18 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
         let obj = v.as_object().unwrap();
         assert!(obj.contains_key("equity_usd"));
-        assert!(!obj.contains_key("deployed_capital_usd"), "null omitted, got {payload}");
-        assert!(!obj.contains_key("realized_pnl_usd"), "null omitted, got {payload}");
-        assert!(!obj.contains_key("unrealized_pnl_usd"), "null omitted, got {payload}");
+        assert!(
+            !obj.contains_key("deployed_capital_usd"),
+            "null omitted, got {payload}"
+        );
+        assert!(
+            !obj.contains_key("realized_pnl_usd"),
+            "null omitted, got {payload}"
+        );
+        assert!(
+            !obj.contains_key("unrealized_pnl_usd"),
+            "null omitted, got {payload}"
+        );
         assert!(
             !obj.contains_key("daily_loss_limit_remaining_usd"),
             "null omitted, got {payload}"

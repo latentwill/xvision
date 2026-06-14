@@ -6,6 +6,7 @@ import { apiFetch, ApiError } from "@/api/client";
 import { InlineEditField } from "@/features/strategies/InlineEditField";
 import { StrategyReadinessPanel } from "@/components/diagnostics/StrategyReadinessPanel";
 import { CHART2_STRATEGY_ROTATION } from "@/theme/themes";
+import type { TunableBound } from "@/api/strategies";
 
 /**
  * Minimal strategy-detail route added by the
@@ -37,6 +38,7 @@ type StrategyManifest = {
 
 type StrategyDetail = {
   manifest: StrategyManifest;
+  tunable_bounds?: TunableBound[];
 };
 
 type MetadataPatch = {
@@ -64,6 +66,136 @@ function patchStrategyMetadata(
 
 // The 8-color rotation palette extracted for swatch display.
 const ROTATION_SWATCHES = CHART2_STRATEGY_ROTATION.map((e) => e.color);
+
+// ─── Tunable bounds helpers ──────────────────────────────────────────────────
+
+/**
+ * Derive a human-readable label from a dot-separated tunable-bound path.
+ *
+ * Supported patterns (from the Pine import surface):
+ *   conditions.N.*        → "Condition N+1 threshold"
+ *   mechanistic.close_policies.N.pct → "Stop/target %"
+ *   mechanistic.close_policies.N.bars → "Time exit bars"
+ *   mechanistic.close_policies.N.usd  → "Target PnL $"
+ *   conditions.N.lhs.*   → "Condition N+1 left side"
+ *   <anything else>      → humanize the last meaningful segment
+ *
+ * The function is intentionally simple and path-driven: if the optimizer
+ * surfaces new path shapes in future, add patterns here.
+ */
+function deriveBoundLabel(path: string): string {
+  const parts = path.split(".");
+
+  // conditions.N.rhs.numeric  →  "Condition N+1 threshold"
+  // conditions.N.*            →  "Condition N+1 threshold" (generic fallback)
+  if (parts[0] === "conditions" && parts.length >= 2) {
+    const idx = parseInt(parts[1] ?? "", 10);
+    const n = isNaN(idx) ? 1 : idx + 1;
+    const sub = parts[2] ?? "";
+    if (sub === "lhs") return `Condition ${n} left side`;
+    // rhs.numeric, rhs.*, or no sub → threshold
+    return `Condition ${n} threshold`;
+  }
+
+  // mechanistic.close_policies.N.<field>
+  if (
+    parts[0] === "mechanistic" &&
+    parts[1] === "close_policies" &&
+    parts.length >= 4
+  ) {
+    const field = parts[3] ?? "";
+    if (field === "pct") return "Stop/target %";
+    if (field === "bars") return "Time exit bars";
+    if (field === "usd") return "Target PnL $";
+    // fallthrough to generic humanizer
+  }
+
+  // Generic: take the last non-numeric, non-empty segment and humanize it.
+  const meaningful = parts
+    .filter((p) => p.length > 0 && isNaN(parseInt(p, 10)))
+    .pop();
+  if (!meaningful) return path;
+  // snake_case → Title Case words
+  return meaningful
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/**
+ * Auto-generated settings strip sourced from `strategy.tunable_bounds`.
+ *
+ * Layout rules (CLAUDE.md, mandatory):
+ * - Inline, single full-width column, no right-side box.
+ * - No popups / modals / overlays.
+ * - Dark-mode-safe borders: border-border only; never border-white / border-gray-*.
+ * - Colored badges use low-opacity bg + dark: variants.
+ *
+ * v1 is READ-ONLY: it displays the declared search space but does not wire
+ * edits to `PUT /api/strategy/:id/mechanical_params`. The edit path was
+ * assessed but skipped — the `mechanical_params` shape is `unknown` on the
+ * TS type and the path-based partial-patch semantics would require type-safe
+ * path traversal that is out of scope for WU-C. Read-only is intentional and
+ * noted in the PR.
+ */
+function TunableBoundsPanel({ bounds }: { bounds: TunableBound[] }) {
+  if (bounds.length === 0) return null;
+
+  return (
+    <section
+      aria-label="Tunable input bounds"
+      data-testid="tunable-bounds-panel"
+      className="mt-6"
+    >
+      <h2 className="text-[15px] font-medium mb-3">Input search space</h2>
+      <div className="rounded border border-border bg-surface-elev overflow-hidden">
+        {bounds.map((b, i) => (
+          <div
+            key={b.path}
+            data-testid="tunable-bound-row"
+            className={[
+              "flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[12.5px]",
+              i < bounds.length - 1 ? "border-b border-border" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            {/* Human label */}
+            <span className="font-medium text-text min-w-[140px]">
+              {deriveBoundLabel(b.path)}
+            </span>
+
+            {/* Kind badge */}
+            <span
+              className="inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-mono
+                         bg-indigo-500/10 text-indigo-700 dark:text-indigo-300"
+            >
+              {b.kind}
+            </span>
+
+            {/* Range */}
+            <span className="text-text-2 font-mono tabular-nums">
+              {b.min !== null ? b.min : "−∞"}
+              {" – "}
+              {b.max !== null ? b.max : "+∞"}
+              {b.step !== null ? (
+                <span className="text-text-3 ml-1.5">step {b.step}</span>
+              ) : null}
+            </span>
+
+            {/* Path — muted mono, truncated on narrow viewports */}
+            <span
+              className="ml-auto text-text-3 font-mono text-[11px] truncate max-w-[260px]"
+              title={b.path}
+            >
+              {b.path}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 /**
  * Inline color picker row. No modal/popover — displays as a
@@ -315,6 +447,7 @@ function StrategyDetailView({ id }: { id: string }) {
 
   const strategy = query.data;
   const m = strategy.manifest;
+  const tunableBounds = strategy.tunable_bounds ?? [];
 
   return (
     <main data-testid="strategy-detail-view" data-strategy-id={m.id}>
@@ -387,6 +520,8 @@ function StrategyDetailView({ id }: { id: string }) {
         <h2 className="text-[15px] font-medium mb-3">Agent readiness</h2>
         <StrategyReadinessPanel strategyId={m.id} />
       </section>
+
+      <TunableBoundsPanel bounds={tunableBounds} />
     </main>
   );
 }

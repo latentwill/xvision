@@ -105,6 +105,7 @@ export type { ListSkillsRequest } from "./types.gen/ListSkillsRequest";
 export type { LiveConfig } from "./types.gen/LiveConfig";
 export type { LiveConfigValidationError } from "./types.gen/LiveConfigValidationError";
 export type { LiveDeploymentSummary } from "./types.gen/LiveDeploymentSummary";
+export type { LiveRunState } from "./types.gen/LiveRunState";
 export type { MacdSeries } from "./types.gen/MacdSeries";
 export type { ManifestMismatch } from "./types.gen/ManifestMismatch";
 export type { MarketOrderFill } from "./types.gen/MarketOrderFill";

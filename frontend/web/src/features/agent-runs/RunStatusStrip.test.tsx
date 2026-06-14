@@ -7,7 +7,7 @@ import { useTraceDock } from "@/stores/trace-dock";
 import { MOCK_RUN_COMPLETED, MOCK_RUN_LIVE, MOCK_RUN_ERROR } from "./mock-fixtures";
 
 afterEach(() => {
-  useTraceDock.getState().setActiveRun(null, "post-hoc");
+  useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
 });
 
 describe("RunStatusStrip", () => {

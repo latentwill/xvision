@@ -397,9 +397,11 @@ async fn list_inner(ctx: &ApiContext, req: &ListRunsRequest) -> ApiResult<Vec<Ru
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
         status: req.status.clone(),
+        mode: None,
         limit: req.limit,
         offset: req.offset,
         since: req.since,
+        ..Default::default()
     };
     store
         .list(filter)
@@ -439,9 +441,11 @@ async fn list_summaries_paged_inner(ctx: &ApiContext, req: &ListRunsRequest) -> 
         agent_id: req.agent_id.clone(),
         scenario_id: req.scenario_id.clone(),
         status: req.status.clone(),
+        mode: None,
         limit: req.limit,
         offset: req.offset,
         since: req.since,
+        ..Default::default()
     };
     // Compute total BEFORE slicing so the pager renders an honest
     // "of N" even when the active page is the last and partial.
@@ -1747,14 +1751,10 @@ async fn collect_provider_names_for_strategy(
 ) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
 
-    // 1. Legacy inline slots on the strategy (trader / intern / regime).
-    for slot in [
-        strategy.trader_slot.as_ref(),
-        strategy.intern_slot.as_ref(),
-        strategy.regime_slot.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
+    // 1. Legacy inline slots on the strategy (trader / regime).
+    for slot in [strategy.trader_slot.as_ref(), strategy.regime_slot.as_ref()]
+        .into_iter()
+        .flatten()
     {
         if let Some(p) = slot.provider.as_deref() {
             let p = p.trim();
@@ -2024,14 +2024,10 @@ fn runtime_slots<'a>(
     if !agent_slots.is_empty() {
         return agent_slots.iter().map(|resolved| &resolved.slot).collect();
     }
-    [
-        strategy.trader_slot.as_ref(),
-        strategy.intern_slot.as_ref(),
-        strategy.regime_slot.as_ref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+    [strategy.trader_slot.as_ref(), strategy.regime_slot.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Pick the long-lived `agents.agent_id` of the agent acting as the
@@ -4064,7 +4060,7 @@ async fn start_run_inner(ctx: &ApiContext, req: EvalRunRequest) -> ApiResult<Run
     // F-1 (eval-launch-concurrency-cap, 2026-05-19): cap how many runs
     // can be in flight against a single upstream `(provider, model)`
     // bucket. Resolved from the trader slot (the dominant token spender);
-    // findings/intern slots ride along on the same permit because the
+    // findings/regime slots ride along on the same permit because the
     // F-1 audit (`team/intake/2026-05-16-eval-review-and-v2a.md`) tracked
     // the burst as a single user-perceived "launch". The guard is moved
     // into the spawned background task so it lives for the full run
@@ -5077,7 +5073,6 @@ mod tests {
             }],
             pipeline: PipelineDef::default(),
             regime_slot: None,
-            intern_slot: None,
             trader_slot: Some(legacy_slot),
             risk: RiskPreset::Balanced.expand(),
             mechanical_params: serde_json::json!({}),
@@ -5087,6 +5082,7 @@ mod tests {
             decision_mode: Default::default(),
             mechanistic_config: None,
             briefing_indicators: Vec::new(),
+            tunable_bounds: Vec::new(),
         }
     }
 
@@ -5365,4 +5361,148 @@ mod tests {
             "per-asset bars must diverge across assets; btc={btc_close} eth={eth_close}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: LiveDeploymentSummary type + list_live_deployments / get_live_deployment
+// ---------------------------------------------------------------------------
+
+/// Wire type for the live-deployments list/detail API.
+/// Represents one paper or testnet live run with its current capital-risk snapshot.
+/// `venue_label` is always "paper" or "testnet" — 'live' is excluded by the query.
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-export",
+    ts(export, export_to = "../../../frontend/web/src/api/types.gen/")
+)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LiveDeploymentSummary {
+    pub deployment_id: String,
+    pub strategy_id: Option<String>,
+    pub strategy_name: Option<String>,
+    /// "paper" | "testnet" — 'live' excluded by the query filter.
+    pub venue_label: String,
+    /// queued | running | completed | failed | cancelled
+    pub status: String,
+    pub paused: bool,
+    pub started_at: String,
+    pub last_decision_at: Option<String>,
+    pub deployed_capital_usd: Option<f64>,
+    pub equity_usd: Option<f64>,
+    pub realized_pnl_usd: Option<f64>,
+    pub unrealized_pnl_usd: Option<f64>,
+    pub realized_today_usd: Option<f64>,
+    pub drawdown_pct: Option<f64>,
+    pub daily_loss_limit_remaining_usd: Option<f64>,
+    // i64 → JSON integer decodes as a JS `number`, not BigInt; pin the TS type.
+    #[cfg_attr(feature = "ts-export", ts(type = "number"))]
+    pub risk_veto_count: i64,
+    /// Daily-loss budget in USD = kill_pct × initial capital. `None` when
+    /// no live_run_state row exists yet or kill_pct is 0. Unlocks the
+    /// strip's buffer %-gradient (remaining / budget).
+    pub daily_loss_budget_usd: Option<f64>,
+    /// Wall-clock deadline (RFC-3339) = started_at + time_limit_secs.
+    /// `None` for bar/decision stop policies (no wall-clock ETA) or when no
+    /// live_run_state row exists yet. Unlocks awm's ETA display.
+    pub stop_at: Option<String>,
+}
+
+/// Private row type for the `eval_runs LEFT JOIN live_run_state` query.
+/// Field names MUST exactly match the SELECT column aliases.
+#[derive(sqlx::FromRow)]
+struct LiveDeploymentRow {
+    deployment_id: String,
+    venue_label: String,
+    status: String,
+    paused: bool,
+    started_at: String,
+    strategy_id: Option<String>,
+    strategy_name: Option<String>,
+    last_decision_at: Option<String>,
+    deployed_capital_usd: Option<f64>,
+    equity_usd: Option<f64>,
+    realized_pnl_usd: Option<f64>,
+    unrealized_pnl_usd: Option<f64>,
+    realized_today_usd: Option<f64>,
+    drawdown_pct: Option<f64>,
+    daily_loss_remaining_usd: Option<f64>,
+    risk_veto_count: Option<i64>,
+    daily_loss_budget_usd: Option<f64>,
+    stop_at: Option<String>,
+}
+
+/// Base SELECT joining `eval_runs` to `live_run_state`, filtered to
+/// `mode='live' AND venue_label != 'live'` (paper + testnet only).
+const LIVE_DEPLOYMENT_SELECT: &str = "\
+    SELECT r.id AS deployment_id, r.venue_label AS venue_label, r.status AS status, \
+           r.paused AS paused, r.started_at AS started_at, \
+           s.strategy_id AS strategy_id, s.strategy_name AS strategy_name, \
+           s.last_decision_at AS last_decision_at, s.deployed_capital_usd AS deployed_capital_usd, \
+           s.equity_usd AS equity_usd, s.realized_pnl_usd AS realized_pnl_usd, \
+           s.unrealized_pnl_usd AS unrealized_pnl_usd, s.realized_today_usd AS realized_today_usd, \
+           s.drawdown_pct AS drawdown_pct, s.daily_loss_remaining_usd AS daily_loss_remaining_usd, \
+           s.risk_veto_count AS risk_veto_count, \
+           s.daily_loss_budget_usd AS daily_loss_budget_usd, s.stop_at AS stop_at \
+    FROM eval_runs r LEFT JOIN live_run_state s ON s.run_id = r.id \
+    WHERE r.mode = 'live' AND r.venue_label != 'live'";
+
+impl From<LiveDeploymentRow> for LiveDeploymentSummary {
+    fn from(r: LiveDeploymentRow) -> Self {
+        Self {
+            deployment_id: r.deployment_id,
+            strategy_id: r.strategy_id,
+            strategy_name: r.strategy_name,
+            venue_label: r.venue_label,
+            status: r.status,
+            paused: r.paused,
+            started_at: r.started_at,
+            last_decision_at: r.last_decision_at,
+            deployed_capital_usd: r.deployed_capital_usd,
+            equity_usd: r.equity_usd,
+            realized_pnl_usd: r.realized_pnl_usd,
+            unrealized_pnl_usd: r.unrealized_pnl_usd,
+            realized_today_usd: r.realized_today_usd,
+            drawdown_pct: r.drawdown_pct,
+            daily_loss_limit_remaining_usd: r.daily_loss_remaining_usd,
+            risk_veto_count: r.risk_veto_count.unwrap_or(0),
+            daily_loss_budget_usd: r.daily_loss_budget_usd,
+            stop_at: r.stop_at,
+        }
+    }
+}
+
+/// List all paper/testnet live deployments, optionally filtered by status.
+///
+/// An empty `status` string is treated as no-filter (same as `None`).
+/// Results are ordered by `started_at DESC, id DESC`.
+pub async fn list_live_deployments(
+    ctx: &ApiContext,
+    status: Option<&str>,
+) -> anyhow::Result<Vec<LiveDeploymentSummary>> {
+    let mut sql = String::from(LIVE_DEPLOYMENT_SELECT);
+    // Treat an empty status string as "no filter".
+    let status = status.filter(|s| !s.is_empty());
+    if status.is_some() {
+        sql.push_str(" AND r.status = ?");
+    }
+    sql.push_str(" ORDER BY r.started_at DESC, r.id DESC");
+    let mut q = sqlx::query_as::<_, LiveDeploymentRow>(&sql);
+    if let Some(st) = status {
+        q = q.bind(st);
+    }
+    let rows = q.fetch_all(&ctx.db).await?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// Fetch a single live deployment by `run_id`, or `None` when not found.
+pub async fn get_live_deployment(
+    ctx: &ApiContext,
+    run_id: &str,
+) -> anyhow::Result<Option<LiveDeploymentSummary>> {
+    let sql = format!("{LIVE_DEPLOYMENT_SELECT} AND r.id = ?");
+    let row = sqlx::query_as::<_, LiveDeploymentRow>(&sql)
+        .bind(run_id)
+        .fetch_optional(&ctx.db)
+        .await?;
+    Ok(row.map(Into::into))
 }

@@ -89,6 +89,63 @@ function makeFallback(): MarketplaceData {
   return new FixtureMarketplaceData();
 }
 
+describe("ApiMarketplaceData.listListings — mine segment", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("mine segment: returns empty pool when no wallet is connected", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing, freeListing], total: 2 }),
+    );
+    mockedChain.currentAddress.mockResolvedValue(null);
+
+    const api = new ApiMarketplaceData(makeFallback());
+    const { rows, matched } = await api.listListings({ ...defaultFilterState(), segment: "mine" });
+    expect(rows).toHaveLength(0);
+    expect(matched).toBe(0);
+  });
+
+  it("mine segment: returns only listings whose id appears in viewer.createdListingIds", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+
+    // Listing id "3" is in the viewer's createdListingIds; "4" is not.
+    // getViewer on ApiMarketplaceData returns createdListingIds: [] (wallet join
+    // is deferred), so "mine" yields empty — this test verifies the guard logic.
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing, freeListing], total: 2 }),
+    );
+    const api = new ApiMarketplaceData(makeFallback());
+    const { rows, matched } = await api.listListings({ ...defaultFilterState(), segment: "mine" });
+    // createdListingIds is [] for the real API viewer (wallet join deferred) →
+    // empty result, never "all listings".
+    expect(rows).toHaveLength(0);
+    expect(matched).toBe(0);
+  });
+
+  it("mine segment: shows own listings when viewer.createdListingIds contains matching ids", async () => {
+    const ADDR = "0x1234567890abcdef1234567890abcdef12345678" as `0x${string}`;
+    mockedChain.currentAddress.mockResolvedValue(ADDR);
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      mockOkJson({ items: [indexedListing, freeListing], total: 2 }),
+    );
+
+    const api = new ApiMarketplaceData(makeFallback());
+    // Spy on getViewer to return a viewer that owns listing "3".
+    vi.spyOn(api, "getViewer").mockResolvedValue({
+      isConnected: true,
+      address: ADDR,
+      createdListingIds: ["3"],
+      ownedListingIds: [],
+    });
+
+    const { rows, matched } = await api.listListings({ ...defaultFilterState(), segment: "mine" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("3");
+    expect(matched).toBe(1);
+  });
+});
+
 describe("ApiMarketplaceData.listListings", () => {
   afterEach(() => vi.restoreAllMocks());
 

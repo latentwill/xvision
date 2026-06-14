@@ -115,9 +115,7 @@ pub async fn insert_receipt(
         Err(e) if is_unique_violation(&e) => Err(DashboardError::Conflict(format!(
             "agent_id {agent_id} already has a publish receipt"
         ))),
-        Err(e) => Err(DashboardError::Internal(anyhow::anyhow!(
-            "insert_receipt: {e}"
-        ))),
+        Err(e) => Err(DashboardError::Internal(anyhow::anyhow!("insert_receipt: {e}"))),
     }
 }
 
@@ -189,9 +187,7 @@ mod tests {
     #[tokio::test]
     async fn find_receipt_absent_is_none() {
         let (pool, _tmp) = migrated_pool().await;
-        let found = find_receipt(&pool, "01NOPENOPENOPENOPENOPENOPE")
-            .await
-            .unwrap();
+        let found = find_receipt(&pool, "01NOPENOPENOPENOPENOPENOPE").await.unwrap();
         assert!(found.is_none(), "fresh table returns None for an unknown id");
     }
 
@@ -212,11 +208,13 @@ mod tests {
 
         // Exactly one row survived, and it is the FIRST one (the winner).
         use sqlx::Row as _;
-        let row = sqlx::query("SELECT COUNT(*) AS n, MIN(token_id) AS tok FROM publish_receipts WHERE agent_id = ?1")
-            .bind(agent_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS n, MIN(token_id) AS tok FROM publish_receipts WHERE agent_id = ?1",
+        )
+        .bind(agent_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         let n: i64 = row.get("n");
         assert_eq!(n, 1, "exactly one receipt row survives the double-insert");
         let found = find_receipt(&pool, agent_id).await.unwrap().unwrap();

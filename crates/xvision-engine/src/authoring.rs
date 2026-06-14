@@ -284,7 +284,6 @@ pub async fn create_blank_strategy(
         agents: Vec::new(),
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Conservative.expand(),
         mechanical_params: serde_json::json!({}),
@@ -294,6 +293,7 @@ pub async fn create_blank_strategy(
         decision_mode: Default::default(),
         mechanistic_config: None,
         briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     let mut warnings = every_bar_warning(&draft).map(|w| vec![w]).unwrap_or_default();
     if let Some(w) = high_position_size_warning(&draft) {
@@ -311,9 +311,8 @@ pub async fn update_slot(store: &dyn StrategyStore, req: UpdateSlotReq) -> anyho
     let mut strategy = store.load(&req.id).await?;
     let slot_field = match req.slot.as_str() {
         "regime" => &mut strategy.regime_slot,
-        "intern" => &mut strategy.intern_slot,
         "trader" => &mut strategy.trader_slot,
-        other => anyhow::bail!("unknown slot `{other}` — must be one of: regime, intern, trader"),
+        other => anyhow::bail!("unknown slot `{other}` — must be one of: regime, trader"),
     };
     let slot = slot_field.get_or_insert_with(|| LLMSlot {
         role: req.slot.clone(),
@@ -853,10 +852,6 @@ mod tests {
             draft.regime_slot.is_none(),
             "blank draft should not carry a regime slot"
         );
-        assert!(
-            draft.intern_slot.is_none(),
-            "blank draft should not carry an intern slot"
-        );
         assert_eq!(draft.manifest.template, "custom");
         assert_eq!(draft.manifest.display_name, "Blank Run");
         assert_eq!(draft.manifest.creator, "@test");
@@ -1293,7 +1288,7 @@ mod tests {
         // Hand-author a strategy with one explicit-Trader AgentRef and
         // no Filter. Going through `add_agent_ref` would leave
         // `activates: None`, which (per the warning's design) does NOT
-        // fire the warning — only explicit Trader/Critic does.
+        // fire the warning — only explicit Trader does.
         let mut strategy = store.load(&out.id).await.unwrap();
         strategy.agents.push(AgentRef {
             agent_id: "01HZAGENT_TRADER".into(),

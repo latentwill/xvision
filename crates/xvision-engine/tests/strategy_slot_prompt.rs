@@ -91,7 +91,6 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         }],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: None,
         risk: RiskPreset::Balanced.expand(),
         mechanical_params: json!({}),
@@ -100,7 +99,8 @@ fn strategy_validates_with_agent_ref_and_no_slot_prompt() {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     };
     validate_strategy(&strategy).expect("strategy with AgentRef and no slot prompt validates");
 }

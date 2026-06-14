@@ -187,11 +187,11 @@ run `source .env.local` before `xvn`.
 export HF_TOKEN=...
 export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"
 
-# Stage 1 Intern — pick one provider
-export XVN_INTERN_PROVIDER=anthropic          # | openai-compat
-export XVN_INTERN_BASE_URL=https://api.anthropic.com
-export XVN_INTERN_MODEL=claude-haiku-4-5
-export XVN_INTERN_KEY_ENV=ANTHROPIC_API_KEY
+# Default LLM provider (Intern stage retired, now single-stage agent)
+# Use config/default.toml [[providers]] array instead
+export XVN_DEFAULT_PROVIDER=anthropic          # | openai-compat
+export XVN_DEFAULT_BASE_URL=https://api.anthropic.com
+export XVN_DEFAULT_MODEL=claude-haiku-4-5
 export ANTHROPIC_API_KEY=...                  # or OPENAI_API_KEY
 
 # Stage 2 local Trader (GGUF)

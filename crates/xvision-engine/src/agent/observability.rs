@@ -936,8 +936,8 @@ impl ObsEmitter {
     /// Open a `ModelCall` span. Caller pairs this with exactly one
     /// `emit_span_finished_*` call carrying the same `span_id`.
     ///
-    /// `stage` is the `LLMSlot.role` label ("regime" / "intern" /
-    /// "trader" or any free-form per-strategy name) so the trace dock
+    /// `stage` is the `LLMSlot.role` label ("regime" / "trader" or
+    /// any free-form per-strategy name) so the trace dock
     /// can group spans by their pipeline role. Populates the
     /// `SpanAttributes` bag with `run_id`, `provider`, `model`, and
     /// the stage so F-7's planned Simple/Advanced toggle has the

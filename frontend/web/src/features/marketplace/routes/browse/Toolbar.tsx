@@ -3,6 +3,7 @@
 // (the project-approved portal dropdown with built-in click-outside + Escape —
 // NOT a focus-stealing modal, QA5). The Filters button toggles the inline
 // filter accordion (no absolute overlay). A segmented List | Index view toggle.
+import { useEffect } from "react";
 import { SignalSelectMenu } from "@/components/primitives/SignalMenu";
 import type { FilterState, SortKey } from "@/features/marketplace/data/types";
 
@@ -69,6 +70,14 @@ export function Toolbar({
   // If the active sort was hidden (performance sort on a zeroed client), fall
   // back to "newest" for the menu's displayed value.
   const sortValue = sortKeys.includes(filter.sort) ? filter.sort : "newest";
+  // When a performance sort becomes unavailable (allowPerformanceSort false),
+  // reset filter.sort to "newest" so the stored filter state matches the
+  // displayed label — prevents stale sort from persisting invisibly.
+  useEffect(() => {
+    if (!allowPerformanceSort && (filter.sort === "return30d" || filter.sort === "sharpe")) {
+      setFilter({ sort: "newest" });
+    }
+  }, [allowPerformanceSort, filter.sort, setFilter]);
   // On the demo client, performance-based ordering is driven by illustrative
   // returns — surface a quiet DEMO tag so it never reads as authoritative.
   const showSortDemoTag = isDemo && (sortValue === "return30d" || sortValue === "sharpe");
@@ -85,7 +94,20 @@ export function Toolbar({
                 key={s.key}
                 type="button"
                 aria-label={s.label}
-                onClick={() => setFilter({ segment: s.key })}
+                onClick={() => {
+                  // Each segment has a canonical default sort that keeps the label honest.
+                  // "trending" → buyers count (interim proxy; bead xvision-ctkm.8 will
+                  //   supply a real velocity/score field when marketplace metrics land).
+                  // "new"      → newest (id-descending proxy for publishedAt; no timestamp
+                  //   on ListingRow yet — documented as a proxy until the field lands).
+                  // "mine"     → keep the current sort — no canonical order for "Mine".
+                  const canonicalSort: Record<FilterState["segment"], SortKey> = {
+                    trending: "buyers",
+                    new: "newest",
+                    mine: filter.sort,
+                  };
+                  setFilter({ segment: s.key, sort: canonicalSort[s.key] });
+                }}
                 className={[
                   "px-3 py-1 text-[12.5px] font-medium cursor-pointer transition-colors",
                   isActive

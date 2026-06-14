@@ -89,7 +89,6 @@ fn minimal_strategy() -> Strategy {
         agents: vec![],
         pipeline: PipelineDef::default(),
         regime_slot: None,
-        intern_slot: None,
         trader_slot: Some(LLMSlot {
             role: "trader".into(),
             attested_with: "mock".into(),
@@ -104,7 +103,8 @@ fn minimal_strategy() -> Strategy {
         acknowledge_no_filter: false,
         decision_mode: Default::default(),
         mechanistic_config: None,
-            briefing_indicators: Vec::new(),
+        briefing_indicators: Vec::new(),
+        tunable_bounds: Vec::new(),
     }
 }
 

@@ -47,6 +47,13 @@ function fmtPct(n: number, d = 2): string {
   return `${sign}${n.toFixed(d)}%`;
 }
 
+/** Format an absolute (sign-stripped) percentage for the headline emphasis.
+ *  Produces "1.02%" rather than "+1.02%" so the suffix ("is up"/"is down")
+ *  carries the direction and the number stays clean. */
+function fmtAbsPct(n: number, d = 2): string {
+  return `${Math.abs(n).toFixed(d)}%`;
+}
+
 function fmtRatio(n: number): string {
   return n.toFixed(2);
 }
@@ -146,8 +153,8 @@ export function GradientHeroDashboard({
                 <GradientHeadline
                   prefix="The"
                   bracketed={lead.name}
-                  suffix="is up"
-                  emphasis={fmtPct(lead.metrics.return)}
+                  suffix={lead.metrics.return >= 0 ? "is up" : "is down"}
+                  emphasis={fmtAbsPct(lead.metrics.return)}
                 />
               ) : (
                 <GradientHeadline

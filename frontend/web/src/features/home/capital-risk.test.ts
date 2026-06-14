@@ -31,6 +31,8 @@ function dep(over: Partial<LiveDeploymentSummary>): LiveDeploymentSummary {
     unrealized_pnl_usd: null,
     drawdown_pct: null,
     daily_loss_limit_remaining_usd: null,
+    daily_loss_budget_usd: null,
+    stop_at: null,
     risk_veto_count_since_last_visit: null,
     paused: false,
     flatten_requested: false,
@@ -49,6 +51,7 @@ describe("aggregateCapitalRisk", () => {
     expect(agg.deployedCapitalUsd).toBeNull();
     expect(agg.worstDrawdownPct).toBeNull();
     expect(agg.tightestDailyLossBufferUsd).toBeNull();
+    expect(agg.tightestDailyLossBudgetUsd).toBeNull();
   });
 
   it("reports the data floor when deployments exist but every capital field is null", () => {
@@ -59,6 +62,7 @@ describe("aggregateCapitalRisk", () => {
     expect(agg.deployedCapitalUsd).toBeNull();
     expect(agg.worstDrawdownPct).toBeNull();
     expect(agg.tightestDailyLossBufferUsd).toBeNull();
+    expect(agg.tightestDailyLossBudgetUsd).toBeNull();
   });
 
   it("SUMS deployed capital only over non-null values", () => {
@@ -99,13 +103,14 @@ describe("aggregateCapitalRisk", () => {
     expect(agg.worstDrawdownPct).toBe(11.0);
   });
 
-  it("picks the TIGHTEST (min) daily-loss buffer over non-null values", () => {
+  it("picks the TIGHTEST (min) daily-loss buffer and its paired budget", () => {
     const agg = aggregateCapitalRisk([
-      dep({ deployment_id: "a", daily_loss_limit_remaining_usd: 500 }),
-      dep({ deployment_id: "b", daily_loss_limit_remaining_usd: 42 }),
+      dep({ deployment_id: "a", daily_loss_limit_remaining_usd: 500, daily_loss_budget_usd: 900 }),
+      dep({ deployment_id: "b", daily_loss_limit_remaining_usd: 42, daily_loss_budget_usd: 100 }),
       dep({ deployment_id: "c", daily_loss_limit_remaining_usd: null }), // ignored
     ]);
     expect(agg.tightestDailyLossBufferUsd).toBe(42);
+    expect(agg.tightestDailyLossBudgetUsd).toBe(100);
   });
 
   it("keeps a tightest buffer that has gone negative (over the kill line)", () => {
@@ -136,20 +141,75 @@ describe("aggregateCapitalRisk", () => {
   });
 });
 
+// bead s78.2: the risk-veto count is a REAL count of recorded risk-veto
+// supervisor notes since the operator's last visit. The per-deployment field is
+// null when NO `?since` boundary was supplied (can't count "since an unknown
+// time"); a real count INCLUDING 0 is honest ("0 vetoes since you were last
+// here"). The aggregate SUMS the non-null per-deployment counts; null only when
+// EVERY per-deployment count is null.
+describe("aggregateCapitalRisk — risk-veto count", () => {
+  it("is null when every per-deployment veto count is null (no boundary)", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: null }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: null }),
+    ]);
+    expect(agg.riskVetoCount).toBeNull();
+  });
+
+  it("is null for an empty deployment list", () => {
+    expect(aggregateCapitalRisk([]).riskVetoCount).toBeNull();
+  });
+
+  it("SUMS the non-null per-deployment veto counts", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 3 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: 5 }),
+    ]);
+    expect(agg.riskVetoCount).toBe(8);
+  });
+
+  it("ignores a null per-deployment count in the sum (never coerced to 0)", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 2 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: null }),
+    ]);
+    expect(agg.riskVetoCount).toBe(2);
+  });
+
+  it("keeps an honest summed 0 (a real 'no vetoes since last visit')", () => {
+    // A boundary WAS supplied (counts are non-null), and the real count is 0.
+    // That is an honest fact, distinct from null (unknown boundary).
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 0 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: 0 }),
+    ]);
+    expect(agg.riskVetoCount).toBe(0);
+    expect(agg.riskVetoCount).not.toBeNull();
+  });
+
+  it("sums a mix of a real 0 and a real positive count", () => {
+    const agg = aggregateCapitalRisk([
+      dep({ deployment_id: "a", risk_veto_count_since_last_visit: 0 }),
+      dep({ deployment_id: "b", risk_veto_count_since_last_visit: 4 }),
+    ]);
+    expect(agg.riskVetoCount).toBe(4);
+  });
+});
+
 describe("bufferTone", () => {
-  it("is healthy when the buffer is comfortably large relative to deployed", () => {
-    // 50% of deployed remaining → healthy.
-    expect(bufferTone(500, 1000)).toBe("healthy");
+  it("is healthy when the buffer is comfortably large relative to budget", () => {
+    // >50% of budget remaining → healthy.
+    expect(bufferTone(600, 1000)).toBe("healthy");
+  });
+
+  it("returns null in the middle decay band", () => {
+    // 40% remaining is not warning yet and should not fabricate healthy.
+    expect(bufferTone(400, 1000)).toBeNull();
   });
 
   it("warns as the buffer shrinks toward the kill line", () => {
-    // ~7% of deployed remaining → warn band.
+    // 7% of budget remaining → warn band.
     expect(bufferTone(70, 1000)).toBe("warn");
-  });
-
-  it("is danger when the buffer is nearly exhausted", () => {
-    // ~1% remaining → danger.
-    expect(bufferTone(10, 1000)).toBe("danger");
   });
 
   it("is danger once the buffer has gone non-positive (kill line crossed)", () => {
@@ -161,16 +221,18 @@ describe("bufferTone", () => {
     expect(bufferTone(null, 1000)).toBeNull();
   });
 
-  it("returns null tone when deployed is null or zero (no ratio to compute)", () => {
+  it("returns null tone when budget is null or zero (no ratio to compute)", () => {
     expect(bufferTone(100, null)).toBeNull();
     expect(bufferTone(100, 0)).toBeNull();
   });
 
   it("classifies monotonically as the buffer ratio falls", () => {
     const healthy = bufferTone(900, 1000);
+    const neutral = bufferTone(400, 1000);
     const warn = bufferTone(80, 1000);
-    const danger = bufferTone(5, 1000);
+    const danger = bufferTone(0, 1000);
     expect(healthy).toBe("healthy");
+    expect(neutral).toBeNull();
     expect(warn).toBe("warn");
     expect(danger).toBe("danger");
   });

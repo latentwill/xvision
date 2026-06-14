@@ -62,7 +62,7 @@ export function DocsRoute() {
 
   const urlSlug = searchParams.get("slug");
   const slugInIndex = urlSlug != null && pages.some((p) => p.slug === urlSlug);
-  const activeSlug = slugInIndex ? urlSlug : (pages[0]?.slug ?? null);
+  const activeSlug = slugInIndex ? urlSlug : urlSlug == null ? (pages[0]?.slug ?? null) : null;
 
   const page = useQuery({
     queryKey: activeSlug ? docsKeys.page(activeSlug) : docsKeys.all,
@@ -159,20 +159,23 @@ export function DocsRoute() {
                   {group.pages.map((p) => {
                     const isActive = p.slug === activeSlug;
                     return (
-                      <button
+                      <a
                         key={p.slug}
-                        type="button"
-                        onClick={() => setSearchParams({ slug: p.slug })}
+                        href={`?slug=${p.slug}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setSearchParams({ slug: p.slug });
+                        }}
                         aria-current={isActive ? "page" : undefined}
                         data-testid={`docs-index-item-${p.slug}`}
-                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] border-l-2 transition-colors leading-snug ${
+                        className={`text-left text-[13px] rounded-sm px-2 py-[5px] border-l-2 transition-colors leading-snug block ${
                           isActive
                             ? "text-text bg-gold/10 border-gold"
                             : "text-text-2 border-transparent hover:text-text hover:bg-surface-elev"
                         }`}
                       >
                         {p.title}
-                      </button>
+                      </a>
                     );
                   })}
                 </div>
@@ -226,7 +229,20 @@ export function DocsRoute() {
             </button>
           </div>
           <Card className="p-6 md:p-10">
-            {!activeSlug ? (
+            {urlSlug != null && !slugInIndex ? (
+              <div
+                role="alert"
+                data-testid="docs-page-not-found"
+                className="text-[13px] text-text-2"
+              >
+                <p className="mb-2 font-medium text-text">Page not found</p>
+                <p className="text-text-3">
+                  No documentation page with slug{" "}
+                  <code className="font-mono text-danger">{urlSlug}</code>{" "}
+                  exists. Select a page from the sidebar.
+                </p>
+              </div>
+            ) : !activeSlug ? (
               <div className="text-text-3 text-[13px]">
                 Select a page from the index.
               </div>

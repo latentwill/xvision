@@ -191,7 +191,6 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "experiment", // bounded via STRICT_TEMPLATES (experiment run only)
     "gate",
     "indicator",
-    "intern",
     "metrics",
     // "migrate" is in DENYLIST_SUBCOMMANDS — intentionally absent here
     "model", // bounded model bakeoff via STRICT_TEMPLATES
@@ -202,14 +201,11 @@ const SUPPORTED_SUBCOMMANDS: &[&str] = &[
     "report",
     "risk",
     "run",
-    "run-setup",
     "scenario", // scenario show, scenario select — read-only paths allowed
-    "show-briefing",
     "show-decision",
     "show-metrics",
     "store",
     "strategy", // strategy show, strategy validate — read-only paths allowed
-    "trader",
 ];
 
 /// Mutating, destructive, or host-admin paths below otherwise-supported heads.
