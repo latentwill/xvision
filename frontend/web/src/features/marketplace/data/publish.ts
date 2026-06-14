@@ -24,6 +24,10 @@ export async function publishListing(d: PublishDraft): Promise<TxRef> {
       tier: d.tier,
       price_usdc: d.priceUsdc ?? 0,
       transferable_license: false,
+      // Creator-chosen listing name (defaults to the strategy's display name).
+      // The backend stores it on the publish receipt so the listing inherits a
+      // real name instead of rendering a generic "Strategy #N".
+      name: d.name,
     }),
   });
   // TxRef: { txHash: string; network: string }

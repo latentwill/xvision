@@ -36,7 +36,7 @@ export function SellRoute() {
   );
 
   const handleDraftUpdate = useCallback(
-    (patch: Partial<Pick<PublishDraft, "tier" | "priceUsdc" | "acceptedPayers">>) => {
+    (patch: Partial<Pick<PublishDraft, "name" | "tier" | "priceUsdc" | "acceptedPayers">>) => {
       setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
     },
     [],

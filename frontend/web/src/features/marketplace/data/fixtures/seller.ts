@@ -12,6 +12,7 @@ export function buildPublishDraft(strategyId: string): PublishDraft {
   const hasAssets = !!s && s.assets.length > 0;
   return {
     strategyId,
+    name: s?.name ?? strategyId,
     listable: [
       { ok: !!s, label: "Strategy exists in your XVN", reason: s ? undefined : "Strategy not found" },
       { ok: hasAssets, label: "Declares an asset universe", reason: hasAssets ? undefined : "No assets configured" },

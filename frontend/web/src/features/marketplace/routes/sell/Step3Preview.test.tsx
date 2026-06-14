@@ -27,6 +27,7 @@ beforeEach(() => {
 
 const happyDraft: PublishDraft = {
   strategyId: "local-btc-momentum",
+  name: "BTC Momentum",
   listable: [
     { ok: true, label: "Strategy exists in your XVN" },
     { ok: true, label: "Declares an asset universe" },

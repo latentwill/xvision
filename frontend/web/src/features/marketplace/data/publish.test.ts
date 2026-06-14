@@ -5,6 +5,7 @@ import type { PublishDraft } from "./types";
 
 const draftFixture: PublishDraft = {
   strategyId: "local-btc-momentum",
+  name: "BTC Momentum",
   listable: [
     { ok: true, label: "Strategy exists in your XVN" },
     { ok: true, label: "Declares an asset universe" },
@@ -71,6 +72,9 @@ describe("publishListing", () => {
     expect(body.tier).toBe("sealed");
     expect(body.price_usdc).toBe(49);
     expect(body.transferable_license).toBe(false);
+    // The creator-chosen listing name is forwarded so the listing inherits a
+    // real name instead of "Strategy #N".
+    expect(body.name).toBe("BTC Momentum");
 
     // Verify TxRef mapping
     expect(tx.network).toBe("mantle-sepolia");
