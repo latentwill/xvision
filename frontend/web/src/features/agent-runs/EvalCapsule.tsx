@@ -56,8 +56,8 @@ export type EvalCapsuleProps = {
   testId?: string;
   /**
    * Focused run's retention/fidelity (`AgentRunSummary.retention_mode`).
-   * Forwarded to `CapsuleShell` so the operator sees whether bodies are
-   * present. Optional — omitted on legacy call sites.
+   * Forwarded to the focused `CapsuleRow` so the operator sees whether bodies
+   * are present. Optional — omitted on legacy call sites.
    */
   retentionMode?: RetentionMode;
 };
