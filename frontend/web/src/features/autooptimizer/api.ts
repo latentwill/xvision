@@ -200,13 +200,15 @@ export type CycleRunDetail = CycleRunSummary & {
 
 /** Pagination options for the historic-cycles list. The backend caps each
  *  page server-side (default 50); the UI passes an explicit page size so the
- *  history list never renders unbounded rows (UI3). */
-export type CycleRunsQuery = { limit?: number; offset?: number };
+ *  history list never renders unbounded rows (UI3).
+ *  `session_id` filters cycles to a single optimizer session (bead .10). */
+export type CycleRunsQuery = { limit?: number; offset?: number; session_id?: string };
 
 export async function listCycleRuns(q?: CycleRunsQuery): Promise<CycleRunSummary[]> {
   const params = new URLSearchParams();
   if (q?.limit != null) params.set("limit", String(q.limit));
   if (q?.offset != null) params.set("offset", String(q.offset));
+  if (q?.session_id) params.set("session_id", q.session_id);
   const qs = params.toString();
   return apiFetch<CycleRunSummary[]>(
     qs ? `/api/autooptimizer/cycles?${qs}` : "/api/autooptimizer/cycles",
@@ -723,6 +725,38 @@ export function useSessionList() {
       fetch("/api/autooptimizer/sessions?limit=10").then(
         (r) => r.json(),
       ) as Promise<SessionListItem[]>,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+/** Full session record from GET /api/autooptimizer/sessions/:id.
+ *  Returns the raw OptimizerSession row (same shape as SessionSummary minus
+ *  the `cost_usd` enrichment which is only on the list endpoint). */
+export interface SessionDetail {
+  session_id: string;
+  strategy_id: string;
+  state: string;
+  mode: string;
+  cycles_planned: number | null;
+  cycles_completed: number;
+  kept_count: number;
+  suspect_count: number;
+  dropped_count: number;
+  errored_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Fetch a single session by id (bead .10). */
+export function useSessionDetail(sessionId: string | undefined) {
+  return useQuery<SessionDetail>({
+    queryKey: ["optimizer/sessions", sessionId ?? ""],
+    queryFn: () =>
+      apiFetch<SessionDetail>(
+        `/api/autooptimizer/sessions/${encodeURIComponent(sessionId!)}`,
+      ),
+    enabled: !!sessionId,
     staleTime: 30_000,
     retry: false,
   });
