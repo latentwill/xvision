@@ -60,6 +60,12 @@ export interface IndexedListing {
   units_sold: number;
   /// Sum of seller proceeds across `Sold` events, in whole USDC.
   earned_usdc: number;
+  /// Best trailing-30d return % from completed eval runs (Part B).
+  /// Absent when agent_id is empty or no completed runs exist.
+  return30d_pct?: number | null;
+  /// Best Sharpe ratio from completed eval runs (Part B).
+  /// Absent when agent_id is empty or no completed runs exist.
+  sharpe?: number | null;
 }
 
 /** Mirrors `ReceiptOut` in marketplace_read.rs. */
@@ -261,7 +267,10 @@ export interface MarketplaceIndexStatus {
 
 function toRow(l: IndexedListing): ListingRow {
   return {
-    id: String(l.listing_id),
+    // Part A (.7): prefer agent_id (ULID) for routing so detail-page URLs
+    // are stable across re-mints. Fall back to numeric listing_id for
+    // listings with empty agent_id (pre-ULID on-chain entries).
+    id: l.agent_id || String(l.listing_id),
     lineageId: l.agent_id || String(l.listing_id),
     version: "v1",
     // QA9: populate name from the IndexedListing.name field so the browse
@@ -271,8 +280,11 @@ function toRow(l: IndexedListing): ListingRow {
     model: "",
     style: l.symmetry,
     assets: [],
-    return30dPct: 0,
-    sharpe: 0,
+    // Part B: consume real perf metrics when the backend provides them.
+    // buyers.agents and clones are BLOCKED (no on-chain data) — leave 0
+    // with a code comment referencing bead xvision-ctkm.8.
+    return30dPct: l.return30d_pct ?? 0,
+    sharpe: l.sharpe ?? 0,
     // Honest approximation: the chain only tells us how many licenses sold,
     // not whether the buyer was a human or an agent — count them all as
     // humans rather than inventing an agent split.
@@ -297,7 +309,16 @@ function toDetail(l: IndexedListing): ListingDetail {
     // Chain metadata name is the only human-readable copy we have; it renders
     // in the promise slot under the title.
     promise: l.name,
-    metrics: { return30dPct: 0, sharpe: 0, winRatePct: 0, maxDrawdownPct: 0, avgDurationDays: 0 },
+    // Part B: surface real perf metrics when available; leave other metric
+    // slots zeroed (winRatePct, maxDrawdownPct, avgDurationDays are not yet
+    // wired from eval_runs — tracked by bead xvision-ctkm.8).
+    metrics: {
+      return30dPct: l.return30d_pct ?? 0,
+      sharpe: l.sharpe ?? 0,
+      winRatePct: 0,
+      maxDrawdownPct: 0,
+      avgDurationDays: 0,
+    },
     paidToCreatorUsd: 0,
     platformFeeBps: 0,
     ingredients: [],
@@ -421,7 +442,17 @@ export class ApiMarketplaceData implements MarketplaceData {
       // caller surfaces the designed not-found state rather than silently
       // serving a wrong-seed fixture. Slug ids (non-numeric) may still fall
       // back to the fixture client for demo/dev use.
-      if (/^\d+$/.test(idOrName)) throw e;
+      //
+      // Part A (.7): also rethrow for ULID-shaped ids. A ULID is exactly 26
+      // chars of uppercase alphanumeric (digits + uppercase letters, Crockford
+      // base32 — excludes I/L/O/U). A real ULID that 404s is a genuine
+      // not-found, not a fixture slug. The fixture fallback must NOT serve
+      // stale/wrong-seed data for real ULIDs.
+      // We use a broader pattern (any 26-char uppercase alphanumeric) to
+      // avoid subtle regex edge cases; all valid fixture slugs are shorter or
+      // contain lowercase/hyphens.
+      const isUlidShaped = /^[0-9A-Z]{26}$/.test(idOrName);
+      if (/^\d+$/.test(idOrName) || isUlidShaped) throw e;
       return this.fallback.getListing(idOrName);
     }
   }
@@ -491,6 +522,9 @@ export class ApiMarketplaceData implements MarketplaceData {
       // address book unavailable — honest empty, receipt still renders
     }
     const at = new Date(r.block_time_unix * 1000).toISOString();
+    // Part A (.7): use agent_id (ULID) for the share URL when available so
+    // the receipt deep-link routes to the ULID-keyed detail page.
+    const routingId = r.agent_id || String(r.listing_id);
     const listingId = String(r.listing_id);
     const buyers = { humans: 0, agents: 0 };
     return {
@@ -499,7 +533,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       at,
       buyer: r.buyer,
       listing: {
-        id: listingId,
+        id: routingId,
         version: "v1",
         creator: { address: "" },
         genArtSeed: r.gen_art_seed,
@@ -520,7 +554,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       install: { xvnDetected: false, xvnEndpoint: "", ingredients: [] },
       share: {
         ogCard: {
-          id: listingId,
+          id: routingId,
           version: "v1",
           creator: { address: "" },
           genArtSeed: r.gen_art_seed,
@@ -531,7 +565,7 @@ export class ApiMarketplaceData implements MarketplaceData {
           verification: "unverified",
           acceptsX402: true,
           promise: r.name,
-          url: `/marketplace/lineage/${listingId}`,
+          url: `/marketplace/lineage/${routingId}`,
         },
         buyerStamp: `bought by ${r.buyer.slice(0, 6)}…${r.buyer.slice(-4)}`,
         caption: `I just bought ${r.name || listingId} for ${r.price_usdc} USDC on Mantle Sepolia.`,

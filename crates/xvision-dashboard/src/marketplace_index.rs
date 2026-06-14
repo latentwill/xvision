@@ -25,6 +25,7 @@
 //!   error in `last_error`.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use alloy::primitives::{Address, U256};
@@ -32,7 +33,9 @@ use alloy::providers::{Provider, ProviderBuilder};
 use alloy::rpc::types::Filter;
 use alloy::sol_types::SolEvent;
 use anyhow::Context;
+use sqlx::SqlitePool;
 
+use xvision_engine::strategies::store::{strategy_store_dir, FilesystemStore, StrategyStore};
 use xvision_identity::client::IIdentityRegistry;
 use xvision_identity::contracts::{IEvalAttestationRegistry, IListingRegistry, IMarketplace};
 use xvision_identity::token_metadata::{decode_token_metadata, TokenMetadata};
@@ -82,6 +85,16 @@ pub struct IndexedListing {
     /// Sum of `Sold.sellerProceeds` in whole USDC (`0.0` when dormant or
     /// not yet scanned).
     pub earned_usdc: f64,
+    /// Best trailing-30d return % across completed eval runs for this
+    /// agent (`None` when agent_id is empty or no completed runs exist).
+    /// Part B: populated by `apply_perf` in the indexer spawn loop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub return30d_pct: Option<f64>,
+    /// Best Sharpe ratio across completed eval runs for this agent
+    /// (`None` when agent_id is empty or no completed runs exist).
+    /// Part B: populated by `apply_perf` in the indexer spawn loop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharpe: Option<f64>,
 }
 
 /// The full indexed view of the marketplace, replaced atomically per poll.
@@ -366,6 +379,131 @@ pub(crate) fn apply_sales(snapshot: &mut MarketplaceSnapshot, ledger: &SalesLedg
 }
 
 // ---------------------------------------------------------------------------
+// Part B: real perf metrics from eval_runs
+// ---------------------------------------------------------------------------
+
+/// Raw perf row fetched from `eval_runs` for one agent.
+#[derive(Debug, sqlx::FromRow)]
+struct PerfRow {
+    total_return_pct: Option<f64>,
+    sharpe: Option<f64>,
+}
+
+/// Queries `eval_runs` for completed runs belonging to `agent_id` and
+/// returns the best trailing-30d return % and best Sharpe across those runs.
+///
+/// Trailing-30d window: filters `started_at >= now - 30d` when any run
+/// falls in that window; otherwise falls back to all completed runs so a
+/// strategy with only older runs still gets a non-null value rather than
+/// silently returning nothing.
+///
+/// Returns `None` for each metric when no completed runs exist or when the
+/// DB query fails (the caller degrades gracefully to `None`). Skipped when
+/// `agent_id` is empty.
+pub(crate) async fn perf_for_agent(pool: &SqlitePool, agent_id: &str) -> (Option<f64>, Option<f64>) {
+    if agent_id.is_empty() {
+        return (None, None);
+    }
+
+    // Parse metrics_json to extract sharpe and total_return_pct.
+    // We extract both fields directly via json_extract so we don't need
+    // to deserialize the full MetricsSummary.
+    let cutoff_30d = {
+        let thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
+        thirty_days_ago.to_rfc3339()
+    };
+
+    // Try trailing-30d window first.
+    let rows_30d: Vec<PerfRow> = sqlx::query_as(
+        "SELECT \
+             json_extract(metrics_json, '$.total_return_pct') AS total_return_pct, \
+             json_extract(metrics_json, '$.sharpe') AS sharpe \
+         FROM eval_runs \
+         WHERE agent_id = ? AND status = 'completed' AND started_at >= ? \
+           AND metrics_json IS NOT NULL",
+    )
+    .bind(agent_id)
+    .bind(&cutoff_30d)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // Fall back to all completed runs when the 30d window is empty.
+    let rows: Vec<PerfRow> = if rows_30d.is_empty() {
+        sqlx::query_as(
+            "SELECT \
+                 json_extract(metrics_json, '$.total_return_pct') AS total_return_pct, \
+                 json_extract(metrics_json, '$.sharpe') AS sharpe \
+             FROM eval_runs \
+             WHERE agent_id = ? AND status = 'completed' AND metrics_json IS NOT NULL",
+        )
+        .bind(agent_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+    } else {
+        rows_30d
+    };
+
+    let best_return = rows.iter().filter_map(|r| r.total_return_pct).reduce(f64::max);
+    let best_sharpe = rows.iter().filter_map(|r| r.sharpe).reduce(f64::max);
+
+    (best_return, best_sharpe)
+}
+
+/// Overlays real perf metrics onto listings that have a non-empty `agent_id`.
+/// Listings with empty agent_id or no completed eval runs keep `None`.
+/// DB failures per-listing degrade to `None` (never block the snapshot swap).
+pub(crate) async fn apply_perf(snapshot: &mut MarketplaceSnapshot, pool: &SqlitePool) {
+    for listing in &mut snapshot.listings {
+        if listing.agent_id.is_empty() {
+            continue;
+        }
+        let (return_pct, sharpe) = perf_for_agent(pool, &listing.agent_id).await;
+        listing.return30d_pct = return_pct;
+        listing.sharpe = sharpe;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Part C: resolve real display names for local listings
+// ---------------------------------------------------------------------------
+
+/// For listings whose `content_uri` starts with `xvn://strategy/<ulid>`,
+/// reads the strategy manifest from the local store and sets
+/// `listing.name = manifest.display_name` when the display name is non-empty.
+///
+/// `ipfs://` listings are BLOCKED on gateway config — left as-is (with a
+/// comment referencing bead xvision-ctkm.9). No-op for any other scheme.
+/// Missing/unreadable strategies degrade to keeping the existing name.
+pub(crate) async fn enrich_local_names(snapshot: &mut MarketplaceSnapshot, xvn_home: &PathBuf) {
+    let store = FilesystemStore::new(strategy_store_dir(xvn_home));
+    for listing in &mut snapshot.listings {
+        let Some(agent_id) = listing.content_uri.strip_prefix("xvn://strategy/") else {
+            // ipfs:// listings are BLOCKED (bead xvision-ctkm.9: no gateway config yet).
+            // Any other scheme: leave name as-is.
+            continue;
+        };
+        match store.load(agent_id).await {
+            Ok(strategy) => {
+                let display_name = strategy.manifest.display_name.trim().to_string();
+                if !display_name.is_empty() {
+                    listing.name = display_name;
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    listing_id = listing.listing_id,
+                    agent_id,
+                    error = %e,
+                    "enrich_local_names: strategy load failed; keeping gen-art name"
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Attestation-count carry-forward
 // ---------------------------------------------------------------------------
 
@@ -505,6 +643,9 @@ pub async fn poll_once(cfg: &IndexerCfg) -> anyhow::Result<PollOutcome> {
             // Overlaid by apply_sales() in the spawn loop.
             units_sold: 0,
             earned_usdc: 0.0,
+            // Overlaid by apply_perf() in the spawn loop (Part B).
+            return30d_pct: None,
+            sharpe: None,
         });
     }
 
@@ -553,7 +694,12 @@ pub(crate) fn apply_tick_timeout(snapshot: &mut MarketplaceSnapshot) {
 /// The entire per-tick chain work is wrapped in [`TICK_DEADLINE`]: a hung
 /// socket can no longer stall the loop forever. On timeout the previous
 /// listings are kept and `last_error` is set.
-pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::JoinHandle<()> {
+pub fn spawn_indexer(
+    snapshot: SharedSnapshot,
+    cfg: IndexerCfg,
+    pool: SqlitePool,
+    xvn_home: PathBuf,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(30));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -575,6 +721,14 @@ pub fn spawn_indexer(snapshot: SharedSnapshot, cfg: IndexerCfg) -> tokio::task::
                             &mut attestation_counts,
                         );
                         apply_sales(&mut fresh, &ledger);
+                        // Part B: enrich listings with real perf metrics from
+                        // local eval_runs. Degrades per-listing to None on DB
+                        // failure; never blocks the snapshot swap.
+                        apply_perf(&mut fresh, &pool).await;
+                        // Part C: resolve real display names for local listings
+                        // (xvn://strategy/<ulid> → manifest.display_name).
+                        // ipfs:// listings are BLOCKED (bead xvision-ctkm.9).
+                        enrich_local_names(&mut fresh, &xvn_home).await;
                         *snapshot.write().await = fresh;
                     }
                     Err(e) => {
@@ -727,6 +881,8 @@ mod tests {
             attestation_count: 0,
             units_sold: 0,
             earned_usdc: 0.0,
+            return30d_pct: None,
+            sharpe: None,
         }
     }
 

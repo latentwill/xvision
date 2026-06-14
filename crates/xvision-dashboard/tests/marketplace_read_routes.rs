@@ -31,6 +31,8 @@ fn listing(listing_id: u64, agent_nft_id: &str, seller: &str, revoked: bool) -> 
         attestation_count: 0,
         units_sold: 0,
         earned_usdc: 0.0,
+        return30d_pct: None,
+        sharpe: None,
     }
 }
 
