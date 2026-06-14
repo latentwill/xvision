@@ -132,6 +132,55 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(screen.getByText(/tendency for prices/)).toBeInTheDocument();
   });
 
+  // WS-11b — the nested eval-run node renders a navigable drill-link to the
+  // candidate's persisted eval-run trace.
+  test("opti.eval-run span renders a navigable link to /agent-runs/:runId", () => {
+    const evalRunSpan: RunSpan = {
+      span_id: "opti-evalrun:cyc1:child1",
+      parent_span_id: "opti-exp:cyc1:child1",
+      name: "Eval run",
+      kind: "opti.eval-run",
+      started_at: "2026-06-14T10:00:02.000Z",
+      finished_at: "2026-06-14T10:00:02.000Z",
+      status: "ok",
+      attributes: { eval_run_id: "01EVALRUNULID", child_hash: "child1" },
+    };
+    render(
+      <SpanInspector
+        span={evalRunSpan}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    const link = screen.getByTestId("span-inspector-eval-run-link");
+    expect(link).toHaveAttribute("href", "/agent-runs/01EVALRUNULID");
+    expect(link).toHaveTextContent("View eval-run trace");
+  });
+
+  test("opti.eval-run span without an eval_run_id renders a muted fallback (no broken link)", () => {
+    const evalRunSpan: RunSpan = {
+      span_id: "opti-evalrun:cyc1:child2",
+      parent_span_id: "opti-exp:cyc1:child2",
+      name: "Eval run",
+      kind: "opti.eval-run",
+      started_at: "2026-06-14T10:00:02.000Z",
+      finished_at: "2026-06-14T10:00:02.000Z",
+      status: "ok",
+      attributes: {},
+    };
+    render(
+      <SpanInspector
+        span={evalRunSpan}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("span-inspector-eval-run-link")).toBeNull();
+    expect(screen.getByTestId("span-inspector-eval-run-missing")).toBeInTheDocument();
+  });
+
   test("renders TOOL ARGS as preformatted JSON", () => {
     render(
       <SpanInspector

@@ -72,6 +72,11 @@ export type SpanKind =
   //   opti.honesty    — the per-cycle honesty check (null-result canary)
   //   opti.judge      — a reviewer finding on a candidate
   //   opti.flywheel   — the DSPy flywheel compile step
+  //   opti.eval-run   — WS-11b: the candidate's persisted eval run, nested
+  //                     under its experiment. A navigable drill-link node
+  //                     (its `attributes.eval_run_id` points at the
+  //                     `/agent-runs/:runId` trace); NOT an inline embed of
+  //                     that run's span tree.
   | "opti.cycle"
   | "opti.parent"
   | "opti.experiment"
@@ -79,6 +84,7 @@ export type SpanKind =
   | "opti.honesty"
   | "opti.judge"
   | "opti.flywheel"
+  | "opti.eval-run"
   // WS-8 taxonomy convergence: a synthetic span kind for the bar-level engine
   // lifecycle signals written to the `events` table (and streamed live as
   // `engine_event` SSE frames). These were dropped from the trace before WS-8
