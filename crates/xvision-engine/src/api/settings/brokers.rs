@@ -37,6 +37,7 @@ pub struct BrokersReport {
     pub alpaca: BrokerEntry,
     pub orderly: BrokerEntry,
     pub byreal: BrokerEntry,
+    pub degen_arena: BrokerEntry,
 }
 
 #[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
@@ -111,13 +112,54 @@ pub struct ByrealCredentials {
     pub account: Option<String>,
 }
 
-/// On-disk file containing optional `[alpaca]` / `[byreal]` sections.
+/// Persisted Degen Arena credentials. Lives in `$XVN_HOME/secrets/brokers.toml`
+/// under the `[degen_arena]` table. The `api_key` is a Hyperliquid trade-only
+/// HL agent-wallet private key (`0x` + 64 hex). Never returned through the read
+/// API; only a `last4` suffix surfaces.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DegenArenaCredentials {
+    /// Hyperliquid trade-only HL agent-wallet private key (`0x` + 64 hex).
+    /// Cannot withdraw — enforced by the HL protocol.
+    pub api_key: String,
+    /// Master account address (`0x` + 40 hex). Used for read queries.
+    pub account_address: String,
+    /// `mainnet` or `testnet`.
+    pub network: String,
+}
+
+/// Request body for `set_degen_arena`. Validates the key and address
+/// format before persisting.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SetDegenArenaReq {
+    /// Hyperliquid trade-only agent-wallet private key: `0x` + 64 hex.
+    #[serde(rename = "apiKey")]
+    pub api_key: String,
+    /// Master account address: `0x` + 40 hex.
+    #[serde(rename = "accountAddress")]
+    pub account_address: String,
+    /// `"testnet"` or `"mainnet"`.
+    pub network: String,
+}
+
+/// Successful set/clear response for Degen Arena — redacted summary only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DegenArenaStored {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_key_suffix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+}
+
+/// On-disk file containing optional `[alpaca]` / `[byreal]` / `[degen_arena]` sections.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct BrokersSecretsFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     alpaca: Option<AlpacaCredentials>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     byreal: Option<ByrealCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    degen_arena: Option<DegenArenaCredentials>,
 }
 
 /// Request body for `set_alpaca`. Mirrors `AlpacaCredentials` but is
@@ -209,6 +251,7 @@ async fn get_inner(xvn_home: &Path) -> ApiResult<BrokersReport> {
         alpaca: alpaca_entry(stored.alpaca.as_ref()),
         orderly: orderly_entry(),
         byreal: byreal_entry(stored.byreal.as_ref()),
+        degen_arena: degen_arena_entry(stored.degen_arena.as_ref()),
     })
 }
 
@@ -284,6 +327,35 @@ fn byreal_entry(stored: Option<&ByrealCredentials>) -> BrokerEntry {
             "Live execution venue (Hyperliquid perps) — not available for paper/backtest. \
              Testnet supported for live-eval (set network=testnet). Use a trading-only \
              agent key (cannot withdraw)."
+                .into(),
+        ),
+    }
+}
+
+fn degen_arena_entry(stored: Option<&DegenArenaCredentials>) -> BrokerEntry {
+    let credentials = vec![
+        cred("DEGEN_HL_API_KEY"),
+        cred("DEGEN_HL_ACCOUNT_ADDRESS"),
+        cred("DEGEN_HL_NETWORK"),
+    ];
+    let env_configured = credentials
+        .iter()
+        .find(|c| c.env_var == "DEGEN_HL_API_KEY")
+        .map(|c| c.is_set)
+        .unwrap_or(false);
+    let stored_present = stored.is_some();
+    let stored_key_suffix = stored.map(|c| last4(&c.api_key));
+    BrokerEntry {
+        name: "Degen Arena".into(),
+        kind: "degen_arena".into(),
+        credentials,
+        configured: env_configured || stored_present,
+        stored: stored_present,
+        stored_key_id_suffix: stored_key_suffix,
+        base_url: stored.map(|c| c.network.clone()),
+        note: Some(
+            "Virtuals Degen Arena (Hyperliquid perps) — live execution via native EIP-712 \
+             signing. Use a trade-only HL agent key (cannot withdraw). testnet supported."
                 .into(),
         ),
     }
@@ -601,9 +673,7 @@ pub struct ResolvedByrealCredentials {
 
 /// Resolve Byreal credentials: stored (Settings → Brokers) win over env,
 /// matching the Alpaca convention. `None` when neither is configured.
-pub async fn resolve_byreal_credentials(
-    xvn_home: &Path,
-) -> ApiResult<Option<ResolvedByrealCredentials>> {
+pub async fn resolve_byreal_credentials(xvn_home: &Path) -> ApiResult<Option<ResolvedByrealCredentials>> {
     // 1. Stored creds win.
     if let Some(c) = load_byreal_credentials(xvn_home).await? {
         if !c.private_key.trim().is_empty() {
@@ -616,7 +686,10 @@ pub async fn resolve_byreal_credentials(
         }
     }
     // 2. Env fallback.
-    if let Some(private_key) = env::var("BYREAL_PRIVATE_KEY").ok().filter(|s| !s.trim().is_empty()) {
+    if let Some(private_key) = env::var("BYREAL_PRIVATE_KEY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
         return Ok(Some(ResolvedByrealCredentials {
             private_key,
             network: env::var("BYREAL_NETWORK").ok().filter(|s| !s.trim().is_empty()),
@@ -712,6 +785,184 @@ async fn clear_byreal_inner(xvn_home: &Path) -> ApiResult<ByrealStored> {
     Ok(ByrealStored {
         stored: false,
         stored_key_id_suffix: None,
+        network: None,
+    })
+}
+
+// ── Degen Arena credential store ─────────────────────────────────────────────
+
+/// Read the persisted Degen Arena credentials, if any.
+pub async fn load_degen_arena_credentials(xvn_home: &Path) -> ApiResult<Option<DegenArenaCredentials>> {
+    let file = load_brokers_secrets(xvn_home).await?;
+    Ok(file.degen_arena)
+}
+
+/// Fully-resolved Degen Arena credentials plus the source they came from.
+#[derive(Debug, Clone)]
+pub struct ResolvedDegenArenaCredentials {
+    /// Trade-only HL agent-wallet private key (`0x` + 64 hex).
+    pub api_key: String,
+    /// Master account address (`0x` + 40 hex).
+    pub account_address: String,
+    /// `"mainnet"` or `"testnet"`.
+    pub network: String,
+    /// `"store"` from `brokers.toml`, `"env"` from `DEGEN_HL_*`.
+    pub source: &'static str,
+}
+
+/// Resolve Degen Arena credentials: stored (Settings → Brokers / deploy ingest)
+/// win over env, matching the Alpaca/Byreal convention. `None` when neither is
+/// configured.
+pub async fn resolve_degen_arena_credentials(
+    xvn_home: &Path,
+) -> ApiResult<Option<ResolvedDegenArenaCredentials>> {
+    // 1. Stored creds win.
+    if let Some(c) = load_degen_arena_credentials(xvn_home).await? {
+        if !c.api_key.trim().is_empty() {
+            return Ok(Some(ResolvedDegenArenaCredentials {
+                api_key: c.api_key,
+                account_address: c.account_address,
+                network: c.network,
+                source: "store",
+            }));
+        }
+    }
+    // 2. Env fallback.
+    if let Some(api_key) = env::var("DEGEN_HL_API_KEY").ok().filter(|s| !s.trim().is_empty()) {
+        let account_address = env::var("DEGEN_HL_ACCOUNT_ADDRESS")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_default();
+        let network = env::var("DEGEN_HL_NETWORK")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "mainnet".into());
+        return Ok(Some(ResolvedDegenArenaCredentials {
+            api_key,
+            account_address,
+            network,
+            source: "env",
+        }));
+    }
+    Ok(None)
+}
+
+/// Regex for a 66-char hex private key: `0x` + 64 hex digits.
+fn is_valid_api_key(key: &str) -> bool {
+    let k = key.trim();
+    if k.len() != 66 {
+        return false;
+    }
+    let lower = k.to_ascii_lowercase();
+    let Some(hex_part) = lower.strip_prefix("0x") else {
+        return false;
+    };
+    hex_part.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Regex for a 42-char hex Ethereum address: `0x` + 40 hex digits.
+fn is_valid_account_address(addr: &str) -> bool {
+    let a = addr.trim();
+    if a.len() != 42 {
+        return false;
+    }
+    let lower = a.to_ascii_lowercase();
+    let Some(hex_part) = lower.strip_prefix("0x") else {
+        return false;
+    };
+    hex_part.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Persist Degen Arena credentials (API route body: `POST /api/live/deploy/degen-arena`).
+/// Validates format before writing. The `api_key` is never echoed back.
+pub async fn set_degen_arena(ctx: &ApiContext, req: SetDegenArenaReq) -> ApiResult<DegenArenaStored> {
+    let started = Instant::now();
+    let result = set_degen_arena_inner(&ctx.xvn_home, req.clone()).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    // Audit-log WITHOUT the key — only the redacted suffix + network.
+    let args_json = serde_json::json!({
+        "api_key_suffix": last4(&req.api_key),
+        "account_address_suffix": last4(&req.account_address),
+        "network": req.network,
+    })
+    .to_string();
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.set_degen_arena",
+        Some("degen_arena"),
+        Some(&args_json),
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn set_degen_arena_inner(xvn_home: &Path, req: SetDegenArenaReq) -> ApiResult<DegenArenaStored> {
+    if !is_valid_api_key(&req.api_key) {
+        return Err(ApiError::Validation(
+            "apiKey must be 0x followed by 64 hex characters".into(),
+        ));
+    }
+    if !is_valid_account_address(&req.account_address) {
+        return Err(ApiError::Validation(
+            "accountAddress must be 0x followed by 40 hex characters".into(),
+        ));
+    }
+    let network = req.network.trim().to_ascii_lowercase();
+    if network != "testnet" && network != "mainnet" {
+        return Err(ApiError::Validation(
+            "network must be \"testnet\" or \"mainnet\"".into(),
+        ));
+    }
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    let creds = DegenArenaCredentials {
+        api_key: req.api_key.trim().to_string(),
+        account_address: req.account_address.trim().to_string(),
+        network: network.clone(),
+    };
+    let suffix = last4(&creds.api_key);
+    file.degen_arena = Some(creds);
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(DegenArenaStored {
+        ok: true,
+        stored_key_suffix: Some(suffix),
+        network: Some(network),
+    })
+}
+
+/// Remove the stored Degen Arena credentials. No-op if none were stored.
+pub async fn clear_degen_arena(ctx: &ApiContext) -> ApiResult<DegenArenaStored> {
+    let started = Instant::now();
+    let result = clear_degen_arena_inner(&ctx.xvn_home).await;
+    let outcome = match &result {
+        Ok(_) => Outcome::Ok,
+        Err(e) => Outcome::Error(e.to_string()),
+    };
+    let _ = audit::record(
+        ctx,
+        "settings",
+        "brokers.clear_degen_arena",
+        Some("degen_arena"),
+        None,
+        outcome,
+        started.elapsed().as_millis() as i64,
+    )
+    .await;
+    result
+}
+
+async fn clear_degen_arena_inner(xvn_home: &Path) -> ApiResult<DegenArenaStored> {
+    let mut file = load_brokers_secrets(xvn_home).await?;
+    file.degen_arena = None;
+    save_brokers_secrets(xvn_home, &file).await?;
+    Ok(DegenArenaStored {
+        ok: false,
+        stored_key_suffix: None,
         network: None,
     })
 }
@@ -911,9 +1162,12 @@ mod tests {
     #[tokio::test]
     async fn set_and_load_byreal_round_trips() {
         let (ctx, _dir) = fresh_ctx().await;
-        let out = set_byreal(&ctx, byreal_req("0xAGENTKEY00000000000000000000beef", Some("testnet")))
-            .await
-            .unwrap();
+        let out = set_byreal(
+            &ctx,
+            byreal_req("0xAGENTKEY00000000000000000000beef", Some("testnet")),
+        )
+        .await
+        .unwrap();
         assert!(out.stored);
         assert_eq!(out.stored_key_id_suffix.as_deref(), Some("beef"));
         assert_eq!(out.network.as_deref(), Some("testnet"));

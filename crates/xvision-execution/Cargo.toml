@@ -51,6 +51,17 @@ base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
 
+# Hyperliquid (Degen Arena venue) native signing — EIP-712 L1-action signing
+# with a trade-only HL agent wallet (secp256k1), NO npm shell-out (see
+# `virtuals.rs`). `alloy` supplies keccak256 / Address / PrivateKeySigner /
+# `sol!` EIP-712; `rmp-serde` supplies the canonical named-map msgpack the HL
+# action-hash requires. We deliberately do NOT use the official
+# `hyperliquid_rust_sdk` (it pins alloy 1.0, conflicting with this workspace's
+# alloy 2). The signing is verified byte-for-byte against the HL Python SDK's
+# published test vectors in `virtuals::sign` tests.
+alloy = { workspace = true }
+rmp-serde = "1"
+
 [dev-dependencies]
 # mockito chosen over wiremock: simpler sync setup, no async mock-server
 # startup boilerplate, adequate for the four deterministic unit scenarios.

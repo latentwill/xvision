@@ -91,6 +91,8 @@
 // 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
 // 61. POST  /api/assets/refresh               assets_refresh::refresh
+// 62. POST  /api/live/deploy/degen-arena      settings::brokers::set_degen_arena
+// 62b. DELETE /api/live/deploy/degen-arena    settings::brokers::delete_degen_arena
 //
 // READ-ONLY routes (GET, GET SSE) — no require_auth layer:
 //
@@ -196,16 +198,16 @@ use crate::auth::{auth_middleware, AuthState};
 use crate::routes::{
     agent_runs, agents, assets as assets_route, assets_refresh as assets_refresh_route,
     autooptimizer as autooptimizer_route, autooptimizer_cycle, bars, charts_annotated, charts_dashboards,
-    charts_market_context, chat_rail, checkpoints as checkpoints_route, cli,
-    cost as cost_route, diagnostics as diagnostics_route, docs,
+    charts_market_context, chat_rail, checkpoints as checkpoints_route, cli, cost as cost_route,
+    diagnostics as diagnostics_route, docs,
     eval::{agent_profiles as eval_agent_profiles, review as eval_review},
     eval_runs, flywheel, focus as focus_route,
     health::health,
     live_broker as live_broker_route, live_deployments as live_deployments_route,
-    marketplace as marketplace_route,
-    marketplace_read as marketplace_read_route, memory as memory_route, optimizations as optimizations_route,
-    safety as safety_route, scenarios, search as search_route, settings, skills, static_files, strategies,
-    strategies_folder as strategies_folder_route, tools as tools_route,
+    marketplace as marketplace_route, marketplace_read as marketplace_read_route, memory as memory_route,
+    optimizations as optimizations_route, safety as safety_route, scenarios, search as search_route,
+    settings, skills, static_files, strategies, strategies_folder as strategies_folder_route,
+    tools as tools_route,
     version::version,
     wizard,
 };
@@ -776,6 +778,14 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/settings/brokers/byreal",
             post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
+        )
+        // ── Live deploy: Degen Arena key ingest ───────────────────────────
+        // POST /api/live/deploy/degen-arena — persist trade-only HL agent-wallet
+        // credentials (apiKey, accountAddress, network) for the Virtuals Degen
+        // Arena venue. Validates format; key is never echoed back.
+        .route(
+            "/api/live/deploy/degen-arena",
+            post(settings::brokers::set_degen_arena).delete(settings::brokers::delete_degen_arena),
         )
         // ── Settings: observability ───────────────────────────────────────
         .route("/api/settings/observability", put(settings::observability::put))

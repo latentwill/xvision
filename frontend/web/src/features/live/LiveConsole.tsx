@@ -31,10 +31,12 @@ import { useWallet } from "@/features/marketplace/lib/wallet";
 import { displayStrategyName } from "@/lib/run-display";
 import { useTraceDock } from "@/stores/trace-dock";
 
+import { DegenDeployStrip, type DegenDeployPayload } from "./DegenDeployStrip";
 import { LiveAccountStrip } from "./LiveAccountStrip";
 import { LivePositionsTable } from "./LivePositionsTable";
 import { VenueAccountPanel } from "./VenueAccountPanel";
 import { StrategyStrip } from "./StrategyStrip";
+import { useDeployDegenArena } from "./useDeployDegenArena";
 import { WalletBanner } from "./WalletBanner";
 import { pickDefaultRun } from "./strip-status";
 import { useTransport } from "./useTransport";
@@ -53,6 +55,26 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
   // against `agentRunKeys.list()`. The factory hands each pill its run's
   // handlers + inline-expander UI state.
   const transportFor = useTransport(walletDisabled);
+
+  // Degen Arena deploy: persist the operator's trade-only HL key via the deploy
+  // route (POST /api/live/deploy/degen-arena); then they map a strategy to a
+  // live run. Inline status only — no popup (repo UI rule).
+  const deployDegenArena = useDeployDegenArena();
+  const [degenDeployMsg, setDegenDeployMsg] = useState<string | null>(null);
+  const handleDegenDeploy = (payload: DegenDeployPayload) => {
+    setDegenDeployMsg("Deploying…");
+    void deployDegenArena(payload)
+      .then(() =>
+        setDegenDeployMsg(
+          "Stored — Degen Arena key saved. Map a strategy and start a live run.",
+        ),
+      )
+      .catch((e: unknown) =>
+        setDegenDeployMsg(
+          e instanceof Error ? `Deploy failed: ${e.message}` : "Deploy failed",
+        ),
+      );
+  };
 
   const runsQuery = useQuery({
     queryKey: agentRunKeys.list(),
@@ -170,13 +192,26 @@ export function LiveConsole({ runId }: LiveConsoleProps) {
           </section>
         </section>
       ) : (
-        <div className="flex flex-col items-center gap-3 py-16 text-center">
-          <p className="text-[15px] font-medium text-text-2">
-            No active live deployments
-          </p>
-          <p className="text-[13px] text-text-3">
-            Configure a broker and deploy a strategy to start live trading.
-          </p>
+        <div className="space-y-5 py-8">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <p className="text-[15px] font-medium text-text-2">
+              No active live deployments
+            </p>
+            <p className="text-[13px] text-text-3">
+              Configure a broker and deploy a strategy to start live trading.
+            </p>
+          </div>
+          {/* Degen Arena (Hyperliquid via Virtuals) deploy strip — inline,
+              full-width per the layout rule. */}
+          <DegenDeployStrip onDeploy={handleDegenDeploy} />
+          {degenDeployMsg && (
+            <p
+              data-testid="degen-deploy-status"
+              className="text-center text-[12px] text-text-3"
+            >
+              {degenDeployMsg}
+            </p>
+          )}
         </div>
       )}
 
