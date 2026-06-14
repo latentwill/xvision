@@ -3507,7 +3507,7 @@ enum LiveVenue {
 fn resolve_live_venue(
     broker_creds_ref: &str,
     orderly_base_url: Option<&str>,
-    byreal_network: Option<&str>,
+    _byreal_network: Option<&str>,
 ) -> ApiResult<LiveVenue> {
     match broker_creds_ref {
         "alpaca" => Ok(LiveVenue::AlpacaPaper),
@@ -3531,32 +3531,19 @@ fn resolve_live_venue(
             Ok(LiveVenue::OrderlyTestnet)
         }
         "byreal" => {
-            // Testnet-only guard, mirroring the Orderly testnet gate: refuse to
-            // run live-eval against real-money Byreal/Hyperliquid mainnet by
-            // omission. Mainnet execution is available via the direct CLI.
-            // We name the env var rather than echoing its value (cred-safety
-            // policy: never interpolate env values into error responses).
-            let is_testnet = byreal_network
-                .map(str::trim)
-                .map(|n| n.to_ascii_lowercase().contains("testnet"))
-                .unwrap_or(false);
-            if !is_testnet {
-                return Err(ApiError::Validation(
-                    "live-eval Byreal is testnet-only in the current live scope: set \
-                     BYREAL_NETWORK to a testnet value (its current value is not 'testnet'). \
-                     Real-money Byreal/Hyperliquid mainnet is out of scope for live runs. \
-                     For mainnet execution use the direct CLI: `xvn fire-trade --venue byreal`."
-                        .into(),
-                ));
-            }
+            // Byreal perps execute on Hyperliquid via the perps CLI; the live
+            // bar stream is still Alpaca. The testnet/mainnet split is carried
+            // by the run's venue_label (Testnet vs Live), enforced by the
+            // SafetyGate + the venue_label<->network consistency check (WU-2.3),
+            // NOT by refusing to resolve mainnet here.
             Ok(LiveVenue::ByrealLive)
         }
         other => Err(ApiError::Validation(format!(
             "live_config.broker_creds_ref '{other}' is not supported in the current live scope. \
              Supported venues: \"alpaca\" (Alpaca paper trading), \"orderly_testnet\" \
              (Orderly Network testnet execution with Alpaca market data), and \"byreal\" \
-             (Byreal perps testnet execution with BYREAL_NETWORK=testnet and Alpaca market data). \
-             Real-money venues are out of scope for now."
+             (Byreal perps execution on Hyperliquid via the perps CLI with Alpaca market data; \
+             network determined by BYREAL_NETWORK)."
         ))),
     }
 }
@@ -4830,19 +4817,17 @@ mod tests {
 
     #[test]
     fn live_venue_byreal_requires_testnet_network() {
-        // Unset / empty / mainnet must all be rejected (fail-closed).
+        // After the mainnet parity lift, byreal resolves to ByrealLive for ALL
+        // BYREAL_NETWORK values (the testnet/mainnet split is carried by
+        // venue_label + SafetyGate, not by refusing to resolve here).
+        // Previously this test asserted rejection for non-testnet networks; it
+        // now asserts successful resolution for all network values.
         for net in [None, Some(""), Some("   "), Some("mainnet")] {
-            let err = resolve_live_venue("byreal", None, net)
-                .expect_err("byreal without BYREAL_NETWORK=testnet must be rejected");
-            let msg = err.to_string();
-            assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
-            assert!(msg.contains("BYREAL_NETWORK"), "must name the env var: {msg}");
-            assert!(
-                msg.contains("fire-trade --venue byreal"),
-                "must point to the CLI: {msg}"
+            assert_eq!(
+                resolve_live_venue("byreal", None, net).unwrap(),
+                LiveVenue::ByrealLive,
+                "byreal with network {net:?} should resolve to ByrealLive after mainnet parity",
             );
-            // Cred-safety: must NOT echo the env value into the error.
-            assert!(!msg.contains("mainnet'"), "must not echo the env value: {msg}");
         }
     }
 
@@ -4855,6 +4840,22 @@ mod tests {
                 "network {net:?} should resolve to ByrealLive",
             );
         }
+    }
+
+    #[test]
+    fn byreal_mainnet_resolves_to_byreal_live() {
+        assert_eq!(
+            resolve_live_venue("byreal", None, Some("mainnet")).unwrap(),
+            LiveVenue::ByrealLive,
+        );
+    }
+
+    #[test]
+    fn byreal_testnet_resolves_to_byreal_live() {
+        assert_eq!(
+            resolve_live_venue("byreal", None, Some("testnet")).unwrap(),
+            LiveVenue::ByrealLive,
+        );
     }
 
     #[test]

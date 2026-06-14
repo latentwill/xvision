@@ -228,7 +228,11 @@ impl LiveConfig {
             }
         }
 
-        if self.venue_label == VenueLabel::Live {
+        // Real-money `Live` is allowed only for venues that settle real funds
+        // (Byreal perps / Hyperliquid). Alpaca live scope is paper only.
+        const REAL_MONEY_CREDS: &[&str] = &["byreal"];
+        if self.venue_label == VenueLabel::Live && !REAL_MONEY_CREDS.contains(&self.broker_creds_ref.as_str())
+        {
             return Err(E::VenueLabelLiveRejected);
         }
 
@@ -578,11 +582,39 @@ mod tests {
 
     #[test]
     fn venue_label_live_is_rejected() {
+        // This test uses the default `valid_config()` broker_creds_ref
+        // ("alpaca_paper_default"), which is NOT a real-money venue → Live
+        // must still be rejected for it.
         let mut cfg = valid_config();
         cfg.venue_label = VenueLabel::Live;
         let err = cfg.validate().unwrap_err();
         assert_eq!(err, LiveConfigValidationError::VenueLabelLiveRejected);
         assert_eq!(err.field_path(), "/venue_label");
+    }
+
+    #[test]
+    fn live_label_rejected_for_alpaca_paper_creds() {
+        // Alpaca is paper-trading only; venue_label=Live must be rejected
+        // even when broker_creds_ref is "alpaca".
+        let mut cfg = valid_config();
+        cfg.broker_creds_ref = "alpaca".into();
+        cfg.venue_label = VenueLabel::Live;
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err, LiveConfigValidationError::VenueLabelLiveRejected);
+        assert_eq!(err.field_path(), "/venue_label");
+    }
+
+    #[test]
+    fn live_label_allowed_for_byreal_creds() {
+        // Byreal perps settle real funds on Hyperliquid mainnet; venue_label=Live
+        // must be ACCEPTED for broker_creds_ref = "byreal".
+        let mut cfg = valid_config();
+        cfg.broker_creds_ref = "byreal".into();
+        cfg.venue_label = VenueLabel::Live;
+        assert!(
+            cfg.validate().is_ok(),
+            "byreal + VenueLabel::Live must pass validation after the mainnet parity lift"
+        );
     }
 
     #[test]
