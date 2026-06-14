@@ -1,7 +1,7 @@
 // frontend/web/src/features/agent-runs/use-span-filter.ts
 import { useEffect, useMemo, useState, type SetStateAction } from "react";
 import type { RunSpan } from "@/api/types-agent-runs";
-import { categoryOf, type SpanCategory } from "./span-colors";
+import { categoryOfSpan, type SpanCategory } from "./span-colors";
 
 export type StatusFilter = "all" | "green" | "blue" | "amber" | "red";
 
@@ -135,8 +135,14 @@ export function useSpanFilter({ runId, spans }: { runId: string; spans: RunSpan[
   const filtered = useMemo(() => {
     const q = activeState.q.trim().toLowerCase();
     return spans.filter((s) => {
-      const cat = categoryOf(s.kind);
-      if (kinds.size > 0 && !kinds.has(cat)) return false;
+      const cat = categoryOfSpan(s);
+      // WS-8: engine.event rows are a parallel lifecycle band, not a span
+      // category, so the span-category kind chips don't gate them — a MODEL/
+      // TOOL chip must never silently drop a risk veto / regime transition /
+      // order-state signal. They still respect status + free-text search.
+      if (s.kind !== "engine.event" && kinds.size > 0 && !kinds.has(cat)) {
+        return false;
+      }
       if (activeState.d !== "all" && String(s.decision_idx ?? "") !== activeState.d) return false;
       // Status predicate
       if (activeState.s === "green" && s.status !== "ok") return false;

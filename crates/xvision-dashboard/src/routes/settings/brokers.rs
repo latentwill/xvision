@@ -10,7 +10,8 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 
 use xvision_engine::api::settings::brokers::{
-    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, SetAlpacaReq, SetByrealReq,
+    self, AlpacaStored, AlpacaTestReport, BrokersReport, ByrealStored, DegenArenaStored, SetAlpacaReq,
+    SetByrealReq, SetDegenArenaReq,
 };
 
 use crate::error::DashboardError;
@@ -56,4 +57,27 @@ pub async fn delete_byreal(State(state): State<AppState>) -> Result<impl IntoRes
 pub async fn test_alpaca(State(state): State<AppState>) -> Result<Json<AlpacaTestReport>, DashboardError> {
     let report = brokers::test_alpaca(&state.api_context()).await?;
     Ok(Json(report))
+}
+
+/// POST `/api/live/deploy/degen-arena` — persist Degen Arena trade-only
+/// HL agent-wallet credentials so a subsequent live run can use them.
+///
+/// Body: `{ apiKey: string, accountAddress: string, network: "testnet"|"mainnet" }`
+///
+/// Validates format (regex) before writing. The key is NEVER echoed back.
+/// Returns `200 { ok: true }` on success; `400` on invalid input.
+pub async fn set_degen_arena(
+    State(state): State<AppState>,
+    Json(req): Json<SetDegenArenaReq>,
+) -> Result<Json<DegenArenaStored>, DashboardError> {
+    let stored = brokers::set_degen_arena(&state.api_context(), req).await?;
+    Ok(Json(stored))
+}
+
+/// DELETE `/api/live/deploy/degen-arena` — drop stored Degen Arena creds.
+pub async fn delete_degen_arena(
+    State(state): State<AppState>,
+) -> Result<axum::http::StatusCode, DashboardError> {
+    brokers::clear_degen_arena(&state.api_context()).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }

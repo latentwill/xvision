@@ -3,8 +3,18 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
-import { agentRunKeys, getAgentRun, openAgentRunStream } from "@/api/agent-runs";
+import {
+  agentRunKeys,
+  engineEventFrameToSpan,
+  getAgentRun,
+  openAgentRunStream,
+} from "@/api/agent-runs";
 import type { AgentRunDetail, RunSpan } from "@/api/types-agent-runs";
+import {
+  applyUnifiedToDetail,
+  freshLiveStreamState,
+  type LiveStreamState,
+} from "./live-stream-reducer";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { useCurrentTraceScope } from "./use-trace-scope";
@@ -86,10 +96,15 @@ const KNOWN_SPAN_KINDS: ReadonlySet<string> = new Set<SpanKindLike>([
   "broker.call",
   "recovery.attempt",
   "state.transition",
+  // WS-8 Part 2: the synthetic kind for projected engine lifecycle signals
+  // (risk veto / regime / order / memory …). Keeping it in the known set means
+  // `projectionToRunSpan` preserves it instead of flattening to `agent.run`;
+  // the carried `attributes.engine_event_kind` then drives the family/label.
+  "engine.event",
 ]);
 type SpanKindLike = RunSpan["kind"];
 
-function projectionToRunSpan(p: SpanProjection): RunSpan {
+export function projectionToRunSpan(p: SpanProjection): RunSpan {
   const kind = (
     KNOWN_SPAN_KINDS.has(p.kind) ? p.kind : "agent.run"
   ) as RunSpan["kind"];
@@ -106,7 +121,32 @@ function projectionToRunSpan(p: SpanProjection): RunSpan {
         : p.status === "error"
           ? "error"
           : "ok",
-    attributes: {},
+    // Carry the projection's attribute bag through (WS-8 Part 2): an
+    // `engine.event` row resolves its family/label off
+    // `attributes.engine_event_kind`, so dropping it would re-blank the row.
+    attributes: p.attributes,
+    // Inspector fidelity (WS-8 Part 2 Part B): the unified projection populates
+    // these off the rich payload variants; carry each onto `RunSpan` so the
+    // SpanInspector renders the SAME model body/tokens/cost, broker fill, tool
+    // I/O, decision index, and error the raw agent-run path shows. Spread only
+    // the present fields so an undefined never overwrites a fixture value and
+    // the wire shape stays minimal.
+    ...(p.provider !== undefined ? { provider: p.provider } : {}),
+    ...(p.model !== undefined ? { model: p.model } : {}),
+    ...(p.tokensIn !== undefined ? { tokens_in: p.tokensIn } : {}),
+    ...(p.tokensOut !== undefined ? { tokens_out: p.tokensOut } : {}),
+    ...(p.cost !== undefined ? { cost: p.cost } : {}),
+    ...(p.promptHash !== undefined ? { hash: p.promptHash } : {}),
+    ...(p.responseHash !== undefined ? { response_hash: p.responseHash } : {}),
+    ...(p.prompt !== undefined ? { prompt: p.prompt } : {}),
+    ...(p.response !== undefined ? { response: p.response } : {}),
+    ...(p.promptPayloadRef !== undefined ? { prompt_payload_ref: p.promptPayloadRef } : {}),
+    ...(p.responsePayloadRef !== undefined ? { response_payload_ref: p.responsePayloadRef } : {}),
+    ...(p.args !== undefined ? { args: p.args } : {}),
+    ...(p.result !== undefined ? { result: p.result } : {}),
+    ...(p.brokerCall !== undefined ? { broker_call: p.brokerCall } : {}),
+    ...(p.decisionIdx !== undefined ? { decision_idx: p.decisionIdx } : {}),
+    ...(p.errorMessage !== undefined ? { error_message: p.errorMessage } : {}),
   };
 }
 
@@ -250,8 +290,37 @@ export function TraceDock() {
   useEffect(() => {
     if (!activeRunId || !isLive) return;
     const key = agentRunKeys.run(activeRunId);
+    // WS-8 Part 2 B2: per-stream projection accumulator. Holds the folded
+    // `SpanProjection[]` across `unified` frames so the dock reconstructs span
+    // detail (model body/tokens/cost, broker fill, tool I/O, engine rows,
+    // error) WITHOUT a per-frame export refetch. Reset on every `snapshot`
+    // (the authoritative resync / reconnect seed).
+    let liveState: LiveStreamState = freshLiveStreamState();
     const close = openAgentRunStream(activeRunId, (ev) => {
       switch (ev.event) {
+        // ── WS-8 Part 2 B2: the converged LIVE tail ────────────────────────
+        // Every live frame is a `UnifiedEvent`. Fold it onto the cached detail
+        // via the shared fidelity-complete projection. The reducer asks for a
+        // refetch ONLY on a terminal frame (canonical run-level aggregates);
+        // span DETAIL never triggers a refetch — that's the whole point of B2.
+        case "unified": {
+          const prev = qc.getQueryData<AgentRunDetail>(key) ?? null;
+          const out = applyUnifiedToDetail(prev, liveState, ev.data);
+          liveState = out.state;
+          // Only write when we actually have a cached detail to mutate (the
+          // snapshot seeds it first; a frame that races ahead is a no-op until
+          // then). `applyUnifiedToDetail` is reference-stable on no-op.
+          if (out.detail && out.detail !== prev) {
+            qc.setQueryData<AgentRunDetail>(key, out.detail);
+          }
+          if (out.requestRefetch) {
+            // Single aggregate refetch on terminal — pulls canonical
+            // span_count / model_call_count / total_cost / retention the
+            // stream doesn't carry. NOT a per-detail-frame refetch.
+            qc.invalidateQueries({ queryKey: key });
+          }
+          return;
+        }
         // Legacy mock-branch arms — kept for test/dev MODE.
         case "summary":
           qc.setQueryData<AgentRunDetail>(key, (prev) =>
@@ -265,9 +334,19 @@ export function TraceDock() {
           return;
         // Real-wire arms.
         case "snapshot":
-          // Authoritative resync — replaces the cached detail wholesale.
+          // Authoritative resync — replaces the cached detail wholesale AND
+          // resets the per-stream live projection so the next `unified` frames
+          // fold onto the fresh seed (reconnect must not double-count).
+          liveState = freshLiveStreamState();
           qc.setQueryData<AgentRunDetail>(key, ev.data);
           return;
+        // ── Legacy raw-`RunEvent`-name arms (back-compat only) ─────────────
+        // The current backend emits ONLY `snapshot` + `unified` (+ `lagged`),
+        // so these never fire against it. Retained so a stale backend or the
+        // integration shim that still emits raw frames keeps rendering rather
+        // than going dark. They DO still refetch on terminal/detail frames —
+        // that's acceptable for the legacy path; the converged path above does
+        // not.
         case "span_started": {
           const partial: RunSpan = {
             span_id: ev.data.span_id,
@@ -335,6 +414,23 @@ export function TraceDock() {
           // aggregates honest.
           qc.invalidateQueries({ queryKey: key });
           return;
+        case "engine_event": {
+          // WS-8: project the live engine event onto an engine.event row and
+          // append it to the cached detail so the trace surfaces lifecycle
+          // signals (risk veto, regime transition, order state, …) in real
+          // time instead of dropping them. Carrier kinds + kindless frames
+          // project to null and are skipped.
+          const projected = engineEventFrameToSpan(ev.data);
+          if (!projected) return;
+          qc.setQueryData<AgentRunDetail>(key, (prev) => {
+            if (!prev) return prev;
+            if (prev.spans.some((s) => s.span_id === projected.span_id)) {
+              return prev;
+            }
+            return { ...prev, spans: [...prev.spans, projected] };
+          });
+          return;
+        }
         // Lifecycle / informational arms — no cache side effect.
         case "run_started":
         case "tool_call_started":
@@ -345,6 +441,8 @@ export function TraceDock() {
         case "supervisor_note":
         case "artifact_written":
         case "backpressure_dropped":
+        case "memory_recall":
+        case "memory_write":
         case "lagged":
           return;
       }

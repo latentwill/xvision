@@ -61,7 +61,7 @@ use xvision_core::market::Ohlcv;
 use xvision_data::alpaca_live::{AlpacaLiveClient, AlpacaLiveCredentials};
 use xvision_data::alpaca_live_poll::{production_fetcher, AlpacaLivePoll};
 use xvision_execution::broker_surface::{AlpacaPaperSurface, BrokerSurface, OrderlyLiveSurface};
-use xvision_execution::ByrealLiveSurface;
+use xvision_execution::{ByrealLiveSurface, DegenArenaSurface};
 use xvision_filters::{FilterEventV1, FilterSummary};
 
 // ---------------------------------------------------------------------------
@@ -3497,6 +3497,10 @@ enum LiveVenue {
     /// Byreal perps (executes on Hyperliquid via the perps CLI) while Alpaca
     /// supplies the live market-data stream. Testnet-only in the current scope.
     ByrealLive,
+    /// Degen Arena — AI Pot / Hyperliquid perps via `DegenArenaSurface`. Alpaca
+    /// supplies live market-data bars while Degen Arena executes on Hyperliquid.
+    /// Testnet is always permitted; mainnet requires DEGEN_ALLOW_MAINNET=1.
+    DegenArena,
 }
 
 /// Gate `broker_creds_ref` to the supported live venues. For
@@ -3507,6 +3511,7 @@ fn resolve_live_venue(
     broker_creds_ref: &str,
     orderly_base_url: Option<&str>,
     byreal_network: Option<&str>,
+    degen_network: Option<&str>,
 ) -> ApiResult<LiveVenue> {
     match broker_creds_ref {
         "alpaca" => Ok(LiveVenue::AlpacaPaper),
@@ -3550,11 +3555,42 @@ fn resolve_live_venue(
             }
             Ok(LiveVenue::ByrealLive)
         }
+        "degen_arena" => {
+            // Gating policy for Degen Arena (AI Pot / Hyperliquid perps):
+            // - Testnet is always allowed (DEGEN_HL_NETWORK contains "testnet").
+            // - Mainnet requires explicit opt-in via DEGEN_ALLOW_MAINNET=1 because
+            //   the AI Pot is a real-money venue. We name env vars but never
+            //   interpolate their values into error responses (cred-safety policy).
+            let is_testnet = degen_network
+                .map(str::trim)
+                .map(|n| n.to_ascii_lowercase().contains("testnet"))
+                .unwrap_or(false);
+            if is_testnet {
+                return Ok(LiveVenue::DegenArena);
+            }
+            // Mainnet path: require explicit DEGEN_ALLOW_MAINNET=1 opt-in.
+            let allow_mainnet = std::env::var("DEGEN_ALLOW_MAINNET")
+                .ok()
+                .map(|v| matches!(v.trim(), "1" | "true"))
+                .unwrap_or(false);
+            if !allow_mainnet {
+                return Err(ApiError::Validation(
+                    "mainnet Degen Arena is gated: DEGEN_HL_NETWORK is not set to testnet and \
+                     DEGEN_ALLOW_MAINNET is not set to '1'. \
+                     Set DEGEN_ALLOW_MAINNET=1 to enable real-money AI-Pot trading on Hyperliquid mainnet. \
+                     For testnet runs set DEGEN_HL_NETWORK to a testnet value."
+                        .into(),
+                ));
+            }
+            Ok(LiveVenue::DegenArena)
+        }
         other => Err(ApiError::Validation(format!(
             "live_config.broker_creds_ref '{other}' is not supported in the current live scope. \
              Supported venues: \"alpaca\" (Alpaca paper trading), \"orderly_testnet\" \
-             (Orderly Network testnet execution with Alpaca market data), and \"byreal\" \
-             (Byreal perps testnet execution with BYREAL_NETWORK=testnet and Alpaca market data). \
+             (Orderly Network testnet execution with Alpaca market data), \"byreal\" \
+             (Byreal perps testnet execution with BYREAL_NETWORK=testnet and Alpaca market data), \
+             and \"degen_arena\" (Degen Arena / Hyperliquid perps with Alpaca market data; \
+             testnet requires DEGEN_HL_NETWORK=testnet, mainnet requires DEGEN_ALLOW_MAINNET=1). \
              Real-money venues are out of scope for now."
         ))),
     }
@@ -3572,19 +3608,29 @@ async fn build_live_executor(
         .map_err(|e| ApiError::Validation(format!("invalid live_config at {}: {e:?}", e.field_path())))?;
     let orderly_base_url = std::env::var("ORDERLY_BASE_URL").ok();
     let byreal_network = std::env::var("BYREAL_NETWORK").ok();
+    // Resolve Degen Arena creds (stored via Settings → Brokers / deploy ingest
+    // win over DEGEN_HL_* env) BEFORE gating, so the testnet/mainnet gate agrees
+    // with the network the creds actually carry — not a possibly-unset env var.
+    let degen_creds = crate::api::settings::brokers::resolve_degen_arena_credentials(&ctx.xvn_home).await?;
+    let degen_network = degen_creds.as_ref().map(|c| c.network.clone());
     let venue = resolve_live_venue(
         &cfg.broker_creds_ref,
         orderly_base_url.as_deref(),
         byreal_network.as_deref(),
+        degen_network.as_deref(),
     )?;
     if cfg.assets.is_empty() {
         return Err(ApiError::Validation(
             "live_config.assets must contain at least one asset".into(),
         ));
     }
-    // Alpaca credentials are required for EVERY live venue: the live bar
-    // stream (LiveStream warmup + websocket + poll) is Alpaca regardless of
-    // which venue executes the orders.
+    // Degen Arena sources market-data bars from Hyperliquid (its own candles),
+    // not Alpaca — so it needs no Alpaca credentials. Every other venue still
+    // uses the Alpaca bar stream.
+    let uses_alpaca_data = venue != LiveVenue::DegenArena;
+    // Alpaca credentials supply the live bar stream for every venue EXCEPT
+    // Degen Arena, which uses Hyperliquid-native candles (`uses_alpaca_data`).
+    // This message is only surfaced when `uses_alpaca_data` is true.
     let missing_alpaca_creds = || {
         match venue {
         LiveVenue::AlpacaPaper => {
@@ -3602,6 +3648,12 @@ async fn build_live_executor(
              the orders (on Hyperliquid). Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
                 .to_string()
         }
+        LiveVenue::DegenArena => {
+            // Unreachable: Degen Arena uses HL-native candles (uses_alpaca_data
+            // == false), so the Alpaca-creds requirement is skipped for it.
+            "Degen Arena sources bars from Hyperliquid and needs no Alpaca credentials.".to_string()
+                .to_string()
+        }
     }
     };
     let stored = broker_settings::load_alpaca_credentials(&ctx.xvn_home).await?;
@@ -3613,7 +3665,7 @@ async fn build_live_executor(
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
         )
-    } else {
+    } else if uses_alpaca_data {
         let key_id =
             std::env::var("APCA_API_KEY_ID").map_err(|_| ApiError::Validation(missing_alpaca_creds()))?;
         let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
@@ -3624,6 +3676,14 @@ async fn build_live_executor(
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "https://paper-api.alpaca.markets".into());
         (key_id, secret, trade_base_url)
+    } else {
+        // Degen Arena: bars come from Hyperliquid and orders are signed with the
+        // HL agent key — no Alpaca credentials needed.
+        (
+            String::new(),
+            String::new(),
+            "https://paper-api.alpaca.markets".into(),
+        )
     };
     if venue == LiveVenue::AlpacaPaper && !trade_base_url.contains("paper-api.alpaca.markets") {
         return Err(ApiError::Validation(format!(
@@ -3649,6 +3709,21 @@ async fn build_live_executor(
                 ByrealLiveSurface::from_env()
                     .map_err(|e| ApiError::Validation(format!("build Byreal live broker: {e}")))?,
             ),
+            LiveVenue::DegenArena => {
+                let c = degen_creds.ok_or_else(|| {
+                    ApiError::Validation(
+                        "Degen Arena selected but no credentials configured — deploy a \
+                         trade-only HL key via the /live deploy strip (POST \
+                         /api/live/deploy/degen-arena) or set DEGEN_HL_API_KEY / \
+                         DEGEN_HL_ACCOUNT_ADDRESS / DEGEN_HL_NETWORK."
+                            .into(),
+                    )
+                })?;
+                Arc::new(
+                    DegenArenaSurface::from_credentials(&c.api_key, &c.account_address, &c.network)
+                        .map_err(|e| ApiError::Validation(format!("build Degen Arena broker: {e}")))?,
+                )
+            }
         },
     };
     let granularity = xvision_data::alpaca::BarGranularity::Minute1;
@@ -3675,25 +3750,59 @@ async fn build_live_executor(
         let asset = asset_ref.venue_symbol.clone();
         let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
             .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
-        let ws = live_client
-            .subscribe_bars(&asset, granularity)
+        let stream = if uses_alpaca_data {
+            let ws = live_client
+                .subscribe_bars(&asset, granularity)
+                .await
+                .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
+            let poll = AlpacaLivePoll::new(
+                production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
+                asset.clone(),
+                granularity,
+            );
+            crate::eval::executor::LiveStream::new_with_warmup(
+                ctx,
+                &asset,
+                granularity,
+                warmup_bars,
+                ws,
+                poll,
+            )
             .await
-            .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
-        let poll = AlpacaLivePoll::new(
-            production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
-            asset.clone(),
-            granularity,
-        );
-        let stream = crate::eval::executor::LiveStream::new_with_warmup(
-            ctx,
-            &asset,
-            granularity,
-            warmup_bars,
-            ws,
-            poll,
-        )
-        .await
-        .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?;
+            .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?
+        } else {
+            // Degen Arena: Hyperliquid-native candles via HlBarFetcher, poll-only
+            // (no Alpaca websocket). Warmup is fetched up front from the same
+            // source so decision history and live bars share one price basis.
+            let is_testnet = degen_network
+                .as_deref()
+                .map(|n| n.to_ascii_lowercase().contains("testnet"))
+                .unwrap_or(false);
+            let hl_base = if is_testnet {
+                xvision_data::hl_bars::HL_TESTNET_INFO
+            } else {
+                xvision_data::hl_bars::HL_MAINNET_INFO
+            };
+            let fetcher = xvision_data::hl_bars::production_hl_fetcher(hl_base);
+            let warmup = if warmup_bars == 0 {
+                Vec::new()
+            } else {
+                let end = Utc::now();
+                let start =
+                    end - chrono::Duration::seconds(granularity.seconds() as i64 * (warmup_bars as i64 + 5));
+                let bars = fetcher
+                    .fetch_window(&asset, granularity, start, end)
+                    .await
+                    .map_err(|e| ApiError::Validation(format!("hl warmup for {asset}: {e}")))?;
+                let mut ohlcv = market_bars_to_ohlcv(bars);
+                if ohlcv.len() > warmup_bars as usize {
+                    ohlcv = ohlcv.split_off(ohlcv.len() - warmup_bars as usize);
+                }
+                ohlcv
+            };
+            let poll = AlpacaLivePoll::new(fetcher, asset.clone(), granularity);
+            crate::eval::executor::LiveStream::new_poll_only(warmup, poll)
+        };
         sub_streams.push((asset_sym, stream));
     }
     let multi = crate::eval::executor::MultiLiveStream::new(sub_streams);
@@ -4738,7 +4847,7 @@ mod tests {
     fn live_venue_alpaca_resolves_regardless_of_orderly_env() {
         for url in [None, Some("https://testnet-api-evm.orderly.org")] {
             assert_eq!(
-                resolve_live_venue("alpaca", url, None).unwrap(),
+                resolve_live_venue("alpaca", url, None, None).unwrap(),
                 LiveVenue::AlpacaPaper
             );
         }
@@ -4747,7 +4856,7 @@ mod tests {
     #[test]
     fn live_venue_orderly_testnet_requires_base_url_set() {
         for url in [None, Some(""), Some("   ")] {
-            let err = resolve_live_venue("orderly_testnet", url, None)
+            let err = resolve_live_venue("orderly_testnet", url, None, None)
                 .expect_err("orderly_testnet without ORDERLY_BASE_URL must be rejected");
             let msg = err.to_string();
             assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
@@ -4758,7 +4867,7 @@ mod tests {
 
     #[test]
     fn live_venue_orderly_testnet_rejects_mainnet_base_url() {
-        let err = resolve_live_venue("orderly_testnet", Some("https://api-evm.orderly.org"), None)
+        let err = resolve_live_venue("orderly_testnet", Some("https://api-evm.orderly.org"), None, None)
             .expect_err("mainnet ORDERLY_BASE_URL must be rejected");
         let msg = err.to_string();
         assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
@@ -4778,6 +4887,7 @@ mod tests {
             resolve_live_venue(
                 "orderly_testnet",
                 Some("https://testnet-api-evm.orderly.org"),
+                None,
                 None
             )
             .unwrap(),
@@ -4789,7 +4899,7 @@ mod tests {
     fn live_venue_byreal_requires_testnet_network() {
         // Unset / empty / mainnet must all be rejected (fail-closed).
         for net in [None, Some(""), Some("   "), Some("mainnet")] {
-            let err = resolve_live_venue("byreal", None, net)
+            let err = resolve_live_venue("byreal", None, net, None)
                 .expect_err("byreal without BYREAL_NETWORK=testnet must be rejected");
             let msg = err.to_string();
             assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
@@ -4807,7 +4917,7 @@ mod tests {
     fn live_venue_byreal_accepts_testnet_network() {
         for net in [Some("testnet"), Some("hyperliquid-testnet"), Some(" TESTNET ")] {
             assert_eq!(
-                resolve_live_venue("byreal", None, net).unwrap(),
+                resolve_live_venue("byreal", None, net, None).unwrap(),
                 LiveVenue::ByrealLive,
                 "network {net:?} should resolve to ByrealLive",
             );
@@ -4816,7 +4926,7 @@ mod tests {
 
     #[test]
     fn live_venue_unknown_ref_names_both_supported_venues() {
-        let err = resolve_live_venue("bybit", Some("https://testnet-api-evm.orderly.org"), None)
+        let err = resolve_live_venue("bybit", Some("https://testnet-api-evm.orderly.org"), None, None)
             .expect_err("unknown broker_creds_ref must be rejected");
         let msg = err.to_string();
         assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
@@ -4826,6 +4936,90 @@ mod tests {
             "must name orderly_testnet: {msg}"
         );
         assert!(msg.contains("\"byreal\""), "must name byreal: {msg}");
+        assert!(msg.contains("\"degen_arena\""), "must name degen_arena: {msg}");
+    }
+
+    // --- resolve_live_venue: degen_arena (2026-06-13) -----------------------
+
+    #[test]
+    fn live_venue_degen_arena_accepts_testnet_network() {
+        for net in [Some("testnet"), Some("hyperliquid-testnet"), Some(" TESTNET ")] {
+            assert_eq!(
+                resolve_live_venue("degen_arena", None, None, net).unwrap(),
+                LiveVenue::DegenArena,
+                "degen_network {net:?} should resolve to DegenArena",
+            );
+        }
+    }
+
+    #[test]
+    fn live_venue_degen_arena_mainnet_without_allow_flag_is_rejected() {
+        // Mainnet (no "testnet" in network value) without DEGEN_ALLOW_MAINNET=1
+        // must be gated. We do NOT set the env var in this test — if it happens
+        // to be set in the environment we explicitly clear it to stay hermetic.
+        // The test names env vars in assertions but never prints their values
+        // (cred-safety policy).
+        let _guard = EnvVarGuard::clear("DEGEN_ALLOW_MAINNET");
+        for net in [None, Some(""), Some("mainnet"), Some("hyperliquid-mainnet")] {
+            let err = resolve_live_venue("degen_arena", None, None, net)
+                .expect_err("mainnet degen_arena without DEGEN_ALLOW_MAINNET must be rejected");
+            let msg = err.to_string();
+            assert!(matches!(err, ApiError::Validation(_)), "got {err:?}");
+            assert!(
+                msg.contains("DEGEN_ALLOW_MAINNET"),
+                "must name DEGEN_ALLOW_MAINNET env var: {msg}"
+            );
+            assert!(
+                msg.contains("DEGEN_HL_NETWORK"),
+                "must name DEGEN_HL_NETWORK env var: {msg}"
+            );
+            // Cred-safety: must not echo env values.
+            assert!(!msg.contains("mainnet'"), "must not echo env value: {msg}");
+        }
+    }
+
+    #[test]
+    fn live_venue_unknown_error_contains_degen_arena() {
+        let err = resolve_live_venue("unknown_venue", None, None, None)
+            .expect_err("unknown venue must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("\"degen_arena\""),
+            "must list degen_arena in error: {msg}"
+        );
+    }
+
+    /// RAII guard that clears an env var for the duration of a test and restores
+    /// (or removes) it on drop — keeping tests hermetic when the env may be set
+    /// by the outer shell.
+    struct EnvVarGuard {
+        key: &'static str,
+        prior: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn clear(key: &'static str) -> Self {
+            let prior = std::env::var(key).ok();
+            // SAFETY: single-threaded test context; standard test-env pattern.
+            #[allow(unused_unsafe)]
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self { key, prior }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: restoring to prior state.
+            #[allow(unused_unsafe)]
+            unsafe {
+                match &self.prior {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
     }
 
     // --- U13: agentd registry / cancel-degrades (2026-06-11) ----------------

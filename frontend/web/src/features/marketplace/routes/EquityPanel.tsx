@@ -17,8 +17,15 @@ interface Props {
   /** On-chain trades → buy/sell markers on the equity curve. Optional so the
    *  old single-arg call site keeps type-checking; defaults to none. */
   trades?: TradeRecord[];
+  /**
+   * Live PnL (USD) from the Degen Arena on-chain runner. Passed through to
+   * PerformanceSection's provenance banner.
+   *
+   * TODO(degen provenance): wire live Degen Arena PnL source.
+   */
+  liveDegenPnlUsd?: number | null;
 }
 
-export function EquityPanel({ curve, trades = [] }: Props): ReactElement {
-  return <PerformanceSection curve={curve} trades={trades} />;
+export function EquityPanel({ curve, trades = [], liveDegenPnlUsd }: Props): ReactElement {
+  return <PerformanceSection curve={curve} trades={trades} liveDegenPnlUsd={liveDegenPnlUsd} />;
 }

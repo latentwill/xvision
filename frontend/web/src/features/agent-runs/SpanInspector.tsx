@@ -13,7 +13,8 @@ import { agentRunKeys, fetchAgentRunBlob } from "@/api/agent-runs";
 import { formatCostUsd, formatCostUsdPrecise } from "@/lib/format";
 import { useTraceDock } from "@/stores/trace-dock";
 import { useCurrentTraceScope } from "./use-trace-scope";
-import { spanColor, withAlpha } from "./span-colors";
+import { engineEventKindOf, spanColorForSpan, withAlpha } from "./span-colors";
+import { engineEventLabelOf } from "./engine-event-kinds";
 import { PullQuote } from "./PullQuote";
 import { formatTraceLabel } from "./trace-labels";
 import { useQueryClient } from "@tanstack/react-query";
@@ -269,7 +270,7 @@ export function SpanInspector({
   onRequestAdvanced,
   runSummary,
 }: SpanInspectorProps) {
-  const color = spanColor(span.kind);
+  const color = spanColorForSpan(span);
   const ms = durationMs(span);
   // The blob-fetch route is keyed by run id; the inspector itself
   // doesn't carry it as a prop (parent always sets activeRunId on the
@@ -417,6 +418,18 @@ export function SpanInspector({
             accent={color.hex}
             glyph="◆"
             body={<DecisionSpanDetailRows attrs={span.attributes} />}
+          />
+        ) : null}
+        {span.kind === "engine.event" ? (
+          // WS-8: engine-event rows render their friendly kind label + raw
+          // payload. Known kinds (risk_veto, order_signed, …) read as their
+          // family; unknown kinds still render (typed fallback) — a new engine
+          // signal is never blank or dropped.
+          <PullQuote
+            label="ENGINE EVENT"
+            accent={color.hex}
+            glyph="◇"
+            body={<EngineEventDetail span={span} />}
           />
         ) : null}
         {span.prompt ? (
@@ -943,5 +956,36 @@ function DecisionSpanDetailRows({
       <dt className="text-text-3">position pre</dt>
       <dd className="text-text">{fmt(positionPre, 6)}</dd>
     </dl>
+  );
+}
+
+/**
+ * Body for an `engine.event` span (WS-8). Renders the friendly kind label and
+ * the raw payload. Known kinds get a human descriptor (`Risk veto`); unknown
+ * kinds fall back to a Title-Cased form of the raw kind so the row is never
+ * blank — a brand-new engine signal still tells the operator what fired.
+ */
+function EngineEventDetail({ span }: { span: RunSpan }) {
+  const kind = engineEventKindOf(span) ?? span.name;
+  const label = engineEventLabelOf(kind);
+  const payload = span.attributes?.["engine_event_payload"];
+  return (
+    <div data-testid="span-inspector-engine-event" className="text-[11px] font-mono">
+      <div className="flex items-baseline gap-2">
+        <span className="text-text">{label}</span>
+        <span className="text-text-3">·</span>
+        <span className="text-text-3 break-all">{kind}</span>
+      </div>
+      {payload !== undefined && payload !== null ? (
+        <pre
+          data-testid="span-inspector-engine-event-payload"
+          className="mt-1.5 whitespace-pre-wrap break-all text-text-2"
+        >
+          {typeof payload === "string"
+            ? payload
+            : JSON.stringify(payload, null, 2)}
+        </pre>
+      ) : null}
+    </div>
   );
 }

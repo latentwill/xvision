@@ -77,6 +77,12 @@ pub enum BrokerKind {
     AlpacaLive,
     OrderlyLive,
     BybitPaper,
+    /// Virtuals **Degen Arena** — Hyperliquid perps signed natively by a
+    /// trade-only HL agent wallet (see [`crate::virtuals`]). Distinct from
+    /// `byreal` (which also reaches Hyperliquid but via an npm subprocess that
+    /// reads the key itself); this variant holds the trade-only key directly
+    /// and shells out to nothing.
+    DegenArena,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,6 +211,10 @@ pub fn classify_broker_error_message(msg: &str) -> BrokerErrorClass {
     if lower.contains("insufficient buying power")
         || lower.contains("insufficient balance")
         || lower.contains("insufficient_funds")
+        // Hyperliquid (Degen Arena venue) phrases a margin shortfall as
+        // "Insufficient margin to place order" — recoverable, same as the
+        // Alpaca/Orderly balance shortfalls above.
+        || lower.contains("insufficient margin")
     {
         BrokerErrorClass::InsufficientFunds
     } else if lower.contains("rate limit") || lower.contains("rate_limited") {
@@ -304,6 +314,15 @@ mod broker_error_classifier_tests {
             BrokerErrorClass::InsufficientFunds,
         );
         assert!(BrokerErrorClass::InsufficientFunds.is_recoverable());
+    }
+
+    #[test]
+    fn hyperliquid_insufficient_margin_is_insufficient_funds() {
+        // Degen Arena (Hyperliquid) margin shortfall — must be recoverable so
+        // the agent re-decides with smaller size rather than terminating.
+        let class = classify_broker_error_message("hyperliquid: Insufficient margin to place order");
+        assert_eq!(class, BrokerErrorClass::InsufficientFunds);
+        assert!(class.is_recoverable());
     }
 
     #[test]

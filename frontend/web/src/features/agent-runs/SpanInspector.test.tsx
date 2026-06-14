@@ -194,6 +194,63 @@ describe("SpanInspector (with pull-quotes)", () => {
     expect(screen.getByText(/"symbol": "SPY"/)).toBeInTheDocument();
   });
 
+  // WS-8: engine.event rows must render their kind + payload, not blank.
+  test("renders ENGINE EVENT body with friendly label + payload for a known kind", () => {
+    const engineSpan: RunSpan = {
+      span_id: "ee_1",
+      parent_span_id: "s_test",
+      name: "risk_veto",
+      kind: "engine.event",
+      started_at: "2026-05-17T10:00:00.500Z",
+      finished_at: "2026-05-17T10:00:00.500Z",
+      status: "ok",
+      attributes: {
+        engine_event_kind: "risk_veto",
+        engine_event_payload: { reason: "max_drawdown", decision_index: 3 },
+      },
+    };
+    render(
+      <SpanInspector
+        span={engineSpan}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    expect(screen.getByText("ENGINE EVENT")).toBeInTheDocument();
+    // Friendly label (not the raw snake_case kind).
+    expect(screen.getByText(/Risk veto/)).toBeInTheDocument();
+    // Payload is shown so the operator sees what fired.
+    expect(screen.getByText(/max_drawdown/)).toBeInTheDocument();
+  });
+
+  test("renders ENGINE EVENT body for an UNKNOWN kind (typed fallback, not dropped)", () => {
+    const engineSpan: RunSpan = {
+      span_id: "ee_2",
+      parent_span_id: null,
+      name: "brand_new_signal",
+      kind: "engine.event",
+      started_at: "2026-05-17T10:00:00.500Z",
+      finished_at: "2026-05-17T10:00:00.500Z",
+      status: "ok",
+      attributes: {
+        engine_event_kind: "brand_new_signal",
+        engine_event_payload: { foo: 1 },
+      },
+    };
+    render(
+      <SpanInspector
+        span={engineSpan}
+        isLive={false}
+        onRerun={() => {}}
+        onJumpToDecision={() => {}}
+      />,
+    );
+    // The fallback body still renders the kind so the row is never blank.
+    expect(screen.getByText("ENGINE EVENT")).toBeInTheDocument();
+    expect(screen.getByText(/brand new signal/)).toBeInTheDocument();
+  });
+
   test("RESPONSE (PARTIAL) shows STREAMING badge when live", () => {
     render(
       <SpanInspector
