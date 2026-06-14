@@ -360,6 +360,7 @@ export function StripDockSlot() {
       <LiveCapsule
         run={focused}
         brokerSpans={brokerCallSpans}
+        retentionMode={summary.retention_mode}
         onExpandDock={() => setHeight("working")}
         onPopOut={() => navigate(`/live/runs/${activeRunId}`)}
       />
@@ -370,6 +371,7 @@ export function StripDockSlot() {
     <EvalCapsule
       focused={focused}
       siblings={siblings}
+      retentionMode={summary.retention_mode}
       onSwitchFocus={(run) => navigate(`/eval-runs/${encodeURIComponent(run.id)}`)}
       onExpandDock={() => setHeight("working")}
       onPopOut={() =>

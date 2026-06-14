@@ -234,6 +234,7 @@ impl WizardEventProjector {
                         is_run_terminator: false,
                         input_hash,
                         input_payload_ref: None,
+                        input_text: None,
                     }),
                 )
             }
@@ -257,6 +258,7 @@ impl WizardEventProjector {
                         output_hash: Some(output_hash),
                         output_payload_ref: None,
                         exit_code: None,
+                        output_text: None,
                     }),
                 )
             }

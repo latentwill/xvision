@@ -286,6 +286,12 @@ fn dispatch_inner(
                     is_run_terminator: false,
                     input_hash,
                     input_payload_ref: None,
+                    // The sidecar `tool_call_started` notification carries
+                    // only `input_hash`, not plaintext args, so this path
+                    // stays hash-only. The plaintext tool payload surface
+                    // is the trajectory-frame channel
+                    // (`ToolCallDelta.input`), not this observability event.
+                    input_text: None,
                 }),
             ]
         }
@@ -305,6 +311,8 @@ fn dispatch_inner(
                     output_hash: str_field("output_hash"),
                     output_payload_ref: None,
                     exit_code: None,
+                    // Hash-only — see the `tool_call_started` note above.
+                    output_text: None,
                 }),
             ]
         }

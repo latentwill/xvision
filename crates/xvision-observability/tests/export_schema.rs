@@ -166,6 +166,7 @@ async fn seed_run(pool: &SqlitePool) {
         is_run_terminator: false,
         input_hash: "sha256:in_fixture".into(),
         input_payload_ref: None,
+        input_text: None,
     }))
     .await;
     bus.publish(RunEvent::ToolCallFinished(ToolCallFinishedEvent {
@@ -173,6 +174,7 @@ async fn seed_run(pool: &SqlitePool) {
         output_hash: Some("sha256:out_fixture".into()),
         output_payload_ref: None,
         exit_code: Some(0),
+        output_text: None,
     }))
     .await;
     bus.publish(RunEvent::SpanFinished(SpanFinishedEvent {
