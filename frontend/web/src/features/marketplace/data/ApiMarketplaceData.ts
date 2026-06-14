@@ -16,6 +16,7 @@ import {
   buyDirect,
   currentAddress,
   ensureMantleSepolia,
+  getActiveNetworkConfigOrDefault,
   getContracts,
   signTransferAuthorization,
   usdcBalance,
@@ -214,7 +215,10 @@ function toRow(l: IndexedListing): ListingRow {
   };
 }
 
-function toDetail(l: IndexedListing): ListingDetail {
+function toDetail(
+  l: IndexedListing,
+  networkSlug: string = activeNetworkSlug,
+): ListingDetail {
   return {
     ...toRow(l),
     // Chain metadata name is the only human-readable copy we have; it renders
@@ -249,7 +253,7 @@ function toDetail(l: IndexedListing): ListingDetail {
         bornAt: "",
         operatorSig: "",
         contract: "",
-        network: activeNetworkSlug,
+        network: networkSlug,
       },
       attestations: [],
       anchors: [],
@@ -332,7 +336,7 @@ export class ApiMarketplaceData implements MarketplaceData {
       const l = await apiFetch<IndexedListing>(
         `/api/marketplace/listings/${encodeURIComponent(idOrName)}`,
       );
-      const detail = toDetail(l);
+      const detail = toDetail(l, (await getActiveNetworkConfigOrDefault()).slug);
       // For OPEN-tier listings, enrich the detail with the verified bundle
       // manifest. Tolerate failure — manifest unavailable must not throw the
       // detail page down.
@@ -440,7 +444,7 @@ export class ApiMarketplaceData implements MarketplaceData {
     const buyers = { humans: 0, agents: 0 };
     return {
       txHash: r.tx_hash,
-      network: activeNetworkSlug,
+      network: (await getActiveNetworkConfigOrDefault()).slug,
       at,
       buyer: r.buyer,
       listing: {
@@ -529,13 +533,19 @@ export class ApiMarketplaceData implements MarketplaceData {
           }),
         },
       );
-      return { txHash: out.tx_hash, network: activeNetworkSlug };
+      return {
+        txHash: out.tx_hash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 503) throw e;
       // Relay unavailable — approve + buy directly from the wallet.
       await approveUsdc(price6);
       const txHash = await buyDirect(BigInt(listingId), addr);
-      return { txHash, network: activeNetworkSlug };
+      return {
+        txHash,
+        network: (await getActiveNetworkConfigOrDefault()).slug,
+      };
     }
   }
   /**

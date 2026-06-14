@@ -774,7 +774,7 @@ fn tier_label(tier: u8) -> &'static str {
 /// `TxChip`/`chain.ts` convention: Mantle Sepolia (5003) is the dev/test
 /// network, Mantle mainnet (5000) is production. Unknown chain ids fall back
 /// to a generic `"chain-{id}"` label so the strip still says *something*.
-fn network_label(chain_id: Option<u64>) -> String {
+pub(crate) fn network_label(chain_id: Option<u64>) -> String {
     match chain_id {
         Some(5003) => "mantle-sepolia".to_string(),
         Some(5000) => "mantle".to_string(),
@@ -786,7 +786,7 @@ fn network_label(chain_id: Option<u64>) -> String {
 /// The block-explorer base for a chain id, matching the canonical Mantle
 /// explorers used by the frontend `TxChip` (NOT mantlescan.xyz). `None` for
 /// chains with no known explorer.
-fn explorer_base(chain_id: Option<u64>) -> Option<&'static str> {
+pub(crate) fn explorer_base(chain_id: Option<u64>) -> Option<&'static str> {
     match chain_id {
         Some(5003) | None => Some("https://explorer.sepolia.mantle.xyz"),
         Some(5000) => Some("https://explorer.mantle.xyz"),

@@ -146,6 +146,12 @@ export function txHashFromId(id: string): string {
 }
 
 const LICENSE_CONTRACT_FALLBACK = "marketplace";
+// Build-time slug, deliberately NOT runtime-resolved: the subgraph source is
+// itself selected at build time (VITE_MARKETPLACE_SUBGRAPH_URL points at a
+// per-network Goldsky deployment), so a subgraph-backed listing is already
+// internally consistent with the build-time network. The subgraph path and the
+// runtime-indexer path (ApiMarketplaceData, which resolves the slug from the
+// backend) are mutually exclusive — see MarketplaceLayout.chooseInitialClient.
 const NETWORK = activeNetworkSlug;
 
 // --- row ------------------------------------------------------------------

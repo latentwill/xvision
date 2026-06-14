@@ -6,11 +6,13 @@
 // user. Theme-token styling only — warn tones with dark-safe opacity, never
 // hard white/gray borders.
 //
-// On a MAINNET build (`VITE_MARKETPLACE_NETWORK=mainnet`) these render nothing /
-// an accurate real-funds notice: a "Testnet · purchases are simulated" claim on
-// mainnet would be false and unsafe.
+// On MAINNET these render nothing / an accurate real-funds notice: a "Testnet ·
+// purchases are simulated" claim on mainnet would be false and unsafe. The
+// network is resolved at RUNTIME from the backend (useMarketplaceNetwork) so a
+// prebuilt bundle reflects whatever chain the backend is on — not the build-time
+// VITE_MARKETPLACE_NETWORK.
 
-import { isMainnetNetwork } from "../lib/chain";
+import { useMarketplaceNetwork } from "../lib/useMarketplaceNetwork";
 
 interface TestnetBadgeProps {
   /** "xs" for inline pills next to CTAs/prices, "sm" for standalone rows. */
@@ -19,8 +21,9 @@ interface TestnetBadgeProps {
 }
 
 export function TestnetBadge({ size = "xs", className = "" }: TestnetBadgeProps) {
-  // No testnet to flag on a mainnet build — never mislabel a real-funds surface.
-  if (isMainnetNetwork()) return null;
+  const { isMainnet } = useMarketplaceNetwork();
+  // No testnet to flag on mainnet — never mislabel a real-funds surface.
+  if (isMainnet) return null;
   const sizing =
     size === "sm"
       ? "px-1.5 py-0.5 text-[10px]"
@@ -42,10 +45,11 @@ export function TestnetBadge({ size = "xs", className = "" }: TestnetBadgeProps)
 // Page-level banner for the marketplace shell. Quiet, full-width, single row —
 // no right-side box (chat rail owns the right), no popup.
 export function TestnetBanner({ className = "" }: { className?: string }) {
-  // Mainnet build: surface an accurate real-funds notice instead of the
-  // (false) "simulated testnet" copy. Kept full-width/single-row per the shell
-  // layout + no-popup rules.
-  if (isMainnetNetwork()) {
+  const { isMainnet } = useMarketplaceNetwork();
+  // Mainnet: surface an accurate real-funds notice instead of the (false)
+  // "simulated testnet" copy. Kept full-width/single-row per the shell layout +
+  // no-popup rules.
+  if (isMainnet) {
     return (
       <div
         className={[
