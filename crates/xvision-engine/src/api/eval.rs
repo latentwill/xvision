@@ -3623,21 +3623,30 @@ fn resolve_live_venue(
     }
 }
 
-/// Defense-in-depth build-time consistency check for Byreal runs: the run's
-/// configured `venue_label` (from `LiveConfig`) must match the broker label
-/// derived from `BYREAL_NETWORK`. A mismatch means the operator configured the
-/// run for one environment (e.g. Live) but pointed `BYREAL_NETWORK` at another
-/// (e.g. testnet), which would produce a silently-wrong execution. Rejecting at
-/// build-time gives a clearer error than a runtime gate denial and catches both
-/// directions: Live-label + testnet-network and Testnet-label + mainnet-network.
-///
-/// Only called for `LiveVenue::ByrealLive`; other venues have no network env.
-fn check_byreal_label_network(run: VenueLabel, broker: VenueLabel) -> ApiResult<()> {
+/// Defense-in-depth build-time consistency check for the network-derived
+/// real-money venues (Byreal / Hyperliquid / Degen Arena): the run's configured
+/// `venue_label` (from `LiveConfig`) must match the broker label derived from
+/// the venue's network env (`BYREAL_NETWORK` / `HL_NETWORK` / `DEGEN_HL_NETWORK`).
+/// A mismatch means the operator configured the run for one environment (e.g.
+/// Live) but pointed the network env at another (e.g. testnet), which would
+/// produce a silently-wrong execution. Rejecting at build-time gives a clearer
+/// error than a runtime gate denial and catches both directions: Live-label +
+/// testnet-network and Testnet-label + mainnet-network. Fixed-label venues
+/// (Alpaca = Paper, Orderly = Testnet) are a no-op.
+fn check_venue_label_network(venue: LiveVenue, run: VenueLabel, broker: VenueLabel) -> ApiResult<()> {
+    // Only the network-derived real-money venues carry a testnet/mainnet split;
+    // Alpaca (Paper) and Orderly (Testnet) have a fixed label and are a no-op.
+    let env_var = match venue {
+        LiveVenue::ByrealLive => "BYREAL_NETWORK",
+        LiveVenue::Hyperliquid => "HL_NETWORK",
+        LiveVenue::DegenArena => "DEGEN_HL_NETWORK",
+        LiveVenue::AlpacaPaper | LiveVenue::OrderlyTestnet => return Ok(()),
+    };
     if run != broker {
         return Err(ApiError::Validation(format!(
-            "Byreal run venue_label ({run:?}) must match BYREAL_NETWORK \
-             (resolved broker label {broker:?}): set BYREAL_NETWORK=mainnet for a \
-             Live run or BYREAL_NETWORK=testnet for a Testnet run."
+            "{venue:?} run venue_label ({run:?}) must match the broker label \
+             ({broker:?}) resolved from {env_var}: use a mainnet network for a Live \
+             run or a testnet network for a Testnet run."
         )));
     }
     Ok(())
@@ -3851,14 +3860,12 @@ async fn build_live_executor(
         degen_network.as_deref(),
         hl_network.as_deref(),
     );
-    // WU-2.3: defense-in-depth build-time check — for Byreal runs the run's
-    // venue_label must agree with the network resolved from BYREAL_NETWORK.
-    // Catches Live-label+testnet-network and Testnet-label+mainnet-network
-    // before the executor is built, giving a clearer error than a runtime gate
-    // denial.
-    if venue == LiveVenue::ByrealLive {
-        check_byreal_label_network(cfg.venue_label, broker_lbl)?;
-    }
+    // Defense-in-depth build-time check — for the network-derived real-money
+    // venues (Byreal / Hyperliquid / Degen Arena) the run's venue_label must
+    // agree with the broker label resolved from the venue's network env. Catches
+    // Live-label+testnet and Testnet-label+mainnet BEFORE the executor is built,
+    // a clearer error than a runtime gate denial. No-op for Alpaca/Orderly.
+    check_venue_label_network(venue, cfg.venue_label, broker_lbl)?;
     let broker: Arc<dyn BrokerSurface> = Arc::new(GatedBrokerSurface::new(
         broker,
         ctx.safety_gate.clone(),
@@ -5818,49 +5825,62 @@ pub async fn get_live_deployment(
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests — check_byreal_label_network (WU-2.3)
+// Unit tests — check_venue_label_network (WU-2.3, generalized to all
+// network-derived venues incl. Hyperliquid + Degen Arena)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod check_byreal_label_network_tests {
-    use super::check_byreal_label_network;
+mod check_venue_label_network_tests {
+    use super::{check_venue_label_network, LiveVenue};
     use crate::safety::VenueLabel;
 
+    const NETWORK_DERIVED: [LiveVenue; 3] = [
+        LiveVenue::ByrealLive,
+        LiveVenue::Hyperliquid,
+        LiveVenue::DegenArena,
+    ];
+
     #[test]
-    fn live_run_testnet_broker_is_err() {
-        // Live-label run against a testnet broker → must be rejected.
-        let result = check_byreal_label_network(VenueLabel::Live, VenueLabel::Testnet);
-        assert!(result.is_err(), "Live run + Testnet broker must return Err");
-        let msg = result.unwrap_err().to_string();
-        assert!(
-            msg.contains("venue_label"),
-            "error message must mention venue_label; got: {msg}"
-        );
+    fn mismatched_labels_are_err_for_every_network_derived_venue() {
+        for venue in NETWORK_DERIVED {
+            // Live-label run against a testnet broker → rejected.
+            let e1 = check_venue_label_network(venue, VenueLabel::Live, VenueLabel::Testnet);
+            assert!(e1.is_err(), "{venue:?}: Live run + Testnet broker must be Err");
+            assert!(
+                e1.unwrap_err().to_string().contains("venue_label"),
+                "{venue:?}: error must mention venue_label"
+            );
+            // Testnet-label run against a live (mainnet) broker → rejected.
+            assert!(
+                check_venue_label_network(venue, VenueLabel::Testnet, VenueLabel::Live).is_err(),
+                "{venue:?}: Testnet run + Live broker must be Err"
+            );
+        }
     }
 
     #[test]
-    fn testnet_run_live_broker_is_err() {
-        // Testnet-label run against a live (mainnet) broker → must be rejected.
-        let result = check_byreal_label_network(VenueLabel::Testnet, VenueLabel::Live);
-        assert!(result.is_err(), "Testnet run + Live broker must return Err");
+    fn matching_labels_are_ok_for_every_network_derived_venue() {
+        for venue in NETWORK_DERIVED {
+            assert!(
+                check_venue_label_network(venue, VenueLabel::Live, VenueLabel::Live).is_ok(),
+                "{venue:?}: Live + Live must be Ok"
+            );
+            assert!(
+                check_venue_label_network(venue, VenueLabel::Testnet, VenueLabel::Testnet).is_ok(),
+                "{venue:?}: Testnet + Testnet must be Ok"
+            );
+        }
     }
 
     #[test]
-    fn live_run_live_broker_is_ok() {
-        // Matching labels → always Ok.
-        assert!(
-            check_byreal_label_network(VenueLabel::Live, VenueLabel::Live).is_ok(),
-            "Live run + Live broker must be Ok"
-        );
-    }
-
-    #[test]
-    fn testnet_run_testnet_broker_is_ok() {
-        // Matching labels → always Ok.
-        assert!(
-            check_byreal_label_network(VenueLabel::Testnet, VenueLabel::Testnet).is_ok(),
-            "Testnet run + Testnet broker must be Ok"
-        );
+    fn fixed_label_venues_are_noop_even_on_mismatch() {
+        // Alpaca/Orderly have a fixed label and no network split — never error.
+        for venue in [LiveVenue::AlpacaPaper, LiveVenue::OrderlyTestnet] {
+            assert!(
+                check_venue_label_network(venue, VenueLabel::Paper, VenueLabel::Live).is_ok(),
+                "{venue:?}: fixed-label venue must be a no-op"
+            );
+        }
     }
 }
 
