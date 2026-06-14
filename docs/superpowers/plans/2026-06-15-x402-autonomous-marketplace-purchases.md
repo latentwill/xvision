@@ -115,8 +115,16 @@ mod tests {
 
     #[test]
     fn typehash_matches_canonical_eip3009() {
-        // SolStruct exposes the encoded type string; its keccak is the typehash.
-        let got = TransferWithAuthorization::eip712_type_hash();
+        use alloy::primitives::keccak256;
+        use alloy::sol_types::SolStruct;
+        // In alloy-sol-types 1.5.7 `eip712_type_hash` is an instance method, but
+        // `eip712_encode_type()` is a type-level fn — keccak of it IS the typehash.
+        let encoded = <TransferWithAuthorization as SolStruct>::eip712_encode_type();
+        assert_eq!(
+            encoded,
+            "TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+        );
+        let got = keccak256(encoded.as_bytes());
         assert_eq!(format!("0x{:x}", got), CANON_TYPEHASH);
     }
 
@@ -130,7 +138,7 @@ mod tests {
 }
 ```
 
-> Note: if `eip712_type_hash()` is not a const associated fn in the pinned alloy version, compute it as `keccak256(TransferWithAuthorization::eip712_encode_type().as_bytes())` and assert that the encoded type string equals `"TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"`.
+> Confirmed against pinned `alloy-sol-types 1.5.7`: `eip712_encode_type()` is the type-level fn (used above); `eip712_type_hash(&self)` is instance-only, so do NOT call it on the type.
 
 - [ ] **Step 3: Run the test (red)**
 
@@ -263,9 +271,11 @@ pub fn sign_authorization(
         .sign_hash_sync(&hash)
         .map_err(|e| MarketplaceError::Signing(format!("eip3009 sign: {e}")))?;
     Ok(SignedParts {
+        // alloy-primitives 1.5.7: sig.v() -> bool, sig.r()/.s() -> U256.
+        // U256 has no Into<B256>; go via big-endian bytes.
         v: 27 + sig.v() as u8,
-        r: sig.r().into(),
-        s: sig.s().into(),
+        r: B256::from(sig.r().to_be_bytes::<32>()),
+        s: B256::from(sig.s().to_be_bytes::<32>()),
     })
 }
 
@@ -291,7 +301,7 @@ Add a `Signing` variant to `MarketplaceError` in `crates/xvision-marketplace/src
     Signing(String),
 ```
 
-> Alloy API note: in some versions the call is `Signature::new(r_u256, s_u256, parity_bool)` and recovery is `recover_address_from_prehash`. Match the version already used in `xvision-execution/src/virtuals.rs` (it imports `alloy::signers::SignerSync` and uses `sign_hash_sync` + `sig.r()/.s()/.v()`). Convert `U256`↔`B256` with `.into()` as needed.
+> Alloy API note (confirmed against pinned alloy-primitives 1.5.7): `sig.v() -> bool`, `sig.r()/.s() -> U256`. `Signature::from_scalars_and_parity(r: B256, s: B256, parity: bool)` takes B256 scalars and `recover_address_from_prehash(&hash)` recovers the address. Convert `U256 -> B256` via `B256::from(u.to_be_bytes::<32>())` (there is NO `U256: Into<B256>`). `MarketplaceError` needs a `Signing(String)` variant (added below) — this is additive and compile-checked; the sign/recover fns are the only producers.
 
 - [ ] **Step 4: Run tests (green)**
 
@@ -385,8 +395,27 @@ git commit -m "feat(x402): driver fetch_listing read (price/seller) for payment 
 
 **Files:**
 - Create: `crates/xvision-dashboard/src/routes/x402.rs`
-- Modify: route module declaration + `server.rs` (route wiring in Task 1.8)
+- Modify: `crates/xvision-dashboard/src/error.rs` (Step 0), route module declaration, `server.rs` (route wiring in Task 1.8)
 - Test: in-module test for the `accepts` builder (pure)
+
+- [ ] **Step 0: Extend `DashboardError` (the x402 handlers depend on this)**
+
+The current enum (`crates/xvision-dashboard/src/error.rs`) has `Validation { field, msg }`, `NotFound`, `Forbidden`, `Unauthorized`, `ServiceUnavailable`, `Internal` — there is **no `BadRequest` variant** and **no `From<MarketplaceError>`**. The x402 code in Tasks 1.4–1.7 uses both. Add:
+```rust
+    /// 400 — malformed x402 payment payload / failed terms.
+    #[error("bad request: {0}")]
+    BadRequest(String),
+```
+Map it to `StatusCode::BAD_REQUEST` in the `IntoResponse for DashboardError` match. Add the conversion from marketplace errors:
+```rust
+impl From<xvision_marketplace::error::MarketplaceError> for DashboardError {
+    fn from(e: xvision_marketplace::error::MarketplaceError) -> Self {
+        // chain/read/signing failures surface as 502/400 as appropriate; default 400.
+        DashboardError::BadRequest(format!("marketplace: {e}"))
+    }
+}
+```
+Build to confirm: `scripts/cargo build -p xvision-dashboard`. (Additive — no existing caller breaks.)
 
 - [ ] **Step 1: Write the failing test (accepts builder)**
 
@@ -710,14 +739,26 @@ pub async fn post_verify(
 
 Implement `recover_payer(state, decoded)`: read `marketplace_addresses.usdc` + `chain.chain_id`, build the domain via `xvision_marketplace::x402::usdc_domain("USD Coin","2", chain_id, usdc)`, build `x402::Authorization` from `decoded.authorization`, parse `r/s` to `B256`, call `x402::recover_authorizer`.
 
-For the spent-nonce precheck, add an **inherent** method on `Erc8004MantleDriver` (NOT the `AnchorDriver` trait — same reasoning as Task 1.3, keeps `MockDriver`/CLI untouched):
+For the spent-nonce precheck, FIRST define an `IERC3009` binding — it does NOT exist anywhere in the codebase (`xvision-identity/contracts.rs` has only `IListingRegistry`/`ILicenseToken`/`IMarketplace`/`IEvalAttestationRegistry`/`IValidationRegistry`). Add it to `adapter.rs` (it targets the USDC token, not an identity contract):
+```rust
+use alloy::sol;
+sol! {
+    #[sol(rpc)]
+    interface IERC3009 {
+        function authorizationState(address authorizer, bytes32 nonce) external view returns (bool);
+    }
+}
+```
+Then add an **inherent** method on `Erc8004MantleDriver` (NOT the `AnchorDriver` trait — same reasoning as Task 1.3, keeps `MockDriver`/CLI untouched):
 ```rust
 impl Erc8004MantleDriver {
     /// EIP-3009 `authorizationState(from, nonce)` via the IERC3009 binding.
     pub async fn is_authorization_used(&self, from: Address, nonce: B256) -> Result<bool, MarketplaceError> {
-        // read-only provider on self.rpc_url; call IERC3009::authorizationState(from, nonce)
-        // against self.addresses.usdc. Returns the bool.
-        todo!("IERC3009::authorizationState read")
+        // Build the same read-only provider used by fetch_listing (Task 1.3),
+        // instantiate IERC3009::new(self.addresses.usdc, &provider), then:
+        //   let used = erc3009.authorizationState(from, nonce).call().await?._0;
+        // Map provider/abi errors to MarketplaceError. Returns `used`.
+        todo!("IERC3009::new(addresses.usdc, provider).authorizationState(from, nonce).call()")
     }
 }
 ```
@@ -1376,12 +1417,15 @@ git commit -m "feat(contracts): wire Mantle mainnet addresses (config + pinned M
 - **Spec coverage:** C1 (Task 1.4), C2 (1.5), C3 (1.6 + 1.2), C4 (1.7), C5 (1.7), C6 (2.1/2.2), C7 (2.1), C8 (3.1–3.3), C9 (4.1/4.2), C10 (4.3), C11 (1.8). Interop smoke §9 (Task 1.10). P0 done. Rate-limiting (open Q#3) = Task 1.8. MCP-signs-locally (open Q#1) = Task 2.2/3.3. EIP-3009 (open Q#2) = confirmed, no Permit2 task. ✅ all spec items mapped.
 
 - **Gate iteration-1 fixes applied:** (1) `build_buy_request` → `pub(crate)` is now an explicit step (Task 1.5 Step 3a). (2) `hex` replaced with `alloy::hex` (no new dep) in dashboard + MCP. (3) interop smoke with `x402-fetch` added (Task 1.10). (4) spent-nonce unit test added via pure `ensure_unused` (Task 1.6 Step 1). (5) `fetch_listing` + `is_authorization_used` are **inherent** methods on `Erc8004MantleDriver`, NOT `AnchorDriver` trait methods — `MockDriver`/`xvision-cli` untouched.
+
+- **Gate iteration-2 fixes applied (pinned-crate compile accuracy):** (1) `DashboardError::BadRequest(String)` variant + `From<MarketplaceError>` added as Task 1.4 Step 0 (the enum had no `BadRequest`). (2) `IERC3009` `sol!` binding defined in Task 1.6 (it existed nowhere). (3) `sig.r()/.s()` are `U256` → convert to `B256` via `to_be_bytes::<32>()` (no `Into<B256>`). (4) typehash test uses type-level `eip712_encode_type()` since `eip712_type_hash` is instance-only. The Completeness reviewer's "no implementation files exist → BLOCKING" was a category error (this is a pre-implementation plan review; the plan specifies a test per change) — rebutted, not a defect.
 - **Type consistency:** `Authorization`, `SignedParts`, `sign_authorization`, `recover_authorizer`, `usdc_domain`, `build_accepts`, `decode_x_payment`, `settle_from_header`, `encode_payment_response`, `ListingView`, `fetch_listing`, `load_agent_signer`, `api_base`, `build_authorization`, `buy/browse/get_listing/import` are defined once and referenced consistently across tasks.
 - **Placeholders:** none — every code step carries real code. Version-sensitive spots (alloy `Signature` ctor, `tower_governor` generics) carry explicit "match the pinned version" notes rather than TODOs.
 
-## Known version-sensitivity callouts (verify against pinned crates, not blockers)
+## Version-sensitivity callouts (resolved against pinned crates: alloy 2.0.4 / alloy-primitives + sol-types 1.5.7)
 
-1. alloy `Signature::from_scalars_and_parity` vs `Signature::new` — mirror `xvision-execution/src/virtuals.rs`.
-2. `SolStruct::eip712_type_hash()` const-ness — fallback to `keccak256(eip712_encode_type())`.
-3. `tower_governor` ↔ axum version compatibility — fallback to a hand-rolled `tower::Layer` + `governor`.
-4. `getrandom`/`hex`/`base64` presence in each crate's `Cargo.toml` — add if missing.
+1. ✅ RESOLVED — `sig.r()/.s()` are `U256`, `sig.v()` is `bool`. Store `r/s` as `B256` via `B256::from(u.to_be_bytes::<32>())`; recover with `Signature::from_scalars_and_parity(r: B256, s: B256, parity)`. (Task 1.2.)
+2. ✅ RESOLVED — `eip712_type_hash(&self)` is instance-only; use the type-level `eip712_encode_type()` + `keccak256`. (Task 1.1.)
+3. ⚠️ OPEN (only remaining) — `tower_governor` ↔ axum version compat. Pin a `tower_governor` matching the dashboard's axum major; if incompatible, fall back to a hand-rolled `tower::Layer` + `governor` keyed by `ConnectInfo<SocketAddr>`. `into_make_service_with_connect_info` is already present (`server.rs:1099`), so peer-IP keying works. (Task 1.8.)
+4. ✅ RESOLVED — deps: `alloy` already a direct dep of dashboard (provides `alloy::hex`); `base64`/`reqwest`/`getrandom` added explicitly where used (Tasks 1.5, 2.1); `hex` not needed.
+5. ✅ RESOLVED — `DashboardError::BadRequest(String)` + `From<MarketplaceError>` added (Task 1.4 Step 0); `MarketplaceError::Signing(String)` added (Task 1.2); `IERC3009` `sol!` binding added (Task 1.6). All three were absent from the codebase and are now explicit plan steps.
