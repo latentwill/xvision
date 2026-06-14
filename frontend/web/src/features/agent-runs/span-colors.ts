@@ -16,6 +16,15 @@ export type SpanCategory =
   | "broker"
   | "supervisor"
   | "artifact"
+  // WS-11a OPTI scope categories (autooptimizer cycle trace). The cycle root +
+  // its phase rows (parent/experiment/honesty/flywheel) get cool, neutral
+  // tints; the three gate outcomes get the Active/Suspect/Rejected tones from
+  // the terminology lock (Active=positive gold, Suspect=warn, Rejected=muted).
+  | "opti_cycle"
+  | "opti_phase"
+  | "opti_kept"
+  | "opti_suspect"
+  | "opti_rejected"
   // WS-8 typed fallback: a span kind we don't recognise lands here instead of
   // being silently bucketed into `supervisor` (which read as a confident
   // "SUPER" badge). An `unknown`-category row still renders — it just shows the
@@ -47,6 +56,15 @@ export const CATEGORY_STYLES: Record<SpanCategory, CategoryStyle> = {
   broker:     { hex: "#f472b6", label: "BROKR" },
   supervisor: { hex: "#00E676", label: "SUPER" },
   artifact:   { hex: "#a78bfa", label: "ARTIF" },
+  // WS-11a OPTI scope. The cycle root reads as a calm slate so the colourful
+  // phase/gate rows nest visibly beneath it. Phase rows (parent / experiment /
+  // honesty / flywheel) share one cyan-leaning tint. The three gate outcomes
+  // map to the lock's Active/Suspect/Rejected tones.
+  opti_cycle:    { hex: "#94a3b8", label: "CYCLE" },
+  opti_phase:    { hex: "#67e8f9", label: "PHASE" },
+  opti_kept:     { hex: "#fbbf24", label: "ACTIV" }, // Active (kept) — positive
+  opti_suspect:  { hex: "#f59e0b", label: "SUSPT" }, // Suspect — warn
+  opti_rejected: { hex: "#6b7280", label: "REJCT" }, // Rejected — muted
   // WS-8 typed fallback. Neutral slate, distinct from every confident family
   // swatch — a fallback row reads as "uncategorised", not as a known kind.
   unknown:    { hex: "#64748b", label: "EVENT" },
@@ -92,6 +110,21 @@ export function categoryOf(kind: SpanKind): SpanCategory {
     return "tool";
   if (kind === "broker.call") return "broker";
   if (kind === "artifact.write") return "artifact";
+  // WS-11a OPTI scope: the autooptimizer cycle trace rows. The cycle root gets
+  // its own slate swatch; every phase row shares the cyan PHASE tint. Gate
+  // rows resolve their three-way Active/Suspect/Rejected tone from
+  // `attributes.outcome` via `spanColorForSpan` — `categoryOf` (kind-only)
+  // can't see the outcome, so a bare opti.gate defaults to the phase tint.
+  if (kind === "opti.cycle") return "opti_cycle";
+  if (
+    kind === "opti.parent" ||
+    kind === "opti.experiment" ||
+    kind === "opti.honesty" ||
+    kind === "opti.flywheel" ||
+    kind === "opti.gate" ||
+    kind === "opti.judge"
+  )
+    return "opti_phase";
   // F-4 observability infrastructure spans (state.transition,
   // recovery.attempt) plus the pre-existing approval / sandbox /
   // supervisor / financial.eval kinds all fall under supervisor.
@@ -104,6 +137,19 @@ export function categoryOf(kind: SpanKind): SpanCategory {
 
 export function spanColor(kind: SpanKind): CategoryStyle {
   return CATEGORY_STYLES[categoryOf(kind)];
+}
+
+/**
+ * Swatch for an OPTI gate row, keyed off its three-way outcome (the kind alone
+ * is ambiguous — see `categoryOf`). Active (kept) = positive gold, Suspect =
+ * warn amber, Rejected = muted grey, per the terminology lock.
+ */
+export function optiGateColor(
+  outcome: "kept" | "suspect" | "rejected",
+): CategoryStyle {
+  if (outcome === "kept") return CATEGORY_STYLES.opti_kept;
+  if (outcome === "suspect") return CATEGORY_STYLES.opti_suspect;
+  return CATEGORY_STYLES.opti_rejected;
 }
 
 /**
@@ -150,6 +196,12 @@ export function categoryOfSpan(span: Pick<RunSpan, "kind" | "attributes">): Span
 export function spanColorForSpan(
   span: Pick<RunSpan, "kind" | "attributes">,
 ): CategoryStyle {
+  if (span.kind === "opti.gate") {
+    const outcome = (span.attributes as { outcome?: unknown }).outcome;
+    if (outcome === "kept" || outcome === "suspect" || outcome === "rejected") {
+      return optiGateColor(outcome);
+    }
+  }
   if (span.kind === "engine.event") {
     const ek = engineEventKindOf(span);
     if (ek) return engineEventStyle(ek);

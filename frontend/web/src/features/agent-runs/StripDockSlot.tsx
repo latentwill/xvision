@@ -136,7 +136,13 @@ export function StripDockSlot() {
   // is what stops the capsule from following navigation onto unrelated
   // pages — when the route's scope has no active run, this returns null.
   const scope = useCurrentTraceScope();
-  const activeRunId = useTraceDock((s) => s.byScope[scope].activeRunId);
+  // WS-11a: the `opti` surface (the autooptimizer cycle trace) is owned by the
+  // dedicated OptiCapsule mounted on the `/optimizer` route — it does not flow
+  // through this agent-run capsule (cycle ids are not agent-run ids, and the
+  // agent-run query below would 404 on them). Bail before any agent-run work.
+  const activeRunId = useTraceDock((s) =>
+    scope === "opti" ? null : s.byScope[scope].activeRunId,
+  );
   const mode = useTraceDock((s) => s.byScope[scope].mode);
   const height = useTraceDock((s) => s.height);
   const setHeight = useTraceDock((s) => s.setHeight);

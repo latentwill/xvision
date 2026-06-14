@@ -23,6 +23,7 @@ import {
   type LineageNode,
 } from "../api";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
+import { OptiCapsuleSlot } from "../OptiCapsuleSlot";
 import { formatRelativeTime, formatUntil } from "../utils/time";
 
 /** Distinct cycles that still hold an active (kept) node. */
@@ -119,7 +120,11 @@ export function OptimizerHome() {
   // The stream-derived cycle id is empty after a page reload mid-run (the SSE
   // buffer starts fresh); the status poll's active_cycle_id is the fallback so
   // Pause/Resume/Cancel stay wired.
-  const { activeCycleId: streamCycleId } = useCycleEventStream();
+  const {
+    activeCycleId: streamCycleId,
+    events: cycleEvents,
+    isRunning: streamRunning,
+  } = useCycleEventStream();
   const activeCycleId = streamCycleId ?? status?.active_cycle_id ?? null;
   const pauseMutation = usePauseCycle();
   const resumeMutation = useResumeCycle();
@@ -192,6 +197,15 @@ export function OptimizerHome() {
   return (
     <>
       <Topbar title="Optimizer" />
+      {/* WS-11a: the OPTI trace capsule — the live autooptimizer cycle rendered
+          on the trace-dock surface. Fed by THIS screen's single cycle SSE
+          subscription (no second EventSource). Fixed-position; renders only
+          while a cycle is in flight / freshly finished. */}
+      <OptiCapsuleSlot
+        events={cycleEvents}
+        activeCycleId={activeCycleId}
+        isRunning={streamRunning}
+      />
       <div className="space-y-5">
         <EditorialHeadline headline={headline} digest={digest}>
           {action}
