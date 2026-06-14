@@ -89,11 +89,13 @@ pub struct ToolCallRow {
     pub input_hash: String,
     pub output_hash: Option<String>,
     /// Reconstructed plaintext tool input from the `tool_call_payload`
-    /// side-row (mirrors `ModelCallRow::prompt_text`). `None` when no
-    /// side-row exists (hash-only runs, or pre-payload tool calls).
+    /// side-row or the blob store. `None` for hash-only runs or when the
+    /// payload is unavailable under retention.
+    #[serde(default)]
     pub input_text: Option<String>,
     /// Reconstructed plaintext tool output from the `tool_call_payload`
-    /// side-row (mirrors `ModelCallRow::response_text`).
+    /// side-row or the blob store.
+    #[serde(default)]
     pub output_text: Option<String>,
     pub input_payload_ref: Option<String>,
     pub output_payload_ref: Option<String>,
