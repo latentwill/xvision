@@ -230,7 +230,7 @@ impl LiveConfig {
 
         // Real-money `Live` is allowed only for venues that settle real funds
         // (Byreal perps / Hyperliquid). Alpaca live scope is paper only.
-        const REAL_MONEY_CREDS: &[&str] = &["byreal"];
+        const REAL_MONEY_CREDS: &[&str] = &["byreal", "degen_arena", "hyperliquid"];
         if self.venue_label == VenueLabel::Live && !REAL_MONEY_CREDS.contains(&self.broker_creds_ref.as_str())
         {
             return Err(E::VenueLabelLiveRejected);
