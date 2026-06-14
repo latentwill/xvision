@@ -2467,6 +2467,17 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "optimize",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
@@ -2658,39 +2669,18 @@
       "mutates": false,
       "path": [
         "help",
-        "risk"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "risk",
-        "evaluate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
-        "risk",
-        "show-config"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "help",
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "help",
+        "run",
+        "export-run"
       ]
     },
     {
@@ -4532,12 +4522,38 @@
     },
     {
       "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--db",
+        "--format",
+        "--help",
+        "--path"
+      ],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "export"
+      ]
+    },
+    {
+      "aliases": [],
       "has_subcommands": true,
       "long_flags": [],
       "mutates": false,
       "path": [
         "optimize",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "optimize",
+        "help",
+        "export"
       ]
     },
     {
@@ -4748,6 +4764,7 @@
         "--day-start",
         "--db",
         "--experiments-per-cycle",
+        "--export",
         "--help",
         "--ipc-socket",
         "--max-consecutive-errors",
@@ -5042,92 +5059,24 @@
       ],
       "mutates": false,
       "path": [
-        "risk"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--asset",
-        "--decision",
-        "--help",
-        "--portfolio",
-        "--risk-config",
-        "--whitelist"
-      ],
-      "mutates": false,
-      "path": [
-        "risk",
-        "evaluate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help",
-        "evaluate"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help",
-        "help"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": false,
-      "path": [
-        "risk",
-        "help",
-        "show-config"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--help",
-        "--risk-config",
-        "--whitelist"
-      ],
-      "mutates": false,
-      "path": [
-        "risk",
-        "show-config"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": true,
-      "long_flags": [
-        "--help"
-      ],
-      "mutates": false,
-      "path": [
         "run"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
+        "--blob-root",
+        "--db",
+        "--format",
+        "--help",
+        "--out",
+        "--xvn-home"
+      ],
+      "mutates": false,
+      "path": [
+        "run",
+        "export-run"
       ]
     },
     {
@@ -5138,6 +5087,17 @@
       "path": [
         "run",
         "help"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
+      "mutates": false,
+      "path": [
+        "run",
+        "help",
+        "export-run"
       ]
     },
     {
