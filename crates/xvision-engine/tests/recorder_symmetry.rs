@@ -113,6 +113,8 @@ fn simulate_strategy_run(recorder: &dyn Recorder, run_id: &str) {
         tool_hash: None,
         input_hash: "sha256:trader-in".into(),
         output_hash: Some("sha256:trader-out".into()),
+        input_text: None,
+        output_text: None,
         input_payload_ref: None,
         output_payload_ref: None,
         side_effect_level: "pure".into(),

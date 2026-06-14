@@ -42,8 +42,8 @@ use tokio_stream::Stream;
 use serde_json::json;
 
 use xvision_observability::{
-    build_export, build_report, find_blob_owner, AgentRunExport, BlobRef, BlobStore, BlobStoreError,
-    ExportError, MemoryRecallEvent,
+    build_export, build_export_with_blobs, find_blob_owner, render_report, AgentRunExport, BlobRef,
+    BlobStore, BlobStoreError, ExportError, MemoryRecallEvent,
 };
 
 use xvision_engine::eval::run::{RunMode, RunStatus as EvalRunStatus};
@@ -304,13 +304,25 @@ pub async fn list_agent_runs(
 // pattern as `eval_runs::get` / `eval_runs::export` (no per-route
 // gate, behind the existing dashboard auth surface).
 
-/// `GET /api/agent-runs/:id` — return the `xvn.agent_run.v2` payload
-/// for a single agent run as the response body.
+/// Blob store rooted at the dashboard's `xvn_home`. Used so the export
+/// document is self-contained — model/tool payloads inline from the
+/// content-addressed store rather than needing follow-up `/blobs/:ref`
+/// fetches.
+fn run_blob_store(state: &AppState) -> BlobStore {
+    BlobStore::new(state.xvn_home.join("agent_runs").join("blobs"))
+}
+
+/// `GET /api/agent-runs/:id` — return the full-fidelity
+/// `xvn.agent_run.v3` payload for a single agent run as the response
+/// body, with blob-backed prompts/responses/tool-I/O inlined.
 pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AgentRunExport>, DashboardError> {
-    let export = build_export(&state.pool, &id).await.map_err(map_err)?;
+    let store = run_blob_store(&state);
+    let export = build_export_with_blobs(&state.pool, &id, Some(&store))
+        .await
+        .map_err(map_err)?;
     Ok(Json(export))
 }
 
@@ -322,7 +334,10 @@ pub async fn export_json(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, DashboardError> {
-    let export = build_export(&state.pool, &id).await.map_err(map_err)?;
+    let store = run_blob_store(&state);
+    let export = build_export_with_blobs(&state.pool, &id, Some(&store))
+        .await
+        .map_err(map_err)?;
     let body = serde_json::to_vec_pretty(&export)
         .map_err(|e| DashboardError::Internal(anyhow::anyhow!("serialize xvn_run.json: {e}")))?;
 
@@ -343,7 +358,11 @@ pub async fn export_md(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Response, DashboardError> {
-    let report = build_report(&state.pool, &id).await.map_err(map_err)?;
+    let store = run_blob_store(&state);
+    let export = build_export_with_blobs(&state.pool, &id, Some(&store))
+        .await
+        .map_err(map_err)?;
+    let report = render_report(&export);
 
     let mut headers = HeaderMap::new();
     headers.insert(
