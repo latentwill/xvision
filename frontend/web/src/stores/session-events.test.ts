@@ -214,6 +214,77 @@ describe("session-events store — one source, two projections", () => {
     expect(seqs).toEqual([0, 1, 2]);
   });
 
+  it("an engine_event in a chat session projects an engine.event dock row (WS-8 Part 2) without disturbing the tool lifecycle", () => {
+    const store = useSessionEvents.getState();
+    // The full tool lifecycle (the existing rail path) …
+    for (const e of toolLifecycle()) store.ingest(SESSION, e);
+    // … plus a run-scoped engine event interleaved into the SAME log.
+    store.ingest(
+      SESSION,
+      ev(
+        {
+          kind: "engine_event",
+          data: {
+            run_id: "run_1",
+            span_id: null,
+            kind: "risk_veto",
+            payload_json: JSON.stringify({ reason: "max_drawdown" }),
+            created_at: "2026-05-24T12:00:02Z",
+          },
+        },
+        { event_id: "ee_risk", seq: 5, session_id: SESSION },
+      ),
+    );
+
+    const spans = useSessionEvents.getState().spansFor(SESSION);
+    // The tool span is untouched (no rail regression).
+    const tool = spans.find((s) => s.spanId === SPAN);
+    expect(tool?.kind).toBe("tool.call");
+    expect(tool?.status).toBe("ok");
+    // The engine event is now a first-class engine.event dock row carrying the
+    // kind + payload the render layer resolves a family/label off.
+    const engine = spans.filter((s) => s.kind === "engine.event");
+    expect(engine).toHaveLength(1);
+    expect(engine[0]!.attributes.engine_event_kind).toBe("risk_veto");
+    expect(engine[0]!.attributes.engine_event_payload).toEqual({ reason: "max_drawdown" });
+    expect(engine[0]!.parentSpanId).toBeNull(); // run-scoped ⇒ top-level row
+
+    // The rail rows are unchanged: still exactly one tool row (engine events
+    // are not rail rows — they pass through the reducer untouched).
+    const toolRows = useSessionEvents.getState().rowsFor(SESSION).filter((r) => r.type === "tool");
+    expect(toolRows).toHaveLength(1);
+  });
+
+  it("a re-delivered engine_event (reconnect/replay) dedupes onto the same dock row", () => {
+    const store = useSessionEvents.getState();
+    const engineEv = ev(
+      {
+        kind: "engine_event",
+        data: {
+          run_id: "run_1",
+          span_id: "sp_decide",
+          kind: "regime_transition",
+          payload_json: null,
+          created_at: "2026-05-24T12:00:03Z",
+        },
+      },
+      { event_id: "ee_regime", seq: 0, span_id: "sp_decide", session_id: "sess_ee" },
+    );
+    store.ingest("sess_ee", engineEv);
+    // Same event_id re-ingested (dedupe gate) AND a distinct event_id carrying
+    // the SAME engine event (e.g. snapshot + live tail overlap) — neither must
+    // produce a duplicate engine.event row.
+    store.ingest("sess_ee", engineEv);
+    store.ingest("sess_ee", { ...engineEv, event_id: "ee_regime_dup", seq: 1 });
+
+    const engine = useSessionEvents
+      .getState()
+      .spansFor("sess_ee")
+      .filter((s) => s.kind === "engine.event");
+    expect(engine).toHaveLength(1);
+    expect(engine[0]!.parentSpanId).toBe("sp_decide");
+  });
+
   it("reset clears a session's log without touching siblings", () => {
     const store = useSessionEvents.getState();
     for (const e of toolLifecycle()) store.ingest(SESSION, e);

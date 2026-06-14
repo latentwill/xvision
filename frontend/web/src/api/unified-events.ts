@@ -220,9 +220,22 @@ export type MemoryRecallItem = {
 };
 export type MemoryRecallEvent = {
   run_id: string;
+  /** `<run_id>:<decision_id>` flywheel correlation key — optional on older
+   * persisted payloads (Rust `skip_serializing_if = "Option::is_none"`). */
+  flywheel_cycle_id?: string | null;
   decision_id: number;
   namespace: string;
   items: MemoryRecallItem[];
+};
+
+/** Mirrors `MemoryWriteEvent`. */
+export type MemoryWriteEvent = {
+  run_id: string;
+  flywheel_cycle_id?: string | null;
+  decision_id: number;
+  namespace: string;
+  memory_item_id: string;
+  text_preview: string;
 };
 
 /** Mirrors `ArtifactWrittenEvent`. */
@@ -415,6 +428,7 @@ export type UnifiedPayload =
 
   // ── Provenance / supervision (reused) ──
   | { kind: "memory_recall"; data: MemoryRecallEvent }
+  | { kind: "memory_write"; data: MemoryWriteEvent }
   | { kind: "artifact_written"; data: ArtifactWrittenEvent }
   | { kind: "supervisor_note"; data: SupervisorNoteEvent }
   | { kind: "engine_event"; data: EngineEvent }

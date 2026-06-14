@@ -49,6 +49,16 @@ export type SpanProjection = {
   startedAt: string;
   finishedAt: string | null;
   status: SpanProjectionStatus;
+  /**
+   * Carrier bag for projected `engine.event` rows (WS-8 Part 2). The raw
+   * agent-run path folds each `EngineEvent` onto a `RunSpan` whose
+   * `attributes.engine_event_kind` drives the family/label/color resolution
+   * in `span-colors.ts` / `engine-event-kinds.ts`. The unified projection must
+   * carry the same bag so a chat-session (or, post-convergence, an agent-run)
+   * trace renders identical engine-event rows. Empty `{}` for ordinary
+   * lifecycle spans — they resolve their family off `kind` alone.
+   */
+  attributes: Record<string, unknown>;
 };
 
 // ─── Per-session slice ──────────────────────────────────────────────────────
@@ -116,6 +126,82 @@ const SPAN_KIND_BY_PAYLOAD: Record<string, string> = {
 };
 
 /**
+ * Engine-event kinds that are payload CARRIERS for a span (their body is folded
+ * onto the matching model/tool span elsewhere), not standalone lifecycle
+ * signals. Projecting them as `engine.event` rows would duplicate the
+ * model/tool span — so they're skipped. Mirrors `ENGINE_EVENT_CARRIER_KINDS`
+ * in `api/agent-runs.ts` so the unified path drops exactly what the raw path
+ * drops. WS-8 Part 2.
+ */
+const ENGINE_EVENT_CARRIER_KINDS: ReadonlySet<string> = new Set([
+  "model_call_payload",
+  "tool_call_payload",
+]);
+
+/**
+ * Project ONE engine-event-shaped signal onto an `engine.event` SpanProjection,
+ * carrying the raw kind in `attributes.engine_event_kind` so the render layer
+ * (`span-colors.ts` / `engine-event-kinds.ts`) resolves its family/label —
+ * EXACTLY the row the raw path's `engineEventFrameToSpan` (api/agent-runs.ts)
+ * produces. Returns the unchanged `spans` for carrier/kindless signals (which
+ * the raw path also drops), so the two paths stay byte-equivalent. WS-8 Part 2.
+ *
+ * `engineKind` is the `EngineEvent.kind` (e.g. `risk_veto`, `memory_recall`).
+ * `scopeSpanId` is the event's scoping span (nests the row under the
+ * decision/model/broker it fired against); a run-scoped event (`null`) becomes
+ * a top-level lifecycle row — never dropped. `payload` is the optional inspector
+ * body (parsed JSON or a structured value), preserved verbatim so the dock shows
+ * what the operator sees on the raw path.
+ */
+function projectEngineEventRow(
+  spans: SpanProjection[],
+  ev: UnifiedEvent,
+  engineKind: string,
+  scopeSpanId: string | null,
+  payload: unknown,
+): SpanProjection[] {
+  if (!engineKind || ENGINE_EVENT_CARRIER_KINDS.has(engineKind)) return spans;
+  const attributes: Record<string, unknown> = { engine_event_kind: engineKind };
+  if (payload !== undefined && payload !== null) {
+    attributes.engine_event_payload = payload;
+  }
+  // Synthetic id mirroring the raw live path
+  // (`engine_event:<kind>:<createdAt>:<parent>`) so replays/reconnects dedupe
+  // a re-delivered engine event onto the same row rather than duplicating it.
+  const spanId = `engine_event:${engineKind}:${ev.ts}:${scopeSpanId ?? "run"}`;
+  const idx = spans.findIndex((s) => s.spanId === spanId);
+  if (idx !== -1) return spans;
+  return [
+    ...spans,
+    {
+      spanId,
+      runId: ev.run_id ?? null,
+      parentSpanId: scopeSpanId,
+      kind: "engine.event",
+      name: engineKind,
+      startedAt: ev.ts,
+      // Engine events are point-in-time signals, not bracketed intervals —
+      // the tree renders them as zero-duration rows (matching the raw path).
+      finishedAt: ev.ts,
+      status: "ok",
+      attributes,
+    },
+  ];
+}
+
+/** Parse a `payload_json` STRING into a value, falling back to the raw string
+ * when it isn't valid JSON — mirrors the raw live path's lenient handling so no
+ * inspector body is lost. */
+function parseEnginePayloadJson(raw: string | null | undefined): unknown {
+  if (typeof raw !== "string" || raw.length === 0) return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
  * Fold one event onto the span projection. Span/run lifecycle events update
  * a per-span record; terminal events close the span. Returns a new array
  * only when something changed (reference-stable otherwise).
@@ -143,6 +229,7 @@ function projectSpan(
         startedAt: seed?.startedAt ?? ev.ts,
         finishedAt: seed?.finishedAt ?? null,
         status: seed?.status ?? "in_progress",
+        attributes: seed?.attributes ?? {},
       };
       return [...spans, update(base)];
     }
@@ -204,6 +291,30 @@ function projectSpan(
       return upsert(p.data.span_id, (s) => s, {
         kind: "broker.call",
       });
+    // ── Engine lifecycle signals (WS-8 Part 2 — convergence parity) ────────
+    // These are the rows WS-8 Part 1 made first-class on the raw dock path.
+    // The unified projection must produce the SAME `engine.event` rows so a
+    // future stream flip never makes the panel go dark.
+    case "engine_event":
+      // The engine event's own `span_id` is its scoping span (the raw path
+      // uses the same field); a run-scoped event has `span_id: null` and
+      // becomes a top-level lifecycle row.
+      return projectEngineEventRow(
+        spans,
+        ev,
+        p.data.kind,
+        p.data.span_id ?? null,
+        parseEnginePayloadJson(p.data.payload_json),
+      );
+    case "memory_recall":
+    case "memory_write":
+      // The dedicated unified memory payloads map onto the SAME `engine.event`
+      // row the raw EXPORT path surfaces — the recorder writes these to the
+      // `events` table with `kind = "memory_recall"|"memory_write"` and
+      // `span_id NULL`, so they project as run-scoped engine-event rows whose
+      // family resolves to `memory` off `engine_event_kind`. The structured
+      // payload is preserved as the inspector body.
+      return projectEngineEventRow(spans, ev, p.kind, null, p.data);
     default:
       return spans;
   }
