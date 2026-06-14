@@ -3624,9 +3624,13 @@ async fn build_live_executor(
             "live_config.assets must contain at least one asset".into(),
         ));
     }
-    // Alpaca credentials are required for EVERY live venue: the live bar
-    // stream (LiveStream warmup + websocket + poll) is Alpaca regardless of
-    // which venue executes the orders.
+    // Degen Arena sources market-data bars from Hyperliquid (its own candles),
+    // not Alpaca — so it needs no Alpaca credentials. Every other venue still
+    // uses the Alpaca bar stream.
+    let uses_alpaca_data = venue != LiveVenue::DegenArena;
+    // Alpaca credentials supply the live bar stream for every venue EXCEPT
+    // Degen Arena, which uses Hyperliquid-native candles (`uses_alpaca_data`).
+    // This message is only surfaced when `uses_alpaca_data` is true.
     let missing_alpaca_creds = || {
         match venue {
         LiveVenue::AlpacaPaper => {
@@ -3645,13 +3649,9 @@ async fn build_live_executor(
                 .to_string()
         }
         LiveVenue::DegenArena => {
-            // TODO(degen market-data): swap to HL candles. The fetcher is ready —
-            // `xvision_data::hl_bars::production_hl_fetcher(base)` is a drop-in
-            // `LivePollFetcher`. Remaining: a poll-only/HL-warmup `LiveStream`
-            // path + a venue branch here so Degen Arena doesn't need Alpaca.
-            "no Alpaca credentials configured for Live run: Degen Arena runs currently use Alpaca \
-             to supply the live market-data stream (bars) while Degen Arena executes orders on \
-             Hyperliquid. Set Settings -> Brokers or APCA_API_KEY_ID/APCA_API_SECRET_KEY."
+            // Unreachable: Degen Arena uses HL-native candles (uses_alpaca_data
+            // == false), so the Alpaca-creds requirement is skipped for it.
+            "Degen Arena sources bars from Hyperliquid and needs no Alpaca credentials.".to_string()
                 .to_string()
         }
     }
@@ -3665,7 +3665,7 @@ async fn build_live_executor(
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| "https://paper-api.alpaca.markets".into()),
         )
-    } else {
+    } else if uses_alpaca_data {
         let key_id =
             std::env::var("APCA_API_KEY_ID").map_err(|_| ApiError::Validation(missing_alpaca_creds()))?;
         let secret = std::env::var("APCA_API_SECRET_KEY").map_err(|_| {
@@ -3676,6 +3676,14 @@ async fn build_live_executor(
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "https://paper-api.alpaca.markets".into());
         (key_id, secret, trade_base_url)
+    } else {
+        // Degen Arena: bars come from Hyperliquid and orders are signed with the
+        // HL agent key — no Alpaca credentials needed.
+        (
+            String::new(),
+            String::new(),
+            "https://paper-api.alpaca.markets".into(),
+        )
     };
     if venue == LiveVenue::AlpacaPaper && !trade_base_url.contains("paper-api.alpaca.markets") {
         return Err(ApiError::Validation(format!(
@@ -3742,25 +3750,59 @@ async fn build_live_executor(
         let asset = asset_ref.venue_symbol.clone();
         let asset_sym = <xvision_core::trading::AssetSymbol as std::str::FromStr>::from_str(&asset)
             .map_err(|e| ApiError::Validation(format!("live_config asset '{asset}': {e}")))?;
-        let ws = live_client
-            .subscribe_bars(&asset, granularity)
+        let stream = if uses_alpaca_data {
+            let ws = live_client
+                .subscribe_bars(&asset, granularity)
+                .await
+                .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
+            let poll = AlpacaLivePoll::new(
+                production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
+                asset.clone(),
+                granularity,
+            );
+            crate::eval::executor::LiveStream::new_with_warmup(
+                ctx,
+                &asset,
+                granularity,
+                warmup_bars,
+                ws,
+                poll,
+            )
             .await
-            .map_err(|e| ApiError::Validation(format!("subscribe Alpaca live bars for {asset}: {e}")))?;
-        let poll = AlpacaLivePoll::new(
-            production_fetcher(data_base_url.clone(), key_id.clone(), secret.clone()),
-            asset.clone(),
-            granularity,
-        );
-        let stream = crate::eval::executor::LiveStream::new_with_warmup(
-            ctx,
-            &asset,
-            granularity,
-            warmup_bars,
-            ws,
-            poll,
-        )
-        .await
-        .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?;
+            .map_err(|e| ApiError::Validation(format!("build LiveStream for {asset}: {e}")))?
+        } else {
+            // Degen Arena: Hyperliquid-native candles via HlBarFetcher, poll-only
+            // (no Alpaca websocket). Warmup is fetched up front from the same
+            // source so decision history and live bars share one price basis.
+            let is_testnet = degen_network
+                .as_deref()
+                .map(|n| n.to_ascii_lowercase().contains("testnet"))
+                .unwrap_or(false);
+            let hl_base = if is_testnet {
+                xvision_data::hl_bars::HL_TESTNET_INFO
+            } else {
+                xvision_data::hl_bars::HL_MAINNET_INFO
+            };
+            let fetcher = xvision_data::hl_bars::production_hl_fetcher(hl_base);
+            let warmup = if warmup_bars == 0 {
+                Vec::new()
+            } else {
+                let end = Utc::now();
+                let start =
+                    end - chrono::Duration::seconds(granularity.seconds() as i64 * (warmup_bars as i64 + 5));
+                let bars = fetcher
+                    .fetch_window(&asset, granularity, start, end)
+                    .await
+                    .map_err(|e| ApiError::Validation(format!("hl warmup for {asset}: {e}")))?;
+                let mut ohlcv = market_bars_to_ohlcv(bars);
+                if ohlcv.len() > warmup_bars as usize {
+                    ohlcv = ohlcv.split_off(ohlcv.len() - warmup_bars as usize);
+                }
+                ohlcv
+            };
+            let poll = AlpacaLivePoll::new(fetcher, asset.clone(), granularity);
+            crate::eval::executor::LiveStream::new_poll_only(warmup, poll)
+        };
         sub_streams.push((asset_sym, stream));
     }
     let multi = crate::eval::executor::MultiLiveStream::new(sub_streams);
