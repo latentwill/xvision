@@ -118,6 +118,26 @@ export const MANTLE_ACTIVE_HEX = activeConfig.hex;
 /** @deprecated kept for back-compat; use {@link MANTLE_ACTIVE_HEX}. */
 export const MANTLE_SEPOLIA_HEX = "0x138b";
 
+/**
+ * Network slug stamped onto `TxRef.network` / on-chain NFT metadata. Drives the
+ * block-explorer choice in `TxChip` ("mantle" → explorer.mantle.xyz;
+ * "mantle-sepolia" → explorer.sepolia.mantle.xyz). Build-time constant; mirrors
+ * {@link activeNetwork}. Replaces the old hardcoded "mantle-sepolia" literals so
+ * a mainnet build never renders Sepolia explorer links.
+ */
+export const activeNetworkSlug: string =
+  activeNetwork === "mainnet" ? "mantle" : "mantle-sepolia";
+
+/**
+ * Call-time mainnet check. Reads the build-time `VITE_MARKETPLACE_NETWORK`
+ * literal (so Vite's define-replacement applies, and tests can `vi.stubEnv` it).
+ * Used by the testnet badge/banner so they stay honest on a mainnet build —
+ * a "purchases are simulated" notice on mainnet would be false and unsafe.
+ */
+export function isMainnetNetwork(): boolean {
+  return import.meta.env.VITE_MARKETPLACE_NETWORK === "mainnet";
+}
+
 // ---------------------------------------------------------------------------
 // Contract discovery (cached from /api/marketplace/status)
 // ---------------------------------------------------------------------------

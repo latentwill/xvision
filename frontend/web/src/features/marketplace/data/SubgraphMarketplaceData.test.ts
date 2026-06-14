@@ -7,6 +7,7 @@ import { defaultFilterState } from "./filter";
 
 // Mock chain so getViewer tests don't need real wallet state.
 vi.mock("../lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   currentAddress: vi.fn(async () => null),
 }));
 

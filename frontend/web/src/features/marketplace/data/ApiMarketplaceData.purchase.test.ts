@@ -11,6 +11,7 @@ import {
 import * as chain from "../lib/chain";
 
 vi.mock("../lib/chain", () => ({
+  activeNetworkSlug: "mantle-sepolia",
   currentAddress: vi.fn(),
   ensureMantleSepolia: vi.fn(),
   usdcBalance: vi.fn(),

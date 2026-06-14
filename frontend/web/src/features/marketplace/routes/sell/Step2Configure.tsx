@@ -5,10 +5,12 @@ export function Step2Configure({
   draft,
   onUpdate,
   onNext,
+  onBack,
 }: {
   draft: PublishDraft;
   onUpdate: (patch: Partial<Pick<PublishDraft, "name" | "tier" | "priceUsdc" | "acceptedPayers">>) => void;
   onNext: () => void;
+  onBack?: () => void;
 }) {
   const allPass = draft.listable.every((c) => c.ok);
   const nameEmpty = draft.name.trim().length === 0;
@@ -155,7 +157,7 @@ export function Step2Configure({
       </div>
 
       {/* Continue */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-wrap items-center gap-4">
         <button
           onClick={onNext}
           disabled={!allPass || nameEmpty}
@@ -166,6 +168,13 @@ export function Step2Configure({
           }`}
         >
           Continue
+        </button>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-[12px] text-text-3 hover:text-text-2"
+        >
+          ← Back
         </button>
         {!allPass && (
           <p className="text-[12px] text-danger">
