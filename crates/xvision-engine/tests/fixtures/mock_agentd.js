@@ -22,6 +22,10 @@
 //                  "aborted" to exercise the not-completed path.
 //   crashOnStep    when true, the process exits hard on the first
 //                  `session.step` (sidecar crash mid-step).
+//   recordStepsPath optional JSONL path. When set, every `session.step`
+//                  prompt is appended as `{ run_id, prompt }` so Rust
+//                  integration tests can assert on Cline briefing content
+//                  without a real provider.
 //
 // Stage 3 (replay) additions:
 //   requireReplay  when true, a `session.step` that has NOT been preceded by
@@ -113,6 +117,7 @@ const stepStatus = cfg.stepStatus ?? "completed";
 const crashOnStep = cfg.crashOnStep === true;
 const requireReplay = cfg.requireReplay === true;
 const replayInjectError = cfg.replayInjectError ?? null;
+const recordStepsPath = cfg.recordStepsPath ?? null;
 
 const seenRunIds = new Set();
 // run_id -> { frames: [...] } loaded via session.replay_load.
@@ -145,6 +150,14 @@ function replayUsage(frames) {
     }
   }
   return usage;
+}
+
+function recordStep(runId, prompt) {
+  if (!recordStepsPath) return;
+  fs.appendFileSync(
+    recordStepsPath,
+    JSON.stringify({ run_id: runId, prompt: typeof prompt === "string" ? prompt : "" }) + "\n",
+  );
 }
 
 function ok(id, result) {
@@ -213,6 +226,7 @@ const server = net.createServer((conn) => {
           process.exit(7);
         }
         const runId = req.params?.run_id;
+        recordStep(runId, req.params?.prompt);
         const replay = loadedReplays.get(runId);
 
         if (replay) {
