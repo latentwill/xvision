@@ -6,12 +6,12 @@ import { RecentCyclesTableBody } from "../panels/RecentCyclesTable";
 import { ExperimentWritersPanel } from "../panels/ExperimentWritersPanel";
 import { EditorialHeadline } from "../ui/EditorialHeadline";
 import { ConsoleModule } from "../ui/ConsoleModule";
+import { RunStatusBar } from "../ui/RunStatusBar";
 import { LineageRiver } from "../ui/LineageRiver";
 import { EdgeVsRandomChart } from "../ui/EdgeVsRandomChart";
-import { buildHeadline, type HeadlineInput } from "../selectors/buildHeadline";
+import { buildHeadline } from "../selectors/buildHeadline";
 import { buildDigest, deriveBestFind } from "../selectors/buildDigest";
 import {
-  useOptimizerStatus,
   useOptimizerStats,
   useCycleRuns,
   useCycleRun,
@@ -22,6 +22,7 @@ import {
   useCancelCycle,
   type LineageNode,
 } from "../api";
+import { useLiveActivity } from "../hooks/useLiveActivity";
 import { useCycleEventStream } from "../hooks/useCycleEventStream";
 import { OptiCapsuleSlot } from "../OptiCapsuleSlot";
 import { formatRelativeTime, formatUntil } from "../utils/time";
@@ -70,17 +71,16 @@ export function OptimizerHome() {
   const [params] = useSearchParams();
   const sessionId = params.get("session");
 
-  const status = useOptimizerStatus(); // StatusResponse | undefined — not a query object
+  // The one truthful run signal — server status, live SSE, or an in-flight
+  // cycle's persisted log — shared with the console so they never disagree.
+  const live = useLiveActivity();
   const stats = useOptimizerStats(sessionId ? { session_id: sessionId } : undefined);
   const cycles = useCycleRuns();
   const lineage = useLineageNodes({ status: "active" });
   const schedule = useSchedule();
 
-  const session = status?.active_session ?? null;
-  const rawState = session?.state ?? "idle";
-  const state = (
-    ["running", "paused", "cancelling"].includes(rawState) ? rawState : "idle"
-  ) as HeadlineInput["state"];
+  const session = live.session;
+  const state = live.activity;
   const isActive = state !== "idle";
 
   const cycleRows = cycles.data ?? [];
@@ -117,15 +117,13 @@ export function OptimizerHome() {
     if (isActive) setLauncherOpen(false);
   }, [isActive]);
 
-  // The stream-derived cycle id is empty after a page reload mid-run (the SSE
-  // buffer starts fresh); the status poll's active_cycle_id is the fallback so
-  // Pause/Resume/Cancel stay wired.
-  const {
-    activeCycleId: streamCycleId,
-    events: cycleEvents,
-    isRunning: streamRunning,
-  } = useCycleEventStream();
-  const activeCycleId = streamCycleId ?? status?.active_cycle_id ?? null;
+  // Resolved across live SSE → server status → latest cycle, so Pause/Resume/
+  // Cancel stay wired even after a reload mid-run (empty SSE buffer).
+  const activeCycleId = live.activeCycleId;
+  // Raw SSE buffer for the OPTI trace capsule. useCycleEventStream is a shared
+  // singleton, so this is the SAME socket useLiveActivity reads — no second
+  // EventSource.
+  const { events: cycleEvents, isRunning: streamRunning } = useCycleEventStream();
   const pauseMutation = usePauseCycle();
   const resumeMutation = useResumeCycle();
   const cancelMutation = useCancelCycle();
@@ -210,6 +208,19 @@ export function OptimizerHome() {
         <EditorialHeadline headline={headline} digest={digest}>
           {action}
         </EditorialHeadline>
+
+        {/* The unmissable live indicator — answers "is something running right
+            now" before anything else on the page. */}
+        {isActive && (
+          <RunStatusBar
+            activity={live.activity}
+            source={live.source}
+            cycleId={activeCycleId}
+            session={session}
+            connected={live.connected}
+            startedAtMs={live.startedAtMs}
+          />
+        )}
 
         {(newestStatsTs || nextRun) && (
           <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] text-text-4 -mt-2">

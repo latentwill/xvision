@@ -887,17 +887,27 @@ export type RiverNode = {
 };
 
 /**
- * Fetch the persisted event log for a completed cycle (oldest-first).
+ * Fetch the persisted event log for a cycle (oldest-first).
  * Enabled only when `cycleId` is non-null. Returns an empty array gracefully
  * on backends that don't yet have the events table (fresh install).
+ *
+ * Pass `{ pollMs }` to poll while a cycle is live: the persisted log is the
+ * resilient telemetry source for a CLI run with no live SSE bridge (IPC off),
+ * so the console can stream straight from the DB. Polling also shortens the
+ * stale window to `pollMs` so freshly-landed events appear promptly.
  */
-export function useCycleEvents(cycleId: string | null) {
+export function useCycleEvents(
+  cycleId: string | null,
+  opts?: { pollMs?: number },
+) {
+  const pollMs = opts?.pollMs;
   return useQuery<PersistedCycleEvent[]>({
     queryKey: autooptimizerKeys.cycleEvents(cycleId),
     queryFn: () =>
       apiFetch<PersistedCycleEvent[]>(`/api/autooptimizer/cycles/${cycleId}/events`),
     enabled: !!cycleId,
-    staleTime: 60_000,
+    staleTime: pollMs ?? 60_000,
+    refetchInterval: pollMs ?? false,
     retry: false, // endpoint may not exist on older backends
   });
 }

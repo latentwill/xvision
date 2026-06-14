@@ -349,6 +349,82 @@ describe("ConsoleModule", () => {
     invalidateSpy.mockRestore();
   });
 
+  // ─── The operator's bug: a live run the tab didn't witness from the start ──
+
+  const inflightRows = (cycleId: string) => [
+    {
+      seq: 1,
+      session_id: "s",
+      cycle_id: cycleId,
+      kind: "cycle_started",
+      payload_json: JSON.stringify({ type: "cycle_started", cycle_id: cycleId }),
+      ts: new Date().toISOString(),
+    },
+    {
+      seq: 2,
+      session_id: "s",
+      cycle_id: cycleId,
+      kind: "mutation_proposed",
+      payload_json: JSON.stringify({
+        type: "mutation_proposed",
+        cycle_id: cycleId,
+        parent_hash: "ffff0000aa",
+        child_hash: "abcd1234ef",
+        mutator_model: "gpt-5.2",
+      }),
+      ts: new Date().toISOString(),
+    },
+  ];
+
+  it("goes live from server status with an EMPTY SSE buffer (CLI run, no IPC)", () => {
+    // The tab joined after cycle_started, so the SSE buffer never saw it. The
+    // console must still go live — driven by /status + the persisted log — and
+    // must NOT show the all-green 'Cycle complete' ribbon.
+    setStream({ events: [], connected: false, isRunning: false, activeCycleId: null });
+    mockRuns.mockReturnValue(q([{ ...cycleSummary, cycle_id: "c-live" }]));
+    mockStatus.mockReturnValue({
+      active_session: {
+        session_id: "sess-1",
+        strategy_id: "strat-abc",
+        state: "running",
+        mode: "explore",
+        cycles_completed: 0,
+        kept_count: 0,
+        suspect_count: 0,
+        dropped_count: 0,
+      },
+      last_event_seq: 2,
+      active_cycle_id: "c-live",
+    });
+    mockEvents.mockReturnValue(q(inflightRows("c-live")));
+
+    renderWithProviders(<ConsoleModule />);
+
+    expect(screen.getByText(/Live · cycle/i)).toHaveTextContent(
+      "Live · cycle c-live · strat-abc",
+    );
+    // A real, in-progress step — not the all-done "Cycle complete" chrome.
+    expect(document.querySelector('[aria-current="step"]')).not.toBeNull();
+    expect(screen.queryByText("Cycle complete")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("artifact-abcd1234ef").length).toBeGreaterThan(0);
+  });
+
+  it("infers a live run from an in-flight latest cycle when status AND SSE are absent", () => {
+    // The exact reported case: no session row, no live SSE — only the DB event
+    // log proves the CLI run is alive.
+    setStream({ events: [], connected: false, isRunning: false, activeCycleId: null });
+    mockRuns.mockReturnValue(q([{ ...cycleSummary, cycle_id: "c-live" }]));
+    mockStatus.mockReturnValue(undefined);
+    mockEvents.mockReturnValue(q(inflightRows("c-live")));
+
+    renderWithProviders(<ConsoleModule />);
+
+    expect(screen.getByText(/Live · cycle/i)).toHaveTextContent("Live · cycle c-live");
+    expect(document.querySelector('[aria-current="step"]')).not.toBeNull();
+    expect(screen.queryByText("Cycle complete")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("artifact-abcd1234ef").length).toBeGreaterThan(0);
+  });
+
   it("replay with an erroring events endpoint also falls back to nodes", () => {
     setStream({ isRunning: false, connected: true });
     mockRuns.mockReturnValue(q([cycleSummary]));
