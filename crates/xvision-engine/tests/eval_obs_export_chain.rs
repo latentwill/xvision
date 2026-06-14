@@ -41,7 +41,7 @@ use xvision_core::config::{ProviderEntry, ProviderKind};
 use xvision_core::market::Ohlcv;
 use xvision_engine::agent::execute_cline::{execute_slot_cline, ClineSlotInput, TrajectoryMode};
 use xvision_engine::agent::llm::{LlmDispatch, ResponseSchema};
-use xvision_engine::agent::observability::{fresh_span_id, ObsEmitter};
+use xvision_engine::agent::observability::{fresh_span_id, ObsEmitter, ObsRetentionPolicy};
 use xvision_engine::eval::executor::{Executor, RunExecutor};
 use xvision_engine::eval::run::{Run, RunMode};
 use xvision_engine::eval::scenario::canonical_scenarios;
@@ -49,7 +49,9 @@ use xvision_engine::strategies::risk::RiskPreset;
 use xvision_engine::strategies::slot::LLMSlot;
 use xvision_engine::tools::ToolRegistry;
 use xvision_observability::types::RunStatus;
-use xvision_observability::{AgentRunRecorder, RunEventBus, SqliteRecorder};
+use xvision_observability::{
+    AgentRunRecorder, BlobStore, ObservabilityConfig, RetentionMode, RunEventBus, SqliteRecorder,
+};
 
 mod support;
 
@@ -523,4 +525,233 @@ async fn cline_slot_success_emits_model_call_finished_row() {
     assert_eq!(model, "claude-sonnet-4-6");
     assert_eq!(in_tok, Some(11), "input tokens must come from step.usage");
     assert_eq!(out_tok, Some(7), "output tokens must come from step.usage");
+}
+
+// ── GAP 3 ────────────────────────────────────────────────────────────────
+// The trace inspector showed only `prompt.hash` / `response.hash` even under
+// `full_debug` retention because the Cline trader emit was the HASH-ONLY
+// variant (`emit_model_call_finished`) which hard-codes
+// `prompt_text: None` / `response_text: None`. The success path now emits
+// `emit_model_call_finished_with_payloads`, so under `full_debug` (with a
+// BlobStore wired) the `model_calls` row carries `prompt_payload_ref` +
+// `response_payload_ref`, and `build_export_with_blobs` reconstructs the
+// operator-visible prompt + response TEXT — not just the hash.
+//
+// Two retention modes are exercised through the REAL emit → bus → recorder →
+// blob → export chain (no hand-written payload rows):
+//   * `full_debug` → both refs land, export resolves non-empty prompt +
+//     response text. FAILS before the fix (hash-only emit writes no refs).
+//   * `hash_only`  → hashes record, but NO payload refs (gating still holds).
+
+/// A retention policy with both store flags ON at the given mode, mirroring
+/// `agent_observability_blob.rs::policy_for`. Under `HashOnly` the store
+/// flags are moot — the emitter never writes bodies regardless.
+fn policy_for(mode: RetentionMode) -> ObsRetentionPolicy {
+    let mut cfg = ObservabilityConfig::default();
+    cfg.retention.mode = mode;
+    cfg.retention.store_prompts = true;
+    cfg.retention.store_responses = true;
+    cfg.retention.max_payload_bytes = 200_000;
+    ObsRetentionPolicy::from_config(&cfg)
+}
+
+/// Drive one trader slot through the mock sidecar with `obs` wired (already
+/// carrying retention + blob store), returning the `model_call` span id the
+/// emit keys on. Mirrors `cline_slot_success_emits_model_call_finished_row`'s
+/// setup so both tests share the real execute_slot_cline path.
+async fn drive_cline_slot(run_id: &str, obs: &ObsEmitter) -> String {
+    let model_call_span_id = fresh_span_id();
+    obs.emit_run_started("cline payload row", "full_debug").await;
+    obs.emit_model_call_started(
+        &model_call_span_id,
+        None,
+        "anthropic",
+        "claude-sonnet-4-6",
+        Some("trader"),
+        None,
+        None,
+    )
+    .await;
+
+    let (client, _dir) = spawn_mock(json!({
+        "decisionJson": r#"{"action":"long_open","conviction":0.8,"justification":"mock"}"#
+    }))
+    .await;
+    let client = Arc::new(client);
+
+    let slot = LLMSlot {
+        role: "trader".into(),
+        attested_with: "anthropic.claude-sonnet-4-6".into(),
+        allowed_tools: Vec::new(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4-6".into()),
+    };
+    let entry = ProviderEntry {
+        name: "anthropic".into(),
+        kind: ProviderKind::Anthropic,
+        base_url: String::new(),
+        api_key_env: "K".into(),
+        enabled_models: vec!["claude-sonnet-4-6".into()],
+    };
+
+    let input = ClineSlotInput {
+        slot: &slot,
+        provider_entry: &entry,
+        api_key: Some("test-key".into()),
+        system_prompt: "Decide whether to trade.".into(),
+        upstream_inputs: json!({"market_data": {"bar_history": [{"c": 100.0}]}}),
+        response_schema: ResponseSchema::trader_output(),
+        allowed_tools: vec!["indicators.rsi".into()],
+        max_tokens: Some(4096),
+        max_wall_ms: None,
+        run_id: run_id.to_string(),
+        cline_client: client.clone(),
+        trajectory_mode: TrajectoryMode::Record,
+        record_slot_role: None,
+        obs: Some(obs.clone()),
+        model_call_span_id: Some(model_call_span_id.clone()),
+        reasoning_effort: None,
+    };
+
+    execute_slot_cline(input)
+        .await
+        .expect("cline slot must produce an LlmResponse");
+
+    // Shut the mock sidecar down so its IPC reader stops competing for the
+    // runtime's worker threads (otherwise the bus drain below can starve).
+    Arc::try_unwrap(client).ok().unwrap().shutdown().await.unwrap();
+
+    obs.emit_span_finished_ok(&model_call_span_id).await;
+    obs.emit_run_finished(RunStatus::Completed, None).await;
+    model_call_span_id
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cline_slot_full_debug_records_prompt_and_response_payloads() {
+    let store = fresh_store().await;
+    let pool = store.pool().clone();
+    let blob_dir = TempDir::new().expect("blob tempdir");
+    let blob = BlobStore::new(blob_dir.path());
+
+    let run_id = "cycle-obs-payload::trader".to_string();
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
+    let bus = Arc::new(RunEventBus::new(vec![recorder]));
+    let obs = ObsEmitter::new(bus.clone(), run_id.clone())
+        .with_retention(policy_for(RetentionMode::FullDebug))
+        .with_blob_store(blob.clone());
+
+    let span_id = drive_cline_slot(&run_id, &obs).await;
+
+    bus.quiesce().await;
+    wait_for_count(&pool, "SELECT COUNT(*) FROM model_calls", 1).await;
+
+    // The model_calls row must carry BOTH payload refs under full_debug —
+    // proving the Cline emit switched to the payload-aware variant.
+    let (prompt_ref, response_ref): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT prompt_payload_ref, response_payload_ref \
+             FROM model_calls WHERE span_id = ?",
+    )
+    .bind(&span_id)
+    .fetch_one(&pool)
+    .await
+    .expect("model_calls row must key on the threaded model_call span id");
+    let prompt_ref = prompt_ref.expect(
+        "full_debug Cline trader run must populate prompt_payload_ref \
+         (else the inspector falls back to showing prompt.hash)",
+    );
+    let response_ref = response_ref.expect(
+        "full_debug Cline trader run must populate response_payload_ref \
+         (else the inspector falls back to showing response.hash)",
+    );
+    assert!(!prompt_ref.is_empty());
+    assert!(!response_ref.is_empty());
+
+    // The operator-visible outcome: build_export_with_blobs reconstructs the
+    // actual prompt + response TEXT for the model call, not just the hash.
+    let export = xvision_observability::build_export_with_blobs(&pool, &run_id, Some(&blob))
+        .await
+        .expect("build_export_with_blobs must succeed");
+    let mc = export
+        .model_calls
+        .iter()
+        .find(|m| m.span_id == span_id)
+        .expect("export must contain the trader model call");
+
+    let prompt_text = mc
+        .prompt_text
+        .as_deref()
+        .expect("export must inline non-null prompt text from the blob");
+    let response_text = mc
+        .response_text
+        .as_deref()
+        .expect("export must inline non-null response text from the blob");
+
+    // The persisted prompt blob is the canonical LlmRequest JSON; it must
+    // carry the slot's system prompt + the rendered user turn (the bytes the
+    // operator wants to read instead of `sha256:…`).
+    assert!(
+        prompt_text.contains("Decide whether to trade."),
+        "prompt blob must include the slot system prompt; got: {prompt_text}"
+    );
+    assert!(
+        prompt_text.contains("submit_decision"),
+        "prompt blob must include the rendered user instructions; got: {prompt_text}"
+    );
+    // The response blob is the decision JSON the agent submitted.
+    assert!(
+        response_text.contains("long_open"),
+        "response blob must be the submitted decision JSON; got: {response_text}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cline_slot_hash_only_records_no_payload_refs() {
+    let store = fresh_store().await;
+    let pool = store.pool().clone();
+    let blob_dir = TempDir::new().expect("blob tempdir");
+    let blob = BlobStore::new(blob_dir.path());
+
+    let run_id = "cycle-obs-hashonly::trader".to_string();
+    let recorder: Arc<dyn AgentRunRecorder> = Arc::new(SqliteRecorder::new(pool.clone()));
+    let bus = Arc::new(RunEventBus::new(vec![recorder]));
+    let obs = ObsEmitter::new(bus.clone(), run_id.clone())
+        .with_retention(policy_for(RetentionMode::HashOnly))
+        .with_blob_store(blob.clone());
+
+    let span_id = drive_cline_slot(&run_id, &obs).await;
+
+    bus.quiesce().await;
+    wait_for_count(&pool, "SELECT COUNT(*) FROM model_calls", 1).await;
+
+    // hash_only: the row records, hashes are present, but NO payload refs —
+    // proving the emitter still gates bodies under retention.
+    let (prompt_hash, prompt_ref, response_ref): (String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT prompt_hash, prompt_payload_ref, response_payload_ref \
+                 FROM model_calls WHERE span_id = ?",
+    )
+    .bind(&span_id)
+    .fetch_one(&pool)
+    .await
+    .expect("model_calls row must exist even under hash_only");
+    assert!(
+        prompt_hash.starts_with("sha256:"),
+        "hash_only must still record the prompt hash; got: {prompt_hash}"
+    );
+    assert!(
+        prompt_ref.is_none(),
+        "hash_only must NOT populate prompt_payload_ref; got: {prompt_ref:?}"
+    );
+    assert!(
+        response_ref.is_none(),
+        "hash_only must NOT populate response_payload_ref; got: {response_ref:?}"
+    );
+
+    // No blob bytes written under hash_only.
+    let entries: Vec<_> = std::fs::read_dir(blob_dir.path())
+        .map(|d| d.flatten().collect())
+        .unwrap_or_default();
+    assert!(
+        entries.is_empty(),
+        "hash_only must not write blobs; found: {entries:?}"
+    );
 }

@@ -34,7 +34,7 @@
 //!   lands record/replay, this executor must compare the live trajectory
 //!   against the recorded one and surface divergence as a typed error.
 
-use crate::agent::llm::{ContentBlock, LlmResponse, ResponseSchema, StopReason};
+use crate::agent::llm::{ContentBlock, LlmRequest, LlmResponse, Message, ResponseSchema, StopReason};
 use crate::eval::executor::trader_output::extract_first_json_object;
 use crate::strategies::slot::LLMSlot;
 use std::sync::Arc;
@@ -397,14 +397,18 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         .unwrap_or_else(|| input.provider_entry.name.clone());
     let obs_model = input.slot.effective_model();
     let obs_model_call_span_id = input.model_call_span_id.clone();
-    // Hash the rendered prompt now (the same text shipped to the sidecar via
-    // `step`), so the `model_calls.prompt_hash` is a real digest of the
-    // request rather than a placeholder. `compute_response_hash` is a generic
+    // Render the first user turn ONCE and reuse it for (a) the prompt hash,
+    // (b) the sidecar `step`, and (c) the persisted prompt blob built below —
+    // so the `model_calls.prompt_hash` digests exactly the bytes the operator
+    // sees in the FullDebug blob (no drift between hash and stored body). A
+    // render error short-circuits the whole slot via `?` (same `anyhow`
+    // propagation the `step` call previously used) rather than silently
+    // logging a hash for a prompt that never shipped.
+    let obs_rendered_prompt = input.render_prompt()?;
+    // `model_calls.prompt_hash` is a real digest of the rendered request
+    // rather than a placeholder. `compute_response_hash` is a generic
     // `sha256:<hex>` of a string; reuse it for the prompt text.
-    let obs_prompt_hash = input
-        .render_prompt()
-        .ok()
-        .map(|p| crate::agent::observability::compute_response_hash(&p));
+    let obs_prompt_hash = crate::agent::observability::compute_response_hash(&obs_rendered_prompt);
 
     // Item 5: map provider → Cline gateway selection. An unmapped provider
     // (e.g. local-candle) aborts with a typed error — NO silent fallback.
@@ -476,7 +480,10 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
         .cline_client
         .step(StepParams {
             run_id: run_id.clone(),
-            prompt: input.render_prompt()?,
+            // Reuse the prompt rendered above so the bytes shipped to the
+            // sidecar are byte-identical to the hash input AND the FullDebug
+            // prompt blob built at the success-path emit below.
+            prompt: obs_rendered_prompt.clone(),
         })
         .await;
 
@@ -622,21 +629,58 @@ pub async fn execute_slot_cline(input: ClineSlotInput<'_>) -> anyhow::Result<Llm
     // emit rather than fabricate one — the span-finished close stays the
     // caller's responsibility. The response_hash digests the decision JSON;
     // `cost_usd: None` lets the emitter fall back to catalog-based pricing.
+    //
+    // PAYLOAD CAPTURE (fix/cline-model-call-payloads): use the PAYLOAD-aware
+    // emit variant — the hash-only `emit_model_call_finished` hard-codes
+    // `prompt_text: None` / `response_text: None`, so under `full_debug` the
+    // trace inspector had no body to show and fell back to `prompt.hash` /
+    // `response.hash`. Mirror the standalone path (`execute.rs`): build an
+    // `LlmRequest` faithfully representing the prompt the sidecar ran, pass it
+    // as `prompt_request`, and pass the decision JSON as `response_text`. The
+    // emitter gates internally on retention (HashOnly → no bodies; Redacted →
+    // redacted bodies; FullDebug → raw), so this NEVER weakens redaction.
+    //
+    // The `LlmRequest` reuses `obs_rendered_prompt` (the exact bytes the hash
+    // digested and the sidecar `step` shipped), so the persisted blob stays
+    // consistent with `prompt_hash`. `tools` is left empty: the Cline path
+    // only has tool *names* (`allowed_tools_plus_submit_decision`), not full
+    // `ToolDefinition`s (those live in the retired LlmDispatch registry), and
+    // the sidecar receives the names + the `response_schema` it splices into
+    // the prompt. The operator-visible prompt — system prompt + rendered user
+    // turn + response contract — is captured faithfully; the tool-definition
+    // JSON bodies are the only omission vs. the true wire request.
     if let (Some(obs), Some(span_id)) = (input.obs.as_ref(), obs_model_call_span_id.as_deref()) {
         let response_hash = if decision_json.is_empty() {
             None
         } else {
             Some(crate::agent::observability::compute_response_hash(&decision_json))
         };
-        obs.emit_model_call_finished(
+        let prompt_request = LlmRequest {
+            model: obs_model.clone(),
+            system_prompt: input.system_prompt.clone(),
+            messages: vec![Message::user_text(obs_rendered_prompt.clone())],
+            max_tokens: input.max_tokens,
+            tools: Vec::new(),
+            temperature: None,
+            response_schema: Some(input.response_schema.clone()),
+            cache_control: None,
+            force_json: false,
+        };
+        obs.emit_model_call_finished_with_payloads(
             span_id,
             &obs_provider,
             &obs_model,
             Some(input_tokens),
             Some(output_tokens),
             None,
-            obs_prompt_hash.clone().unwrap_or_default(),
+            obs_prompt_hash,
             response_hash,
+            Some(&prompt_request),
+            if decision_json.is_empty() {
+                None
+            } else {
+                Some(decision_json.as_str())
+            },
         )
         .await;
     }
