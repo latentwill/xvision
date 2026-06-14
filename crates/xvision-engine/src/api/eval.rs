@@ -39,7 +39,7 @@ use crate::api::{search as api_search, strategy as api_strategy, ApiContext, Api
 use crate::eval::attestation::{self, EvalAttestation};
 use crate::eval::compare::{compare_runs, CompareOptions, ComparisonReport, ManifestMismatch};
 use crate::eval::cost::aggregate_eval_run_inference_cost;
-use crate::eval::executor::{Executor, RunExecutor};
+use crate::eval::executor::{Executor, GatedBrokerSurface, RunExecutor};
 use crate::eval::findings::{Finding, InferenceCostDominatesReturnPayload, Severity};
 use crate::eval::live_config::LiveConfig;
 use crate::eval::metrics::{
@@ -54,6 +54,7 @@ use crate::eval::scenario::{
     SlippageModel, TimeWindow, Venue, VenueSettings,
 };
 use crate::eval::store::{ListFilter, RunStore};
+use crate::safety::{AuthContext, VenueLabel};
 use crate::tools::ToolRegistry;
 use xvision_agent_client::{AgentClient, ToolDispatch, ToolDispatchError};
 use xvision_core::config::{self, AgentRuntime, ProviderEntry, ProviderKind};
@@ -3560,6 +3561,37 @@ fn resolve_live_venue(
     }
 }
 
+/// Map a `LiveVenue` + optional `BYREAL_NETWORK` value to the `VenueLabel`
+/// that describes what the **broker** is doing (as opposed to what the *run*
+/// is labelled). Used to populate the `broker_venue_label` argument of
+/// `GatedBrokerSurface::new`.
+///
+/// Rules:
+/// - `AlpacaPaper` → `Paper` (Alpaca paper trading, no real money).
+/// - `OrderlyTestnet` → `Testnet` (Orderly testnet, on-chain but no real funds).
+/// - `ByrealLive` + `byreal_network` containing "testnet" (case-insensitive) →
+///   `Testnet`.
+/// - `ByrealLive` + anything else (unset, empty, "mainnet", …) → `Live`.
+///   Unset / empty is the production-mainnet default for the perps CLI, so we
+///   fail safe to the strict `Live` label rather than a permissive one.
+fn broker_label_for(venue: LiveVenue, byreal_network: Option<&str>) -> VenueLabel {
+    match venue {
+        LiveVenue::AlpacaPaper => VenueLabel::Paper,
+        LiveVenue::OrderlyTestnet => VenueLabel::Testnet,
+        LiveVenue::ByrealLive => {
+            let is_testnet = byreal_network
+                .map(str::trim)
+                .map(|n| n.to_ascii_lowercase().contains("testnet"))
+                .unwrap_or(false);
+            if is_testnet {
+                VenueLabel::Testnet
+            } else {
+                VenueLabel::Live
+            }
+        }
+    }
+}
+
 async fn build_live_executor(
     ctx: &ApiContext,
     cfg: &LiveConfig,
@@ -3651,6 +3683,17 @@ async fn build_live_executor(
             ),
         },
     };
+    // Wrap every broker (including injected overrides) in `GatedBrokerSurface`
+    // so the safety gate fires on every live submit, regardless of venue or
+    // whether the broker came from a broker_override. The wrap happens AFTER
+    // the override/venue match so even injected test brokers are gated.
+    let broker: Arc<dyn BrokerSurface> = Arc::new(GatedBrokerSurface::new(
+        broker,
+        ctx.safety_gate.clone(),
+        cfg.venue_label,
+        broker_label_for(venue, byreal_network.as_deref()),
+        AuthContext::system(),
+    ));
     let granularity = xvision_data::alpaca::BarGranularity::Minute1;
     let live_client = AlpacaLiveClient::new(AlpacaLiveCredentials {
         key_id: key_id.clone(),
@@ -5403,4 +5446,72 @@ pub async fn get_live_deployment(
         .fetch_optional(&ctx.db)
         .await?;
     Ok(row.map(Into::into))
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — broker_label_for (DoD 3)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod broker_label_for_tests {
+    use super::{broker_label_for, LiveVenue};
+    use crate::safety::VenueLabel;
+
+    #[test]
+    fn alpaca_paper_maps_to_paper() {
+        assert_eq!(
+            broker_label_for(LiveVenue::AlpacaPaper, None),
+            VenueLabel::Paper,
+            "AlpacaPaper → Paper"
+        );
+    }
+
+    #[test]
+    fn orderly_testnet_maps_to_testnet() {
+        assert_eq!(
+            broker_label_for(LiveVenue::OrderlyTestnet, None),
+            VenueLabel::Testnet,
+            "OrderlyTestnet → Testnet"
+        );
+    }
+
+    #[test]
+    fn byreal_live_unset_maps_to_live() {
+        // BYREAL_NETWORK unset → fail-safe to Live (production mainnet default).
+        assert_eq!(
+            broker_label_for(LiveVenue::ByrealLive, None),
+            VenueLabel::Live,
+            "ByrealLive + unset network → Live (fail-safe)"
+        );
+    }
+
+    #[test]
+    fn byreal_live_mainnet_maps_to_live() {
+        assert_eq!(
+            broker_label_for(LiveVenue::ByrealLive, Some("mainnet")),
+            VenueLabel::Live,
+            "ByrealLive + 'mainnet' → Live"
+        );
+    }
+
+    #[test]
+    fn byreal_live_testnet_maps_to_testnet() {
+        assert_eq!(
+            broker_label_for(LiveVenue::ByrealLive, Some("testnet")),
+            VenueLabel::Testnet,
+            "ByrealLive + 'testnet' → Testnet"
+        );
+    }
+
+    #[test]
+    fn byreal_live_testnet_case_insensitive() {
+        // "Testnet", "TESTNET", "hl-testnet" all contain "testnet".
+        for s in ["Testnet", "TESTNET", "hl-testnet", "byreal-testnet-v2"] {
+            assert_eq!(
+                broker_label_for(LiveVenue::ByrealLive, Some(s)),
+                VenueLabel::Testnet,
+                "ByrealLive + '{s}' must map to Testnet"
+            );
+        }
+    }
 }
