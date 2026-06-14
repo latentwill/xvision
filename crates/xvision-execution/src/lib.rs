@@ -12,6 +12,7 @@ pub mod byreal;
 pub mod byreal_clmm;
 pub mod executor;
 pub mod orderly;
+pub mod virtuals;
 
 pub use alpaca::AlpacaExecutor;
 pub use broker_surface::{
@@ -24,3 +25,7 @@ pub use byreal::{
 };
 pub use executor::{ExecutionReceipt, Executor, ExecutorError};
 pub use orderly::{OrderlyExecutor, OrderlyPosition, VenueSnapshot};
+pub use virtuals::{
+    DegenArenaSurface, HlOrderAck, HlOrderReq, HlPosition, HyperliquidApi, MockHyperliquidApi,
+    ReqwestHyperliquidApi,
+};

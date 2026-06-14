@@ -17,8 +17,15 @@ export type DockMode = "post-hoc" | "live";
  * pages" bug: nulling one scope on unmount no longer clobbers the
  * other surface's run, and the floating capsule only renders for the
  * scope that matches the current route.
+ *
+ * WS-11a adds a third scope, `opti` — the autooptimizer *cycle* projected onto
+ * the trace dock on the `/optimizer` route. It owns `byScope.opti`; the
+ * eval/live routes must not touch it (and vice versa). The cycle rows
+ * themselves are derived from the existing cycle SSE stream by
+ * `features/autooptimizer/opti-trace-reducer.ts` — the slice here only tracks
+ * the active cycle id, selection, mode, and cost override, mirroring eval/live.
  */
-export type TraceScope = "eval" | "live";
+export type TraceScope = "eval" | "live" | "opti";
 
 /**
  * Per-scope dock slice. One of these exists for each {@link TraceScope}.
@@ -295,6 +302,7 @@ export const useTraceDock = create<State & Actions>((set, get) => ({
   byScope: {
     eval: freshScopeState(),
     live: freshScopeState(),
+    opti: freshScopeState(),
   },
   activeSessionId: null,
   lastOpenHeight: "working",

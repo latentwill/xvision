@@ -106,6 +106,58 @@ describe("trace-dock store — per-scope state", () => {
   });
 });
 
+describe("trace-dock store — opti scope (WS-11a)", () => {
+  beforeEach(() => {
+    useTraceDock.getState().setActiveRun("eval", null, "post-hoc");
+    useTraceDock.getState().setActiveRun("live", null, "post-hoc");
+    useTraceDock.getState().setActiveRun("opti", null, "post-hoc");
+  });
+
+  test("opti scope initializes with an empty slice", () => {
+    const opti = useTraceDock.getState().byScope.opti;
+    expect(opti.activeRunId).toBeNull();
+    expect(opti.selectedSpanId).toBeNull();
+    expect(opti.mode).toBe("post-hoc");
+    expect(opti.costOverrideUsd).toBeNull();
+  });
+
+  test("setActiveRun on opti leaves eval + live untouched", () => {
+    useTraceDock.getState().setActiveRun("eval", "E", "post-hoc");
+    useTraceDock.getState().setActiveRun("live", "L", "live");
+    useTraceDock.getState().setActiveRun("opti", "cyc_1", "live");
+    expect(useTraceDock.getState().byScope.opti.activeRunId).toBe("cyc_1");
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBe("E");
+    expect(useTraceDock.getState().byScope.live.activeRunId).toBe("L");
+  });
+
+  test("writing eval/live does not disturb opti, and vice versa", () => {
+    useTraceDock.getState().setActiveRun("opti", "cyc_2", "live");
+    useTraceDock.getState().setSelectedSpan("opti", "opti-cycle:cyc_2");
+    // Mutate eval + live aggressively.
+    useTraceDock.getState().setActiveRun("eval", "E2", "post-hoc");
+    useTraceDock.getState().setActiveRun("live", "L2", "live");
+    useTraceDock.getState().setSelectedSpan("eval", "s_eval");
+    useTraceDock.getState().setSelectedSpan("live", "s_live");
+    // opti slice survives.
+    expect(useTraceDock.getState().byScope.opti.activeRunId).toBe("cyc_2");
+    expect(useTraceDock.getState().byScope.opti.selectedSpanId).toBe("opti-cycle:cyc_2");
+    // Now null opti and confirm eval/live are unaffected.
+    useTraceDock.getState().setActiveRun("opti", null, "post-hoc");
+    expect(useTraceDock.getState().byScope.eval.activeRunId).toBe("E2");
+    expect(useTraceDock.getState().byScope.live.activeRunId).toBe("L2");
+    expect(useTraceDock.getState().byScope.live.selectedSpanId).toBe("s_live");
+  });
+
+  test("setSelectedSpan + setCostOverrideUsd are isolated to the opti scope", () => {
+    useTraceDock.getState().setSelectedSpan("opti", "opti-gate:cyc_3:h1");
+    useTraceDock.getState().setCostOverrideUsd("opti", 1.23);
+    expect(useTraceDock.getState().byScope.opti.selectedSpanId).toBe("opti-gate:cyc_3:h1");
+    expect(useTraceDock.getState().byScope.opti.costOverrideUsd).toBe(1.23);
+    expect(useTraceDock.getState().byScope.eval.selectedSpanId).toBeNull();
+    expect(useTraceDock.getState().byScope.live.costOverrideUsd).toBeNull();
+  });
+});
+
 describe("trace-dock store — heightPx slice", () => {
   beforeEach(() => {
     localStorage.clear();

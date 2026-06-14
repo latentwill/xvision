@@ -140,6 +140,27 @@ impl LiveStream {
         }
     }
 
+    /// Build a **poll-only** `LiveStream` (no websocket) from a pre-fetched
+    /// warmup buffer + a REST poll source. For venues without an Alpaca
+    /// websocket — e.g. Hyperliquid / Degen Arena, where bars come from REST
+    /// polling (`HlBarFetcher`) only. `warmup` is drained via
+    /// [`Self::take_warmup`] like the websocket path; with no ws, `next_bar`
+    /// goes straight to the poll fallback.
+    pub fn new_poll_only(warmup: Vec<Ohlcv>, poll: AlpacaLivePoll) -> Self {
+        let starts_in_warmup = !warmup.is_empty();
+        Self {
+            warmup: warmup.into(),
+            ws: None,
+            poll: Some(poll),
+            state: if starts_in_warmup {
+                LiveStreamState::Warmup
+            } else {
+                LiveStreamState::PollFallback
+            },
+            last_yielded_ts: None,
+        }
+    }
+
     /// Timestamp of the most recent bar handed to the caller.
     /// Public for diagnostics + Stage-2/4 trace events.
     pub fn last_yielded_ts(&self) -> Option<DateTime<Utc>> {

@@ -160,4 +160,28 @@ describe("LiveConsole", () => {
       ).toBeInTheDocument(),
     );
   });
+
+  test("ArenaStandingIndicator renders inline when a run is selected", async () => {
+    vi.mocked(listAgentRuns).mockResolvedValue([mkRun()]);
+    renderConsole("/live");
+    await waitFor(() =>
+      expect(screen.getByTestId("arena-standing-indicator")).toBeInTheDocument(),
+    );
+    // Chips are present (conservative defaults: not-active state)
+    expect(screen.getByTestId("chip-trading-via-arena")).toBeInTheDocument();
+    expect(screen.getByTestId("chip-ai-pot-in-view")).toBeInTheDocument();
+  });
+
+  test("ArenaStandingIndicator is absent when no run is selected (empty state)", async () => {
+    vi.mocked(listAgentRuns).mockResolvedValue([]);
+    renderConsole("/live");
+    await waitFor(() =>
+      expect(
+        screen.getByText(/No active live deployments/i),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByTestId("arena-standing-indicator"),
+    ).not.toBeInTheDocument();
+  });
 });

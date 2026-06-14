@@ -1,7 +1,7 @@
 // frontend/web/src/features/agent-runs/trace-labels.test.ts
 import { describe, expect, test } from "vitest";
 import type { RunSpan } from "@/api/types-agent-runs";
-import { formatTraceLabel } from "./trace-labels";
+import { formatTraceLabel, optiSpanLabel } from "./trace-labels";
 
 function baseSpan(over: Partial<RunSpan> = {}): RunSpan {
   return {
@@ -148,5 +148,34 @@ describe("formatTraceLabel — F-5", () => {
     expect(formatTraceLabel({ span, refKind: "prompt" })).toBe(
       "BrokerCall · BUY 0.1234 BTC (rejected)",
     );
+  });
+});
+
+describe("optiSpanLabel — WS-11a operator-surface OPTI labels", () => {
+  function optiSpan(kind: RunSpan["kind"], attrs: Record<string, unknown> = {}): RunSpan {
+    return baseSpan({ kind, name: "x", attributes: attrs });
+  }
+
+  test("cycle / parent / experiment / honesty / judge / flywheel get plain-language labels", () => {
+    expect(optiSpanLabel(optiSpan("opti.cycle"))).toBe("Optimizer cycle");
+    expect(optiSpanLabel(optiSpan("opti.parent"))).toBe("Parent selected");
+    expect(optiSpanLabel(optiSpan("opti.experiment"))).toBe("Experiment proposed");
+    expect(optiSpanLabel(optiSpan("opti.honesty"))).toBe("Honesty check");
+    expect(optiSpanLabel(optiSpan("opti.judge"))).toBe("Judge finding");
+    expect(optiSpanLabel(optiSpan("opti.flywheel"))).toBe("Flywheel compiled");
+  });
+
+  test("gate rows resolve the three-way outcome label (Active / Suspect / Rejected)", () => {
+    expect(optiSpanLabel(optiSpan("opti.gate", { outcome: "kept" }))).toBe("Active");
+    expect(optiSpanLabel(optiSpan("opti.gate", { outcome: "suspect" }))).toBe("Suspect");
+    expect(optiSpanLabel(optiSpan("opti.gate", { outcome: "rejected" }))).toBe("Rejected");
+  });
+
+  test("gate row with an unknown/missing outcome falls back to a generic gate label", () => {
+    expect(optiSpanLabel(optiSpan("opti.gate"))).toBe("Gate evaluated");
+  });
+
+  test("a non-opti span returns null (the caller keeps its existing label path)", () => {
+    expect(optiSpanLabel(baseSpan({ kind: "model.call" }))).toBeNull();
   });
 });

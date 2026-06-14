@@ -90,6 +90,8 @@
 // 60. POST   /api/optimize/memory-demos/:id/gate      flywheel::optimize_memory_demos_gate
 //
 // 61. POST  /api/assets/refresh               assets_refresh::refresh
+// 62. POST  /api/live/deploy/degen-arena      settings::brokers::set_degen_arena
+// 62b. DELETE /api/live/deploy/degen-arena    settings::brokers::delete_degen_arena
 //
 // READ-ONLY routes (GET, GET SSE) — no require_auth layer:
 //
@@ -772,6 +774,14 @@ fn mutating_router(state: AppState) -> Router {
         .route(
             "/api/settings/brokers/byreal",
             post(settings::brokers::set_byreal).delete(settings::brokers::delete_byreal),
+        )
+        // ── Live deploy: Degen Arena key ingest ───────────────────────────
+        // POST /api/live/deploy/degen-arena — persist trade-only HL agent-wallet
+        // credentials (apiKey, accountAddress, network) for the Virtuals Degen
+        // Arena venue. Validates format; key is never echoed back.
+        .route(
+            "/api/live/deploy/degen-arena",
+            post(settings::brokers::set_degen_arena).delete(settings::brokers::delete_degen_arena),
         )
         // ── Settings: observability ───────────────────────────────────────
         .route("/api/settings/observability", put(settings::observability::put))
