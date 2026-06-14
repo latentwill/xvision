@@ -96,7 +96,7 @@ function decisionMode(row: StrategyListItem): {
       : { label: "missing agent", pillTone: "danger", badgeColor: "danger" };
   }
   return agents > 0
-    ? { label: "agent-direct", pillTone: "warn", badgeColor: "warn" }
+    ? { label: "agent-direct", pillTone: "default", badgeColor: "muted" }
     : { label: "missing agent", pillTone: "danger", badgeColor: "danger" };
 }
 

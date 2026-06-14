@@ -352,7 +352,7 @@ export function TraceDock() {
     <div
       data-testid="trace-dock"
       className="fixed bottom-0 left-0 right-0 z-30 bg-bg border-t border-border shadow-2xl flex flex-col"
-      style={{ height: heightPx }}
+      style={{ height: heightPx, maxHeight: "calc(100vh - 60px)" }}
     >
       <DockResizeHandle />
       <div className="flex items-center gap-3 px-3 h-8 border-b border-border text-[11px] font-mono">

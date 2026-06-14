@@ -161,6 +161,7 @@ function VariantMiniTree({
   variants: Variant[];
   clonesOfYours?: { count: number; upstreamEarningsUsd: number };
 }) {
+  if (variants.length === 0) return null;
   return (
     <div className="rounded-md border border-border bg-surface-card p-4">
       <div className="text-[12px] font-medium text-text mb-3">Version history</div>
@@ -264,6 +265,7 @@ function MoreFromCreatorCard({
   creator: Creator;
 }) {
   const navigate = useNavigate();
+  if (rows.length === 0) return null;
   return (
     <div className="rounded-md border border-border bg-surface-card">
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">

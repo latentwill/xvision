@@ -886,14 +886,14 @@ function BarCacheTab({ scenario }: { scenario: Scenario }) {
 
         <dt className="text-text-3">Window</dt>
         <dd className="font-mono text-[12px] m-0">
-          {data.window_start} → {data.window_end}
+          {new Date(data.window_start).toLocaleDateString()} → {new Date(data.window_end).toLocaleDateString()}
         </dd>
 
         <dt className="text-text-3">Bars</dt>
         <dd className="font-mono m-0">{data.bar_count.toLocaleString()}</dd>
 
         <dt className="text-text-3">Fetched at</dt>
-        <dd className="font-mono text-[12px] m-0">{data.fetched_at}</dd>
+        <dd className="font-mono text-[12px] m-0">{new Date(data.fetched_at).toLocaleString()}</dd>
 
         <dt className="text-text-3"></dt>
         <dd className="m-0 mt-2">

@@ -72,7 +72,7 @@ export function AttentionBand({
               />
               <Link
                 to="/eval-runs"
-                className="text-text-2 hover:text-text hover:underline"
+                className="font-medium text-text hover:underline"
               >
                 Evaluate {counts.userAwaitingFirstEval} user{" "}
                 {counts.userAwaitingFirstEval === 1 ? "strategy" : "strategies"}{" "}

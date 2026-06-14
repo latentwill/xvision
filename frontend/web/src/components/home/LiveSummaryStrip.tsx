@@ -115,7 +115,11 @@ export function LiveSummaryStrip() {
             </span>
           )}
           {staleCount > 0 && (
-            <span data-testid="stale-count" className="text-text-3">
+            <span
+              data-testid="stale-count"
+              className="text-text-3"
+              title="Agent run stuck in 'running' after parent eval completed"
+            >
               <span className="font-mono font-semibold tabular-nums">{staleCount}</span>{" "}
               stale
             </span>
