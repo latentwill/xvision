@@ -104,7 +104,6 @@ export function EvalCapsule({
       tone={focused.status}
       borderColor={borderColor}
       expanded={expanded}
-      retentionMode={retentionMode}
     >
       {/* Focused-eval row (always rendered). */}
       <div
@@ -115,6 +114,7 @@ export function EvalCapsule({
           run={focused}
           focused={true}
           currentSpan={focused.currentSpan ?? null}
+          retentionMode={retentionMode}
         />
 
         {/* Trailing controls */}

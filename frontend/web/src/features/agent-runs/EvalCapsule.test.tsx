@@ -208,6 +208,28 @@ describe("EvalCapsule", () => {
     expect(screen.getByText(/2 ERR/)).toBeInTheDocument();
   });
 
+  test("renders the fidelity badge inline inside the focused content row (not as a stacked row)", () => {
+    renderCapsule(
+      <EvalCapsule focused={focused()} siblings={[]} retentionMode="full_debug" />,
+    );
+    const cap = screen.getByTestId("run-status-strip");
+    const badge = within(cap).getByTestId("capsule-fidelity-badge");
+    expect(badge.textContent).toContain("full");
+
+    // The badge must be a descendant of the focused content row (the same row
+    // carrying the EVAL prefix + short tag), so it sits on the single
+    // horizontal line rather than stacking above the body as an empty row.
+    const kindLabel = within(cap).getByTestId("capsule-kind-label");
+    const contentRow = kindLabel.closest("div.transition-colors");
+    expect(contentRow).not.toBeNull();
+    expect(contentRow!.contains(badge)).toBe(true);
+  });
+
+  test("omits the fidelity badge when no retentionMode is provided", () => {
+    renderCapsule(<EvalCapsule focused={focused()} siblings={[]} />);
+    expect(screen.queryByTestId("capsule-fidelity-badge")).toBeNull();
+  });
+
   test("renders the focused row's currentSpan chip", () => {
     renderCapsule(
       <EvalCapsule
