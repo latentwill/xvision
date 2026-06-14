@@ -163,8 +163,6 @@ pub enum Command {
     /// library; `import` adds user files (md/txt/csv/pdf/json) with
     /// summary sidecars for csv/pdf.
     Strategies(commands::strategies::StrategiesCmd),
-    /// Risk layer evaluation + config inspection.
-    Risk(commands::risk::RiskCmd),
     /// SQLite flight-recorder operations (migrate / stats).
     Store(commands::store_cmd::StoreCmd),
     /// Compute one technical indicator from a JSON price/HLC series.
@@ -291,7 +289,6 @@ impl Cli {
                 .map_err(Into::into),
             Command::Strategy(cmd) => commands::strategy::run(cmd).await,
             Command::Strategies(cmd) => commands::strategies::run(cmd).await,
-            Command::Risk(cmd) => commands::risk::run(cmd).await.map_err(Into::into),
             Command::Store(cmd) => commands::store_cmd::run(cmd).await.map_err(Into::into),
             Command::Indicator(cmd) => commands::indicator::run(cmd).map_err(Into::into),
             Command::Dashboard(cmd) => commands::dashboard::run(cmd).await.map_err(Into::into),

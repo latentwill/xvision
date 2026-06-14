@@ -171,7 +171,7 @@ implementation-plan §8.5. Show: probe set name, n probes, last
 re-evaluation timestamp, decision-flip count vs. baseline, capability-floor
 delta. Wired up only after F13 / M14 lands.
 
-- *Source:* `xvision-harness` JSON.
+- *Source:* eval harness JSON (xvision-harness retired 2026-06).
 - *v1:* stub only — corpus is curated post-headline.
 
 ### 2.3 Trade history (user idea #2, expanded)
