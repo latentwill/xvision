@@ -2099,6 +2099,16 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
+      "mutates": true,
+      "path": [
+        "help",
+        "init"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [],
       "mutates": false,
       "path": [
         "help",
@@ -2331,16 +2341,6 @@
       "path": [
         "help",
         "metrics"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [],
-      "mutates": true,
-      "path": [
-        "help",
-        "migrate"
       ]
     },
     {
@@ -2945,7 +2945,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "help",
         "strategies",
@@ -3551,6 +3551,19 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [
+        "--dry-run",
+        "--help",
+        "--xvn-home"
+      ],
+      "mutates": true,
+      "path": [
+        "init"
+      ]
+    },
+    {
+      "aliases": [],
+      "has_subcommands": false,
+      "long_flags": [
         "--help",
         "--json",
         "--n",
@@ -4109,19 +4122,6 @@
       "mutates": false,
       "path": [
         "metrics"
-      ]
-    },
-    {
-      "aliases": [],
-      "has_subcommands": false,
-      "long_flags": [
-        "--dry-run",
-        "--help",
-        "--xvn-home"
-      ],
-      "mutates": true,
-      "path": [
-        "migrate"
       ]
     },
     {
@@ -4750,6 +4750,7 @@
         "--experiments-per-cycle",
         "--help",
         "--ipc-socket",
+        "--max-consecutive-errors",
         "--max-cycles",
         "--max-output-tokens",
         "--mock",
@@ -5737,7 +5738,7 @@
       "aliases": [],
       "has_subcommands": false,
       "long_flags": [],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "strategies",
         "help",
@@ -5768,7 +5769,7 @@
         "--help",
         "--xvn-home"
       ],
-      "mutates": false,
+      "mutates": true,
       "path": [
         "strategies",
         "init"

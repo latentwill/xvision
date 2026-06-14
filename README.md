@@ -76,7 +76,7 @@ cd xvision
 cargo build --release
 
 # 2. Initialize xvision config/state
-./target/release/xvn migrate
+./target/release/xvn init
 
 # 3. Check provider config/readiness
 ./target/release/xvn doctor --json
@@ -165,7 +165,7 @@ Quick summary:
   heads (`eval list/show/results/watch/compare`, `strategy show/validate`,
   `scenario show/select`, `doctor`, etc.) are allowed without configuration.
   Mutating/destructive nested paths and server/live-trading heads (`dashboard`,
-  `mcp`, `fire-trade`, `close-position`, `migrate`, etc.) are rejected.
+  `mcp`, `fire-trade`, `close-position`, `init`, etc.) are rejected.
   Bounded eval/experiment/bakeoff jobs require their strict-template flag set
   (`--max-decisions`, `--max-wall-clock`, etc.).
 

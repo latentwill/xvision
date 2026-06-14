@@ -5,11 +5,11 @@
 #   - ensures /data exists (it's the canonical mount for xvn.db, traces, vectors)
 #   - seeds packaged probe fixtures into /data/probes if the image includes any
 #   - seeds packaged strategies into $XVN_HOME/strategies without overwriting
-#   - if XVN_AUTOMIGRATE=1, runs `xvn migrate --xvn-home $XVN_HOME` before exec
+#   - if XVN_AUTOMIGRATE=1, runs `xvn init --xvn-home $XVN_HOME` before exec
 #   - execs `xvn` with the caller's args; default arg is `--help`
 #
 # Env vars consumed:
-#   XVN_AUTOMIGRATE       if "1", run xvn migrate before exec (default: 0)
+#   XVN_AUTOMIGRATE       if "1", run xvn init before exec (default: 0)
 #   XVN_DATA_DIR          override /data (default: /data)
 #   XVN_HOME              override xvn runtime home (default: $XVN_DATA_DIR)
 #   XVN_CONFIG_DIR        override /config (default: /config)
@@ -96,8 +96,8 @@ fi
 export XVN_CONFIG_PATH="$WRITABLE_CONFIG_PATH"
 
 if [[ "${XVN_AUTOMIGRATE:-0}" == "1" ]]; then
-  echo "[entrypoint] running xvn migrate against $XVN_HOME/xvn.db" >&2
-  xvn migrate --xvn-home "$XVN_HOME"
+  echo "[entrypoint] running xvn init against $XVN_HOME/xvn.db" >&2
+  xvn init --xvn-home "$XVN_HOME"
 fi
 
 if [[ $# -eq 0 ]]; then

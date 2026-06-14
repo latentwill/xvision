@@ -1034,7 +1034,7 @@ describe("EvalRunsRoute", () => {
     expect(screen.getAllByText("Deleted Scenario").length).toBeGreaterThan(0);
   });
 
-  it("shows Live Alpaca launch controls when live is selected", async () => {
+  it("shows forward-test launch controls when forward test is selected", async () => {
     mockReady({ alpaca: broker({ configured: false, stored: false }) });
     vi.mocked(evalApi.startRun).mockResolvedValue({} as never);
 
@@ -1043,11 +1043,11 @@ describe("EvalRunsRoute", () => {
     await screen.findByRole("option", { name: /User 4H/ });
     expect(screen.queryByLabelText("paper")).not.toBeInTheDocument();
     expect(screen.getByLabelText("backtest")).toBeChecked();
-    fireEvent.click(screen.getByLabelText("live"));
-    expect(screen.getByLabelText("live")).toBeChecked();
-    expect(screen.getByLabelText("Live asset")).toBeVisible();
-    expect(screen.getByLabelText("Live capital")).toBeVisible();
-    expect(screen.getByLabelText("Live bar limit")).toBeVisible();
-    expect(screen.getByLabelText("Live warmup bars")).toBeVisible();
+    fireEvent.click(screen.getByLabelText("forward test"));
+    expect(screen.getByLabelText("forward test")).toBeChecked();
+    expect(screen.getByLabelText("Forward-test asset")).toBeVisible();
+    expect(screen.getByLabelText("Forward-test capital")).toBeVisible();
+    expect(screen.getByLabelText("Forward-test bar limit")).toBeVisible();
+    expect(screen.getByLabelText("Forward-test warmup bars")).toBeVisible();
   });
 });

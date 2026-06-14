@@ -218,8 +218,8 @@ are still required for the live market-data bar stream regardless of venue.
 
 **Pipeline roles** (intern → trader → risk → executor) are valid
 conventions, not hardcoded slot names. The current shipped CLI initializes
-state with `xvn migrate`; interactive setup/onboarding is handled through the
-dashboard wizard and operator runbooks.
+state with `xvn init` (back-compat alias: `xvn migrate`); interactive
+setup/onboarding is handled through the dashboard wizard and operator runbooks.
 
 ## Experiment vs strategy vs eval (mental model)
 

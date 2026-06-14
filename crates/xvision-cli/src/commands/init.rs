@@ -1,11 +1,14 @@
-//! `xvn migrate` — apply pending migrations + seed (or report what would
-//! happen with `--dry-run`).
+//! `xvn init` — initialize `$XVN_HOME`: create the SQLite schema and seed the
+//! canonical scenarios (or report what would happen with `--dry-run`).
 //!
-//! Migrations and the canonical seed are also applied on every
-//! `ApiContext::open`, so calling `xvn migrate` after any other `xvn`
-//! command is effectively a no-op. This subcommand exists for operators
-//! who want an explicit, scriptable "make sure xvn_home is initialized"
-//! step plus a `--dry-run` inspection mode.
+//! On a fresh machine there is nothing to "migrate" — `init` builds the schema
+//! from zero and seeds. On an existing home it applies any pending schema
+//! migrations. The same schema + canonical seed are also applied on every
+//! `ApiContext::open` (including `xvn dashboard serve`), so `xvn init` is an
+//! explicit, scriptable "make sure this home is set up" step plus a `--dry-run`
+//! inspection mode — running it before another `xvn` command is optional.
+//!
+//! Back-compat: this command is still reachable as `xvn migrate` (hidden alias).
 
 use std::path::PathBuf;
 
@@ -16,10 +19,10 @@ use xvision_engine::api::{Actor, ApiContext};
 
 use crate::exit::{CliResult, ResultExt, XvnExit};
 
-/// `xvn migrate` — apply migrations + seed, or report pending state in
-/// `--dry-run` mode.
+/// `xvn init` — set up `$XVN_HOME` (schema + canonical seed), or report pending
+/// state in `--dry-run` mode.
 #[derive(Args, Debug)]
-pub struct MigrateCmd {
+pub struct InitCmd {
     /// Report pending migrations and seed deltas without mutating.
     #[arg(long)]
     pub dry_run: bool,
@@ -29,7 +32,7 @@ pub struct MigrateCmd {
     pub xvn_home: Option<PathBuf>,
 }
 
-pub async fn run(cmd: MigrateCmd) -> CliResult<()> {
+pub async fn run(cmd: InitCmd) -> CliResult<()> {
     let xvn_home = crate::commands::home::resolve_xvn_home(cmd.xvn_home).exit_with(XvnExit::Usage)?;
 
     if cmd.dry_run {
@@ -134,6 +137,6 @@ async fn run_apply(xvn_home: PathBuf) -> Result<()> {
         .await
         .context("open ApiContext")?;
 
-    println!("migrations applied.");
+    println!("initialized {} (schema + canonical seed).", xvn_home.display());
     Ok(())
 }
