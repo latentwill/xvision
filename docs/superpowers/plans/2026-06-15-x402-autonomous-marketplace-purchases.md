@@ -406,7 +406,14 @@ The current enum (`crates/xvision-dashboard/src/error.rs`) has `Validation { fie
     #[error("bad request: {0}")]
     BadRequest(String),
 ```
-Map it to `StatusCode::BAD_REQUEST` in the `IntoResponse for DashboardError` match. Add the conversion from marketplace errors:
+Add the match arm to the existing (non-exhaustive) `impl IntoResponse for DashboardError` `match &self` block — without it the crate won't compile:
+```rust
+            DashboardError::BadRequest(m) => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "code": "bad_request", "message": m.clone() })),
+            ).into_response(),
+```
+Add the conversion from marketplace errors:
 ```rust
 impl From<xvision_marketplace::error::MarketplaceError> for DashboardError {
     fn from(e: xvision_marketplace::error::MarketplaceError) -> Self {
@@ -579,7 +586,7 @@ The header is base64(JSON) of `{ x402Version, scheme, network, payload: { author
                     "value":"49000000","validAfter":"0","validBefore":"9999999999",
                     "nonce":"0x33"
                 },
-                "signature":"0x"  // not parsed here; v/r/s split done in decode
+                "signature": format!("0x{}1b", "00".repeat(64))  // 65-byte dummy (v=0x1b=27); decode validates length, not crypto
             }
         });
         use base64::Engine;
@@ -1419,6 +1426,8 @@ git commit -m "feat(contracts): wire Mantle mainnet addresses (config + pinned M
 - **Gate iteration-1 fixes applied:** (1) `build_buy_request` → `pub(crate)` is now an explicit step (Task 1.5 Step 3a). (2) `hex` replaced with `alloy::hex` (no new dep) in dashboard + MCP. (3) interop smoke with `x402-fetch` added (Task 1.10). (4) spent-nonce unit test added via pure `ensure_unused` (Task 1.6 Step 1). (5) `fetch_listing` + `is_authorization_used` are **inherent** methods on `Erc8004MantleDriver`, NOT `AnchorDriver` trait methods — `MockDriver`/`xvision-cli` untouched.
 
 - **Gate iteration-2 fixes applied (pinned-crate compile accuracy):** (1) `DashboardError::BadRequest(String)` variant + `From<MarketplaceError>` added as Task 1.4 Step 0 (the enum had no `BadRequest`). (2) `IERC3009` `sol!` binding defined in Task 1.6 (it existed nowhere). (3) `sig.r()/.s()` are `U256` → convert to `B256` via `to_be_bytes::<32>()` (no `Into<B256>`). (4) typehash test uses type-level `eip712_encode_type()` since `eip712_type_hash` is instance-only. The Completeness reviewer's "no implementation files exist → BLOCKING" was a category error (this is a pre-implementation plan review; the plan specifies a test per change) — rebutted, not a defect.
+
+- **Gate iteration-3 fixes applied (final, mechanical):** (1) Task 1.5 decode test fixture now uses a valid 65-byte dummy signature (`0x..1b`) so the length-check passes and the test can go green (was `"0x"` = 0 bytes). (2) Task 1.4 Step 0 now includes the explicit `IntoResponse` match arm code for `BadRequest` (the match is non-exhaustive — prose alone would not compile). Scope & Alignment PASSED all three iterations. Gate history: iter1 5 blockers → iter2 4 → iter3 2 (both trivial, reviewer-specified fixes applied).
 - **Type consistency:** `Authorization`, `SignedParts`, `sign_authorization`, `recover_authorizer`, `usdc_domain`, `build_accepts`, `decode_x_payment`, `settle_from_header`, `encode_payment_response`, `ListingView`, `fetch_listing`, `load_agent_signer`, `api_base`, `build_authorization`, `buy/browse/get_listing/import` are defined once and referenced consistently across tasks.
 - **Placeholders:** none — every code step carries real code. Version-sensitive spots (alloy `Signature` ctor, `tower_governor` generics) carry explicit "match the pinned version" notes rather than TODOs.
 
