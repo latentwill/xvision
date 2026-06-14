@@ -81,21 +81,55 @@ describe("FidelityBadge", () => {
   });
 });
 
-describe("CapsuleShell fidelity", () => {
-  test("renders the fidelity badge when retentionMode is provided", () => {
+describe("CapsuleRow fidelity (inline)", () => {
+  // The fidelity badge moved OFF the CapsuleShell (where it rendered as a
+  // separate stacked row that added a near-empty line above the body — broken
+  // on the collapsed pill) and INTO the focused row's chip cluster, so it sits
+  // inline on one line and never adds vertical height.
+  test("renders the fidelity badge inline on the focused row when retentionMode is provided", () => {
     const { getByTestId } = render(
-      <CapsuleShell testId="shell" tone="eval" borderColor="var(--gold)" retentionMode="redacted">
-        <div>body</div>
-      </CapsuleShell>,
+      <MemoryRouter>
+        <CapsuleRow run={row()} focused retentionMode="full_debug" />
+      </MemoryRouter>,
     );
     const badge = getByTestId("capsule-fidelity-badge");
-    expect(badge.textContent).toContain("redacted");
+    expect(badge.textContent).toContain("full");
+    expect(badge.getAttribute("data-fidelity")).toBe("full_debug");
+    // The badge is a descendant of the focused row (not a preceding sibling),
+    // so it shares the single horizontal line instead of stacking above it.
+    const rowDiv = rowEl(document.body as HTMLElement);
+    expect(rowDiv.contains(badge)).toBe(true);
   });
 
   test("omits the fidelity badge when retentionMode is absent", () => {
     const { queryByTestId } = render(
+      <MemoryRouter>
+        <CapsuleRow run={row()} focused />
+      </MemoryRouter>,
+    );
+    expect(queryByTestId("capsule-fidelity-badge")).toBeNull();
+  });
+
+  test("does not render the fidelity badge on a non-focused row", () => {
+    // Fidelity is a property of the focused run only; sibling rows don't carry
+    // their own badge (avoids N redundant chips in the expanded stack).
+    const { queryByTestId } = render(
+      <MemoryRouter>
+        <CapsuleRow run={row()} focused={false} retentionMode="full_debug" />
+      </MemoryRouter>,
+    );
+    expect(queryByTestId("capsule-fidelity-badge")).toBeNull();
+  });
+});
+
+describe("CapsuleShell no longer stacks the fidelity badge", () => {
+  test("does not render a stacked fidelity row above its children", () => {
+    // Regression guard for the layout bug: the shell must NOT inject a
+    // separate badge row (the second empty line). The badge now lives inline
+    // in the focused content row, rendered by the capsules themselves.
+    const { queryByTestId } = render(
       <CapsuleShell testId="shell" tone="eval" borderColor="var(--gold)">
-        <div>body</div>
+        <div data-testid="body">body</div>
       </CapsuleShell>,
     );
     expect(queryByTestId("capsule-fidelity-badge")).toBeNull();
