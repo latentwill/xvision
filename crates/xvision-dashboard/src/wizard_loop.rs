@@ -7026,7 +7026,7 @@ all = [{ lhs = "ema_12", op = "crosses_above", rhs = "ema_26" }]
                     "role": "trader",
                     "provider": "openai",
                     "model": "gpt-4.1-mini",
-                    "system_prompt": "You are the ETH/USD trader. Return structured JSON."
+                    "system_prompt": "You are the ETH/USD trader for this strategy. Evaluate the provided OHLCV bars, active filters, risk configuration, and current position state before deciding. Return only structured JSON with action, size_pct, confidence, and concise rationale. Respect configured stop loss, take profit, and max risk limits; hold when evidence is weak or liquidity is poor."
                 }),
             )
             .await

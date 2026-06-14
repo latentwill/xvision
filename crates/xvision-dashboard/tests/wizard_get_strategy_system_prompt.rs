@@ -101,7 +101,7 @@ async fn get_strategy_includes_system_prompt_per_agent() {
     let strategy_id = created.id.clone();
 
     // 2. Create an agent with a distinctive system_prompt.
-    let known_prompt = "You are an ETH/USD 4-hour swing trader. Trade ETH only.";
+    let known_prompt = "You are an ETH/USD 4-hour swing trader for this strategy. Review the latest OHLCV bars, configured filters, risk controls, and current position state before making a decision. Return structured JSON with action, size_pct, confidence, and concise rationale. Trade ETH only, respect stop loss and take profit limits, and hold when evidence is weak.";
     let agent = api_agents::create(
         &ctx,
         CreateAgentRequest {
@@ -320,7 +320,8 @@ async fn get_strategy_unresolvable_agent_degrades_gracefully() {
                 name: "trader".into(),
                 provider: "anthropic".into(),
                 model: "claude-sonnet-4-6".into(),
-                system_prompt: "doomed prompt".into(),
+                system_prompt: "You are the temporary ETH/USD validation trader for this strategy fixture. Evaluate bars, filters, current position state, and risk settings before deciding. Return structured JSON with action, size_pct, confidence, and concise rationale. Respect configured drawdown, stop loss, take profit, and liquidity limits; hold when evidence is weak."
+                    .into(),
                 skill_ids: vec![],
                 max_tokens: None,
                 max_wall_ms: None,

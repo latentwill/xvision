@@ -313,6 +313,15 @@ pub struct RunCycleArgs {
         help = "Strict per-call output-token cap applied to candidate eval dispatches this cycle"
     )]
     pub max_output_tokens: Option<u32>,
+    /// C1 (2026-06-13): halt the session loudly after this many CONSECUTIVE
+    /// candidate eval failures (reset by any successful candidate). Catches a
+    /// systemically misconfigured trader model instead of grinding. Default 3.
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Halt after N consecutive candidate eval failures (default 3)"
+    )]
+    pub max_consecutive_errors: Option<u32>,
 }
 
 // ── Top-level dispatch ────────────────────────────────────────────────────────
@@ -674,11 +683,20 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         if optimizer_memory_enabled {
             opt_mem = ctx.memory_recorder.clone();
         }
-        Box::new(CachedBacktestPaperTester::new(
-            ctx,
-            Arc::clone(&metered_dispatch),
-            Arc::new(ToolRegistry::default_with_builtins()),
-        ))
+        let tools = Arc::new(ToolRegistry::default_with_builtins());
+        let cline_ctx =
+            xvision_engine::api::eval::spawn_optimizer_cline_ctx(&ctx, &binding.provider, Arc::clone(&tools))
+                .await
+                .map_err(|e| CliError::upstream(anyhow::anyhow!("spawn optimizer sidecar: {e}")))?;
+        let agent_runtime = if cline_ctx.is_some() {
+            xvision_core::config::AgentRuntime::Cline
+        } else {
+            xvision_core::config::AgentRuntime::LlmDispatch
+        };
+        Box::new(
+            CachedBacktestPaperTester::new(ctx, Arc::clone(&metered_dispatch), tools)
+                .with_cline_runtime(agent_runtime, cline_ctx),
+        )
     };
 
     let budget_cap = args.budget.unwrap_or(f64::INFINITY);
@@ -726,6 +744,7 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
         regime_set: cfg.regime_set.clone(),
         scenario_pool,
         max_output_tokens: args.max_output_tokens,
+        max_consecutive_errors: args.max_consecutive_errors.unwrap_or(3),
     };
 
     let parent_policy = ParentPolicy::RoundRobin;
@@ -903,6 +922,10 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                     "kept"
                 } else if !result.suspect_nodes.is_empty() {
                     "suspect"
+                } else if result.rejected_nodes.is_empty() && result.errored_count > 0 {
+                    // Cycle produced nothing but eval errors — honest signal,
+                    // distinct from a clean gate rejection.
+                    "errored"
                 } else {
                     "dropped"
                 };
@@ -926,12 +949,13 @@ pub async fn run_cycle_cmd(args: RunCycleArgs) -> CliResult<()> {
                 }
 
                 eprintln!(
-                    "cycle {} → {bucket} ({} kept, {} suspect, {} dropped); honesty: {}; \
+                    "cycle {} → {bucket} ({} kept, {} suspect, {} dropped, {} errored); honesty: {}; \
                      cumulative cost ${:.4}",
                     result.cycle_id,
                     result.active_nodes.len(),
                     result.suspect_nodes.len(),
                     result.rejected_nodes.len(),
+                    result.errored_count,
                     result.honesty_check.message,
                     totals.spent_usd,
                 );
