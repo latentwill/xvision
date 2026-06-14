@@ -477,6 +477,20 @@ export function TraceDock() {
       style={{ height: heightPx, maxHeight: "calc(100vh - 60px)" }}
     >
       <DockResizeHandle />
+      {/*
+        Filter-first layout (operator request): the search / kind / status
+        filter is the FIRST row of the dock — above the TRACE stats header and
+        the TREE/FLAME view toggle — so filtering is the primary action and the
+        views below react to it.
+      */}
+      <FilterBar
+        query={filter.query} setQuery={filter.setQuery}
+        kinds={filter.kinds} toggleKind={filter.toggleKind}
+        status={filter.status} setStatus={filter.setStatus}
+        decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
+        decisions={decisions}
+        total={filter.summary.total} filtered={filter.summary.filtered}
+      />
       <div className="flex items-center gap-3 px-3 h-8 border-b border-border text-[11px] font-mono">
         <span className="text-text-2">TRACE</span>
         {summary ? (
@@ -677,14 +691,6 @@ export function TraceDock() {
           </button>
         </div>
       </div>
-      <FilterBar
-        query={filter.query} setQuery={filter.setQuery}
-        kinds={filter.kinds} toggleKind={filter.toggleKind}
-        status={filter.status} setStatus={filter.setStatus}
-        decisionFilter={filter.decisionFilter} setDecisionFilter={filter.setDecisionFilter}
-        decisions={decisions}
-        total={filter.summary.total} filtered={filter.summary.filtered}
-      />
       <div data-testid="trace-dock-body" className="flex flex-1 min-h-0">
         <div className="min-w-0 flex-1 border-r border-border">
           {q.data || hasSessionTrace ? (
